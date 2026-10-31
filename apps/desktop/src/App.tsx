@@ -3,7 +3,7 @@
  * store; analysis and rendering run in a Web Worker; file system and
  * toolchain access go through the typed `window.kr` bridge.
  * ===================================================================== */
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
@@ -21,7 +21,7 @@ import { withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
-import type { BuildState, CartCheck, Command, ContextMenuState, Editing, KickBuild, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem } from './lib/types';
+import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem } from './lib/types';
 import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
@@ -47,6 +47,8 @@ const SourceView = lazy(() => import('./components/SourceView').then(m => ({ def
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
 
 const kr = window.kr;
+/** how long a block whose type changed stays framed (the .changed animation in app.css) */
+const CHANGED_MS = 4000;
 const pickToolchain = (s: Settings): ToolchainSettings => Object.fromEntries(TOOLCHAIN_KEYS.map(k => [k, s[k]])) as ToolchainSettings;
 
 type Range = { start: Addr; end: Addr };
@@ -460,6 +462,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     setSel(s => extendSel(s, from, r));
     return true;
   };
+  /* a block whose type changed: the cursor goes to its start, and once the listing has the new lines it shows that
+     start where it was on screen (else a third of the way down) and frames the block a moment */
+  const [changed, setChanged] = useState<Changed | null>(null);
+  const pendingChange = useRef<{ start: Addr; end: Addr; label: string; y: number | null } | null>(null);
+  const showChanged = (start: Addr, end: Addr, label: string) => {
+    const el = listRef.current, i = lineOf[start], y = el && i >= 0 ? i * ROW - el.scrollTop : -1;
+    pendingChange.current = { start, end, label, y: el && y >= 0 && y + ROW <= el.clientHeight ? y : null };
+    setChanged(null);
+    setCursor(start);
+    setSel(s => (s?.multi ? s : null));
+  };
+  useLayoutEffect(() => {
+    const p = pendingChange.current;
+    // another edit (an undo, say) takes the frame away
+    if (!p) { setChanged(null); return; }
+    // the analysis of the edit (or of a later one) is in
+    if (rProject !== useProject.getState().present) return;
+    pendingChange.current = null;
+    setScrollReq({ addr: p.start, center: false, n: Date.now(), ...(p.y != null ? { y: p.y } : {}) });
+    setChanged({ start: p.start, end: p.end, label: p.label, at: Date.now() });
+  }, [rProject]);
+  useEffect(() => { if (!changed) return; const t = setTimeout(() => setChanged(null), CHANGED_MS); return () => clearTimeout(t); }, [changed]);
   const targetRange = () => {
     if (sel && sel.multi && sel.end > sel.start) return sel;
     if (cursor == null) return null;
@@ -473,11 +497,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const merged = id === 'code' ? 0 : A.blocks.filter(b => b.start < r.end && b.end > r.start).length;
     update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${m ? m.label : id}`, d => { d.overrides.push({ start: r.start, end: r.end, type: MARK_TYPE[id], ...(m?.props ? { props: { ...m.props } } : {}) }); });
     toast(`$${h4(r.start)}–$${h4(r.end - 1)} marked as ${m ? m.label : id}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
+    showChanged(r.start, r.end, `Marked as ${m ? m.label : id}`);
   };
   /** a data, table or word block's number format and items a row (an override like the block, with them) */
   const setFormat = (b: Block, change: { fmt?: NumberFormat | null; row?: number | null }) => {
     const what = change.fmt !== undefined ? `${change.fmt === 'bin' ? 'binary' : change.fmt === 'dec' ? 'decimal' : change.fmt === 'hex' ? 'hex' : 'addresses'} numbers` : `${change.row ?? 'default'} a row`;
     update(`$${h4(b.start)}-$${h4(b.end - 1)}: ${what}`, d => { d.overrides.push(formatOverride(b, change, d.overrides)); });
+    showChanged(b.start, b.end, what[0].toUpperCase() + what.slice(1));
   };
   /** the code in `r` runs with this $01 value / VIC bank; null returns it to detection */
   const setBankZone = (r: Range, part: 'port' | 'vicBank', v: number | null) => {
@@ -493,6 +519,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const o = m.override, what = kindInfo(m.into).label;
     update(`Merge $${h4(o.start)}-$${h4(o.end - 1)} into one ${what} block`, d => { d.overrides.push(o); });
     toast(m.into === 'code' ? `$${h4(o.start)}–$${h4(o.end - 1)} marked as Code (code stays split per routine)` : `$${h4(o.start)}–$${h4(o.end - 1)} merged into one ${what} block`, 'ok');
+    showChanged(o.start, o.end, m.into === 'code' ? 'Marked as Code' : `Merged into one ${what} block`);
   };
   /** a line at a block's edge was dragged into the neighbouring block (or the menu said so): its bytes join that block */
   const moveInto = (m: ByteMove) => {
@@ -500,7 +527,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const start = Math.min(m.start, m.into.start), end = Math.max(m.end, m.into.end);
     update(`Move ${what} into the ${into} block`, d => { d.overrides.push(...m.overrides); if (m.rekey) moveBlockKeys(d, m.rekey.from, m.rekey.to); });
     setSel(null);
-    navigate(m.start, { noHistory: true });
+    showChanged(m.start, m.end, `Moved into the ${into} block`);
     toast(`${what.replace('-', '–')} moved into the ${into} block, now $${h4(start)}–$${h4(end - 1)}`, 'ok');
   };
   /** the Merge range dialog was confirmed: one block of the chosen type replaces every block in the range */
@@ -508,7 +535,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     update(`Merge $${h4(o.start)}-$${h4(o.end - 1)} into one ${label} block`, d => { d.overrides.push(o); });
     setModal(null);
     setSel(null);
-    navigate(o.start, { center: true });
+    showChanged(o.start, o.end, `Merged into one ${label} block`);
     toast(`Merged ${replaced} block${replaced === 1 ? '' : 's'} into one ${label} block $${h4(o.start)}–$${h4(o.end - 1)}`, 'ok');
   };
   /** leave the block at `a` out of the build (it stays in the source under #if), or put it back */
@@ -529,6 +556,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const rr = r || targetRange(); if (!rr) return;
     update('Clear override', d => { d.overrides.push({ start: rr.start, end: rr.end, type: 'auto' }); });
     toast(`$${h4(rr.start)}–$${h4(rr.end - 1)} returned to automatic analysis`, 'ok');
+    showChanged(rr.start, rr.end, 'Back to automatic analysis');
   };
   const rename = (addr: Addr, name: string): boolean => {
     if (name && !validLabel(name)) { setLabelError('Use letters, digits and _ only, start with a letter or _, and avoid mnemonic names.'); toast(`"${name}" is not a valid Kick Assembler label`, 'err'); return false; }
@@ -1419,11 +1447,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onMove={moveInto} onToken={onToken} onContext={onContext}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
-                patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} />
+                patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} />
             </>}
             <Suspense fallback={<div className="empty">Loading…</div>}>
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
-                scripts={project.scripts ?? {}} onEditScript={setScript} />}
+                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel}
                 onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}

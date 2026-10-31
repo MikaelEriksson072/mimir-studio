@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { BUILD_SCRIPTS, lineText, type Addr, type AnalysisResult, type BuildScript, type KickProblem, type RenderResult, type Settings, type Vfs } from '@mimir/core';
 import { Icon } from '../lib/icons';
-import type { NavOptions } from '../lib/types';
+import type { Changed, NavOptions } from '../lib/types';
 import { LineBody } from './Listing';
 
 type MonacoNs = typeof Monaco;
@@ -16,17 +16,20 @@ interface SourceViewProps {
   onCopy: (text: string | undefined) => void; onExport: () => void;
   /** the build scripts the user edited (Project.scripts), and how an edit (null: back to generated) is kept */
   scripts: Partial<Record<BuildScript, string>>; onEditScript: (path: BuildScript, text: string | null) => void;
+  /** a block whose type just changed: its lines are marked a moment */
+  changed?: Changed | null;
 }
 
 const isScript = (p: string): p is BuildScript => (BUILD_SCRIPTS as readonly string[]).includes(p);
 
 const languageOf = (p: string) => p.endsWith('.asm') ? 'kickass' : p.endsWith('.md') ? 'markdown' : p.endsWith('.sh') ? 'shell' : p.endsWith('.bat') ? 'bat' : 'plaintext';
 
-export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript }: SourceViewProps) {
+export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed }: SourceViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
   const ed = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const deco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const changedDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const models = useRef<Record<string, Monaco.editor.ITextModel>>({});
   const edPath = useRef<string>('');
   const [state, setState] = useState<'loading' | 'ready' | 'fallback'>('loading');
@@ -63,6 +66,7 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
       });
       ed.current = editor;
       deco.current = editor.createDecorationsCollection();
+      changedDeco.current = editor.createDecorationsCollection();
       editor.onDidChangeCursorPosition(ev => {
         if (suppress.current || ev.source === 'api') return;
         const lines = rRef.current.fileLines[edPath.current];
@@ -126,6 +130,18 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     deco.current?.set([{ range: new monaco.Range(idx + 1, 1, idx + 1, 1), options: { isWholeLine: true, className: 'mon-cur', linesDecorationsClassName: 'mon-cur-gut' } }]);
     suppress.current = true; e.revealLineInCenterIfOutsideViewport(idx + 1); suppress.current = false;
   }, [state, cursor, cur?.path, R]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // a block whose type just changed: from its header (and the lines above its first byte) to its last byte
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (state !== 'ready' || !cur || !monaco || !changedDeco.current) return;
+    const lines = changed ? R.fileLines[cur.path] : undefined;
+    let i0 = -1, i1 = -1;
+    if (changed && lines) lines.forEach((l, i) => { if ('n' in l && l.n > 0 && l.a >= changed.start && l.a < changed.end) { if (i0 < 0) i0 = i; i1 = i; } });
+    if (!changed || !lines || i0 < 0) { changedDeco.current.clear(); return; }
+    while (i0 > 0 && lines[i0 - 1].a === changed.start && lines[i0 - 1].k !== 'blank') i0--;
+    changedDeco.current.set([{ range: new monaco.Range(i0 + 1, 1, i1 + 1, 1), options: { isWholeLine: true, className: 'mon-changed', linesDecorationsClassName: 'mon-changed-gut' } }]);
+  }, [state, changed, cur?.path, R]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="source">

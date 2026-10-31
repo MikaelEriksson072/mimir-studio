@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent 
 import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, offsetText, OPC, patchAt, patchEnd, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { Icon } from '../lib/icons';
-import type { Editing, ScrollReq, Sel } from '../lib/types';
+import type { Changed, Editing, ScrollReq, Sel } from '../lib/types';
 import type { Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
 import { bookmarkCss } from './Bookmarks';
@@ -111,9 +111,11 @@ interface ListingProps {
   /** the offset column (as in SourceGen): where the byte at an address is in the file it was opened from, and that
    *  file's name; null where no file holds it. Missing: no column */
   offsetAt?: ((a: Addr) => { n: number; file: string } | null) | null;
+  /** a block whose type just changed: framed a moment, with what it became */
+  changed?: Changed | null;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -184,14 +186,19 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const handle = !e.shiftKey && l.k !== 'hdr' && (e.target as HTMLElement).closest('.adr, .hex');
     startDrag(i, e.clientY, handle ? movesOf(A, l) : null);
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!scrollReq || !box.current) return;
     const i = lineOf[scrollReq.addr];
     if (i < 0) return;
     let j = i; while (j > 0 && lines[j - 1].a === lines[i].a && ['lbl', 'hdr', 'dir', 'cmt'].includes(lines[j - 1].k) && i - j < 6) j--;
     const el = box.current, vis = el.clientHeight;
     const y = j * ROW;
-    if (scrollReq.center || y < el.scrollTop || (i + 1) * ROW > el.scrollTop + vis) el.scrollTop = Math.max(0, y - Math.floor(vis / 3));
+    // a block whose type changed: its first line stays where it was on screen, with its header in view
+    const kept = scrollReq.y != null ? Math.max(0, Math.min(i * ROW - scrollReq.y, y)) : null;
+    if (kept != null && (i + 1) * ROW <= kept + vis) el.scrollTop = kept;
+    else if (scrollReq.center || y < el.scrollTop || (i + 1) * ROW > el.scrollTop + vis) el.scrollTop = Math.max(0, y - Math.floor(vis / 3));
+    // the rows at the new place render now, not after the scroll event
+    setTop(el.scrollTop);
   }, [scrollReq]); // eslint-disable-line react-hooks/exhaustive-deps
   // Data as code turns rows of data into many lines (and back): the line in view stays where it is on screen. That
   // is the cursor's line when it is in view, else the top line with bytes; its place on screen is taken before the
@@ -230,6 +237,15 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     for (const k of Object.keys(bookmarks)) { const a = Number(k), i = lineOf[a]; if (i >= 0) m.set(i, [...(m.get(i) || []), a].sort((x, y) => x - y)); }
     return m;
   }, [bookmarks, lineOf]);
+  // a block whose type just changed: its lines, from its header (and the lines above its first byte) to its last byte
+  const frame = useMemo(() => {
+    if (!changed) return null;
+    let i0 = lineOf[changed.start];
+    const i1 = lineOf[changed.end - 1];
+    if (i0 < 0 || i1 < i0) return null;
+    while (i0 > 0 && lines[i0 - 1].a === changed.start && lines[i0 - 1].k !== 'blank' && lines[i0 - 1].k !== 'file') i0--;
+    return { top: i0 * ROW, height: (i1 - i0 + 1) * ROW };
+  }, [changed, lines, lineOf]);
   /** the offset column's cell for a line (empty where it has no bytes or no file holds them) */
   const offCell = (a: Addr | null) => {
     if (!offsetAt) return null;
@@ -309,11 +325,14 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       : `Drop it in ${[moves.prev && intoText(moves.prev, 'prev'), moves.next && intoText(moves.next, 'next')].filter(Boolean).join(' or ')} · Esc cancels`;
     chip = <div className={cx('move-chip', m && 'ok')} role="status" style={{ top: moving.over * ROW + ROW + 2 }}>{text}</div>;
   }
+  // the frame fades as it would have since the change, also when the listing comes back from another tab
+  const changedFrame = frame && changed && <div key={changed.at} className="changed" aria-hidden="true"
+    style={{ top: frame.top, height: frame.height, '--since': `${Math.min(0, changed.at - Date.now())}ms` } as React.CSSProperties}><span className="changed-tag">{changed.label}</span></div>;
   // where the listing is on screen after this render (the line kept in view is placed against it); runs last
   useLayoutEffect(() => { if (box.current) boxTop.current = box.current.getBoundingClientRect().top; });
   return (
     <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => setTop(e.currentTarget.scrollTop)} aria-label="Disassembly listing">
-      <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{pop}{chip}</div>
+      <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{chip}</div>
     </div>
   );
 }

@@ -542,6 +542,49 @@ test('Data as code keeps the line in view where it is on screen, both ways', asy
   });
 });
 
+test('a block marked with another type: the cursor goes to its start, which stays in view, and the block is framed a moment', async ({ page }) => {
+  await waitForListing(page);
+  const frame = listing(page).locator('.changed');
+  const y = async (l: Locator) => Math.round((await l.boundingBox())?.y ?? -1);
+  /** the first line with bytes at `adr` */
+  const bytesAt = (adr: string) => listing(page).locator('.row:not(.hdr)', { has: page.locator('.adr', { hasText: new RegExp(`^${adr}$`) }) }).filter({ has: page.locator('.hex', { hasText: /\S/ }) }).first();
+
+  await test.step('a selection made downwards: the cursor goes from its last line to its first, which stays put on screen', async () => {
+    await goTo(page, 'fx_091e');
+    for (let i = 0; i < 2; i++) await page.keyboard.press('Shift+ArrowDown');
+    await expect(statusBar(page)).toContainText('sel $091e–$0925 (8 B)');
+    await expect(listing(page).locator('.row.cur .adr')).not.toHaveText('091e');
+    const y0 = await y(bytesAt('091e'));
+    await page.keyboard.press('d');
+    await expect(frame).toContainText('Marked as Bytes (.byte)');
+    await expect(listing(page).locator('.row.cur .adr')).toHaveText('091e');
+    await expect(listing(page).locator('.row.cur')).toContainText('.byte $ad');
+    expect(await y(bytesAt('091e'))).toBe(y0);
+    // the frame starts at the block's header
+    expect(Math.round((await frame.boundingBox())!.y)).toBe(await y(headerRow(page, '091e')));
+  });
+
+  await test.step('the frame fades and goes', async () => {
+    await expect(frame).toHaveCount(0, { timeout: 8_000 });
+  });
+
+  await test.step('the start of the range scrolled out of view: the listing goes back to it', async () => {
+    await goTo(page, 'colors_0939-$0ab4');
+    await expect(statusBar(page)).toContainText('sel $0939–$0ab4 (380 B)');
+    await listing(page).evaluate(el => { el.scrollTop += 3000; });
+    await expect(headerRow(page, '0939')).toHaveCount(0);
+    await page.keyboard.press('d');
+    await expect(frame).toContainText('Marked as Bytes (.byte)');
+    await expect(headerRow(page, '0939')).toBeInViewport();
+    await expect(listing(page).locator('.row.cur .adr')).toHaveText('0939');
+  });
+
+  await test.step('Ctrl+Z takes the frame away with the mark', async () => {
+    await page.keyboard.press('Control+z');
+    await expect(frame).toHaveCount(0, { timeout: 2_000 });
+  });
+});
+
 test('merge a block with the block before or after it', async ({ page }) => {
   await waitForListing(page);
   await goTo(page, 'txt_0960');

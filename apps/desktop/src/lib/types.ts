@@ -8,7 +8,10 @@ export interface MountedDisk { name: string; path: string | null; bytes: Uint8Ar
 /** Selection in the listing/heatmap; `multi` = an explicit range (shift-click, drag, block header, Go to range).
  * `anchor`..`anchorEnd` is the line or block picked first; extending the selection always keeps it whole. */
 export interface Sel { start: Addr; end: Addr; multi: boolean; anchor?: Addr; anchorEnd?: Addr }
-export interface ScrollReq { addr: Addr; center: boolean; n: number }
+/** `y`: keep the line at this height in the listing (px from its top), where it was before its block changed type */
+export interface ScrollReq { addr: Addr; center: boolean; n: number; y?: number }
+/** a block whose type just changed (the listing frames it a moment, with `label` on it); `at`: when */
+export interface Changed { start: Addr; end: Addr; label: string; at: number }
 /** inline edit popover: a label, a line's trailing comment, or a comment line / block (`block`) above a line */
 /** `zp`: the label is a zero-page variable; `line`: open the editor under this listing line (a `.label` line in the
  *  file head, which has no address of the label itself) */
