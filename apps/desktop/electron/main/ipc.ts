@@ -10,7 +10,7 @@ import { CHANNELS, type InvokeChannel, type ExportWriteResult, type FileSaveResu
 import type { PathPolicy } from './paths';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
-import { createProjectFolder, gatherWork, homeOf, type ProjectStore } from './projects';
+import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
 import { PROJECT_FOLDERS } from '../../shared/projects';
 import { createBuildFolder, readDiskImage, readPrgFiles, readProjectFile, writeExportFolder, writeProjectFile, type ExportWatcher } from './project-fs';
 import { buildWithKickAssembler, c64Roms, identifyWithTool, keepPacked, openTerminal, packWithBrokkr, packWithExomizer, runInVice, unpackWithTool } from './toolchain';
@@ -99,7 +99,9 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle(CHANNELS.projectStart, z.undefined().or(z.object({}).strict()), () => projects.start());
   handle(CHANNELS.projectParent, z.undefined().or(z.object({}).strict()), async (_req, e): Promise<ProjectParentResult | null> => {
-    const [picked] = await pickPaths(e, { title: 'Folder for the new project', defaultPath: projects.parent(), properties: ['openDirectory', 'createDirectory', 'promptToCreate'] });
+    // it opens where the suggested folder is, or the nearest folder above it while it is not made yet (Documents\Mimir
+    // before the first project); a folder that is not there is not offered to be made (promptToCreate asked at once)
+    const [picked] = await pickPaths(e, { title: 'Folder for the new project', defaultPath: nearestFolder(projects.parent()), properties: ['openDirectory', 'createDirectory'] });
     return picked ? { dir: policy.allow(picked) } : null;
   });
   handle(CHANNELS.projectCreate, projectCreateSchema, async (req): Promise<ProjectCreateResult> => {

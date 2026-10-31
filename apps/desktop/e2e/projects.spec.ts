@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { expect, launchApp, repoDir, test } from './fixtures';
-import { goTo, listing, listingRows, occurrences, statusBar, stubDialogs, toast, waitForListing } from './helpers';
+import { dialogOptions, goTo, listing, listingRows, occurrences, statusBar, stubDialogs, toast, waitForListing } from './helpers';
 
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
@@ -42,6 +42,11 @@ test.describe('the start screen', () => {
       await stubDialogs(app, { open: [work] });
       await form.getByRole('button', { name: 'Change…' }).click();
       await expect(form).toContainText(`Creates ${dir}`);
+      // the dialog opens in a folder that is there (Documents\Mimir is not before the first project: Windows would ask
+      // at once whether to create it)
+      const shown = (await dialogOptions(app)).pop();
+      expect(shown?.title).toBe('Folder for the new project');
+      expect(existsSync(shown?.defaultPath ?? '')).toBe(true);
       await form.getByRole('button', { name: 'Create project' }).click();
       await expect(toast(page, `Created the project scroller in ${dir}`)).toBeVisible();
       expect(existsSync(file)).toBe(true);

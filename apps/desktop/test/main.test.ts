@@ -16,7 +16,7 @@ import { buildWithKickAssembler, keepPacked, packWithBrokkr, packWithExomizer } 
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
 import { charRomFiles, readCharRom } from '../electron/main/chargen';
-import { createProjectFolder, gatherWork, homeOf, isOwnTemp, ProjectStore, RECENT_PROJECTS } from '../electron/main/projects';
+import { createProjectFolder, gatherWork, homeOf, isOwnTemp, nearestFolder, ProjectStore, RECENT_PROJECTS } from '../electron/main/projects';
 import { projectNameOf, projectNameProblem } from '../shared/projects';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
@@ -479,6 +479,14 @@ describe('projects', () => {
     expect(new ProjectStore(store, docs).parent()).toBe(join(docs, 'Mimir'));
     writeFileSync(join(store, 'projects.json'), '{ not json');
     expect(new ProjectStore(store, docs).start()).toMatchObject({ last: null, recent: [] });
+  });
+
+  it('open the folder dialog where a folder is: the suggested one, or the nearest above it before it is made', () => {
+    const docs = tmp();
+    expect(nearestFolder(docs)).toBe(docs);
+    expect(nearestFolder(join(docs, 'Mimir'))).toBe(docs);
+    expect(nearestFolder(join(docs, 'Mimir', 'deeper', 'still'))).toBe(docs);
+    expect(nearestFolder(new ProjectStore(tmp(), docs).parent())).toBe(docs);
   });
 
   it('give the project of this run its folders for the export, the build and the packed file', () => {

@@ -24,6 +24,18 @@ type Stored = z.output<typeof fileSchema>;
 const isDir = (p: string | undefined): p is string => { try { return !!p && existsSync(p) && statSync(p).isDirectory(); } catch { return false; } };
 const same = (a: string, b: string) => resolve(normalize(a)).toLowerCase() === resolve(normalize(b)).toLowerCase();
 
+/** `dir`, or the nearest folder above it that is there: a folder dialog opened at one that is not there asks at once
+ *  whether to create it */
+export function nearestFolder(dir: string): string {
+  let d = resolve(dir);
+  while (!isDir(d)) {
+    const up = dirname(d);
+    if (up === d) return d;
+    d = up;
+  }
+  return d;
+}
+
 /** the project whose project file is `file` */
 export const homeOf = (file: string): ProjectHome => ({ name: projectNameOf(file), dir: dirname(resolve(file)), file: resolve(file) });
 
