@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   analyze, areaAt, bankFiles, builtCartridge, cartMode, cartridgeFiles, cartridgeSource, chipAddress, compareCrt, createProject, crtBanks, deserializeProject, describeCrt, expectedCartridge, exportFiles,
-  isCrt, makeCrt, openCartridge, parseCrt, planPatch, portText, reaches, rebuildCrt, render, serializeProject, verify, withPatch, DEFAULT_SETTINGS, type FileInput, type ProjectInput,
+  isCrt, makeCrt, openCartridge, parseCrt, planPatch, portText, reaches, rebuildCrt, render, serializeProject, spaceRender, spaceView, verify, withPatch, DEFAULT_SETTINGS, type FileInput, type ListingLine, type ProjectInput, type SpaceCache,
 } from '../src';
 import { fromSource } from './helpers/programs';
 
@@ -190,14 +190,15 @@ describe('rebuilding the image', () => {
     const c = cartridgeFiles(p, R, DEFAULT_SETTINGS)!;
     expect(c.entry).toBe('demo.crt.asm');
     expect(c.output).toBe('demo.crt');
-    expect(Object.keys(c.files)).toEqual(['demo.crt.asm', 'banks/bank01_8000.bin']);
+    // every bank is re-assembled: no chip comes from banks/
+    expect(Object.keys(c.files)).toEqual(['demo.crt.asm']);
     const src = c.files['demo.crt.asm'] as string;
     expect(src).toContain('.file [name="demo.crt", type="bin", segments="Cartridge"]');
     expect(src).toContain('.byte $00, $13                          // hardware type 19: Magic Desk (Domark, HES Australia)');
     expect(src).toContain('.text "MIMIR DEMO"                      // the name');
     expect(src).toContain('.import binary "out/bank00_8000.prg", 2 // the re-assembled chip, without its load address');
-    expect(src).toContain('.import binary "banks/bank01_8000.bin"');
-    expect(src).toContain('.errorif * - chip1 != 8192, "banks/bank01_8000.bin does not hold the chip\'s 8192 bytes"');
+    expect(src).toContain('.import binary "out/bank01_8000.prg", 2');
+    expect(src).toContain('.errorif * - chip1 != 8192, "out/bank01_8000.prg does not hold the chip\'s 8192 bytes"');
     const built = builtCartridge(p, V.results.map(r => r.prg))!;
     expect(built.problems).toEqual([]);
     expect(compareCrt(parseCrt(b), built.crt)).toEqual({ ok: true, same: b.length, total: b.length, diffs: [] });
@@ -257,6 +258,99 @@ describe('rebuilding the image', () => {
     expect(back.files[0].chip).toBe(0);
     // a project without one keeps none
     expect(deserializeProject(serializeProject(createProject({ files: [{ name: 'a.prg', load: 0x1000, bytes: new Uint8Array(4) }] }))).cart).toBeNull();
+  });
+});
+
+describe('every bank at once, each a space of its own (13.9b)', () => {
+  const SPACE = 0x10000;
+  /** a 16K cartridge of two banks: bank 0 has ROML ($8000, CBM80) and ROMH, bank 1 only ROMH ($a000), whose code calls
+   *  a routine in bank 0's ROML, as one bank calls the fixed one */
+  const crossBank = () => {
+    const rom = (src: string, load: number) => { const b = new Uint8Array(0x2000).fill(0xff), f = fromSource('x.prg', src); b.set(f.bytes.subarray(0, 0x2000), f.load - load); return b; };
+    return makeCrt({ hw: 17, exrom: 0, game: 0, chips: [
+      { bank: 0, load: 0x8000, bytes: rom('.pc = $8000\n .word cold, cold\n .byte $c3, $c2, $cd, $38, $30\ncold:\n jmp cold\n.pc = $8100\n lda #1\n sta $d020\n rts', 0x8000) },
+      { bank: 0, load: 0xa000, bytes: rom('.pc = $a000\n rts', 0xa000) },
+      { bank: 1, load: 0xa000, bytes: rom('.pc = $a000\n jsr $8100\n jmp $a000', 0xa000) },
+    ] });
+  };
+
+  it('opens every bank, and lists them one after the other at bank addresses', () => {
+    const b = demoCartridge(), o = openCartridge('demo.crt', b);
+    expect(o.files.map(f => [f.name, f.load, f.chip])).toEqual([['bank00_8000.prg', 0x8000, 0], ['bank01_8000.prg', 0x8000, 1]]);
+    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart };
+    const A = analyze(p), R = render(A, p);
+    expect(A.spaces?.map(s => [s.space, s.bank, s.files, s.cart, s.entry])).toEqual([[0, 0, [0], '8k', 0x8009], [1, 1, [1], '8k', null]]);
+    expect(A.mem.length).toBe(2 * SPACE);
+    expect(A.mem[SPACE + 0x8000]).toBe(0x0d); // "M" of bank 1's text
+    expect(R.lines.filter(l => l.k === 'file').map(l => [l.a, (l as { text: string }).text])).toEqual([[0x8000, 'bank00_8000.asm · bank 0'], [SPACE + 0x8000, 'bank01_8000.asm · bank 1']]);
+    expect(R.fileNames).toEqual(['bank00_8000', 'bank01_8000']);
+    // bank 1 has no start of its own: it is not decoded as code from its first byte
+    expect(A.blocks.find(x => x.start === SPACE + 0x8000)?.type).not.toBe('code');
+    expect(A.log.some(l => l.msg === 'Bank 1: Bank 1 has no start of its own: it is traced from what other banks call in it and from the code you mark (C)')).toBe(true);
+    expect(verify(A, R).ok).toBe(true);
+  });
+
+  it('keeps the work on each bank in that bank: labels, comments and overrides at bank addresses', () => {
+    const o = openCartridge('demo.crt', demoCartridge());
+    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, labels: { [SPACE + 0x8000]: 'bank1_text', [0x8009]: 'reset' }, comments: { [SPACE + 0x8000]: 'shown by bank 0' }, overrides: [{ start: SPACE + 0x8000, end: SPACE + 0x802a, type: 'text', props: { enc: 'screen' } }] };
+    const A = analyze(p), R = render(A, p);
+    expect(R.labels.get(SPACE + 0x8000)?.name).toBe('bank1_text');
+    expect(R.labels.get(0x8009)?.name).toBe('reset');
+    expect(R.labels.get(0x8000)?.name).toBe('cart_vectors');
+    expect(A.blocks.find(x => x.start === SPACE + 0x8000)).toMatchObject({ type: 'text', user: true });
+    expect(A.blocks.find(x => x.start === 0x8000)?.type).toBe('words');
+    expect(R.files['bank01_8000.asm']).toMatch(/bank1_text:\n\s+\.encoding "screencode_upper"\n\s+\.text "MIMIR STUDIO: BANK 1 OF THE DEMO CARTRIDGE" +\/\/ shown by bank 0/);
+    expect(R.files['bank00_8000.asm']).not.toContain('bank1_text');
+    expect(verify(A, R).ok).toBe(true);
+    // one bank as 64 KB: its own blocks and names at their plain addresses
+    const v = spaceView(A, 1);
+    expect(v.blocks[0]).toMatchObject({ start: 0x8000, type: 'text' });
+    expect(v.mem[0x8000]).toBe(0x0d);
+    expect(spaceRender(R, A, 1).labels.get(0x8000)?.name).toBe('bank1_text');
+    expect(spaceRender(R, A, 0).labels.get(0x8000)?.name).toBe('cart_vectors');
+  });
+
+  it('traces what one bank calls in another, and names it there (the nearest bank that has the address)', () => {
+    const o = openCartridge('x.crt', crossBank());
+    // bank 1 has no start: its code is marked as an entry point, at its bank address
+    const p: ProjectInput = { name: 'x', files: o.files, cart: o.cart, entries: [SPACE + 0xa000] };
+    const A = analyze(p), R = render(A, p);
+    expect(A.spaces?.map(s => [s.bank, s.files])).toEqual([[0, [0, 1]], [1, [2]]]);
+    // bank 0 never calls $8100 itself: bank 1 does
+    expect(A.insLen[0x8100]).toBe(2);
+    expect(A.entryKind.get(0x8100)).toBe('sub');
+    const b1 = R.files['bank01_a000.asm'] as string;
+    expect(b1).toContain('// labels in other banks of the cartridge\n.label sub_8100 = $8100');
+    expect(b1).toMatch(/jsr sub_8100\n/);
+    // in the listing the operand goes to bank 0's routine; bank 1's own $a000 stays its own
+    const jsr = R.lines.find(l => l.k === 'ins' && l.a === SPACE + 0xa000) as Extract<ListingLine, { k: 'ins' }>;
+    expect(jsr.tok.find(t => t.t === 'lbl')?.to).toBe(0x8100);
+    expect(A.xrefs.get(0x8100)?.map(x => x.from)).toEqual([SPACE + 0xa000]);
+    expect(verify(A, R).ok).toBe(true);
+    const V = verify(A, R), built = builtCartridge(p, V.results.map(r => r.prg))!;
+    expect(compareCrt(parseCrt(crossBank()), built.crt).ok).toBe(true);
+  });
+
+  it('analyses only the bank that changed again, with a cache', () => {
+    const o = openCartridge('demo.crt', demoCartridge()), cache: SpaceCache = new Map();
+    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart };
+    const A = analyze(p, cache), again = analyze({ ...p, labels: { 1: 'x' } }, cache);
+    expect(again.parts![0]).toBe(A.parts![0]);
+    expect(again.parts![1]).toBe(A.parts![1]);
+    const marked = analyze({ ...p, overrides: [{ start: SPACE + 0x8000, end: SPACE + 0x8010, type: 'text' }] }, cache);
+    expect(marked.parts![0]).toBe(A.parts![0]);
+    expect(marked.parts![1]).not.toBe(A.parts![1]);
+  });
+
+  it('writes a patch in bank 0, never in another bank at the same address', () => {
+    const o = openCartridge('demo.crt', demoCartridge()), p = createProject({ files: o.files, cart: o.cart });
+    const A = analyze(p), R = render(A, p);
+    expect(planPatch(A, R, p, { name: 'b1', start: SPACE + 0x8000, end: SPACE + 0x8003, source: ' nop', fill: 'nop', over: false })).toEqual({ error: 'Patches can only be written in bank 0 of a cartridge so far.' });
+    const plan = planPatch(A, R, p, { name: 'b0', start: 0x802e, end: 0x8031, source: ' lda #2', fill: 'nop', over: false });
+    if ('error' in plan) throw new Error(plan.error);
+    const q = withPatch(p, plan.patch);
+    expect(q.files[0].bytes[0x2e]).toBe(0xa9);
+    expect(q.files[1].bytes).toEqual(p.files[1].bytes);
   });
 });
 

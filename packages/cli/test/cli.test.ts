@@ -40,7 +40,7 @@ describe('mimir CLI', () => {
     expect(JSON.parse(c.lines.join('\n')).packing).toEqual([null]);
   });
 
-  it('analyses a cartridge (or another bank of it), verifies the image rebuilt and exports it', async () => {
+  it('analyses a cartridge (every bank, or one of them), verifies the image rebuilt and exports it', async () => {
     const crt = join(__dirname, '../../../fixtures/crt/mimir-demo.crt');
     let c = capture(dir);
     expect(await main(['analyse', crt], c.io)).toBe(0);
@@ -49,7 +49,8 @@ describe('mimir CLI', () => {
 
     c = capture(dir);
     expect(await main(['verify', crt], c.io)).toBe(0);
-    expect(c.lines).toEqual(['OK   bank00_8000.asm: 8192/8192 bytes identical to bank00_8000.prg (built-in assembler)', 'OK   mimir-demo.crt: 16480/16480 bytes identical to mimir-demo.crt (the cartridge rebuilt from the chips)']);
+    // every bank, each a space of its own (13.9b)
+    expect(c.lines).toEqual(['OK   bank00_8000.asm: 8192/8192 bytes identical to bank00_8000.prg (built-in assembler)', 'OK   bank01_8000.asm: 8192/8192 bytes identical to bank01_8000.prg (built-in assembler)', 'OK   mimir-demo.crt: 16480/16480 bytes identical to mimir-demo.crt (the cartridge rebuilt from the chips)']);
 
     c = capture(dir);
     expect(await main(['export', crt, '--bank', '1', '-o', 'cart'], c.io)).toBe(0);

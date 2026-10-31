@@ -23,6 +23,18 @@ describe('Go to dialog input', () => {
     expect(parse('$0000-$ffff')).toEqual({ start: 0, end: 0x10000 });
   });
 
+  it('takes a cartridge bank before the address, and resolves one without it (spec 13.9b)', () => {
+    // bank 3 is space 2 here; an address without a bank goes to space 1 (the bank of the cursor)
+    const resolve = (a: number, bank: number | null) => (bank === 3 ? 0x20000 : bank == null ? 0x10000 : 0) + a;
+    const go = (s: string) => parseGoto(s, () => undefined, resolve);
+    expect(go('3:8000')).toEqual({ addr: 0x28000 });
+    expect(go('3:$a000')).toEqual({ addr: 0x2a000 });
+    expect(go('$8000')).toEqual({ addr: 0x18000 });
+    expect(go('3:8000-3:80ff')).toEqual({ start: 0x28000, end: 0x28100 });
+    // without banks every address is plain
+    expect(parseGoto('3:8000', () => undefined)).toEqual({ addr: 0x8000 });
+  });
+
   it('explains what it accepts', () => {
     for (const s of ['', 'nope', '$12345', '$2000-', '-$2000', '$2000-nope']) expect(parse(s), s).toEqual({ error: GOTO_HELP });
   });

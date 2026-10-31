@@ -1,5 +1,5 @@
 /* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, program start, memory map), Blocks (filterable), Symbols (labels, hardware registers), Bookmarks, Pack.
- * The Explorer's sections are cards that fold up (the user's choice is kept), each with what it holds in a few words
+ * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState } from 'react';
 import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type Crt, type D64File, type LoaderPart, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef } from '@mimir/core';
@@ -20,8 +20,13 @@ interface SidebarProps {
   /** set the program start (null: back to the detected one) */
   onSetStart: (a: Addr | null) => void;
   disk: MountedDisk | null; onMount: () => void; onEject: () => void;
-  /** the project's cartridge, read (spec 13.9): its banks open with a click (`add`: the chips that fit join the files) */
-  cart: Crt | null; onOpenBank: (bank: number, add: boolean) => void;
+  /** the project's cartridge, read (spec 13.9): a bank in the project is gone to with a click, one out of it added
+   *  (`leave`: taken out) */
+  cart: Crt | null; onOpenBank: (bank: number, leave?: boolean) => void;
+  /** where file `i` starts, in its bank (13.9b) */
+  fileAddr: (i: number) => Addr;
+  /** the bank of the cursor as 64 KB, for the memory strip (13.9b): its analysis, where it starts, the cursor in it */
+  bankView: { A: AnalysisResult; base: Addr; cursor: Addr | null };
   /** open the Spindle script tab (a Spindle disk's load script) */
   onShowSpindle: () => void;
   /** open the Bitfire script tab (a Bitfire disk's files) */
@@ -63,11 +68,13 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpen, onAdd, onDemo, onRemoveFile, onSetStart, disk, onMount, onEject, cart, onOpenBank, onShowSpindle, onShowBitfire, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpen, onAdd, onDemo, onRemoveFile, onSetStart, disk, onMount, onEject, cart, onOpenBank, fileAddr, bankView, onShowSpindle, onShowBitfire, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
     const segs = A.blocks.filter(b => b.end - b.start >= 48 || (b.type === 'code' && A.entryKind.get(b.start) && A.entryKind.get(b.start) !== 'sub'));
+    // a cartridge's many chips are one row here; the Cartridge section lists its banks (13.9b)
+    const chips = project.files.filter(f => f.chip != null).length, chipsShort = chips > 4;
     return (
       <div className="side-inner">
         <div className="side-title">Explorer</div>
@@ -76,14 +83,18 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpe
             <button className="btn tiny ghost" onClick={onDemo} title="Load the showcase: a C64 intro with one block of every type and a guided tour (F2)">Demo</button>
             <button className="icon-btn" title="Add PRG to this project" aria-label="Add PRG to this project" onClick={onAdd}><Icon name="plus" size={14} /></button>
           </>}>
-          {project.files.map((f, i) => (
-            <div key={f.id || i} className="file-row" onClick={() => onNavigate(f.load)}>
+          {project.files.map((f, i) => (chipsShort && f.chip != null ? null :
+            <div key={f.id || i} className="file-row" onClick={() => onNavigate(fileAddr(i))}>
               <Icon name="doc" size={14} />
               <div className="file-meta"><div className="file-name">{f.name}</div><div className="muted mono small">${h4(f.load)}–${h4(f.load + f.bytes.length - 1)} · {fmtBytes(f.bytes.length)}</div></div>
               {packing[i] && <span className="pill pack" title={`${packing[i]!.verdict === 'packed' ? 'Packed' : 'Maybe packed'}${packing[i]!.signature ? ` (${packing[i]!.signature})` : ''}:\n${packing[i]!.reasons.join('\n')}`}>{packing[i]!.verdict === 'packed' ? 'packed' : 'packed?'}</span>}
               {project.files.length > 1 && <button className="icon-btn" title={`Remove ${f.name}`} aria-label={`Remove ${f.name}`} onClick={e => { e.stopPropagation(); onRemoveFile(i); }}><Icon name="x" size={13} /></button>}
             </div>
           ))}
+          {chipsShort && <div className="file-row" onClick={() => onNavigate(fileAddr(project.files.findIndex(f => f.chip != null)))}>
+            <Icon name="chip" size={14} />
+            <div className="file-meta"><div className="file-name">{chips} chips of {project.cart?.name}</div><div className="muted small">every bank in the listing, one after the other: the Cartridge section lists them</div></div>
+          </div>}
           <div className="side-actions two">
             <button className="btn small" onClick={onOpen} title="Open a .prg, a VICE snapshot (.vsf) or a cartridge (.crt) as a new project"><Icon name="upload" size={13} />Open PRG…</button>
             <button className="btn small ghost" onClick={onMount} title="Mount a .d64 disk image and open its files"><Icon name="disk" size={13} />Mount D64…</button>
@@ -98,11 +109,11 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpe
         <ProgramStart A={A} R={R} project={project} onNavigate={onNavigate} onSetStart={onSetStart} />
         <SideSection id="map" title="Memory map" summary={`${segs.length} block${segs.length === 1 ? '' : 's'}`}>
           <div className="mmap">
-            <MemoryStrip A={A} colors={colors} cursor={cursor} onNavigate={onNavigate} />
+            <MemoryStrip A={bankView.A} colors={colors} cursor={bankView.cursor} onNavigate={a => onNavigate(bankView.base + a)} />
             <div className="seg-list">
               {segs.map(b => { const l = R.labels.get(b.start); return (
                 <button key={b.id} className={cx('seg-row', cursor != null && cursor >= b.start && cursor < b.end && 'on')} onClick={() => onNavigate(b.start)}>
-                  <i style={{ background: `var(--g-${groupOfKind(b.type)})` }} /><span className="mono">${h4(b.start)}</span><span className="seg-name">{l ? l.name : kindInfo(b.type).label}</span>
+                  <i style={{ background: `var(--g-${groupOfKind(b.type)})` }} /><span className="mono">{bankAdr(A, b.start)}</span><span className="seg-name">{l ? l.name : kindInfo(b.type).label}</span>
                 </button>); })}
             </div>
           </div>
@@ -123,7 +134,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpe
           {list.map(b => { const l = R.labels.get(b.start); const on = cursor != null && cursor >= b.start && cursor < b.end; return (
             <button key={b.id} className={cx('blk-row', on && 'on')} onClick={() => onNavigate(b.start)}>
               <i style={{ background: `var(--g-${groupOfKind(b.type)})` }} />
-              <span className="blk-main"><span className="blk-name">{l ? l.name : kindInfo(b.type).label}</span><span className="muted mono small">${h4(b.start)} · {b.end - b.start} B</span></span>
+              <span className="blk-main"><span className="blk-name">{l ? l.name : kindInfo(b.type).label}</span><span className="muted mono small">{bankAdr(A, b.start)} · {b.end - b.start} B</span></span>
               <span className="blk-type">{kindInfo(b.type).label}{b.user && <Icon name="pencil" size={11} />}</span>
             </button>); })}
         </div>
@@ -144,7 +155,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpe
       <div className="blk-list">
         {symTab === 'labels' ? labels.map(([a, l]) => (
           <button key={a} className={cx('sym-row', cursor === a && 'on')} onClick={() => onNavigate(a)}>
-            <span className={cx('mono sym-name', l.user && 'user')}>{l.name}</span><span className="muted mono small">${h4(a)}</span><span className="sym-refs">{(A.xrefs.get(a) || []).length}</span>
+            <span className={cx('mono sym-name', l.user && 'user')}>{l.name}</span><span className="muted mono small">{bankAdr(A, a)}</span><span className="sym-refs">{(A.xrefs.get(a) || []).length}</span>
           </button>)) : hw.map(e => (
           <div key={e.sym.name} className="sym-row static" title={e.sym.desc}>
             <span className="mono sym-name syn-hw">{e.sym.name}</span><span className="muted small">{e.sym.cat}</span><span className="sym-refs">{e.n}</span>
@@ -265,11 +276,11 @@ function PatchesSection({ list, onGo, onEdit, onSave, onRemove, onSwitch }: Patc
  * bank opens with a click as the project's files (Ctrl+Z goes back); + adds its chips that fit beside the open ones.
  * The export and Build & Run rebuild the whole image, the chips not opened from their bytes.
  */
-function CartridgeSection({ crt, name, project, onOpenBank }: { crt: Crt; name: string; project: Project; onOpenBank: (bank: number, add: boolean) => void }) {
+function CartridgeSection({ crt, name, project, onOpenBank }: { crt: Crt; name: string; project: Project; onOpenBank: (bank: number, leave?: boolean) => void }) {
   const banks = useMemo(() => crtBanks(crt), [crt]);
   const open = new Set(project.files.map(f => f.chip).filter((c): c is number => c != null));
-  const overlaps = (load: Addr, size: number) => project.files.some(f => load < f.load + f.bytes.length && f.load < load + size);
   const boot = bootBank(crt);
+  const inProject = banks.filter(b => b.chips.some(c => open.has(c.index))).length;
   const kb = (n: number) => (n % 1024 ? `${n} B` : `${n / 1024} KB`);
   return (
     <SideSection id="cart" title="Cartridge" summary={name}>
@@ -278,26 +289,32 @@ function CartridgeSection({ crt, name, project, onOpenBank }: { crt: Crt; name: 
       </div>
       <div className="disk-list" role="list" aria-label={`Banks of ${name}`}>
         {banks.map(({ bank, chips }) => {
-          const on = chips.every(c => open.has(c.index)), some = chips.some(c => open.has(c.index));
-          const fits = chips.filter(c => !open.has(c.index) && !overlaps(chipAddress(crt, c), c.data.length));
+          const on = chips.some(c => open.has(c.index));
           const where = chips.map(c => `$${h4(chipAddress(crt, c))}`).join(' + ');
           const what = chips.map(c => `${chipTypeName(c.type)} at $${h4(chipAddress(crt, c))}${chipAddress(crt, c) !== c.load ? ` (the file says $${h4(c.load)})` : ''}, ${c.data.length} bytes`).join('; ');
           return (
-            <div key={bank} role="listitem" className={cx('disk-row cart-row', on && 'on', some && !on && 'part')} tabIndex={0}
-              title={`${on ? 'Bank' : 'Open bank'} ${bank}${on ? ' is open' : ''}${bank === boot ? ', the bank the C64 starts in' : ''}: ${what}`}
-              onClick={() => onOpenBank(bank, false)} onKeyDown={e => { if (e.key === 'Enter') onOpenBank(bank, false); }}>
+            <div key={bank} role="listitem" className={cx('disk-row cart-row', on && 'on', !on && 'out')} tabIndex={0}
+              title={`${on ? 'Go to bank' : 'Add bank'} ${bank}${bank === boot ? ', the bank the C64 starts in' : ''}: ${what}`}
+              onClick={() => onOpenBank(bank)} onKeyDown={e => { if (e.key === 'Enter') onOpenBank(bank); }}>
               <span className="mono small disk-blocks">{bank}</span>
               <span className="mono disk-name">{where}{bank === boot ? <span className="muted"> · start</span> : null}</span>
               <span className="mono small muted">{kb(chips.reduce((n, c) => n + c.data.length, 0))}</span>
-              {fits.length ? <button className="icon-btn" title={`Add bank ${bank} to this project (${fits.map(c => `$${h4(chipAddress(crt, c))}`).join(', ')})`} aria-label={`Add bank ${bank} to this project`} onClick={e => { e.stopPropagation(); onOpenBank(bank, true); }}><Icon name="plus" size={13} /></button> : <span />}
+              {!on ? <button className="icon-btn" title={`Add bank ${bank} to this project`} aria-label={`Add bank ${bank} to this project`} onClick={e => { e.stopPropagation(); onOpenBank(bank); }}><Icon name="plus" size={13} /></button>
+                : inProject > 1 ? <button className="icon-btn cart-leave" title={`Leave bank ${bank} out of the project (the export takes it from the cartridge as it is)`} aria-label={`Leave bank ${bank} out of the project`} onClick={e => { e.stopPropagation(); onOpenBank(bank, true); }}><Icon name="x" size={12} /></button> : <span />}
             </div>
           );
         })}
       </div>
-      <div className="side-hint">{cartModeName(crt.mode)} · a click opens a bank, + adds it where it fits · the export and Build &amp; Run rebuild the whole .crt</div>
+      <div className="side-hint">{cartModeName(crt.mode)} · every bank is in the listing, one after the other · a click goes to a bank, + adds one, × leaves one out · the export and Build &amp; Run rebuild the whole .crt</div>
     </SideSection>
   );
 }
+
+/** `$8000`, or with a cartridge's banks `3:$8000` (the bank, then the address in it; 13.9b) */
+const bankAdr = (A: Pick<AnalysisResult, 'spaces'>, a: Addr): string => {
+  const s = A.spaces?.find(x => x.space === Math.floor(a / 0x10000));
+  return `${s ? `${s.bank}:` : ''}$${h4(a)}`;
+};
 
 /** The mounted .d64, listed the way the 1541 lists it. A PRG opens with a click; + adds it to the project. */
 function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire }: { disk: MountedDisk; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void }) {

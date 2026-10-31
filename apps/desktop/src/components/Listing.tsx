@@ -6,6 +6,7 @@ import { Icon } from '../lib/icons';
 import type { Editing, ScrollReq, Sel } from '../lib/types';
 import type { Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
+import { bookmarkCss } from './Bookmarks';
 
 const TOKEN_CLASS: Record<Token['t'], string> = { lbl: 'syn-label', hw: 'syn-hw', kw: 'syn-kw', num: 'syn-num', str: 'syn-str', dir: 'syn-dir', def: 'syn-label', p: 'syn-p' };
 
@@ -35,7 +36,8 @@ function Toks({ tok, onToken }: { tok: Token[]; onToken: (t: Token) => void }) {
     if ((t.t === 'lbl' || t.t === 'kw') && t.to != null && plus?.t === 'p' && plus.s === '+' && n?.t === 'num' && !n.sym) {
       const off = offsetValue(n.s);
       if (off == null) continue;
-      const to = (t.to + off) & 0xffff;
+      // in the label's bank (spec 13.9b): only the address in it wraps
+      const to = t.to - (t.to & 0xffff) + ((t.to + off) & 0xffff);
       out.push(<span key={`${i}+`} className="link offset" title={`Go to $${h4(to)} (${t.s}+${n.s})`} onClick={e => { e.stopPropagation(); onToken({ t: 'num', s: n.s, to }); }}><span className="syn-p">+</span><span className="syn-num">{n.s}</span></span>);
       i += 2;
     }
@@ -231,6 +233,8 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const note = at.length === 1 && b.text ? `\n\n${b.text.length > 300 ? b.text.slice(0, 300) + '…' : b.text}` : '';
     const tip = at.map(a => `Bookmark $${h4(a)}: ${bookmarks[a].title}`).join('\n') + note + '\n\nClick to open the note';
     return <button className="bm-mark" aria-label={`Bookmark $${h4(at[0])}: ${b.title}`} title={tip} onMouseDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onBookmark(at[0]); }}><svg viewBox="0 0 8 11" width="8" height="11" aria-hidden="true"><path d="M0 0h8v11L4 8 0 11z" /></svg></button>; };
+  /** a bookmarked line is tinted in the colour of its (first) bookmark, which its mark has too */
+  const tint = (i: number) => { const at = marks.get(i); return at ? { '--bm': bookmarkCss(bookmarks[at[0]].color) } as React.CSSProperties : undefined; };
   // with data shown as code the listing no longer matches the .asm file line for line: addresses then
   const byLine = gutter === 'line' && !lines.some(l => 'preview' in l && l.preview);
   const first = Math.max(0, Math.floor(top / ROW) - 10), last = Math.min(lines.length, Math.ceil((top + height) / ROW) + 10);
@@ -248,7 +252,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       const inSel = !!(sel && sel.multi && blk && blk.start >= sel.start && blk.end <= sel.end);
       // the loaders this block holds a part of
       const lparts = blk ? A.loaders.flatMap(f => f.parts.filter(p => p.start < blk.end && p.end > blk.start).map(p => ({ f, p }))) : [];
-      rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into')} style={{ top: i * ROW }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
+      rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into', marks.has(i) && 'bm')} style={{ top: i * ROW, ...tint(i) }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
         <span className="gut" style={{ background: `var(--g-${hg})` }} />{mark(i)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : h4(l.a)}</span>
         <button className="fold" aria-label={folded.has(l.a) ? 'Unfold block' : 'Fold block'} aria-expanded={!folded.has(l.a)} title={folded.has(l.a) ? 'Unfold (F)' : 'Fold (F)'}
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleFold(l.a); }}><Icon name={folded.has(l.a) ? 'chevron' : 'down'} size={12} /></button>
@@ -268,7 +272,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const pt = n > 0 && patches.length ? patchAt(patches, l.a) : undefined;
     const ptTip = pt && `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`;
     rows.push(
-      <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched')} style={{ top: i * ROW }}
+      <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm')} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l)}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{mark(i)}
         <span className={cx('adr', byLine && 'lno')} title={tip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>

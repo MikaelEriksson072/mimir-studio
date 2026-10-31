@@ -116,8 +116,14 @@ export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePat
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment. */
 export interface Note { text: string; block?: boolean }
 
-/** A bookmark: the user's own note on an address, listed with its title; kept in the project, never in the source. */
-export interface Bookmark { title: string; text: string }
+/** A bookmark: the user's own note on an address, listed with its title; kept in the project, never in the source.
+ * `color`: one of BOOKMARK_COLORS, or a colour of the user's own as #rrggbb (missing: amber, the first). */
+export interface Bookmark { title: string; text: string; color?: string }
+/** the colours a bookmark can have by name; the app and NOTES.html show each in a shade that suits the theme */
+export const BOOKMARK_COLORS = ['amber', 'orange', 'red', 'pink', 'violet', 'blue', 'teal', 'green'] as const;
+export type BookmarkPreset = typeof BOOKMARK_COLORS[number];
+/** a bookmark colour: a preset by name or #rrggbb */
+export const isBookmarkColor = (c: string): boolean => (BOOKMARK_COLORS as readonly string[]).includes(c) || /^#[0-9a-f]{6}$/i.test(c);
 /** the build scripts of an exported project, which the user can edit */
 export type BuildScript = 'build.bat' | 'build.sh';
 
@@ -262,6 +268,13 @@ export interface ProjectInput {
   patches?: Pick<Patch, 'name' | 'start' | 'bytes' | 'off'>[];
   /** the cartridge the files' chips are of: its memory map, start vectors and the image the export rebuilds */
   cart?: Cartridge | null;
+  /** a bank of the cartridge analysed as a space of its own (spec 13.9b), other than the one the C64 starts in: its
+   *  number. Its first byte is not taken for its start (such a bank holds what other banks call or copy) */
+  bank?: number;
+  /** ... the addresses here that other banks call, traced as subroutines */
+  calls?: Addr[];
+  /** ... and the names other banks give addresses this one does not have, which its source uses (`.label` lines) */
+  foreign?: Record<Addr, string>;
   settings?: Partial<Settings>;
 }
 
@@ -532,6 +545,25 @@ export interface AnalysisResult {
   spindle: SpindleDriver[];
   /** what the deep analysis did (`Settings.deepAnalysis`); null without it */
   deep: DeepReport | null;
+  /** the banks of a cartridge, each analysed as a space of its own and merged into this result, where an address in
+   *  the space of index s is s * $10000 + its address (spec 13.9b); missing for one space */
+  spaces?: SpaceInfo[];
+  /** the analysis of each space (render and verify use them; not sent to the window) */
+  parts?: AnalysisResult[];
+}
+
+/** A space of a merged analysis (spec 13.9b): a bank of the cartridge and the project files in it */
+export interface SpaceInfo {
+  /** its index: addresses in it are space * $10000 + their address */
+  space: number;
+  /** the cartridge's bank */
+  bank: number;
+  /** the project files in it, by their index */
+  files: number[];
+  /** the memory map it runs with */
+  cart: CartMode;
+  /** where it starts (its cold start or reset; a bank address), null without one */
+  entry: Addr | null;
 }
 
 export type LoaderId = 'spindle' | 'krill' | 'bitfire' | 'sparkle' | 'covert' | 'fastloader' | 'tape' | 'kernal';
@@ -623,6 +655,8 @@ export interface RenderResult {
   usedHw: Set<Addr>;
   /** blocks left out of the build (project.excluded): their bytes are not in the output, `name` is the #if symbol */
   excluded: ExcludedRange[];
+  /** the render of each space of a merged analysis (spec 13.9b; verify uses them, not sent to the window) */
+  parts?: RenderResult[];
 }
 
 export interface ExcludedRange { start: Addr; end: Addr; file: number; name: string }

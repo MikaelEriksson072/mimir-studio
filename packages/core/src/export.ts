@@ -5,7 +5,7 @@ import { makePrg } from './c64/prg';
 import { cartridgeSource, chipFromPrg, crtBase, crtOutputName, crtSourceName, describeCrt, parseCrt, rebuildCrt, type Crt } from './c64/crt';
 import { serializeProject } from './project';
 import { NOTES_TEXT_FILE, notesExport, notesFor } from './notes-doc';
-import { patchEnd, patchFileName, patchSource, unpatchedFiles } from './patch';
+import { patchEnd, patchFileName, patchSource, projectUnpatched } from './patch';
 
 /** A project's cartridge (spec 13.9): its source, which builds the image, and the image's name; null without one */
 export interface CartBuild { entry: string; output: string }
@@ -116,7 +116,7 @@ export function exportFiles(project: Project, R: RenderResult, S: Settings, veri
   if (notes) out[notes[0]] = notes[1];
   out[`${project.name}.mimir.json`] = JSON.stringify(serializeProject(project), null, 1);
   // the input files as they were loaded; each patch as a Kick Assembler source of its own
-  for (const f of unpatchedFiles(project.files, project.patches ?? [])) out[`original/${f.name}`] = makePrg(f.load, f.bytes);
+  for (const f of projectUnpatched(project)) out[`original/${f.name}`] = makePrg(f.load, f.bytes);
   if (project.cart) out[`original/${project.cart.name}`] = project.cart.crt;
   for (const p of project.patches ?? []) {
     const from = project.files.find(f => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length)?.name;

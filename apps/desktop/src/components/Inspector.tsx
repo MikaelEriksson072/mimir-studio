@@ -1,7 +1,7 @@
 /* Inspector (right column): memory map, block evidence/type/label/comment (or the zero-page variable whose .label line
  * was clicked: its name and comments), graphics/music/text preview. */
 import { useEffect, useMemo, useState } from 'react';
-import { textEncoding, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat } from '@mimir/core';
+import { textEncoding, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
 import type { TypeGroup } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -32,11 +32,15 @@ interface InspectorProps {
   zpVar?: Addr | null;
   /** its comment lines above the `.label` line (Project.notes) and the comment at the end of it (Project.comments) */
   onZpNote?: (a: Addr, text: string) => void; onZpComment?: (a: Addr, text: string) => void;
+  /** the cursor's bank of a cartridge as 64 KB (spec 13.9b), for the heatmap and the graphics preview: its analysis,
+   *  where it starts among the bank addresses, the cursor and selection in it, and the bank's number (null: no banks) */
+  bank?: { A: AnalysisResult; base: Addr; cursor: Addr | null; sel: Sel | null; number: number | null };
 }
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onToggleExcluded, onToggleBinary, onFormat, cycles, zpVar, onZpNote, onZpComment }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onToggleExcluded, onToggleBinary, onFormat, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
+  const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
   const [view, setView] = useState<'auto' | GfxMode>('auto');
@@ -60,10 +64,10 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
     <div className="inspector">
       {cycles && <CyclesSection path={cycles.path} R={R} onToggle={cycles.onToggle} onNavigate={onNavigate} />}
       <section className="insp-sec">
-        <div className="sec-head"><span>Memory map</span>
+        <div className="sec-head"><span>Memory map{B.number != null ? ` · bank ${B.number}` : ''}</span>
           <div className="seg" role="group" aria-label="Heatmap mode">{([['type', 'Type'], ['bytes', 'Bytes'], ['refs', 'Refs']] as const).map(([k, l]) => <button key={k} className={cx(heatMode === k && 'on')} aria-pressed={heatMode === k} onClick={() => setHeatMode(k)}>{l}</button>)}</div>
         </div>
-        <Heatmap A={A} mode={heatMode} cursor={cursor} sel={sel} onNavigate={onNavigate} onSelect={onSelect} colors={colors} fit={fit} />
+        <Heatmap A={B.A} mode={heatMode} cursor={B.cursor} sel={B.sel} onNavigate={a => onNavigate(B.base + a)} onSelect={(s, e) => onSelect(B.base + s, B.base + e)} colors={colors} fit={fit} />
         <ul className="legend compact">{GROUP_ORDER.filter(g => groups[g]).map(g => <li key={g}><i style={{ background: `var(--g-${g})` }} />{GROUP_LABEL[g]}</li>)}</ul>
         <label className="check small"><input id="heat-fit" type="checkbox" checked={fit} onChange={e => setUi({ heatFit: e.target.checked })} /> Zoom to the loaded pages (off shows all 64 KB)</label>
         <p className="muted small">Click to jump, drag to select a range. Each row is one 256-byte page.</p>
@@ -93,7 +97,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
                 title={m ? `One ${kindInfo(m.into).label} block $${h4(m.override.start)}–$${h4(m.override.end - 1)} (with the ${kindInfo(m.other.type).label} block ${dir === 'prev' ? 'before' : 'after'} it)` : `No ${dir === 'prev' ? 'previous' : 'next'} block in this file`}>{label}</button>); })}
             <button className="btn small merge-range-btn" onClick={onMergeRange} title="Merge from this block to an end address into one block (M)">Merge range…</button>
           </div>
-          {blk.type === 'code' && A.mcfg && <MemoryFields A={A} blk={blk} onBankZone={onBankZone} />}
+          {blk.type === 'code' && A.mcfg && <MemoryFields A={A} blk={blk} cart={B.A.mcfg?.cart} onBankZone={onBankZone} />}
           <label className="field"><span>Label</span>
             <input className="mono" value={nameV} placeholder="(no label)" spellCheck={false} onChange={e => setNameV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') onRename(blk.start, nameV.trim()); }} onBlur={() => { if ((lb ? lb.name : '') !== nameV.trim()) onRename(blk.start, nameV.trim()); }} /></label>
           <label className="field"><span>Comment</span>
@@ -109,7 +113,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
           </div>
           {mode && range ? (
             <>
-              <div className="gfx-box"><GfxPreview mem={A.mem} start={range.start} end={Math.max(range.end, range.start + (mode === 'bitmap' ? 8000 : mode === 'chars' ? 8 : 64))} mode={mode} mc={mc} /></div>
+              <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={Math.max(range.end, range.start + (mode === 'bitmap' ? 8000 : mode === 'chars' ? 8 : 64)) - B.base} mode={mode} mc={mc} /></div>
               <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>
             </>
           ) : music ? (
@@ -165,8 +169,9 @@ function FormatFields({ blk, defaultRow, onFormat }: { blk: Block; defaultRow: n
   );
 }
 
-function MemoryFields({ A, blk, onBankZone }: { A: AnalysisResult; blk: Block; onBankZone: InspectorProps['onBankZone'] }) {
-  const m = A.mcfg!;
+/** `cart`: the memory map of the block's bank (13.9b) */
+function MemoryFields({ A, blk, cart, onBankZone }: { A: AnalysisResult; blk: Block; cart?: CartMode; onBankZone: InspectorProps['onBankZone'] }) {
+  const m = { ...A.mcfg!, cart: cart ?? A.mcfg!.cart };
   const port = m.port[blk.start], vic = m.vic[blk.start];
   const fp = portsOf(m.forcedPort[blk.start]), fv = banksOf(m.forcedVic[blk.start]);
   const range = { start: blk.start, end: blk.end };

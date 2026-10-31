@@ -29,7 +29,7 @@ Options:
   --java <path>     Java executable used for --kickass (default: java)
   --no-roms         unpack with Sindri's stand-ins instead of VICE's C64 ROMs (default: the ROMs of a
                     VICE installation, or the folder in C64_ROMS)
-  --bank <n>        a cartridge: open this bank instead of the one the C64 starts in
+  --bank <n>        a cartridge: only this bank (by default every bank, each a space of its own)
   --file <name>     unpack: the file on the D64 (default: its first PRG; * and ? as the DOS takes them)
   --disk <d64>      unpack: put this disk in the drive (a D64 given as the file is in it already), so the
                     program can load from it with the KERNAL or its own fast loader
@@ -63,7 +63,7 @@ function coerce(key: string, value: string): unknown {
   return value;
 }
 
-/** `bank`: the bank of a cartridge (.crt) to open; the one the C64 starts in when not given */
+/** `bank`: the only bank of a cartridge (.crt) to open; every bank when not given (spec 13.9b) */
 function loadProject(inputs: string[], io: Io, sets: [string, string][], bank?: number): Project {
   if (!inputs.length) throw new Error('no input files');
   const settings: Partial<Settings> = {};

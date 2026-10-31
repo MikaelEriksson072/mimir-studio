@@ -17,12 +17,16 @@ export function seedEntries(ctx: Ctx): void {
   // a cartridge starts where its vectors point (5.3b), not at its first byte
   const cart = ctx.cartStart?.entries.filter(e => loaded(e.a)) ?? [];
   for (const e of cart) { enqueue(e.a, e.kind); if (e.kind === 'entry') ctx.entry = ctx.entry ?? e.a; }
-  if (files.length && !userStart && !cart.length && !basics.some(b => b.file === 0) && !ov[files[0].load]) {
+  // a bank the C64 does not start in (13.9b) is traced from what calls it, its own vectors and the code marked
+  if (project.bank != null && !userStart && !cart.length) L('info', `Bank ${project.bank} has no start of its own: it is traced from what other banks call in it and from the code you mark (C)`, null, 'entry');
+  else if (files.length && !userStart && !cart.length && !basics.some(b => b.file === 0) && !ov[files[0].load]) {
     // a deep analysis traces the load address on trial, like any guess (`settle`)
     if (ctx.deep) ctx.pending.push({ a: files[0].load, kind: 'entry' });
     else loadEntry(ctx);
   }
   for (const a of project.entries || []) enqueue(a, 'user');
+  // what other banks of the cartridge call here (13.9b)
+  for (const a of project.calls || []) if (loaded(a)) enqueue(a, 'sub');
   for (const o of ctx.ovList) if (o.type === 'code') enqueue(o.start, 'user');
 }
 

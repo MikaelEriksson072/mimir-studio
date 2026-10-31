@@ -296,7 +296,9 @@ describe('schemas', () => {
     delete json.entryPoint;
     expect(serializedProjectSchema.parse(json).entryPoint).toBeNull();
     expect(projectSchema.safeParse(p).success).toBe(true);
-    expect(projectSchema.safeParse({ ...p, entryPoint: 0x10000 }).success).toBe(false);
+    expect(projectSchema.safeParse({ ...p, entryPoint: -1 }).success).toBe(false);
+    // a bank address of a cartridge's banks (spec 13.9b): $10000 is bank 1's $0000
+    expect(projectSchema.safeParse({ ...p, entryPoint: 0x10000 }).success).toBe(true);
   });
 
   it('reads blocks excluded from the build, and older files without them', () => {
@@ -317,6 +319,16 @@ describe('schemas', () => {
     expect(projectSchema.safeParse(p).success).toBe(true);
     expect(projectSchema.safeParse({ ...p, bookmarks: { 0x0810: 'not a bookmark' } }).success).toBe(false);
     expect(projectSchema.safeParse({ ...p, bookmarks: { 0x0810: { title: 'x'.repeat(201), text: '' } } }).success).toBe(false);
+  });
+
+  it('reads bookmark colours: a preset by name or #rrggbb, and leaves out one it does not know', () => {
+    const p = { ...demoProject(), bookmarks: { 0x0810: { title: 'a', text: '', color: 'teal' }, 0x0813: { title: 'b', text: '', color: '#3A9fe0' }, 0x0816: { title: 'c', text: '' } } };
+    const json = JSON.parse(JSON.stringify(serializeProject(p)));
+    expect(serializedProjectSchema.parse(json).bookmarks).toEqual(p.bookmarks);
+    json.bookmarks[0x0810].color = 'chartreuse';
+    json.bookmarks[0x0813].color = 'url(x)';
+    expect(serializedProjectSchema.parse(json).bookmarks).toEqual({ 2064: { title: 'a', text: '' }, 2067: { title: 'b', text: '' }, 2070: { title: 'c', text: '' } });
+    expect(projectSchema.parse({ ...p, bookmarks: { 0x0810: { title: 'a', text: '', color: '#12345' } } }).bookmarks).toEqual({ 2064: { title: 'a', text: '' } });
   });
 
   it('reads edited build scripts, and older files without them', () => {
@@ -488,11 +500,12 @@ describe('project files', () => {
     expect(prgOpenSchema.parse({ zeroPage: true })).toEqual({ zeroPage: true });
   });
 
-  it('opens a cartridge as the chips of its boot bank, each with the image, which the project schemas keep', async () => {
+  it('opens a cartridge as every chip, each with the image, which the project schemas keep with work at bank addresses', async () => {
     const path = join(__dirname, '../../../fixtures/crt/mimir-demo.crt'), crt = new Uint8Array(readFileSync(path));
     const opened = await readPrgFiles([path]);
-    expect(opened.map(f => [f.name, f.load, f.bytes.length, f.chip])).toEqual([['bank00_8000.prg', 0x8000, 0x2000, 0]]);
+    expect(opened.map(f => [f.name, f.load, f.bytes.length, f.chip])).toEqual([['bank00_8000.prg', 0x8000, 0x2000, 0], ['bank01_8000.prg', 0x8000, 0x2000, 1]]);
     expect(opened[0].cart).toEqual({ name: 'mimir-demo.crt', crt });
+    expect(opened[1].cart).toBe(opened[0].cart);
     const p = createProject({ files: opened, cart: opened[0].cart });
     const saved = projectSchema.parse(p);
     expect(saved.cart?.crt).toEqual(crt);
@@ -501,6 +514,10 @@ describe('project files', () => {
     expect(read.cart?.crt).toEqual(crt);
     expect(read.files[0].chip).toBe(0);
     expect(() => projectSchema.parse({ ...p, cart: { name: 'x.crt', crt: new Uint8Array(10) } })).toThrow(/not a cartridge image/);
+    // a label, an override and the program start in bank 1 (spec 13.9b: $1:8000 is $18000)
+    const banked = { ...p, labels: { 0x18000: 'text' }, overrides: [{ start: 0x18000, end: 0x18010, type: 'text' as const }], entryPoint: 0x18000 };
+    expect(projectSchema.parse(banked).overrides[0].start).toBe(0x18000);
+    expect(serializedProjectSchema.parse(JSON.parse(JSON.stringify(serializeProject(banked)))).entryPoint).toBe(0x18000);
     expect(runSchema.parse({ prgPath: 'c.crt', cart: true })).toEqual({ prgPath: 'c.crt', cart: true });
   });
 

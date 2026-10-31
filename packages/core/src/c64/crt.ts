@@ -160,10 +160,11 @@ export function bankFiles(c: Crt, bank = bootBank(c)): ChipFile[] {
   return c.chips.filter(x => x.bank === bank).map(x => ({ name: `${chipName(c, x)}.prg`, load: chipAddress(c, x), bytes: x.data.slice(), chip: x.index }));
 }
 
-/** A cartridge image opened: the image kept with the project, and the chips of its boot bank as files. */
+/** A cartridge image opened: the image kept with the project, and every chip as a file, bank by bank (each bank is
+ *  a space of its own in the analysis, spec 13.9b) */
 export function openCartridge(name: string, bytes: Uint8Array): { cart: Cartridge; crt: Crt; files: ChipFile[] } {
   const crt = parseCrt(bytes, name);
-  return { cart: { name, crt: bytes.slice() }, crt, files: bankFiles(crt) };
+  return { cart: { name, crt: bytes.slice() }, crt, files: crtBanks(crt).flatMap(b => bankFiles(crt, b.bank)) };
 }
 
 /**

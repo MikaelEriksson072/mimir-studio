@@ -51,15 +51,23 @@ interface UiState {
   cycles: boolean;
   /** a new VICE quicksave (Alt+F11 in VICE) is opened when it is written */
   followQuicksave: boolean;
-  /** the side panel's sections folded up (by id) */
-  sideClosed: string[];
+  /** the side panel's sections opened in this run (by id); not persisted: every section is closed when the app starts */
+  sideOpen: string[];
+  /** the user's own bookmark colours, for every project: eight places, each #rrggbb or empty */
+  bmColors: string[];
   gfx: GfxPrefs;
   mon: MonPrefs;
   sizes: Sizes;
   set: (patch: Partial<Omit<UiState, 'set'>>) => void;
 }
 
-const PERSIST = ['theme', 'tab', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'followQuicksave', 'sideClosed', 'gfx', 'mon', 'sizes'] as const;
+/** how many colours of their own the user can keep for bookmarks */
+export const OWN_BM_COLORS = 8;
+/** the saved own bookmark colours: always eight places, those that are not #rrggbb empty */
+export const bmColorsOf = (saved: unknown): string[] =>
+  Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
+
+const PERSIST = ['theme', 'tab', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'followQuicksave', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -73,7 +81,8 @@ export const useUi = create<UiState>((set) => ({
   dataAsCode: false,
   cycles: store.get('kr.cycles', false),
   followQuicksave: store.get('kr.followQuicksave', true),
-  sideClosed: store.get<string[]>('kr.sideClosed', []),
+  sideOpen: [],
+  bmColors: bmColorsOf(store.get<unknown>('kr.bmColors', [])),
   gfx: gfxPrefs(store.get<Partial<GfxPrefs>>('kr.gfx', {})),
   mon: { ...MON_DEFAULTS, ...store.get<Partial<MonPrefs>>('kr.mon', {}) },
   sizes: store.get<Sizes>('kr.sizes', { side: 272, insp: 312, bottom: 230 }),

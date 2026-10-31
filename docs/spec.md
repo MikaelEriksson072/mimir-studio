@@ -1847,13 +1847,15 @@ låter kod i ROML köra med `$33`/`$37`, i en 16K-cartridges ROMH med HIRAM och 
 de öppnade chippen (`cartMode`): ett chip på `$e000` ger Ultimax, ett över `$a000–$bfff` (eller en cartridge som startar
 i 16K) 16K, annars 8K. Inspector, högerklicksmenyn och statusraden visar `$01` med kartan (`ROML · ROMH · I/O · KERNAL`).
 
-**Banker.** Chippen i startbanken (den lägsta, bank 0) blir projektets filer, `bank00_8000.prg` och så vidare, på
-adresserna CPU:n ser dem på när C64:an startar. En EasyFlash (Ultimax vid start) har sin ROMH på `$a000` i filen, men
-startbankens ROMH öppnas på `$e000`, där återställningsvektorn är (`chipAddress`). Varje fil minns sitt CHIP-paket
-(`LoadedFile.chip`), och avbilden sparas med projektet (`Project.cart`, base64 under `cart` i projektfilen). Explorer får
-sektionen *Cartridge* under *Files*: namnet och typen, och en rad per bank med chippens adresser och storlek. Startbanken
-är märkt *start*, de öppna bankerna markerade. Ett klick öppnar en bank som projektets filer (ett nytt projekt med samma
-avbild, Ctrl+Z går tillbaka), och **+** lägger till dess chip som får plats bredvid de öppna. Sindri kör inte chippen.
+**Banker.** Alla chip blir projektets filer, bank för bank, `bank00_8000.prg`, `bank01_8000.prg` och så vidare, på
+adresserna CPU:n ser dem på. En EasyFlash (Ultimax vid start) har sin ROMH på `$a000` i filen, men startbankens ROMH öppnas
+på `$e000`, där återställningsvektorn är (`chipAddress`); de andra bankernas ROMH ligger på `$a000`. Varje fil minns sitt
+CHIP-paket (`LoadedFile.chip`), och avbilden sparas med projektet (`Project.cart`, base64 under `cart` i projektfilen).
+Bankerna har samma adresser, så varje bank är ett adressrum för sig (13.9b) och listningen visar dem alla, efter varandra.
+Explorer får sektionen *Cartridge* under *Files*: namnet och typen, och en rad per bank med chippens adresser och storlek.
+Startbanken är märkt *start*. Ett klick går till bankens start (dess vektor, annars dess första chip), **×** lämnar en bank
+utanför projektet (exporten tar den då ur avbilden som den är, `banks/`) och **+** lägger till den igen. Med fler än fyra
+chip visar *Files* dem på en rad. Sindri kör inte chippen.
 
 **Start (5.3b, `analyze/cartridge.ts`).** I 8K och 16K letar KERNAL:s återställning efter `CBM80` (`$c3 $c2 $cd $38 $30`)
 på `$8004` och hoppar genom kallstartvektorn på `$8000`; NMI-rutinen (RESTORE) går genom varmstartvektorn på `$8002`.
@@ -1895,6 +1897,59 @@ Mot användarens arkiv (309 cartridges: normala 8K och 16K, Ultimax, Ocean, Magi
 Zaxxon och EasyFlash) verifierades 299 byte för byte; de 10 andra är avkortade filer som `cartconv` också kallar trasiga.
 Ett urval av alla typerna, upp till en EasyFlash på 1 MB, byggdes om med KickAss.jar till identiska avbilder.
 
+### 13.9b Bankerna som adressrum
+
+En cartridges banker delar adresser: varje bank ligger på `$8000` (och `$a000`), men bara en är inkopplad åt gången. Som i
+SourceGen (6502bench), där hela `.crt`-filen är en följd med huvudena som icke-adresserbara områden och varje bank ett
+adressområde på `$8000`, ska alla banker synas på en gång så att koden blir komplett. `packages/core/src/spaces.ts`:
+
+- **Bankadresser.** Varje bank är ett adressrum på 64 KB. En adress i rum *s* är *s* · `$10000` + adressen (en
+  bankadress): bank 1:s `$8000` är `$18000`. Rum *s* är cartridgens *s*:e bank i ordning (`crtBanks`), så nycklarna står
+  kvar när banker läggs till eller tas bort. Bank 0 är rum 0 och dess adresser är de vanliga: ett projekt med ett rum
+  (varje projekt utan cartridge) analyseras precis som förut. Filer som inte är chip (PRG:er) hör till rum 0.
+- **Analysen** (`analyze`) delar projektet per rum (`splitProject`): rummets filer, och användarens arbete i det
+  (etiketter, kommentarer, overrides, ingångspunkter, programstarten, bokmärken, minneszoner, utelämnade och binära block),
+  med nycklarna gjorda vanliga. En nyckel i rum 0 vars adress ingen fil där har (en nollsidevariabel) delas: alla rum får
+  den. Varje rum analyseras av motorn som den är och resultaten slås ihop (`mergeAnalyses`) till ett där allt står på
+  bankadresser: minnet, typkartan och de andra tabellerna är rummen efter varandra, block, etiketter, korsreferenser och
+  loggen (*Bank 3: …*) likaså. `AnalysisResult.spaces` säger för varje rum dess bank, filer, minneskarta och start.
+- **Närmaste banken.** En adress söks i banken referensen står i, annars i den första banken som har den. Adresser som
+  ingen bank har (nollsidan, I/O, RAM) står kvar som de är, och deras namn delas av alla banker. Kod som en bank anropar
+  i en annan (`jsr`/`jmp` till en adress banken själv saknar) spåras där som subrutin (`ProjectInput.calls`), i omgångar
+  tills inget nytt kommer (högst 4).
+- **Starten.** En bank som inte är startbanken gissar ingen start på sin första byte (`ProjectInput.bank`): den spåras från
+  sina egna vektorer (en Action Replay har `CBM80` i varje bank), från det andra banker anropar i den och från koden man
+  märker (C). Loggen säger det.
+- **Cache.** Analysarbetaren behåller varje rums analys (`SpaceCache`): ett rum vars filer och arbete är desamma
+  analyseras inte igen, så en ändring i en bank av en stor cartridge analyserar den banken. En EasyFlash på 1 MB (64
+  banker) öppnas på knappt 2 s, och en ändring i en bank tar ungefär 1 s med sammanslagningen.
+
+**Källan** (`render`): varje rum renderas som det är, med sitt prefix på binärfilerna (`gfx/bank03_…`, `music/bank03_…`,
+`data/bank03_…`), och raderna, etiketterna och länkarna görs till bankadresser. En operand till en annan bank får den
+bankens etikett (`ProjectInput.foreign`), med ett eget namn om banken redan har ett likadant, och filens huvud definierar
+den: `// labels in other banks of the cartridge` och `.label sub_8100 = $8100`. Filraden över varje bank säger dess
+nummer (*bank01_8000.asm · bank 1*). `verify` verifierar rum för rum, med resultaten i projektets filordning, och
+exporten skriver varje banks källa: avbilden byggs av dem alla, ingen bank tas ur `banks/`.
+
+**Fönstret.** Listningen, Inspector, statusraden och panelerna arbetar med bankadresser. Statusraden säger banken
+(*bank 3 · $8000 · start*), och Blocks, Symbols och Memory map visar `3:$8000`. Vyerna på 64 KB (Graphics, Memory,
+värmekartan i Inspector och Explorer, grafikförhandsvisningen) visar banken där markören är (`spaceView`,
+`spaceRender`): deras adresser är de vanliga i den banken, och det de väljer eller markerar görs till bankadresser igen.
+Inspector säger *Memory map · bank 3*, och `$01` visas med bankens minneskarta. *Go to* (G) tar banken före adressen
+(`3:8000`, `3:$8000-3:$80ff`); utan den gäller markörens bank när den har adressen, annars den första som har den.
+Programstarten och användarens arbete sparas på bankadresser (projektfilens schema tar dem). Patchar kan skrivas i
+bank 0 och hamnar alltid i bank 0:s chip, inte i en annan bank på samma adress; i andra banker säger dialogen att det
+inte går ännu. Instruktionsavkodningen (`decode`), cykelräkningen och *Merge range* håller sig i bankadressens bank.
+
+**Test:** `crt.test.ts` (*every bank at once*): båda demobankerna i listningen på bankadresser, en etikett, en kommentar och
+en override i bank 1 som stannar där, en vy av en bank, en 16K-cartridge där bank 1 (bara ROMH) anropar en rutin i bank
+0:s ROML som spåras där och heter `sub_8100` i bank 1:s källa, cachen (bara banken som ändrades analyseras igen) och en
+patch i bank 0 som inte hamnar i bank 1. `goto.test.ts` läser `3:8000`. E2e-testet öppnar demon med båda bankerna,
+går till bank 1, skriver `0:8009` i Go to, namnger `$8000` i bank 1, lämnar bank 1 utanför och lägger till den igen
+(namnet står kvar), verifierar, exporterar båda bankernas källor och kör Build & Run. Mot arkivet: Chase HQ 2 (32
+banker), Myth (64) och OneLoad64 (EasyFlash, 64 banker, 127 chip) verifieras bank för bank och byggs om till identiska
+avbilder; användarens Action Replay 5 (Bacchus, 4 banker med var sin `CBM80`) likaså, också med KickAss.jar.
+
 ## 14. UI/UX-specifikation
 
 ### 14.1 Layout (ett fönster)
@@ -1903,7 +1958,7 @@ Ett urval av alla typerna, upp till en EasyFlash på 1 MB, byggdes om med KickAs
 |---|---|
 | Titelrad | Öppna, Spara, Ångra/Gör om, kommandosök, Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
 | Aktivitetsrad | Explorer, Blocks, Symbols, Bookmarks (med antal), Pack (med antal intervall), specifikation, kommandopalett |
-| Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik fäller ihop det (valet sparas per användare, `sideClosed`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till en PRG) står i Files rubrik; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8) |
+| Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till en PRG) står i Files rubrik; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo) |
 | Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Statistics, Build output |

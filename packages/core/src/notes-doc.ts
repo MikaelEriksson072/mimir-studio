@@ -2,7 +2,7 @@
  * wrote. NOTES.html is one self-contained page to read in a browser or print, NOTES.txt the same as plain text
  * (Settings.notesFormat, spec 11.4). Built from the rendered files, so every address, line number and code line is
  * the one in the exported .asm files. */
-import type { Addr, Bookmark, Line, Project, RenderResult, Settings, Token } from './types';
+import { isBookmarkColor, type Addr, type Bookmark, type Line, type Project, type RenderResult, type Settings, type Token } from './types';
 import { h2, h4 } from './util/hex';
 import { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES, type LineTextSettings } from './render/lines';
 
@@ -67,7 +67,7 @@ interface Row { no: number; adr: string; bytes: string; line: Line; cur: boolean
 interface Place { a: Addr; loc: Loc | null; name: string | null; block: string | null }
 interface Notes {
   files: string[];
-  bookmarks: (Place & { title: string; text: string; rows: Row[] })[];
+  bookmarks: (Place & { title: string; text: string; color?: string; rows: Row[] })[];
   comments: (Place & { kind: string; text: string; row: Row })[];
 }
 
@@ -125,7 +125,7 @@ function collect(project: NotesProject, R: RenderResult, S: Settings): Notes | n
   const place = (a: Addr): Place => { const loc = at(a); return { a, loc, ...(loc ? context(loc, a) : { name: R.labels.get(a)?.name ?? null, block: null }) }; };
   return {
     files,
-    bookmarks: bookmarks.map(([a, b]) => { const p = place(a); return { ...p, title: b.title || `$${h4(a)}`, text: b.text.trim(), rows: p.loc ? excerpt(p.loc) : [] }; }),
+    bookmarks: bookmarks.map(([a, b]) => { const p = place(a); return { ...p, title: b.title || `$${h4(a)}`, text: b.text.trim(), color: b.color, rows: p.loc ? excerpt(p.loc) : [] }; }),
     comments: comments.map(c => { const p = place(c.a); return { ...p, kind: c.kind, text: c.text, row: { ...row(p.loc!, p.loc!.idx), cur: false } }; }),
   };
 }
@@ -143,8 +143,10 @@ export function notesDocument(project: NotesProject, R: RenderResult, S: Setting
   const row = (r: Row) => `<div class="r${r.cur ? ' cur' : ''}"><span class="ln">${r.no}</span><span class="ad">${r.adr}</span><span class="by">${r.bytes}</span><span class="sc">${lineHtml(r.line, S) || ' '}</span></div>`;
   const where = (loc: Loc | null) => (loc ? `<span>${esc(loc.file)}, line ${loc.line}</span>` : '<span>not in the exported source</span>');
   const anchor = (a: Addr) => `bm-${h4(a)}`;
+  /** a bookmark's colour other than amber: the colour of its card and of its address in the contents */
+  const tint = (c?: string) => (c && c !== 'amber' && isBookmarkColor(c) ? ` style="--mark: ${c.startsWith('#') ? c : `var(--bm-${c})`}"` : '');
 
-  const cards = bookmarks.map(b => `<article class="bm" id="${anchor(b.a)}">
+  const cards = bookmarks.map(b => `<article class="bm" id="${anchor(b.a)}"${tint(b.color)}>
 <header><span class="adr">$${h4(b.a)}</span><h3>${esc(b.title)}</h3></header>
 <div class="meta">${b.name ? `<span class="mono">${esc(b.name)}</span>` : ''}${b.block ? `<span>${esc(b.block)}</span>` : ''}${where(b.loc)}</div>
 ${b.text ? `<div class="note">${esc(b.text)}</div>` : '<div class="note empty">No note.</div>'}
@@ -162,7 +164,7 @@ ${b.loc ? `<div class="code" role="figure" aria-label="${esc(b.loc.file)}, line 
     ['Source', files.map(f => `<span class="mono">${esc(f)}</span>`).join(', ')],
     ...(generated ? [['Exported', stamp(generated)]] : []),
   ];
-  const toc = bookmarks.length > 1 ? `<nav class="toc" aria-label="Bookmarks"><ol>${bookmarks.map(b => `<li><a href="#${anchor(b.a)}"><span class="adr">$${h4(b.a)}</span>${esc(b.title)}</a></li>`).join('')}</ol></nav>` : '';
+  const toc = bookmarks.length > 1 ? `<nav class="toc" aria-label="Bookmarks"><ol>${bookmarks.map(b => `<li${tint(b.color)}><a href="#${anchor(b.a)}"><span class="adr">$${h4(b.a)}</span>${esc(b.title)}</a></li>`).join('')}</ol></nav>` : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -174,10 +176,12 @@ ${b.loc ? `<div class="code" role="figure" aria-label="${esc(b.loc.file)}, line 
 :root { color-scheme: light dark;
   --bg: #f6f5fa; --card: #ffffff; --code: #fbfaff; --line: #e2dfec; --fg: #1d1b2a; --fg-2: #54516a; --fg-3: #87849b; --accent: #5a4ed1; --mark: #b7791f; --cur: rgba(90, 78, 209, 0.11);
   --mn: #2356c4; --il: #c2410c; --dr: #7c3aed; --lb: #946200; --hw: #0d7d71; --kw: #be185d; --nm: #b45309; --st: #3b7a1e; --cm: #8a879f;
+  --bm-orange: #c4511a; --bm-red: #c8372f; --bm-pink: #c02a7a; --bm-violet: #6d48d6; --bm-blue: #2f6fd0; --bm-teal: #0d7d71; --bm-green: #3a8a1e;
   --ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace; }
 @media (prefers-color-scheme: dark) { :root {
   --bg: #121218; --card: #18181f; --code: #14141a; --line: #292935; --fg: #dedde9; --fg-2: #a4a2b9; --fg-3: #6d6b82; --accent: #8b80f9; --mark: #e5a83b; --cur: rgba(139, 128, 249, 0.18);
-  --mn: #8cb4ff; --il: #ff9b73; --dr: #c49bff; --lb: #f0c674; --hw: #4fd1c0; --kw: #ff8ccb; --nm: #e4a76a; --st: #9dd28a; --cm: #6f6d88; } }
+  --mn: #8cb4ff; --il: #ff9b73; --dr: #c49bff; --lb: #f0c674; --hw: #4fd1c0; --kw: #ff8ccb; --nm: #e4a76a; --st: #9dd28a; --cm: #6f6d88;
+  --bm-orange: #f07c45; --bm-red: #f05454; --bm-pink: #ef72c0; --bm-violet: #a98bff; --bm-blue: #5fa3ff; --bm-teal: #3cc9bd; --bm-green: #6cc65a; } }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--ui); -webkit-font-smoothing: antialiased; }
 main { max-width: 920px; margin: 0 auto; padding: 48px 24px 64px; }

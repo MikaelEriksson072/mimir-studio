@@ -70,6 +70,21 @@ describe('NOTES.html', () => {
     expect(card('9000')).not.toContain('class="code"');
   });
 
+  it('shows each bookmark in its colour: a preset in the shade of the theme, one of the user\'s own as it is', () => {
+    const p = annotated();
+    p.bookmarks[0x0810].color = 'teal';
+    p.bookmarks[0x09b5].color = '#3a9fe0';
+    p.bookmarks[0x9000].color = 'red;background:url(x)';
+    const { R, S } = build(p), doc = notesDocument(p, R, S)!;
+    expect(doc).toContain('<article class="bm" id="bm-0810" style="--mark: var(--bm-teal)">');
+    expect(doc).toContain('<li style="--mark: var(--bm-teal)"><a href="#bm-0810">');
+    expect(doc).toContain('<article class="bm" id="bm-09b5" style="--mark: #3a9fe0">');
+    // not a colour: amber, as without one
+    expect(doc).toContain('<article class="bm" id="bm-9000">');
+    expect(doc).not.toContain('url(x)');
+    expect(doc).toMatch(/--bm-teal: #[0-9a-f]{6};[\s\S]*prefers-color-scheme: dark[\s\S]*--bm-teal: #[0-9a-f]{6};/);
+  });
+
   it('lists the comments with their kind, place and code line', () => {
     const p = annotated(), { R, S } = build(p);
     const doc = notesDocument(p, R, S)!;

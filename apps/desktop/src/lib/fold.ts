@@ -13,7 +13,8 @@ export interface ListingView {
   hidden: Map<number, number>;
 }
 
-export function foldLines(all: readonly ListingLine[], blocks: readonly Block[], folded: ReadonlySet<Addr>): ListingView {
+/** `size`: how many addresses there are (64 KB, or a cartridge's banks as spaces of their own, spec 13.9b) */
+export function foldLines(all: readonly ListingLine[], blocks: readonly Block[], folded: ReadonlySet<Addr>, size = 0x10000): ListingView {
   const nums = fileLineNumbers(all);
   const lines: ListingLine[] = [], no: number[] = [], hidden = new Map<number, number>(), foldedAt = new Map<number, Block>();
   let fold = -1; // view index of the folded header whose lines are being skipped
@@ -24,11 +25,11 @@ export function foldLines(all: readonly ListingLine[], blocks: readonly Block[],
     if (l.k === 'hdr') { const b = blocks[l.blk]; if (b && folded.has(b.start)) { fold = lines.length; foldedAt.set(fold, b); } }
     lines.push(l); no.push(nums[i]);
   });
-  const lineOf = new Int32Array(65536).fill(-1);
+  const lineOf = new Int32Array(size).fill(-1);
   lines.forEach((l, i) => {
     const b = foldedAt.get(i);
     const [s, e] = b ? [b.start, b.end] : 'n' in l && l.n > 0 ? [l.a, l.a + l.n] : [0, 0];
-    for (let a = s; a < e && a < 65536; a++) if (lineOf[a] < 0) lineOf[a] = i;
+    for (let a = s; a < e && a < size; a++) if (lineOf[a] < 0) lineOf[a] = i;
   });
   return { lines, lineNo: Int32Array.from(no), lineOf, hidden };
 }

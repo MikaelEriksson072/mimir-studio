@@ -40,8 +40,11 @@ export interface Cycles {
   jam?: boolean;
 }
 
-/** the target of the branch at `pc` */
-export const branchTarget = (mem: Uint8Array, pc: Addr): Addr => (pc + 2 + ((mem[(pc + 1) & 0xffff] ^ 0x80) - 0x80)) & 0xffff;
+/** the 64 KB a bank address is in (0 for a plain one, spec 13.9b) */
+const bankOf = (pc: Addr): Addr => pc - (pc & 0xffff);
+
+/** the target of the branch at `pc` (in its bank) */
+export const branchTarget = (mem: Uint8Array, pc: Addr): Addr => bankOf(pc) + ((pc + 2 + ((mem[bankOf(pc) + ((pc + 1) & 0xffff)] ^ 0x80) - 0x80)) & 0xffff);
 
 /** The cycles of the instruction at `pc`, from its opcode and, for branches and indexed reads, its operand. */
 export function instructionCycles(mem: Uint8Array, pc: Addr): Cycles {
@@ -49,7 +52,7 @@ export function instructionCycles(mem: Uint8Array, pc: Addr): Cycles {
   if (o.jam) return { base: 0, page: false, jam: true };
   if (o.flow === 'br') return { base: 2, page: false, taken: ((pc + 2) & 0xff00) === (branchTarget(mem, pc) & 0xff00) ? 3 : 4 };
   // an absolute base whose low byte is $00 cannot carry: $1000,x stays in $10xx
-  const page = PAGE.has(op) && !((o.mode === 'abx' || o.mode === 'aby') && mem[(pc + 1) & 0xffff] === 0);
+  const page = PAGE.has(op) && !((o.mode === 'abx' || o.mode === 'aby') && mem[bankOf(pc) + ((pc + 1) & 0xffff)] === 0);
   return { base: CYCLES[op], page };
 }
 
@@ -109,7 +112,7 @@ interface Code { mem: Uint8Array; insLen: Uint8Array }
 function walk(A: Code, start: Addr, end: Addr, taken: ReadonlySet<Addr>, collect = true): { steps: CycleStep[]; total: number } {
   const steps: CycleStep[] = [];
   let sum = 0, skipTo = -1, stopped = false;
-  for (let pc = start; pc < end && pc < 0x10000;) {
+  for (let pc = start; pc < end && pc < bankOf(start) + 0x10000;) {
     const n = A.insLen[pc];
     if (!n) { pc++; continue; }
     const o = OPC[A.mem[pc]], c = instructionCycles(A.mem, pc);
@@ -119,7 +122,7 @@ function walk(A: Code, start: Addr, end: Addr, taken: ReadonlySet<Addr>, collect
       const jumpTo = (t: Addr) => { if (t > pc && t < end) skipTo = t; else if (t >= end || t < start) stopped = true; };
       if (c.taken != null && taken.has(pc)) { used = c.taken; const t = branchTarget(A.mem, pc); if (t > pc) jumpTo(t); }
       else used = c.base;
-      if (o.flow === 'jmp') { const t = A.mem[(pc + 1) & 0xffff] | (A.mem[(pc + 2) & 0xffff] << 8); if (t === pc) stopped = true; else if (t > pc) jumpTo(t); else stopped = true; }
+      if (o.flow === 'jmp') { const b = bankOf(pc), t = b + (A.mem[b + ((pc + 1) & 0xffff)] | (A.mem[b + ((pc + 2) & 0xffff)] << 8)); if (t === pc) stopped = true; else if (t > pc) jumpTo(t); else stopped = true; }
       if (o.flow === 'ret' || o.flow === 'jmpi' || o.flow === 'brk' || c.jam) stopped = true;
       sum += used;
     }

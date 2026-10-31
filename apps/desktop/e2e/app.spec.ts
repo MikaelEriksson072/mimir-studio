@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFile
 import { dirname, join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, repoDir, test } from './fixtures';
-import { dialogOptions, goTo, headerRow, listing, listingRows, occurrences, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
+import { dialogOptions, goTo, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
 
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
@@ -412,7 +412,7 @@ test('the listing shows memory addresses or line numbers', async ({ page }) => {
 
 test('set the program start by hand', async ({ page }) => {
   await waitForListing(page);
-  const section = page.locator('.side-sec', { hasText: 'Program start' });
+  const section = await openSection(page, 'Program start');
   const input = page.getByLabel('Program start address');
   const hasRow = async (text: string) => (await listingRows(page)).some(r => r.text.startsWith(text));
   await expect(section).toContainText('$0810');
@@ -714,9 +714,11 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   const files = page.getByRole('list', { name: 'Files on mimir-demo.d64' });
 
   await test.step('Mount D64… lists the directory', async () => {
+    await openSection(page, 'Files');
     await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64')] });
     await page.getByRole('button', { name: 'Mount D64…' }).click();
     await expect(toast(page, 'Mounted mimir-demo.d64: "MIMIR DEMO", 3 files')).toBeVisible();
+    await openSection(page, 'Disk');
     await expect(page.locator('.disk-head')).toContainText('"MIMIR DEMO"');
     await expect(files.getByRole('listitem')).toHaveText([/49\s*"RASTER DEMO"\s*PRG/, /1\s*"SPRITE"\s*PRG/, /1\s*"NOTES"\s*SEQ/]);
     await expect(files.getByRole('listitem').nth(2)).toHaveClass(/off/);
@@ -746,54 +748,86 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   });
 });
 
-test('open a cartridge: its boot bank is re-assembled, its banks open from the Explorer, and the .crt is rebuilt', async ({ workDir: work, app, page }) => {
+test('open a cartridge: every bank is in the listing, one after the other, and the .crt is rebuilt', async ({ workDir: work, app, page }) => {
   // fixtures/crt/mimir-demo.crt (packages/core/test/crt.test.ts): a Magic Desk of 2 banks; bank 0 starts it (CBM80)
+  // and shows bank 1's text. Each bank is a space of its own (spec 13.9b): bank 1's $8000 is $18000
   const crtPath = join(repoDir, 'fixtures/crt/mimir-demo.crt'), crt = readFileSync(crtPath);
   await waitForListing(page);
   const banks = page.getByRole('list', { name: 'Banks of mimir-demo.crt' });
 
-  await test.step('Open PRG… takes a .crt: the chips of the boot bank open, and the Explorer lists the banks', async () => {
+  await test.step('Open PRG… takes a .crt: every chip opens, and the Explorer lists the banks', async () => {
+    await openSection(page, 'Files');
     await stubDialogs(app, { open: [crtPath] });
     await page.getByRole('button', { name: 'Open PRG…' }).click();
-    await expect(toast(page, 'Opened the cartridge mimir-demo.crt: Magic Desk (Domark, HES Australia), 2 banks of 8 KB (16 KB), 8K mode; bank00_8000.prg at $8000')).toBeVisible();
-    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg']);
+    await expect(toast(page, 'Opened the cartridge mimir-demo.crt: Magic Desk (Domark, HES Australia), 2 banks of 8 KB (16 KB), 8K mode; bank00_8000.prg at $8000, bank01_8000.prg at $8000')).toBeVisible();
+    await openSection(page, 'Cartridge');
+    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
     await expect(banks.getByRole('listitem')).toHaveText([/0\s*\$8000 · start\s*8 KB/, /1\s*\$8000\s*8 KB/]);
-    await expect(banks.getByRole('listitem').first()).toHaveClass(/on/);
+    for (const row of await banks.getByRole('listitem').all()) await expect(row).toHaveClass(/on/);
     await expect(page.locator('.disk-head').first()).toContainText('"MIMIR DEMO"');
     await expect.poll(() => page.locator('.side-sec').evaluateAll(s => s.map(e => e.getAttribute('aria-label'))))
       .toEqual(['Files', 'Cartridge', 'VICE quicksave', 'Loaders', 'Program start', 'Memory map']);
-    // the vectors and the signature, and the code they start
+    // both banks in the listing, each under its own file bar; bank 0's vectors and signature, and the code they start
     const rows = await listingRows(page);
+    expect(rows.filter(r => /\.asm · bank \d+$/.test(r.text.trim())).map(r => r.text.trim())).toEqual(['bank00_8000.asm · bank 0', 'bank01_8000.asm · bank 1']);
     expect(rows.some(r => /^cart_vectors:/.test(r.text.trim()))).toBe(true);
     expect(rows.some(r => r.text.includes('.text "CBM80"'))).toBe(true);
     expect(rows.some(r => /^warm_start:/.test(r.text.trim()))).toBe(true);
-    await expect(statusBar(page)).toContainText('$8009 · start');
+    await expect(statusBar(page)).toContainText('bank 0 · $8009 · start');
   });
 
-  await test.step('F7 verifies the chip and the cartridge rebuilt from it', async () => {
+  await test.step('a click on a bank goes to it; G takes a bank before the address', async () => {
+    await banks.getByRole('listitem').nth(1).click();
+    await expect(statusBar(page)).toContainText('bank 1 · $8000');
+    // the Inspector's memory map shows the cursor's bank
+    await expect(page.locator('.insp-sec .sec-head').first()).toContainText('Memory map · bank 1');
+    await page.keyboard.press('g');
+    await page.locator('#goto-input').fill('0:8009');
+    await page.locator('#goto-input').press('Enter');
+    await expect(statusBar(page)).toContainText('bank 0 · $8009 · start');
+  });
+
+  await test.step('a name and a type set in bank 1 stay in bank 1', async () => {
+    await page.keyboard.press('g');
+    await page.locator('#goto-input').fill('1:8000');
+    await page.locator('#goto-input').press('Enter');
+    await page.keyboard.press('n');
+    await page.getByLabel('Label at $8000').fill('bank1_text');
+    await page.getByLabel('Label at $8000').press('Enter');
+    await expect(statusBar(page)).toContainText('bank 1 · $8000 · bank1_text');
+    const rows = await listingRows(page);
+    expect(rows.filter(r => /^bank1_text:/.test(r.text.trim()))).toHaveLength(1);
+    expect(rows.some(r => /^cart_vectors:/.test(r.text.trim()))).toBe(true);
+  });
+
+  await test.step('× leaves a bank out of the project, + adds it again', async () => {
+    await banks.getByRole('listitem').nth(1).hover();
+    await page.getByRole('button', { name: 'Leave bank 1 out of the project' }).click();
+    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg']);
+    await expect(banks.getByRole('listitem').nth(1)).toHaveClass(/out/);
+    await page.getByRole('button', { name: 'Add bank 1 to this project' }).click();
+    await expect(toast(page, 'Added bank 1 of mimir-demo.crt: bank01_8000.prg at $8000')).toBeVisible();
+    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+    // the name given in bank 1 is still there
+    expect((await listingRows(page)).some(r => /^bank1_text:/.test(r.text.trim()))).toBe(true);
+  });
+
+  await test.step('F7 verifies both banks and the cartridge rebuilt from them', async () => {
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
     await page.getByRole('tab', { name: 'Build output' }).click();
+    await expect(page.locator('.build-log')).toContainText('bank01_8000.asm');
     await expect(page.locator('.build-log')).toContainText('Built-in cartridge OK: mimir-demo.crt 16480 / 16480 bytes identical to mimir-demo.crt');
   });
 
-  await test.step('a click opens bank 1 in place of bank 0, and Ctrl+Z goes back', async () => {
-    await banks.getByRole('listitem').nth(1).click();
-    await expect(toast(page, 'Opened bank 1 of mimir-demo.crt: bank01_8000.prg at $8000. Ctrl+Z goes back')).toBeVisible();
-    await expect(page.locator('.file-name')).toHaveText(['bank01_8000.prg']);
-    await expect(banks.getByRole('listitem').nth(1)).toHaveClass(/on/);
-    // the banks are at the same addresses: + adds nothing
-    await expect(banks.getByRole('button', { name: /Add bank/ })).toHaveCount(0);
-    await page.keyboard.press('Control+z');
-    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg']);
-  });
-
-  await test.step('Ctrl+E exports the cartridge\'s source and the image it builds', async () => {
+  await test.step('Ctrl+E exports every bank\'s source, the cartridge\'s, and the image they build', async () => {
     const out = join(work, 'export');
     await stubDialogs(app, { open: [out] });
     await page.keyboard.press('Control+e');
     await expect(toast(page, `Exported verified Kick Assembler project to ${out}`)).toBeVisible({ timeout: 90_000 });
-    expect(readdirSync(out)).toEqual(expect.arrayContaining(['bank00_8000.asm', 'mimir-demo.crt.asm', 'banks', 'build.bat', 'out', 'original']));
+    expect(readdirSync(out)).toEqual(expect.arrayContaining(['bank00_8000.asm', 'bank01_8000.asm', 'mimir-demo.crt.asm', 'build.bat', 'out', 'original']));
+    expect(readdirSync(out)).not.toContain('banks');
+    expect(readFileSync(join(out, 'bank01_8000.asm'), 'utf8')).toContain('bank1_text:');
     expect(readFileSync(join(out, 'out', 'mimir-demo.crt'))).toEqual(crt);
     expect(readFileSync(join(out, 'original', 'mimir-demo.crt'))).toEqual(crt);
     expect(readFileSync(join(out, 'build.bat'), 'utf8')).toMatch(/mimir-demo\.crt\.asm -odir out[^\n]*\r\nstart "" "%VICE%" .*-cartcrt out\\mimir-demo\.crt/);
@@ -860,6 +894,8 @@ test('a packed PRG is reported and unpacked with Sindri, or an external unpacker
   // undoes it as an external unpacker and names its result `<name>.0810` the way unp64 does
   const fake = join(repoDir, 'packages/core/test/helpers/fake-unp64.cjs');
   await waitForListing(page);
+  await openSection(page, 'Files');
+  await openSection(page, 'Program start');
   const bar = page.locator('.pack-bar');
   const done = page.locator('.unpack-bar');
   const open = async () => {
@@ -921,8 +957,10 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
   const drives = () => { try { return readdirSync(vice).some(d => existsSync(join(vice, d, 'DRIVES'))); } catch { return false; } };
   test.skip(!process.env.C64_ROMS && !drives(), 'needs VICE\'s ROMs');
   await waitForListing(page);
+  await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/kernal-load.d64')] });
   await page.getByRole('button', { name: 'Mount D64…' }).click();
+  await openSection(page, 'Disk');
   await page.getByRole('list', { name: 'Files on kernal-load.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
   const bar = page.locator('.pack-bar');
   await expect(bar).toContainText('BOOT.prg is packed.', { timeout: 30_000 });
@@ -938,6 +976,7 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
 
 test('file dialogs open in the folder they were last used in', async ({ app, page, userData }) => {
   await waitForListing(page);
+  await openSection(page, 'Files');
   const prgDir = join(repoDir, 'fixtures', 'prg'), diskDir = join(repoDir, 'fixtures', 'd64');
 
   await stubDialogs(app, { open: [join(prgDir, 'packed-demo.prg')] });
@@ -1273,6 +1312,61 @@ test('bookmarks: notes on addresses, listed by address, a click shows the note a
     await expect(mark('0810')).toHaveCount(1);
     await expect(list.locator('.bm-row')).toHaveCount(2);
   });
+
+  await test.step('a colour: a preset or one of your own, which the mark, its line and the list show', async () => {
+    const rgb = (hex: string) => `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+    const token = (name: string) => page.evaluate(n => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+    const dialog = page.getByRole('form', { name: 'Edit bookmark' });
+    const presets = dialog.getByRole('group', { name: 'Preset colours' }), own = dialog.getByRole('group', { name: 'Your colours' });
+    const icon = (title: string) => list.locator('.bm-item', { hasText: title }).locator('.bm-ic');
+    // without a colour a bookmark is amber, as before there were colours
+    await expect(mark('0810')).toHaveCSS('color', rgb(await token('--bm-amber')));
+    await goTo(page, 'start');
+    await page.keyboard.press('b');
+    await expect(presets.getByRole('button', { name: 'Amber' })).toHaveAttribute('aria-pressed', 'true');
+    await presets.getByRole('button', { name: 'Teal' }).click();
+    await expect(dialog.locator('.bm-color-name')).toHaveText('Teal');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    const teal = rgb(await token('--bm-teal'));
+    await expect(mark('0810')).toHaveCSS('color', teal);
+    await expect(icon('Set up')).toHaveCSS('color', teal);
+    // the line is tinted in it
+    await expect(at('0810').filter({ has: page.locator('.bm-mark') })).toHaveClass(/\bbm\b/);
+
+    // a colour of your own, made in an empty place: Esc closes only its editor, the bookmark's stays open
+    await goTo(page, 'sine_09b5');
+    await page.keyboard.press('b');
+    await own.getByRole('button', { name: 'Make colour 1 of your own' }).click();
+    const make = dialog.getByRole('group', { name: 'Make colour 1 of your own' });
+    await expect(make.getByLabel('Colour as #rrggbb')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(make).toBeHidden();
+    await expect(dialog).toBeVisible();
+    await own.getByRole('button', { name: 'Make colour 1 of your own' }).click();
+    await make.getByLabel('Colour as #rrggbb').fill('#FF00AA');
+    await make.getByLabel('Colour as #rrggbb').press('Enter');
+    await expect(make).toBeHidden();
+    await expect(dialog).toBeVisible();
+    await expect(own.getByRole('button', { name: 'Your colour 1: #ff00aa' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(dialog.locator('.bm-color-name')).toHaveText('Your colour 1 · #ff00aa');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(mark('09b5')).toHaveCSS('color', 'rgb(255, 0, 170)');
+    await expect(icon('sine_09b5')).toHaveCSS('color', 'rgb(255, 0, 170)');
+
+    // the colours of your own are there for every bookmark; Ctrl+Z takes the colour back
+    await goTo(page, 'start');
+    await page.keyboard.press('b');
+    await expect(presets.getByRole('button', { name: 'Teal' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(own.getByRole('button', { name: 'Your colour 1: #ff00aa' })).toHaveAttribute('aria-pressed', 'false');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await listing(page).focus();
+    await page.keyboard.press('Control+z');
+    await expect(icon('sine_09b5')).toHaveCSS('color', rgb(await token('--bm-amber')));
+    await expect(icon('Set up')).toHaveCSS('color', teal);
+  });
 });
 
 test('the export writes NOTES.html, or NOTES.txt when set, with the bookmarks and comments', async ({ workDir: work, app, page }) => {
@@ -1333,6 +1427,7 @@ test('the installed app unpacks with Sindri: no unp64 comes with it', async ({ a
   test.skip(!installed, 'needs the installed app (MIMIR_E2E_EXE)');
   expect(existsSync(join(dirname(installed!), 'resources', 'unp64'))).toBe(false);
   await waitForListing(page);
+  await openSection(page, 'Files');
 
   await test.step('a fresh profile has no external unpacker', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
@@ -1471,12 +1566,13 @@ test('cycle counting: cycles per line, a block\'s total, and branches taken or n
 test('open a VICE snapshot like a PRG', async ({ app, page }) => {
   // fixtures/vsf/raster-demo.vsf: x64sc 3.10 stopped in the demo's raster IRQ ($08c7)
   await waitForListing(page);
+  await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
   await page.getByRole('button', { name: 'Open PRG…' }).click();
   await expect(toast(page, 'Loaded raster-demo.prg at $0200 from a VICE 3.10 snapshot of a C64SC, PC $08c7, $01 = $37; traced from $08c7, $08b7; program start $0810')).toBeVisible();
   await expect(page.locator('.file-row', { hasText: 'raster-demo.prg' })).toContainText('$0200–$ffff');
   // the BASIC stub inside the RAM is the program start the analysis traces from; Build & Run restarts the snapshot
-  const start = page.locator('.side-sec', { hasText: 'Program start' });
+  const start = await openSection(page, 'Program start');
   await expect(start).toContainText(/\$0810\s*start/);
   await expect(start).toContainText('set by you');
   await expect(start).toContainText('VICE restarts the snapshot as it was taken (PC $08c7, $01 = $37); the start is for the analysis');
@@ -1504,6 +1600,7 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
 test('deep analysis from the Problems tab: a snapshot\'s ROM calls are not traced into the RAM below', async ({ app, page }) => {
   // the snapshot's RAM covers the KERNAL and BASIC ROM: the normal analysis traces their calls into it
   await waitForListing(page);
+  await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
   await page.getByRole('button', { name: 'Open PRG…' }).click();
   await expect(toast(page, 'Loaded raster-demo.prg at $0200')).toBeVisible();
@@ -1690,6 +1787,8 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
 
   await test.step('Brokkr packs by default: the view shows its command, Pack builds, packs and checks it', async () => {
     await page.locator('nav.activity').getByRole('button', { name: 'Pack' }).click();
+    // the view's sections are closed when the app starts
+    for (const name of ['What to pack', 'Packed file', 'Self-extracting', 'Command']) await openSection(page, name);
     await expect(view.getByRole('tab', { name: 'Brokkr' })).toHaveAttribute('aria-selected', 'true');
     await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
     await view.getByRole('button', { name: 'Pack', exact: true }).click();
@@ -1740,6 +1839,7 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
   await test.step('crunched data: Brokkr decrunches the stream again and says where it loads in place', async () => {
     await view.getByLabel('Effort').selectOption('normal');
     await view.getByRole('tab', { name: 'Crunched data' }).click();
+    await openSection(page, 'Crunched data');
     await expect(cmd).toHaveText('brokkr mem -o raster-demo-brokkr.prg raster-demo.prg');
     // no start and nothing after decrunching: your own code decrunches it
     await expect(view.getByLabel('Start', { exact: true })).toHaveCount(0);
@@ -1813,6 +1913,7 @@ test('pack with Exomizer: the whole build or chosen blocks, checked with desfx, 
 
   await test.step('the whole build: the Pack view shows the command, Pack builds, packs and checks it', async () => {
     await page.locator('nav.activity').getByRole('button', { name: 'Pack' }).click();
+    for (const name of ['What to pack', 'Packed file', 'Self-extracting', 'Command']) await openSection(page, name);
     await view.getByRole('tab', { name: 'Exomizer' }).click();
     await expect(cmd).toHaveText(/^exomizer(\.exe)? sfx sys -o raster-demo-exo\.prg raster-demo\.prg$/);
     await view.getByRole('button', { name: 'Pack', exact: true }).click();
@@ -2070,6 +2171,7 @@ test('the Demo button opens the showcase: every block type and a guided tour in 
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
     await page.locator('nav.activity').getByRole('button', { name: 'Explorer' }).click();
+    await openSection(page, 'Files');
     await expect(page.locator('.file-name')).toHaveText(['mimir-showcase.prg']);
   });
 });
@@ -2079,7 +2181,8 @@ test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctr
   // a file of its own instead of VICE's settings folder: the user's quicksaves are never touched
   const qs = join(work, 'C64SC.vsf'), snapshot = join(repoDir, 'fixtures/vsf/raster-demo.vsf');
   const files = page.locator('.file-name');
-  const section = page.getByRole('region', { name: 'VICE quicksave' });
+  await openSection(page, 'Files');
+  const section = await openSection(page, 'VICE quicksave');
   const status = section.getByRole('status', { name: 'Latest VICE quicksave' });
   const open = section.getByRole('button', { name: /Open the latest quicksave/ });
   await page.getByRole('button', { name: 'Settings' }).click();
@@ -2483,6 +2586,7 @@ test('Build & Run restarts a VICE snapshot as it was taken, with the built progr
   const build = page.getByRole('button', { name: 'Build & Run' });
   await expect(build).toHaveAttribute('title', 'Build with KickAss.jar and run in VICE (F5)');
   await stubDialogs(app, { open: [vsf] });
+  await openSection(page, 'Files');
   await page.getByRole('button', { name: 'Open PRG…' }).click();
   await expect(toast(page, 'Loaded raster-demo.prg at $0200 from a VICE 3.10 snapshot')).toBeVisible();
   await expect(build).toHaveAttribute('title', /restart the snapshot in VICE as it was taken/);
@@ -2497,29 +2601,59 @@ test('Build & Run restarts a VICE snapshot as it was taken, with the built progr
   expect(readFileSync(started![1])).toEqual(readFileSync(vsf));
 });
 
-test('the Explorer\'s sections say what they hold and fold up, and stay folded', async ({ page }) => {
+test('the side panel\'s sections say what they hold, start closed, stay open for the run and are closed again after a restart', async ({ page }) => {
   await waitForListing(page);
+  const views = page.getByRole('navigation', { name: 'Views' });
+  const sections = page.locator('.side-sec');
   const loaders = page.getByRole('region', { name: 'Loaders' });
   const toggle = loaders.getByRole('button', { name: 'Loaders' });
+  /** every section of the view shown is closed: its title and what it holds, nothing more */
+  const allClosed = async (count: number) => {
+    await expect(sections).toHaveCount(count);
+    await expect(sections.locator('.sec-toggle[aria-expanded="false"]')).toHaveCount(count);
+    await expect(sections.locator('.sec-body')).toHaveCount(0);
+  };
   await expect(page.getByRole('region', { name: 'Files' }).locator('.sec-sum')).toHaveText('1 file');
   await expect(loaders.locator('.sec-sum')).toHaveText('none found');
   await expect(page.getByRole('region', { name: 'Program start' }).locator('.sec-sum')).toHaveText('$0810');
+  // Files, VICE quicksave, Loaders, Program start and Memory map
+  await allClosed(5);
+  await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(loaders).toContainText('No fast, IRQ or tape loader found, and no KERNAL LOAD.');
+  // another view and back: still open for the rest of the run
+  await views.getByRole('button', { name: 'Blocks' }).click();
+  await views.getByRole('button', { name: 'Explorer' }).click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
   await expect(loaders.locator('.sec-sum')).toHaveText('none found');
-  // another view and back: still folded (the choice is kept with the user's other preferences)
-  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Blocks' }).click();
-  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Explorer' }).click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+  // the Pack view's sections (What to pack, Packed file, Self-extracting, Command) are closed too
+  await views.getByRole('button', { name: 'Pack' }).click();
+  await allClosed(4);
+  await openSection(page, 'Command');
+
+  // a restart (the reload starts the window afresh, its saved preferences read again): every section closed again,
+  // also the ones that were open
+  await views.getByRole('button', { name: 'Explorer' }).click();
   await toggle.click();
-  await expect(loaders).toContainText('No fast, IRQ or tape loader found, and no KERNAL LOAD.');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await page.reload();
+  await waitForListing(page);
+  await allClosed(5);
+  await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
+  await views.getByRole('button', { name: 'Pack' }).click();
+  await allClosed(4);
 });
 
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
-  const section = page.getByRole('region', { name: 'Loaders' });
+  await openSection(page, 'Files');
+  const section = await openSection(page, 'Loaders');
   await expect(section).toContainText('No fast, IRQ or tape loader found, and no KERNAL LOAD.');
 
   // fixtures/prg/loader-demo.prg (packages/core/test/loaders.test.ts): an installer that sends drive code with M-W and
@@ -2551,6 +2685,7 @@ test('loaders: the Explorer names the loader and lists its parts, which the list
 
 test('the Spindle script: a tab when Pefchain drivers are in memory, a row per script line that goes to its driver', async ({ app, page }) => {
   await waitForListing(page);
+  await openSection(page, 'Files');
   await expect(page.getByRole('tab', { name: /Spindle script/ })).toHaveCount(0);
 
   // fixtures/prg/spindle-demo.prg (packages/core/test/spindle.test.ts): the drivers pefchain 3.1 built for five small
@@ -2597,9 +2732,11 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
   // fixtures/d64/spindle-demo.d64 (packages/core/test/spindle-disk.test.ts): 4 jobs, labels 01, 02 and 1f, a jump after
   // the last one, and the boot program going to $0800
   await waitForListing(page);
+  await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/spindle-demo.d64')] });
   await page.getByRole('button', { name: 'Mount D64…' }).click();
   await expect(toast(page, 'Mounted spindle-demo.d64: "SPINDLE DEMO", 1 file, a Spindle 3 disk with 4 jobs')).toBeVisible();
+  await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('Spindle 3 disk: 4 jobs the loader reads, not files');
 
   await test.step('the Explorer opens the load script, a row per chunk', async () => {
@@ -2638,9 +2775,11 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
   // fixtures/d64/bitfire-demo.d64 (packages/core/test/bitfire-disk.test.ts): the raster demo packed with an end, a table
   // that is not packed, and a file packed in place that unpacks to $2ed4-$2fff
   await waitForListing(page);
+  await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/bitfire-demo.d64')] });
   await page.getByRole('button', { name: 'Mount D64…' }).click();
   await expect(toast(page, 'Mounted bitfire-demo.d64: "BITFIRE DEMO", 2 files, a Bitfire disk with 3 files of its own')).toBeVisible();
+  await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('Bitfire disk: 3 files the loader reads, not in the directory');
   const table = page.getByRole('table', { name: 'Bitfire files' });
 
@@ -2912,6 +3051,7 @@ test('patch: new code over the selected lines, marked as patched, saved as a PRG
     expect(rows.some(r => r.text === '// ==== patch "red border": $091e-$0925, 8 bytes written over the original ====')).toBe(true);
     await expect(patchedRow('091e')).toContainText('patch red border');
     await expect(listing(page).locator('.row.patched')).toHaveCount(5);
+    await openSection(page, 'Patches');
     const list = page.getByRole('list', { name: 'Patches' });
     await expect(list.getByRole('listitem')).toHaveText([/red border\s*\$091e–\$0925$/]);
     await page.keyboard.press('F7');

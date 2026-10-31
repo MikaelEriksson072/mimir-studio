@@ -29,6 +29,7 @@ interface RenderCtx {
   prevType?: BlockKind | null;
   needSeg?: boolean;
   useLabel?: (a: Addr) => void;
+  useForeign?: (a: Addr) => void;
   useZp?: (a: Addr) => void;
   useHw?: (a: Addr) => void;
   isCall?: boolean;
@@ -51,6 +52,8 @@ export interface RenderOptions {
   /** listing only: every block that is not code is shown disassembled (a linear sweep from its start), to find
    *  code that was classified as data. The files, fileLines and verification do not change. */
   dataAsCode?: boolean;
+  /** put before the names of the binary files (gfx/, music/, data/): a bank's own (spec 13.9b, `bank03_`) */
+  binPrefix?: string;
 }
 
 /** loader parts that span code or data: their end gets a mark too */
@@ -123,6 +126,9 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   // music saved as a binary file is not loaded with LoadSid, so references to it cannot use music.init/play
   const musicFor = (a: Addr) => S.musicAsSid ? A.music.find(m => a >= m.start && a < m.end && !binaryStarts.has(findBlock(A.blocks, m.start)?.start ?? -1)) : null;
   const musicVar = (m: MusicInfo) => A.music.length > 1 ? `music_${h4(m.start)}` : 'music';
+  const musicPath = (m: MusicInfo) => `music/${opts.binPrefix ?? ''}music_${h4(m.start)}.sid`;
+  // the names other banks give addresses this one does not have (13.9b): its file head defines those it uses
+  const foreign = project.foreign || {};
   const blocksSorted = A.blocks;
 
   // duplicate label detection
@@ -139,6 +145,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       if (a === m.play) return [{ t: 'kw', s: `${v}.play`, to: a }];
       return [{ t: 'kw', s: `${v}.location`, to: m.start }, { t: 'p', s: '+' }, { t: 'num', s: n4(a - m.start) }];
     }
+    if (!loaded(a) && foreign[a]) { ctx.useForeign && ctx.useForeign(a); return [{ t: 'lbl', s: foreign[a], to: a }]; }
     // bank tracking: an instruction that always reaches I/O or ROM here gets the hardware/ROM name (or the bare
     // address), never the label of the RAM bytes below; one that always reaches RAM never gets a hardware name.
     // Where the configuration cannot be told, $d000-$dfff is I/O
@@ -314,7 +321,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   /** the .label lines of binary blocks: a label the analysis made but the source never uses (an I/O register the
    *  code reaches as VIC_..., say) is dropped once the whole file is written */
   const binaryDefs = new WeakSet<Line>();
-  const binaryPath = (b: Block) => { const l = labelAt(b.start); return `data/${l ? l.name : `block_${h4(b.start)}`}.bin`; };
+  const binaryPath = (b: Block) => { const l = labelAt(b.start); return `data/${opts.binPrefix ?? ''}${l ? l.name : `block_${h4(b.start)}`}.bin`; };
   const blockTitle = (b: Block) => {
     const info = kindInfo(b.type), p = b.props;
     let t = info.label;
@@ -384,7 +391,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
         const m: MusicInfo = A.music.find(x => x.start === b.start) || { start: b.start, end: b.end, init: b.start, play: b.start + 3, sidRegs: 0, score: 0, why: [], file: b.file };
         if (S.musicAsSid) {
           const v = musicVar(m);
-          const path = `music/music_${h4(m.start)}.sid`;
+          const path = musicPath(m);
           binFiles[path] = makePsid(mem.slice(m.start, m.end), m.start, m.init, m.play, `${project.name || 'music'} ${h4(m.start)}`);
           ctx.usedMusic.add(m);
           out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'kw', s: `${v}.location`, to: m.start }, { t: 'p', s: ' ' }, { t: 'str', s: '"Music"' }] });
@@ -462,7 +469,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
         label(b.start);
         const hasInner = (() => { for (let p = b.start + 1; p < b.end; p++) if (labelAt(p)) return true; return false; })();
         if (S.gfxBinary && b.type !== 'screen' && !hasInner) {
-          const path = `gfx/${b.type}_${h4(b.start)}.bin`;
+          const path = `gfx/${opts.binPrefix ?? ''}${b.type}_${h4(b.start)}.bin`;
           binFiles[path] = mem.slice(b.start, b.end);
           out.push({ k: 'dir', a: b.start, n: len, tok: [{ t: 'dir', s: '.import binary' }, { t: 'p', s: ' ' }, { t: 'str', s: `"${path}"` }], cmt: `${len} bytes` });
         } else if (b.type === 'charset') {
@@ -531,11 +538,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
 
   A.files.forEach((f, fi) => {
     const body: Line[] = [];
-    const usedZp = new Set<Addr>(), usedExt = new Set<Addr>(), usedHw = new Set<Addr>(), usedHere = new Set<Addr>();
+    const usedZp = new Set<Addr>(), usedExt = new Set<Addr>(), usedHw = new Set<Addr>(), usedHere = new Set<Addr>(), usedForeign = new Set<Addr>();
     const ctx: RenderCtx & { usedMusic: Set<MusicInfo> } = {
       fileIdx: fi, usedMusic: new Set(), prevType: null, needSeg: true,
       useLabel: a => { if (fileOf(a) !== fi) usedExt.add(a); else usedHere.add(a); },
-      useZp: a => usedZp.add(a), useHw: a => usedHw.add(a),
+      useZp: a => usedZp.add(a), useHw: a => usedHw.add(a), useForeign: a => usedForeign.add(a),
     };
     const fb = blocksSorted.filter(b => b.file === fi);
     const fileExcluded: ExcludedRange[] = [];
@@ -624,9 +631,14 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       head.push({ k: 'cmt', a: f.load, text: 'labels defined in other files' });
       for (const a of [...usedExt].sort((x, y) => x - y)) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: labelAt(a)!.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(a) }] });
     }
+    if (usedForeign.size) {
+      head.push({ k: 'blank', a: f.load });
+      head.push({ k: 'cmt', a: f.load, text: 'labels in other banks of the cartridge' });
+      for (const a of [...usedForeign].sort((x, y) => x - y)) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: foreign[a] }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(a) }] });
+    }
     if (ctx.usedMusic.size) {
       head.push({ k: 'blank', a: f.load });
-      for (const m of ctx.usedMusic) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.var' }, { t: 'p', s: ' ' }, { t: 'def', s: musicVar(m) }, { t: 'p', s: ' = ' }, { t: 'kw', s: 'LoadSid' }, { t: 'p', s: '(' }, { t: 'str', s: `"music/music_${h4(m.start)}.sid"` }, { t: 'p', s: ')' }] });
+      for (const m of ctx.usedMusic) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.var' }, { t: 'p', s: ' ' }, { t: 'def', s: musicVar(m) }, { t: 'p', s: ' = ' }, { t: 'kw', s: 'LoadSid' }, { t: 'p', s: '(' }, { t: 'str', s: `"${musicPath(m)}"` }, { t: 'p', s: ')' }] });
     }
     head.push({ k: 'blank', a: f.load });
     const lines = head.concat(body);

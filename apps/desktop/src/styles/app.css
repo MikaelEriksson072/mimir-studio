@@ -162,7 +162,9 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .disk-blocks { text-align: right; }
 /* a cartridge's banks: the open ones marked like the selected block */
 .cart-row.on { background: var(--sel); color: var(--fg); }
-.cart-row.part .disk-blocks { color: var(--fg); }
+.cart-row.out { opacity: 0.6; }
+.cart-row .cart-leave { opacity: 0; }
+.cart-row:hover .cart-leave, .cart-row:focus-within .cart-leave { opacity: 1; }
 .disk-name { color: var(--fg); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 .mmap { display: flex; gap: 8px; }
 .strip-wrap { display: flex; gap: 4px; flex: none; }
@@ -368,9 +370,17 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .edit-pop.zp { border-color: var(--warn); }
 .edit-pop label .zp-tag { margin-left: 8px; }
 /* bookmarks: the mark in the listing's left margin (in the address column's padding), the list in the sidebar */
-.bm-mark { position: absolute; left: 3px; top: 0; bottom: 0; width: 11px; padding: 0; border: 0; background: none; display: grid; place-items: center; color: var(--warn); cursor: pointer; z-index: 1; }
+.bm-mark { position: absolute; left: 3px; top: 0; bottom: 0; width: 11px; padding: 0; border: 0; background: none; display: grid; place-items: center; color: var(--bm, var(--bm-amber)); cursor: pointer; z-index: 1; }
 .bm-mark svg { fill: currentColor; }
 .bm-mark:hover { color: var(--fg); }
+/* a bookmarked line is tinted in its bookmark's colour (--bm, set on the row) */
+.row.bm { background: color-mix(in srgb, var(--bm) 13%, transparent); }
+.row.bm:hover { background: color-mix(in srgb, var(--bm) 18%, transparent); }
+.row.bm.sel { background: color-mix(in srgb, var(--bm) 13%, var(--sel)); }
+.row.bm.cur { background: color-mix(in srgb, var(--bm) 13%, var(--cur)); }
+.row.hdr.bm { background: color-mix(in srgb, var(--bm) 13%, var(--panel)); }
+.row.hdr.bm.sel { background: color-mix(in srgb, var(--bm) 13%, var(--sel)); }
+.row.bm.drop-into { background: color-mix(in srgb, var(--accent) 16%, var(--editor)); }
 .activity .act-count { position: absolute; right: 3px; top: 4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--fg-2); font: 600 9.5px/15px var(--font-ui); text-align: center; }
 .bm-item { border-radius: 6px; }
 .bm-item.open { background: var(--sel); }
@@ -378,7 +388,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .bm-row:hover { background: var(--row-hover); color: var(--fg); }
 .bm-item.open .bm-row { color: var(--fg); }
 .bm-row.here .bm-adr { color: var(--accent-hi); }
-.bm-ic { color: var(--warn); flex: none; }
+.bm-ic { color: var(--bm, var(--bm-amber)); flex: none; }
+.bm-row .bm-ic { fill: currentColor; }
 .bm-adr { flex: none; font-size: 12px; }
 .bm-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-body { padding: 0 8px 8px 27px; display: flex; flex-direction: column; gap: 6px; }
@@ -395,6 +406,23 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .bm-addr-row input { flex: 1; min-width: 0; }
 .bm-addr-row .btn { height: 28px; }
 .bm-item.editing { box-shadow: inset 0 0 0 1px var(--accent); }
+/* the editor's colours: the presets (--sw), then the user's own; the bookmark's has a ring */
+.bm-colors { gap: 6px; }
+.bm-color-head { display: flex; align-items: baseline; gap: 6px; }
+.bm-color-name { color: var(--fg-3); font-size: 11.5px; }
+.bm-swatches { display: flex; align-items: center; gap: 6px; min-height: 22px; }
+.bm-sw { --edge: inset 0 0 0 1px color-mix(in srgb, var(--fg) 18%, transparent); width: 18px; height: 18px; flex: none; padding: 0; border: 0; border-radius: 50%; background: var(--sw); box-shadow: var(--edge); display: grid; place-items: center; color: var(--fg-3); cursor: pointer; transition: transform 0.08s; }
+.bm-sw:hover { transform: scale(1.15); }
+.bm-sw.on { box-shadow: var(--edge), 0 0 0 2px var(--panel-2), 0 0 0 3.5px var(--fg); }
+.bm-sw.free { background: none; box-shadow: inset 0 0 0 1px var(--line-2); }
+.bm-sw.free:hover { box-shadow: inset 0 0 0 1px var(--accent); color: var(--fg); }
+.bm-sw.editing { box-shadow: var(--edge), 0 0 0 2px var(--panel-2), 0 0 0 3.5px var(--accent); }
+.bm-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.bm-sw-edit { width: 22px; height: 22px; }
+.bm-own { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 7px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel); }
+.field .bm-own input[type="color"] { width: 34px; height: 26px; padding: 2px; flex: none; cursor: pointer; }
+.field .bm-own input.mono { flex: 1; min-width: 72px; height: 26px; }
+.bm-own .icon-btn { width: 24px; height: 24px; }
 .edit-pop input { height: 28px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--editor); outline: none; }
 .edit-pop input:focus { border-color: var(--accent); }
 .edit-pop textarea { padding: 6px 8px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--editor); color: var(--fg); outline: none; resize: vertical; font: 13px/20px var(--font-code); }

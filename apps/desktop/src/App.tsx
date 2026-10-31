@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
-  bankFiles, builtCartridge, cartBuild, cartridgeFiles, compareCrt, describeCrt, expectedCartridge, isCrt, openCartridge, parseCrt, type Crt,
+  bankFiles, builtCartridge, cartBuild, cartridgeFiles, compareCrt, describeCrt, expectedCartridge, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
@@ -128,16 +128,39 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   // folded blocks (by start address) show only their header; the view maps addresses to the visible lines
   const [folded, setFolded] = useState<ReadonlySet<Addr>>(() => new Set());
-  const view = useMemo(() => foldLines(R.lines, A.blocks, folded), [R, A, folded]);
+  const view = useMemo(() => foldLines(R.lines, A.blocks, folded, A.mem.length), [R, A, folded]);
   const excludedSet = useMemo(() => new Set(project.excluded), [project.excluded]);
   const lineOf = view.lineOf;
+  /* ---- a cartridge's banks are spaces of their own (13.9b): the listing shows them all, one after the other, at bank
+     addresses (space * $10000 + address); the 64 KB views (Graphics, Memory, the heatmap) show the bank of the cursor ---- */
+  const space = spaceOf(cursor ?? A.entry ?? 0);
+  const base = space * SPACE;
+  const As = useMemo(() => spaceView(A, space), [A, space]);
+  const Rs = useMemo(() => spaceRender(R, A, space), [R, A, space]);
+  const vCursor = cursor != null && spaceOf(cursor) === space ? cursor - base : null;
+  const vSel = useMemo((): Sel | null => (!sel || !base ? sel : spaceOf(sel.start) !== space ? null
+    : { ...sel, start: sel.start - base, end: sel.end - base, ...(sel.anchor != null ? { anchor: sel.anchor - base } : {}), ...(sel.anchorEnd != null ? { anchorEnd: sel.anchorEnd - base } : {}) }), [sel, base, space]);
+  /** an address of a 64 KB view in the bank it shows */
+  const inBank = (a: Addr): Addr => base + a;
+  /** an address typed or picked without a bank: in the cursor's bank when it has it, else in the first bank that has it */
+  const resolveAddr = (a: Addr, bank: number | null = null): Addr => {
+    if (!A.spaces || a >= SPACE) return a;
+    if (bank != null) { const s = A.spaces.find(x => x.bank === bank); return s ? s.space * SPACE + a : a; }
+    if (A.owner[base + a] >= 0) return base + a;
+    const s = A.spaces.find(x => A.owner[x.space * SPACE + a] >= 0);
+    return s ? s.space * SPACE + a : a;
+  };
+  /** the cartridge bank an address is in (null without banks) */
+  const bankAt = (a: Addr | null): number | null => (a == null ? null : A.spaces?.find(x => x.space === spaceOf(a))?.bank ?? null);
+  /** where file `i` starts, in its bank */
+  const fileAddr = (i: number): Addr => (A.spaces?.find(x => x.files.includes(i))?.space ?? 0) * SPACE + (project.files[i]?.load ?? 0);
   useEffect(() => { if (cursor == null && A.entry != null) { setCursor(A.entry); setScrollReq({ addr: A.entry, center: true, n: Date.now() }); } }, [A]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toast = useCallback((msg: string, kind: ToastKind = 'info') => { const id = uid(); setToasts(t => [...t.slice(-3), { id, msg, kind }]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); }, []);
   const needDesktop = () => { toast('This needs the desktop app (file system and toolchain access go through the Electron main process).', 'warn'); };
 
   const navigate = useCallback((addr: Addr, opts: NavOptions = {}) => {
-    if (addr == null || addr < 0 || addr > 0xffff) return;
+    if (addr == null || addr < 0 || addr >= A.owner.length) return;
     if (A.owner[addr] < 0) { toast(`$${h4(addr)} is not part of any loaded file`, 'warn'); return; }
     // going to an address inside a folded block (Go to, a link, the sidebar) unfolds it
     if (opts.center) { const b = findBlock(A.blocks, addr); if (b && addr !== b.start && folded.has(b.start)) setFolded(f => { const n = new Set(f); n.delete(b.start); return n; }); }
@@ -166,7 +189,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       replace(createProject({ files, settings: project.settings, cart }), null, opts.undoLabel); resetView();
       let what = '';
       try { what = `: ${describeCrt(parseCrt(cart.crt, cart.name))}`; } catch { /* the files say enough */ }
-      toast(`Opened the cartridge ${cart.name}${what}; ${files.filter(f => f.chip != null).map(f => `${f.name} at $${h4(f.load)}`).join(', ')}${add ? ' (a project holds one cartridge, so it is a project of its own)' : ''}`, 'ok');
+      const chips = files.filter(f => f.chip != null);
+      toast(`Opened the cartridge ${cart.name}${what}; ${chips.length > 4 ? `${chips.length} chips, every bank in the listing` : chips.map(f => `${f.name} at $${h4(f.load)}`).join(', ')}${add ? ' (a project holds one cartridge, so it is a project of its own)' : ''}`, 'ok');
       return;
     }
     // a snapshot is kept with its file: Build & Run restarts it as it was
@@ -277,19 +301,22 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   /* ---- the project's cartridge (13.9) ---- */
   const crt = useMemo((): Crt | null => { try { return project.cart ? parseCrt(project.cart.crt, project.cart.name) : null; } catch { return null; } }, [project.cart]);
-  /** a bank of the cartridge as the project's files (Ctrl+Z goes back), or (`add`) its chips that fit beside them */
-  const openBank = (bank: number, add: boolean) => {
+  /** a bank of the cartridge: in the project, the listing goes to its start (`leave`: it is taken out of the project);
+   *  not in it, its chips are added (13.9b: every bank is a space of its own, so they never collide) */
+  const openBank = (bank: number, leave = false) => {
     if (!crt || !project.cart) return;
-    const chips = bankFiles(crt, bank).map(withId);
-    if (!add) {
-      replace(createProject({ files: chips, settings: project.settings, cart: project.cart }), null, `Open bank ${bank} of ${project.cart.name}`); resetView();
-      toast(`Opened bank ${bank} of ${project.cart.name}: ${chips.map(f => `${f.name} at $${h4(f.load)}`).join(', ')}. Ctrl+Z goes back`, 'ok');
+    const mine = (f: LoadedFile) => f.chip != null && crt.chips[f.chip]?.bank === bank;
+    const at = project.files.findIndex(mine);
+    if (leave) {
+      if (at < 0 || project.files.every(f => f.chip == null || mine(f))) return;
+      update(`Leave bank ${bank} out`, d => { d.files = d.files.filter(f => !mine(f)); });
+      toast(`Bank ${bank} is out of the project: the export takes it from the cartridge as it is (banks/). + adds it again`, 'ok');
       return;
     }
-    const fits = chips.filter(c => !project.files.some(f => f.chip === c.chip || (c.load < f.load + f.bytes.length && f.load < c.load + c.bytes.length)));
-    if (!fits.length) { toast(`Bank ${bank} has no chip that fits beside the open files: it is at the same addresses`, 'warn'); return; }
-    update(`Add bank ${bank}`, d => { d.files.push(...fits); });
-    toast(`Added ${fits.map(f => `${f.name} at $${h4(f.load)}`).join(', ')}`, 'ok');
+    if (at >= 0) { const s = A.spaces?.find(x => x.bank === bank); navigate(s?.entry ?? fileAddr(at), { center: true, listing: true }); return; }
+    const chips = bankFiles(crt, bank).map(withId);
+    update(`Add bank ${bank}`, d => { d.files.push(...chips); });
+    toast(`Added bank ${bank} of ${project.cart.name}: ${chips.map(f => `${f.name} at $${h4(f.load)}`).join(', ')}`, 'ok');
   };
   /* ---- packed programs ---- */
   // a decruncher in front of compressed data (detectPacking), and what the unpacker finds: Sindri runs
@@ -327,7 +354,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   }, [project.files, toolchain.unpackerPath]); // eslint-disable-line react-hooks/exhaustive-deps
   const packing = useMemo(() => A.files.map((af, i): PackingInfo | null => {
     const f = project.files[i];
-    const h = detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
+    // a cartridge's chip is no packed program (and is in a bank of its own)
+    const h = f?.chip != null ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
     return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, f ? runs[f.id] : undefined, at);
   }), [A, identified, runs, project.files, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went. */
@@ -545,7 +573,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const old = project.bookmarks[from];
     setBmEdit(null); setBmSel(to);
     setTimeout(() => listRef.current?.focus(), 0);
-    if (old && from === to && old.title === b.title && old.text === b.text) return;
+    if (old && from === to && old.title === b.title && old.text === b.text && old.color === b.color) return;
     update(old ? `Bookmark $${h4(to)}` : `Add bookmark $${h4(to)}`, d => { delete d.bookmarks[from]; d.bookmarks[to] = b; });
     toast(old ? `Bookmark $${h4(to)} saved` : `Bookmark added at $${h4(to)}: Ctrl+B shows the list`, 'ok');
   };
@@ -757,7 +785,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           log.push(res.stdout.trim());
           if (!res.outputs.length) log.push('', `KickAss.jar was not run: ${res.problems.map(p => p.message).join('; ')}`, 'Verified with the built-in assembler only.');
           else {
-            const compared = res.outputs.slice(0, R.fileNames.length).map((o, i) => { const c = comparePrg(snapshot.files[i], o.prg, R.excluded.filter(x => x.file === i)); return { entry: o.entry, ok: o.ok && c.ok, same: c.same, total: c.total, excluded: c.excluded, prgPath: o.prgPath, vsPath: o.vsPath, prg: o.prg, diffs: c.diffs }; });
+            const compared = res.outputs.slice(0, R.fileNames.length).map((o, i) => { const c = comparePrg(snapshot.files[i], o.prg, R.excluded.filter(x => x.file === i).map(x => ({ start: spaceAddr(x.start), end: spaceAddr(x.start) + x.end - x.start }))); return { entry: o.entry, ok: o.ok && c.ok, same: c.same, total: c.total, excluded: c.excluded, prgPath: o.prgPath, vsPath: o.vsPath, prg: o.prg, diffs: c.diffs }; });
             const co = cs ? res.outputs[R.fileNames.length] : undefined;
             const kickCart = cs ? checkCart(cs.output, co?.ok ? co.prg : null, co && !co.ok ? [`${cs.entry} did not assemble`] : [], co?.prgPath) : null;
             kick = { ok: res.ok && compared.every(c => c.ok) && (!kickCart || kickCart.ok), dir: w.dir, problems: res.problems, compared, cart: kickCart };
@@ -1304,7 +1332,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             d.patches = d.patches.filter(p => d.files.some(f => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length));
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
-          cart={crt} onOpenBank={(bank, add) => { openBank(bank, add); setDrawer(null); }}
+          cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
           disk={disk} packing={packing} onMount={() => void mountDisk()} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? { addr: bmEdit, cursorAt: lineAddr() ?? null, onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); }, onPreview: a => navigate(a, { center: true, listing: true, noHistory: true }) } : null}
@@ -1356,7 +1384,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           <ErrorBoundary>
             {tab === 'listing' && <>
               {welcome && <div className="welcome">
-                <div><b>{project.files.map(f => f.name).join(', ')}</b> is analysed: {A.blocks.length} blocks, {A.labels.size} labels, {A.music.length ? 'SID music, ' : ''}{A.gfx.length ? `${A.gfx.length} graphics block${A.gfx.length > 1 ? 's' : ''}, ` : ''}{A.stats.illegal} undocumented opcodes.</div>
+                <div><b>{project.cart && A.spaces ? `${project.cart.name} (${A.spaces.length} banks)` : project.files.map(f => f.name).join(', ')}</b> is analysed: {A.blocks.length} blocks, {A.labels.size} labels, {A.music.length ? 'SID music, ' : ''}{A.gfx.length ? `${A.gfx.length} graphics block${A.gfx.length > 1 ? 's' : ''}, ` : ''}{A.stats.illegal} undocumented opcodes.</div>
                 <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
                 <button className="icon-btn" aria-label="Dismiss" onClick={() => setUi({ welcome: false })}><Icon name="x" size={14} /></button>
               </div>}
@@ -1382,13 +1410,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath || `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} />}
               {tab === 'spec' && <SpecView />}
-              {tab === 'gfx' && <MemoryGfx A={A} R={R} cursor={cursor} sel={sel}
-                onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s, anchorEnd: e }); setCursor(s); }} onClear={() => setSel(null)}
-                onMark={(id, r) => mark(id, r)} onShow={a => navigate(a, { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />}
-              {tab === 'mem' && <MemoryDump A={A} R={R} cursor={cursor} sel={sel}
-                onCursor={a => { navigate(a, { noHistory: true }); setSel({ start: a, end: a + 1, multi: false, anchor: a, anchorEnd: a + 1 }); }}
-                onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s, anchorEnd: e }); setCursor(s); }} onClear={() => setSel(null)}
-                onMark={(id, r) => mark(id, r)} onShow={a => navigate(a, { center: true, listing: true })} onCopy={t => void copyText(t)} />}
+              {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel}
+                onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
+                onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />}
+              {tab === 'mem' && <MemoryDump A={As} R={Rs} cursor={vCursor} sel={vSel}
+                onCursor={a => { const g = inBank(a); navigate(g, { noHistory: true }); setSel({ start: g, end: g + 1, multi: false, anchor: g, anchorEnd: g + 1 }); }}
+                onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
+                onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onCopy={t => void copyText(t)} />}
             </Suspense>
           </ErrorBoundary>
         </div>
@@ -1416,20 +1444,21 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       <Splitter dir="v" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, insp: Math.max(260, Math.min(520, useUi.getState().sizes.insp - d)) } })} />
       <aside className="insp-col"><ErrorBoundary>
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
+          bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
           onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
 
-      <StatusBar A={A} fileCount={project.files.length} cursor={cursor} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} cycles={path && path.instructions ? path.total : null}
+      <StatusBar A={A} fileCount={project.files.length} cursor={cursor} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} cycles={path && path.instructions ? path.total : null}
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null} />
 
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
       {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, or a .d64 to mount it</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {modal === 'settings' && <SettingsModal settings={S} desktop={!!kr} onSave={s => void saveSettings(s)} onClose={() => setModal(null)} />}
-      {modal === 'goto' && <GotoModal R={R} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
+      {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}

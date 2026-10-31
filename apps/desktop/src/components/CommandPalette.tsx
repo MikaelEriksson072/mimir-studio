@@ -22,11 +22,12 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   );
 }
 
-export function GotoModal({ R, onGo, onSelect, onClose }: { R: RenderResult; onGo: (a: Addr) => void; onSelect: (start: Addr, end: Addr) => void; onClose: () => void }) {
+/** `resolve`: an address without a bank in a cartridge's banks (13.9b) */
+export function GotoModal({ R, resolve, onGo, onSelect, onClose }: { R: RenderResult; resolve?: (a: Addr, bank: number | null) => Addr; onGo: (a: Addr) => void; onSelect: (start: Addr, end: Addr) => void; onClose: () => void }) {
   const [v, setV] = useState('');
   const [err, setErr] = useState('');
   const go = () => {
-    const t = parseGoto(v, name => { for (const [a, l] of R.labels) if (l.name === name) return a; return undefined; });
+    const t = parseGoto(v, name => { for (const [a, l] of R.labels) if (l.name === name) return a; return undefined; }, resolve);
     if ('error' in t) setErr(t.error);
     else if ('addr' in t) onGo(t.addr);
     else onSelect(t.start, t.end);

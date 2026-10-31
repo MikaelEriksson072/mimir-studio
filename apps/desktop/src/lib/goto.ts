@@ -6,13 +6,17 @@ export type GotoTarget = { addr: Addr } | { start: Addr; end: Addr } | { error: 
 
 export const GOTO_HELP = 'Enter a hex address like $0810, a range like $2000-$27ff, or an existing label name.';
 
-export function parseGoto(text: string, labelAddr: (name: string) => Addr | undefined): GotoTarget {
+/**
+ * `resolve`: an address of a cartridge with banks (13.9b), "3:8000" giving the bank; without one, the bank the cursor
+ * is in when it has the address, else the first that has it. Labels are where they are.
+ */
+export function parseGoto(text: string, labelAddr: (name: string) => Addr | undefined, resolve: (a: Addr, bank: number | null) => Addr = a => a): GotoTarget {
   const one = (s: string): Addr | undefined => {
     const t = s.trim();
     const l = labelAddr(t);
     if (l != null) return l;
-    const m = t.match(/^(?:\$|0x)?([0-9a-fA-F]{1,4})$/);
-    return m ? parseInt(m[1], 16) : undefined;
+    const m = t.match(/^(?:(\d{1,3}):)?(?:\$|0x)?([0-9a-fA-F]{1,4})$/);
+    return m ? resolve(parseInt(m[2], 16), m[1] != null ? +m[1] : null) : undefined;
   };
   const s = text.trim();
   const a = one(s);

@@ -34,15 +34,17 @@ export { makePsid, parsePsid } from './c64/psid';
 export { artStudioPicture, ART_STUDIO_LOAD, BITMAP_SIZE, gfxSource, koalaPicture, KOALA_LOAD, SCREEN_SIZE, type GfxFileColors, type GfxFileKind } from './c64/gfxfiles';
 export type { PsidInfo } from './c64/psid';
 
-export { analyze, findBlock } from './analyze';
+export { findBlock } from './analyze';
+// a cartridge's banks analysed, rendered and verified as spaces of their own (13.9b); one space goes to the engine as it is
+export { analyze, bankAddr, fileSpaces, type SpaceCache, render, SPACE, spaceAddr, spaceFiles, spaceLines, spaceOf, spaceRender, spaceView, splitProject, verify } from './spaces';
 export { spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript } from './analyze/spindle';
-export { render, validLabel, type RenderOptions } from './render/kick';
+export { validLabel, type RenderOptions } from './render/kick';
 export { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';
 export type { LineTextSettings } from './render/lines';
 export { hardwareInclude } from './render/include';
 
 export { assemble } from './verify/kick-subset-assembler';
-export { verify, comparePrg } from './verify/verify';
+export { comparePrg } from './verify/verify';
 export { parseKickOutput } from './verify/kick-output';
 
 export { DEMO_FONT, makeDemo } from './demo';
@@ -51,7 +53,7 @@ export { makeShowcase, showcaseProject, type ShowcaseProgram } from './showcase'
 export { FORMATTABLE, formatOverride, lineMove, markIdOf, mergeOverride, mergeRange, moveBlockKeys, moveBytes, type BlockMerge, type ByteMove, type RangeMerge } from './edit';
 export { createProject, demoProject, serializeProject, deserializeProject, projectNameFor, withId, newId, b64enc, b64dec } from './project';
 export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles, expectedCartridge, readme, projectScripts, projectTextFiles, exportFiles, type CartBuild } from './export';
-export { applyPatch, assemblePatch, patchAt, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';
+export { applyPatch, assemblePatch, patchAt, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, projectUnpatched, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';
 export { NOTES_FILE, NOTES_TEXT_FILE, notesDocument, notesExport, notesFile, notesFor, notesText, lineHtml } from './notes-doc';
 export { detectPacking, packerSignature, type PackingInfo } from './packing';
 export { conclusive, depackers, depackerText, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun } from './sindri';

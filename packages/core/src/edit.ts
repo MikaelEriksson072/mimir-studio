@@ -153,7 +153,7 @@ export interface RangeMerge {
 export function mergeRange(A: AnalysisResult, start: Addr, end: Addr, id: string, from?: Block | null): RangeMerge | { error: string } {
   const m = MARK_AS.find(x => x.id === id);
   if (!m) return { error: `unknown block type "${id}"` };
-  if (!(start >= 0 && end <= 0x10000 && start < end)) return { error: 'the end must come after the start' };
+  if (!(start >= 0 && end <= A.owner.length && start < end)) return { error: 'the end must come after the start' };
   const file = A.owner[start];
   if (file < 0) return { error: `$${h4(start)} is not part of any loaded file` };
   for (let a = start; a < end; a++) if (A.owner[a] !== file) return { error: `$${h4(start)}-$${h4(end - 1)} ${A.owner[a] < 0 ? `runs past the end of the file at $${h4(a)}` : `crosses into another file at $${h4(a)}`}` };

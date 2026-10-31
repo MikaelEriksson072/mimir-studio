@@ -2,7 +2,7 @@
  * Kick-subset assembler at the range's start, with the program's labels, zero-page variables and the hardware
  * symbols at hand, and written over the bytes of the file that holds the range. A patch keeps the bytes it wrote
  * over, so it can be edited, switched off and removed again, and it can be saved as a PRG file of its own. */
-import type { Addr, AnalysisResult, LoadedFile, Patch, PatchFill, Project, RenderResult, Settings } from './types';
+import type { Addr, AnalysisResult, Cartridge, FileInput, LoadedFile, Patch, PatchFill, Project, RenderResult, Settings } from './types';
 import { assemble } from './verify/kick-subset-assembler';
 import { hardwareInclude } from './render/include';
 import { makePrg } from './c64/prg';
@@ -10,6 +10,15 @@ import { newId } from './project';
 import { h2, h4 } from './util/hex';
 import { cycleText, instructionCycles } from './cpu/cycles';
 import { OPC } from './cpu/opcodes';
+import { fileSpaces } from './spaces';
+
+/** which files a patch can be written in: those of the bank the C64 starts in, where a cartridge's banks share
+ *  addresses (13.9b); every file without banks */
+export type PatchFiles = (i: number) => boolean;
+const patchFiles = (project: { files: readonly FileInput[]; cart?: Cartridge | null }): PatchFiles | undefined => {
+  const l = fileSpaces(project);
+  return l ? i => l.spaces[i] === 0 : undefined;
+};
 
 const NOP = 0xea;
 
@@ -95,8 +104,8 @@ export const patchFileName = (name: string, ext: 'prg' | 'asm' = 'prg'): string 
 export const patchPrg = (p: Pick<Patch, 'start' | 'bytes'>): Uint8Array => makePrg(p.start, p.bytes);
 
 /** the last file (as the analysis reads them, later files over earlier ones) that holds start..end whole */
-function fileIndex(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], start: Addr, end: Addr): number {
-  for (let i = files.length - 1; i >= 0; i--) { const f = files[i]; if (start >= f.load && end <= f.load + f.bytes.length) return i; }
+function fileIndex(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], start: Addr, end: Addr, ok?: PatchFiles): number {
+  for (let i = files.length - 1; i >= 0; i--) { const f = files[i]; if ((!ok || ok(i)) && start >= f.load && end <= f.load + f.bytes.length) return i; }
   return -1;
 }
 
@@ -108,25 +117,29 @@ function writeAt<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F
   return files.map((g, j) => (j === i ? { ...g, bytes: b } : g));
 }
 
-/** `files` with the patch written over them */
-export const applyPatch = <F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes'>): F[] =>
-  writeAt(files, fileIndex(files, p.start, patchEnd(p)), p.start, p.bytes);
+/** `files` with the patch written over them (`ok`: the files it can be in) */
+export const applyPatch = <F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes'>, ok?: PatchFiles): F[] =>
+  writeAt(files, fileIndex(files, p.start, patchEnd(p), ok), p.start, p.bytes);
 
 /** `files` with the bytes the patch wrote over back, in the file that holds the patch (a file added later over the
  *  same addresses is left alone) */
-export function revertPatch<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes' | 'old'>): F[] {
-  const holds = (f: F) => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length && p.bytes.every((b, k) => f.bytes[p.start - f.load + k] === b);
+export function revertPatch<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes' | 'old'>, ok?: PatchFiles): F[] {
+  const holds = (f: F, i: number) => (!ok || ok(i)) && p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length && p.bytes.every((b, k) => f.bytes[p.start - f.load + k] === b);
   let i = files.length - 1;
-  while (i >= 0 && !holds(files[i])) i--;
-  return writeAt(files, i >= 0 ? i : fileIndex(files, p.start, patchEnd(p)), p.start, p.old);
+  while (i >= 0 && !holds(files[i], i)) i--;
+  return writeAt(files, i >= 0 ? i : fileIndex(files, p.start, patchEnd(p), ok), p.start, p.old);
 }
 
 /** The files as they were loaded, every patch that is on taken out (the newest first). */
-export function unpatchedFiles<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], patches: readonly Pick<Patch, 'start' | 'bytes' | 'old' | 'off'>[]): F[] {
+export function unpatchedFiles<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], patches: readonly Pick<Patch, 'start' | 'bytes' | 'old' | 'off'>[], ok?: PatchFiles): F[] {
   let out = [...files];
-  for (const p of patchesOn(patches).reverse()) out = revertPatch(out, p);
+  for (const p of patchesOn(patches).reverse()) out = revertPatch(out, p, ok);
   return out;
 }
+
+/** unpatchedFiles of a project, in the files of its bank 0 when it has a cartridge's banks */
+export const projectUnpatched = <F extends FileInput>(project: { files: readonly F[]; patches?: readonly Patch[]; cart?: Cartridge | null }): F[] =>
+  unpatchedFiles(project.files, project.patches ?? [], patchFiles(project));
 
 /** the names the code defines itself (labels, .label/.const/.var): the program's own of those names are left out */
 function ownNames(source: string): Set<string> {
@@ -197,8 +210,11 @@ export function assemblePatch(R: Pick<RenderResult, 'labels' | 'zp'>, settings: 
  * that holds the range, it may only write past the range with `over`, and it may not touch another patch (one that
  * is switched off keeps its range). A shorter code leaves the rest of the range to the fill.
  */
-export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'zp'>, project: Pick<Project, 'files' | 'patches'> & { settings: Pick<Settings, 'hexCase'> }, req: PatchRequest): PatchPlan | PatchError {
+export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'zp'>, project: Pick<Project, 'files' | 'patches'> & Partial<Pick<Project, 'cart'>> & { settings: Pick<Settings, 'hexCase'> }, req: PatchRequest): PatchPlan | PatchError {
+  const ok = patchFiles(project);
   const { start, end } = req;
+  // a patch is written in the bank the C64 starts in or in a project of one space (13.9b)
+  if (start >= 0x10000) return { error: 'Patches can only be written in bank 0 of a cartridge so far.' };
   if (!(start >= 0 && start < end && end <= 0x10000)) return { error: 'The range is empty.' };
   const asm = assemblePatch(R, project.settings, start, req.source);
   let time: PatchTime | undefined;
@@ -212,8 +228,8 @@ export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'z
   const len = req.fill === 'nop' ? Math.max(n, size) : n;
   // the bytes it writes over: as loaded, the patch being edited taken out first (when it is on)
   const edited = req.id ? project.patches.find(p => p.id === req.id) : undefined;
-  const base = edited && !edited.off ? revertPatch(project.files, edited) : project.files;
-  if (req.cycles) time = patchTime(base, req, asm);
+  const base = edited && !edited.off ? revertPatch(project.files, edited, ok) : project.files;
+  if (req.cycles) time = patchTime(base, req, asm, ok);
 
   if (!name) return fail('Give the patch a name.');
   if (project.patches.some(p => p.id !== req.id && p.name.trim().toLowerCase() === name.toLowerCase())) return fail(`There is already a patch called "${name}".`);
@@ -235,7 +251,7 @@ export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'z
 
   const bytes = new Uint8Array(len).fill(NOP);
   bytes.set(asm.code);
-  const f = base[fileIndex(base, start, start + len)];
+  const f = base[fileIndex(base, start, start + len, ok)];
   if (!f) return fail(`$${h4(start)}-$${h4(start + len - 1)} is not inside one loaded file.`);
   const old = f.bytes.slice(start - f.load, start - f.load + len);
   // with `keep` the bytes after the code stay as they are: the patch writes only the code
@@ -252,9 +268,9 @@ const MODE_TEXT: Record<string, string> = { abx: ' $xxxx,x', aby: ' $xxxx,y', iz
  * fill (with `keep`, the original's bytes after the code). An instruction whose time varies may only be one the
  * original has (the same opcode, varying the same way), and each of the original's must be there.
  */
-function patchTime(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], req: PatchRequest, asm: PatchCode): PatchTime | undefined {
+function patchTime(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], req: PatchRequest, asm: PatchCode, ok?: PatchFiles): PatchTime | undefined {
   const { start, end } = req, n = asm.code.length, len = req.fill === 'nop' ? Math.max(n, end - start) : n;
-  const f = files[fileIndex(files, start, end)];
+  const f = files[fileIndex(files, start, end, ok)];
   if (!f) return undefined;
   const span = Math.min(Math.max(end, start + len), f.load + f.bytes.length);
   const original = f.bytes.slice(start - f.load, span - f.load);
@@ -308,24 +324,24 @@ export function patchSource(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pi
 }
 
 /** The project with the patch added or edited: written over the files when it is on (an edited one keeps on or off). */
-export function withPatch<P extends Pick<Project, 'files' | 'patches'>>(project: P, patch: Patch): Pick<Project, 'files' | 'patches'> {
-  const was = project.patches.find(p => p.id === patch.id);
-  const base = was && !was.off ? revertPatch(project.files, was) : project.files;
-  return { files: patch.off ? base : applyPatch(base, patch), patches: was ? project.patches.map(p => (p.id === patch.id ? patch : p)) : [...project.patches, patch] };
+export function withPatch<P extends Pick<Project, 'files' | 'patches'> & Partial<Pick<Project, 'cart'>>>(project: P, patch: Patch): Pick<Project, 'files' | 'patches'> {
+  const was = project.patches.find(p => p.id === patch.id), ok = patchFiles(project);
+  const base = was && !was.off ? revertPatch(project.files, was, ok) : project.files;
+  return { files: patch.off ? base : applyPatch(base, patch, ok), patches: was ? project.patches.map(p => (p.id === patch.id ? patch : p)) : [...project.patches, patch] };
 }
 
 /** The project without the patch: the bytes it wrote over are back. */
-export function withoutPatch<P extends Pick<Project, 'files' | 'patches'>>(project: P, id: string): Pick<Project, 'files' | 'patches'> {
+export function withoutPatch<P extends Pick<Project, 'files' | 'patches'> & Partial<Pick<Project, 'cart'>>>(project: P, id: string): Pick<Project, 'files' | 'patches'> {
   const p = project.patches.find(x => x.id === id);
   if (!p) return { files: project.files, patches: project.patches };
-  return { files: p.off ? project.files : revertPatch(project.files, p), patches: project.patches.filter(x => x.id !== id) };
+  return { files: p.off ? project.files : revertPatch(project.files, p, patchFiles(project)), patches: project.patches.filter(x => x.id !== id) };
 }
 
 /** The project with the patch switched on (its bytes written again) or off (the bytes it wrote over back); it stays
  *  in the list, and keeps its range. */
-export function switchPatch<P extends Pick<Project, 'files' | 'patches'>>(project: P, id: string, on: boolean): Pick<Project, 'files' | 'patches'> {
-  const p = project.patches.find(x => x.id === id);
+export function switchPatch<P extends Pick<Project, 'files' | 'patches'> & Partial<Pick<Project, 'cart'>>>(project: P, id: string, on: boolean): Pick<Project, 'files' | 'patches'> {
+  const p = project.patches.find(x => x.id === id), ok = patchFiles(project);
   if (!p || !p.off === on) return { files: project.files, patches: project.patches };
   const { off: _, ...q } = p;
-  return { files: on ? applyPatch(project.files, p) : revertPatch(project.files, p), patches: project.patches.map(x => (x.id === id ? (on ? q : { ...q, off: true }) : x)) };
+  return { files: on ? applyPatch(project.files, p, ok) : revertPatch(project.files, p, ok), patches: project.patches.map(x => (x.id === id ? (on ? q : { ...q, off: true }) : x)) };
 }

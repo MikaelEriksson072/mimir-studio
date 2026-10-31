@@ -60,6 +60,15 @@ export function occurrences(rows: ListingRow[], name: string): number {
   return rows.reduce((n, r) => n + (r.text.match(re)?.length ?? 0), 0);
 }
 
+/** The side panel's section `name` (Files, Loaders, What to pack…), opened: every section is closed when the app starts. */
+export async function openSection(page: Page, name: string): Promise<Locator> {
+  const section = page.getByRole('region', { name, exact: true });
+  const toggle = section.locator('.sec-toggle');
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  return section;
+}
+
 /** G opens "Go to address, label or range"; Enter jumps there, or selects the range ("$2000-$27ff"). */
 export async function goTo(page: Page, target: string): Promise<void> {
   await page.keyboard.press('g');
