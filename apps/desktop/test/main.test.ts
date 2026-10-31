@@ -16,13 +16,15 @@ import { buildWithKickAssembler, keepPacked, packWithBrokkr, packWithExomizer } 
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
 import { charRomFiles, readCharRom } from '../electron/main/chargen';
+import { createProjectFolder, gatherWork, homeOf, isOwnTemp, ProjectStore, RECENT_PROJECTS } from '../electron/main/projects';
+import { projectNameOf, projectNameProblem } from '../shared/projects';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
 const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'settings:get', 'settings:set', 'terminal:open', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen'].sort());
   });
 });
 
@@ -438,6 +440,94 @@ describe('RecentFolders', () => {
   });
 });
 
+describe('projects', () => {
+  it('check a name the way Windows takes a folder name', () => {
+    expect(projectNameProblem('raster demo')).toBeNull();
+    expect(projectNameProblem('my-demo_2')).toBeNull();
+    for (const bad of ['', '   ', 'a:b', 'a/b', 'a\\b', 'what?', 'end.', 'CON', 'lpt1', 'nul.txt', 'x'.repeat(81)]) expect(projectNameProblem(bad), bad).not.toBeNull();
+    expect(projectNameOf(join('C:', 'p', 'raster', 'raster.mimir.json'))).toBe('raster');
+    expect(projectNameOf('old.json')).toBe('old');
+  });
+
+  it('remember what was worked on last and the projects opened last, for the next start', () => {
+    const store = tmp(), docs = tmp(), a = tmp(), b = tmp();
+    const p = new ProjectStore(store, docs);
+    expect(p.start()).toEqual({ last: null, resume: null, recent: [], parent: join(docs, 'Mimir') });
+    const ha = homeOf(join(a, 'a.mimir.json')), hb = homeOf(join(b, 'b.mimir.json'));
+    writeFileSync(ha.file, '{}');
+    p.enter(ha);
+    p.enter(hb);
+    p.enter(ha);
+    expect(p.current).toEqual(ha);
+    // a reloaded window goes on with it; the next start offers it
+    expect(p.start()).toMatchObject({ last: { kind: 'project', home: ha, exists: true }, resume: { kind: 'project', home: ha } });
+    const again = new ProjectStore(store, docs);
+    expect(again.start()).toMatchObject({ last: { kind: 'project', home: ha, exists: true }, resume: null });
+    expect(again.recent().map(r => [r.name, r.exists])).toEqual([['a', true], ['b', false]]);
+    expect(again.isRecent(hb.file.toUpperCase())).toBe(true);
+    expect(again.isRecent(join(a, 'other.mimir.json'))).toBe(false);
+    again.unsaved();
+    expect(again.current).toBeNull();
+    expect(again.start()).toMatchObject({ last: { kind: 'unsaved' }, resume: { kind: 'unsaved' } });
+    expect(again.forget(hb.file).map(r => r.name)).toEqual(['a']);
+    for (let i = 0; i < RECENT_PROJECTS + 3; i++) again.enter(homeOf(join(a, `p${i}`, `p${i}.mimir.json`)));
+    expect(again.recent()).toHaveLength(RECENT_PROJECTS);
+    // where new projects go: the documents folder's Mimir, else where the last one went (while it is there)
+    again.rememberParent(b);
+    expect(new ProjectStore(store, docs).parent()).toBe(b);
+    again.rememberParent(join(b, 'gone'));
+    expect(new ProjectStore(store, docs).parent()).toBe(join(docs, 'Mimir'));
+    writeFileSync(join(store, 'projects.json'), '{ not json');
+    expect(new ProjectStore(store, docs).start()).toMatchObject({ last: null, recent: [] });
+  });
+
+  it('give the project of this run its folders for the export, the build and the packed file', () => {
+    const p = new ProjectStore(tmp(), tmp()), dir = tmp();
+    expect(p.folder('build')).toBeNull();
+    p.enter(homeOf(join(dir, 'x.mimir.json')));
+    expect(p.folder('source')).toBe(join(dir, 'source'));
+    expect([existsSync(join(dir, 'source')), existsSync(join(dir, 'build'))]).toEqual([true, false]);
+  });
+
+  it("make a project's folder, never over a project of that name", async () => {
+    const parent = tmp();
+    const home = await createProjectFolder(parent, ' raster ');
+    expect(home).toEqual({ name: 'raster', dir: join(parent, 'raster'), file: join(parent, 'raster', 'raster.mimir.json') });
+    expect(existsSync(home.dir)).toBe(true);
+    writeFileSync(home.file, '{}');
+    await expect(createProjectFolder(parent, 'raster')).rejects.toThrow(/There is a project called raster/);
+    await expect(createProjectFolder(parent, 'a|b')).rejects.toThrow(/cannot have/);
+    // a folder that is there without a project in it takes one
+    mkdirSync(join(parent, 'empty'));
+    expect((await createProjectFolder(parent, 'empty')).dir).toBe(join(parent, 'empty'));
+  });
+
+  it("move the work without a project into it: the export copied, the app's own build and pack folders moved", async () => {
+    const home = await createProjectFolder(tmp(), 'moved');
+    const exportDir = join(tmp(), 'export');
+    mkdirSync(exportDir);
+    writeFileSync(join(exportDir, 'main.asm'), '; mine');
+    mkdirSync(join(exportDir, 'include'));
+    writeFileSync(join(exportDir, 'include', 'hw.asm'), '; hw');
+    const buildDir = mkdtempSync(join(tmpdir(), 'mimir-build-'));
+    writeFileSync(join(buildDir, 'main.prg'), new Uint8Array([1, 8, 96]));
+    const packDir = mkdtempSync(join(tmpdir(), 'mimir-pack-'));
+    writeFileSync(join(packDir, 'main-exo.prg'), new Uint8Array([1, 8, 0]));
+    expect([isOwnTemp(buildDir), isOwnTemp(exportDir), isOwnTemp(join(buildDir, 'sub'))]).toEqual([true, false, false]);
+
+    const moved = await gatherWork(home, { exportDir, buildDir, packed: join(packDir, 'main-exo.prg') });
+    expect(moved).toEqual({ source: join(home.dir, 'source'), build: join(home.dir, 'build'), packed: join(home.dir, 'packed', 'main-exo.prg') });
+    expect(readFileSync(join(home.dir, 'source', 'include', 'hw.asm'), 'utf8')).toBe('; hw');
+    expect([...readFileSync(join(home.dir, 'build', 'main.prg'))]).toEqual([1, 8, 96]);
+    expect(existsSync(moved.packed!)).toBe(true);
+    // the folder the user picked stays; the app's own temp folders are gone
+    expect(existsSync(join(exportDir, 'main.asm'))).toBe(true);
+    expect([existsSync(buildDir), existsSync(packDir)]).toEqual([false, false]);
+    // nothing to move: nothing moves
+    expect(await gatherWork(await createProjectFolder(tmp(), 'empty'), {})).toEqual({});
+  });
+});
+
 describe('settings from before the rename', () => {
   it('come along once from the old folder into the app\'s own, not into a profile of its own', () => {
     const appData = tmp(), old = join(appData, '@kickreasm', 'desktop'), now = join(appData, '@mimir', 'desktop');
@@ -468,6 +558,14 @@ describe('project files', () => {
     expect(back.files[0].bytes).toEqual(p.files[0].bytes);
     expect(back.labels).toEqual({ 2064: 'main' });
     expect(JSON.parse(readFileSync(path, 'utf8')).format).toBe('mimir-project');
+  });
+
+  it('saves and opens a new project, which has no files yet', async () => {
+    const path = join(tmp(), 'new.mimir.json');
+    const p = createProject({ name: 'new', files: [] });
+    expect(projectSchema.safeParse(p).success).toBe(true);
+    await writeProjectFile(path, p);
+    expect(await readProjectFile(path)).toMatchObject({ name: 'new', files: [] });
   });
 
   it('opens a project saved before the rename (KickReasm Studio, .krproj.json), and saves it as Mimir Studio does', async () => {

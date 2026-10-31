@@ -95,8 +95,9 @@ export const serializedProjectSchema = z.object({
   format: z.enum(['mimir-project', LEGACY_PROJECT_FORMAT]),
   version: z.literal(1),
   name: z.string().max(255).default('project'),
-  // project files from before snapshots were kept have no vsf; a chip of the cartridge says which
-  files: z.array(z.object({ name: fileName, load: addr, data: z.string(), vsf: z.string().optional(), chip: chip.optional() })).min(1).max(1024),
+  // project files from before snapshots were kept have no vsf; a chip of the cartridge says which; a new project has
+  // no files until one is opened in it
+  files: z.array(z.object({ name: fileName, load: addr, data: z.string(), vsf: z.string().optional(), chip: chip.optional() })).max(1024),
   overrides: z.array(overrideSchema).max(100000).default([]),
   entries: z.array(at).max(65536).default([]),
   // project files from before the program start could be set have none
@@ -129,7 +130,7 @@ export const projectSchema = z.object({
   format: z.literal('mimir-project'),
   version: z.literal(1),
   name: z.string().max(255),
-  files: z.array(z.object({ id: z.string().max(64), name: fileName, load: addr, bytes: z.instanceof(Uint8Array), vsf: z.instanceof(Uint8Array).optional(), chip: chip.optional() })).min(1).max(1024),
+  files: z.array(z.object({ id: z.string().max(64), name: fileName, load: addr, bytes: z.instanceof(Uint8Array), vsf: z.instanceof(Uint8Array).optional(), chip: chip.optional() })).max(1024),
   overrides: z.array(overrideSchema).max(100000),
   entries: z.array(at).max(65536),
   entryPoint: at.nullable(),
@@ -150,6 +151,14 @@ export const projectSchema = z.object({
 
 export const projectOpenSchema = z.object({ path: z.string().max(4096).optional() }).default({});
 export const projectSaveSchema = z.object({ project: projectSchema, path: z.string().max(4096).optional() });
+/** a new project's folder (its name is checked again where the folder is made) and the work that moves into it */
+export const projectCreateSchema = z.object({
+  name: z.string().min(1).max(80),
+  parent: z.string().min(1).max(4096),
+  project: projectSchema,
+  gather: z.object({ exportDir: z.string().max(4096), buildDir: z.string().max(4096), packed: z.string().max(4096) }).partial().strict().optional(),
+});
+export const projectForgetSchema = z.object({ file: z.string().min(1).max(4096) }).strict();
 /** `zeroPage`: VICE snapshots open from $0002 (zero page and stack included) */
 export const prgOpenSchema = z.object({ paths: z.array(z.string().max(4096)).max(64).optional(), zeroPage: z.boolean().optional() }).default({});
 export const diskOpenSchema = z.object({ path: z.string().max(4096).optional() }).default({});
@@ -158,7 +167,7 @@ export const terminalOpenSchema = z.object({ dir: z.string().min(1).max(4096).op
 export const unpackSchema = z.object({ name: fileName, prg: z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG') });
 export const exportWriteSchema = z.object({
   dir: z.string().max(4096).optional(),
-  target: z.enum(['pick', 'temp']).optional(),
+  target: z.enum(['pick', 'temp', 'project', 'build']).optional(),
   name: z.string().max(64).regex(/^[A-Za-z0-9_-]*$/).optional(),
   files: z.record(z.string().min(1).max(512), z.union([z.string(), z.instanceof(Uint8Array)])),
 }).refine(r => !!r.dir !== !!r.target, 'give either dir or target');

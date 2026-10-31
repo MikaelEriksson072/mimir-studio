@@ -12,7 +12,7 @@ import {
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
-import { useProject } from './store/project';
+import { forgetUnsavedWork, useProject } from './store/project';
 import { useUi, type Activity } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
@@ -40,8 +40,9 @@ import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
 import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { CreateProjectModal, StartScreen } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
-import type { IdentifyResponse, OpenedPrg, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
+import type { IdentifyResponse, OpenedPrg, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
@@ -59,25 +60,45 @@ function extendSel(s: Sel | null, from: Range | null, r: Range): Sel {
   return { start: Math.min(a0, r.start), end: Math.max(a1, r.end), multi: true, anchor: a0, anchorEnd: a1 };
 }
 
+/** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
+type Note = { text: string; n: number };
+
 export function App() {
-  const project = useProject(s => s.present);
   const theme = useUi(s => s.theme);
+  useEffect(() => { const root = document.documentElement; root.dataset.theme = theme; root.dataset.resolved = theme; }, [theme]);
+  // the desktop app starts with the start screen (a project, or work without one); `resume`: a reloaded window goes on
+  // with what it worked on
+  const [startScreen, setStartScreen] = useState<{ resume: boolean } | null>(kr ? { resume: true } : null);
+  const [note, setNote] = useState<Note | null>(null);
+  if (startScreen) return <StartScreen resume={startScreen.resume} onStarted={text => { setNote(text ? { text, n: Date.now() } : null); setStartScreen(null); }} />;
+  return <Studio note={note} onStartScreen={() => setStartScreen({ resume: false })} />;
+}
+
+function Studio({ note, onStartScreen }: { note: Note | null; onStartScreen: () => void }) {
+  const project = useProject(s => s.present);
   const dataAsCode = useUi(s => s.dataAsCode);
   const { analysis, error, busy } = useAnalysis(project, { dataAsCode });
   const [toolchain, setToolchain] = useState<ToolchainSettings>(() => pickToolchain(project.settings));
   useEffect(() => { if (kr) kr.getSettings().then(setToolchain).catch(() => { /* keep project defaults */ }); }, []);
-  useEffect(() => { const root = document.documentElement; root.dataset.theme = theme; root.dataset.resolved = theme; }, [theme]);
 
   if (!analysis) return <div className="boot">{error ? `Analysis failed: ${error}` : 'Analysing…'}</div>;
-  return <Workspace A={analysis.A} R={analysis.R} aKey={analysis.aKey} renderMs={analysis.renderMs} rProject={analysis.project} busy={busy} toolchain={toolchain} setToolchain={setToolchain} />;
+  return <Workspace A={analysis.A} R={analysis.R} aKey={analysis.aKey} renderMs={analysis.renderMs} rProject={analysis.project} busy={busy} toolchain={toolchain} setToolchain={setToolchain} note={note} onStartScreen={onStartScreen} />;
 }
 
-interface WorkspaceProps { A: AnalysisResult; R: RenderResult; aKey: number; renderMs: number; /** the project A and R were computed for */ rProject: Project; busy: boolean; toolchain: ToolchainSettings; setToolchain: (t: ToolchainSettings) => void }
+interface WorkspaceProps {
+  A: AnalysisResult; R: RenderResult; aKey: number; renderMs: number; /** the project A and R were computed for */ rProject: Project; busy: boolean; toolchain: ToolchainSettings; setToolchain: (t: ToolchainSettings) => void;
+  note: Note | null;
+  /** back to the start screen (the project's work is saved first) */
+  onStartScreen: () => void;
+}
 
-function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolchain }: WorkspaceProps) {
+/** `p` in `to` instead of `from`, when it is in `from` */
+const rebase = <T extends string | null | undefined>(p: T, from: string, to: string): T => (p && p.startsWith(from) ? `${to}${p.slice(from.length)}` as T : p);
+
+function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolchain, note, onStartScreen }: WorkspaceProps) {
   const project = useProject(s => s.present);
-  const past = useProject(s => s.past), future = useProject(s => s.future), projectPath = useProject(s => s.path);
-  const { update, replace, undo, redo, setPath } = useProject.getState();
+  const past = useProject(s => s.past), future = useProject(s => s.future), home = useProject(s => s.home);
+  const { update, replace, undo, redo, enter, setHome } = useProject.getState();
   /** analysis settings from the project, toolchain paths from the app */
   const S: Settings = useMemo(() => ({ ...A.S, ...toolchain }), [A.S, toolchain]);
   // the newest analysis, project and settings, for work that awaits (verify, build, export) and must not use a stale
@@ -100,7 +121,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'patch' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'patch' | 'project' | null>(null);
   /** the patch dialog's range and code */
   const [patchDraft, setPatchDraft] = useState<PatchDraft | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -113,6 +134,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [disk, setDisk] = useState<MountedDisk | null>(null);
   /** the folder of the last Kick Assembler export in this session (the terminal opens there) */
   const [exportDir, setExportDir] = useState<string | null>(null);
+  /** the files that export was of (their ids): it moves into a project made from the work only while they are the work's */
+  const exportedFiles = useRef<string | null>(null);
+  const filesOf = (p: Project) => p.files.map(f => f.id).join(',');
   /** the last unpack (shown above the listing with the layer report, or the external unpacker's output) */
   const [unpacked, setUnpacked] = useState<{ ok: boolean; title: string; output: string; label: string } | null>(null);
   /** the last pack, with Brokkr or Exomizer (the Pack view shows it) */
@@ -168,6 +192,42 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   const toast = useCallback((msg: string, kind: ToastKind = 'info') => { const id = uid(); setToasts(t => [...t.slice(-3), { id, msg, kind }]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); }, []);
   const needDesktop = () => { toast('This needs the desktop app (file system and toolchain access go through the Electron main process).', 'warn'); };
+  const noted = useRef(0);
+  useEffect(() => { if (note && note.n !== noted.current) { noted.current = note.n; toast(note.text, 'ok'); } }, [note, toast]);
+
+  /* ---- a project's work is saved to its project file as it changes (the work without a project: the store keeps it) ---- */
+  const pending = useRef<{ timer?: ReturnType<typeof setTimeout>; project?: Project; home?: ProjectHome }>({});
+  /** the change waiting to be saved, saved now */
+  const saveNow = useCallback(async () => {
+    const w = pending.current;
+    clearTimeout(w.timer);
+    pending.current = {};
+    if (!kr || !w.project || !w.home) return;
+    try { await kr.saveProject({ project: w.project, path: w.home.file }); } catch (e) { toast(`The project was not saved: ${errorText(e)}`, 'err'); }
+  }, [toast]);
+  const seen = useRef({ project, home });
+  useEffect(() => {
+    // an edit in the same project (not the project opened, nor the work just moved into one: that is on disk)
+    const was = seen.current;
+    seen.current = { project, home };
+    if (!home || was.home !== home || was.project === project) return;
+    clearTimeout(pending.current.timer);
+    pending.current = { project, home, timer: setTimeout(() => void saveNow(), 500) };
+  }, [project, home, saveNow]);
+  useEffect(() => {
+    const flush = () => void saveNow();
+    window.addEventListener('beforeunload', flush);
+    return () => { window.removeEventListener('beforeunload', flush); flush(); };
+  }, [saveNow]);
+  /** the work goes on without a project (the project's last change is saved first) */
+  const leaveProject = async () => {
+    if (!home) return;
+    await saveNow();
+    setHome(null);
+    setExportDir(null);
+    await kr?.workUnsaved();
+  };
+  const toStartScreen = async () => { await saveNow(); onStartScreen(); };
 
   const navigate = useCallback((addr: Addr, opts: NavOptions = {}) => {
     if (addr == null || addr < 0 || addr >= A.owner.length) return;
@@ -196,7 +256,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const cart = opened.find(f => f.cart)?.cart;
     if (cart && !(add && project.cart && project.cart.name === cart.name && project.cart.crt.length === cart.crt.length)) {
       const files: LoadedFile[] = opened.map(({ id, name, load, bytes, chip, cart: c }) => ({ id, name, load, bytes, ...(c === cart && chip != null ? { chip } : {}) }));
-      replace(createProject({ files, settings: project.settings, cart }), null, opts.undoLabel); resetView();
+      replace(createProject({ files, settings: project.settings, cart }), opts.undoLabel ?? (home ? `Open ${cart.name}` : undefined)); resetView();
       let what = '';
       try { what = `: ${describeCrt(parseCrt(cart.crt, cart.name))}`; } catch { /* the files say enough */ }
       const chips = files.filter(f => f.chip != null);
@@ -209,7 +269,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // a snapshot's BASIC SYS is the program start: its RAM from $0200 cannot be started with RUN
     const start = add ? undefined : opened.find(f => f.start != null)?.start;
     if (add) update(`Add ${files.map(f => f.name).join(', ')}`, d => { d.files.push(...files); for (const e of entries) if (!d.entries.includes(e)) d.entries.push(e); });
-    else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: project.settings }), entries, entryPoint: start ?? null }, null, opts.undoLabel); resetView(); }
+    // in a project the files it held come back with Ctrl+Z
+    else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: project.settings }), entries, entryPoint: start ?? null }, opts.undoLabel ?? (home ? `Open ${files.map(f => f.name).join(', ')}` : undefined)); resetView(); }
     if (opts.note) { toast(opts.note, 'ok'); return; }
     toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}`, 'ok');
   };
@@ -372,7 +433,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined): string => {
     const out = withId(parsePrg(`${f.name.replace(/\.prg$/i, '')}-unpacked.prg`, prg));
     const entry = start != null && start >= out.load && start < out.load + out.bytes.length ? start : null;
-    if (project.files.length === 1) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry }); resetView(); }
+    if (project.files.length === 1) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry }, home ? `Unpack ${f.name}` : undefined); resetView(); }
     else update(`Unpack ${f.name}`, d => {
       // a patch written over the packed file has nothing to stand on in the unpacked one
       const was = d.files[i];
@@ -420,14 +481,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   const openProject = async () => {
     if (!kr) return needDesktop();
-    try { const r = await kr.openProject(); if (r) { replace(r.project, r.path); resetView(); toast(`Opened project ${r.path}`, 'ok'); } } catch (e) { toast(errorText(e), 'err'); }
+    try {
+      await saveNow();
+      const r = await kr.openProject();
+      if (r) { enter(r.project, r.home); resetView(); setExportDir(null); toast(`Opened the project ${r.home.name} (${r.home.dir})`, 'ok'); }
+    } catch (e) { toast(errorText(e), 'err'); }
   };
   const readDropped = async (list: FileList, add: boolean) => {
     const prgs: OpenedPrg[] = [];
     for (const f of Array.from(list)) {
       const buf = new Uint8Array(await f.arrayBuffer());
       try {
-        if (/\.json$/i.test(f.name)) { replace(deserializeProject(JSON.parse(new TextDecoder().decode(buf)) as SerializedProject)); resetView(); toast(`Opened project ${f.name}`, 'ok'); continue; }
+        // a project file dropped on the window: its folder is not known, so it is work without a project
+        if (/\.json$/i.test(f.name)) { const p = deserializeProject(JSON.parse(new TextDecoder().decode(buf)) as SerializedProject); await leaveProject(); replace(p); resetView(); toast(`Opened project ${f.name} as work without a project: Save creates a project from it`, 'ok'); continue; }
         if (/\.d64$/i.test(f.name)) { mountBytes(f.name, null, buf); continue; }
         // a cartridge image (known by its header): the chips of its boot bank, with the image
         if (isCrt(buf)) { const o = openCartridge(f.name, buf); prgs.push(...o.files.map(x => ({ ...withId(x), cart: o.cart }))); continue; }
@@ -772,6 +838,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   /** Built-in verifier in the worker, then (when configured) the real KickAss.jar in a temp build folder. */
   const runVerify = async (opts: { quiet?: boolean } = {}): Promise<BuildState | null> => {
+    if (!latest.current.project.files.length) { toast('The project has no files yet: open a PRG, a snapshot or a cartridge first', 'warn'); return null; }
     try {
       setBuildBusy('Verifying');
       // verify what the listing will show: F7 right after an edit waits for the analysis of that edit, or it would
@@ -817,7 +884,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         const cs = cartridgeFiles(snapshot, R, latest.current.S);
         // the files with a source of their own: with every bank in one source (13.9c) the chips have none
         const own = R.fileNames.map((n, i) => ({ n, i })).filter(x => !(cs?.one && snapshot.files[x.i]?.chip != null));
-        const w = await kr.writeExport({ target: 'temp', name: snapshot.name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40), files: { ...R.files, ...cs?.files } });
+        // in the project's build folder (without a project in a fresh folder in temp)
+        const w = await kr.writeExport({ target: 'build', name: snapshot.name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40), files: { ...R.files, ...cs?.files } });
         if (w) {
           const res = await kr.build({ dir: w.dir, entries: [...own.map(x => `${x.n}.asm`), ...(cs ? [cs.entry] : [])] });
           log.push(res.stdout.trim());
@@ -938,13 +1006,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     } finally { setBuildBusy(null); }
   };
 
-  /** a terminal in the folder you work in: the last export, else the saved project's folder (else the main process
+  /** a terminal in the folder you work in: the last export, else the project's source folder (else the main process
    * picks the folder of the last dialog, or home); VICE is on PATH there and `kickass` runs KickAss.jar */
   const openTerminal = async () => {
     if (!kr) return needDesktop();
-    const projectDir = projectPath ? projectPath.replace(/[\\/][^\\/]*$/, '').replace(/^([A-Za-z]:)$/, '$1\\') : null;
-    const dir = exportDir ?? projectDir;
-    try { const r = await kr.openTerminal(dir ? { dir } : {}); toast(`Terminal opened in ${r.dir}`, 'ok'); } catch (e) { toast(errorText(e), 'err'); }
+    try { const r = await kr.openTerminal(exportDir ? { dir: exportDir } : {}); toast(`Terminal opened in ${r.dir}`, 'ok'); } catch (e) { toast(errorText(e), 'err'); }
   };
 
   /* ---- pack with Brokkr or Exomizer (the Pack view) ---- */
@@ -1007,7 +1073,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       setBuild(b => b && { ...b, log: `${b.log}\n\n> ${r.argv.map(shellWord).join(' ')}\n(in ${r.dir}, from ${from})\n${r.output.trim()}${check}${r.ok ? '' : `\n${r.error}`}` });
       if (!r.ok) { setUi({ bottom: 'build', panelOpen: true }); toast(`${packer}: ${r.error}`, 'err'); return; }
       const bad = r.check?.status === 'differs';
-      toast(`Packed ${r.packed?.length ?? 0} bytes into ${dir ? r.path : r.name} (${r.prg?.length ?? 0} bytes)${r.check?.status === 'same' ? ', decrunch verified' : bad ? ', but it does not decrunch to the same bytes' : ''}`, bad ? 'err' : 'ok');
+      toast(`Packed ${r.packed?.length ?? 0} bytes into ${dir || home ? r.path : r.name} (${r.prg?.length ?? 0} bytes)${r.check?.status === 'same' ? ', decrunch verified' : bad ? ', but it does not decrunch to the same bytes' : ''}`, bad ? 'err' : 'ok');
     } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
   };
   /** the packed file in VICE (with the build's labels, which name the decrunched program) */
@@ -1033,21 +1099,60 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     try { const r = await kr.saveFile({ name: packRes.name, bytes: packRes.prg, title: 'Save the packed file' }); if (r) toast(`Saved ${r.path}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
 
-  const exportProject = async () => {
+  /** verify, then export to the project's source folder (`elsewhere`, or without a project: to a folder picked) */
+  const exportProject = async (elsewhere = false) => {
     if (!kr) return needDesktop();
     const res = await runVerify({ quiet: true });
     if (!res) return;
     try {
       // the render that was verified (runVerify waited for the latest analysis)
       const { R: R1, project: p1, S: S1 } = latest.current;
-      const w = await kr.writeExport({ target: 'pick', files: exportFiles(p1, R1, S1, res.V, new Date()) });
-      if (w) setExportDir(w.dir);
+      const w = await kr.writeExport({ target: home && !elsewhere ? 'project' : 'pick', files: exportFiles(p1, R1, S1, res.V, new Date()) });
+      if (w) { setExportDir(w.dir); exportedFiles.current = filesOf(p1); }
       if (w) toast(res.ok ? `Exported verified Kick Assembler project to ${w.dir} (${w.written.length} files)` : `Exported to ${w.dir}, but the round-trip check failed; see Build output`, res.ok ? 'ok' : 'warn');
     } catch (e) { toast(`Export failed: ${errorText(e)}`, 'err'); }
   };
+  /** Ctrl+S: the project saved to its project file now; work without a project becomes a project */
   const saveProject = async () => {
     if (!kr) return needDesktop();
-    try { const r = await kr.saveProject({ project, path: projectPath ?? undefined }); if (r) { setPath(r.path); toast(`Project saved to ${r.path}`, 'ok'); } } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+    if (!home) { setModal('project'); return; }
+    clearTimeout(pending.current.timer);
+    pending.current = {};
+    try { await kr.saveProject({ project, path: home.file }); toast(`Project saved to ${home.file}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+  };
+  /** a copy of the project file wherever the user wants it (the work stays where it is) */
+  const saveProjectCopy = async () => {
+    if (!kr) return needDesktop();
+    try { const r = await kr.saveProject({ project }); if (r) toast(`A copy of the project saved to ${r.path}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+  };
+  /** what moves into a project created from the work without one */
+  const gathered = () => {
+    const packed = packRes?.ok && packRes.path ? packRes.path : undefined;
+    const exported = exportDir && exportedFiles.current === filesOf(project) ? exportDir : undefined;
+    return { ...(exported ? { exportDir: exported } : {}), ...(build?.kick?.dir ? { buildDir: build.kick.dir } : {}), ...(packed ? { packed } : {}) };
+  };
+  const movingText = () => {
+    const g = gathered();
+    return ['the project (its files, labels, comments, bookmarks and patches)', ...(g.exportDir ? [`the export (copied from ${g.exportDir})`] : []), ...(g.buildDir ? ['the last build'] : []), ...(g.packed ? [`the packed file ${packRes?.name}`] : [])];
+  };
+  /** a project for the work without one: its folder made, the work saved and moved there; it goes on in the project */
+  const createFromWork = async (name: string, parent: string) => {
+    if (!kr) return;
+    const gather = gathered();
+    const r = await kr.createProject({ name, parent, project, gather });
+    setHome(r.home);
+    forgetUnsavedWork();
+    setModal(null);
+    // what moved is where it is now
+    const { source, build: built, packed } = r.moved;
+    if (source) setExportDir(source);
+    if (built && gather.buildDir) {
+      const from = gather.buildDir;
+      setBuild(b => (b?.kick ? { ...b, kick: { ...b.kick, dir: built, compared: b.kick.compared.map(c => ({ ...c, prgPath: rebase(c.prgPath, from, built), vsPath: rebase(c.vsPath, from, built) })), cart: b.kick.cart && { ...b.kick.cart, path: rebase(b.kick.cart.path, from, built), vs: rebase(b.kick.cart.vs, from, built) } } } : b));
+    }
+    if (packed) setPackRes(x => x && { ...x, path: packed });
+    const moved = [source && 'the export', built && 'the last build', packed && 'the packed file'].filter(Boolean);
+    toast(`Created the project ${r.home.name} in ${r.home.dir}: the work is saved there${moved.length ? `, with ${moved.join(', ')}` : ''}`, 'ok');
   };
   const copyText = async (t: string | undefined, what = 'Copied to clipboard') => { if (!t) return; try { await navigator.clipboard.writeText(t); toast(what, 'ok'); } catch { toast('The clipboard is not available; select the text and copy it manually', 'warn'); } };
   /**
@@ -1077,11 +1182,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   /** the showcase (core/showcase.ts) with its tour in the Bookmarks view. It needs bank tracking: its bitmap logo sits
    *  above a text screen, and only that tells the two $d018 values apart */
-  const loadDemo = () => {
+  const loadDemo = async () => {
+    // the showcase is not a project's work: a project is saved as it is and left
+    const left = home;
+    await leaveProject();
     replace(showcaseProject({ ...project.settings, bankTracking: true }));
     resetView();
     setUi({ activity: 'bookmarks' });
-    toast('Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop', 'ok');
+    toast(`Showcase loaded${left ? ` without a project (${left.name} is saved as it was)` : ''}: the Bookmarks view is a tour of it, F2 goes to the next stop`, 'ok');
   };
   const saveSettings = async (s: Settings) => {
     const tc = pickToolchain(s);
@@ -1101,7 +1209,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...packing.flatMap((p, i) => (p ? [{ id: `unpack-${i}`, label: external ? `Unpack ${project.files[i]?.name} with ${unpackerName}` : `Unpack ${project.files[i]?.name}`, run: () => void unpackFile(i) }] : [])),
     { id: 'terminal', label: 'Open a terminal in the project folder (VICE on PATH, kickass runs Kick Assembler)', run: () => void openTerminal() },
     ...(disk ? [{ id: 'eject', label: `Eject ${disk.name}`, run: ejectDisk }] : []),
-    { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: loadDemo },
+    { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: () => void loadDemo() },
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
     { id: 'select-range', label: 'Select address range… (e.g. $2000-$27ff)', run: () => setModal('goto') },
     { id: 'back', label: 'Navigate back', key: 'Esc', run: goBack },
@@ -1143,9 +1251,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       ...(packRes.argv[1] === 'sfx' ? [{ id: 'pack-run', label: `Run the packed ${packRes.name} in VICE`, run: () => void runPacked() }] : []),
       { id: 'pack-save', label: `Save the packed ${packRes.name} as…`, run: () => void savePacked() },
     ] : []),
-    { id: 'export', label: 'Export Kick Assembler project to a folder…', key: 'Ctrl+E', run: () => void exportProject() },
-    { id: 'save', label: 'Save project (.mimir.json)', key: 'Ctrl+S', run: () => void saveProject() },
+    { id: 'export', label: home ? `Export Kick Assembler project to ${home.name}\\source` : 'Export Kick Assembler project to a folder…', key: 'Ctrl+E', run: () => void exportProject() },
+    ...(home ? [{ id: 'export-to', label: 'Export Kick Assembler project to another folder…', run: () => void exportProject(true) }] : []),
+    { id: 'save', label: home ? `Save project (${home.name}.mimir.json; Mimir also saves as you work)` : 'Save: create a project from this work (a folder of its own)…', key: 'Ctrl+S', run: () => void saveProject() },
+    { id: 'save-copy', label: 'Save a copy of the project file (.mimir.json)…', run: () => void saveProjectCopy() },
     { id: 'openproj', label: 'Open project (.mimir.json)…', run: () => void openProject() },
+    ...(home ? [{ id: 'reveal', label: `Show the project folder (${home.dir})`, run: () => void kr?.revealProject().catch((e: unknown) => toast(errorText(e), 'err')) }] : []),
+    { id: 'start-screen', label: home ? 'Close the project: the start screen (new project, recent projects)' : 'The start screen (new project, open, recent projects)', run: () => void toStartScreen() },
     { id: 'settings', label: 'Settings', key: 'Ctrl+,', run: () => setModal('settings') },
     { id: 'theme', label: 'Toggle light / dark theme', run: () => setUi({ theme: theme === 'dark' ? 'light' : 'dark' }) },
     { id: 'undo', label: `Undo${undoLabel ? ': ' + undoLabel : ''}`, key: 'Ctrl+Z', run: undo },
@@ -1347,11 +1459,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     navigate(a, { center: true, listing: true, keepSel: true });
     setSel({ start: a, end: b, multi: true, anchor: a, anchorEnd: b });
   };
+  /** the title bar's project button: what can be done with the project, or with the work without one */
+  const projectMenu = (e: ReactMouseEvent<HTMLElement>) => {
+    if (menu?.owner === 'project') { setMenu(null); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu({ owner: 'project', x: r.left, y: r.bottom + 2, items: [
+      ...(home
+        ? [{ label: 'Show the project folder', run: () => void kr?.revealProject().catch((err: unknown) => toast(errorText(err), 'err')) }, { label: 'Save project', key: 'Ctrl+S', run: () => void saveProject() }]
+        : [{ label: 'Create a project from this work…', key: 'Ctrl+S', run: () => setModal('project') }]),
+      { label: 'Save a copy of the project file…', run: () => void saveProjectCopy() },
+      { sep: true },
+      { label: 'Open project…', run: () => void openProject() },
+      { label: home ? 'Close the project (start screen)' : 'Start screen', run: () => void toStartScreen() },
+    ] });
+  };
   const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', R.main ?? `${R.fileNames[0] || 'main'}.asm`], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`)} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
-      <TitleBar projectName={project.name} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
+      <TitleBar projectName={project.name} home={home?.name ?? null} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onOpen={() => void openPrgs(false)} onSave={() => void saveProject()} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
         onVerify={() => void runVerify()} onExport={() => void exportProject()} onBuild={() => void runBuild()} onTerminal={() => void openTerminal()}
@@ -1362,7 +1488,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
       <aside className="sidebar"><ErrorBoundary>
         <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }}
-          onOpen={() => void openPrgs(false)} onAdd={() => void openPrgs(true)} onDemo={loadDemo}
+          onOpen={() => void openPrgs(false)} onAdd={() => void openPrgs(true)} onDemo={() => void loadDemo()}
           quicksave={{ info: qsInfo, follow: followQuicksave, onOpen: () => void openQuicksave(), onFollow: v => setUi({ followQuicksave: v }),
             kept: qsList, onOpenKept: q => void openKeptQuicksave(q), onRenameKept: (q, name) => void renameKeptQuicksave(q, name), onSaveKept: q => void saveKeptQuicksave(q),
             onFavouriteKept: (q, on) => void favouriteKeptQuicksave(q, on) }}
@@ -1425,7 +1551,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         </div>
         <div className="editor">
           <ErrorBoundary>
-            {tab === 'listing' && <>
+            {tab === 'listing' && !project.files.length && <div className="empty-project">
+              <Icon name={home ? 'folder' : 'doc'} size={30} />
+              <h2>{home ? `${home.name} has no files yet` : 'No files yet'}</h2>
+              <p>Open the program to re-assemble: a PRG, a VICE snapshot (.vsf) or a cartridge (.crt), or mount a D64 and open its files.</p>
+              <div className="empty-actions">
+                <button className="btn primary" onClick={() => void openPrgs(false)}><Icon name="upload" size={14} />Open PRG…</button>
+                <button className="btn" onClick={() => void mountDisk()}><Icon name="disk" size={14} />Mount D64…</button>
+                <button className="btn" onClick={() => void openQuicksave()}>VICE quicksave <kbd>F9</kbd></button>
+              </div>
+              <p className="muted small">Or drop the files on the window.</p>
+            </div>}
+            {tab === 'listing' && project.files.length > 0 && <>
               {welcome && <div className="welcome">
                 <div><b>{project.cart && A.spaces ? `${project.cart.name} (${A.spaces.length} banks)` : project.files.map(f => f.name).join(', ')}</b> is analysed: {A.blocks.length} blocks, {A.labels.size} labels, {A.music.length ? 'SID music, ' : ''}{A.gfx.length ? `${A.gfx.length} graphics block${A.gfx.length > 1 ? 's' : ''}, ` : ''}{A.stats.illegal} undocumented opcodes.</div>
                 <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
@@ -1504,6 +1641,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
+      {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}
       <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} />{t.msg}</div>)}</div>
     </div>

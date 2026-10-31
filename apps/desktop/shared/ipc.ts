@@ -8,6 +8,12 @@ import type { Cartridge, ExomizerReport, KickProblem, LoadedFile, PackCheck, Pac
 export const CHANNELS = {
   projectOpen: 'project:open',
   projectSave: 'project:save',
+  projectStart: 'project:start',
+  projectCreate: 'project:create',
+  projectParent: 'project:parent',
+  projectUnsaved: 'project:unsaved',
+  projectReveal: 'project:reveal',
+  projectForget: 'project:forget',
   prgOpen: 'prg:open',
   diskOpen: 'disk:open',
   exportWrite: 'export:write',
@@ -39,9 +45,35 @@ export const CHANNELS = {
 
 export type InvokeChannel = Exclude<(typeof CHANNELS)[keyof typeof CHANNELS], 'fs:changed' | 'vice:quicksaved'>;
 
-/** `path` given: open it; otherwise the main process shows a file dialog. */
+/** `path` given: open it (in a folder opened in this session, or a project opened before); otherwise the main process
+ *  shows a file dialog. The project's folder is where what Mimir writes for it goes from then on. */
 export interface ProjectOpenRequest { path?: string }
-export interface ProjectOpenResult { path: string; project: Project }
+export interface ProjectOpenResult { path: string; project: Project; home: ProjectHome }
+
+/** A project: its name, its folder and its project file (`<name>.mimir.json` in the folder) */
+export interface ProjectHome { name: string; dir: string; file: string }
+/** a project opened before; `exists`: its project file is still there */
+export interface RecentProject extends ProjectHome { opened: number; exists: boolean }
+/** What the start screen offers. */
+export interface ProjectStartInfo {
+  /** what was worked on last: a project, or work without one (kept by the window) */
+  last: { kind: 'project'; home: ProjectHome; exists: boolean } | { kind: 'unsaved' } | null;
+  /** what was chosen earlier in this run of the app (the window was reloaded): it goes on with that */
+  resume: { kind: 'project'; home: ProjectHome } | { kind: 'unsaved' } | null;
+  /** the projects opened last, the newest first */
+  recent: RecentProject[];
+  /** where a new project's folder goes unless another is chosen */
+  parent: string;
+}
+/**
+ * A new project: the folder `<parent>/<name>` with `project` saved in it as `<name>.mimir.json`. `parent` is the one
+ * the start info gave or one picked with project:parent. `gather`: the work done without a project that moves into it,
+ * the folder of the last export (copied to source/), of the last build (build/) and the packed file (packed/).
+ */
+export interface ProjectCreateRequest { name: string; parent: string; project: Project; gather?: { exportDir?: string; buildDir?: string; packed?: string } }
+/** `moved`: where the gathered work is now */
+export interface ProjectCreateResult { home: ProjectHome; moved: { source?: string; build?: string; packed?: string } }
+export interface ProjectParentResult { dir: string }
 
 /** `path` omitted (or not previously used in this session): the main process shows a save dialog. */
 export interface ProjectSaveRequest { project: Project; path?: string }
@@ -60,12 +92,13 @@ export interface DiskOpenResult { path: string; name: string; bytes: Uint8Array 
 
 /**
  * Where to write: `dir` (a folder the user picked earlier in this session), `target: 'pick'` (ask
- * with a folder dialog) or `target: 'temp'` (a fresh build folder under the OS temp dir).
+ * with a folder dialog), `target: 'temp'` (a fresh build folder under the OS temp dir), `target: 'project'` (the
+ * project's source folder) or `target: 'build'` (the project's build folder; without a project a fresh one in temp).
  * File keys are relative paths; absolute paths and `..` are rejected.
  */
 export interface ExportWriteRequest {
   dir?: string;
-  target?: 'pick' | 'temp';
+  target?: 'pick' | 'temp' | 'project' | 'build';
   /** used to name the folder for `target: 'temp'` */
   name?: string;
   files: Record<string, string | Uint8Array>;
@@ -108,7 +141,8 @@ export interface RunResult { pid: number; via: 'run' | 'sys' | 'monitor' | 'cart
 
 /**
  * A terminal window (VICE on PATH, `kickass` defined) in `dir`: a folder opened in this session (the export or
- * project folder). Without one it opens where the last dialog picked something, or in the home folder.
+ * project folder). Without one it opens in the project's source folder (or the project's folder before an export),
+ * and without a project where the last dialog picked something, or in the home folder.
  */
 export interface TerminalOpenRequest { dir?: string }
 export interface TerminalOpenResult { dir: string }
@@ -187,6 +221,18 @@ export interface QuicksaveFavouriteRequest { id: string; on: boolean }
 export interface KrApi {
   openProject(req?: ProjectOpenRequest): Promise<ProjectOpenResult | null>;
   saveProject(req: ProjectSaveRequest): Promise<ProjectSaveResult | null>;
+  /** what the start screen offers: what was worked on last, the projects opened last */
+  projectStart(): Promise<ProjectStartInfo>;
+  /** a new project's folder, with the project saved in it (and the work without a project moved there) */
+  createProject(req: ProjectCreateRequest): Promise<ProjectCreateResult>;
+  /** a folder dialog for where a new project's folder goes; null: cancelled */
+  projectParent(): Promise<ProjectParentResult | null>;
+  /** work without a project from now on (the window keeps it) */
+  workUnsaved(): Promise<void>;
+  /** the project's folder in the file manager */
+  revealProject(): Promise<void>;
+  /** a project taken off the list of those opened last */
+  forgetProject(req: { file: string }): Promise<RecentProject[]>;
   openPrg(req?: PrgOpenRequest): Promise<OpenedPrg[]>;
   /** null: the dialog was cancelled */
   openDisk(req?: DiskOpenRequest): Promise<DiskOpenResult | null>;

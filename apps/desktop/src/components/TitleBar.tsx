@@ -1,9 +1,12 @@
+import type { MouseEvent } from 'react';
 import { Icon } from '../lib/icons';
 import { Logo } from './Logo';
 import { cx } from '../lib/util';
 
 interface TitleBarProps {
   projectName: string; undoLabel: string | null; canRedo: boolean; theme: string;
+  /** the project's name (null: work without a project); its button opens what can be done with it */
+  home: string | null; onProject: (e: MouseEvent<HTMLElement>) => void;
   verifyState: 'ok' | 'bad' | null; busy: boolean;
   /** the project was opened from a VICE snapshot: Build & Run restarts it as it was */
   snapshot?: boolean;
@@ -19,9 +22,13 @@ export function TitleBar(p: TitleBarProps) {
     <header className="titlebar">
       <button className="icon-btn only-narrow" aria-label="Toggle sidebar" onClick={p.onToggleSide}><Icon name="menu" /></button>
       <div className="brand"><Logo className="brand-logo" size={20} /><span className="brand-name">Mimir</span><span className="brand-sub">Studio</span></div>
+      <button className={cx('proj-chip', !p.home && 'unsaved')} onMouseDown={e => e.stopPropagation()} onClick={p.onProject} aria-haspopup="menu" aria-label={p.home ? `Project ${p.home}` : 'No project'}
+        title={p.home ? `The project ${p.home}: Mimir saves it in its folder as you work` : 'Work without a project: Mimir keeps it for the next start. Save (Ctrl+S) creates a project and moves the work into its folder'}>
+        <Icon name={p.home ? 'folder' : 'doc'} size={14} /><span>{p.home ?? 'No project'}</span><Icon name="down" size={12} />
+      </button>
       <div className="tb-group hide-narrow">
         <button className="btn ghost" onClick={p.onOpen} title="Open PRG files (Ctrl+O)"><Icon name="upload" />Open</button>
-        <button className="btn ghost" onClick={p.onSave} title="Save project (Ctrl+S)"><Icon name="download" />Save</button>
+        <button className="btn ghost" onClick={p.onSave} title={p.home ? 'Save the project (Ctrl+S); Mimir also saves it as you work' : 'Create a project from this work: a folder of its own, where the work moves (Ctrl+S)'}><Icon name="download" />Save</button>
         <button className="icon-btn" onClick={p.onUndo} disabled={!p.undoLabel} title={p.undoLabel ? `Undo: ${p.undoLabel} (Ctrl+Z)` : 'Nothing to undo'} aria-label="Undo"><Icon name="undo" /></button>
         <button className="icon-btn" onClick={p.onRedo} disabled={!p.canRedo} title="Redo (Ctrl+Y)" aria-label="Redo"><Icon name="redo" /></button>
       </div>

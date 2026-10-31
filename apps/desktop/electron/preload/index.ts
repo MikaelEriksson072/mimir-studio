@@ -13,6 +13,12 @@ function invoke<T>(channel: InvokeChannel, arg?: unknown): Promise<T> {
 const api: KrApi = {
   openProject: req => invoke(CHANNELS.projectOpen, req ?? {}),
   saveProject: req => invoke(CHANNELS.projectSave, req),
+  projectStart: () => invoke(CHANNELS.projectStart),
+  createProject: req => invoke(CHANNELS.projectCreate, req),
+  projectParent: () => invoke(CHANNELS.projectParent),
+  workUnsaved: () => invoke(CHANNELS.projectUnsaved),
+  revealProject: () => invoke(CHANNELS.projectReveal),
+  forgetProject: req => invoke(CHANNELS.projectForget, req),
   openPrg: req => invoke(CHANNELS.prgOpen, req ?? {}),
   openDisk: req => invoke(CHANNELS.diskOpen, req ?? {}),
   writeExport: req => invoke(CHANNELS.exportWrite, req),

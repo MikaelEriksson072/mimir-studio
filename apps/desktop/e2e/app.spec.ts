@@ -723,23 +723,28 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
     await expect(statusBar(page)).toContainText('$0810 · start');
   });
 
-  await test.step('rename, then Ctrl+S saves the project', async () => {
+  await test.step('rename, then Ctrl+S makes a project of the work', async () => {
     await goTo(page, OLD);
     await page.keyboard.press('n');
     await page.getByLabel('Label at $092d').fill(NEW);
     await page.getByLabel('Label at $092d').press('Enter');
     await expect(statusBar(page)).toContainText(`$092d · ${NEW}`);
 
-    const file = join(work, 'demo.mimir.json');
-    await stubDialogs(app, { save: file });
     await page.keyboard.press('Control+s');
-    await expect(toast(page, `Project saved to ${file}`)).toBeVisible();
-    expect(readFileSync(file, 'utf8')).toContain(NEW);
+    const dialog = page.getByRole('dialog', { name: 'Create a project from this work' });
+    await expect(dialog.getByLabel('Name')).toHaveValue('raster-demo');
+    await dialog.getByLabel('Name').fill('demo');
+    await stubDialogs(app, { open: [work] });
+    await dialog.getByRole('button', { name: 'Change…' }).click();
+    await expect(dialog.locator('.np-parent')).toContainText(work);
+    await dialog.getByRole('button', { name: 'Create project and move the work' }).click();
+    await expect(toast(page, `Created the project demo in ${join(work, 'demo')}: the work is saved there`)).toBeVisible();
+    expect(readFileSync(join(work, 'demo', 'demo.mimir.json'), 'utf8')).toContain(NEW);
+    await expect(page.getByRole('button', { name: 'Project demo' })).toBeVisible();
   });
 
-  await test.step('Ctrl+E verifies and exports the Kick Assembler project', async () => {
-    const out = join(work, 'export');
-    await stubDialogs(app, { open: [out] });
+  await test.step("Ctrl+E verifies and exports the Kick Assembler project into the project's source folder", async () => {
+    const out = join(work, 'demo', 'source');
     await page.keyboard.press('Control+e');
     await expect(toast(page, `Exported verified Kick Assembler project to ${out}`)).toBeVisible({ timeout: 90_000 });
     expect(readdirSync(out)).toEqual(expect.arrayContaining(['raster-demo.asm', 'raster-demo.mimir.json', 'build.bat', 'build.sh', 'include', 'original']));
@@ -2090,10 +2095,12 @@ test('pack with Exomizer: the whole build or chosen blocks, checked with desfx, 
     await listing(page).click();
     await page.keyboard.press('Control+z');
     await expect(cmd).toHaveText(/ sfx \$0810 -o /);
+    // without a project, a copy of the project file (Save makes a project of the work)
     const out = join(work, 'packed.mimir.json');
     await stubDialogs(app, { save: out });
-    await page.keyboard.press('Control+s');
-    await expect(toast(page, `Project saved to ${out}`)).toBeVisible();
+    await page.getByRole('button', { name: 'No project' }).click();
+    await page.getByRole('menuitem', { name: 'Save a copy of the project file…' }).click();
+    await expect(toast(page, `A copy of the project saved to ${out}`)).toBeVisible();
     expect(JSON.parse(readFileSync(out, 'utf8')).pack).toMatchObject({ mode: 'sfx', start: 'jmp', jmp: 0x0810, effect: 'default' });
   });
 });

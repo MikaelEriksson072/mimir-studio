@@ -7,6 +7,7 @@ import { bringOldSettings } from './migrate';
 import { registerIpc } from './ipc';
 import { PathPolicy } from './paths';
 import { ExportWatcher } from './project-fs';
+import { ProjectStore } from './projects';
 import { QuicksaveHistory, QuicksaveWatcher } from './quicksave';
 import { RecentFolders } from './recent';
 import { SettingsStore } from './settings';
@@ -72,7 +73,8 @@ app.whenReady().then(() => {
       for (const w of BrowserWindow.getAllWindows()) w.webContents.send(CHANNELS.viceQuicksaved, e);
     });
   });
-  registerIpc({ policy: new PathPolicy(), settings: new SettingsStore(app.getPath('userData')), recent: new RecentFolders(app.getPath('userData')), watcher, isTrustedUrl, quicksave, history });
+  const projects = new ProjectStore(app.getPath('userData'), app.getPath('documents'));
+  registerIpc({ policy: new PathPolicy(), settings: new SettingsStore(app.getPath('userData')), recent: new RecentFolders(app.getPath('userData')), watcher, isTrustedUrl, quicksave, history, projects });
   buildMenu();
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

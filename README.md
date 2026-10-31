@@ -135,6 +135,13 @@ This writes `Mimir-Studio-<version>-setup.exe` and a portable `.exe` to `apps/de
 
 ## How to use it
 
+When Mimir starts, it asks what to work on: **Continue** with what you did last, a **New project…**, **Open project…**,
+or **Without a project**. A project is a folder of its own: the project file (`<name>.mimir.json`), the Kick Assembler
+source (`source`), the build (`build`) and the packed file (`packed`) go there, Mimir saves the project as you work, and
+the next start offers to continue it. Without a project you work as before, and Mimir keeps the work for the next
+start; *Save* (`Ctrl+S`) then creates a project and moves the work into its folder, with the last export, build and
+packed file.
+
 1. **Open a program.** Use *Open PRG…* (`Ctrl+O`) for a `.prg`, a VICE `.vsf` or a cartridge `.crt`, or *Mount D64…*
    for a disk. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
@@ -145,7 +152,8 @@ This writes `Mimir-Studio-<version>-setup.exe` and a portable `.exe` to `apps/de
    code, bytes, words or text. Right-click for everything else. `Ctrl+Z` undoes, and `Ctrl+C` copies the selected
    lines as source.
 4. **Verify** with `F7`. The status bar says whether the source assembles back to the original bytes.
-5. **Export** the Kick Assembler project with its build scripts (`Ctrl+E`), or **Build & Run** it in VICE (`F5`).
+5. **Export** the Kick Assembler project with its build scripts (`Ctrl+E`, into the project's `source` folder), or
+   **Build & Run** it in VICE (`F5`).
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
 the Spindle script (when there is one), statistics and the build output.

@@ -1,15 +1,17 @@
 /* Registers the IPC allowlist (spec 13.4). Every request is checked for a trusted sender and
  * validated with zod before it touches the file system or starts a process. */
-import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type OpenDialogOptions, type WebContents } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions, type WebContents } from 'electron';
 import { existsSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z, type ZodTypeAny } from 'zod';
-import { CHANNELS, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectOpenResult, type ProjectSaveResult } from '../../shared/ipc';
+import { CHANNELS, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult } from '../../shared/ipc';
 import type { PathPolicy } from './paths';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
+import { createProjectFolder, gatherWork, homeOf, type ProjectStore } from './projects';
+import { PROJECT_FOLDERS } from '../../shared/projects';
 import { createBuildFolder, readDiskImage, readPrgFiles, readProjectFile, writeExportFolder, writeProjectFile, type ExportWatcher } from './project-fs';
 import { buildWithKickAssembler, c64Roms, identifyWithTool, keepPacked, openTerminal, packWithBrokkr, packWithExomizer, runInVice, unpackWithTool } from './toolchain';
 import { viceAttach, viceCommand } from './vice-monitor';
@@ -18,7 +20,7 @@ import { charRomFiles, readCharRom } from './chargen';
 import { openC64File } from '@mimir/core';
 import { openedPrg } from './project-fs';
 import {
-  buildSchema, diskOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
+  buildSchema, diskOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
 } from './schemas';
 
@@ -34,6 +36,8 @@ export interface IpcDeps {
   quicksave: QuicksaveWatcher;
   /** the newest quicksaves, kept with names */
   history: QuicksaveHistory;
+  /** the project of this run, the projects opened last and what was worked on last */
+  projects: ProjectStore;
 }
 
 const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undefined;
@@ -51,7 +55,7 @@ async function pickPaths(e: IpcMainInvokeEvent, options: OpenDialogOptions): Pro
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { policy, settings, watcher, recent, quicksave, history } = deps;
+  const { policy, settings, watcher, recent, quicksave, history, projects } = deps;
   quicksave.watch(quicksaveFiles(settings.get().viceQuicksave));
   // the quicksave there is now (from before the app started, or in a newly set file) joins the kept ones
   const keepCurrent = () => quicksaveInfo(quicksaveFiles(settings.get().viceQuicksave)).then(i => (i.found && i.saved ? history.add(i.path, i.saved) : null)).catch(() => null);
@@ -77,22 +81,55 @@ export function registerIpc(deps: IpcDeps): void {
     });
   };
 
+  /** work on the project `home` from now on: its folder may be written to, and it is the one opened last */
+  const enter = (home: ProjectHome) => { policy.allow(home.dir); projects.enter(home); return home; };
+
   handle(CHANNELS.projectOpen, projectOpenSchema, async (req, e): Promise<ProjectOpenResult | null> => {
-    let path = req.path ? policy.assert(req.path, 'Project file') : null;
+    // a project opened before needs no dialog: the start screen lists those (from this store, never from the renderer)
+    let path = req.path ? (projects.isRecent(req.path) ? req.path : policy.assert(req.path, 'Project file')) : null;
     if (!path) {
       const [picked] = await pick(e, 'project', { title: 'Open Mimir project', properties: ['openFile'], filters: [{ name: 'Mimir project', extensions: ['json'] }] });
       if (!picked) return null;
       path = picked;
       chose(dirname(path), 'project');
     }
-    return { path, project: await readProjectFile(path) };
+    const project = await readProjectFile(path);
+    return { path, project, home: enter(homeOf(path)) };
   });
+
+  handle(CHANNELS.projectStart, z.undefined().or(z.object({}).strict()), () => projects.start());
+  handle(CHANNELS.projectParent, z.undefined().or(z.object({}).strict()), async (_req, e): Promise<ProjectParentResult | null> => {
+    const [picked] = await pickPaths(e, { title: 'Folder for the new project', defaultPath: projects.parent(), properties: ['openDirectory', 'createDirectory', 'promptToCreate'] });
+    return picked ? { dir: policy.allow(picked) } : null;
+  });
+  handle(CHANNELS.projectCreate, projectCreateSchema, async (req): Promise<ProjectCreateResult> => {
+    // the folder for new projects the store suggests (the documents folder's Mimir, or where the last one went), or one
+    // picked in this session
+    const parent = req.parent === projects.parent() ? req.parent : policy.assert(req.parent, 'The folder for the new project');
+    // the work without a project comes from folders of this session (an export, the app's build and pack folders)
+    const gather = req.gather ?? {};
+    for (const p of [gather.exportDir, gather.buildDir, gather.packed]) if (p) policy.assert(p, 'The work to move into the project');
+    const home = await createProjectFolder(parent, req.name);
+    await writeProjectFile(home.file, { ...req.project, name: req.project.name || home.name });
+    const moved = await gatherWork(home, gather);
+    projects.rememberParent(parent);
+    enter(home);
+    if (moved.source) watcher.watch(moved.source);
+    return { home, moved };
+  });
+  handle(CHANNELS.projectUnsaved, z.undefined().or(z.object({}).strict()), () => { projects.unsaved(); });
+  handle(CHANNELS.projectReveal, z.undefined().or(z.object({}).strict()), async () => {
+    if (!projects.current) throw new Error('No project is open');
+    const error = await shell.openPath(projects.current.dir);
+    if (error) throw new Error(error);
+  });
+  handle(CHANNELS.projectForget, projectForgetSchema, req => projects.forget(req.file));
 
   handle(CHANNELS.projectSave, projectSaveSchema, async (req, e): Promise<ProjectSaveResult | null> => {
     let path = req.path && policy.isAllowed(req.path) ? req.path : null;
     if (!path) {
       const win = windowOf(e.sender);
-      const start = recent.folder('project'), file = `${req.project.name}.mimir.json`;
+      const start = projects.current?.dir ?? recent.folder('project'), file = `${req.project.name}.mimir.json`;
       const options = { title: 'Save Mimir project', defaultPath: start ? join(start, file) : file, filters: [{ name: 'Mimir project', extensions: ['json'] }] };
       const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
       if (r.canceled || !r.filePath) return null;
@@ -124,8 +161,15 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle(CHANNELS.exportWrite, exportWriteSchema, async (req, e): Promise<ExportWriteResult | null> => {
     let dir: string;
-    if (req.target === 'temp') dir = policy.allow(await createBuildFolder(req.name ?? 'build'));
-    else if (req.target === 'pick') {
+    // a project's build goes in its build folder, again each time; without a project in a fresh folder in temp
+    const own = req.target === 'build' ? projects.folder('build') : null;
+    if (req.target === 'temp' || (req.target === 'build' && !own)) dir = policy.allow(await createBuildFolder(req.name ?? 'build'));
+    else if (own) dir = own;
+    else if (req.target === 'project') {
+      const source = projects.folder('source');
+      if (!source) throw new Error('No project is open: export to a folder instead');
+      dir = source;
+    } else if (req.target === 'pick') {
       const [picked] = await pick(e, 'export', { title: 'Export Kick Assembler project to folder', properties: ['openDirectory', 'createDirectory', 'promptToCreate'] });
       if (!picked) return null;
       // the next export dialog opens in the folder around this one, so a new export can go next to it
@@ -133,7 +177,7 @@ export function registerIpc(deps: IpcDeps): void {
     } else dir = policy.assert(req.dir!, 'Export folder');
     watcher.touched(dir);
     const written = await writeExportFolder(dir, req.files);
-    if (req.target !== 'temp') watcher.watch(dir);
+    if (req.target !== 'temp' && req.target !== 'build') watcher.watch(dir);
     return { dir, written };
   });
 
@@ -143,8 +187,9 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.toolchainIdentify, unpackSchema, req => identifyWithTool(req, settings.get()));
   handle(CHANNELS.toolchainRoms, z.undefined().or(z.object({}).strict()), () => c64Roms(settings.get().vicePath));
   handle(CHANNELS.toolchainPack, packSchema, async req => {
-    // the folder for the packed file must be one picked in this session (pack:folder asks for it first)
-    const to = req.prefs.dir ? policy.assert(req.prefs.dir, 'The folder for the packed file (choose it again in the Pack view)') : null;
+    // the folder for the packed file must be one picked in this session (pack:folder asks for it first); none chosen,
+    // a project's packed file goes in its packed folder
+    const to = req.prefs.dir ? policy.assert(req.prefs.dir, 'The folder for the packed file (choose it again in the Pack view)') : projects.folder('packed');
     const r = await (req.prefs.packer === 'exomizer' ? packWithExomizer(req, settings.get(), policy) : packWithBrokkr(req, policy));
     if (to && r.name) watcher.wrote(join(to, r.name));
     return keepPacked(r, to);
@@ -159,7 +204,8 @@ export function registerIpc(deps: IpcDeps): void {
   });
   handle(CHANNELS.fileSave, fileSaveSchema, async (req, e): Promise<FileSaveResult | null> => {
     const win = windowOf(e.sender);
-    const start = recent.folder('pack') ?? recent.folder('export');
+    // a project's files are saved in its folder unless the user goes elsewhere
+    const start = projects.current?.dir ?? recent.folder('pack') ?? recent.folder('export');
     const ext = /\.(\w+)$/.exec(req.name)?.[1].toLowerCase() ?? 'prg';
     const options = { title: req.title ?? 'Save packed file', defaultPath: start ? join(start, req.name) : req.name, filters: [{ name: SAVE_KINDS[ext] ?? 'C64 file', extensions: [ext] }, { name: 'All files', extensions: ['*'] }] };
     const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
@@ -168,7 +214,12 @@ export function registerIpc(deps: IpcDeps): void {
     await writeFile(r.filePath, req.bytes);
     return { path: r.filePath };
   });
-  handle(CHANNELS.terminalOpen, terminalOpenSchema, req => openTerminal(req.dir ? policy.assert(req.dir, 'Folder') : lastChosen ?? homedir(), settings.get()));
+  const projectTerminal = () => {
+    if (!projects.current) return null;
+    const source = join(projects.current.dir, PROJECT_FOLDERS.source);
+    return existsSync(source) ? source : projects.current.dir;
+  };
+  handle(CHANNELS.terminalOpen, terminalOpenSchema, req => openTerminal(req.dir ? policy.assert(req.dir, 'Folder') : projectTerminal() ?? lastChosen ?? homedir(), settings.get()));
   handle(CHANNELS.viceAttach, viceAttachSchema, req => viceAttach(req));
   handle(CHANNELS.viceCommand, viceCommandSchema, req => viceCommand(req));
   // the file comes from the settings (or VICE's own folder), never from the renderer
@@ -184,7 +235,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.viceQuicksaveFavourite, quicksaveFavouriteSchema, req => history.favourite(req.id, req.on));
   handle(CHANNELS.viceQuicksaveSave, quicksaveSaveSchema, async (req, e): Promise<FileSaveResult | null> => {
     const { entry, bytes } = await history.get(req.id);
-    const win = windowOf(e.sender), start = recent.folder('snapshot'), file = quicksaveFileName(entry.name);
+    const win = windowOf(e.sender), start = projects.current?.dir ?? recent.folder('snapshot'), file = quicksaveFileName(entry.name);
     const options = { title: `Save the quicksave "${entry.name}"`, defaultPath: start ? join(start, file) : file, filters: [{ name: 'VICE snapshot', extensions: ['vsf'] }, { name: 'All files', extensions: ['*'] }] };
     const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
     if (r.canceled || !r.filePath) return null;

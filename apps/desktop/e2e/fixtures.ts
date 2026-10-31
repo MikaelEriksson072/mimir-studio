@@ -1,6 +1,7 @@
 /* Playwright-for-Electron fixtures (spec 16). Every test starts the built app (out/main/index.js)
- * with a fresh user-data folder, so settings.json and the project autosaved in localStorage start
- * empty and the demo program is loaded. MIMIR_E2E_EXE=<path to Mimir Studio.exe> runs the
+ * with a fresh user-data folder, so settings.json, the projects and the work autosaved in localStorage start
+ * empty; the start screen is answered with "Without a project", and the demo program is loaded (`start: 'none'`
+ * leaves the start screen to the test). MIMIR_E2E_EXE=<path to Mimir Studio.exe> runs the
  * same tests against a packaged app (release/<version>/win-unpacked or an installed copy). */
 import { _electron as electron, expect, test as base, type ElectronApplication, type Page } from '@playwright/test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -30,7 +31,26 @@ interface Fixtures {
   page: Page;
 }
 
-export const test = base.extend<Fixtures>({
+interface Options {
+  /** what the page fixture answers on the start screen: work without a project (the demo), or nothing */
+  start: 'without' | 'none';
+}
+
+/** The app with the profile `userData` (a test that restarts it launches it again with the same one). */
+export async function launchApp(userData: string): Promise<ElectronApplication> {
+  if (packagedExe && !existsSync(packagedExe)) throw new Error(`MIMIR_E2E_EXE: ${packagedExe} does not exist`);
+  if (!packagedExe && !existsSync(mainEntry)) throw new Error(`${mainEntry} is missing: run \`electron-vite build\` first (the e2e script does).`);
+  // load out/renderer/index.html, never a dev server
+  const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[0] !== 'ELECTRON_RENDERER_URL' && e[1] !== undefined));
+  const profile = `--user-data-dir=${userData}`;
+  return electron.launch(packagedExe
+    ? { executablePath: packagedExe, args: [profile], env }
+    : { executablePath: electronPath, args: [mainEntry, profile], cwd: appDir, env });
+}
+
+export const test = base.extend<Fixtures & Options>({
+  start: ['without', { option: true }],
+
   workDir: async ({}, use) => {
     const dir = tempDir('files');
     await use(dir);
@@ -47,23 +67,18 @@ export const test = base.extend<Fixtures>({
   },
 
   app: async ({ userData }, use) => {
-    if (packagedExe && !existsSync(packagedExe)) throw new Error(`MIMIR_E2E_EXE: ${packagedExe} does not exist`);
-    if (!packagedExe && !existsSync(mainEntry)) throw new Error(`${mainEntry} is missing: run \`electron-vite build\` first (the e2e script does).`);
-    // load out/renderer/index.html, never a dev server
-    const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[0] !== 'ELECTRON_RENDERER_URL' && e[1] !== undefined));
-    const profile = `--user-data-dir=${userData}`;
-    const app = await electron.launch(packagedExe
-      ? { executablePath: packagedExe, args: [profile], env }
-      : { executablePath: electronPath, args: [mainEntry, profile], cwd: appDir, env });
+    const app = await launchApp(userData);
     await use(app);
-    await app.close();
+    // a test that restarted the app closed this one already
+    await app.close().catch(() => undefined);
   },
 
-  page: async ({ app }, use, testInfo) => {
+  page: async ({ app, start }, use, testInfo) => {
     const page = await app.firstWindow();
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(String(e.stack ?? e)));
     await page.waitForLoadState('domcontentloaded');
+    if (start === 'without') await page.getByRole('button', { name: 'Without a project' }).click();
     await use(page);
     if (testInfo.status !== testInfo.expectedStatus) {
       await testInfo.attach('window', { body: await page.screenshot(), contentType: 'image/png' }).catch(() => undefined);

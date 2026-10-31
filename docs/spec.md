@@ -1327,11 +1327,17 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 
 | Kanal | Riktning | Argument → svar |
 |---|---|---|
-| `project:open` | renderer → main | `{ path? }` → `Project` (dialog om sökväg saknas) |
+| `project:open` | renderer → main | `{ path? }` → `{ path, project, home }` (dialog om sökväg saknas; en sökväg måste ligga i en mapp vald i sessionen eller vara ett projekt öppnat förut); projektets mapp är där det som skrivs hamnar från och med nu (13.10) |
 | `project:save` | renderer → main | `{ project, path? }` → `{ path }` |
+| `project:start` | renderer → main | → `{ last, resume, recent, parent }`: det startskärmen erbjuder (13.10) |
+| `project:create` | renderer → main | `{ name, parent, project, gather? }` → `{ home, moved }`: ett nytt projekts mapp med projektet sparat i, och arbetet utan projekt flyttat dit |
+| `project:parent` | renderer → main | → `{ dir }`: mappen ett nytt projekts mapp läggs i, vald i en mappdialog (`null` om den avbryts) |
+| `project:unsaved` | renderer → main | arbete utan projekt från och med nu |
+| `project:reveal` | renderer → main | projektets mapp i utforskaren |
+| `project:forget` | renderer → main | `{ file }` → listan: ett projekt struket ur listan över de senaste (mappen rörs inte) |
 | `prg:open` | renderer → main | `{ paths?, zeroPage? }` → `OpenedPrg[]` (`LoadedFile`, för en VICE-snapshot också `vsf`, `entries`, `start` och `snapshot`, 13.7) |
 | `disk:open` | renderer → main | `{ path? }` → `{ path, name, bytes }` för en `.d64` (dialog om sökväg saknas; `null` om den avbryts) |
-| `export:write` | renderer → main | `{ dir, files: Record<string, string \| Uint8Array> }` → `{ written: string[] }` |
+| `export:write` | renderer → main | `{ dir \| target, files: Record<string, string \| Uint8Array> }` → `{ dir, written: string[] }`; `target`: `pick` (mappdialog), `temp` (ny mapp i temp), `project` (projektets `source`), `build` (projektets `build`, utan projekt en ny mapp i temp) |
 | `toolchain:build` | renderer → main | `{ dir, entries: string[] }` → `{ ok, stdout, problems: Problem[], prg?: Uint8Array }` |
 | `toolchain:run` | renderer → main | `{ prgPath, labelsPath?, start?, disk? }` → `{ pid, via: 'run' \| 'sys' \| 'monitor' }` |
 | `toolchain:pack` | renderer → main | `{ files: { name, prg }[], prefs: PackPrefs }` → `{ ok, output, argv, dir, name?, path?, prg?, packed, report, check, error? }`: Brokkr i en arbetstråd eller Exomizer, efter `prefs.packer`; filen skrivs också i `prefs.dir` när den är satt (en mapp vald i sessionen), och `path` pekar dit (13.8) |
@@ -1515,8 +1521,8 @@ demot packat med slut, en tabell som inte är packad och en fil packad på plats
 ### 13.6 Terminal
 
 **Terminal** i titelraden (och kommandopaletten) öppnar ett terminalfönster i mappen du arbetar i: den senast
-exporterade Kick Assembler-mappen, annars projektfilens mapp, annars mappen där en dialog senast valde något (PRG,
-disk, projekt), annars hemmappen. På Windows är det PowerShell, startat med `cmd /d /c start "Mimir Studio" /D
+exporterade Kick Assembler-mappen, annars projektets `source` (projektets mapp före en export, 13.10), annars mappen
+där en dialog senast valde något (PRG, disk, projekt), annars hemmappen. På Windows är det PowerShell, startat med `cmd /d /c start "Mimir Studio" /D
 <mapp> powershell.exe -NoLogo -NoExit -Command …`: `start` ger PowerShell en egen konsol (Windows 11 visar den i
 standardterminalen), medan ett program som appen startar direkt får appens tomma standardhandtag och avslutas.
 VICE:s mapp ligger först i `PATH` (så `x64sc fil.prg` fungerar), och `kickass fil.asm` kör `KickAss.jar` med den
@@ -1985,6 +1991,56 @@ bank där ett chip utanför projektet tas ur `banks/`. `kickass.integration.test
 avbild, med VICE-etiketterna. Ett e2e-test bockar i rutan, ser en filrad och namnrummen, namnger `$8000` i bank 1,
 öppnar källfliken, verifierar, exporterar och bockar ur igen. Användarens Action Replay (4 banker, ungefär 9 900 rader),
 EasyFlash-skivan OneLoad64 (64 banker, 127 chip) och Pitfall (en bank) blir identiska avbilder med KickAss.jar.
+
+### 13.10 Projekt och startskärmen
+
+Ett **projekt** är en egen mapp, döpt efter projektet, med projektfilen `<namn>.mimir.json` i och det Mimir skriver
+för det i mappar där:
+
+```
+<namn>\
+  <namn>.mimir.json   projektet (filerna, etiketter, kommentarer, bokmärken, patchar …), sparat medan du arbetar
+  source\             Kick Assembler-exporten (Ctrl+E skriver hit utan dialog)
+  build\              KickAss.jar:s bygge vid varje verifiering (F7, F5), samma mapp varje gång
+  packed\             den packade filen, när ingen annan mapp är vald i Pack-vyn (13.8)
+```
+
+Mapparna skapas när något skrivs i dem. Spara-dialogerna (grafik, patchar, den packade filen, quicksaves, en kopia av
+projektfilen) öppnas i projektets mapp. Varje ändring sparas i projektfilen en halv sekund efter den (och innan
+projektet lämnas eller fönstret stängs); **Save** (Ctrl+S) sparar direkt. Att öppna en PRG, en snapshot eller en
+cartridge i ett projekt ger projektet de filerna, som ett steg Ctrl+Z ångrar. Showcase-demon och en projektfil som
+släpps på fönstret lämnar projektet (som är sparat) och blir arbete utan projekt. En projektfil öppnad med **Open
+project** gör sin mapp till projektets, också för filer sparade före projekten.
+
+**Startskärmen** visas när appen startar: **Continue** med det du arbetade med sist (projektet, med dess mapp, eller
+arbetet utan projekt; knappen har fokus så Enter fortsätter), **New project…** (namn och mappen det läggs i: först
+`Dokument\Mimir`, sedan där det senaste lades; `Change…` väljer en annan i en mappdialog), **Open project…**,
+**Without a project** och de senast öppnade projekten (högst 10; ett som inte finns kvar är överstruket, × stryker det
+ur listan). Namnet prövas som Windows prövar ett mappnamn (inga `<>:"/\|?*`, inte en enhet som `CON`, inte slut på
+punkt); finns redan ett projekt med namnet i mappen skapas inget. Ett nytt projekt är tomt: listningen visar **Open
+PRG…**, **Mount D64…** och **VICE quicksave**. Laddas fönstret om fortsätter det med det som valts i körningen, utan
+startskärmen. Projektknappen i titelraden (projektets namn, eller *No project*) har **Show the project folder**,
+**Save a copy of the project file…**, **Open project…** och **Close the project** (tillbaka till startskärmen).
+
+**Utan projekt** arbetar du som förut: fönstret sparar arbetet (`localStorage`) till nästa start, exporten frågar
+efter en mapp och bygget hamnar i temp. **Save** (Ctrl+S) skapar då ett projekt av arbetet (*Create a project from
+this work*): mappen skapas, projektet sparas där, den senaste exporten av de filer du har kopieras till `source`
+(mappen du valde lämnas som den är), det senaste bygget flyttas till `build` och den packade filen till `packed` (ur
+appens egna mappar i temp, som tas bort), och arbetet fortsätter i projektet. Fönstret sparar då inget arbete utan
+projekt längre. Ett projekt som öppnas medan det finns arbete utan projekt lämnar det kvar: startskärmen erbjuder
+båda.
+
+Huvudprocessen håller reda på det (`projects.json` i appens datamapp): det som valdes sist, de senaste projekten och
+mappen nya projekt läggs i. Ett projekt i listan öppnas utan dialog (sökvägen kommer från listan, inte från
+renderaren); mappen nya projekt läggs i är den huvudprocessen föreslår eller en vald i sessionen, och projektets mapp
+får skrivas i när projektet öppnats eller skapats.
+
+**Test:** `test/main.test.ts` (*projects*): namnen, listan och det som valdes sist över en omstart, mapparna, att ett
+projekt inte skapas två gånger, och att exporten kopieras medan bygget och den packade filen flyttas.
+`e2e/projects.spec.ts`: startskärmen vid första starten, ett nytt projekt (mappen, en PRG öppnad i det, ändringar
+sparade i projektfilen, Ctrl+E till `source`), nästa start (Continue med Enter, omladdning utan startskärm, tillbaka
+till startskärmen), arbete utan projekt bredvid ett projekt, och ett projekt skapat av arbetet med exporten flyttad
+dit.
 
 ## 14. UI/UX-specifikation
 
