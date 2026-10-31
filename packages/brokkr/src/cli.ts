@@ -16,7 +16,8 @@ import { defaultThreads, Pool } from './node.ts';
 import { crunchSearch } from './search.ts';
 import { sfxAsync, type SfxFormat, type SfxResult, type Start } from './sfx.ts';
 
-const USAGE = `Brokkr, a C64 cruncher (Exomizer 3 streams, smaller and faster; or its own, smaller still)
+const USAGE = `Brokkr, a C64 cruncher: Exomizer 3 streams, smaller and faster; or its own formats, smaller still or
+faster to decrunch
 
 usage: brokkr <command> [options] <file>...
 

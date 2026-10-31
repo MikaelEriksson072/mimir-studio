@@ -174,8 +174,8 @@ packages/sindri  @mimir/sindri: Sindri, the built-in unpacker, an emulated C64 (
                  packed program through its layers; data/signatures.json names packers by fingerprint (see its README)
 packages/brokkr  @mimir/brokkr: Brokkr, the built-in cruncher (Exomizer 3 streams, its own adaptive format or its fast one,
                  self-extracting files checked in an emulated C64, D64 packing, 6502 decrunchers in Kick Assembler
-                 source; see its README). Like Sindri a
-                 copy of its own project (C:\Users\mikae\brokkr): src/ and test/ are kept the same
+                 source; see its README). Like Sindri a copy of its own project (C:\Users\mikae\brokkr, public at
+                 github.com/MikaelEriksson072/Brokkr): src/, test/ and README.md are kept the same
 apps/desktop     Electron app
   electron/main  window, IPC allowlist (zod), path policy, toolchain runner, settings, file watcher
   electron/preload  contextBridge -> window.kr

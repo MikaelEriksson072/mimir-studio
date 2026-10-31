@@ -86,8 +86,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   ones the original has (a `bne` for a `bne`), and the editor shows how many cycles are left. The listing marks the
   patched bytes. Each patch can be switched off and on in the Explorer, edited, removed (the original bytes come back)
   and saved as a PRG. The export writes each one's source to `patches/`, as a `.asm` file that assembles on its own.
-- **Its own cruncher.** The *Pack* view packs the rebuilt program with [Brokkr](packages/brokkr/README.md), Mimir's own
-  cruncher (Sindri's brother: Sindri unpacks, Brokkr packs). It writes Exomizer 3's format, so every Exomizer
+- **Its own cruncher.** The *Pack* view packs the rebuilt program with [Brokkr](https://github.com/MikaelEriksson072/Brokkr),
+  Mimir's own cruncher (Sindri's brother: Sindri unpacks, Brokkr packs). It writes Exomizer 3's format, so every Exomizer
   decruncher reads it, but crunches it smaller and several times faster than Exomizer 3.1.1, plans where the
   decruncher, its table and the stream go and what `$01` must be, and runs every self-extracting file in an emulated
   C64 before it hands it over. *Max* effort searches on every core. For the smallest files it has a format of its own,
@@ -198,8 +198,9 @@ BASIC without them; for a disk it takes the 1541's DOS ROM from VICE too. unp64 
 [iAN CooG](http://iancoog.altervista.org) no longer comes with the app; it can still be set as an external unpacker in
 Settings → Toolchain.
 
-Programs are packed by Brokkr, Mimir's own cruncher (`packages/brokkr`, GPL-3.0 like the rest), a copy of its own
-project, which also runs on its own from the command line. It writes the stream format of Exomizer 3 (whose decrunchers
+Programs are packed by Brokkr, Mimir's own cruncher (`packages/brokkr`, GPL-3.0 like the rest). It is a copy of its own
+repository, [MikaelEriksson072/Brokkr](https://github.com/MikaelEriksson072/Brokkr), where it also runs on its own from
+the command line. It writes the stream format of Exomizer 3 (whose decrunchers
 read it) with code of its own: its cruncher, its 6502 decruncher and its self-extracting files are written from scratch.
 
 ## License
