@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   analyze, areaAt, bankFiles, builtCartridge, cartMode, cartridgeFiles, cartridgeSource, chipAddress, compareCrt, createProject, crtBanks, deserializeProject, describeCrt, expectedCartridge, exportFiles,
-  isCrt, makeCrt, openCartridge, parseCrt, planPatch, portText, reaches, rebuildCrt, render, serializeProject, spaceRender, spaceView, verify, withPatch, DEFAULT_SETTINGS, type FileInput, type ListingLine, type ProjectInput, type SpaceCache,
+  isCrt, lineText, makeCrt, openCartridge, parseCrt, planPatch, portText, reaches, rebuildCrt, render, serializeProject, spaceRender, spaceView, verify, withPatch, DEFAULT_SETTINGS, type FileInput, type ListingLine, type ProjectInput, type SpaceCache,
 } from '../src';
 import { fromSource } from './helpers/programs';
 
@@ -351,6 +351,51 @@ describe('every bank at once, each a space of its own (13.9b)', () => {
     const q = withPatch(p, plan.patch);
     expect(q.files[0].bytes[0x2e]).toBe(0xa9);
     expect(q.files[1].bytes).toEqual(p.files[1].bytes);
+  });
+});
+
+describe('every bank in one source (13.9c)', () => {
+  const one = () => { const o = openCartridge('demo.crt', demoCartridge()); return createProject({ files: o.files, cart: o.cart, settings: { cartOneSource: true } }); };
+
+  it('writes one <name>.crt.asm: a segment per chip, a namespace per bank, the names they share once, the image last', () => {
+    const p = one(), A = analyze(p), R = render(A, p), src = R.files['demo.crt.asm'] as string;
+    expect(R.main).toBe('demo.crt.asm');
+    expect(Object.keys(R.files).filter(k => k.endsWith('.asm'))).toEqual(['include/c64-hardware.asm', 'demo.crt.asm']);
+    expect(src).toContain('.file [name="demo.crt", type="bin", segments="Cartridge"]\n.segmentdef Cartridge [start=0]\n.segmentdef Bank00_8000 [min=$8000, max=$9fff, fill] // bank 0\n.segmentdef Bank01_8000 [min=$8000, max=$9fff, fill] // bank 1\n');
+    expect(src.match(/#import "include\/c64-hardware\.asm"/g)).toHaveLength(1);
+    expect(src).toContain('.namespace bank00 {\n.segment Bank00_8000\n');
+    expect(src).toContain('.namespace bank01 {\n.segment Bank01_8000\n');
+    expect(src).toMatch(/\} +\/\/ end of bank 1\n/);
+    expect(src).toContain('.segment Cartridge\n        .encoding "ascii"');
+    expect(src).toMatch(/chip1:\n +\.segmentout \[segments="Bank01_8000"\]\n +\.errorif \* - chip1 != 8192, "segment Bank01_8000 does not hold the chip's 8192 bytes"/);
+    // the listing shows the same file, under one file bar
+    expect(R.lines.filter(l => l.k === 'file').map(l => (l as { text: string }).text)).toEqual(['demo.crt.asm · every bank']);
+    expect(R.lines.filter(l => l.k !== 'file').map(l => lineText(l, DEFAULT_SETTINGS)).join('\n') + '\n').toBe(src);
+    // the built-in assembler still checks the chips
+    expect(verify(A, R).ok).toBe(true);
+  });
+
+  it('exports the one source, a build that assembles it alone, and the image it writes', () => {
+    const p = one(), A = analyze(p), R = render(A, p), V = verify(A, R), out = exportFiles(p, R, p.settings, V);
+    expect(Object.keys(out).filter(k => k.endsWith('.asm'))).toEqual(['include/c64-hardware.asm', 'demo.crt.asm']);
+    expect(out['out/demo.crt']).toEqual(demoCartridge());
+    expect(out['build.bat']).toContain('"%JAVA%" -jar "%KICKASS%" demo.crt.asm -odir out');
+    expect(out['build.bat']).not.toContain('bank00_8000.asm');
+    expect(out['build.bat']).toContain('-moncommands out\\demo.crt.vs -cartcrt out\\demo.crt');
+    expect(out['README.md']).toContain('- `demo.crt.asm` — every bank of the cartridge in one source: assemble it alone, it writes `demo.crt`');
+    expect(out['README.md']).not.toContain('`bank00_8000.asm`');
+  });
+
+  it('works for a cartridge of one bank too, and takes a chip left out of the project from banks/', () => {
+    const o = openCartridge('demo.crt', demoCartridge());
+    const p = createProject({ files: [o.files[0]], cart: o.cart, settings: { cartOneSource: true } }), A = analyze(p), R = render(A, p);
+    expect(A.spaces).toBeUndefined();
+    const src = R.files['demo.crt.asm'] as string;
+    expect(src).toContain('.namespace bank00 {');
+    expect(src).not.toContain('.namespace bank01');
+    expect(src).toMatch(/chip1:\n +\.import binary "banks\/bank01_8000\.bin"/);
+    expect(R.files['banks/bank01_8000.bin']).toEqual(o.files[1].bytes);
+    expect(verify(A, R).ok).toBe(true);
   });
 });
 

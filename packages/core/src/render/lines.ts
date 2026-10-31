@@ -4,8 +4,9 @@ import { h4 } from '../util/hex';
 
 export type LineTextSettings = Pick<Settings, 'indent' | 'commentCol' | 'addrComments'>;
 
-/** Directives written at column 0 (everything else is indented). */
-export const TOP_LEVEL_DIRECTIVES = ['#import', '#define', '#if', '#else', '#endif', '.label', '.var', '.pc', 'BasicUpstart2'];
+/** Directives written at column 0 (everything else is indented); a cartridge's banks in one source (13.9c) add the
+ *  segments, the image's file and each bank's namespace */
+export const TOP_LEVEL_DIRECTIVES = ['#import', '#define', '#if', '#else', '#endif', '.label', '.var', '.pc', 'BasicUpstart2', '.file', '.segmentdef', '.segment', '.namespace', '}'];
 
 /**
  * Mnemonics are always written in lower case: Kick Assembler 5.25 rejects upper-case ones
@@ -25,7 +26,8 @@ export function lineText(l: ListingLine, S: LineTextSettings): string {
     case 'lbl': return `${l.name}:`;
     case 'ins': return withCmt(ind + mnc(l.mn) + (l.ext || '') + (l.tok.length ? ' ' + tokS(l.tok) : ''), cc(l.cmt));
     case 'dat': return withCmt(ind + l.dir + ' ' + tokS(l.tok), cc(l.cmt));
-    case 'dir': return withCmt((l.tok[0] && TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s) ? '' : ind) + tokS(l.tok), l.cmt);
+    // a directive line that starts with a name defines a label (`chip0:` in a cartridge's source): column 0 too
+    case 'dir': return withCmt((l.tok[0] && (TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s) || l.tok[0].t === 'def') ? '' : ind) + tokS(l.tok), l.cmt);
     case 'cmt': return l.raw ? l.text : l.text ? `// ${l.text}` : '//';
     case 'hdr': return `// ${('---- ' + l.text + ' ').padEnd(66, '-')}`;
     case 'file': return `// ===== ${l.text} =====`;

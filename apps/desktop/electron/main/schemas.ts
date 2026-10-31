@@ -72,6 +72,7 @@ export const settingsSchema = toolchainSettingsSchema.partial().extend({
   bytesPerRow: z.number().int().min(1).max(64), indent: z.number().int().min(0).max(16), commentCol: z.number().int().min(0).max(160),
   basicUpstart: z.boolean(), hwInclude: z.enum(['import', 'inline', 'none']), hwComments: z.boolean(),
   musicAsSid: z.boolean(), gfxBinary: z.boolean(), addrComments: z.boolean(), notesFormat: z.enum(['html', 'txt', 'none']),
+  cartOneSource: z.boolean(),
 }).partial();
 
 const fileName = z.string().min(1).max(255);

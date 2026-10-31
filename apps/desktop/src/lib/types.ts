@@ -41,7 +41,8 @@ export interface KickBuild {
 }
 
 /** A cartridge image rebuilt (spec 13.9) and compared with the one the project was opened from */
-export interface CartCheck { ok: boolean; name: string; crt: Uint8Array | null; path?: string; same: number; total: number; diffs: string[] }
+/** `vs`: the VICE labels its source wrote (every bank in one source, 13.9c) */
+export interface CartCheck { ok: boolean; name: string; crt: Uint8Array | null; path?: string; vs?: string; same: number; total: number; diffs: string[] }
 
 export interface BuildState {
   ok: boolean;

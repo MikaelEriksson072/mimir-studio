@@ -94,6 +94,9 @@ export interface Settings {
   addrComments: boolean;
   /** the export's document with the bookmarks and comments: NOTES.html, NOTES.txt, or none */
   notesFormat: 'html' | 'txt' | 'none';
+  /** a cartridge: every bank in one source, `<name>.crt.asm`, which writes the image (spec 13.9c); off: a source per
+   *  chip and the image's own */
+  cartOneSource: boolean;
   // toolchain (used by the Electron main process and the CLI)
   javaPath: string;
   kickJar: string;
@@ -630,12 +633,17 @@ export type Line =
   | { k: 'lbl'; a: Addr; name: string }
   | { k: 'ins'; a: Addr; n: number; mn: string; ext: ForcedMode; tok: Token[]; cmt: string; ill?: boolean; userCmt?: boolean; preview?: boolean; delay?: boolean }
   | { k: 'dat'; a: Addr; n: number; dir: '.byte' | '.word' | '.text'; tok: Token[]; cmt: string; mn?: string; ill?: boolean; userCmt?: boolean; preview?: boolean }
-  | { k: 'dir'; a: Addr; n: number; tok: Token[]; cmt?: string; zp?: Addr; userCmt?: boolean }
+  | { k: 'dir'; a: Addr; n: number; tok: Token[]; cmt?: string; zp?: Addr; userCmt?: boolean; head?: HeadPart }
   /** `raw`: written as it is (the lines of a block comment); `note`: part of a user Note; `zp`: the note is on the
    *  zero-page variable at this address (its `.label` line in the file head, whose `a` is the file's load address);
    *  `mark`: a mark the analysis made (where a loader part starts or ends) */
-  | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; mark?: boolean }
-  | { k: 'blank'; a: Addr };
+  | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; mark?: boolean; head?: HeadPart }
+  | { k: 'blank'; a: Addr; head?: HeadPart };
+
+/** What a line of a file's head is (render): its title, a loader's or the excluded blocks' notes (`mark`), the
+ *  hardware include, the hardware, zero-page and other files' names, other banks' names and the music. All banks in one
+ *  source (13.9c) keep the marks, the other banks' names and the music in each bank and define the rest once. */
+export type HeadPart = 'title' | 'mark' | 'gap' | 'import' | 'hw' | 'zp' | 'ext' | 'foreign' | 'music';
 
 /** Listing-only separator between the files of a multi-file project. */
 export interface FileLine { k: 'file'; a: Addr; text: string; fi: number }
@@ -657,6 +665,8 @@ export interface RenderResult {
   excluded: ExcludedRange[];
   /** the render of each space of a merged analysis (spec 13.9b; verify uses them, not sent to the window) */
   parts?: RenderResult[];
+  /** the source to show first when it is not the first file's: a cartridge's banks in one source (13.9c) */
+  main?: string;
 }
 
 export interface ExcludedRange { start: Addr; end: Addr; file: number; name: string }

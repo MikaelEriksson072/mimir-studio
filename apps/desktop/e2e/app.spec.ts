@@ -605,11 +605,12 @@ test('fold and unfold blocks', async ({ page }) => {
 
   await test.step('the command palette folds every block that is not code, and unfolds all', async () => {
     const palette = async (cmd: string) => { await page.keyboard.press('Control+Shift+P'); const q = page.getByRole('textbox', { name: 'Command' }); await q.fill(cmd); await q.press('Enter'); };
+    // the listing re-renders after the command: wait for it
     await palette('Fold every block that is not code');
-    expect(await shown('09bd')).toBe(false);
+    await expect.poll(() => shown('09bd')).toBe(false);
     expect((await listingRows(page)).some(r => r.text === 'start:')).toBe(true);
     await palette('Unfold all blocks');
-    expect(await shown('09bd')).toBe(true);
+    await expect.poll(() => shown('09bd')).toBe(true);
   });
 });
 
@@ -857,6 +858,70 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     const started = /> VICE started \(pid -?\d+\): the cartridge (.+?\.crt) attached \(-cartcrt\)/.exec(log);
     expect(started, log.slice(-600)).toBeTruthy();
     expect(readFileSync(started![1])).toEqual(crt);
+  });
+});
+
+test('a cartridge with every bank in one .asm: the listing, the source, verify and export', async ({ workDir: work, app, page }) => {
+  // spec 13.9c: All banks in one .asm (Explorer → Cartridge) makes mimir-demo.crt.asm, which writes the whole image
+  const crtPath = join(repoDir, 'fixtures/crt/mimir-demo.crt'), crt = readFileSync(crtPath);
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [crtPath] });
+  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await expect(toast(page, /^Opened the cartridge mimir-demo\.crt/)).toBeVisible();
+  await openSection(page, 'Cartridge');
+  const one = page.getByRole('checkbox', { name: 'All banks in one .asm' });
+
+  await test.step('the box makes one source of every bank, under one file bar', async () => {
+    await expect(one).not.toBeChecked();
+    await one.check();
+    await expect(one).toBeChecked();
+    // the listing comes when the worker has rendered it as one source
+    await expect.poll(async () => (await listingRows(page)).filter(r => /\.asm( · |$)/.test(r.text.trim())).map(r => r.text.trim()))
+      .toEqual(['mimir-demo.crt.asm · every bank']);
+    const rows = await listingRows(page);
+    expect(rows.some(r => r.text.trim() === '.namespace bank00 {')).toBe(true);
+    expect(rows.some(r => r.text.trim() === '.namespace bank01 {')).toBe(true);
+    expect(rows.some(r => r.text.includes('.segmentout [segments="Bank01_8000"]'))).toBe(true);
+    // editing goes on as before: a name in bank 1 (the box has the focus: the listing gets it back)
+    await listing(page).locator('.row.cur').click();
+    await page.keyboard.press('g');
+    await page.locator('#goto-input').fill('1:8000');
+    await page.locator('#goto-input').press('Enter');
+    await page.keyboard.press('n');
+    await page.getByLabel('Label at $8000').fill('bank1_text');
+    await page.getByLabel('Label at $8000').press('Enter');
+    await expect(statusBar(page)).toContainText('bank 1 · $8000 · bank1_text');
+  });
+
+  await test.step('the source tab shows the one .asm', async () => {
+    await page.getByRole('tab', { name: 'mimir-demo.crt.asm' }).click();
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.monaco-editor .view-lines').first()).toContainText('every bank of the cartridge in one source');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+  });
+
+  await test.step('F7 verifies, and the export has the one source and a build that assembles it alone', async () => {
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+    await page.getByRole('tab', { name: 'Build output' }).click();
+    await expect(page.locator('.build-log')).toContainText('Built-in cartridge OK: mimir-demo.crt 16480 / 16480 bytes identical to mimir-demo.crt');
+    const out = join(work, 'export-one');
+    await stubDialogs(app, { open: [out] });
+    await page.keyboard.press('Control+e');
+    await expect(toast(page, `Exported verified Kick Assembler project to ${out}`)).toBeVisible({ timeout: 90_000 });
+    const asm = readdirSync(out).filter(f => f.endsWith('.asm'));
+    expect(asm).toEqual(['mimir-demo.crt.asm']);
+    expect(readFileSync(join(out, 'mimir-demo.crt.asm'), 'utf8')).toMatch(/\.namespace bank01 \{\n\.segment Bank01_8000\n[\s\S]*bank1_text:/);
+    expect(readFileSync(join(out, 'out', 'mimir-demo.crt'))).toEqual(crt);
+    expect(readFileSync(join(out, 'build.bat'), 'utf8')).toMatch(/KICKASS%" mimir-demo\.crt\.asm -odir out[^\n]*\r\nstart "" "%VICE%" .*-moncommands out\\mimir-demo\.crt\.vs -cartcrt out\\mimir-demo\.crt/);
+  });
+
+  await test.step('off again: a source per chip', async () => {
+    await one.uncheck();
+    // the listing comes when the worker has rendered it again
+    await expect.poll(async () => (await listingRows(page)).filter(r => /\.asm · bank \d+$/.test(r.text.trim())).map(r => r.text.trim()))
+      .toEqual(['bank00_8000.asm · bank 0', 'bank01_8000.asm · bank 1']);
   });
 });
 

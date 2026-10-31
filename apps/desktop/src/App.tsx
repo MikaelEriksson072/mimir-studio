@@ -735,7 +735,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const extraFiles = useMemo(() => projectTextFiles(project, R, S), [project, R, S]);
   /** build.bat / build.sh edited in the source view; the generated text again (or null) drops the edit */
   const setScript = (path: BuildScript, text: string | null) => {
-    const value = text == null || text === buildScripts(S, R.fileNames, cartBuild(project))[path] ? null : text;
+    const value = text == null || text === buildScripts(S, R.fileNames, cartBuild({ ...project, settings: S }))[path] ? null : text;
     if ((project.scripts?.[path] ?? null) === value) return;
     update(value == null ? `Restore generated ${path}` : `Edit ${path}`, d => { d.scripts ??= {}; if (value == null) delete d.scripts[path]; else d.scripts[path] = value; });
     if (text == null) toast(`${path} is generated again from the toolchain settings`, 'ok');
@@ -787,15 +787,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         setBuildBusy('Assembling with KickAss.jar');
         // the cartridge's own source comes last: it takes the chips' PRGs the others built
         const cs = cartridgeFiles(snapshot, R, latest.current.S);
+        // the files with a source of their own: with every bank in one source (13.9c) the chips have none
+        const own = R.fileNames.map((n, i) => ({ n, i })).filter(x => !(cs?.one && snapshot.files[x.i]?.chip != null));
         const w = await kr.writeExport({ target: 'temp', name: snapshot.name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40), files: { ...R.files, ...cs?.files } });
         if (w) {
-          const res = await kr.build({ dir: w.dir, entries: [...R.fileNames.map(n => `${n}.asm`), ...(cs ? [cs.entry] : [])] });
+          const res = await kr.build({ dir: w.dir, entries: [...own.map(x => `${x.n}.asm`), ...(cs ? [cs.entry] : [])] });
           log.push(res.stdout.trim());
           if (!res.outputs.length) log.push('', `KickAss.jar was not run: ${res.problems.map(p => p.message).join('; ')}`, 'Verified with the built-in assembler only.');
           else {
-            const compared = res.outputs.slice(0, R.fileNames.length).map((o, i) => { const c = comparePrg(snapshot.files[i], o.prg, R.excluded.filter(x => x.file === i).map(x => ({ start: spaceAddr(x.start), end: spaceAddr(x.start) + x.end - x.start }))); return { entry: o.entry, ok: o.ok && c.ok, same: c.same, total: c.total, excluded: c.excluded, prgPath: o.prgPath, vsPath: o.vsPath, prg: o.prg, diffs: c.diffs }; });
-            const co = cs ? res.outputs[R.fileNames.length] : undefined;
-            const kickCart = cs ? checkCart(cs.output, co?.ok ? co.prg : null, co && !co.ok ? [`${cs.entry} did not assemble`] : [], co?.prgPath) : null;
+            const compared = res.outputs.slice(0, own.length).map((o, k) => { const i = own[k].i, c = comparePrg(snapshot.files[i], o.prg, R.excluded.filter(x => x.file === i).map(x => ({ start: spaceAddr(x.start), end: spaceAddr(x.start) + x.end - x.start }))); return { entry: o.entry, ok: o.ok && c.ok, same: c.same, total: c.total, excluded: c.excluded, prgPath: o.prgPath, vsPath: o.vsPath, prg: o.prg, diffs: c.diffs }; });
+            const co = cs ? res.outputs[own.length] : undefined;
+            const kickCart = cs ? { ...checkCart(cs.output, co?.ok ? co.prg : null, co && !co.ok ? [`${cs.entry} did not assemble`] : [], co?.prgPath), ...(co?.vsPath ? { vs: co.vsPath } : {}) } : null;
             kick = { ok: res.ok && compared.every(c => c.ok) && (!kickCart || kickCart.ok), dir: w.dir, problems: res.problems, compared, cart: kickCart };
             log.push('');
             for (const c of compared) {
@@ -852,7 +854,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           if (!w) return;
           crtPath = `${w.dir}/${res.cart.name}`;
         }
-        const labels = res.kick?.compared[0]?.vsPath ?? undefined;
+        // the labels of the first chip's source, or of the one source with every bank (13.9c)
+        const labels = (project.settings.cartOneSource ? res.kick?.cart?.vs : undefined) ?? res.kick?.compared[0]?.vsPath ?? undefined;
         const { pid } = await kr.run({ prgPath: crtPath, labelsPath: labels, disk: diskPath, cart: true });
         setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): the cartridge ${crtPath} attached (-cartcrt)${labels ? ` with labels from ${labels}` : ''}${drive}` });
         toast(`VICE started the cartridge ${res.cart?.name ?? project.cart.name}${labels ? ' with labels in the monitor' : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}`, 'ok');
@@ -1316,7 +1319,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     navigate(a, { center: true, listing: true, keepSel: true });
     setSel({ start: a, end: b, multi: true, anchor: a, anchorEnd: b });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', `${R.fileNames[0] || 'main'}.asm`], ['spec', 'doc', 'SPEC.md']];
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', R.main ?? `${R.fileNames[0] || 'main'}.asm`], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`)} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
@@ -1341,7 +1344,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             d.patches = d.patches.filter(p => d.files.some(f => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length));
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
-          cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
+          cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
+          onOneSource={on => update(on ? 'Every bank in one source' : 'A source per chip', d => { d.settings.cartOneSource = on; })} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
           disk={disk} packing={packing} onMount={() => void mountDisk()} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? { addr: bmEdit, cursorAt: lineAddr() ?? null, onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); }, onPreview: a => navigate(a, { center: true, listing: true, noHistory: true }) } : null}
@@ -1418,7 +1422,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} />
             </>}
             <Suspense fallback={<div className="empty">Loading…</div>}>
-              {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath || `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
+              {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel}
@@ -1447,7 +1451,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} />}
             {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
-            {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild(project)} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}
+            {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild({ ...project, settings: S })} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}
           </ErrorBoundary></div>
         </section>}
       </main>

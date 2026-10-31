@@ -1950,6 +1950,42 @@ går till bank 1, skriver `0:8009` i Go to, namnger `$8000` i bank 1, lämnar ba
 banker), Myth (64) och OneLoad64 (EasyFlash, 64 banker, 127 chip) verifieras bank för bank och byggs om till identiska
 avbilder; användarens Action Replay 5 (Bacchus, 4 banker med var sin `CBM80`) likaså, också med KickAss.jar.
 
+### 13.9c Alla banker i en källa
+
+*All banks in one .asm* i Explorers *Cartridge*-sektion (inställningen `Settings.cartOneSource`, sparad i projektet,
+ångringsbar) gör hela cartridgen till en enda Kick Assembler-källa, `<namn>.crt.asm`, som SourceGens enda utfil: den
+skriver hela avbilden själv, och listningen och fliken med källan visar den som en fil. Av: en källa per chip och en för
+avbilden (13.9).
+
+**Källan** (`oneSource`, `packages/core/src/spaces.ts`) byggs av renderingen per chip:
+- Överst `.file [name="<namn>.crt", type="bin", segments="Cartridge"]`, `.segmentdef Cartridge [start=0]` och ett
+  segment per chip (`.segmentdef Bank03_8000 [min=$8000, max=$9fff, fill]`). Sedan det som varje chips källa definierade
+  för sig, en gång: `#import "include/c64-hardware.asm"` (eller hårdvarunamnen), och nollsidevariablerna med sina
+  anteckningar (*zero page (every bank)*). Renderingen märker huvudets rader (`Line.head`) för det.
+- Sedan varje bank i ett eget namnrum, `.namespace bank03 { … }`, så att samma namn kan finnas i flera banker (`start`
+  i varje Action Replay-bank; `bank03.start` utifrån). Bankens chip står var och ett i sitt segment (`.segment
+  Bank03_8000`), med det deras källor hade utom huvudet: inläsarnas och de utelämnade blockens rader, andra bankers
+  namn (`.label sub_8100 = $8100`) och musiken stannar i banken.
+- Sist avbilden i segmentet `Cartridge`: huvudet och varje CHIP-paket som förut (`cartImageLines`, delad med 13.9), med
+  chipets byte ur dess segment (`.segmentout [segments="Bank03_8000"]`); ett chip som inte är med i projektet från
+  `banks/`. `.errorif` kontrollerar varje chips längd.
+- Listningen visar samma rader under en filrad (*bacchus.crt.asm · every bank*), med en markering där varje bank börjar;
+  man redigerar som vanligt. Filer som inte är chip (PRG:er) behåller sina egna källor. Det gäller också en cartridge
+  med en bank.
+
+**Bygget:** `build.bat` och `build.sh` assemblerar bara `<namn>.crt.asm` och ger VICE dess etiketter
+(`-moncommands out\<namn>.crt.vs`, där Kick Assembler skriver namnen i namnrummen); README beskriver filen. Den inbyggda
+verifieringen kontrollerar chippen som förut (renderingen per chip finns kvar under, `RenderResult.parts`) och avbilden
+de bygger; med KickAss.jar assembleras den enda källan och dess avbild jämförs med originalet. Byggpanelen visar bara
+den källans kommando, och fliken med källan heter som den (`RenderResult.main`).
+
+**Test:** `crt.test.ts` (*every bank in one source*): segmenten, namnrummen, en `#import`, `.segmentout`, att
+listningens rader är filens text, verifieringen, exporten (bara den källan, `build.bat`, README) och en cartridge med en
+bank där ett chip utanför projektet tas ur `banks/`. `kickass.integration.test.ts` assemblerar den ensam till samma
+avbild, med VICE-etiketterna. Ett e2e-test bockar i rutan, ser en filrad och namnrummen, namnger `$8000` i bank 1,
+öppnar källfliken, verifierar, exporterar och bockar ur igen. Användarens Action Replay (4 banker, ungefär 9 900 rader),
+EasyFlash-skivan OneLoad64 (64 banker, 127 chip) och Pitfall (en bank) blir identiska avbilder med KickAss.jar.
+
 ## 14. UI/UX-specifikation
 
 ### 14.1 Layout (ett fönster)

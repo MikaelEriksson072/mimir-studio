@@ -122,6 +122,8 @@ async function kickCheck(p: Project, io: Io, jar: string, java: string): Promise
   try {
     await writeVfs(dir, { ...R.files, ...cart?.files });
     for (const [fi, f] of A.files.entries()) {
+      // every bank in one source (13.9c): the chips are built by the cartridge's source, checked below
+      if (cart?.one && f.chip != null) continue;
       const entry = `${R.fileNames[fi]}.asm`;
       const run = await runKickAssembler({ java, jar, cwd: dir, entry, outDir: 'out', args: splitArgs(p.settings.kickArgs) });
       const cmp = comparePrg(f, run.prg);

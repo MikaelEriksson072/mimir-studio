@@ -242,6 +242,12 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   opened from (`+000050`): a PRG's after its load address, a cartridge chip's in its CHIP packet of the `.crt`, a
   snapshot's RAM in its C64MEM module (`fileOffsetBases`, `packages/core/src/offsets.ts`). *Offset* in the listing
   toolbar turns it off and on (`useUi.offsets`, kept with the other choices; on by default).
+- **Every bank in one source.** *All banks in one .asm* in the Explorer's Cartridge section (`Settings.cartOneSource`)
+  makes the cartridge one Kick Assembler source, `<name>.crt.asm` (`oneSource` in `spaces.ts`, spec 13.9c), from the
+  render per chip: a segment per chip, a namespace per bank (the same names in several banks), what every chip's head
+  defined once at the top (the render marks head lines, `Line.head`), and the image last with `.segmentout`. The listing
+  shows it under one file bar; the built-in verify still checks the chips (`RenderResult.parts`), KickAss.jar assembles
+  the one source, and the build scripts build only it.
 - **Every bank at once.** The banks share addresses, so each is a 64 KB space of its own (`packages/core/src/spaces.ts`,
   spec 13.9b): an address in space *s* is *s* · `$10000` + the address (a bank address; bank 0's are the plain ones, so
   a project without banks is unchanged). `analyze`, `render` and `verify` (core's public ones) split the project per

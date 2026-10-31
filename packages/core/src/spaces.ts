@@ -12,13 +12,14 @@
  * Addresses no bank has (the zero page, I/O, RAM) stay plain: their names are shared by every bank.
  * ===================================================================== */
 import type {
-  Addr, AnalysisResult, Block, Bookmark, FileInput, FileVerifyResult, Line, ListingLine, LogEntry, Note, Override, ProjectInput,
-  RenderResult, SpaceInfo, Token, VerifyResult, XRef,
+  Addr, AnalysisResult, Block, Bookmark, FileInput, FileLine, FileVerifyResult, HeadPart, Line, ListingLine, LogEntry, Note, Override, ProjectInput,
+  RenderResult, Settings, SpaceInfo, Token, VerifyResult, XRef,
 } from './types';
+import { lineText } from './render/lines';
 import { analyze as analyzeOne } from './analyze';
 import { render as renderOne, type RenderOptions } from './render/kick';
 import { verify as verifyOne } from './verify/verify';
-import { crtBanks, parseCrt } from './c64/crt';
+import { cartImageLines, chipAddress, chipName, crtBanks, crtBase, crtOutputName, crtSourceName, describeCrt, parseCrt, type CartLine, type Crt } from './c64/crt';
 
 export const SPACE = 0x10000;
 export const spaceOf = (a: Addr): number => Math.floor(a / SPACE);
@@ -223,6 +224,11 @@ const unique = (name: string, bank: number, taken: (n: string) => boolean): stri
 
 /** The source of a merged analysis: each space rendered as it is, its addresses made bank addresses; one space: as it is. */
 export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOptions = {}): RenderResult {
+  const R = renderSpaces(A, project, opts);
+  return A.S.cartOneSource && project.cart ? oneSource(project, A.S, R) : R;
+}
+
+function renderSpaces(A: AnalysisResult, project: ProjectInput, opts: RenderOptions): RenderResult {
   const layout = A.parts && A.spaces ? fileSpaces(project) : null;
   if (!A.parts || !A.spaces || !layout) return renderOne(A, project, opts);
   const parts = splitProject(project, layout);
@@ -279,10 +285,129 @@ function mergeRenders(project: ProjectInput, parts: Split[], renders: RenderResu
   return out;
 }
 
+/* ---------- all banks in one source (13.9c) ---------- */
+
+/** the parts of a file's head that one source defines once at its top, or leaves out (the file's title) */
+const HOISTED: ReadonlySet<HeadPart> = new Set(['title', 'gap', 'import', 'hw', 'zp', 'ext']);
+
+/** an operand written as tokens: strings, numbers and the rest */
+const argTokens = (s: string): Token[] => s.split(/("[^"]*"|\$[0-9a-fA-F]+|\b\d+\b)/).filter(Boolean)
+  .map((x): Token => ({ t: x.startsWith('"') ? 'str' : /^(\$[0-9a-fA-F]+|\d+)$/.test(x) ? 'num' : 'p', s: x }));
+
+/**
+ * A cartridge's chips in one source, `<name>.crt.asm`, which writes the whole image (spec 13.9c), from the render of a
+ * source per chip. At the top: the image's file and a segment per chip (`Bank03_8000`, its addresses, filled), then
+ * once what every chip's source defined for itself: the hardware include or names, the zero-page variables. Then each
+ * bank in a namespace of its own (`.namespace bank03 { … }`, so the same name can be in several banks; `bank03.start`
+ * from outside), each of its chips in its segment, with what its source had besides its head. Last the image: the
+ * header and every CHIP packet, each chip's bytes from its segment (`.segmentout`); a chip not in the project from
+ * banks/. The listing shows the same lines, under one file bar; files that are not chips keep their own sources.
+ */
+export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): RenderResult {
+  let crt: Crt;
+  try { crt = parseCrt(project.cart!.crt, project.cart!.name); } catch { return R; }
+  const base = crtBase(project.cart!), entry = crtSourceName(base), up = S.hexCase === 'upper';
+  const x4 = (v: number) => '$' + (up ? (v & 0xffff).toString(16).padStart(4, '0').toUpperCase() : (v & 0xffff).toString(16).padStart(4, '0'));
+  // the listing's lines of each file, after its file bar
+  const chunks = new Map<number, { bar: FileLine; lines: Line[] }>();
+  let cur: Line[] | null = null;
+  for (const l of R.lines) { if (l.k === 'file') { cur = []; chunks.set(l.fi, { bar: l, lines: cur }); } else cur?.push(l); }
+  const isChip = (i: number) => { const c = project.files[i]?.chip; return c != null && !!crt.chips[c] && chunks.has(i); };
+  const order = [...chunks.keys()].filter(isChip);
+  if (!order.length) return R;
+  const chipOf = (i: number) => crt.chips[project.files[i].chip!];
+  const banks: { bank: number; files: number[] }[] = [];
+  for (const i of order) { const b = chipOf(i).bank, last = banks[banks.length - 1]; if (last?.bank === b) last.files.push(i); else banks.push({ bank: b, files: [i] }); }
+  const seg = (i: number) => R.fileNames[i].replace(/^./, c => c.toUpperCase());
+  const ns = (bank: number) => `bank${String(bank).padStart(2, '0')}`;
+  const at0 = chunks.get(order[0])!.bar.a;
+  const cmt = (a: Addr, text: string, mark = false): Line => ({ k: 'cmt', a, text, ...(mark ? { mark } : {}) });
+  const dir = (a: Addr, d: string, args = '', c = ''): Line => ({ k: 'dir', a, n: 0, tok: [{ t: 'dir', s: d }, ...(args ? [{ t: 'p' as const, s: ' ' }, ...argTokens(args)] : [])], ...(c ? { cmt: c } : {}) });
+  const blank = (a: Addr): Line => ({ k: 'blank', a });
+  const text = (i: number) => R.fileLines[`${R.fileNames[i]}.asm`] ?? [];
+
+  // what every chip's head defined, once: the include, the hardware names, the zero-page variables (with their notes)
+  let include: Line | null = null;
+  const hw: Line[] = [], zp: Line[] = [], seen = new Set<string>();
+  for (const i of order) {
+    let notes: Line[] = [];
+    for (const l of text(i)) {
+      if (l.k === 'blank' || !('head' in l)) continue;
+      if (l.head === 'import' && !include) include = l;
+      else if (l.head === 'hw' && l.k === 'dir') { const t = lineText(l, S); if (!seen.has(t)) { seen.add(t); hw.push(l); } }
+      else if (l.head === 'zp' && l.k === 'cmt' && l.zp != null) notes.push(l);
+      else if (l.head === 'zp' && l.k === 'dir') {
+        const key = `zp ${l.zp} ${lineText(l, S)}`;
+        if (!seen.has(key)) { seen.add(key); zp.push(...notes, l); }
+        notes = [];
+      }
+    }
+  }
+  const top: Line[] = [
+    cmt(at0, `${project.cart!.name} — every bank of the cartridge in one source, re-assembled by Mimir Studio`),
+    cmt(at0, `${describeCrt(crt)}${crt.name ? `: "${crt.name}"` : ''}`),
+    cmt(at0, `Assemble this file alone: it writes ${crtOutputName(base)}. Each chip is a segment and each bank a namespace, so the same`),
+    cmt(at0, `name can be in several banks (bank03.start is bank 3's start from outside it).`),
+    blank(at0),
+    dir(at0, '.file', `[name="${crtOutputName(base)}", type="bin", segments="Cartridge"]`),
+    dir(at0, '.segmentdef', 'Cartridge [start=0]'),
+    ...order.map(i => { const c = chipOf(i), a = chipAddress(crt, c); return dir(chunks.get(i)!.bar.a, '.segmentdef', `${seg(i)} [min=${x4(a)}, max=${x4(a + c.data.length - 1)}, fill]`, `bank ${c.bank}`); }),
+    blank(at0),
+    ...(include ? [include] : []),
+    ...(hw.length ? [cmt(at0, 'hardware and KERNAL symbols'), ...hw] : []),
+    ...(zp.length ? [blank(at0), cmt(at0, 'zero page (every bank)'), ...zp] : []),
+    blank(at0),
+  ];
+  // each bank in its namespace, each chip in its segment, without what the top defines
+  const banked = (lines: (i: number) => readonly Line[]): Line[] => banks.flatMap(({ bank, files }) => {
+    const a = chunks.get(files[0])!.bar.a, end = chunks.get(files[files.length - 1])!.lines.at(-1)?.a ?? a;
+    return [
+      cmt(a, `==== bank ${bank}: ${files.map(i => `${R.fileNames[i]} (${x4(chipAddress(crt, chipOf(i)))}-${x4(chipAddress(crt, chipOf(i)) + chipOf(i).data.length - 1)})`).join(', ')} ====`, true),
+      dir(a, '.namespace', `${ns(bank)} {`),
+      ...files.flatMap(i => [dir(chunks.get(i)!.bar.a, '.segment', seg(i)), ...lines(i).filter(l => !('head' in l && l.head && HOISTED.has(l.head))), blank(chunks.get(i)!.bar.a)]),
+      dir(end, '}', '', `end of bank ${bank}`),
+      blank(end),
+    ];
+  });
+  // the image: the header and the CHIP packets, each chip from its segment, one not in the project from banks/
+  const files: Record<string, Uint8Array> = {};
+  const segOf = new Map(order.map(i => [chipOf(i).index, seg(i)]));
+  const atEnd = chunks.get(order[order.length - 1])!.lines.at(-1)?.a ?? at0;
+  const toLine = (l: CartLine): Line => l.k === 'cmt' ? cmt(atEnd, l.text) : l.k === 'blank' ? blank(atEnd)
+    : l.k === 'lbl' ? { k: 'dir', a: atEnd, n: 0, tok: [{ t: 'def', s: l.name }, { t: 'p', s: ':' }] } : dir(atEnd, l.dir, l.args ?? '', l.cmt ?? '');
+  const image: Line[] = [
+    cmt(atEnd, 'the cartridge image: its header, then each CHIP packet with its chip\'s segment', true),
+    dir(atEnd, '.segment', 'Cartridge'),
+    dir(atEnd, '.encoding', '"ascii"'),
+    blank(atEnd),
+    ...cartImageLines(crt, x => {
+      const s = segOf.get(x.index);
+      if (s) return { lines: [{ k: 'dir', dir: '.segmentout', args: `[segments="${s}"]` }], what: `segment ${s}`, from: `segment ${s}` };
+      const bin = `banks/${chipName(crt, x)}.bin`;
+      files[bin] = x.data.slice();
+      return { lines: [{ k: 'dir', dir: '.import binary', args: `"${bin}"` }], what: 'not in the project', from: bin };
+    }, S.hexCase).map(toLine),
+  ];
+  const listing = [...top, ...banked(i => chunks.get(i)!.lines), ...image];
+  const source = [...top, ...banked(text), ...image];
+  // files that are not chips keep their sources and their file bars
+  const others = [...chunks.keys()].filter(i => !isChip(i));
+  const out: RenderResult = {
+    // the render of a source per chip stays for verify (13.9c): a project of one space has no other
+    ...R, main: entry, parts: R.parts ?? [R],
+    lines: [{ k: 'file', a: at0, text: `${entry} · every bank`, fi: order[0] }, ...listing, ...others.flatMap(i => [chunks.get(i)!.bar, ...chunks.get(i)!.lines])],
+    files: { ...Object.fromEntries(Object.entries(R.files).filter(([k]) => !order.some(i => k === `${R.fileNames[i]}.asm`))), ...files, [entry]: source.map(l => lineText(l, S)).join('\n') + '\n' },
+    fileLines: { ...Object.fromEntries(Object.entries(R.fileLines).filter(([k]) => !order.some(i => k === `${R.fileNames[i]}.asm`))), [entry]: source },
+  };
+  return out;
+}
+
 /* ---------- verify ---------- */
 
 /** The round trip of a merged analysis, space by space; the results in the order of the project files. */
 export function verify(A: AnalysisResult, R: RenderResult): VerifyResult {
+  // one space with every bank in one source (13.9c): the render of its source per chip
+  if (!A.parts && R.parts?.length === 1) return verifyOne(A, R.parts[0]);
   if (!A.parts || !A.spaces || !R.parts || R.parts.length !== A.parts.length) return verifyOne(A, R);
   const results: FileVerifyResult[] = new Array(A.files.length);
   A.parts.forEach((P, i) => verifyOne(P, R.parts![i]).results.forEach((r, fi) => { results[A.spaces![i].files[fi]] = r; }));

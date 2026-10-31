@@ -155,4 +155,21 @@ describe.skipIf(!available)(`real Kick Assembler (${jar ?? 'not found'})`, () =>
       }
     }
   }, 60_000);
+
+  it('assembles every bank in one source (13.9c) alone to the image it was opened from', async () => {
+    const crt = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/crt/mimir-demo.crt')));
+    const o = openCartridge('mimir-demo.crt', crt), p = createProject({ files: o.files, cart: o.cart, settings: { cartOneSource: true } });
+    const R = render(analyze(p), p), dir = await mkdtemp(join(tmpdir(), 'mimir-it-'));
+    try {
+      await writeVfs(dir, exportFiles(p, R, p.settings));
+      const run = await runKickAssembler({ java, jar: jar!, cwd: dir, entry: 'mimir-demo.crt.asm', outDir: 'out', args: ['-vicesymbols'] });
+      expect(run.ok, run.output).toBe(true);
+      expect(run.prg).toEqual(crt);
+      // the labels of every bank, for VICE's monitor
+      expect(run.vsPath).toBe(join(dir, 'out', 'mimir-demo.crt.vs'));
+      expect(readFileSync(run.vsPath!, 'utf8')).toMatch(/al C:8009 \.start/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

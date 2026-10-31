@@ -3,7 +3,7 @@
  * Kick Assembler export (single source of truth).
  * ===================================================================== */
 import type {
-  Addr, AnalysisResult, Block, BlockKind, DelaySled, ForcedMode, Line, ListingLine, MusicInfo, NumberFormat,
+  Addr, AnalysisResult, Block, BlockKind, DelaySled, ForcedMode, HeadPart, Line, ListingLine, MusicInfo, NumberFormat,
   ProjectInput, RenderLabel, RenderProblem, RenderResult, TextEncoding, Token, ZpVar, ExcludedRange, LoaderPart } from '../types';
 import { kindInfo, TYPE_BY_KEY } from '../model';
 import { ENC, MODE_LEN, OPC } from '../cpu/opcodes';
@@ -590,9 +590,13 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     }
     usedHw.forEach(a => allUsedHw.add(a));
     const head: Line[] = [];
+    /** what the head's lines since `from` are (all banks in one source define some once, 13.9c) */
+    const part = (from: number, what: HeadPart) => { for (let i = from; i < head.length; i++) (head[i] as { head?: HeadPart }).head = what; };
+    let at = 0;
     const end = Math.min(0x10000, f.load + f.bytes.length);
     head.push({ k: 'cmt', a: f.load, text: `${f.name} — re-assembled by Mimir Studio` });
     head.push({ k: 'cmt', a: f.load, text: `load ${n4(f.load)}-${n4(end - 1)} (${end - f.load} bytes)${A.entry != null && fileOf(A.entry) === fi ? ` · entry ${labelAt(A.entry) ? labelAt(A.entry)!.name : n4(A.entry)}` : ''} · Kick Assembler 5.x` });
+    part(at, 'title'); at = head.length;
     // the loaders found in this file (spec 8.11c); their parts are marked where they start and end
     const fileLoaders = (A.loaders ?? []).filter(l => l.parts.some(p => fileOf(p.start) === fi));
     if (fileLoaders.length) {
@@ -608,14 +612,17 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       head.push({ k: 'cmt', a: f.load, text: 'blocks left out of the build; remove the // in front of a #define to build it again:' });
       for (const x of fileExcluded) head.push({ k: 'cmt', a: f.load, text: `#define ${x.name}` });
     }
+    part(at, 'mark');
     head.push({ k: 'blank', a: f.load });
-    if (S.hwInclude === 'import') head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '#import' }, { t: 'p', s: ' ' }, { t: 'str', s: '"include/c64-hardware.asm"' }] });
+    part(head.length - 1, 'gap'); at = head.length;
+    if (S.hwInclude === 'import') { head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '#import' }, { t: 'p', s: ' ' }, { t: 'str', s: '"include/c64-hardware.asm"' }] }); part(at, 'import'); at = head.length; }
     else if (S.hwInclude === 'inline' && usedHw.size) {
       head.push({ k: 'cmt', a: f.load, text: 'hardware and KERNAL symbols' });
       for (const a of [...usedHw].sort((x, y) => x - y)) {
         const s = SYM.exact.get(a) || SYM.regions.find(r => r.start === a);
         if (s && !/\+/.test(s.name)) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: s.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4('addr' in s ? s.addr : s.start) }] });
       }
+      part(at, 'hw'); at = head.length;
     }
     if (usedZp.size) {
       head.push({ k: 'blank', a: f.load });
@@ -625,22 +632,27 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
         if (noteAt(a)) head.push(...commentLines(a, notes[a].text, !!notes[a].block, true).map((l): Line => ({ ...l, a: f.load, zp: a } as Line)));
         head.push({ k: 'dir', a: f.load, n: 0, zp: a, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: zp.get(a)!.name, zp: a }, { t: 'p', s: ' = ' }, { t: 'num', s: n2(a) }] });
       }
+      part(at, 'zp'); at = head.length;
     }
     if (usedExt.size) {
       head.push({ k: 'blank', a: f.load });
       head.push({ k: 'cmt', a: f.load, text: 'labels defined in other files' });
       for (const a of [...usedExt].sort((x, y) => x - y)) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: labelAt(a)!.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(a) }] });
+      part(at, 'ext'); at = head.length;
     }
     if (usedForeign.size) {
       head.push({ k: 'blank', a: f.load });
       head.push({ k: 'cmt', a: f.load, text: 'labels in other banks of the cartridge' });
       for (const a of [...usedForeign].sort((x, y) => x - y)) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: foreign[a] }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(a) }] });
+      part(at, 'foreign'); at = head.length;
     }
     if (ctx.usedMusic.size) {
       head.push({ k: 'blank', a: f.load });
       for (const m of ctx.usedMusic) head.push({ k: 'dir', a: f.load, n: 0, tok: [{ t: 'dir', s: '.var' }, { t: 'p', s: ' ' }, { t: 'def', s: musicVar(m) }, { t: 'p', s: ' = ' }, { t: 'kw', s: 'LoadSid' }, { t: 'p', s: '(' }, { t: 'str', s: `"${musicPath(m)}"` }, { t: 'p', s: ')' }] });
+      part(at, 'music'); at = head.length;
     }
     head.push({ k: 'blank', a: f.load });
+    part(at, 'gap');
     const lines = head.concat(body);
     while (lines.length && lines[lines.length - 1].k === 'blank') lines.pop();
     const userCmt = project.comments || {}, done = new Set<Addr>();

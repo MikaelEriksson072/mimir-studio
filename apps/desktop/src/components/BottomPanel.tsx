@@ -270,9 +270,11 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   const name = names[0] || 'main';
   const q = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
   const kick = (entry: string) => `${q(S.javaPath)} -jar ${q(S.kickJar)} ${entry} -odir ${S.outDir} ${S.kickArgs}`;
-  const kickCmd = kick(`${name}.asm`);
+  // every bank in one source (13.9c): it is the only source to build, and VICE gets its labels
+  const kickCmd = cart?.one ? null : kick(`${name}.asm`);
   const cartCmd = cart ? kick(cart.entry) : null;
-  const viceCmd = `${q(S.vicePath)} ${S.viceArgs} -moncommands ${S.outDir}/${name}.vs ${cart ? `-cartcrt ${S.outDir}/${cart.output}` : `-autostart ${S.outDir}/${name}.prg`}`;
+  const labels = cart?.one ? cart.entry.replace(/\.asm$/, '') : name;
+  const viceCmd = `${q(S.vicePath)} ${S.viceArgs} -moncommands ${S.outDir}/${labels}.vs ${cart ? `-cartcrt ${S.outDir}/${cart.output}` : `-autostart ${S.outDir}/${name}.prg`}`;
   return (
     <div className="build">
       <div className="build-actions">
@@ -280,7 +282,7 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
         <button className="btn primary" onClick={onRun} disabled={!!busy}><Icon name="play" />Build &amp; run</button>
         {busy ? <span className="small text-accent-hi">{busy}…</span> : <span className="muted small">The main process runs these with argument arrays (no shell), in a temporary build folder:</span>}
       </div>
-      <div className="cmd"><code>{kickCmd}</code><button className="icon-btn" title="Copy command" onClick={() => onCopy(kickCmd)}><Icon name="copy" size={14} /></button></div>
+      {kickCmd && <div className="cmd"><code>{kickCmd}</code><button className="icon-btn" title="Copy command" onClick={() => onCopy(kickCmd)}><Icon name="copy" size={14} /></button></div>}
       {cartCmd && <div className="cmd"><code>{cartCmd}</code><button className="icon-btn" title="Copy command" onClick={() => onCopy(cartCmd)}><Icon name="copy" size={14} /></button></div>}
       <div className="cmd"><code>{viceCmd}</code><button className="icon-btn" title="Copy command" onClick={() => onCopy(viceCmd)}><Icon name="copy" size={14} /></button></div>
       {build ? (

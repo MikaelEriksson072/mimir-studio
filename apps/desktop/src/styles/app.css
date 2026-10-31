@@ -163,6 +163,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 /* a cartridge's banks: the open ones marked like the selected block */
 .cart-row.on { background: var(--sel); color: var(--fg); }
 .cart-row.out { opacity: 0.6; }
+.cart-one { margin: 6px 0 2px; }
 .cart-row .cart-leave { opacity: 0; }
 .cart-row:hover .cart-leave, .cart-row:focus-within .cart-leave { opacity: 1; }
 .disk-name { color: var(--fg); white-space: pre; overflow: hidden; text-overflow: ellipsis; }

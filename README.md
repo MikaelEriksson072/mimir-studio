@@ -33,7 +33,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   source uses. The analysis knows the cartridge's memory map (8K, 16K or Ultimax), so its ROM at `$a000` or `$e000` is code
   to trace, not BASIC or the KERNAL, and it starts from the CBM80 or reset vectors. The export writes every bank's
   source and a Kick Assembler source that rebuilds the whole `.crt` byte for byte, and *Build & Run* starts it in VICE
-  with `-cartcrt`. It reads every hardware type VICE knows; normal, Ultimax, Ocean,
+  with `-cartcrt`. *All banks in one .asm* in the Cartridge section makes it one source instead, as SourceGen writes it:
+  each bank in a namespace of its own, and the file writes the whole `.crt` by itself. It reads every hardware type VICE knows; normal, Ultimax, Ocean,
   Magic Desk, System 3, Dinamic, Fun Play, Zaxxon and EasyFlash cartridges are checked against real ones.
 - **It recognises what demos and games are made of:**
   - SID players, by their jump table and note frequency table, exported as a `.sid` that Kick Assembler loads with `LoadSid`;

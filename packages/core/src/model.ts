@@ -66,7 +66,7 @@ export const DEFAULT_SETTINGS: Settings = {
   illegal: true, detectMusic: true, detectGfx: true, detectText: true, bankTracking: true, snapshotZeroPage: false, codeIslands: true, deepAnalysis: false,
   // output
   mnemonicCase: 'lower', hexCase: 'lower', bytesPerRow: 8, indent: 8, commentCol: 40,
-  basicUpstart: true, hwInclude: 'import', hwComments: true, musicAsSid: true, gfxBinary: true, addrComments: false, notesFormat: 'html',
+  basicUpstart: true, hwInclude: 'import', hwComments: true, musicAsSid: true, gfxBinary: true, addrComments: false, notesFormat: 'html', cartOneSource: false,
   // toolchain (used by the Electron main process and the CLI)
   javaPath: 'java', kickJar: 'C:\\C64\\KickAssembler\\KickAss.jar', vicePath: 'C:\\C64\\VICE\\bin\\x64sc.exe',
   outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1',

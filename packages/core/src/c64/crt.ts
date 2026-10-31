@@ -248,46 +248,44 @@ export interface CartSourceOptions {
   hexCase?: 'lower' | 'upper';
 }
 
+/** A line of a cartridge's source: a comment, a directive with its operands and a comment, a label, a gap */
+export type CartLine = { k: 'cmt'; text: string } | { k: 'dir'; dir: string; args?: string; cmt?: string } | { k: 'lbl'; name: string } | { k: 'blank' };
+
+/** a line of a cartridge's source as text: comments at column 40, as Kick Assembler sources are written here */
+export const cartLineText = (l: CartLine): string => {
+  if (l.k === 'cmt') return `// ${l.text}`;
+  if (l.k === 'lbl') return `${l.name}:`;
+  if (l.k === 'blank') return '';
+  const d = l.args ? `${l.dir} ${l.args}` : l.dir;
+  return l.cmt ? `${d.padEnd(40)}// ${l.cmt}` : d;
+};
+
 /**
- * The cartridge's own source: `.file` writes the image (it runs past 64 KB, so a segment of its own starting at 0), with
- * the header and every packet header as commented `.byte` lines, the re-assembled chips from the PRGs their sources
- * build (the load address skipped) and the others from `banks/<name>.bin`. `.errorif` checks the length of each.
- * Returns the source and the binary files it reads.
+ * The image's header and CHIP packets as source lines (13.9): the header's and every packet header's bytes as commented
+ * `.byte` lines (the name as `.text` in ASCII), and for each chip the lines `data` gives, after the label `chip<n>:`,
+ * followed by an `.errorif` that checks the chip's length; `what` names where its bytes come from.
  */
-export function cartridgeSource(name: string, c: Crt, o: CartSourceOptions): { source: string; files: Record<string, Uint8Array> } {
-  const up = o.hexCase === 'upper';
+export function cartImageLines(c: Crt, chip: (x: CrtChip) => { lines: CartLine[]; what: string; from: string }, hexCase?: 'lower' | 'upper'): CartLine[] {
+  const up = hexCase === 'upper';
   const x2 = (v: number) => '$' + (up ? h2(v).toUpperCase() : h2(v));
   const x4 = (v: number) => '$' + (up ? h4(v).toUpperCase() : h4(v));
-  const b = c.bytes, base = crtBase({ name }), files: Record<string, Uint8Array> = {};
-  const out = (dir: string, cmt = '') => lines.push(cmt ? `${dir.padEnd(40)}// ${cmt}` : dir);
+  const b = c.bytes, out: CartLine[] = [];
+  const dir = (d: string, args: string, cmt = '') => out.push({ k: 'dir', dir: d, args, ...(cmt ? { cmt } : {}) });
   const bytes = (from: number, to: number, cmt = '') => {
     if (to <= from) return;
     const same = b.subarray(from, to).every(v => v === b[from]);
-    if (same && to - from > 4) { out(`.fill ${to - from}, ${x2(b[from])}`, cmt); return; }
-    for (let p = from; p < to; p += 16) out(`.byte ${[...b.subarray(p, Math.min(to, p + 16))].map(x2).join(', ')}`, p === from ? cmt : '');
+    if (same && to - from > 4) { dir('.fill', `${to - from}, ${x2(b[from])}`, cmt); return; }
+    for (let p = from; p < to; p += 16) dir('.byte', [...b.subarray(p, Math.min(to, p + 16))].map(x2).join(', '), p === from ? cmt : '');
   };
   /** printable ASCII as .text (no " or \), the rest as bytes */
   const ascii = (from: number, to: number, cmt: string) => {
     let e = from;
     while (e < to && b[e] >= 0x20 && b[e] < 0x7f && b[e] !== 0x22 && b[e] !== 0x5c) e++;
-    if (e > from) out(`.text "${text(b, from, e - from)}"`, cmt);
+    if (e > from) dir('.text', `"${text(b, from, e - from)}"`, cmt);
     bytes(e, to, e > from ? '' : cmt);
   };
-  const outDir = o.outDir.replace(/\\/g, '/').replace(/\/+$/, '') || '.';
-  const lines: string[] = [
-    `// ${name} — the cartridge image, rebuilt by Mimir Studio`,
-    `// ${describeCrt(c)}${c.name ? `: "${c.name}"` : ''}`,
-    `// ${c.chips.length} CHIP packet${c.chips.length === 1 ? '' : 's'}: ${o.sources.size ? `${o.sources.size} re-assembled from ${o.sources.size === 1 ? 'its source' : 'their sources'}, built first into ${outDir}/` : 'none re-assembled'}${o.sources.size < c.chips.length ? `, ${c.chips.length - o.sources.size} from banks/` : ''}`,
-    `// Assemble the chips' sources first (build.bat and build.sh do); this writes ${outDir}/${crtOutputName(base)}.`,
-    '',
-    `.file [name="${crtOutputName(base)}", type="bin", segments="Cartridge"]`,
-    '.segmentdef Cartridge [start=0]',
-    '.segment Cartridge',
-    '.encoding "ascii"',
-    '',
-    '// the header',
-  ];
-  out('.text "C64 CARTRIDGE   "', 'signature');
+  out.push({ k: 'cmt', text: 'the header' });
+  dir('.text', '"C64 CARTRIDGE   "', 'signature');
   bytes(0x10, 0x14, `header length: ${be32(b, 0x10)}`);
   bytes(0x14, 0x16, `version ${c.version[0]}.${c.version[1]}`);
   bytes(0x16, 0x18, `hardware type ${c.hw}: ${crtTypeName(c.hw)}`);
@@ -298,22 +296,51 @@ export function cartridgeSource(name: string, c: Crt, o: CartSourceOptions): { s
   ascii(0x20, 0x40, 'the name');
   bytes(0x40, c.headerLength, 'more header');
   let p = c.headerLength;
-  for (const chip of c.chips) {
-    const src = o.sources.get(chip.index), n = chipName(c, chip), size = chip.data.length;
-    bytes(p, chip.offset, 'between the packets');
-    lines.push('', `// CHIP ${chip.index}: bank ${chip.bank}, ${chipTypeName(chip.type)} at ${x4(chip.load)}, ${size} bytes${src ? ` (${src}.asm)` : ''}`);
-    out('.text "CHIP"');
-    bytes(chip.offset + 4, chip.offset + 8, `packet length: ${chip.length}`);
-    bytes(chip.offset + 8, chip.offset + 10, `chip type: ${chipTypeName(chip.type)}`);
-    bytes(chip.offset + 10, chip.offset + 12, `bank ${chip.bank}`);
-    bytes(chip.offset + 12, chip.offset + 14, `load address ${x4(chip.load)}${chipAddress(c, chip) !== chip.load ? ` (the CPU sees it at ${x4(chipAddress(c, chip))})` : ''}`);
-    bytes(chip.offset + 14, chip.offset + 16, `size: ${size}`);
-    lines.push(`chip${chip.index}:`);
-    if (src) out(`.import binary "${outDir}/${src}.prg", 2`, 'the re-assembled chip, without its load address');
-    else { files[`banks/${n}.bin`] = chip.data.slice(); out(`.import binary "banks/${n}.bin"`); }
-    lines.push(`.errorif * - chip${chip.index} != ${size}, "${src ? `${outDir}/${src}.prg` : `banks/${n}.bin`} does not hold the chip's ${size} bytes"`);
-    p = chip.dataOffset + size;
+  for (const x of c.chips) {
+    const size = x.data.length, d = chip(x);
+    bytes(p, x.offset, 'between the packets');
+    out.push({ k: 'blank' }, { k: 'cmt', text: `CHIP ${x.index}: bank ${x.bank}, ${chipTypeName(x.type)} at ${x4(x.load)}, ${size} bytes${d.what ? ` (${d.what})` : ''}` });
+    dir('.text', '"CHIP"');
+    bytes(x.offset + 4, x.offset + 8, `packet length: ${x.length}`);
+    bytes(x.offset + 8, x.offset + 10, `chip type: ${chipTypeName(x.type)}`);
+    bytes(x.offset + 10, x.offset + 12, `bank ${x.bank}`);
+    bytes(x.offset + 12, x.offset + 14, `load address ${x4(x.load)}${chipAddress(c, x) !== x.load ? ` (the CPU sees it at ${x4(chipAddress(c, x))})` : ''}`);
+    bytes(x.offset + 14, x.offset + 16, `size: ${size}`);
+    out.push({ k: 'lbl', name: `chip${x.index}` }, ...d.lines);
+    dir('.errorif', `* - chip${x.index} != ${size}, "${d.from} does not hold the chip's ${size} bytes"`);
+    p = x.dataOffset + size;
   }
-  if (p < b.length) { lines.push(''); bytes(p, b.length, 'after the last packet'); }
-  return { source: lines.join('\n') + '\n', files };
+  if (p < b.length) { out.push({ k: 'blank' }); bytes(p, b.length, 'after the last packet'); }
+  return out;
+}
+
+/**
+ * The cartridge's own source: `.file` writes the image (it runs past 64 KB, so a segment of its own starting at 0), with
+ * the header and every packet header as commented `.byte` lines, the re-assembled chips from the PRGs their sources
+ * build (the load address skipped) and the others from `banks/<name>.bin`. `.errorif` checks the length of each.
+ * Returns the source and the binary files it reads.
+ */
+export function cartridgeSource(name: string, c: Crt, o: CartSourceOptions): { source: string; files: Record<string, Uint8Array> } {
+  const base = crtBase({ name }), files: Record<string, Uint8Array> = {};
+  const outDir = o.outDir.replace(/\\/g, '/').replace(/\/+$/, '') || '.';
+  const head = [
+    `// ${name} — the cartridge image, rebuilt by Mimir Studio`,
+    `// ${describeCrt(c)}${c.name ? `: "${c.name}"` : ''}`,
+    `// ${c.chips.length} CHIP packet${c.chips.length === 1 ? '' : 's'}: ${o.sources.size ? `${o.sources.size} re-assembled from ${o.sources.size === 1 ? 'its source' : 'their sources'}, built first into ${outDir}/` : 'none re-assembled'}${o.sources.size < c.chips.length ? `, ${c.chips.length - o.sources.size} from banks/` : ''}`,
+    `// Assemble the chips' sources first (build.bat and build.sh do); this writes ${outDir}/${crtOutputName(base)}.`,
+    '',
+    `.file [name="${crtOutputName(base)}", type="bin", segments="Cartridge"]`,
+    '.segmentdef Cartridge [start=0]',
+    '.segment Cartridge',
+    '.encoding "ascii"',
+    '',
+  ];
+  const lines = cartImageLines(c, x => {
+    const src = o.sources.get(x.index);
+    if (src) return { lines: [{ k: 'dir', dir: '.import binary', args: `"${outDir}/${src}.prg", 2`, cmt: 'the re-assembled chip, without its load address' }], what: `${src}.asm`, from: `${outDir}/${src}.prg` };
+    const bin = `banks/${chipName(c, x)}.bin`;
+    files[bin] = x.data.slice();
+    return { lines: [{ k: 'dir', dir: '.import binary', args: `"${bin}"` }], what: '', from: bin };
+  }, o.hexCase);
+  return { source: [...head, ...lines.map(cartLineText)].join('\n') + '\n', files };
 }

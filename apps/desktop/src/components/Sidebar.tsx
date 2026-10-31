@@ -23,6 +23,8 @@ interface SidebarProps {
   /** the project's cartridge, read (spec 13.9): a bank in the project is gone to with a click, one out of it added
    *  (`leave`: taken out) */
   cart: Crt | null; onOpenBank: (bank: number, leave?: boolean) => void;
+  /** every bank in one source, `<name>.crt.asm` (13.9c), or a source per chip */
+  onOneSource: (on: boolean) => void;
   /** where file `i` starts, in its bank (13.9b) */
   fileAddr: (i: number) => Addr;
   /** the bank of the cursor as 64 KB, for the memory strip (13.9b): its analysis, where it starts, the cursor in it */
@@ -68,7 +70,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpen, onAdd, onDemo, onRemoveFile, onSetStart, disk, onMount, onEject, cart, onOpenBank, fileAddr, bankView, onShowSpindle, onShowBitfire, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpen, onAdd, onDemo, onRemoveFile, onSetStart, disk, onMount, onEject, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -101,7 +103,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpe
           </div>
           <p className="side-hint">Or drop .prg, .vsf, .crt or .d64 files on the window; with Shift they are added.</p>
         </SideSection>
-        {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} />}
+        {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
         {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
@@ -276,7 +278,8 @@ function PatchesSection({ list, onGo, onEdit, onSave, onRemove, onSwitch }: Patc
  * bank opens with a click as the project's files (Ctrl+Z goes back); + adds its chips that fit beside the open ones.
  * The export and Build & Run rebuild the whole image, the chips not opened from their bytes.
  */
-function CartridgeSection({ crt, name, project, onOpenBank }: { crt: Crt; name: string; project: Project; onOpenBank: (bank: number, leave?: boolean) => void }) {
+function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt: Crt; name: string; project: Project; onOpenBank: (bank: number, leave?: boolean) => void; onOneSource: (on: boolean) => void }) {
+  const one = !!project.settings.cartOneSource;
   const banks = useMemo(() => crtBanks(crt), [crt]);
   const open = new Set(project.files.map(f => f.chip).filter((c): c is number => c != null));
   const boot = bootBank(crt);
@@ -305,6 +308,9 @@ function CartridgeSection({ crt, name, project, onOpenBank }: { crt: Crt; name: 
           );
         })}
       </div>
+      <label className="check small cart-one" title={`Every bank in one Kick Assembler source, ${name.replace(/\.crt$/i, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'cartridge'}.crt.asm, which writes the whole cartridge by itself: each chip in a segment, each bank in a namespace (the same names can be in several banks), the header and CHIP packets last. Off: a source per chip and one for the image`}>
+        <input type="checkbox" checked={one} onChange={e => onOneSource(e.target.checked)} /> All banks in one .asm
+      </label>
       <div className="side-hint">{cartModeName(crt.mode)} · every bank is in the listing, one after the other · a click goes to a bank, + adds one, × leaves one out · the export and Build &amp; Run rebuild the whole .crt</div>
     </SideSection>
   );

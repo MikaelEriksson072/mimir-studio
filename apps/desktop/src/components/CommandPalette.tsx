@@ -1,5 +1,5 @@
 /* Command palette (Ctrl+Shift+P / F1) and the "Go to address, label or range" dialog (G / Ctrl+G). */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Addr, RenderResult } from '@mimir/core';
 import { cx } from '../lib/util';
 import { parseGoto } from '../lib/goto';
@@ -9,14 +9,15 @@ import { Modal } from './Modal';
 export function CommandPalette({ commands, onClose }: { commands: Command[]; onClose: () => void }) {
   const [q, setQ] = useState(''); const [i, setI] = useState(0);
   const list = commands.filter(c => c.label.toLowerCase().includes(q.toLowerCase()));
-  useEffect(() => setI(0), [q]);
+  // typing starts over at the first command; a row the mouse picked in a longer list never points past this one
+  const at = Math.min(i, list.length - 1);
   return (
     <div className="modal-back top" onMouseDown={onClose}>
       <div className="palette" role="dialog" aria-label="Command palette" onMouseDown={e => e.stopPropagation()}>
         <label htmlFor="pal-q" className="sr-only">Command</label>
-        <input id="pal-q" autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Type a command"
-          onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setI(x => Math.min(list.length - 1, x + 1)); } if (e.key === 'ArrowUp') { e.preventDefault(); setI(x => Math.max(0, x - 1)); } if (e.key === 'Enter' && list[i]) { onClose(); list[i].run(); } if (e.key === 'Escape') onClose(); }} />
-        <div className="pal-list">{list.map((c, k) => <button key={c.id} className={cx('pal-row', k === i && 'on')} onMouseEnter={() => setI(k)} onClick={() => { onClose(); c.run(); }}><span>{c.label}</span>{c.key && <kbd>{c.key}</kbd>}</button>)}</div>
+        <input id="pal-q" autoFocus value={q} onChange={e => { setQ(e.target.value); setI(0); }} placeholder="Type a command"
+          onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setI(x => Math.min(list.length - 1, x + 1)); } if (e.key === 'ArrowUp') { e.preventDefault(); setI(x => Math.max(0, x - 1)); } if (e.key === 'Enter' && list[at]) { onClose(); list[at].run(); } if (e.key === 'Escape') onClose(); }} />
+        <div className="pal-list">{list.map((c, k) => <button key={c.id} className={cx('pal-row', k === at && 'on')} onMouseEnter={() => setI(k)} onClick={() => { onClose(); c.run(); }}><span>{c.label}</span>{c.key && <kbd>{c.key}</kbd>}</button>)}</div>
       </div>
     </div>
   );
