@@ -136,7 +136,8 @@ This writes `Mimir-Studio-<version>-setup.exe` and a portable `.exe` to `apps/de
 
 1. **Open a program.** Use *Open PRG…* (`Ctrl+O`) for a `.prg`, a VICE `.vsf` or a cartridge `.crt`, or *Mount D64…*
    for a disk. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
-2. **Read the listing.** Blocks are coloured by type. The inspector on the right shows why each block was classified
+2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
+   file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview. `G` goes to an address or label, and `X` lists who references the
    line. Pointing at an undocumented opcode says what it does and which flags it changes.
 3. **Fix what the heuristics got wrong.** `N` renames, `;` comments, and `C`, `D`, `W` and `T` mark the selection as

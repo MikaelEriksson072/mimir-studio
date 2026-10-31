@@ -774,11 +774,23 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     expect(rows.some(r => r.text.includes('.text "CBM80"'))).toBe(true);
     expect(rows.some(r => /^warm_start:/.test(r.text.trim()))).toBe(true);
     await expect(statusBar(page)).toContainText('bank 0 · $8009 · start');
+    // the offset in the .crt, left of the address (as in SourceGen): the 64-byte header and bank 0's CHIP header first
+    await expect(listing(page).locator('.row.cur .off')).toHaveText('+000059');
   });
 
   await test.step('a click on a bank goes to it; G takes a bank before the address', async () => {
     await banks.getByRole('listitem').nth(1).click();
     await expect(statusBar(page)).toContainText('bank 1 · $8000');
+    // bank 1's data comes after bank 0's packet and its own CHIP header
+    await expect(listing(page).locator('.row.cur .off')).toHaveText('+002060');
+    await expect(listing(page).locator('.row.cur .off')).toHaveAttribute('title', 'Offset $2060 (8288) in mimir-demo.crt');
+    // the Offset button hides the column, and shows it again
+    const offset = page.getByRole('button', { name: 'Offset', exact: true });
+    await expect(offset).toHaveAttribute('aria-pressed', 'true');
+    await offset.click();
+    await expect(listing(page).locator('.off')).toHaveCount(0);
+    await offset.click();
+    await expect(listing(page).locator('.row.cur .off')).toHaveText('+002060');
     // the Inspector's memory map shows the cursor's bank
     await expect(page.locator('.insp-sec .sec-head').first()).toContainText('Memory map · bank 1');
     await page.keyboard.press('g');

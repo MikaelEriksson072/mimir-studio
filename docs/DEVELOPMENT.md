@@ -238,6 +238,10 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   `banks/*.bin`; F7 checks the rebuilt image byte for byte (`builtCartridge`, `compareCrt`), KickAss.jar assembles the
   `.crt.asm` too, and Build & Run starts it with `-cartcrt`. Checked against 309 cartridges of the reference archive;
   see spec 13.9.
+- **Offset column.** As in SourceGen, the listing shows left of the address where each byte is in the file it was
+  opened from (`+000050`): a PRG's after its load address, a cartridge chip's in its CHIP packet of the `.crt`, a
+  snapshot's RAM in its C64MEM module (`fileOffsetBases`, `packages/core/src/offsets.ts`). *Offset* in the listing
+  toolbar turns it off and on (`useUi.offsets`, kept with the other choices; on by default).
 - **Every bank at once.** The banks share addresses, so each is a 64 KB space of its own (`packages/core/src/spaces.ts`,
   spec 13.9b): an address in space *s* is *s* · `$10000` + the address (a bank address; bank 0's are the plain ones, so
   a project without banks is unchanged). `analyze`, `render` and `verify` (core's public ones) split the project per

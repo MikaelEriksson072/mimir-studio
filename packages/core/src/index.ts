@@ -63,3 +63,4 @@ export {
   parseExomizer, rangeCover, shellWord, type ExomizerArea, type ExomizerReport, type PackCheck, type PackFile, type PackPart,
 } from './pack';
 export { splitArgs } from './util/args';
+export { fileOffsetBases, offsetText } from './offsets';

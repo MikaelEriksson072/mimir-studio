@@ -49,6 +49,8 @@ interface UiState {
   dataAsCode: boolean;
   /** listing: the 6510 cycles of every instruction, and the cycles of the selected range or block */
   cycles: boolean;
+  /** listing: the offset column, where each byte is in the file it was opened from (as in SourceGen) */
+  offsets: boolean;
   /** a new VICE quicksave (Alt+F11 in VICE) is opened when it is written */
   followQuicksave: boolean;
   /** the side panel's sections opened in this run (by id); not persisted: every section is closed when the app starts */
@@ -67,7 +69,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'followQuicksave', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -80,6 +82,7 @@ export const useUi = create<UiState>((set) => ({
   gutter: store.get<Gutter>('kr.gutter', 'addr'),
   dataAsCode: false,
   cycles: store.get('kr.cycles', false),
+  offsets: store.get('kr.offsets', true),
   followQuicksave: store.get('kr.followQuicksave', true),
   sideOpen: [],
   bmColors: bmColorsOf(store.get<unknown>('kr.bmColors', [])),

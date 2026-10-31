@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
-  bankFiles, builtCartridge, cartBuild, cartridgeFiles, compareCrt, describeCrt, expectedCartridge, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
+  bankFiles, builtCartridge, cartBuild, cartridgeFiles, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
@@ -90,7 +90,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     tick();
   });
   const ui = useUi();
-  const { theme, tab, bottom, activity, panelOpen, welcome, sizes, gutter, dataAsCode, cycles, followQuicksave } = ui;
+  const { theme, tab, bottom, activity, panelOpen, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
   const setUi = ui.set;
 
   const [srcPath, setSrcPath] = useState<string | null>(null);
@@ -152,6 +152,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   /** the cartridge bank an address is in (null without banks) */
   const bankAt = (a: Addr | null): number | null => (a == null ? null : A.spaces?.find(x => x.space === spaceOf(a))?.bank ?? null);
+  /** the offset column (as in SourceGen): where the byte at an address is in the file it was opened from (a PRG after
+   *  its load address, a chip in its .crt, a snapshot's RAM in its .vsf) */
+  const offsetBases = useMemo(() => fileOffsetBases(project), [project.files, project.cart]); // eslint-disable-line react-hooks/exhaustive-deps
+  const offsetAt = useCallback((a: Addr) => {
+    const fi = A.owner[a], f = fi >= 0 ? A.files[fi] : undefined, b = fi >= 0 ? offsetBases[fi] : null;
+    if (!f || b == null) return null;
+    return { n: b + spaceAddr(a) - f.load, file: f.chip != null && project.cart ? project.cart.name : f.vsf ? f.name.replace(/\.prg$/i, '.vsf') : f.name };
+  }, [A, offsetBases, project.cart]);
   /** where file `i` starts, in its bank */
   const fileAddr = (i: number): Addr => (A.spaces?.find(x => x.files.includes(i))?.space ?? 0) * SPACE + (project.files[i]?.load ?? 0);
   useEffect(() => { if (cursor == null && A.entry != null) { setCursor(A.entry); setScrollReq({ addr: A.entry, center: true, n: Date.now() }); } }, [A]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1114,6 +1122,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'tab-listing', label: 'Show listing', run: () => setUi({ tab: 'listing' }) },
     { id: 'cycles', label: cycles ? 'Listing: hide cycle counts' : 'Listing: show cycle counts (6510 cycles per instruction; select a range or block to count it)', run: () => setUi({ cycles: !cycles, tab: 'listing' }) },
     { id: 'data-as-code', label: dataAsCode ? 'Listing: show data as classified' : 'Listing: show data as code (find code that is marked as data)', run: () => setUi({ dataAsCode: !dataAsCode, tab: 'listing' }) },
+    { id: 'offsets', label: offsets ? 'Listing: hide the offset in the file' : 'Listing: show the offset in the file (as SourceGen)', run: () => setUi({ offsets: !offsets }) },
     { id: 'gutter', label: gutter === 'line' ? 'Listing: show memory addresses' : 'Listing: show line numbers (as in the .asm file)', run: () => setUi({ gutter: gutter === 'line' ? 'addr' : 'line' }) },
     { id: 'tab-source', label: 'Show generated Kick Assembler source', run: () => setUi({ tab: 'source' }) },
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
@@ -1356,6 +1365,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               <button className="icon-btn" onClick={goFwd} title="Forward (Alt+→)" aria-label="Forward"><Icon name="right" size={14} /></button>
               <button className="btn ghost small" onClick={() => setModal('goto')} title="Go to an address or label, or select a range (G)"><Icon name="target" size={14} /><span className="tool-label">Go to</span><kbd>G</kbd></button>
               <button className={cx('btn ghost small', dataAsCode && 'on')} aria-pressed={dataAsCode} onClick={() => setUi({ dataAsCode: !dataAsCode })} title="Data as code: show every block that is not code disassembled, to find code that is marked as data. The export does not change."><Icon name="code" size={14} /><span className="tool-label">Data as code</span></button>
+              <button className={cx('btn ghost small', offsets && 'on')} aria-pressed={offsets} onClick={() => setUi({ offsets: !offsets })} title="Offset: show where each byte is in the file it was opened from (+000050), left of the address, as SourceGen does: a PRG's after its load address, a cartridge's in the .crt, a snapshot's in the .vsf"><Icon name="rows" size={14} /><span className="tool-label">Offset</span></button>
               <button className={cx('btn ghost small', cycles && 'on')} aria-pressed={cycles} onClick={() => setUi({ cycles: !cycles })} title="Cycles: show the 6510 cycles of every instruction. Select a range, or click a block header, to count it; click a branch's cycles to mark it taken."><Icon name="clock" size={14} /><span className="tool-label">Cycles</span></button>
               <div className="seg" role="group" aria-label="Left column" title="Left column of the listing: memory address or line number in the .asm file">
                 {([['addr', 'Address', 'Adr'], ['line', 'Line', 'Line']] as const).map(([k, l, s]) => <button key={k} className={cx(gutter === k && 'on')} aria-pressed={gutter === k} aria-label={l} onClick={() => setUi({ gutter: k })}><span className="seg-long">{l}</span><span className="seg-short">{s}</span></button>)}
@@ -1373,6 +1383,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                   { sep: true },
                   { label: 'Data as code', checked: dataAsCode, run: () => setUi({ dataAsCode: !dataAsCode }) },
                   { label: 'Cycles', checked: cycles, run: () => setUi({ cycles: !cycles }) },
+                  { label: 'Offset in the file', checked: offsets, run: () => setUi({ offsets: !offsets }) },
                   { sep: true },
                   { label: 'Left column: address', checked: gutter === 'addr', run: () => setUi({ gutter: 'addr' }) },
                   { label: 'Left column: line in the .asm', checked: gutter === 'line', run: () => setUi({ gutter: 'line' }) },
@@ -1403,7 +1414,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               </div>}
               <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onMove={moveInto} onToken={onToken} onContext={onContext}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
-                labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
+                labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
                 patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} />
             </>}
             <Suspense fallback={<div className="empty">Loading…</div>}>

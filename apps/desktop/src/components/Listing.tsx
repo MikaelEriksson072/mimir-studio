@@ -1,6 +1,6 @@
 /* Listing — virtualized, interactive view of the shared line model (spec 6, "one line model, two views"). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
-import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, OPC, patchAt, patchEnd, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
+import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, offsetText, OPC, patchAt, patchEnd, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { Icon } from '../lib/icons';
 import type { Editing, ScrollReq, Sel } from '../lib/types';
@@ -108,9 +108,12 @@ interface ListingProps {
   patches?: readonly Patch[];
   /** when this changes (data shown as code), the line in view stays where it is on screen once the new lines come */
   keepView?: unknown;
+  /** the offset column (as in SourceGen): where the byte at an address is in the file it was opened from, and that
+   *  file's name; null where no file holds it. Missing: no column */
+  offsetAt?: ((a: Addr) => { n: number; file: string } | null) | null;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -227,6 +230,12 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     for (const k of Object.keys(bookmarks)) { const a = Number(k), i = lineOf[a]; if (i >= 0) m.set(i, [...(m.get(i) || []), a].sort((x, y) => x - y)); }
     return m;
   }, [bookmarks, lineOf]);
+  /** the offset column's cell for a line (empty where it has no bytes or no file holds them) */
+  const offCell = (a: Addr | null) => {
+    if (!offsetAt) return null;
+    const o = a != null ? offsetAt(a) : null;
+    return <span className="off" title={o ? `Offset $${o.n.toString(16)} (${o.n}) in ${o.file}` : undefined}>{o ? offsetText(o.n) : ''}</span>;
+  };
   const mark = (i: number) => {
     const at = marks.get(i); if (!at) return null;
     const b = bookmarks[at[0]];
@@ -253,7 +262,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       // the loaders this block holds a part of
       const lparts = blk ? A.loaders.flatMap(f => f.parts.filter(p => p.start < blk.end && p.end > blk.start).map(p => ({ f, p }))) : [];
       rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into', marks.has(i) && 'bm')} style={{ top: i * ROW, ...tint(i) }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
-        <span className="gut" style={{ background: `var(--g-${hg})` }} />{mark(i)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : h4(l.a)}</span>
+        <span className="gut" style={{ background: `var(--g-${hg})` }} />{mark(i)}{offCell(l.a)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : h4(l.a)}</span>
         <button className="fold" aria-label={folded.has(l.a) ? 'Unfold block' : 'Fold block'} aria-expanded={!folded.has(l.a)} title={folded.has(l.a) ? 'Unfold (F)' : 'Fold (F)'}
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleFold(l.a); }}><Icon name={folded.has(l.a) ? 'chevron' : 'down'} size={12} /></button>
         <span className="hdr-chip" style={{ '--c': `var(--g-${hg})` } as React.CSSProperties}>{typeInfo(l.type).label}</span>
@@ -265,7 +274,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     }
     if (l.k === 'file') { rows.push(<div key={i} className="row filebar" style={{ top: i * ROW }}><Icon name="doc" size={13} /> {l.text}</div>); continue; }
     // blank lines are rows of their own only when the line numbers would otherwise skip them
-    if (l.k === 'blank') { if (byLine) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" /><span className="adr lno">{lineNo[i]}</span></div>); continue; }
+    if (l.k === 'blank') { if (byLine) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{offCell(null)}<span className="adr lno">{lineNo[i]}</span></div>); continue; }
     // only a line at a block's edge can move into the block next to it
     const mv = blk && n > 0 && (l.a === blk.start || l.a + n === blk.end) ? movesOf(A, l) : null, tip = mv ? moveTip(mv) : undefined;
     // bytes a patch wrote over (the first of its lines names it)
@@ -275,7 +284,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm')} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l)}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{mark(i)}
-        <span className={cx('adr', byLine && 'lno')} title={tip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
+        {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno')} title={tip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
         <span className="hex" title={pt ? [ptTip, tip].filter(Boolean).join('\n\n') : tip}>{bytes}</span>
         {cycles && <CycleCell l={l} A={A} step={steps.get(l.a)} taken={cycles.taken} onToggle={cycles.onToggle} />}
         <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>patch {pt.name}</span>}</span>
