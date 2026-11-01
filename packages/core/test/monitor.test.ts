@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findInMemory, loadedRanges, makeDemo, MAX_MATCHES, monitorChar, monitorLine, monitorRows, monitorText, parseMonitorCommand, petsciiToScreen, parsePrg } from '../src';
+import { findInMemory, loadedRanges, makeDemo, MAX_MATCHES, monitorChar, monitorLine, monitorRows, monitorText, nextZero, parseMonitorCommand, petsciiToScreen, parsePrg } from '../src';
 import { findVice } from '../src/node';
 
 const mem = new Uint8Array(0x10000);
@@ -101,6 +101,24 @@ describe('finding text and bytes', () => {
     const all = findInMemory(m, [{ start: 0, end: 0x10000 }], '41', 'bytes');
     expect(all).toMatchObject({ more: true });
     expect('matches' in all && all.matches.length).toBe(MAX_MATCHES);
+  });
+});
+
+describe('the 0 that ends a text', () => {
+  const ranges = loadedRanges(owner);
+  it('is the first 0 byte from the address on, the address itself too', () => {
+    // the demo's title "MIMIR STUDIO DEMO" at $0949 ends in $0d $00, and so does the next text, its 0 at $0984
+    expect(nextZero(mem, ranges, 0x0949)).toBe(0x095f);
+    expect(nextZero(mem, ranges, 0x095f)).toBe(0x095f);
+    expect(nextZero(mem, ranges, 0x0960)).toBe(0x0984);
+  });
+
+  it('stays in the loaded range that holds the address', () => {
+    const m = new Uint8Array(0x10000).fill(0x41), r = [{ start: 0x1000, end: 0x1004 }, { start: 0x1006, end: 0x1008 }];
+    m[0x1005] = 0; m[0x1007] = 0;
+    expect(nextZero(m, r, 0x1001)).toBeNull();
+    expect(nextZero(m, r, 0x1005)).toBeNull();
+    expect(nextZero(m, r, 0x1006)).toBe(0x1007);
   });
 });
 

@@ -3205,6 +3205,54 @@ test('the Memory tab finds text as PETSCII and as screen codes, and bytes, and s
   });
 });
 
+test('the Memory tab selects from the start of a text to the 0 that ends it, with 0 or the button', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Memory' }).click();
+  const view = page.getByLabel('Memory as the VICE monitor shows it'), bar = view.locator('.gfxv-sel[role="status"]');
+  const byte = (a: number) => view.locator(`.mon-b[data-a="${a}"]`);
+  const go = async (cmd: string) => { const c = page.getByLabel('Monitor command'); await c.fill(cmd); await c.press('Enter'); };
+  const toZero = view.getByRole('button', { name: /Select to the next 0/ });
+
+  await test.step('0 on the first letter of the title selects it to its 0, and again the next text too', async () => {
+    await go('m 0949');
+    await byte(0x0949).click();
+    await expect(toZero).toBeVisible();
+    await page.keyboard.press('0');
+    await expect(bar).toContainText('$0949–$095f (23 bytes)');
+    await expect(view.locator('.gfxv-info')).toContainText('$095f = $00');
+    await page.keyboard.press('0');
+    await expect(bar).toContainText('$0949–$0984 (60 bytes)');
+  });
+
+  await test.step('the button does the same from the cursor', async () => {
+    await byte(0x0960).click();
+    await toZero.click();
+    await expect(bar).toContainText('$0960–$0984 (37 bytes)');
+    await expect(page.getByLabel('Memory dump')).toBeFocused();
+  });
+
+  await test.step('no 0 before the loaded bytes end: it says so, and the cursor stays', async () => {
+    await go('m 37f0');
+    await byte(0x37fe).click();
+    await page.keyboard.press('0');
+    await expect(view.getByRole('alert')).toHaveText('No 0 byte from $37fe on before the loaded bytes end.');
+    await expect(view.locator('.gfxv-info')).toContainText('$37fe = $81');
+    await page.keyboard.press('ArrowLeft');
+    await expect(view.getByRole('alert')).toHaveCount(0);
+  });
+
+  await test.step('Mark as Text makes the selection one text block, the 0 in it', async () => {
+    await go('m 0949');
+    await byte(0x0949).click();
+    await page.keyboard.press('0');
+    await page.keyboard.press('0');
+    await view.getByRole('button', { name: 'Mark as Text', exact: true }).click();
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, '$0949');
+    await expect(headerRow(page, '0949')).toContainText('$0949-$0984');
+  });
+});
+
 test('patch: new code over the selected lines, marked as patched, saved as a PRG, exported, removed', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });

@@ -2,10 +2,11 @@
  * with the same bytes as text, `i` 40 bytes a row as PETSCII text and `ii` as screen codes, the inverse ones inverted.
  * The cursor and the selection are the listing's: a click puts the cursor on a byte, Shift+click or a drag selects,
  * the arrow keys move. The command field takes VICE's commands (`m 0801 08ff`, `ii 0400`); Copy writes the rows as
- * VICE does. Find searches text (as PETSCII and as screen codes) or bytes, marks every hit and steps through them. */
+ * VICE does. Find searches text (as PETSCII and as screen codes) or bytes, marks every hit and steps through them.
+ * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too. */
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  clipRanges, findBlock, findInMemory, h2, h4, kindInfo, loadedRanges, monitorChar, monitorPrefix, monitorRows, monitorText, MONITOR_ROW, parseMonitorCommand,
+  clipRanges, findBlock, findInMemory, h2, h4, kindInfo, loadedRanges, monitorChar, monitorPrefix, monitorRows, monitorText, MONITOR_ROW, nextZero, parseMonitorCommand,
   type Addr, type AnalysisResult, type FindAs, type MemoryMatch, type MonitorMode, type MonitorRange, type MonitorRow, type RenderResult,
 } from '@mimir/core';
 import { Icon } from '../lib/icons';
@@ -122,6 +123,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); e.stopPropagation(); copy(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); e.stopPropagation(); findInput.current?.select(); return; }
     if (e.key === 'F3') { e.preventDefault(); e.stopPropagation(); goHit(e.shiftKey ? -1 : 1); return; }
+    if (e.key === '0' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); toZero(); return; }
     if (e.key === 'Escape') { e.stopPropagation(); anchor.current = null; onClear(); }
   };
   // Shift+arrows: the selection grows from the anchor; the cursor shown is the moving end
@@ -129,6 +131,24 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   const onCursorKeep = (b: Addr) => setMoving(b);
   useEffect(() => { if (!sel?.multi) setMoving(null); }, [sel]);
   const cur = sel?.multi && moving != null ? moving : cursor;
+
+  /* ---- 0: the selection from the cursor (or the selection's start) to the 0 byte that ends the text, the 0 taken in;
+     again the next text too ---- */
+  const [zeroErr, setZeroErr] = useState<string | null>(null);
+  useEffect(() => { setZeroErr(null); }, [cursor, sel]);
+  const toZero = () => {
+    const start = range?.start ?? cursor;
+    if (start == null || A.owner[start] < 0) return;
+    const from = range ? range.end : start;
+    const z = nextZero(A.mem, ranges, from);
+    if (z == null) { setZeroErr(`${range ? `No 0 byte after $${h4(range.end - 1)}` : `No 0 byte from $${h4(start)} on`} before the loaded bytes end.`); return; }
+    anchor.current = start;
+    onSelect(start, z + 1);
+    // the info line shows the 0
+    onCursorKeep(z); setHover(null);
+    scrollTo(z, false);
+  };
+  const zeroBtn = <button className="btn small" onClick={() => { toZero(); scroller.current?.focus(); }} title="Select from the cursor (or the selection's start) to the next 0 byte, the end of the text, the 0 taken in. Again takes in the next text too (0)">Select to the next 0<kbd>0</kbd></button>;
 
   // find: every hit marked in the dump, Enter and the arrows step through them from the cursor
   const [findAs, setFindAs] = useState<FindAs>('text');
@@ -245,13 +265,18 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
         </OptGroup>
       </div>
       {cmdErr && <div className="gfxv-sel err-text small" role="alert">{cmdErr}</div>}
+      {zeroErr && <div className="gfxv-sel err-text small" role="alert">{zeroErr}</div>}
       <div className="gfxv-sel" role="status">
         {range ? <>
           <span><b className="mono">${h4(range.start)}–${h4(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
+          {zeroBtn}
           <span className="grow" />
           {MARKS.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}
           <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name="list" size={13} />Show in listing</button>
-        </> : <span className="muted">Click a byte to put the cursor there, Shift+click or drag to select, arrow keys to move. Double-click shows it in the listing.</span>}
+        </> : <>
+          <span className="muted">Click a byte to put the cursor there, Shift+click or drag to select, arrow keys to move, <kbd>0</kbd> to select to the 0 that ends a text. Double-click shows it in the listing.</span>
+          {cursor != null && A.owner[cursor] >= 0 && <><span className="grow" />{zeroBtn}</>}
+        </>}
       </div>
       <div className="monv-scroll" ref={scroller} tabIndex={0} aria-label="Memory dump" onScroll={e => setTop(e.currentTarget.scrollTop)} onKeyDown={key}
         onMouseDown={down} onMouseMove={move} onMouseLeave={() => setHover(null)} onMouseUp={() => { dragging.current = false; }}

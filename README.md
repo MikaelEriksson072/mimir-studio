@@ -75,7 +75,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   select what you find, mark it and save it as raw bytes, a `.prg`, a Koala or Art Studio picture, a PNG or `.byte`
   source.
 - **A Memory tab.** It prints memory the way the VICE monitor does (`m`, `i`, `ii`). You can search it for text, as
-  PETSCII and as screen codes at once, or for bytes (`a9 00 8d`, `??` for any byte), and step through the hits.
+  PETSCII and as screen codes at once, or for bytes (`a9 00 8d`, `??` for any byte), and step through the hits. `0`
+  selects from the start of a text to the 0 byte that ends it, ready to mark as text.
 - **Every edit still assembles, and every edit can be undone:**
   - rename labels and comment lines;
   - mark ranges as code, bytes, words or text, and write data, tables and words in hex, decimal or binary, as many

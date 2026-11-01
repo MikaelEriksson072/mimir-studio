@@ -2296,6 +2296,11 @@ Statusen säger vilken träff det är och hur den matchade (*1 of 2 matches · P
 - Ett klick på en byte, i hexkolumnen eller textkolumnen, sätter markören där.
 - `Shift`+klick eller att dra markerar, och piltangenterna flyttar (med `Shift` växer markeringen).
 - Ett dubbelklick visar byten i listningen.
+- `0` (eller knappen *Select to the next 0*) markerar från markören till 0-byten som avslutar texten, och 0:an räknas med,
+  som i analysens textblock. Med en markering går den från markeringens början, och 0:an söks efter markeringens slut,
+  så att ett `0` till tar med nästa text också (en tabell med nollavslutade texter, en i taget). Sökningen stannar där det
+  laddade området slutar, och finns ingen 0 före det säger en rad i rött det (*No 0 byte from $37fe on before the loaded
+  bytes end.*) och markeringen står kvar (`nextZero` i `monitor.ts`).
 - En markering kan markeras som text, text i skärmkoder, bytes eller kod härifrån.
 
 **Kopiera:** *Copy selection* / *Copy all* lägger raderna på urklipp som VICE skriver dem (`monitorText`), med raderna från
