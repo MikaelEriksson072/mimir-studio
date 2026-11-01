@@ -1,6 +1,6 @@
 /* =====================================================================
  * Assembles exactly the Kick Assembler subset that the generator emits
- * (#import, #define/#if/#else/#endif, .pc/*=, .label/.const/.var, .byte/.word/.text/.encoding,
+ * (#import, #define/#if/#else/#endif, .pc/*=, .pseudopc { }, .label/.const/.var, .byte/.word/.text/.encoding,
  * .fill with expressions, .import binary, LoadSid, BasicUpstart2, every
  * addressing mode, .abs/.zp, multi-pass resolution). The desktop app and
  * the CLI can additionally run the real KickAss.jar.
@@ -192,11 +192,20 @@ export function assemble(vfs: Vfs, entryPath: string): AssembleResult {
   };
   const splitArgs = (s: string) => { const out: string[] = []; let depth = 0, q = false, cur = ''; for (const c of s) { if (c === '"') q = !q; if (!q && c === '(') depth++; if (!q && c === ')') depth--; if (!q && depth === 0 && c === ',') { out.push(cur.trim()); cur = ''; continue; } cur += c; } if (cur.trim()) out.push(cur.trim()); return out; };
   let mem = new Uint8Array(0x10000), written = new Uint8Array(0x10000), blocks: { start: number; name: string }[] = [];
-  const emit = (b: number, st: Stmt) => { b &= 0xff; if (pc > 0xffff) { E('program counter past $ffff', st); return; } if (written[pc] && pass === 'final') E(`memory at $${h4(pc)} written twice`, st); mem[pc] = b; written[pc] = 1; pc++; };
+  // `.pseudopc a { … }`: `pc` (labels, `*`, branches) counts from a while the bytes go on where they are; `off` is
+  // how far pc is from where the next byte goes, and `outer` the offsets of the .pseudopc blocks around
+  let off = 0, outer: number[] = [];
+  const emit = (b: number, st: Stmt) => {
+    b &= 0xff;
+    const at = pc - off;
+    if (at < 0 || at > 0xffff) { E('program counter past $ffff', st); return; }
+    if (written[at] && pass === 'final') E(`memory at $${h4(at)} written twice`, st);
+    mem[at] = b; written[at] = 1; pc++;
+  };
 
   const runPass = (final: boolean) => {
     mem = new Uint8Array(0x10000); written = new Uint8Array(0x10000); blocks = [];
-    pc = 0; let enc = 'screencode_mixed'; unresolved = []; let changed = false;
+    pc = 0; off = 0; outer = []; let enc = 'screencode_mixed'; unresolved = []; let changed = false;
     const define = (name: string, v: Value, st: Stmt) => { if (final && syms.has(name) && syms.get(name) !== v && typeof v === 'number') E(`symbol "${name}" changed value in the final pass`, st); if (syms.get(name) !== v) changed = true; syms.set(name, v); };
     const defs = new Set<string>();
     for (const st of stmts) {
@@ -205,7 +214,12 @@ export function assemble(vfs: Vfs, entryPath: string): AssembleResult {
         const s = st.body;
         if (!s) continue;
         let m: RegExpMatchArray | null;
-        if ((m = s.match(/^(?:\.pc|\*)\s*=\s*(.+?)(?:\s+"([^"]*)")?$/))) { const v = ev(P(m[1])); if (v != null) pc = v; blocks.push({ start: pc, name: m[2] || '' }); continue; }
+        if ((m = s.match(/^(?:\.pc|\*)\s*=\s*(.+?)(?:\s+"([^"]*)")?$/))) {
+          if (outer.length) { E('.pc inside .pseudopc', st); continue; }
+          const v = ev(P(m[1])); if (v != null) pc = v; blocks.push({ start: pc, name: m[2] || '' }); continue;
+        }
+        if ((m = s.match(/^\.pseudopc\s+(.+?)\s*\{$/))) { const v = ev(P(m[1])); outer.push(off); if (v != null) { off += v - pc; pc = v; } continue; }
+        if (s === '}') { if (!outer.length) { E('} without .pseudopc', st); continue; } const was = outer.pop()!; pc -= off - was; off = was; continue; }
         if ((m = s.match(/^\.(label|const|var)\s+([A-Za-z_]\w*)\s*=\s*(.+)$/))) { const v = ev(P(m[3])); if (v != null) define(m[2], v, st); continue; }
         if ((m = s.match(/^\.encoding\s+"([^"]+)"$/))) { if (!ENCODINGS[m[1]]) E(`unknown encoding "${m[1]}"`, st); enc = m[1]; continue; }
         if ((m = s.match(/^\.cpu\b/))) continue;
@@ -266,6 +280,7 @@ export function assemble(vfs: Vfs, entryPath: string): AssembleResult {
         E(`unsupported statement: ${s}`, st);
       } catch (err) { E((err as Error).message, st); }
     }
+    if (final && outer.length) E(`.pseudopc without } (${outer.length} open)`);
     return changed;
   };
   for (pass = 1; pass <= 12; pass++) { const ch = runPass(false); if (!ch && !unresolved.length && pass > 1) break; }

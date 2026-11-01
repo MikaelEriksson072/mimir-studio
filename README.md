@@ -84,6 +84,13 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   - merge blocks, or drag a byte into the block next to it;
   - set the memory configuration for a range, keep bookmarks and fold blocks;
   - leave blocks out of the build, or save them as binary files.
+- **Relocated code.** A block the program copies to another address before it runs there (a transfer routine in the
+  tape buffer, code moved under the KERNAL, a routine copied to the zero page) is relocated with `R`: the analysis
+  reads it where it runs, so its labels, references and blocks have the addresses it runs at, and the source writes
+  it where it is loaded, inside `.pseudopc`. Names, comments, marks, bookmarks and patches on the bytes go along when
+  it is relocated, runs somewhere else or stops being relocated. The analysis finds the copy loops itself
+  (`lda $1000,x / sta $2000,x` and a jump there), and Problems offers the relocation in one click: in 284 cracktros and
+  intros from CSDB it finds 101, and each one, relocated, assembles back byte for byte.
 - **Patches.** Select lines and press `P` to write new code over them, in Kick Assembler with the program's labels and
   the hardware names. The editor shows each line's address and bytes as you type, `Tab` steps from instruction to
   instruction, and an original instruction you write over moves to a column on the right, out of the code. The code

@@ -11,6 +11,7 @@ import { h2, h4 } from './util/hex';
 import { cycleText, instructionCycles } from './cpu/cycles';
 import { OPC } from './cpu/opcodes';
 import { fileSpaces } from './spaces';
+import { loadAddress } from './relocs';
 
 /** which files a patch can be written in: those of the bank the C64 starts in, where a cartridge's banks share
  *  addresses (13.9b); every file without banks */
@@ -109,6 +110,9 @@ function fileIndex(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], start: 
   return -1;
 }
 
+/** where a patch's bytes are in the file: at its start, or (in a relocated block) where the block is loaded */
+const fileAt = (p: Pick<Patch, 'start' | 'at'>): Addr => p.at ?? p.start;
+
 /** `files` with `bytes` written at `start` in file `i` (a new array, and a new byte array for the file changed) */
 function writeAt<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], i: number, start: Addr, bytes: Uint8Array): F[] {
   if (i < 0) throw new Error(`$${h4(start)}-$${h4(start + bytes.length - 1)} is not inside one loaded file`);
@@ -118,20 +122,21 @@ function writeAt<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F
 }
 
 /** `files` with the patch written over them (`ok`: the files it can be in) */
-export const applyPatch = <F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes'>, ok?: PatchFiles): F[] =>
-  writeAt(files, fileIndex(files, p.start, patchEnd(p), ok), p.start, p.bytes);
+export const applyPatch = <F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes' | 'at'>, ok?: PatchFiles): F[] =>
+  writeAt(files, fileIndex(files, fileAt(p), fileAt(p) + p.bytes.length, ok), fileAt(p), p.bytes);
 
 /** `files` with the bytes the patch wrote over back, in the file that holds the patch (a file added later over the
  *  same addresses is left alone) */
-export function revertPatch<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes' | 'old'>, ok?: PatchFiles): F[] {
-  const holds = (f: F, i: number) => (!ok || ok(i)) && p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length && p.bytes.every((b, k) => f.bytes[p.start - f.load + k] === b);
+export function revertPatch<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], p: Pick<Patch, 'start' | 'bytes' | 'old' | 'at'>, ok?: PatchFiles): F[] {
+  const at = fileAt(p), end = at + p.bytes.length;
+  const holds = (f: F, i: number) => (!ok || ok(i)) && at >= f.load && end <= f.load + f.bytes.length && p.bytes.every((b, k) => f.bytes[at - f.load + k] === b);
   let i = files.length - 1;
   while (i >= 0 && !holds(files[i], i)) i--;
-  return writeAt(files, i >= 0 ? i : fileIndex(files, p.start, patchEnd(p), ok), p.start, p.old);
+  return writeAt(files, i >= 0 ? i : fileIndex(files, at, end, ok), at, p.old);
 }
 
 /** The files as they were loaded, every patch that is on taken out (the newest first). */
-export function unpatchedFiles<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], patches: readonly Pick<Patch, 'start' | 'bytes' | 'old' | 'off'>[], ok?: PatchFiles): F[] {
+export function unpatchedFiles<F extends Pick<LoadedFile, 'load' | 'bytes'>>(files: readonly F[], patches: readonly Pick<Patch, 'start' | 'bytes' | 'old' | 'off' | 'at'>[], ok?: PatchFiles): F[] {
   let out = [...files];
   for (const p of patchesOn(patches).reverse()) out = revertPatch(out, p, ok);
   return out;
@@ -226,10 +231,13 @@ export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'z
   for (let a = start; a < end; a++) if (A.owner[a] !== file) return fail(`$${h4(start)}-$${h4(end - 1)} ${A.owner[a] < 0 ? 'runs past the end of the file' : 'crosses into another file'} at $${h4(a)}.`);
   const n = asm.code.length, size = end - start;
   const len = req.fill === 'nop' ? Math.max(n, size) : n;
+  // in a relocated block (8.1b) the code runs at `start` and its bytes are where the block is loaded, in one piece
+  const at = loadAddress(A, start);
+  for (let a = start; a < Math.max(end, start + len) && A.owner[a] === file; a++) if (loadAddress(A, a) !== at + a - start) return fail(`$${h4(start)}-$${h4(Math.max(end, start + len) - 1)} crosses the edge of a relocated block at $${h4(a)}.`);
   // the bytes it writes over: as loaded, the patch being edited taken out first (when it is on)
   const edited = req.id ? project.patches.find(p => p.id === req.id) : undefined;
   const base = edited && !edited.off ? revertPatch(project.files, edited, ok) : project.files;
-  if (req.cycles) time = patchTime(base, req, asm, ok);
+  if (req.cycles) time = patchTime(base, req, asm, at, ok);
 
   if (!name) return fail('Give the patch a name.');
   if (project.patches.some(p => p.id !== req.id && p.name.trim().toLowerCase() === name.toLowerCase())) return fail(`There is already a patch called "${name}".`);
@@ -251,11 +259,11 @@ export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'z
 
   const bytes = new Uint8Array(len).fill(NOP);
   bytes.set(asm.code);
-  const f = base[fileIndex(base, start, start + len, ok)];
+  const f = base[fileIndex(base, at, at + len, ok)];
   if (!f) return fail(`$${h4(start)}-$${h4(start + len - 1)} is not inside one loaded file.`);
-  const old = f.bytes.slice(start - f.load, start - f.load + len);
+  const old = f.bytes.slice(at - f.load, at - f.load + len);
   // with `keep` the bytes after the code stay as they are: the patch writes only the code
-  const patch: Patch = { id: edited?.id ?? newId(), name, start, end, source: req.source, fill: req.fill, over: req.over, bytes, old, ...(req.cycles ? { cycles: true } : {}), ...(edited?.off ? { off: true } : {}) };
+  const patch: Patch = { id: edited?.id ?? newId(), name, start, end, source: req.source, fill: req.fill, over: req.over, bytes, old, ...(req.cycles ? { cycles: true } : {}), ...(edited?.off ? { off: true } : {}), ...(at !== start ? { at } : {}) };
   return { patch, lines: asm.lines, code: asm.code, past: Math.max(0, n - size), ...(time ? { time } : {}) };
 }
 
@@ -268,12 +276,13 @@ const MODE_TEXT: Record<string, string> = { abx: ' $xxxx,x', aby: ' $xxxx,y', iz
  * fill (with `keep`, the original's bytes after the code). An instruction whose time varies may only be one the
  * original has (the same opcode, varying the same way), and each of the original's must be there.
  */
-function patchTime(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], req: PatchRequest, asm: PatchCode, ok?: PatchFiles): PatchTime | undefined {
+function patchTime(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], req: PatchRequest, asm: PatchCode, at: Addr, ok?: PatchFiles): PatchTime | undefined {
   const { start, end } = req, n = asm.code.length, len = req.fill === 'nop' ? Math.max(n, end - start) : n;
-  const f = files[fileIndex(files, start, end, ok)];
+  // `at`: where the bytes are in the file (a relocated block's are where it is loaded); they run from `start`
+  const f = files[fileIndex(files, at, at + end - start, ok)];
   if (!f) return undefined;
-  const span = Math.min(Math.max(end, start + len), f.load + f.bytes.length);
-  const original = f.bytes.slice(start - f.load, span - f.load);
+  const span = Math.min(at + Math.max(end, start + len) - start, f.load + f.bytes.length);
+  const original = f.bytes.slice(at - f.load, span - f.load);
   const now = original.slice();
   for (let i = 0; i < Math.min(len, now.length); i++) now[i] = i < n ? asm.code[i] : NOP;
   const o = straightCycles(original, start), w = straightCycles(now, start);

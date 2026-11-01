@@ -417,6 +417,11 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 /* timing code: the instructions a branch enters part of the way in, to wait (5.4b) */
 .row.delay .src { color: var(--fg-2); }
 .row.delay .gut { background-image: repeating-linear-gradient(180deg, transparent 0 2px, var(--editor) 2px 4px); }
+/* where a relocated block runs (8.1b): a stripe in its colour beside the gutter */
+.row.in-reloc .gut { box-shadow: 3px 0 0 var(--g-reloc); }
+.row.in-reloc.cur .gut { box-shadow: 0 0 0 1px var(--accent-hi), 3px 0 0 var(--g-reloc); }
+.reloc-notice > div { display: flex; flex-direction: column; gap: 6px; }
+.reloc-notice p { margin: 0; }
 .zp-tag.delay-tag { color: var(--accent-hi); }
 /* bytes a patch wrote over (spec 10.2): tinted, the bytes and the gutter's edge in the warning colour */
 .row.patched { background: color-mix(in srgb, var(--warn) 8%, transparent); }

@@ -81,7 +81,7 @@ const chip = z.number().int().min(0).max(4095);
 /** a cartridge image: at most 16 MB (the largest VICE emulates are 16 MB) */
 const crtBytes = z.instanceof(Uint8Array).refine(b => b.length >= 0x40 && b.length <= 16 * 1024 * 1024 + 0x10000, 'not a cartridge image');
 /** code the user wrote over the loaded bytes (spec 10.2): what it wrote and what was there, as many bytes */
-const patchFields = { name: z.string().min(1).max(64), start: at, end: at, source: z.string().max(65536), fill: z.enum(['nop', 'keep']), over: z.boolean(), off: z.boolean().optional(), cycles: z.boolean().optional() };
+const patchFields = { name: z.string().min(1).max(64), start: at, end: at, source: z.string().max(65536), fill: z.enum(['nop', 'keep']), over: z.boolean(), off: z.boolean().optional(), cycles: z.boolean().optional(), at: at.optional() };
 const base64 = z.string().max(0x20000).regex(/^[A-Za-z0-9+/]*={0,2}$/);
 const serializedPatch = z.object({ ...patchFields, bytes: base64, old: base64 })
   .refine(p => p.bytes.length === p.old.length && p.bytes.length > 0, 'the bytes written and the bytes written over differ in length');
@@ -89,6 +89,8 @@ const patch = z.object({ ...patchFields, id: z.string().max(64), bytes: z.instan
   .refine(p => p.bytes.length === p.old.length && p.bytes.length > 0 && p.start + p.bytes.length <= 0x10000, 'the bytes written and the bytes written over differ in length');
 /** memory configuration / VIC bank the code in a range runs with (null: back to detection) */
 const bankZone = z.object({ start: at, end: at, port: z.number().int().min(0).max(255).nullable().optional(), vicBank: z.number().int().min(0).max(3).nullable().optional() });
+/** bytes the program copies elsewhere to run there (spec 8.1b): loaded at start-end (end excluded), run at `to` */
+const reloc = z.object({ start: at, end: at, to: at }).refine(r => r.start < r.end && r.end - r.start <= 0x10000, 'a relocated block needs at least one byte');
 
 /** .mimir.json on disk (and a .krproj.json saved before the rename) */
 export const serializedProjectSchema = z.object({
@@ -116,6 +118,8 @@ export const serializedProjectSchema = z.object({
   // project files from before patches have none
   patches: z.array(serializedPatch).max(4096).default([]),
   bankZones: z.array(bankZone).max(100000).default([]),
+  // project files from before blocks could be relocated have none
+  relocs: z.array(reloc).max(4096).default([]),
   // project files from before blocks could be excluded have none
   excluded: z.array(at).max(65536).default([]),
   // project files from before blocks could be saved as binary files have none
@@ -143,6 +147,7 @@ export const projectSchema = z.object({
   pack: packPrefsSchema.nullable().optional(),
   patches: z.array(patch).max(4096),
   bankZones: z.array(bankZone).max(100000),
+  relocs: z.array(reloc).max(4096),
   excluded: z.array(at).max(65536),
   binary: z.array(at).max(65536),
   cart: z.object({ name: fileName, crt: crtBytes }).nullable().optional(),

@@ -2,7 +2,7 @@
  * and writes this object; the order of the stages is fixed in analyze/index. */
 import type {
   Addr, BasicInfo, DelaySled, EntryKind, FileInput, ImmediateHint, IndirectJump, LogEntry, LogLevel,
-  LohiTable, Override, ProjectInput, Settings, SpindleDriver, TextEncoding, XRef, XRefKind,
+  LohiTable, Override, ProjectInput, RelocInfo, Settings, SpindleDriver, TextEncoding, XRef, XRefKind,
 } from '../types';
 import { DEFAULT_SETTINGS, T } from '../model';
 import type { CartMode } from '../c64/memconfig';
@@ -44,6 +44,9 @@ export interface Ctx {
   logged: Set<string>;
   L: (lvl: LogLevel, msg: string, addr?: Addr | null, cat?: string) => void;
   loaded: (a: number) => boolean;
+  /** the relocated blocks placed where they run (8.1b): the copy of block k is owned by `files.length + k`, so an
+   *  instruction or a block never runs from it into other bytes; the result gives those bytes the file they are of */
+  relocs: RelocInfo[];
   // overrides
   ov: Uint8Array;
   ovList: Override[];
@@ -122,7 +125,7 @@ export function createContext(project: ProjectInput, deep: Deep | null = null): 
   const loaded = (a: number) => a >= 0 && a < 0x10000 && owner[a] >= 0;
   const ov = new Uint8Array(0x10000);
   const ctx = {
-    project, S, files: project.files, mem, owner, log: [], logged: new Set(), loaded,
+    project, S, files: project.files, mem, owner, log: [], logged: new Set(), loaded, relocs: [],
     ov, ovList: [], ovProps: new Map(), forcedData: (a: Addr) => ov[a] !== 0 && ov[a] !== T.CODE,
     cart: projectCartMode(project.cart, project.files), cartStart: null,
     basics: [], insLen: new Uint8Array(0x10000), codeOwner: new Int32Array(0x10000).fill(-1), skip: new Set(), xrefs: new Map(),

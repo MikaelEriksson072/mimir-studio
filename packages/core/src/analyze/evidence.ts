@@ -74,7 +74,12 @@ export function evidence(ctx: Ctx): void {
       const kind = (mode === 'izx' || mode === 'izy') ? 'ptr' : info.access;
       addX(tgt, pc, kind);
       if (kind === 'ptr') addX(tgt + 1, pc, 'ptr');
-      if ((info.access === 'write' || info.access === 'rmw') && loaded(tgt) && (insLen[tgt] || codeOwner[tgt] >= 0)) {
+      // `lda $1000,x / sta $2000,x` into a relocated block that runs at $2000, from its bytes at $1000: the copy that
+      // puts it there (8.1b), not code that changes itself
+      const from = (A as Reg | null)?.idx;
+      const copied = (mode === 'abx' || mode === 'aby') && mn === 'STA' && !!from && from.r === (mode === 'abx' ? 'x' : 'y')
+        && ctx.relocs.some(r => tgt >= r.to && tgt < r.to + r.end - r.start && from.t === r.start + tgt - r.to);
+      if ((info.access === 'write' || info.access === 'rmw') && loaded(tgt) && (insLen[tgt] || codeOwner[tgt] >= 0) && !copied) {
         const s = insLen[tgt] ? tgt : codeOwner[tgt];
         smc.set(s, pc);
         L('info', `Self-modifying code: ${$4(pc)} writes into the instruction at ${$4(s)}`, pc, 'code');

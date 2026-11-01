@@ -1731,6 +1731,85 @@ test('timing code: a delay a timer sets the branch into is marked, and what it r
   await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
 });
 
+test('relocate code the program copies elsewhere: Problems finds the copy, the listing reads it where it runs, names go along', async ({ app, page }) => {
+  // fixtures/prg/moved-demo.prg (packages/core/test/reloc.test.ts): 10 SYS2061, a loop that copies $1000-$1010 to $2000
+  // and jumps there, and at $1000 code assembled to run at $2000
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/moved-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded moved-demo.prg at $0801')).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: /^Relocate/ });
+
+  await test.step('Problems says what the loop copies and where the code goes; Relocate… fills in the dialog', async () => {
+    await page.getByRole('tab', { name: /Problems/ }).click();
+    const row = page.locator('.loglist .logrow', { hasText: 'The loop at $080f copies $1000-$1010 to $2000-$2010' });
+    await expect(row).toContainText('the jmp at $0818 goes there');
+    await row.getByRole('button', { name: 'Relocate…' }).click();
+    await expect(dialog.getByLabel('Start (loaded at)')).toHaveValue('$1000');
+    await expect(dialog.getByLabel('End (included)')).toHaveValue('$1010');
+    await expect(dialog.getByLabel('Runs at')).toHaveValue('$2000');
+    await expect(dialog).toContainText('The loop at $080f copies these bytes to $2000, and the jmp at $0818 goes there.');
+    // nothing may be loaded where it runs
+    await dialog.getByLabel('Runs at').fill('$0900');
+    await expect(dialog).toContainText('$0900 is loaded from moved-demo.prg: a relocated block runs where nothing is loaded.');
+    await expect(dialog.getByRole('button', { name: 'Relocate', exact: true })).toBeDisabled();
+    await dialog.getByLabel('Runs at').fill('$2000');
+    await dialog.getByRole('button', { name: 'Relocate', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(toast(page, '$1000–$1010 runs at $2000–$2010: traced and named there')).toBeVisible();
+    await expect(row).toHaveCount(0);
+  });
+
+  await test.step('the code is traced and named where it runs, and written inside .pseudopc where it is loaded', async () => {
+    const rows = await listingRows(page);
+    expect(rowAt(rows, '080f')?.text).toMatch(/^lda reloc_1000,x/);
+    expect(rowAt(rows, '0812')?.text).toMatch(/^sta l_2000,x/);
+    expect(rowAt(rows, '0818')?.text).toMatch(/^jmp l_2000/);
+    expect(headerAt(rows, '1000')).toMatchObject({ chip: 'Relocated', user: true });
+    expect(headerAt(rows, '1000')?.text).toContain('runs at $2000-$2010');
+    expect(rows.find(r => r.adr === '1000' && /^\.pseudopc \$2000 \{/.test(r.text))).toBeTruthy();
+    expect(rowAt(rows, '2000')?.text).toMatch(/^inc VIC_BORDER_COLOR/);
+    expect(rowAt(rows, '2003')?.text).toMatch(/^jsr sub_2009/);
+    expect(rows.some(r => /^\}\s*\/\/ end of reloc_1000/.test(r.text))).toBe(true);
+    await goTo(page, '$2003');
+    await expect(listing(page).locator('.row.cur')).toHaveClass(/in-reloc/);
+    await expect(page.locator('.inspector')).toContainText('It runs here because the program copies the relocated block reloc_1000 ($1000–$1010) to $2000–$2010.');
+  });
+
+  await test.step('a name given where it runs goes along when it runs elsewhere, and back when it is not relocated', async () => {
+    await goTo(page, '$2009');
+    await page.keyboard.press('n');
+    const input = page.getByLabel('Label at $2009');
+    await input.fill('blink');
+    await input.press('Enter');
+    await expect.poll(async () => rowAt(await listingRows(page), '2003')?.text).toMatch(/^jsr blink/);
+    // R on the relocated block: where it runs
+    await page.keyboard.press('r');
+    await expect(dialog).toContainText('The program copies $1000–$1010 to $2000–$2010 and runs it there.');
+    await dialog.getByLabel('Runs at').fill('$c000');
+    await expect(dialog).toContainText('Going along to $c000: 1 name.');
+    await dialog.getByRole('button', { name: 'Run it there' }).click();
+    await expect(toast(page, '$1000–$1010 runs at $c000–$c010 now')).toBeVisible();
+    // the loop still copies it to $2000: there nothing is loaded now, and Problems says so (the listing follows once
+    // the analysis of the edit is in)
+    await expect.poll(async () => (await listingRows(page)).find(r => r.text === 'blink:')?.adr).toBe('c009');
+    expect(rowAt(await listingRows(page), '0818')?.text).toMatch(/^jmp \$2000/);
+    await expect(page.locator('.loglist .logrow', { hasText: 'but it is relocated to run at $c000' })).toBeVisible();
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+    // Ctrl+Z: at $2000 again
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => rowAt(await listingRows(page), '2003')?.text).toMatch(/^jsr blink/);
+    // the right-click menu stops relocating it: the name goes back to $1009
+    await goTo(page, '$2000');
+    await listing(page).locator('.row.cur').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /^Stop relocating \$1000–\$1010/ }).click();
+    await expect(toast(page, '$1000–$1010 is read where it is loaded again')).toBeVisible();
+    await expect.poll(async () => (await listingRows(page)).find(r => r.text === 'blink:')?.adr).toBe('1009');
+    expect((await listingRows(page)).some(r => /\.pseudopc/.test(r.text))).toBe(false);
+  });
+});
+
 test('Problems warns when bank tracking is off and I/O is written as labels, and turns it on', async ({ workDir: work, app, page }) => {
   // a memory dump from $0801 over $d000-$d02f: 10 SYS2061, then lda #$00 / sta $d020 / sta $d021 / rts
   const prg = new Uint8Array(2 + 0xd030 - 0x0801);

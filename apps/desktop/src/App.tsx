@@ -8,6 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
+  addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, builtCartridge, cartBuild, cartridgeFiles, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
@@ -18,11 +19,11 @@ import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
-import { withIdentified, withUnpackRun } from './lib/packing';
+import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
-import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem } from './lib/types';
+import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem } from './lib/types';
 import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
@@ -34,6 +35,7 @@ import { BitfirePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPa
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
+import { RelocateModal, type RelocDraft } from './components/Relocate';
 import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
 import { MemoryDump } from './components/MemoryDump';
@@ -123,9 +125,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'patch' | 'project' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'patch' | 'project' | 'reloc' | null>(null);
   /** the patch dialog's range and code */
   const [patchDraft, setPatchDraft] = useState<PatchDraft | null>(null);
+  /** the Relocate dialog's block: a range, a relocated block, or a copy loop's (spec 8.1b) */
+  const [relocDraft, setRelocDraft] = useState<RelocDraft | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [labelError, setLabelError] = useState<string | null>(null);
@@ -156,7 +160,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   // folded blocks (by start address) show only their header; the view maps addresses to the visible lines
   const [folded, setFolded] = useState<ReadonlySet<Addr>>(() => new Set());
-  const view = useMemo(() => foldLines(R.lines, A.blocks, folded, A.mem.length), [R, A, folded]);
+  const view = useMemo(() => foldLines(R.lines, A.blocks, folded, A.mem.length, A.relocs), [R, A, folded]);
   const excludedSet = useMemo(() => new Set(project.excluded), [project.excluded]);
   const lineOf = view.lineOf;
   /* ---- a cartridge's banks are spaces of their own (13.9b): the listing shows them all, one after the other, at bank
@@ -186,7 +190,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const offsetAt = useCallback((a: Addr) => {
     const fi = A.owner[a], f = fi >= 0 ? A.files[fi] : undefined, b = fi >= 0 ? offsetBases[fi] : null;
     if (!f || b == null) return null;
-    return { n: b + spaceAddr(a) - f.load, file: f.chip != null && project.cart ? project.cart.name : f.vsf ? f.name.replace(/\.prg$/i, '.vsf') : f.name };
+    // a relocated block's bytes are where it is loaded (8.1b)
+    return { n: b + spaceAddr(loadAddress(A, a)) - f.load, file: f.chip != null && project.cart ? project.cart.name : f.vsf ? f.name.replace(/\.prg$/i, '.vsf') : f.name };
   }, [A, offsetBases, project.cart]);
   /** where file `i` starts, in its bank */
   const fileAddr = (i: number): Addr => (A.spaces?.find(x => x.files.includes(i))?.space ?? 0) * SPACE + (project.files[i]?.load ?? 0);
@@ -234,8 +239,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const navigate = useCallback((addr: Addr, opts: NavOptions = {}) => {
     if (addr == null || addr < 0 || addr >= A.owner.length) return;
     if (A.owner[addr] < 0) { toast(`$${h4(addr)} is not part of any loaded file`, 'warn'); return; }
-    // going to an address inside a folded block (Go to, a link, the sidebar) unfolds it
-    if (opts.center) { const b = findBlock(A.blocks, addr); if (b && addr !== b.start && folded.has(b.start)) setFolded(f => { const n = new Set(f); n.delete(b.start); return n; }); }
+    // going to an address inside a folded block (Go to, a link, the sidebar) unfolds it, and the relocated blocks it runs in
+    if (opts.center) { const b = findBlock(A.blocks, addr); unfold([...(b && addr !== b.start ? [b.start] : []), ...relocsAround(addr)]); }
     if (cursor != null && cursor !== addr && !opts.noHistory) { navHist.current.back.push(cursor); navHist.current.fwd = []; }
     setCursor(addr);
     if (!opts.keepSel) setSel(null);
@@ -244,10 +249,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   }, [A, cursor, toast, setUi, folded]);
   const goBack = () => { const b = navHist.current.back.pop(); if (b != null && cursor != null) { navHist.current.fwd.push(cursor); navigate(b, { noHistory: true }); } };
   const goFwd = () => { const f = navHist.current.fwd.pop(); if (f != null && cursor != null) { navHist.current.back.push(cursor); navigate(f, { noHistory: true }); } };
+  /** the relocated blocks the bytes at `a` run in, the innermost first (where each one is loaded) */
+  const relocsAround = (a: Addr): Addr[] => { const out: Addr[] = []; for (let r = relocAt(A, a); r && out.length < 64; r = relocAt(A, r.start)) out.push(r.start); return out; };
+  const unfold = (starts: Addr[]) => { const shut = starts.filter(s => folded.has(s)); if (shut.length) setFolded(f => { const n = new Set(f); for (const s of shut) n.delete(s); return n; }); };
   const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; };
   /** fold or unfold the block that starts at (or contains) `a` */
   const toggleFold = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return; setFolded(f => { const n = new Set(f); if (n.has(b.start)) n.delete(b.start); else n.add(b.start); return n; }); if (cursor != null && cursor > b.start && cursor < b.end) setCursor(b.start); };
-  const foldAll = (which: 'data' | 'all' | 'none') => setFolded(which === 'none' ? new Set() : new Set(A.blocks.filter(b => which === 'all' || b.type !== 'code').map(b => b.start)));
+  // a relocated block holds code too: it is no block of data to fold
+  const foldAll = (which: 'data' | 'all' | 'none') => setFolded(which === 'none' ? new Set() : new Set(A.blocks.filter(b => which === 'all' || (b.type !== 'code' && b.type !== 'reloc')).map(b => b.start)));
 
   /* ---- find in the listing (Ctrl+F): every line with a match is marked, Enter and F3 go from one to the next ---- */
   const [findOpen, setFindOpen] = useState(false);
@@ -272,12 +281,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const cursorLineIdx = () => { const v = cursor != null ? lineOf[cursor] : -1; return v >= 0 ? Math.max(0, R.lines.indexOf(view.lines[v])) : 0; };
   const showHit = (i: number) => {
     const l = R.lines[i]; if (!l) return;
-    // a hit inside a folded block unfolds it
+    // a hit inside a folded block unfolds it, and the relocated blocks it runs in
     if (l.k !== 'hdr') for (let j = i - 1; j >= 0; j--) {
       const h = R.lines[j];
       if (h.k === 'file') break;
       if (h.k === 'hdr') { const b = A.blocks[h.blk]; if (b && folded.has(b.start)) setFolded(f => { const n = new Set(f); n.delete(b.start); return n; }); break; }
     }
+    if (l.k !== 'file') unfold(relocsAround(l.a));
     // the cursor goes to the line's address, unless the line is in a file's head (whose lines share one address)
     const at = l.k !== 'file' && l.k !== 'blank' && !('head' in l && l.head) && A.owner[l.a] >= 0 ? l.a : null;
     if (at != null && at !== cursor) {
@@ -504,6 +514,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const f = project.files[i];
     // a cartridge's chip is no packed program (and is in a bank of its own)
     const h = f?.chip != null ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
+    // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
+    if (!external && f && onlyRelocates(runs[f.id], A)) return null;
     return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, f ? runs[f.id] : undefined, at);
   }), [A, identified, runs, project.files, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went. */
@@ -635,6 +647,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   const mark = (id: string, range?: { start: Addr; end: Addr }) => {
     const r = range || targetRange(); if (!r) return;
+    const rl = A.relocs.find(x => x.start < r.end && r.start < x.end);
+    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside .pseudopc`, 'warn'); return; }
     const m = MARK_AS.find(x => x.id === id);
     // the analysis merges every block (and earlier override) inside the range into the new one; code stays split per routine
     const merged = id === 'code' ? 0 : A.blocks.filter(b => b.start < r.end && b.end > r.start).length;
@@ -684,6 +698,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   /** leave the block at `a` out of the build (it stays in the source under #if), or put it back */
   const toggleExcluded = (a: Addr) => {
     const b = findBlock(A.blocks, a); if (!b) return;
+    const inRun = relocAt(A, b.start);
+    if (inRun) { toast(`A block where a relocated block runs is written inside its .pseudopc, so it cannot be left out alone: leave out the whole relocated block ($${h4(inRun.start)})`, 'warn'); return; }
     const out = project.excluded.includes(b.start);
     update(`${out ? 'Include' : 'Exclude'} $${h4(b.start)}-$${h4(b.end - 1)} ${out ? 'in' : 'from'} the build`, d => { d.excluded = out ? d.excluded.filter(x => x !== b.start) : [...d.excluded, b.start]; });
     toast(out ? `$${h4(b.start)}–$${h4(b.end - 1)} is built again` : `$${h4(b.start)}–$${h4(b.end - 1)} is left out of the build (still in the source under #if)`, 'ok');
@@ -700,6 +716,47 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     update('Clear override', d => { d.overrides.push({ start: rr.start, end: rr.end, type: 'auto' }); });
     toast(`$${h4(rr.start)}–$${h4(rr.end - 1)} returned to automatic analysis`, 'ok');
     showChanged(rr.start, rr.end, 'Back to automatic analysis');
+  };
+  /* ---- relocated blocks: bytes the program copies elsewhere to run there (spec 8.1b) ---- */
+  /** R: the relocated block where the range starts or the cursor is (where it is loaded or runs), else the selection,
+   *  else the block at the cursor; `copyAt`: the copy loop the analysis found (a hint's Relocate button) */
+  const startRelocate = (range?: Range | null, copyAt?: Addr) => {
+    const c = copyAt != null ? A.copies.find(x => x.at === copyAt) : undefined;
+    const r = c ?? range ?? (sel && sel.multi && sel.end > sel.start ? { start: sel.start, end: sel.end } : null);
+    const at = r ? r.start : cursor;
+    if (at == null) { toast('Select the bytes to relocate, or put the cursor in their block', 'info'); return; }
+    // a range inside where a relocated block runs is relocated again from there; the cursor alone edits that block
+    const rl = relocLoadedAt(A, at) ?? (r ? undefined : relocAt(A, at));
+    if (rl) { setRelocDraft({ start: rl.start, end: rl.end, to: c && c.start === rl.start ? c.to : rl.to, reloc: rl, copyAt: c?.at ?? null }); setModal('reloc'); return; }
+    const b = findBlock(A.blocks, at), span = r ?? (b ? { start: b.start, end: b.end } : null);
+    if (!span) { toast(`$${h4(at)} is not part of any loaded file`, 'warn'); return; }
+    const cp = c ?? A.copies.find(x => x.start <= span.start && span.end <= x.end);
+    setRelocDraft({ start: span.start, end: span.end, to: cp ? cp.to + span.start - cp.start : null, copyAt: cp?.at ?? null });
+    setModal('reloc');
+  };
+  const closeReloc = () => { setModal(null); setRelocDraft(null); setTimeout(() => listRef.current?.focus(), 0); };
+  const relocate = (r: Reloc) => {
+    const n = r.end - r.start;
+    update(`Relocate $${h4(r.start)}-$${h4(r.end - 1)} to run at $${h4(r.to)}`, d => addReloc(d, r));
+    closeReloc(); setSel(null);
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(r.to)}–$${h4(r.to + n - 1)}: traced and named there, and written inside .pseudopc (Ctrl+Z takes it back)`, 'ok');
+    showChanged(r.to, r.to + n, `Relocated: runs at $${h4(r.to)}`);
+  };
+  /** the relocated block loaded at `start` runs at `to` instead */
+  const runRelocAt = (start: Addr, to: Addr) => {
+    const r = project.relocs.find(x => x.start === start); if (!r) return;
+    const n = r.end - r.start;
+    update(`$${h4(r.start)}-$${h4(r.end - 1)} runs at $${h4(to)}`, d => moveReloc(d, start, to));
+    closeReloc();
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(to)}–$${h4(to + n - 1)} now`, 'ok');
+    showChanged(to, to + n, `Runs at $${h4(to)}`);
+  };
+  const unrelocate = (start: Addr) => {
+    const r = project.relocs.find(x => x.start === start); if (!r) return;
+    update(`Stop relocating $${h4(r.start)}-$${h4(r.end - 1)}`, d => removeReloc(d, start));
+    closeReloc();
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} is read where it is loaded again: its names and comments went back with it (Ctrl+Z relocates it again)`, 'ok');
+    showChanged(r.start, r.end, 'No longer relocated');
   };
   const rename = (addr: Addr, name: string): boolean => {
     if (name && !validLabel(name)) { setLabelError('Use letters, digits and _ only, start with a letter or _, and avoid mnemonic names.'); toast(`"${name}" is not a valid Kick Assembler label`, 'err'); return false; }
@@ -1334,6 +1391,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'merge-prev', label: 'Merge the block at the cursor with the previous block', run: () => mergeBlock('prev') },
     { id: 'merge-next', label: 'Merge the block at the cursor with the next block', run: () => mergeBlock('next') },
     { id: 'merge-range', label: 'Merge range into one block… (start, end, block type)', key: 'M', run: () => setModal('merge') },
+    { id: 'relocate', label: 'Relocate the selection (or the block at the cursor): the program copies it elsewhere to run there… (on a relocated block: where it runs)', key: 'R', run: () => startRelocate() },
     { id: 'patch', label: 'Patch the selection (or the cursor line) with new code… (a patch on it: edit it)', key: 'P', run: () => startPatch() },
     ...project.patches.flatMap(p => [
       { id: `patch-switch-${p.id}`, label: `Switch ${p.off ? 'on' : 'off'} patch "${p.name}" (${patchSpan(p)})`, run: () => switchOnePatch(p, !!p.off) },
@@ -1438,7 +1496,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text' };
+      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text' };
       if (single[key]) run(single[key]);
     };
     window.addEventListener('keydown', onKey);
@@ -1511,13 +1569,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         // a line at a block's edge: the same as dragging it into the neighbouring block
         ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]) => { const m = lineMove(A, l, dir); return m ? [{ label: `Move $${h4(m.start)}${m.end - m.start > 1 ? `-$${h4(m.end - 1)}` : ''} into the ${word} block (${kindInfo(m.into.type).label})`, run: () => moveInto(m) }] : []; }),
         { label: 'Merge range into one block…', key: 'M', run: () => { if (!inSel) setCursor(l.a); setModal('merge'); } },
+        ...((): MenuItem[] => {
+          // on a relocated block (where it is loaded or runs): where it runs, or not; else relocate the selection or the block
+          const rl = l.a != null ? (relocLoadedAt(A, l.a) ?? (inSel ? undefined : relocAt(A, l.a))) : undefined;
+          if (rl) return [
+            { label: `Change where $${h4(rl.start)}–$${h4(rl.end - 1)} runs ($${h4(rl.to)})…`, key: 'R', run: () => startRelocate({ start: rl.start, end: rl.end }) },
+            { label: `Stop relocating $${h4(rl.start)}–$${h4(rl.end - 1)} (read it where it is loaded)`, run: () => unrelocate(rl.start) },
+          ];
+          const r = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          return r ? [{ label: `Relocate ${inSel ? 'selection' : 'block'}… (the program copies it elsewhere to run)`, key: 'R', run: () => startRelocate(r) }] : [];
+        })(),
         { label: 'Add entry point here', key: 'E', run: () => addEntry(l.a) },
         { label: folded.has(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Unfold block' : 'Fold block', key: 'F', run: () => toggleFold(l.a) },
         { label: project.excluded.includes(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Include block in the build' : 'Exclude block from the build', run: () => toggleExcluded(l.a) },
         { label: project.binary.includes(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Write block in the source again' : 'Save block as a binary file (.import binary)', run: () => toggleBinary(l.a) },
         ...(() => {
-          // the Pack view: the selection, else the whole block
-          const r = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          // the Pack view: the selection, else the whole block, where its bytes are in the built PRG (a relocated block's
+          // where it is loaded, 8.1b)
+          const r0 = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          const r = r0 && loadRange(A, r0.start, r0.end);
           if (!r) return [];
           const cover = project.pack?.ranges ? rangeCover(project.pack.ranges, r.start, r.end) : 0, what = inSel ? 'selection' : 'block';
           return [
@@ -1556,7 +1626,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...A.log.filter(l => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint').map(l => (l.cat === 'banks' ? { ...l, action: { label: 'Turn on', run: () => {
       update('Follow the memory configuration ($01) and VIC bank', d => { d.settings.bankTracking = true; });
       toast('Following the memory configuration ($01) and VIC bank: I/O accesses are written as registers', 'ok');
-    } } } : l)),
+    } } } : l.cat === 'reloc' && l.lvl === 'hint' && l.addr != null && A.copies.some(c => c.at === l.addr) ? { ...l, action: { label: 'Relocate…', run: () => startRelocate(null, l.addr!) } } : l)),
     ...packing.flatMap((p, i) => (p ? [{ lvl: 'warn' as const, msg: `${A.files[i].name} ${p.verdict === 'packed' ? 'is packed' : 'may be packed'}${p.signature ? ` (${p.signature})` : ''}: ${p.reasons.join('; ')}. Unpack it (${unpackLabel}) to see the program.`, addr: p.decruncher, cat: 'packing' }] : [])),
   ], [A, R, kickProblems, packing, unpackLabel]);
   // the Spindle script tab is there when the analysis found Spindle's drivers
@@ -1774,7 +1844,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
@@ -1791,6 +1861,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
+      {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}
       <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} />{t.msg}</div>)}</div>

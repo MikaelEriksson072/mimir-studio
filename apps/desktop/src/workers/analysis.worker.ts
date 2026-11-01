@@ -1,5 +1,5 @@
 /* Analysis worker (spec 4.3): runs @mimir/core off the UI thread. analyze() only re-runs when
- * the files, overrides, entries, program start, bank zones or settings changed (the caller bumps `aKey`); labels and comments
+ * the files, overrides, entries, program start, bank zones, relocated blocks or settings changed (the caller bumps `aKey`); labels and comments
  * only re-render, which keeps renames instant. A cartridge's banks are spaces of their own (spec 13.9b): the cache keeps
  * each one's analysis, so an edit in one bank analyses that bank only, and the analyses of the single spaces stay here. */
 import * as Comlink from 'comlink';
