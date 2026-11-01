@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
+import type { InspectorMode } from '../store/ui';
 import { Modal } from './Modal';
 
 type Key = keyof Settings;
@@ -11,8 +12,10 @@ type Key = keyof Settings;
 export interface AppPrefs {
   /** the start screen is shown when the app starts */
   startScreen: boolean;
+  /** the inspector always open, or folded in until it is needed */
+  inspector: InspectorMode;
 }
-const DEFAULT_PREFS: AppPrefs = { startScreen: true };
+const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open' };
 
 export function SettingsModal({ settings, prefs: prefs0, desktop, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
   const [s, setS] = useState<Settings>(settings);
@@ -70,6 +73,12 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, onSave, onClos
         {tab === 'general' && <>
           <label className="check"><input id="set-startScreen" type="checkbox" checked={prefs.startScreen} onChange={e => setPrefs(p => ({ ...p, startScreen: e.target.checked }))} />
             <span>Show the start screen when Mimir starts<small className="muted"> — continue, a new project, open one, or work without a project. Off: Mimir goes on with what you worked on last (the start screen still comes when that project is gone). The project button in the title bar shows it at any time</small></span></label>
+          <label className="field"><span>Inspector (the panel on the right)</span>
+            <select id="set-inspector" value={prefs.inspector} onChange={e => setPrefs(p => ({ ...p, inspector: e.target.value as InspectorMode }))}>
+              <option value="open">Always open</option>
+              <option value="auto">Folded in: opens when you need it, folds in when you click outside it</option>
+            </select>
+            <small className="muted">Folded in, the inspector is a strip at the right edge and the listing gets its room. A click on the strip, or on the start of a block (its header in the listing), opens the inspector over the editor; a click outside it or Esc folds it in again. The button at the top of the inspector switches between the two.</small></label>
           <p className="muted small">{desktop ? 'Kept by the app (not in the project).' : 'Running outside the desktop app: there is no start screen.'}</p>
         </>}
       </div>

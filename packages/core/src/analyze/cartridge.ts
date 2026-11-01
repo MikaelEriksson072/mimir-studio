@@ -22,7 +22,7 @@ export interface CartStart {
 /** The cartridge's start vectors in the loaded chips, logged; null without a cartridge or without its vectors loaded. */
 export function findCartStart(ctx: Ctx): CartStart | null {
   const { cart, mem, owner, files, L } = ctx;
-  const chip = (a: Addr, n: number) => { for (let i = 0; i < n; i++) if (owner[a + i] < 0 || files[owner[a + i]].chip == null) return false; return true; };
+  const chip = (a: Addr, n: number) => { for (let i = 0; i < n; i++) if (owner[a + i] < 0 || files[owner[a + i]]?.chip == null) return false; return true; };
   if (cart === '8k' || cart === '16k') {
     if (!chip(0x8000, 9)) return null;
     if (!CBM80.every((v, i) => mem[0x8004 + i] === v)) {

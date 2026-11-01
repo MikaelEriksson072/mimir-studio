@@ -198,6 +198,7 @@ interface Project {
   notes: Record<Addr, Note>;              // egna kommentarrader och kommentarblock ovanför en adress
   bookmarks: Record<Addr, Bookmark>;      // bokmärken: titel och anteckning per adress, skrivs aldrig till källkoden (10)
   bankZones: BankZone[];                  // ordnad lista, senare vinner: vad koden i ett intervall körs med
+  relocs: Reloc[];                        // byte som programmet kopierar till en annan adress och kör där (8.1b)
   excluded: Addr[];                       // starten på block som lämnas utanför bygget (11.5)
   binary: Addr[];                         // starten på block som sparas som binärfil (11.6)
   settings: Settings;
@@ -219,10 +220,16 @@ interface BankZone {                      // se 8.7b
   vicBank?: number | null;                // VIC-bank 0–3; null = tillbaka till detektering
 }
 
+interface Reloc {                         // se 8.1b
+  start: Addr; end: Addr;                 // där byten ligger i filen (end exklusiv)
+  to: Addr;                               // där de körs
+}
+
 interface LoadedFile { id: string; name: string; load: Addr; bytes: Uint8Array; }
 
 type BlockKind = 'code' | 'data' | 'words' | 'text' | 'table' | 'lohi' | 'sprite'
-               | 'charset' | 'bitmap' | 'screen' | 'music' | 'fill' | 'basic';
+               | 'charset' | 'bitmap' | 'screen' | 'music' | 'fill' | 'basic'
+               | 'reloc';                 // där ett flyttat block ligger (8.1b)
 
 interface Override {
   start: Addr; end: Addr;                 // end exklusiv
@@ -321,6 +328,41 @@ Analysen är en deterministisk pipeline. Varje steg är O(n) över max 64 KB och
 ### 8.1 Minnesbild
 
 Alla filer läggs i en 64 KB-bild; `owner[addr]` anger vilken fil som äger byten (senare fil vinner vid överlapp, med varning). Flera filer analyseras tillsammans, så korsreferenser mellan t.ex. `main.prg` och `music.prg` löses upp.
+
+### 8.1b Flyttade block (relokering)
+
+Program kopierar ofta kod till en annan adress innan den körs där: en överföringsrutin till kassettbufferten
+(`$033c`) eller skärmen som laddar nästa del, kod under KERNAL eller i nollsidan. Byten ligger då på en adress i filen
+och körs på en annan, och koden i dem är skriven för den andra (`jmp $2000`, inte `jmp $1000`). Ett flyttat block
+(`Project.relocs`: `start`–`end` i filen körs på `to`) gör att analysen läser dem där de körs:
+
+- **Minnesbilden.** Efter filerna läggs en kopia av byten på `to` (`placeRelocs`). Under analysen ägs kopian av
+  `files.length + k`, så att ingen instruktion och inget block går från den in i andra byte; i resultatet ägs den av
+  filen byten är från, och `AnalysisResult.relocs` säger var varje block är laddat och körs. Där byten är laddade är de
+  ett block av typen *Relocated* (`T.RELOC`, typen vinner över allt som markerats där) med en etikett (`reloc_1000`);
+  spårningen går inte in där, och en kodväg som gör det får en varning som säger var koden körs. Referenser till
+  laddplatsen skrivs från blockets etikett (`lda reloc_1000+5`, hur långt in det än är).
+- **Villkor.** Byten ska vara ett stycke av en fil, eller av ett annat flyttat blocks kopia (ett block flyttat igen
+  därifrån; de läggs ut i omgångar), och där de körs får ingenting vara laddat, varken en fil, ett annat flyttat block
+  eller blockets egna byte. Ett block som inte kan läggas ut står i loggen med skälet. Kopieringsloopens
+  `sta $2000,x` från blockets byte är kopieringen, inte självmodifierande kod. I en cartridge körs blocket i banken
+  det är laddat i (13.9b).
+- **Källkoden.** Blocken där det körs skrivs där byten är laddade, i `.pseudopc to { … }`: etiketten för laddplatsen
+  före, inga `.pc` inuti (musik utan sin `.pc = music.location`), och `}` efter. Kick Assembler kan inte nästla
+  `.pseudopc`, så ett block flyttat igen inifrån ett annat pausar det: `}`, blockets etikett som `.label`, dess egen
+  `.pseudopc`, och sedan `.pseudopc` där det första fortsätter. Filhuvudet listar filens flyttade block. Hela blocket
+  kan lämnas utanför bygget (11.5) eller sparas som binärfil (11.6, etiketterna där det körs blir `.label`); ett block
+  där det körs kan inte lämnas utanför för sig. Den inbyggda assemblern klarar `.pseudopc`, och KickAss.jar bygger
+  alltihop byte för byte (`kickass.integration.test.ts`).
+- **Upptäckt.** `findCopies` hittar loopar `lda src,x / sta dst,x` (eller `,y`), flera par en sida isär blir ett
+  block, där indexregistrets start (`ldx #`) och slut (`dex/bpl`, `dex/bne`, `inx/bne`, `inx/cpx #/bne`, `bcc`) går
+  att läsa, kopian hamnar där ingenting är laddat, och koden hoppar eller anropar dit. Där hoppet går in ska byten
+  vara en rutin (inte text, inte NOP), och kod som programmet går in i där den är laddad (en loop som kopierar några
+  byte mer än sin rutin, in i en subrutin) hålls utanför. Av kopior till samma plats vinner den som hoppet följer
+  direkt efter (en text som kopieras till skärmen på `$0400` går ofta dit också). Varje kopia blir ett tips i
+  Problems med *Relocate…*. På 284 intros ur CSDB:s samling (uppackade med Sindri först) hittas 101 i 98 av dem, och varenda
+  en assembleras byte för byte när den flyttas. En körning av Sindri vars enda lager flyttar kod dit ett flyttat (eller
+  föreslaget) block körs ger ingen packningsnotis (8.11b).
 
 ### 8.2 Startpunkter
 
@@ -1019,7 +1061,8 @@ Pefchain läser det, med drivern och rutinerna efter `#`.
 | Bokmärkeslistan | `Ctrl+B`, aktivitetsradens bokmärkesknapp (visar antalet) | Alla bokmärken sorterade efter adress, med adress och titel, och filtrerbara på titel, anteckning och adress. Ett klick visar hela anteckningen med *Go to*, *Edit* och *Delete*, och ett klick till döljer den. Ett dubbelklick går till platsen i koden |
 | Nästa / föregående bokmärke | `F2` / `Shift+F2` | Går till bokmärket efter eller före markörens rad och börjar om från första eller sista. Titeln visas i en toast |
 | Nästa / föregående block | `Ctrl+↓` / `Ctrl+↑`, pilarna *Next block* / *Previous block* i listningens verktygsrad (när raden är bred nog) och ⋯-menyn, kommandopaletten | `Ctrl+↓` går till nästa blocks början. `Ctrl+↑` går till början av blocket markören står i, och står den redan där till blocket före. Blockets rubrik hamnar överst i listningen med raden ovanför, så man kan bläddra block för block. Ihopfällda block förblir ihopfällda och markören stannar på rubriken, så *Fold all blocks* och sedan `Ctrl+↓` går igenom blocken ett i taget. En följd av hopp läggs en gång i navigeringshistoriken, så `Esc` går tillbaka dit markören stod före det första. Efter det sista blocket och före det första händer ingenting (`blockStep` i `apps/desktop/src/lib/fold.ts`) |
-| Patch | `P`, högerklick → *Patch selection/line/block with new code…*, kommandopaletten | Ny kod skrivs över markeringen (eller raden vid markören) i de laddade bytena; `P` på en patchad rad redigerar patchen (10.2) |
+| Patch | `P`, högerklick → *Patch selection/line/block with new code…*, kommandopaletten | Ny kod skrivs över markeringen (eller raden vid markören) i de laddade bytena; `P` på en patchad rad redigerar patchen (10.2). I ett flyttat block assembleras den där koden körs och skrivs där filen har byten (`Patch.at`) |
+| Flytta ett block (relokera) | `R`, högerklick → *Relocate selection/block…*, inspektorns *Relocate…*, *Relocate…* på ett tips i Problems, kommandopaletten | En dialog med start, slut (inklusive) och adressen byten körs på (8.1b), ifylld från markeringen, blocket vid markören eller kopieringsloopen tipset gäller. Den säger direkt vad som är i vägen (något laddat där det skulle köras, blockets egna byte, en fil- eller patchgräns), varnar för kod som också körs där den är laddad, och räknar upp vad som följer med. Användarens namn, kommentarer, kommentarrader, bokmärken, markeringar (kapade vid kanterna), startpunkter, programstart, uteslutna och binära block, patchar och block flyttade därifrån flyttas till där byten körs (`addReloc`). På ett flyttat block (där det är laddat eller körs) ger `R` samma dialog för att köra det någon annanstans (`moveReloc`, allt följer med) eller *Stop relocating* (`removeReloc`, allt går tillbaka). Listningen visar raderna där blocket körs med körningsadressen, filens offset för laddplatsen och en rand i blocktypens färg (*Relocated*), och inspektorn säger var blocket är laddat och körs. Ångras med `Ctrl+Z` |
 | Lägg till startpunkt | `E` | Spårning från adressen |
 | Programstart | Explorer → *Program start* (adress eller etikett), högerklick → *Set as program start*, kommandopaletten | Ersätter den detekterade starten (8.2); *Use the detected start* tar bort valet |
 | Korsreferenser | `X` | Bottenpanelen visar alla referenser till raden |
@@ -2091,14 +2134,34 @@ dit.
 | Region | Innehåll |
 |---|---|
 | Titelrad | Öppna, Spara, Ångra/Gör om, kommandosök, Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
-| Aktivitetsrad | Explorer, Blocks, Symbols, Bookmarks (med antal), Pack (med antal intervall), specifikation, kommandopalett |
-| Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till en PRG) står i Files rubrik; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8) |
+| Aktivitetsrad | Explorer, Blocks, Symbols, Bookmarks (med antal), Pack (med antal intervall), specifikation, kommandopalett. Knappen för vyn som visas fäller ihop sidopanelen; är den ihopfälld är ingen knapp vald, och en vys knapp visar panelen igen med den vyn |
+| Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till en PRG) står i Files rubrik; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
-| Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo) |
+| Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
 | Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Statistics, Build output |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, analystid, verifieringsstatus |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.
+
+**Fälla ihop panelerna:** sidopanelen fälls ihop och visas igen med `Ctrl+Shift+B` (`Ctrl+B` visar bokmärkena), knappen
+till höger på vyns rubrik (*Collapse side panel*), knappen för vyn som visas i aktivitetsraden och *Toggle side panel*
+i kommandopaletten. Ihopfälld försvinner panelen och dess dragkant, och editorn med listningen får deras bredd (276 px
+med standardbredden). Aktivitetsraden står kvar, och en vys knapp visar panelen igen med den vyn, liksom `Ctrl+B`, *Demo*,
+en monterad disk och Pack-kommandona. Bottenpanelen fälls ihop med `Ctrl+J` och pilen till höger på dess flikrad. Båda
+valen sparas per användare med de andra (`sidePanel`, `panelOpen` i `apps/desktop/src/store/ui.ts`), så de står kvar
+efter en omstart. I ett smalt fönster (under 900 px) öppnar och stänger `Ctrl+Shift+B` sidopanelens låda.
+
+**Inspektorn infälld:** Settings → General → *Inspector (the panel on the right)* väljer *Always open* (standard) eller
+*Folded in*. Infälld är inspektorn en list längst till höger (28 px, *Inspector* på högkant), och editorn med listningen
+får resten av bredden (288 px med standardbredden). Ett klick på listen fäller ut inspektorn över editorns högra del, i
+sin vanliga bredd, så listningen behåller sin bredd. Ett klick på ett blocks start, dess rubrikrad i listningen, fäller
+också ut den, med blocket i *Block*; ett klick på en annan rubrik låter den vara utfälld och visar det blocket. Ett klick
+utanför den fäller in den igen och gör samtidigt det det gör där: ett klick på en rad i listningen flyttar markören dit. Klick i menyer och dialoger räknas inte. `Esc` fäller
+också in den, och bara det: listningen går inte tillbaka. Klick inne i inspektorn (heatmap, typ, talformat) låter den
+vara utfälld. Knappen i inspektorns rubrik byter läge direkt: *Fold in the inspector* när den alltid är öppen och
+nålen *Keep the inspector open* när den är utfälld. Kommandopaletten har *Show the inspector* (infälld) och kommandot
+som byter läge. Valet sparas per användare (`inspector` i `apps/desktop/src/store/ui.ts`). I ett smalt fönster är
+inspektorn som förut en låda som titelradens knapp öppnar, i båda lägena.
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:
@@ -2296,6 +2359,11 @@ Statusen säger vilken träff det är och hur den matchade (*1 of 2 matches · P
 - Ett klick på en byte, i hexkolumnen eller textkolumnen, sätter markören där.
 - `Shift`+klick eller att dra markerar, och piltangenterna flyttar (med `Shift` växer markeringen).
 - Ett dubbelklick visar byten i listningen.
+- `0` (eller knappen *Select to the next 0*) markerar från markören till 0-byten som avslutar texten, och 0:an räknas med,
+  som i analysens textblock. Med en markering går den från markeringens början, och 0:an söks efter markeringens slut,
+  så att ett `0` till tar med nästa text också (en tabell med nollavslutade texter, en i taget). Sökningen stannar där det
+  laddade området slutar, och finns ingen 0 före det säger en rad i rött det (*No 0 byte from $37fe on before the loaded
+  bytes end.*) och markeringen står kvar (`nextZero` i `monitor.ts`).
 - En markering kan markeras som text, text i skärmkoder, bytes eller kod härifrån.
 
 **Kopiera:** *Copy selection* / *Copy all* lägger raderna på urklipp som VICE skriver dem (`monitorText`), med raderna från

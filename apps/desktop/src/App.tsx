@@ -8,21 +8,22 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
+  addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, builtCartridge, cartBuild, cartridgeFiles, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
 import { forgetUnsavedWork, useProject } from './store/project';
-import { useUi, type Activity } from './store/ui';
+import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
-import { withIdentified, withUnpackRun } from './lib/packing';
+import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
-import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem } from './lib/types';
+import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem } from './lib/types';
 import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
@@ -34,6 +35,7 @@ import { BitfirePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPa
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
+import { RelocateModal, type RelocDraft } from './components/Relocate';
 import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
 import { MemoryDump } from './components/MemoryDump';
@@ -115,7 +117,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     tick();
   });
   const ui = useUi();
-  const { theme, tab, bottom, activity, panelOpen, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
+  const { theme, tab, bottom, activity, sidePanel, panelOpen, inspector, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
   const setUi = ui.set;
 
   const [srcPath, setSrcPath] = useState<string | null>(null);
@@ -123,9 +125,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'patch' | 'project' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'patch' | 'project' | 'reloc' | null>(null);
   /** the patch dialog's range and code */
   const [patchDraft, setPatchDraft] = useState<PatchDraft | null>(null);
+  /** the Relocate dialog's block: a range, a relocated block, or a copy loop's (spec 8.1b) */
+  const [relocDraft, setRelocDraft] = useState<RelocDraft | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [labelError, setLabelError] = useState<string | null>(null);
@@ -156,7 +160,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   // folded blocks (by start address) show only their header; the view maps addresses to the visible lines
   const [folded, setFolded] = useState<ReadonlySet<Addr>>(() => new Set());
-  const view = useMemo(() => foldLines(R.lines, A.blocks, folded, A.mem.length), [R, A, folded]);
+  const view = useMemo(() => foldLines(R.lines, A.blocks, folded, A.mem.length, A.relocs), [R, A, folded]);
   const excludedSet = useMemo(() => new Set(project.excluded), [project.excluded]);
   const lineOf = view.lineOf;
   /* ---- a cartridge's banks are spaces of their own (13.9b): the listing shows them all, one after the other, at bank
@@ -186,7 +190,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const offsetAt = useCallback((a: Addr) => {
     const fi = A.owner[a], f = fi >= 0 ? A.files[fi] : undefined, b = fi >= 0 ? offsetBases[fi] : null;
     if (!f || b == null) return null;
-    return { n: b + spaceAddr(a) - f.load, file: f.chip != null && project.cart ? project.cart.name : f.vsf ? f.name.replace(/\.prg$/i, '.vsf') : f.name };
+    // a relocated block's bytes are where it is loaded (8.1b)
+    return { n: b + spaceAddr(loadAddress(A, a)) - f.load, file: f.chip != null && project.cart ? project.cart.name : f.vsf ? f.name.replace(/\.prg$/i, '.vsf') : f.name };
   }, [A, offsetBases, project.cart]);
   /** where file `i` starts, in its bank */
   const fileAddr = (i: number): Addr => (A.spaces?.find(x => x.files.includes(i))?.space ?? 0) * SPACE + (project.files[i]?.load ?? 0);
@@ -234,8 +239,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const navigate = useCallback((addr: Addr, opts: NavOptions = {}) => {
     if (addr == null || addr < 0 || addr >= A.owner.length) return;
     if (A.owner[addr] < 0) { toast(`$${h4(addr)} is not part of any loaded file`, 'warn'); return; }
-    // going to an address inside a folded block (Go to, a link, the sidebar) unfolds it
-    if (opts.center) { const b = findBlock(A.blocks, addr); if (b && addr !== b.start && folded.has(b.start)) setFolded(f => { const n = new Set(f); n.delete(b.start); return n; }); }
+    // going to an address inside a folded block (Go to, a link, the sidebar) unfolds it, and the relocated blocks it runs in
+    if (opts.center) { const b = findBlock(A.blocks, addr); unfold([...(b && addr !== b.start ? [b.start] : []), ...relocsAround(addr)]); }
     if (cursor != null && cursor !== addr && !opts.noHistory) { navHist.current.back.push(cursor); navHist.current.fwd = []; }
     setCursor(addr);
     if (!opts.keepSel) setSel(null);
@@ -244,10 +249,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   }, [A, cursor, toast, setUi, folded]);
   const goBack = () => { const b = navHist.current.back.pop(); if (b != null && cursor != null) { navHist.current.fwd.push(cursor); navigate(b, { noHistory: true }); } };
   const goFwd = () => { const f = navHist.current.fwd.pop(); if (f != null && cursor != null) { navHist.current.back.push(cursor); navigate(f, { noHistory: true }); } };
+  /** the relocated blocks the bytes at `a` run in, the innermost first (where each one is loaded) */
+  const relocsAround = (a: Addr): Addr[] => { const out: Addr[] = []; for (let r = relocAt(A, a); r && out.length < 64; r = relocAt(A, r.start)) out.push(r.start); return out; };
+  const unfold = (starts: Addr[]) => { const shut = starts.filter(s => folded.has(s)); if (shut.length) setFolded(f => { const n = new Set(f); for (const s of shut) n.delete(s); return n; }); };
   const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; };
   /** fold or unfold the block that starts at (or contains) `a` */
   const toggleFold = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return; setFolded(f => { const n = new Set(f); if (n.has(b.start)) n.delete(b.start); else n.add(b.start); return n; }); if (cursor != null && cursor > b.start && cursor < b.end) setCursor(b.start); };
-  const foldAll = (which: 'data' | 'all' | 'none') => setFolded(which === 'none' ? new Set() : new Set(A.blocks.filter(b => which === 'all' || b.type !== 'code').map(b => b.start)));
+  // a relocated block holds code too: it is no block of data to fold
+  const foldAll = (which: 'data' | 'all' | 'none') => setFolded(which === 'none' ? new Set() : new Set(A.blocks.filter(b => which === 'all' || (b.type !== 'code' && b.type !== 'reloc')).map(b => b.start)));
 
   /* ---- find in the listing (Ctrl+F): every line with a match is marked, Enter and F3 go from one to the next ---- */
   const [findOpen, setFindOpen] = useState(false);
@@ -272,12 +281,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const cursorLineIdx = () => { const v = cursor != null ? lineOf[cursor] : -1; return v >= 0 ? Math.max(0, R.lines.indexOf(view.lines[v])) : 0; };
   const showHit = (i: number) => {
     const l = R.lines[i]; if (!l) return;
-    // a hit inside a folded block unfolds it
+    // a hit inside a folded block unfolds it, and the relocated blocks it runs in
     if (l.k !== 'hdr') for (let j = i - 1; j >= 0; j--) {
       const h = R.lines[j];
       if (h.k === 'file') break;
       if (h.k === 'hdr') { const b = A.blocks[h.blk]; if (b && folded.has(b.start)) setFolded(f => { const n = new Set(f); n.delete(b.start); return n; }); break; }
     }
+    if (l.k !== 'file') unfold(relocsAround(l.a));
     // the cursor goes to the line's address, unless the line is in a file's head (whose lines share one address)
     const at = l.k !== 'file' && l.k !== 'blank' && !('head' in l && l.head) && A.owner[l.a] >= 0 ? l.a : null;
     if (at != null && at !== cursor) {
@@ -418,7 +428,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     let bitfire: BitfireDisk | null = null;
     try { if (!spindle) bitfire = readBitfireDisk(bytes); } catch { /* not one */ }
     setDisk({ name, path, bytes, img, spindle, bitfire });
-    setUi({ activity: 'explorer' });
+    setUi({ activity: 'explorer', sidePanel: true });
     const kind = spindle ? `, a Spindle 3 disk with ${spindle.jobs.length} job${spindle.jobs.length === 1 ? '' : 's'}`
       : bitfire ? `, a Bitfire disk with ${bitfire.files.length} file${bitfire.files.length === 1 ? '' : 's'} of its own` : '';
     toast(`Mounted ${name}: "${img.name}", ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}`, 'ok');
@@ -504,6 +514,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const f = project.files[i];
     // a cartridge's chip is no packed program (and is in a bank of its own)
     const h = f?.chip != null ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
+    // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
+    if (!external && f && onlyRelocates(runs[f.id], A)) return null;
     return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, f ? runs[f.id] : undefined, at);
   }), [A, identified, runs, project.files, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went. */
@@ -635,6 +647,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   const mark = (id: string, range?: { start: Addr; end: Addr }) => {
     const r = range || targetRange(); if (!r) return;
+    const rl = A.relocs.find(x => x.start < r.end && r.start < x.end);
+    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside .pseudopc`, 'warn'); return; }
     const m = MARK_AS.find(x => x.id === id);
     // the analysis merges every block (and earlier override) inside the range into the new one; code stays split per routine
     const merged = id === 'code' ? 0 : A.blocks.filter(b => b.start < r.end && b.end > r.start).length;
@@ -684,6 +698,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   /** leave the block at `a` out of the build (it stays in the source under #if), or put it back */
   const toggleExcluded = (a: Addr) => {
     const b = findBlock(A.blocks, a); if (!b) return;
+    const inRun = relocAt(A, b.start);
+    if (inRun) { toast(`A block where a relocated block runs is written inside its .pseudopc, so it cannot be left out alone: leave out the whole relocated block ($${h4(inRun.start)})`, 'warn'); return; }
     const out = project.excluded.includes(b.start);
     update(`${out ? 'Include' : 'Exclude'} $${h4(b.start)}-$${h4(b.end - 1)} ${out ? 'in' : 'from'} the build`, d => { d.excluded = out ? d.excluded.filter(x => x !== b.start) : [...d.excluded, b.start]; });
     toast(out ? `$${h4(b.start)}–$${h4(b.end - 1)} is built again` : `$${h4(b.start)}–$${h4(b.end - 1)} is left out of the build (still in the source under #if)`, 'ok');
@@ -700,6 +716,47 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     update('Clear override', d => { d.overrides.push({ start: rr.start, end: rr.end, type: 'auto' }); });
     toast(`$${h4(rr.start)}–$${h4(rr.end - 1)} returned to automatic analysis`, 'ok');
     showChanged(rr.start, rr.end, 'Back to automatic analysis');
+  };
+  /* ---- relocated blocks: bytes the program copies elsewhere to run there (spec 8.1b) ---- */
+  /** R: the relocated block where the range starts or the cursor is (where it is loaded or runs), else the selection,
+   *  else the block at the cursor; `copyAt`: the copy loop the analysis found (a hint's Relocate button) */
+  const startRelocate = (range?: Range | null, copyAt?: Addr) => {
+    const c = copyAt != null ? A.copies.find(x => x.at === copyAt) : undefined;
+    const r = c ?? range ?? (sel && sel.multi && sel.end > sel.start ? { start: sel.start, end: sel.end } : null);
+    const at = r ? r.start : cursor;
+    if (at == null) { toast('Select the bytes to relocate, or put the cursor in their block', 'info'); return; }
+    // a range inside where a relocated block runs is relocated again from there; the cursor alone edits that block
+    const rl = relocLoadedAt(A, at) ?? (r ? undefined : relocAt(A, at));
+    if (rl) { setRelocDraft({ start: rl.start, end: rl.end, to: c && c.start === rl.start ? c.to : rl.to, reloc: rl, copyAt: c?.at ?? null }); setModal('reloc'); return; }
+    const b = findBlock(A.blocks, at), span = r ?? (b ? { start: b.start, end: b.end } : null);
+    if (!span) { toast(`$${h4(at)} is not part of any loaded file`, 'warn'); return; }
+    const cp = c ?? A.copies.find(x => x.start <= span.start && span.end <= x.end);
+    setRelocDraft({ start: span.start, end: span.end, to: cp ? cp.to + span.start - cp.start : null, copyAt: cp?.at ?? null });
+    setModal('reloc');
+  };
+  const closeReloc = () => { setModal(null); setRelocDraft(null); setTimeout(() => listRef.current?.focus(), 0); };
+  const relocate = (r: Reloc) => {
+    const n = r.end - r.start;
+    update(`Relocate $${h4(r.start)}-$${h4(r.end - 1)} to run at $${h4(r.to)}`, d => addReloc(d, r));
+    closeReloc(); setSel(null);
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(r.to)}–$${h4(r.to + n - 1)}: traced and named there, and written inside .pseudopc (Ctrl+Z takes it back)`, 'ok');
+    showChanged(r.to, r.to + n, `Relocated: runs at $${h4(r.to)}`);
+  };
+  /** the relocated block loaded at `start` runs at `to` instead */
+  const runRelocAt = (start: Addr, to: Addr) => {
+    const r = project.relocs.find(x => x.start === start); if (!r) return;
+    const n = r.end - r.start;
+    update(`$${h4(r.start)}-$${h4(r.end - 1)} runs at $${h4(to)}`, d => moveReloc(d, start, to));
+    closeReloc();
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(to)}–$${h4(to + n - 1)} now`, 'ok');
+    showChanged(to, to + n, `Runs at $${h4(to)}`);
+  };
+  const unrelocate = (start: Addr) => {
+    const r = project.relocs.find(x => x.start === start); if (!r) return;
+    update(`Stop relocating $${h4(r.start)}-$${h4(r.end - 1)}`, d => removeReloc(d, start));
+    closeReloc();
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} is read where it is loaded again: its names and comments went back with it (Ctrl+Z relocates it again)`, 'ok');
+    showChanged(r.start, r.end, 'No longer relocated');
   };
   const rename = (addr: Addr, name: string): boolean => {
     if (name && !validLabel(name)) { setLabelError('Use letters, digits and _ only, start with a letter or _, and avoid mnemonic names.'); toast(`"${name}" is not a valid Kick Assembler label`, 'err'); return false; }
@@ -731,7 +788,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [bmSel, setBmSel] = useState<Addr | null>(null);
   const [bmEdit, setBmEdit] = useState<Addr | null>(null);
   const showBookmarks = (a?: Addr) => {
-    setUi({ activity: 'bookmarks' });
+    setUi({ activity: 'bookmarks', sidePanel: true });
     if (a !== undefined) setBmSel(a);
     if (window.matchMedia?.('(max-width: 900px)').matches) setDrawer('side');
   };
@@ -1097,7 +1154,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const prefs = project.pack ?? packDefaults(A, project);
     const what = `$${h4(r.start)}-$${h4(r.end - 1)}`;
     setPack({ ...prefs, ranges: editRanges(prefs.ranges ?? [], r.start, r.end, on) }, `${on ? 'Pack' : 'Do not pack'} ${what}`);
-    setUi({ activity: 'pack' });
+    setUi({ activity: 'pack', sidePanel: true });
     toast(on ? `${what} is packed with the chosen blocks (Pack view)` : `${what} is left out of the pack`, 'ok');
   };
   /** Build and verify like Build & Run, then pack the PRGs it built with Brokkr or Exomizer as the Pack view says. */
@@ -1265,16 +1322,35 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     await leaveProject();
     replace(showcaseProject({ ...project.settings, bankTracking: true }));
     resetView();
-    setUi({ activity: 'bookmarks' });
+    setUi({ activity: 'bookmarks', sidePanel: true });
     toast(`Showcase loaded${left ? ` without a project (${left.name} is saved as it was)` : ''}: the Bookmarks view is a tour of it, F2 goes to the next stop`, 'ok');
   };
   const saveSettings = async (s: Settings, prefs: AppPrefs) => {
     const tc = pickToolchain(s);
     try { setToolchain(kr ? await kr.setSettings(tc) : tc); } catch (e) { toast(`Toolchain settings rejected: ${errorText(e)}`, 'err'); return; }
     setUi(prefs);
+    setDrawer(d => (d === 'insp' ? null : d));
     update('Settings', d => { for (const k of Object.keys(s) as (keyof Settings)[]) if (!(TOOLCHAIN_KEYS as readonly string[]).includes(k)) (d.settings as Record<string, unknown>)[k] = s[k]; });
     setModal(null); toast('Settings saved', 'ok');
   };
+
+  /** Ctrl+Shift+B, the side panel's own button and its view's button in the activity bar: the side panel collapsed, so the
+   *  listing and the other views get its room, or shown again (on a narrow window it is the drawer) */
+  const toggleSide = () => {
+    if (window.matchMedia?.('(max-width: 900px)').matches) { setDrawer(d => (d === 'side' ? null : 'side')); return; }
+    const open = !useUi.getState().sidePanel;
+    setUi({ sidePanel: open });
+    // the focus does not stay in the hidden panel
+    if (!open && document.activeElement?.closest('.sidebar, .side-collapse')) listRef.current?.focus();
+  };
+  /** folds in the inspector opened over the editor from its strip (the drawer `insp`, as on a narrow window) */
+  const closeInspector = () => {
+    setDrawer(d => (d === 'insp' ? null : d));
+    // the focus does not stay in the hidden inspector
+    if (document.activeElement?.closest('.insp-col')) listRef.current?.focus();
+  };
+  /** the inspector always open beside the editor, or folded in until it is needed (also Settings → General) */
+  const setInspector = (m: InspectorMode) => { closeInspector(); setUi({ inspector: m }); };
 
   /* ---- commands & keys ---- */
   const undoLabel = past.length ? past[past.length - 1].label : null;
@@ -1315,6 +1391,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'merge-prev', label: 'Merge the block at the cursor with the previous block', run: () => mergeBlock('prev') },
     { id: 'merge-next', label: 'Merge the block at the cursor with the next block', run: () => mergeBlock('next') },
     { id: 'merge-range', label: 'Merge range into one block… (start, end, block type)', key: 'M', run: () => setModal('merge') },
+    { id: 'relocate', label: 'Relocate the selection (or the block at the cursor): the program copies it elsewhere to run there… (on a relocated block: where it runs)', key: 'R', run: () => startRelocate() },
     { id: 'patch', label: 'Patch the selection (or the cursor line) with new code… (a patch on it: edit it)', key: 'P', run: () => startPatch() },
     ...project.patches.flatMap(p => [
       { id: `patch-switch-${p.id}`, label: `Switch ${p.off ? 'on' : 'off'} patch "${p.name}" (${patchSpan(p)})`, run: () => switchOnePatch(p, !!p.off) },
@@ -1325,11 +1402,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...(project.entryPoint != null ? [{ id: 'start-clear', label: `Clear the program start $${h4(project.entryPoint)} (Build & Run starts the program with RUN)`, run: () => setStart(null) }] : []),
     { id: 'xrefs', label: 'Show cross-references', key: 'X', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
     { id: 'copy-lines', label: 'Copy the selected lines (or the line at the cursor) as source', key: 'Ctrl+C', run: copyLines },
+    { id: 'side-panel', label: 'Toggle side panel (Explorer, Blocks, Symbols, Bookmarks, Pack)', key: 'Ctrl+Shift+B', run: () => toggleSide() },
+    ...(inspector === 'auto' ? [{ id: 'inspector-show', label: 'Show the inspector (the memory map, the block at the cursor, its preview)', run: () => setDrawer('insp') }] : []),
+    { id: 'inspector-mode', label: inspector === 'auto' ? 'Keep the inspector open beside the editor' : 'Fold in the inspector (a strip at the right edge opens it when you need it)', run: () => setInspector(inspector === 'auto' ? 'open' : 'auto') },
     { id: 'panel', label: 'Toggle bottom panel', key: 'Ctrl+J', run: () => setUi({ panelOpen: !useUi.getState().panelOpen }) },
     { id: 'verify', label: 'Verify round-trip (re-assemble and compare)', key: 'F7', run: () => void runVerify() },
     { id: 'build', label: 'Build with KickAss.jar & run in VICE', key: 'F5', run: () => void runBuild() },
     { id: 'pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} (build, verify, pack as the Pack view says)`, run: () => void runPack() },
-    { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack' }) },
+    { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack', sidePanel: true }) },
     ...(packRes?.ok && packRes.path ? [
       ...(packRes.argv[1] === 'sfx' ? [{ id: 'pack-run', label: `Run the packed ${packRes.name} in VICE`, run: () => void runPacked() }] : []),
       { id: 'pack-save', label: `Save the packed ${packRes.name} as…`, run: () => void savePacked() },
@@ -1355,8 +1435,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
   ];
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind, drawer, closeInspector });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind, drawer, closeInspector };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -1372,7 +1452,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       // Ctrl+↓ / Ctrl+↑: from block to block
       if (ctrl && !e.shiftKey && !e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && !typing && !k.editing && !k.modal && k.tab === 'listing') return run(e.key === 'ArrowDown' ? 'block-next' : 'block-prev');
       if (ctrl && !typing) {
-        const map: Record<string, string> = { z: e.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', e: 'export', g: 'goto', ',': 'settings', j: 'panel', b: 'bookmarks' };
+        const map: Record<string, string> = { z: e.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', e: 'export', g: 'goto', ',': 'settings', j: 'panel', b: e.shiftKey ? 'side-panel' : 'bookmarks' };
         const id = map[e.key.toLowerCase()]; if (id) return run(id);
       }
       if (ctrl && (e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'o')) return run(e.key.toLowerCase() === 's' ? 'save' : 'open');
@@ -1382,6 +1462,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (e.key === 'F9') return run('quicksave');
       if (e.key === 'F7') return run('verify');
       if (typing || k.editing || k.modal || ctrl || (e.altKey && !['ArrowLeft', 'ArrowRight'].includes(e.key))) return;
+      // the inspector opened from its strip (or a narrow window's drawer): Esc folds it in, and only that
+      if (e.key === 'Escape' && k.drawer === 'insp') { e.preventDefault(); k.closeInspector(); return; }
       if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goBack(); return; }
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goFwd(); return; }
       if (e.key === 'F2') return run(e.shiftKey ? 'bookmark-prev' : 'bookmark-next');
@@ -1414,7 +1496,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text' };
+      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text' };
       if (single[key]) run(single[key]);
     };
     window.addEventListener('keydown', onKey);
@@ -1429,7 +1511,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // a comment line of a zero-page variable opens its editor
     if (zl && dbl && l.k === 'cmt') { navigate(l.a, { noHistory: true }); startNote(!!project.notes[zl.addr]?.block, undefined, zl); return; }
     if (def && dbl) { navigate(l.a, { noHistory: true }); startDefRename(def, i); return; }
-    if (l.k === 'hdr') { navigate(l.a, { noHistory: true }); const b = A.blocks[l.blk]; if (b) setSel({ start: b.start, end: b.end, multi: true, anchor: b.start, anchorEnd: b.end }); return; }
+    if (l.k === 'hdr') {
+      navigate(l.a, { noHistory: true }); const b = A.blocks[l.blk]; if (b) setSel({ start: b.start, end: b.end, multi: true, anchor: b.start, anchorEnd: b.end });
+      // the inspector folded in opens over the editor with the block clicked
+      if (inspector === 'auto' && !window.matchMedia?.('(max-width: 900px)').matches) setDrawer('insp');
+      return;
+    }
     if (l.a == null) return;
     const n = 'n' in l ? l.n : 0;
     navigate(l.a, { noHistory: true });
@@ -1482,13 +1569,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         // a line at a block's edge: the same as dragging it into the neighbouring block
         ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]) => { const m = lineMove(A, l, dir); return m ? [{ label: `Move $${h4(m.start)}${m.end - m.start > 1 ? `-$${h4(m.end - 1)}` : ''} into the ${word} block (${kindInfo(m.into.type).label})`, run: () => moveInto(m) }] : []; }),
         { label: 'Merge range into one block…', key: 'M', run: () => { if (!inSel) setCursor(l.a); setModal('merge'); } },
+        ...((): MenuItem[] => {
+          // on a relocated block (where it is loaded or runs): where it runs, or not; else relocate the selection or the block
+          const rl = l.a != null ? (relocLoadedAt(A, l.a) ?? (inSel ? undefined : relocAt(A, l.a))) : undefined;
+          if (rl) return [
+            { label: `Change where $${h4(rl.start)}–$${h4(rl.end - 1)} runs ($${h4(rl.to)})…`, key: 'R', run: () => startRelocate({ start: rl.start, end: rl.end }) },
+            { label: `Stop relocating $${h4(rl.start)}–$${h4(rl.end - 1)} (read it where it is loaded)`, run: () => unrelocate(rl.start) },
+          ];
+          const r = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          return r ? [{ label: `Relocate ${inSel ? 'selection' : 'block'}… (the program copies it elsewhere to run)`, key: 'R', run: () => startRelocate(r) }] : [];
+        })(),
         { label: 'Add entry point here', key: 'E', run: () => addEntry(l.a) },
         { label: folded.has(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Unfold block' : 'Fold block', key: 'F', run: () => toggleFold(l.a) },
         { label: project.excluded.includes(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Include block in the build' : 'Exclude block from the build', run: () => toggleExcluded(l.a) },
         { label: project.binary.includes(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Write block in the source again' : 'Save block as a binary file (.import binary)', run: () => toggleBinary(l.a) },
         ...(() => {
-          // the Pack view: the selection, else the whole block
-          const r = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          // the Pack view: the selection, else the whole block, where its bytes are in the built PRG (a relocated block's
+          // where it is loaded, 8.1b)
+          const r0 = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          const r = r0 && loadRange(A, r0.start, r0.end);
           if (!r) return [];
           const cover = project.pack?.ranges ? rangeCover(project.pack.ranges, r.start, r.end) : 0, what = inSel ? 'selection' : 'block';
           return [
@@ -1527,7 +1626,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...A.log.filter(l => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint').map(l => (l.cat === 'banks' ? { ...l, action: { label: 'Turn on', run: () => {
       update('Follow the memory configuration ($01) and VIC bank', d => { d.settings.bankTracking = true; });
       toast('Following the memory configuration ($01) and VIC bank: I/O accesses are written as registers', 'ok');
-    } } } : l)),
+    } } } : l.cat === 'reloc' && l.lvl === 'hint' && l.addr != null && A.copies.some(c => c.at === l.addr) ? { ...l, action: { label: 'Relocate…', run: () => startRelocate(null, l.addr!) } } : l)),
     ...packing.flatMap((p, i) => (p ? [{ lvl: 'warn' as const, msg: `${A.files[i].name} ${p.verdict === 'packed' ? 'is packed' : 'may be packed'}${p.signature ? ` (${p.signature})` : ''}: ${p.reasons.join('; ')}. Unpack it (${unpackLabel}) to see the program.`, addr: p.decruncher, cat: 'packing' }] : [])),
   ], [A, R, kickProblems, packing, unpackLabel]);
   // the Spindle script tab is there when the analysis found Spindle's drivers
@@ -1539,6 +1638,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const path = useMemo(() => (cycleRange ? cyclePath(A, cycleRange.start, cycleRange.end, taken) : null), [A, cycleRange?.start, cycleRange?.end, taken]); // eslint-disable-line react-hooks/exhaustive-deps
   const curLabel = cursor != null ? (() => { for (let p = cursor; p >= 0 && cursor - p < 4096; p--) { const l = R.labels.get(p); if (l) return p === cursor ? l.name : `${l.name}+${cursor - p}`; if (blk && p <= blk.start) break; } return null; })() : null;
   const narrow = window.matchMedia?.('(max-width: 900px)').matches;
+  // the inspector opened from its strip folds in again at a click outside it, which still does what it does (menus
+  // and dialogs over everything do not count, nor a block's header, which shows its block there); on a narrow window
+  // the drawer's backdrop takes the click
+  const inspOut = inspector === 'auto' && drawer === 'insp' && !narrow;
+  useEffect(() => {
+    if (!inspOut) return;
+    const down = (e: PointerEvent) => { if (!(e.target as Element | null)?.closest?.('.insp-col, .insp-rail, .ctx, .modal-back, .listing .row.hdr')) setDrawer(null); };
+    window.addEventListener('pointerdown', down, true);
+    return () => window.removeEventListener('pointerdown', down, true);
+  }, [inspOut]);
   const nav = (a: Addr) => navigate(a, { center: true, listing: true });
   /** "Go to" with a range: select its loaded part as one anchor, like a block header */
   const selectRange = (s: Addr, e: Addr) => {
@@ -1566,7 +1675,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', R.main ?? `${R.fileNames[0] || 'main'}.asm`], ['spec', 'doc', 'SPEC.md']];
 
   return (
-    <div className={cx('app', drawer && `drawer-${drawer}`)} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
+    <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
       <TitleBar projectName={project.name} home={home?.name ?? null} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onOpen={() => void openPrgs(false)} onSave={() => void saveProject()} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
@@ -1574,7 +1683,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         onTheme={() => setUi({ theme: theme === 'dark' ? 'light' : 'dark' })} onSettings={() => setModal('settings')}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar activity={activity} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, pack: project.pack?.ranges?.length ?? 0 }} busy={{ pack: !!packRun }} onActivity={(a: Activity) => { setUi({ activity: a }); if (narrow) setDrawer('side'); }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />
+      <ActivityBar activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, pack: project.pack?.ranges?.length ?? 0 }} busy={{ pack: !!packRun }} onActivity={(a: Activity) => {
+          // the view shown: its button collapses the side panel; collapsed, any view's button brings it back
+          if (narrow) { setUi({ activity: a }); setDrawer('side'); } else if (sidePanel && a === activity) toggleSide(); else setUi({ activity: a, sidePanel: true });
+        }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />
 
       <aside className="sidebar"><ErrorBoundary>
         <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }}
@@ -1597,7 +1709,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             onChange: setPack, onPack: () => void runPack(), onPickDir: () => void pickPackDir(), onRun: () => void runPacked(), onSave: () => void savePacked(), onSettings: () => setModal('settings'),
             onLog: () => setUi({ bottom: 'build', panelOpen: true }), onNavigate: a => { nav(a); setDrawer(null); } }} />
       </ErrorBoundary></aside>
-      <Splitter dir="v" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, side: Math.max(200, Math.min(480, useUi.getState().sizes.side + d)) } })} />
+      <button className="icon-btn side-collapse" onClick={toggleSide} aria-label="Collapse side panel" title="Collapse the side panel: the listing gets its room (Ctrl+Shift+B). The view's button in the activity bar brings it back"><Icon name="side-hide" size={16} /></button>
+      <Splitter dir="v" className="side-split" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, side: Math.max(200, Math.min(480, useUi.getState().sizes.side + d)) } })} />
 
       <main className="main">
         {/* the row fits the editor's width (container queries in app.css): the tools lose their labels, then the tabs
@@ -1720,15 +1833,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         </section>}
       </main>
 
-      <Splitter dir="v" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, insp: Math.max(260, Math.min(520, useUi.getState().sizes.insp - d)) } })} />
-      <aside className="insp-col"><ErrorBoundary>
+      <Splitter dir="v" className="insp-split" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, insp: Math.max(260, Math.min(520, useUi.getState().sizes.insp - d)) } })} />
+      <aside className="insp-col">
+        <div className="insp-head"><span>Inspector</span><span className="grow" />
+          {inspector === 'auto'
+            ? <button className="icon-btn insp-mode" onClick={() => setInspector('open')} aria-label="Keep the inspector open" title="Keep the inspector open beside the editor (Settings → General)"><Icon name="pin" size={15} /></button>
+            : <button className="icon-btn insp-mode" onClick={() => setInspector('auto')} aria-label="Fold in the inspector" title="Fold the inspector into a strip at the right edge: the listing gets its room, and a click on the strip opens it when you need it (Settings → General)"><Icon name="insp-hide" size={16} /></button>}
+        </div>
+        <ErrorBoundary>
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
+      {inspector === 'auto' && <button className={cx('insp-rail', drawer === 'insp' && 'on')} onClick={() => (drawer === 'insp' ? closeInspector() : setDrawer('insp'))} aria-label="Inspector" aria-expanded={drawer === 'insp'}
+        title={drawer === 'insp' ? 'Fold in the inspector (a click outside it or Esc does too)' : 'Open the inspector: the memory map, the block at the cursor and its preview'}><Icon name="panel" size={16} /><span>Inspector</span></button>}
 
       <StatusBar A={A} fileCount={project.files.length} cursor={cursor} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} cycles={path && path.instructions ? path.total : null}
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null} />
@@ -1736,10 +1857,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
       {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, or a .d64 to mount it</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen }} desktop={!!kr} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector }} desktop={!!kr} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
+      {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}
       <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} />{t.msg}</div>)}</div>

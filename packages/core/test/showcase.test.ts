@@ -19,7 +19,8 @@ describe('the showcase', () => {
   });
 
   it('has one block of every type the analysis finds', () => {
-    const all = Object.values(TYPE_INFO).map(t => t.key).sort();
+    // a relocated block is one the user makes (8.1b), not one the analysis finds
+    const all = Object.values(TYPE_INFO).map(t => t.key).filter(k => k !== 'reloc').sort();
     expect([...new Set(A.blocks.map(b => b.type))].sort()).toEqual(all);
     const want: [number, BlockKind][] = [
       [0x0801, 'basic'], [0x0810, 'code'], [L.fx_table, 'words'], [L.frame, 'data'], [L.crow_lo, 'lohi'], [L.crow_hi, 'lohi'],

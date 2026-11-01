@@ -1,7 +1,7 @@
 /* Inspector (right column): memory map, block evidence/type/label/comment (or the zero-page variable whose .label line
  * was clicked: its name and comments), graphics/music/text preview. */
 import { useEffect, useMemo, useState } from 'react';
-import { textEncoding, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
+import { textEncoding, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, relocAt, relocLoadedAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
 import type { TypeGroup } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -21,6 +21,9 @@ interface InspectorProps {
   onMerge: (dir: 'prev' | 'next', at: Addr) => void;
   /** open the Merge range dialog (start and type from this block) */
   onMergeRange: () => void;
+  /** open the Relocate dialog for these bytes (on a relocated block: where it runs), or stop relocating the block loaded
+   *  at `start` (spec 8.1b) */
+  onRelocate: (range: { start: Addr; end: Addr }) => void; onUnrelocate: (start: Addr) => void;
   onToggleExcluded: (at: Addr) => void;
   /** save the block as data/<label>.bin (loaded with .import binary), or write it in the source again */
   onToggleBinary: (at: Addr) => void;
@@ -39,7 +42,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onToggleExcluded, onToggleBinary, onFormat, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -60,6 +63,8 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   const te = blk && blk.type === 'text' ? textEncoding(blk.props.enc) : null;
   const textPreview = blk && te ? [...A.mem.subarray(blk.start, Math.min(blk.end, blk.start + 120))].map(b => b === 0x0d && te.kick.startsWith('petscii') ? '⏎' : te.char(b) ?? (b === 0 ? '·' : '░')).join('') : null;
   const xin = blk ? (A.xrefs.get(blk.start) || []).length : 0;
+  // a relocated block (8.1b): this one, where its bytes are loaded, or the one whose copy this block is in
+  const loadedRl = blk?.type === 'reloc' ? relocLoadedAt(A, blk.start) : undefined, runRl = blk ? relocAt(A, blk.start) : undefined;
   return (
     <div className="inspector">
       {cycles && <CyclesSection path={cycles.path} R={R} onToggle={cycles.onToggle} onNavigate={onNavigate} />}
@@ -77,25 +82,29 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
           <div className="sec-head"><span>Block</span>{blk.user ? <span className="pill user">set by you</span> : <span className={cx('pill', blk.conf >= 0.85 ? 'hi' : blk.conf >= 0.6 ? 'mid' : 'lo')}>{blk.conf >= 0.85 ? 'high' : blk.conf >= 0.6 ? 'medium' : 'low'} confidence</span>}</div>
           <dl className="kv">
             <dt>Range</dt><dd className="mono">${h4(blk.start)}–${h4(blk.end - 1)} <span className="muted">· {blk.end - blk.start} bytes</span></dd>
+            {loadedRl && <><dt>Runs at</dt><dd className="mono"><button className="linkish mono" title="Go to where it runs" onClick={() => onNavigate(loadedRl.to)}>${h4(loadedRl.to)}–${h4(loadedRl.to + loadedRl.end - loadedRl.start - 1)}</button></dd></>}
+            {runRl && <><dt>Loaded at</dt><dd className="mono">${h4(loadAddress(A, blk.start))}–${h4(loadAddress(A, blk.end - 1))} <span className="muted">· in </span><button className="linkish mono" title="Go to the relocated block, where it is loaded" onClick={() => onNavigate(runRl.start)}>{R.labels.get(runRl.start)?.name ?? `$${h4(runRl.start)}`}</button></dd></>}
             <dt>Why</dt><dd>{blk.reason || '—'}</dd>
             <dt>Refs in</dt><dd>{xin}</dd>
             <dt>Entropy</dt><dd className="mono">{blk.entropy.toFixed(2)} <span className="muted">bits/byte</span></dd>
           </dl>
-          <label className="field"><span>Type</span>
+          {(loadedRl || runRl) && <RelocNotice R={R} r={(loadedRl ?? runRl)!} inside={!loadedRl} onRelocate={onRelocate} onUnrelocate={onUnrelocate} />}
+          {!loadedRl && <label className="field"><span>Type</span>
             <select value={markId} onChange={e => e.target.value === 'auto' ? onClearOverride(blk) : onMark(e.target.value, { start: blk.start, end: blk.end })}>
               {MARK_AS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
               {blk.type === 'lohi' && <option value="">Lo/Hi table (detected)</option>}
               {blk.type === 'basic' && <option value="">BASIC (detected)</option>}
               {blk.user && <option value="auto">Automatic (clear override)</option>}
-            </select></label>
+            </select></label>}
           {FORMATTABLE.includes(blk.type) && <FormatFields blk={blk} defaultRow={blk.type === 'words' ? 1 : A.S.bytesPerRow} onFormat={onFormat} />}
-          <label className="check"><input type="checkbox" aria-label="Include in the build" checked={!project.excluded.includes(blk.start)} onChange={() => onToggleExcluded(blk.start)} /><span>Include in the build<small className="muted"> — when off, the block stays in the source under #if and its bytes are left out</small></span></label>
+          <label className="check" title={runRl ? 'Written inside the .pseudopc of the relocated block: leave out the whole relocated block instead' : undefined}><input type="checkbox" aria-label="Include in the build" disabled={!!runRl} checked={!project.excluded.includes(blk.start)} onChange={() => onToggleExcluded(blk.start)} /><span>Include in the build<small className="muted"> — when off, the block stays in the source under #if and its bytes are left out</small></span></label>
           <label className="check"><input type="checkbox" aria-label="Save as a binary file" checked={project.binary.includes(blk.start)} onChange={() => onToggleBinary(blk.start)} /><span>Save as a binary file<small className="muted"> — the export writes <span className="mono">data/{lb ? lb.name : `block_${h4(blk.start)}`}.bin</span> and the source loads it with .import binary</small></span></label>
           <div className="merge-row">
             {([['prev', 'Merge with previous'], ['next', 'Merge with next']] as const).map(([dir, label]) => { const m = mergeOverride(A, blk.start, dir); return (
               <button key={dir} className="btn small" disabled={!m} onClick={() => onMerge(dir, blk.start)}
                 title={m ? `One ${kindInfo(m.into).label} block $${h4(m.override.start)}–$${h4(m.override.end - 1)} (with the ${kindInfo(m.other.type).label} block ${dir === 'prev' ? 'before' : 'after'} it)` : `No ${dir === 'prev' ? 'previous' : 'next'} block in this file`}>{label}</button>); })}
             <button className="btn small merge-range-btn" onClick={onMergeRange} title="Merge from this block to an end address into one block (M)">Merge range…</button>
+            {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onRelocate({ start: blk.start, end: blk.end })} title="The program copies these bytes to another address and runs them there: read them where they run, written inside .pseudopc (R)">Relocate…</button>}
           </div>
           {blk.type === 'code' && A.mcfg && <MemoryFields A={A} blk={blk} cart={B.A.mcfg?.cart} onBankZone={onBankZone} />}
           <label className="field"><span>Label</span>
@@ -127,6 +136,28 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
               : <p className="muted small">Pick Sprite, Chars or Bitmap to view these bytes as graphics. Useful for finding unreferenced graphics.</p>}
         </section>
       )}
+    </div>
+  );
+}
+
+/** A relocated block (spec 8.1b): where it is loaded and where it runs, and buttons to run it elsewhere or to stop
+ *  relocating it. `inside`: the block shown is one where it runs. */
+function RelocNotice({ R, r, inside, onRelocate, onUnrelocate }: { R: RenderResult; r: NonNullable<ReturnType<typeof relocAt>>; inside: boolean } & Pick<InspectorProps, 'onRelocate' | 'onUnrelocate'>) {
+  const n = r.end - r.start, name = R.labels.get(r.start)?.name;
+  const loaded = <span className="mono">${h4(r.start)}–${h4(r.end - 1)}</span>, runs = <span className="mono">${h4(r.to)}–${h4(r.to + n - 1)}</span>;
+  const pc = <span className="mono">.pseudopc ${h4(r.to)} {'{ }'}</span>;
+  return (
+    <div className="notice small reloc-notice">
+      <Icon name="info" size={14} />
+      <div>
+        <p>{inside
+          ? <>It runs here because the program copies the relocated block {name && <span className="mono">{name} </span>}({loaded}) to {runs}. The source writes it where those bytes are loaded, inside {pc}.</>
+          : <>The program copies these bytes to {runs} and runs them there. The listing shows them where they run, and the source writes them here, inside {pc}.</>}</p>
+        <div className="merge-row">
+          <button className="btn small" onClick={() => onRelocate({ start: r.start, end: r.end })} title="Give another address it runs at (R)">Runs at…</button>
+          <button className="btn small" onClick={() => onUnrelocate(r.start)} title="Read the bytes where they are loaded again; names and comments go back with them">Stop relocating</button>
+        </div>
+      </div>
     </div>
   );
 }

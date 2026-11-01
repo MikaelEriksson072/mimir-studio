@@ -7,12 +7,14 @@ import type { CartMode } from './c64/memconfig';
 
 export type Addr = number; // 0x0000–0xffff
 
+/** `reloc`: bytes the program copies to another address before they run there (`Reloc`); the blocks at that address
+ *  hold what they are */
 export type BlockKind =
   | 'code' | 'data' | 'words' | 'text' | 'table' | 'lohi' | 'sprite'
-  | 'charset' | 'bitmap' | 'screen' | 'music' | 'fill' | 'basic';
+  | 'charset' | 'bitmap' | 'screen' | 'music' | 'fill' | 'basic' | 'reloc';
 
 /** Numeric classification id used in the 64 KB type map (`AnalysisResult.tm`). */
-export type TypeId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+export type TypeId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
 
 /** the *-mixed kinds are for the lower case character set (Kick's petscii_mixed / screencode_mixed) */
 export type TextEncoding = 'petscii' | 'screen' | 'petscii-mixed' | 'screen-mixed';
@@ -192,6 +194,14 @@ export interface PackPrefs {
  */
 export interface BankZone { start: Addr; end: Addr; port?: number | null; vicBank?: number | null }
 
+/**
+ * Bytes the program copies to another address before they run there (spec 8.1b): `start`-`end` (end excluded) of a
+ * loaded file run at `to`. The analysis puts a copy of them at `to` and reads them there, so their labels, references
+ * and blocks have the addresses they run at; the source writes them where they are loaded, inside
+ * `.pseudopc to { … }`. Where they run nothing may be loaded (another relocated block's bytes are no file's).
+ */
+export interface Reloc { start: Addr; end: Addr; to: Addr }
+
 /** What a patch puts in the rest of its range when its code is shorter: NOPs ($ea), or the bytes that were there. */
 export type PatchFill = 'nop' | 'keep';
 
@@ -218,6 +228,9 @@ export interface Patch {
   off?: boolean;
   /** written to take as many cycles as the original, with instructions of a fixed time */
   cycles?: boolean;
+  /** where its bytes are in the file, when that is not `start`: a patch in a relocated block (`Reloc`) is assembled
+   *  where the code runs and written where the file has those bytes */
+  at?: Addr;
 }
 
 export interface Project {
@@ -233,6 +246,7 @@ export interface Project {
   blockComments: Record<Addr, string>; // comments above blocks
   notes: Record<Addr, Note>; // comment lines and blocks the user inserted above an address
   bankZones: BankZone[]; // ordered, later wins: memory configuration / VIC bank code runs with
+  relocs: Reloc[]; // bytes the program copies elsewhere to run there (.pseudopc)
   excluded: Addr[]; // starts of the blocks left out of the build (kept in the source under #if)
   binary: Addr[]; // starts of the blocks written to their own file and loaded with .import binary
   bookmarks: Record<Addr, Bookmark>; // the user's notes on addresses (the Bookmarks list); not written to the source
@@ -260,6 +274,8 @@ export interface ProjectInput {
   blockComments?: Record<Addr, string>;
   notes?: Record<Addr, Note>;
   bankZones?: BankZone[];
+  /** bytes the program copies elsewhere to run there: analysed where they run, written inside `.pseudopc` */
+  relocs?: Reloc[];
   /** starts of the blocks left out of the build: they stay in the source under `#if INCLUDE_<name>` */
   excluded?: Addr[];
   /** starts of the blocks saved as `data/<name>.bin` and loaded with `.import binary` */
@@ -304,6 +320,8 @@ export interface SerializedProject {
   notes?: Record<string, Note>;
   /** missing in project files from before bank zones existed */
   bankZones?: BankZone[];
+  /** missing in project files from before blocks could be relocated */
+  relocs?: Reloc[];
   /** missing in project files from before blocks could be excluded */
   excluded?: Addr[];
   /** missing in project files from before blocks could be binary files */
@@ -334,6 +352,8 @@ export interface BlockProps {
   play?: Addr;
   row?: number;
   fmt?: NumberFormat;
+  /** a relocated block: where its bytes run */
+  to?: Addr;
 }
 
 export interface Block {
@@ -548,12 +568,24 @@ export interface AnalysisResult {
   spindle: SpindleDriver[];
   /** what the deep analysis did (`Settings.deepAnalysis`); null without it */
   deep: DeepReport | null;
+  /** the relocated blocks (`Project.relocs`) the analysis placed where they run, in the order placed: a block whose
+   *  bytes are in another one's run copy comes after it */
+  relocs: RelocInfo[];
+  /** loops that copy code elsewhere before it runs there, not relocated yet (each a hint in the log) */
+  copies: RelocCopy[];
   /** the banks of a cartridge, each analysed as a space of its own and merged into this result, where an address in
    *  the space of index s is s * $10000 + its address (spec 13.9b); missing for one space */
   spaces?: SpaceInfo[];
   /** the analysis of each space (render and verify use them; not sent to the window) */
   parts?: AnalysisResult[];
 }
+
+/** A relocated block as placed (8.1b): `file` holds its bytes at `start`, and a copy of them is at `to` */
+export interface RelocInfo extends Reloc { file: number }
+
+/** A loop that copies code to where nothing is loaded, which the code then jumps or calls into (8.1b): the relocation
+ *  that reads it there. `loop`: where the loop starts; `at`: the store of the copy; `jump`: the jump or call into it. */
+export interface RelocCopy extends Reloc { loop: Addr; at: Addr; jump: Addr }
 
 /** A space of a merged analysis (spec 13.9b): a bank of the cartridge and the project files in it */
 export interface SpaceInfo {
@@ -633,11 +665,14 @@ export type Line =
   | { k: 'lbl'; a: Addr; name: string }
   | { k: 'ins'; a: Addr; n: number; mn: string; ext: ForcedMode; tok: Token[]; cmt: string; ill?: boolean; userCmt?: boolean; preview?: boolean; delay?: boolean }
   | { k: 'dat'; a: Addr; n: number; dir: '.byte' | '.word' | '.text'; tok: Token[]; cmt: string; mn?: string; ill?: boolean; userCmt?: boolean; preview?: boolean }
-  | { k: 'dir'; a: Addr; n: number; tok: Token[]; cmt?: string; zp?: Addr; userCmt?: boolean; head?: HeadPart }
+  /** `reloc`: the `.pseudopc … {` line of a relocated block (`open`: it holds the block's loaded bytes) and its `}`
+   *  (`close`); where a block relocated from inside it comes, the `}` that pauses it and the `.pseudopc` it goes on with */
+  | { k: 'dir'; a: Addr; n: number; tok: Token[]; cmt?: string; zp?: Addr; userCmt?: boolean; head?: HeadPart; reloc?: 'open' | 'close' | 'pause' | 'resume' }
   /** `raw`: written as it is (the lines of a block comment); `note`: part of a user Note; `zp`: the note is on the
    *  zero-page variable at this address (its `.label` line in the file head, whose `a` is the file's load address);
-   *  `mark`: a mark the analysis made (where a loader part starts or ends) */
-  | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; mark?: boolean; head?: HeadPart }
+   *  `mark`: a mark the analysis made (where a loader part starts or ends); `reloc`: where a relocated block ends when
+   *  its .pseudopc was paused for one relocated from inside it, and not opened again */
+  | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; mark?: boolean; head?: HeadPart; reloc?: 'close' }
   | { k: 'blank'; a: Addr; head?: HeadPart };
 
 /** What a line of a file's head is (render): its title, a loader's or the excluded blocks' notes (`mark`), the

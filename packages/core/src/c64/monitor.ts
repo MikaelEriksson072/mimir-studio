@@ -117,6 +117,15 @@ export function monitorText(mem: ArrayLike<number>, ranges: readonly MonitorRang
 export const clipRanges = (ranges: readonly MonitorRange[], start: Addr, end: Addr): MonitorRange[] =>
   ranges.map(r => ({ start: Math.max(r.start, start), end: Math.min(r.end, end) })).filter(r => r.end > r.start);
 
+/** The 0 byte that ends a text (the Memory tab's `0`): the first $00 from `from` on, in the loaded range that holds
+ *  `from`; null when that range ends first, or `from` is not loaded. */
+export function nextZero(mem: ArrayLike<number>, ranges: readonly MonitorRange[], from: Addr): Addr | null {
+  const r = ranges.find(x => from >= x.start && from < x.end);
+  if (!r) return null;
+  for (let a = from; a < r.end; a++) if (mem[a] === 0) return a;
+  return null;
+}
+
 /** A search hit: its bytes, and how they matched (text as PETSCII, as screen codes or as both, or bytes). */
 export interface MemoryMatch { start: Addr; end: Addr; as: 'petscii' | 'screen' | 'both' | 'bytes' }
 export type FindAs = 'text' | 'bytes';

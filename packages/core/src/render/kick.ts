@@ -37,6 +37,8 @@ interface RenderCtx {
   /** the instruction whose operand this is, and how it uses the address (bank tracking names by what it reaches) */
   pc?: Addr;
   write?: boolean;
+  /** how many relocated blocks' .pseudopc the block is inside (8.1b): it gets no .pc of its own there */
+  reloc?: number;
 }
 
 interface DataRowOptions {
@@ -130,6 +132,15 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   // the names other banks give addresses this one does not have (13.9b): its file head defines those it uses
   const foreign = project.foreign || {};
   const blocksSorted = A.blocks;
+  // 8.1b: the relocated blocks. The blocks where one runs are written inside its .pseudopc, where its bytes are loaded
+  const relocs = A.relocs ?? [];
+  const runSize = (r: { start: Addr; end: Addr }) => r.end - r.start;
+  const runOf = (a: Addr) => relocs.find(r => a >= r.to && a < r.to + runSize(r));
+  /** where the bytes of `a` come in the source: those of a relocated block's copy where it is loaded, just after the
+   *  loaded address (by a half, a quarter in a block relocated from another one's copy, …) */
+  const lpos = (a: Addr, eps = 0.5): number => { const r = runOf(a); return r ? lpos(r.start + a - r.to, eps / 2) + eps : a; };
+  /** `a` is where relocated block `r` runs, or in a block relocated from there */
+  const runsIn = (a: Addr, r: (typeof relocs)[number]) => { for (let x = runOf(a); x; x = runOf(x.start)) if (x === r) return true; return false; };
 
   // duplicate label detection
   const byName = new Map<string, Addr>(); const dupes = new Set<string>();
@@ -176,6 +187,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       const s = codeOwner[a] >= 0 ? codeOwner[a] : -1;
       if (s >= 0 && labelAt(s)) { ctx.useLabel && ctx.useLabel(s); return [{ t: 'lbl', s: labelAt(s)!.name, to: s }, { t: 'p', s: '+' }, { t: 'num', s: String(a - s) }]; }
       const b = findBlock(A.blocks, a);
+      // where a relocated block is loaded: from its start, however far (a label inside would be in its .pseudopc)
+      if (b && b.type === 'reloc' && labelAt(b.start)) { ctx.useLabel && ctx.useLabel(b.start); return [{ t: 'lbl', s: labelAt(b.start)!.name, to: b.start }, { t: 'p', s: '+' }, { t: 'num', s: String(a - b.start) }]; }
       if (b) for (let p = a - 1; p >= b.start && a - p < 256; p--) {
         const l = labelAt(p);
         if (l) { ctx.useLabel && ctx.useLabel(p); return [{ t: 'lbl', s: l.name, to: p }, { t: 'p', s: '+' }, { t: 'num', s: String(a - p) }]; }
@@ -331,7 +344,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     if (b.type === 'data' && p.var) t = 'Variables';
     return t;
   };
-  const SEG_NAME: Partial<Record<BlockKind, string>> = { code: 'Code', sprite: 'Sprites', charset: 'Charset', bitmap: 'Bitmap', screen: 'Screen', data: 'Data' };
+  const SEG_NAME: Partial<Record<BlockKind, string>> = { code: 'Code', sprite: 'Sprites', charset: 'Charset', bitmap: 'Bitmap', screen: 'Screen', data: 'Data', reloc: 'Relocated' };
 
   function renderBlock(out: Line[], b: Block, ctx: RenderCtx & { usedMusic: Set<MusicInfo> }) {
     const lb = labelAt(b.start);
@@ -339,9 +352,12 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     const title = blockTitle(b);
     const userCmt = (project.blockComments || {})[b.start];
     const binary = binaryStarts.has(b.start) ? binaryPath(b) : null;
-    out.push({ k: 'hdr', a: b.start, blk: b.id, type: TYPE_BY_KEY[b.type], text: `${title}${lb ? ' · ' + lb.name : ''} · ${n4(b.start)}-${n4(b.end - 1)} (${len} byte${len === 1 ? '' : 's'})${binary ? ` · ${binary}` : ''}`, ...(binary ? { binary } : {}) });
+    const reloc = b.type === 'reloc' ? relocs.find(x => x.start === b.start) : undefined;
+    const runs = reloc ? ` · runs at ${n4(reloc.to)}-${n4(reloc.to + len - 1)}` : '';
+    out.push({ k: 'hdr', a: b.start, blk: b.id, type: TYPE_BY_KEY[b.type], text: `${title}${lb ? ' · ' + lb.name : ''} · ${n4(b.start)}-${n4(b.end - 1)} (${len} byte${len === 1 ? '' : 's'})${runs}${binary ? ` · ${binary}` : ''}`, ...(binary ? { binary } : {}) });
     if (userCmt) out.push(...commentLines(b.start, userCmt));
-    const seg = (name: string) => out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(b.start) }, { t: 'p', s: ' ' }, { t: 'str', s: `"${name}"` }] });
+    // inside a relocated block's .pseudopc the bytes follow one another: a .pc there would move where they are loaded
+    const seg = (name: string) => { if (!ctx.reloc) out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(b.start) }, { t: 'p', s: ' ' }, { t: 'str', s: `"${name}"` }] }); };
     if (ctx.needSeg || (['sprite', 'charset', 'bitmap', 'screen'] as BlockKind[]).includes(b.type) || (b.type === 'code' && ctx.prevType !== 'code') || (b.type !== 'code' && ctx.prevType === 'code')) {
       if (binary || (b.type !== 'basic' && !(b.type === 'music' && S.musicAsSid))) seg(SEG_NAME[b.type] || (b.type === 'code' ? 'Code' : 'Data'));
     }
@@ -351,14 +367,17 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       // the bytes go to their own file; labels inside the block stay defined for the code that uses them
       label(b.start);
       binFiles[binary] = mem.slice(b.start, b.end);
-      out.push({ k: 'dir', a: b.start, n: len, tok: [{ t: 'dir', s: '.import binary' }, { t: 'p', s: ' ' }, { t: 'str', s: `"${binary}"` }], cmt: `${len} bytes · ${title}` });
-      for (let p = b.start + 1; p < b.end; p++) {
+      out.push({ k: 'dir', a: b.start, n: len, tok: [{ t: 'dir', s: '.import binary' }, { t: 'p', s: ' ' }, { t: 'str', s: `"${binary}"` }], cmt: `${len} bytes · ${title}${runs}` });
+      const define = (p: Addr) => {
         const l = labelAt(p);
-        if (!l) continue;
+        if (!l) return;
         const def: Line = { k: 'dir', a: p, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: l.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(p) }] };
         binaryDefs.add(def); // kept only if the file refers to the label (see the file loop)
         out.push(def);
-      }
+      };
+      for (let p = b.start + 1; p < b.end; p++) define(p);
+      // a relocated block's labels are where it runs
+      if (reloc) [...labels.keys()].filter(a => runsIn(a, reloc)).sort((x, y) => x - y).forEach(define);
       ctx.prevType = b.type;
       return;
     }
@@ -394,7 +413,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
           const path = musicPath(m);
           binFiles[path] = makePsid(mem.slice(m.start, m.end), m.start, m.init, m.play, `${project.name || 'music'} ${h4(m.start)}`);
           ctx.usedMusic.add(m);
-          out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'kw', s: `${v}.location`, to: m.start }, { t: 'p', s: ' ' }, { t: 'str', s: '"Music"' }] });
+          // in a relocated block's .pseudopc the music goes where the bytes before it end
+          if (!ctx.reloc) out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'kw', s: `${v}.location`, to: m.start }, { t: 'p', s: ' ' }, { t: 'str', s: '"Music"' }] });
           out.push({ k: 'dir', a: b.start, n: b.end - b.start, tok: [{ t: 'dir', s: '.fill' }, { t: 'p', s: ' ' }, { t: 'kw', s: `${v}.size` }, { t: 'p', s: ', ' }, { t: 'kw', s: `${v}.getData(i)` }], cmt: `${path}: init ${n4(m.init)}, play ${n4(m.play)}` });
           ctx.needSeg = true;
         } else {
@@ -477,6 +497,30 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
         } else dataRows(out, b.start, b.end, ctx, { row: b.type === 'screen' ? 40 : 8 });
         break;
       }
+      case 'reloc': {
+        // 8.1b: where its bytes are loaded, the blocks where they run, inside .pseudopc. Kick Assembler cannot nest
+        // .pseudopc: a block relocated from where another one runs pauses that one's (`}`, then .pseudopc again where
+        // it goes on), and its label, an address where the other one runs, is a .label
+        const name = lb ? lb.name : n4(b.start);
+        if (!ctx.reloc) label(b.start);
+        else if (lb) out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: lb.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(b.start) }] });
+        if (!reloc) { dataRows(out, b.start, b.end, ctx, {}); break; }
+        const end = reloc.to + len;
+        const pseudopc = (a: Addr, n: number, cmt: string): Line => ({ k: 'dir', a: n ? b.start : a, n, reloc: n ? 'open' : 'resume', tok: [{ t: 'dir', s: '.pseudopc' }, { t: 'p', s: ' ' }, { t: 'num', s: n4(a), to: a }, { t: 'p', s: ' {' }], cmt });
+        out.push(pseudopc(reloc.to, len, `the ${len} byte${len === 1 ? '' : 's'} run at ${n4(reloc.to)}-${n4(end - 1)}`));
+        const inner: RenderCtx & { usedMusic: Set<MusicInfo> } = { ...ctx, reloc: (ctx.reloc ?? 0) + 1, prevType: null, needSeg: false };
+        let open = true;
+        for (const c of blocksSorted) {
+          if (c.start < reloc.to || c.start >= end) continue;
+          const again = c.type === 'reloc' && relocs.some(x => x.start === c.start);
+          if (again && open) { out.push({ k: 'dir', a: c.start, n: 0, reloc: 'pause', tok: [{ t: 'dir', s: '}' }], cmt: `${name} goes on after ${labelAt(c.start)?.name ?? n4(c.start)}` }); open = false; }
+          if (!again && !open) { out.push(pseudopc(c.start, 0, `${name} goes on`)); open = true; }
+          renderBlock(out, c, inner); out.push({ k: 'blank', a: c.end });
+        }
+        const ends = `end of ${name}, which runs at ${n4(reloc.to)}`;
+        out.push(open ? { k: 'dir', a: b.start, n: 0, reloc: 'close', tok: [{ t: 'dir', s: '}' }], cmt: ends } : { k: 'cmt', a: b.start, text: ends, reloc: 'close' });
+        break;
+      }
       default: {
         label(b.start);
         const p = b.props || {};
@@ -509,7 +553,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     for (let i = 0; i < src.length; i++) {
       const l = src[i];
       const b = l.k === 'hdr' ? A.blocks[l.blk] : null;
-      if (!b || b.type === 'code' || b.type === 'fill') { out.push(l); continue; }
+      // a relocated block is shown where its bytes run, as what they are there
+      if (!b || b.type === 'code' || b.type === 'fill' || b.type === 'reloc') { out.push(l); continue; }
       out.push({ ...l, preview: true } as Line);
       let j = i + 1, body = false;
       for (; j < src.length && src[j].k !== 'hdr' && src[j].k !== 'blank'; j++) {
@@ -544,7 +589,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       useLabel: a => { if (fileOf(a) !== fi) usedExt.add(a); else usedHere.add(a); },
       useZp: a => usedZp.add(a), useHw: a => usedHw.add(a), useForeign: a => usedForeign.add(a),
     };
-    const fb = blocksSorted.filter(b => b.file === fi);
+    // the blocks where a relocated block runs are written inside it (8.1b)
+    const fb = blocksSorted.filter(b => b.file === fi && !runOf(b.start));
     const fileExcluded: ExcludedRange[] = [];
     for (const b of fb) {
       if (!excludedStarts.has(b.start)) { renderBlock(body, b, ctx); body.push({ k: 'blank', a: b.end }); continue; }
@@ -571,8 +617,9 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     excludedAll.push(...fileExcluded);
     // labels inside binary blocks stay defined only where this file refers to them (other files define their own)
     if (binaryStarts.size) body.splice(0, body.length, ...body.filter(l => !binaryDefs.has(l) || usedHere.has(l.a)));
-    // notes go above the line holding their address, and above its labels; a loader part's marks above them
-    const noteAddrs = [...new Set([...Object.keys(notes).map(Number).filter(noteAt), ...loaderStarts.keys(), ...loaderEnds.keys()])].filter(a => loaded(a) && fileOf(a) === fi).sort((x, y) => x - y);
+    // notes go above the line holding their address, and above its labels; a loader part's marks above them. The lines
+    // come in the order of the bytes as loaded (`lpos`: a relocated block's lines where its bytes are loaded)
+    const noteAddrs = [...new Set([...Object.keys(notes).map(Number).filter(noteAt), ...loaderStarts.keys(), ...loaderEnds.keys()])].filter(a => loaded(a) && fileOf(a) === fi).sort((x, y) => lpos(x) - lpos(y));
     if (noteAddrs.length) {
       const withNotes: Line[] = [];
       let k = 0;
@@ -581,8 +628,9 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
         if (noteAt(a)) withNotes.push(...commentLines(a, notes[a].text, !!notes[a].block, true));
       };
       for (const l of body) {
-        const last = l.k === 'lbl' ? l.a : 'n' in l && l.n > 0 ? l.a + l.n - 1 : -1;
-        while (k < noteAddrs.length && noteAddrs[k] <= last) put(noteAddrs[k++]);
+        // a .pseudopc line holds the block's loaded bytes, but the lines inside it show them
+        const last = l.k === 'lbl' || (l.k === 'dir' && l.reloc === 'open') ? lpos(l.a) : 'n' in l && l.n > 0 ? lpos(l.a + l.n - 1) : -1;
+        while (k < noteAddrs.length && lpos(noteAddrs[k]) <= last) put(noteAddrs[k++]);
         withNotes.push(l);
       }
       while (k < noteAddrs.length) put(noteAddrs[k++]);
@@ -607,6 +655,13 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     if (A.spindle?.length && fileOf(A.spindle[0].start) === fi) {
       head.push({ k: 'cmt', a: f.load, text: 'Spindle effect drivers found by Mimir Studio (the ==== lines mark them), as the script they were built from:', mark: true });
       for (const t of spindleScript(A.spindle)) head.push({ k: 'cmt', a: f.load, text: t && `  ${t}`, mark: true });
+    }
+    // the relocated blocks of this file (8.1b)
+    const fileRelocs = relocs.filter(r => r.file === fi);
+    if (fileRelocs.length) {
+      const many = fileRelocs.length > 1;
+      head.push({ k: 'cmt', a: f.load, text: `relocated block${many ? 's' : ''}: the program copies ${many ? 'them' : 'it'} elsewhere to run, so ${many ? 'each is' : 'it is'} written inside .pseudopc:`, mark: true });
+      for (const r of fileRelocs) head.push({ k: 'cmt', a: f.load, text: `  ${n4(r.start)}-${n4(r.end - 1)}${labelAt(r.start) ? ` (${labelAt(r.start)!.name})` : ''} runs at ${n4(r.to)}-${n4(r.to + runSize(r) - 1)}`, mark: true });
     }
     if (fileExcluded.length) {
       head.push({ k: 'cmt', a: f.load, text: 'blocks left out of the build; remove the // in front of a #define to build it again:' });

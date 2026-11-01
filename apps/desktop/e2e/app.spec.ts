@@ -1731,6 +1731,85 @@ test('timing code: a delay a timer sets the branch into is marked, and what it r
   await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
 });
 
+test('relocate code the program copies elsewhere: Problems finds the copy, the listing reads it where it runs, names go along', async ({ app, page }) => {
+  // fixtures/prg/moved-demo.prg (packages/core/test/reloc.test.ts): 10 SYS2061, a loop that copies $1000-$1010 to $2000
+  // and jumps there, and at $1000 code assembled to run at $2000
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/moved-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded moved-demo.prg at $0801')).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: /^Relocate/ });
+
+  await test.step('Problems says what the loop copies and where the code goes; Relocate… fills in the dialog', async () => {
+    await page.getByRole('tab', { name: /Problems/ }).click();
+    const row = page.locator('.loglist .logrow', { hasText: 'The loop at $080f copies $1000-$1010 to $2000-$2010' });
+    await expect(row).toContainText('the jmp at $0818 goes there');
+    await row.getByRole('button', { name: 'Relocate…' }).click();
+    await expect(dialog.getByLabel('Start (loaded at)')).toHaveValue('$1000');
+    await expect(dialog.getByLabel('End (included)')).toHaveValue('$1010');
+    await expect(dialog.getByLabel('Runs at')).toHaveValue('$2000');
+    await expect(dialog).toContainText('The loop at $080f copies these bytes to $2000, and the jmp at $0818 goes there.');
+    // nothing may be loaded where it runs
+    await dialog.getByLabel('Runs at').fill('$0900');
+    await expect(dialog).toContainText('$0900 is loaded from moved-demo.prg: a relocated block runs where nothing is loaded.');
+    await expect(dialog.getByRole('button', { name: 'Relocate', exact: true })).toBeDisabled();
+    await dialog.getByLabel('Runs at').fill('$2000');
+    await dialog.getByRole('button', { name: 'Relocate', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(toast(page, '$1000–$1010 runs at $2000–$2010: traced and named there')).toBeVisible();
+    await expect(row).toHaveCount(0);
+  });
+
+  await test.step('the code is traced and named where it runs, and written inside .pseudopc where it is loaded', async () => {
+    const rows = await listingRows(page);
+    expect(rowAt(rows, '080f')?.text).toMatch(/^lda reloc_1000,x/);
+    expect(rowAt(rows, '0812')?.text).toMatch(/^sta l_2000,x/);
+    expect(rowAt(rows, '0818')?.text).toMatch(/^jmp l_2000/);
+    expect(headerAt(rows, '1000')).toMatchObject({ chip: 'Relocated', user: true });
+    expect(headerAt(rows, '1000')?.text).toContain('runs at $2000-$2010');
+    expect(rows.find(r => r.adr === '1000' && /^\.pseudopc \$2000 \{/.test(r.text))).toBeTruthy();
+    expect(rowAt(rows, '2000')?.text).toMatch(/^inc VIC_BORDER_COLOR/);
+    expect(rowAt(rows, '2003')?.text).toMatch(/^jsr sub_2009/);
+    expect(rows.some(r => /^\}\s*\/\/ end of reloc_1000/.test(r.text))).toBe(true);
+    await goTo(page, '$2003');
+    await expect(listing(page).locator('.row.cur')).toHaveClass(/in-reloc/);
+    await expect(page.locator('.inspector')).toContainText('It runs here because the program copies the relocated block reloc_1000 ($1000–$1010) to $2000–$2010.');
+  });
+
+  await test.step('a name given where it runs goes along when it runs elsewhere, and back when it is not relocated', async () => {
+    await goTo(page, '$2009');
+    await page.keyboard.press('n');
+    const input = page.getByLabel('Label at $2009');
+    await input.fill('blink');
+    await input.press('Enter');
+    await expect.poll(async () => rowAt(await listingRows(page), '2003')?.text).toMatch(/^jsr blink/);
+    // R on the relocated block: where it runs
+    await page.keyboard.press('r');
+    await expect(dialog).toContainText('The program copies $1000–$1010 to $2000–$2010 and runs it there.');
+    await dialog.getByLabel('Runs at').fill('$c000');
+    await expect(dialog).toContainText('Going along to $c000: 1 name.');
+    await dialog.getByRole('button', { name: 'Run it there' }).click();
+    await expect(toast(page, '$1000–$1010 runs at $c000–$c010 now')).toBeVisible();
+    // the loop still copies it to $2000: there nothing is loaded now, and Problems says so (the listing follows once
+    // the analysis of the edit is in)
+    await expect.poll(async () => (await listingRows(page)).find(r => r.text === 'blink:')?.adr).toBe('c009');
+    expect(rowAt(await listingRows(page), '0818')?.text).toMatch(/^jmp \$2000/);
+    await expect(page.locator('.loglist .logrow', { hasText: 'but it is relocated to run at $c000' })).toBeVisible();
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+    // Ctrl+Z: at $2000 again
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => rowAt(await listingRows(page), '2003')?.text).toMatch(/^jsr blink/);
+    // the right-click menu stops relocating it: the name goes back to $1009
+    await goTo(page, '$2000');
+    await listing(page).locator('.row.cur').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /^Stop relocating \$1000–\$1010/ }).click();
+    await expect(toast(page, '$1000–$1010 is read where it is loaded again')).toBeVisible();
+    await expect.poll(async () => (await listingRows(page)).find(r => r.text === 'blink:')?.adr).toBe('1009');
+    expect((await listingRows(page)).some(r => /\.pseudopc/.test(r.text))).toBe(false);
+  });
+});
+
 test('Problems warns when bank tracking is off and I/O is written as labels, and turns it on', async ({ workDir: work, app, page }) => {
   // a memory dump from $0801 over $d000-$d02f: 10 SYS2061, then lda #$00 / sta $d020 / sta $d021 / rts
   const prg = new Uint8Array(2 + 0xd030 - 0x0801);
@@ -2909,6 +2988,175 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await allClosed(4);
 });
 
+test('the side panel collapses so the listing gets its room, and comes back with a view\'s button or Ctrl+Shift+B; it stays collapsed after a restart', async ({ page }) => {
+  await waitForListing(page);
+  const side = page.locator('aside.sidebar');
+  const title = side.locator('.side-title');
+  const views = page.getByRole('navigation', { name: 'Views' });
+  const explorer = views.getByRole('button', { name: 'Explorer' });
+  const collapse = page.getByRole('button', { name: 'Collapse side panel' });
+  const width = async () => Math.round((await listing(page).boundingBox())!.width);
+  await expect(explorer).toHaveAttribute('aria-pressed', 'true');
+  const open = await width();
+
+  await test.step('its button collapses it: the listing is wider by the panel, and no view\'s button is on', async () => {
+    await collapse.click();
+    await expect(side).toBeHidden();
+    await expect(collapse).toBeHidden();
+    await expect(explorer).toHaveAttribute('aria-pressed', 'false');
+    // the panel (272 px) and its splitter
+    await expect.poll(width).toBe(open + 276);
+  });
+
+  await test.step('a view\'s button brings it back with that view, and the listing is as wide as before', async () => {
+    await views.getByRole('button', { name: 'Blocks' }).click();
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Blocks');
+    await expect(views.getByRole('button', { name: 'Blocks' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(width).toBe(open);
+  });
+
+  await test.step('the button of the view shown collapses it, Ctrl+Shift+B too; Ctrl+B still shows the bookmarks', async () => {
+    await views.getByRole('button', { name: 'Blocks' }).click();
+    await expect(side).toBeHidden();
+    await listing(page).click();
+    await page.keyboard.press('Control+Shift+B');
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Blocks');
+    await page.keyboard.press('Control+Shift+B');
+    await expect(side).toBeHidden();
+    await page.keyboard.press('Control+b');
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Bookmarks');
+  });
+
+  await test.step('the command palette collapses it and brings it back', async () => {
+    const palette = async () => { await page.keyboard.press('Control+Shift+P'); const q = page.getByRole('textbox', { name: 'Command' }); await q.fill('Toggle side panel'); await q.press('Enter'); };
+    await palette();
+    await expect(side).toBeHidden();
+    await expect.poll(width).toBe(open + 276);
+    await palette();
+    await expect(side).toBeVisible();
+  });
+
+  await test.step('collapsed, it is collapsed after a restart; the Explorer\'s button brings it back', async () => {
+    await collapse.click();
+    await expect(side).toBeHidden();
+    await page.reload();
+    await waitForListing(page);
+    await expect(side).toBeHidden();
+    await expect.poll(width).toBe(open + 276);
+    await explorer.click();
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Explorer');
+    await expect.poll(width).toBe(open);
+  });
+});
+
+test('the inspector folds into a strip at the right edge (Settings → General): it opens over the editor when needed and folds in at a click outside it', async ({ page }) => {
+  await waitForListing(page);
+  const insp = page.locator('aside.insp-col');
+  const rail = page.getByRole('button', { name: 'Inspector', exact: true });
+  const width = async () => Math.round((await listing(page).boundingBox())!.width);
+  const settings = async () => {
+    await page.keyboard.press('Control+,');
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await dialog.getByRole('tab', { name: 'General' }).click();
+    return dialog;
+  };
+  const choose = async (mode: 'open' | 'auto') => {
+    const dialog = await settings();
+    await dialog.getByLabel('Inspector (the panel on the right)').selectOption(mode);
+    await dialog.getByRole('button', { name: 'Save settings' }).click();
+    await expect(dialog).toBeHidden();
+  };
+  await expect(insp).toBeVisible();
+  await expect(rail).toBeHidden();
+  const open = await width();
+
+  await test.step('Settings folds it in: a strip at the right edge, and the listing gets its room', async () => {
+    await choose('auto');
+    await expect(insp).toBeHidden();
+    await expect(rail).toBeVisible();
+    await expect(rail).toHaveAttribute('aria-expanded', 'false');
+    // the inspector (312 px) and its splitter, less the strip (28 px)
+    await expect.poll(width).toBe(open + 288);
+  });
+
+  await test.step('a click on the strip opens it over the editor, and a click inside it keeps it open', async () => {
+    await rail.click();
+    await expect(insp).toBeVisible();
+    await expect(rail).toHaveAttribute('aria-expanded', 'true');
+    await expect(insp).toContainText('Memory map');
+    expect(await width()).toBe(open + 288);
+    const bytes = insp.getByRole('button', { name: 'Bytes', exact: true });
+    await bytes.click();
+    await expect(bytes).toHaveAttribute('aria-pressed', 'true');
+    await expect(insp).toBeVisible();
+  });
+
+  await test.step('a click outside folds it in and still does what it does there: the cursor goes to the line clicked', async () => {
+    await listing(page).locator('.row', { hasText: 'jsr sub_0866' }).click();
+    await expect(insp).toBeHidden();
+    await expect(rail).toHaveAttribute('aria-expanded', 'false');
+    await expect(statusBar(page)).toContainText('$0813');
+  });
+
+  await test.step('Esc folds it in; the strip again, and the command palette, open it', async () => {
+    await rail.click();
+    await expect(insp).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(insp).toBeHidden();
+    // Esc folded it in, and only that: the listing did not go back
+    await expect(statusBar(page)).toContainText('$0813');
+    await page.keyboard.press('Control+Shift+P');
+    const q = page.getByRole('textbox', { name: 'Command' });
+    await q.fill('Show the inspector');
+    await q.press('Enter');
+    await expect(insp).toBeVisible();
+    await rail.click();
+    await expect(insp).toBeHidden();
+  });
+
+  await test.step('a click on the start of a block, its header, opens it with that block; another header keeps it open, another line folds it in', async () => {
+    await goTo(page, '$0949');
+    await headerRow(page, '0949').click();
+    await expect(insp).toBeVisible();
+    await expect(insp).toContainText('$0949–');
+    await headerRow(page, '0939').click();
+    await expect(insp).toBeVisible();
+    await expect(insp).toContainText('$0939–$0948');
+    await listing(page).locator('.row:not(.hdr)', { has: page.locator('.adr', { hasText: /^0949$/ }) }).first().click();
+    await expect(insp).toBeHidden();
+  });
+
+  await test.step('its pin keeps it open beside the editor, and its button at the top folds it in again', async () => {
+    await rail.click();
+    await insp.getByRole('button', { name: 'Keep the inspector open', exact: true }).click();
+    await expect(rail).toBeHidden();
+    await expect(insp).toBeVisible();
+    await expect.poll(width).toBe(open);
+    await insp.getByRole('button', { name: 'Fold in the inspector', exact: true }).click();
+    await expect(insp).toBeHidden();
+    await expect(rail).toBeVisible();
+    await expect.poll(width).toBe(open + 288);
+  });
+
+  await test.step('folded in, it is folded in after a restart, as Settings says; Always open brings it back', async () => {
+    await page.reload();
+    await waitForListing(page);
+    await expect(insp).toBeHidden();
+    await expect(rail).toBeVisible();
+    const dialog = await settings();
+    await expect(dialog.getByLabel('Inspector (the panel on the right)')).toHaveValue('auto');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await choose('open');
+    await expect(insp).toBeVisible();
+    await expect(rail).toBeHidden();
+    await expect.poll(width).toBe(open);
+  });
+});
+
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');
@@ -3202,6 +3450,54 @@ test('the Memory tab finds text as PETSCII and as screen codes, and bytes, and s
     await expect(q).toHaveClass(/bad/);
     await q.press('Escape');
     await expect(q).toHaveValue('');
+  });
+});
+
+test('the Memory tab selects from the start of a text to the 0 that ends it, with 0 or the button', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Memory' }).click();
+  const view = page.getByLabel('Memory as the VICE monitor shows it'), bar = view.locator('.gfxv-sel[role="status"]');
+  const byte = (a: number) => view.locator(`.mon-b[data-a="${a}"]`);
+  const go = async (cmd: string) => { const c = page.getByLabel('Monitor command'); await c.fill(cmd); await c.press('Enter'); };
+  const toZero = view.getByRole('button', { name: /Select to the next 0/ });
+
+  await test.step('0 on the first letter of the title selects it to its 0, and again the next text too', async () => {
+    await go('m 0949');
+    await byte(0x0949).click();
+    await expect(toZero).toBeVisible();
+    await page.keyboard.press('0');
+    await expect(bar).toContainText('$0949–$095f (23 bytes)');
+    await expect(view.locator('.gfxv-info')).toContainText('$095f = $00');
+    await page.keyboard.press('0');
+    await expect(bar).toContainText('$0949–$0984 (60 bytes)');
+  });
+
+  await test.step('the button does the same from the cursor', async () => {
+    await byte(0x0960).click();
+    await toZero.click();
+    await expect(bar).toContainText('$0960–$0984 (37 bytes)');
+    await expect(page.getByLabel('Memory dump')).toBeFocused();
+  });
+
+  await test.step('no 0 before the loaded bytes end: it says so, and the cursor stays', async () => {
+    await go('m 37f0');
+    await byte(0x37fe).click();
+    await page.keyboard.press('0');
+    await expect(view.getByRole('alert')).toHaveText('No 0 byte from $37fe on before the loaded bytes end.');
+    await expect(view.locator('.gfxv-info')).toContainText('$37fe = $81');
+    await page.keyboard.press('ArrowLeft');
+    await expect(view.getByRole('alert')).toHaveCount(0);
+  });
+
+  await test.step('Mark as Text makes the selection one text block, the 0 in it', async () => {
+    await go('m 0949');
+    await byte(0x0949).click();
+    await page.keyboard.press('0');
+    await page.keyboard.press('0');
+    await view.getByRole('button', { name: 'Mark as Text', exact: true }).click();
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, '$0949');
+    await expect(headerRow(page, '0949')).toContainText('$0949-$0984');
   });
 });
 

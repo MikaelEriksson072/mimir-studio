@@ -3,10 +3,10 @@ import type { BlockKind, OverrideProps, Settings, TypeId } from './types';
 /** Classification ids used in the 64 KB type map. */
 export const T = {
   NONE: 0, DATA: 1, CODE: 2, BASIC: 3, TEXT: 4, TABLE: 5, LOHI: 6, WORDS: 7,
-  SPRITE: 8, CHARSET: 9, BITMAP: 10, SCREEN: 11, MUSIC: 12, FILL: 13,
+  SPRITE: 8, CHARSET: 9, BITMAP: 10, SCREEN: 11, MUSIC: 12, FILL: 13, RELOC: 14,
 } as const satisfies Record<string, TypeId>;
 
-export type TypeGroup = 'code' | 'basic' | 'gfx' | 'music' | 'table' | 'text' | 'data' | 'fill';
+export type TypeGroup = 'code' | 'basic' | 'gfx' | 'music' | 'table' | 'text' | 'data' | 'fill' | 'reloc';
 export interface TypeInfo { key: BlockKind; label: string; group: TypeGroup }
 
 export const TYPE_INFO: Record<Exclude<TypeId, 0>, TypeInfo> = {
@@ -23,6 +23,8 @@ export const TYPE_INFO: Record<Exclude<TypeId, 0>, TypeInfo> = {
   [T.SCREEN]: { key: 'screen', label: 'Screen matrix', group: 'gfx' },
   [T.MUSIC]: { key: 'music', label: 'Music (SID)', group: 'music' },
   [T.FILL]: { key: 'fill', label: 'Fill', group: 'fill' },
+  // where a relocated block is loaded (8.1b): what its bytes are, the blocks where they run say
+  [T.RELOC]: { key: 'reloc', label: 'Relocated', group: 'reloc' },
 };
 
 export const TYPE_BY_KEY = Object.fromEntries(

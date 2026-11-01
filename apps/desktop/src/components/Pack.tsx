@@ -4,7 +4,7 @@
  * with the packer, format and kind of file chosen (packOptions); they are kept in the project. Pack builds, verifies
  * and packs. */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { editRanges, extraProblem, h2, h4, kindInfo, mergeRanges, packOptions, packProblem, rangeCover, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
+import { editRanges, extraProblem, h2, h4, kindInfo, loadAddress, loadRange, mergeRanges, packOptions, packProblem, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
 import type { PackResponse } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
 import { SideSection } from './SideSection';
@@ -106,10 +106,12 @@ export function PackView(p: PackViewProps) {
   const warning = packWarning(prefs, A);
   const ranges = prefs.ranges ?? [];
   const toggle = (start: Addr, end: Addr, on: boolean, what: string) => set({ ranges: editRanges(ranges, start, end, on) }, `${on ? 'Pack' : 'Do not pack'} ${what}`);
-  const selRange = sel && sel.multi && sel.end > sel.start ? sel : null;
-  const blk = cursor != null ? A.blocks.find(b => cursor >= b.start && cursor < b.end) : undefined;
+  // what is packed is the built PRG: where a relocated block runs (8.1b), its bytes are where it is loaded
+  const selRange = sel && sel.multi && sel.end > sel.start ? loadRange(A, sel.start, sel.end) : null;
+  const at = cursor != null ? loadAddress(A, cursor) : null;
+  const blk = at != null ? A.blocks.find(b => at >= b.start && at < b.end) : undefined;
   const ql = q.trim().toLowerCase().replace(/^\$/, '');
-  const list = prefs.ranges ? A.blocks.filter(b => { const l = R.labels.get(b.start); return !ql || h4(b.start).includes(ql) || kindInfo(b.type).label.toLowerCase().includes(ql) || !!l?.name.toLowerCase().includes(ql); }) : [];
+  const list = prefs.ranges ? A.blocks.filter(b => { const l = R.labels.get(b.start); return !relocAt(A, b.start) && (!ql || h4(b.start).includes(ql) || kindInfo(b.type).label.toLowerCase().includes(ql) || !!l?.name.toLowerCase().includes(ql)); }) : [];
   const fresh = !!result && result.key === current;
   const brokkr = prefs.packer !== 'exomizer', sfx = prefs.mode === 'sfx';
   // what is shown: only the settings that take effect
@@ -163,7 +165,7 @@ export function PackView(p: PackViewProps) {
               const cover = rangeCover(ranges, b.start, b.end), len = b.end - b.start, all = cover === len, l = R.labels.get(b.start);
               const what = `$${h4(b.start)}-$${h4(b.end - 1)}`;
               return (
-                <div key={b.id} role="listitem" className={cx('pack-blk', cursor != null && cursor >= b.start && cursor < b.end && 'on')}>
+                <div key={b.id} role="listitem" className={cx('pack-blk', at != null && at >= b.start && at < b.end && 'on')}>
                   <input type="checkbox" aria-label={`Pack ${what}`} checked={all} ref={el => { if (el) el.indeterminate = cover > 0 && !all; }} onChange={() => toggle(b.start, b.end, !all, what)} />
                   <button className="pack-blk-main" title="Show in the listing" onClick={() => p.onNavigate(b.start)}>
                     <i style={{ background: `var(--g-${groupOfKind(b.type)})` }} />
