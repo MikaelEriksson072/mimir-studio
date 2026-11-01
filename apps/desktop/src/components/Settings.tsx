@@ -78,7 +78,7 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, onSave, onClos
               <option value="open">Always open</option>
               <option value="auto">Folded in: opens when you need it, folds in when you click outside it</option>
             </select>
-            <small className="muted">Folded in, the inspector is a strip at the right edge and the listing gets its room. A click on the strip opens the inspector over the editor; a click outside it or Esc folds it in again. The button at the top of the inspector switches between the two.</small></label>
+            <small className="muted">Folded in, the inspector is a strip at the right edge and the listing gets its room. A click on the strip, or on the start of a block (its header in the listing), opens the inspector over the editor; a click outside it or Esc folds it in again. The button at the top of the inspector switches between the two.</small></label>
           <p className="muted small">{desktop ? 'Kept by the app (not in the project).' : 'Running outside the desktop app: there is no start screen.'}</p>
         </>}
       </div>

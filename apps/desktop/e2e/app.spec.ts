@@ -3039,6 +3039,18 @@ test('the inspector folds into a strip at the right edge (Settings → General):
     await expect(insp).toBeHidden();
   });
 
+  await test.step('a click on the start of a block, its header, opens it with that block; another header keeps it open, another line folds it in', async () => {
+    await goTo(page, '$0949');
+    await headerRow(page, '0949').click();
+    await expect(insp).toBeVisible();
+    await expect(insp).toContainText('$0949–');
+    await headerRow(page, '0939').click();
+    await expect(insp).toBeVisible();
+    await expect(insp).toContainText('$0939–$0948');
+    await listing(page).locator('.row:not(.hdr)', { has: page.locator('.adr', { hasText: /^0949$/ }) }).first().click();
+    await expect(insp).toBeHidden();
+  });
+
   await test.step('its pin keeps it open beside the editor, and its button at the top folds it in again', async () => {
     await rail.click();
     await insp.getByRole('button', { name: 'Keep the inspector open', exact: true }).click();

@@ -2111,8 +2111,9 @@ efter en omstart. I ett smalt fönster (under 900 px) öppnar och stänger `Ctrl
 **Inspektorn infälld:** Settings → General → *Inspector (the panel on the right)* väljer *Always open* (standard) eller
 *Folded in*. Infälld är inspektorn en list längst till höger (28 px, *Inspector* på högkant), och editorn med listningen
 får resten av bredden (288 px med standardbredden). Ett klick på listen fäller ut inspektorn över editorns högra del, i
-sin vanliga bredd, så listningen behåller sin bredd. Ett klick utanför den fäller in den igen och gör samtidigt det det
-gör där: ett klick på en rad i listningen flyttar markören dit. Klick i menyer och dialoger räknas inte. `Esc` fäller
+sin vanliga bredd, så listningen behåller sin bredd. Ett klick på ett blocks start, dess rubrikrad i listningen, fäller
+också ut den, med blocket i *Block*; ett klick på en annan rubrik låter den vara utfälld och visar det blocket. Ett klick
+utanför den fäller in den igen och gör samtidigt det det gör där: ett klick på en rad i listningen flyttar markören dit. Klick i menyer och dialoger räknas inte. `Esc` fäller
 också in den, och bara det: listningen går inte tillbaka. Klick inne i inspektorn (heatmap, typ, talformat) låter den
 vara utfälld. Knappen i inspektorns rubrik byter läge direkt: *Fold in the inspector* när den alltid är öppen och
 nålen *Keep the inspector open* när den är utfälld. Kommandopaletten har *Show the inspector* (infälld) och kommandot

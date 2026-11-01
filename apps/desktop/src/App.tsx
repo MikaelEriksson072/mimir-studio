@@ -1453,7 +1453,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // a comment line of a zero-page variable opens its editor
     if (zl && dbl && l.k === 'cmt') { navigate(l.a, { noHistory: true }); startNote(!!project.notes[zl.addr]?.block, undefined, zl); return; }
     if (def && dbl) { navigate(l.a, { noHistory: true }); startDefRename(def, i); return; }
-    if (l.k === 'hdr') { navigate(l.a, { noHistory: true }); const b = A.blocks[l.blk]; if (b) setSel({ start: b.start, end: b.end, multi: true, anchor: b.start, anchorEnd: b.end }); return; }
+    if (l.k === 'hdr') {
+      navigate(l.a, { noHistory: true }); const b = A.blocks[l.blk]; if (b) setSel({ start: b.start, end: b.end, multi: true, anchor: b.start, anchorEnd: b.end });
+      // the inspector folded in opens over the editor with the block clicked
+      if (inspector === 'auto' && !window.matchMedia?.('(max-width: 900px)').matches) setDrawer('insp');
+      return;
+    }
     if (l.a == null) return;
     const n = 'n' in l ? l.n : 0;
     navigate(l.a, { noHistory: true });
@@ -1564,11 +1569,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const curLabel = cursor != null ? (() => { for (let p = cursor; p >= 0 && cursor - p < 4096; p--) { const l = R.labels.get(p); if (l) return p === cursor ? l.name : `${l.name}+${cursor - p}`; if (blk && p <= blk.start) break; } return null; })() : null;
   const narrow = window.matchMedia?.('(max-width: 900px)').matches;
   // the inspector opened from its strip folds in again at a click outside it, which still does what it does (menus
-  // and dialogs over everything do not count); on a narrow window the drawer's backdrop takes the click
+  // and dialogs over everything do not count, nor a block's header, which shows its block there); on a narrow window
+  // the drawer's backdrop takes the click
   const inspOut = inspector === 'auto' && drawer === 'insp' && !narrow;
   useEffect(() => {
     if (!inspOut) return;
-    const down = (e: PointerEvent) => { if (!(e.target as Element | null)?.closest?.('.insp-col, .insp-rail, .ctx, .modal-back')) setDrawer(null); };
+    const down = (e: PointerEvent) => { if (!(e.target as Element | null)?.closest?.('.insp-col, .insp-rail, .ctx, .modal-back, .listing .row.hdr')) setDrawer(null); };
     window.addEventListener('pointerdown', down, true);
     return () => window.removeEventListener('pointerdown', down, true);
   }, [inspOut]);
