@@ -21,7 +21,7 @@ export interface Activity {
   /** written bytes it had read before (in-place work) */
   inPlace: number;
   kind: Kind;
-  /** the opcodes of its instructions in address order, as hex: the fingerprint */
+  /** the opcodes of its instructions in address order, as they were when it ran them, as hex: the fingerprint */
   opcodes: string;
 }
 
@@ -39,11 +39,11 @@ export function ranges(test: (a: number) => boolean, gap = 0, from = 0, to = 0xf
 
 /** What layer `id`, which started at instruction `since`, has done so far. */
 export function activity(m: C64, eid: Int32Array, id: number, since: number): Activity {
-  const { wid, wtime, rtime, etime, ram } = m;
+  const { wid, wtime, rtime, etime, eop } = m;
   const isCode = new Uint8Array(0x10000), isWritten = new Uint8Array(0x10000), isRead = new Uint8Array(0x10000);
   let instructions = 0, writtenBytes = 0, readBytes = 0, inPlace = 0, opcodes = '';
   for (let a = 0; a < 0x10000; a++) {
-    if (eid[a] === id) { isCode[a] = 1; instructions++; opcodes += ram[a].toString(16).padStart(2, '0'); }
+    if (eid[a] === id) { isCode[a] = 1; instructions++; opcodes += eop[a].toString(16).padStart(2, '0'); }
     if (a < 0x200) continue;
     const ownCode = etime[a] >= since;
     if (wid[a] === id && !(etime[a] > wtime[a])) {

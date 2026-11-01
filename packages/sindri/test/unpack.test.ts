@@ -50,6 +50,42 @@ irq:   inc $d019
        jmp $ea31
 `);
 
+/** a depacker in the zero page, as a freezer backup's: it copies the program to $1000, wipes its own copy loop and
+ *  starts the program; the stub at $080d puts it there */
+const WIPES_ITSELF = (() => {
+  const zp = asm(`
+* = $0040
+       ldx #31
+c:     lda $0900,x
+       sta $1000,x
+       dex
+       bpl c
+       jmp $0080
+* = $0080
+       ldx #$3f
+w:     lda #0
+       sta $40,x
+       dex
+       bpl w
+       jmp $1000
+`).prg.subarray(2);
+  return asm(`${SYS_LINE}
+       sei
+       ldx #${zp.length - 1}
+s:     lda zp,x
+       sta $40,x
+       dex
+       bpl s
+       jmp $0040
+zp:
+${byteLines(zp)}
+* = $0900
+       inc $d020
+       jmp $1000
+       .fill 26, $ea
+`).prg;
+})();
+
 for (const mode of roms ? ['stand-ins', 'ROMs'] as const : ['stand-ins'] as const) {
   const go = (prg: Uint8Array) => unpack(prg, { roms: mode === 'ROMs' ? roms : null });
 
@@ -126,6 +162,13 @@ ${byteLines(code)}
       const r = go(file.prg);
       expect(r.layers[0].entry).toBe(0x02a7);
       expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000 });
+    });
+
+    it('fingerprints a depacker by the code it ran, also when it wipes that code before the program starts', () => {
+      const r = go(WIPES_ITSELF);
+      expect(r.layers.map(l => [l.entry, l.kind])).toEqual([[0x080d, 'jump'], [0x0040, 'mover'], [0x1000, 'program']]);
+      // ldx lda sta dex bpl jmp, twice; not the BRKs it left at $0040-$007f
+      expect(r.layers[1].opcodes).toBe('a2bd9dca104c' + 'a2a995ca104c');
     });
 
     it('says when nothing was unpacked', () => {

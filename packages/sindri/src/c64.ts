@@ -237,6 +237,8 @@ export class C64 implements Bus {
   readonly rtime = new Uint32Array(0x10000);
   /** when it was last executed (any byte of an instruction) */
   readonly etime = new Uint32Array(0x10000);
+  /** the opcode it held when it was last executed as one (code that is overwritten later keeps its fingerprint) */
+  readonly eop = new Uint8Array(0x10000);
   /** the tag new writes get */
   tag = BOOT;
   /** the CPU runs ROM code (or C64 set-up code in RAM): its writes below $0400 are the system's (keyboard buffer,

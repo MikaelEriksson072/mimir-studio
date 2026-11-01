@@ -12,6 +12,14 @@ function packedPrg(data: Uint8Array) {
   bytes.set(data, 0x0830 - 0x0801);
   return { name: 'packed.prg', load: 0x0801, bytes };
 }
+/** 10 SYS2061, a freezer backup's depacker of the shape `code` gives (from $080d), then `data` from $0900 */
+function backupPrg(code: string, data: Uint8Array) {
+  const stub = fromSource('backup.prg', `.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n sei\n lda #$7f\n sta $dd0d\n lda #$34\n sta $01\n ldx #$0c\n ldy #$00\nl: lda $0900,y\n sta $ff00,y\n dey\n cpy #$ff\n bne l\n${code}\n.pc = $08ff\n .byte 0`);
+  const bytes = new Uint8Array(0x0900 - 0x0801 + data.length);
+  bytes.set(stub.bytes);
+  bytes.set(data, 0x0900 - 0x0801);
+  return { name: 'backup.prg', load: 0x0801, bytes };
+}
 const random = (n: number, values = 256, seed = 7) => { let x = seed; return Uint8Array.from({ length: n }, () => { x = (x * 1103515245 + 12345) >>> 0; return (x >>> 16) % values; }); };
 const check = (f: { name: string; load: number; bytes: Uint8Array }) => detectPacking(analyze({ name: 'p', files: [f] }));
 
@@ -31,6 +39,41 @@ describe('packing', () => {
     expect(check(packedPrg(old))).toMatchObject({ verdict: 'maybe', packedShare: 0 });
     const said = Uint8Array.from([...old.slice(0, 3000), ...new TextEncoder().encode('CRUNCHED BY TIME CRUNCHER'), ...old.slice(3000)]);
     expect(check(packedPrg(said))).toMatchObject({ verdict: 'packed', signature: 'Time Cruncher' });
+  });
+
+  it('knows an Action Replay backup by its depacker, also where the data does not look packed enough', () => {
+    const data = random(30000, 100); // ~6.6 bits per byte: on its own only "maybe"
+    const backup = backupPrg(' lda #$20\n ldx #$06\n sta $de00\n sta $dffe\n stx $de00\n dec $01\n ldy #$00\n jmp $008e', data);
+    const ar = check(backup);
+    expect(ar).toMatchObject({ verdict: 'packed', decruncher: 0x080d, signature: 'Datel Action Replay backup' });
+    expect(ar!.reasons[0]).toBe('the code at $080d is the depacker of a Datel Action Replay backup');
+    expect(ar!.reasons.join(' | ')).not.toMatch(/the file names/);
+    // the BASIC line made NOPs (to be started at the load address) or cleared: the depacker is still at 2061
+    for (const fill of [0xea, 0x00]) {
+      const changed = check({ ...backup, bytes: backup.bytes.slice().fill(fill, 0, 12) });
+      expect(changed).toMatchObject({ verdict: 'packed', decruncher: 0x080d, signature: 'Datel Action Replay backup' });
+      expect(changed!.reasons[0]).toBe('the code at $080d is the depacker of a Datel Action Replay backup');
+    }
+    // one whose cartridge writes were changed to $d020 (a re-release that runs without the cartridge)
+    expect(check(backupPrg(' lda #$00\n ldx #$00\n sta $d020\n sta $d020\n stx $d020\n dec $01\n ldy #$00\n jmp $008e', data))).toMatchObject({ signature: 'Datel Action Replay backup' });
+  });
+
+  it('knows a Freeze Machine backup by its depacker, and the first file of a Split Freeze', () => {
+    const data = random(30000, 100);
+    // the same start as the Action Replay's, the zero page and the stack put back from the file, on at $007e
+    const backup = backupPrg(' ldy #$00\nz: lda $0b00,y\n sta $0000,y\n lda $0c00,y\n sta $0100,y\n iny\n bne z\n dec $01\n ldy #$00\n jmp $007e', data);
+    const fm = check(backup);
+    expect(fm).toMatchObject({ verdict: 'packed', decruncher: 0x080d, signature: 'Evesham Freeze Machine backup' });
+    expect(fm!.reasons[0]).toBe('the code at $080d is the depacker of an Evesham Freeze Machine backup');
+    expect(check(backupPrg(' ldy #$00\n jmp $008e', data))).toMatchObject({ signature: 'Datel Action Replay backup' });
+    // a Split Freeze's first file: the top of memory, which its loader puts at $a000 before it loads the second file
+    // (a whole backup) over itself and goes on at 2061; the code from $08f8 is left over from a backup
+    const split = fromSource('split.prg', `.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n sei\n lda #$7f\n sta $dd0d\n lda #$34\n sta $01\n ldy #$00\nl: lda $0900,y\n sta $a000,y\n iny\n bne l\n inc l+2\n inc l+5\n bne l\n lda #$37\n sta $01\n lda #5\n ldx #<name\n ldy #>name\n jsr $ffbd\n lda #$0f\n ldx #$08\n ldy #$0f\n jsr $ffba\n lda #$08\n pha\n lda #$0c\n pha\n lda #$00\n jmp $ffd5\nname: .text "PART2"\n.pc = $08f8\n dec $01\n ldy #$00\n jmp $007e\n .byte 0`);
+    const first = { ...split, bytes: Uint8Array.from([...split.bytes, ...random(11000, 100)]) };
+    for (const fill of [null, 0x00]) {
+      const r = check(fill == null ? first : { ...first, bytes: first.bytes.slice().fill(fill, 0, 12) });
+      expect(r, String(fill)).toMatchObject({ verdict: 'packed', decruncher: 0x080d, signature: 'Evesham Freeze Machine backup' });
+    }
   });
 
   it('leaves plain programs alone', () => {

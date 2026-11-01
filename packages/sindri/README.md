@@ -141,8 +141,10 @@ For every layer the report says what it did:
 - the code it ran, the data it read and what it wrote;
 - the code it wrote and called (subroutines, interrupt handlers);
 - the text in and around its code (credits, packer names) and what it printed;
-- a **fingerprint**: the opcodes of the instructions it ran, in address order. Operands are left out, so the same
-  depacker matches wherever it runs and whatever it unpacks. `data/signatures.json` holds the known ones with their
+- a **fingerprint**: the opcodes of the instructions it ran, in address order, as they were when it ran them. Operands
+  are left out, so the same depacker matches wherever it runs and whatever it unpacks, and one that is written over
+  before the next layer starts (a depacker in the zero page that the program's own zero page replaces) keeps its
+  fingerprint. `data/signatures.json` holds the known ones with their
   names, and a layer that matches one by 80% or more is named. An unknown depacker is listed with the short id of its
   fingerprint, so files packed with the same unknown packer show the same id; `--learn NAME` adds it to the list.
 
@@ -151,6 +153,38 @@ address unp64 names was given unp64's packer name. That gave 321 fingerprints of
 Compactor, PuCrunch, the CruelCrunch and Dali versions, ByteBoozer, 1001 CardCruncher, NSU Packer, ...). On 473 other
 files Sindri names 429 packers exactly as unp64 does, 2 by the same family and none wrongly; it names nothing
 where unp64 knows no name either.
+
+Until November 2026 a fingerprint was read from memory when the next layer started. The depackers of four packers run
+in the zero page and were written over by then (Dali's fast decruncher, 1001 CardCruncher New Packer, NuCrunch and Datel
+UltraCompander), so their 35 entries held the C64's zero page rather than their code. They were learned again, as 8
+entries, from the 418 files of the archive's intros and demos that unp64 names with Dali, 1001 CardCruncher New
+Packer, NuCrunch or UltraCompander. Sindri now gives 403 of them unp64's name, where it did 215 before (it often took
+Dali 0.3.1 for 0.3.2 and the reverse); a Dali 0.3.5 file gets the name of 0.3.3, whose decruncher it nearly has. On a
+sample of 1978 files of the archive (intros, demos and games) the change kept every layer and every name, and named
+35 more layers.
+
+The Action Replay's freezer backups are named *Datel Action Replay backup* (unp64 calls them Action Replay v3.x and
+v4.x). *DISK SAVE - TURBO* and *STANDARD* both write one PRG at `$0801` with two layers: the depacker at `$080d` moves
+the packed data to the top of memory, restores the VIC, SID and CIAs and turns the cartridge off; the one at `$008e`
+unpacks the memory, restores the zero page over itself and starts the frozen program. AR 5.1 and 7.5 write the same
+depacker, AR 7.2 a slightly different one, and other versions others again: 17 entries name both layers of 2640 of the
+2700 backups in the archive. In 31 of the rest the run ends inside the second layer, and in 23 the BASIC line was
+changed so that `RUN` starts nothing (`-e 2061` starts them).
+
+The Freeze Machine's backups (Evesham's freezer cartridge) begin with the same instructions and are named *Evesham
+Freeze Machine backup*. The depacker at `$080d` moves the packed data up, puts the zero page, the stack and the colours
+back from the file and restores the SID, CIAs and VIC; the one at `$007e` unpacks the memory, puts the zero page back
+from the stack page and returns into the frozen program. A *Split Freeze* is two files: the first holds the top of
+memory and a loader that loads the second, a whole backup, over itself, so it is unpacked only with its disk. 13
+entries were learned from the archive's 133 backups (124 that unp64 calls Freeze Machine, 9 Split Freeze), run with
+and without their disk. With the disk both layers of 99 of the 124 are named. In 24 the run ends inside the second
+layer, which as the last one (the program) gets no name: 22 of them are BASIC programs, which go on in the BASIC ROM,
+so no new layer starts. One has a changed BASIC line, and `-e 2061` names both. Of the Split Freezes, 6 get both names
+with the disk (3 of them only with `-e 2061`: their BASIC line was cleared), and in 3 the run ends inside the
+second layer. Without the disk 98 of the 124 get both names and no Split Freeze gets one: they stop at the load. No
+layer of the 2700 Action Replay backups is named after the Freeze Machine, nor the reverse, and on the sample of 1978
+files every layer and name stayed. A backup on a Kick Off disk that unp64 does not name has the same depacker; its
+first layer is named (82% alike), its second not (78%). That gives 324 fingerprints of 137 packers.
 
 ## Compared with unp64
 
@@ -194,12 +228,16 @@ pnpm test
 
 The tests build packed programs with a small 6502 assembler (an RLE cruncher whose decruncher runs at `$0100`, stays in
 high memory, is called with `JSR` or ends in BASIC's `RUN`, an XOR coder in front of it, an intro that waits for space,
-an autostart over the BASIC vectors) and run them with the stand-ins and, when VICE's ROMs are found, with the real
-ROMs. With the ROMs, small BASIC programs with an extension go on with themselves and RUN themselves again without new
-layers, packed or not, and one that RUNs another program starts a layer. When Exomizer is installed, an Exomizer 3
-self-extracting file is unpacked too. The drive tests check the GCR tracks sector by sector, have the DOS read sectors
-all over a disk, and, with VICE's ROMs, follow a boot file that loads the next file through the KERNAL and one that
-sends drive code of its own with `M-W`, starts it with `M-E` and receives a sector over the serial bus bit by bit.
+an autostart over the BASIC vectors, a depacker in the zero page that wipes its own code before it starts the program)
+and run them with the stand-ins and, when VICE's ROMs are found, with the real ROMs. With the ROMs, small BASIC
+programs with an extension go on with themselves and RUN themselves again without new layers, packed or not, and one
+that RUNs another program starts a layer. When Exomizer is installed, an Exomizer 3 self-extracting file is unpacked
+too. The signature list is checked as well: no entry may hold the BRKs and
+JAMs of code that was written over, no Action Replay or Freeze Machine entry may name other code, nor the reverse, and
+both layers of either backup get their names, as they ran in backups whose fingerprints are close to an entry but not
+the same. The drive tests check the GCR tracks sector by sector, have the DOS read sectors all over a disk, and,
+with VICE's ROMs, follow a boot file that loads the next file through the KERNAL and one that sends drive code of its
+own with `M-W`, starts it with `M-E` and receives a sector over the serial bus bit by bit.
 
 ## Limits
 

@@ -397,7 +397,7 @@ class Session {
   // --- the run ------------------------------------------------------------------------------------------------------
 
   private loop(): void {
-    const m = this.m, cpu = m.cpu, map = m.map, ram = m.ram, etime = m.etime, wid = m.wid, eid = this.eid, special = this.special;
+    const m = this.m, cpu = m.cpu, map = m.map, ram = m.ram, etime = m.etime, eop = m.eop, wid = m.wid, eid = this.eid, special = this.special;
     let next = m.icount + CHECK;
     while (!this.stopped) {
       if (cpu.s > this.frameSp) this.unwind();
@@ -414,9 +414,9 @@ class Session {
           if (wid[pc] === this.curId && TRANSFER[cpu.lastOp] && this.isTransfer(pc)) this.enter(pc, false);
           eid[pc] = this.curId;
         }
-        const ic = m.icount;
-        etime[pc] = ic;
-        const len = LEN[ram[pc]];
+        const ic = m.icount, op = ram[pc];
+        etime[pc] = ic; eop[pc] = op;
+        const len = LEN[op];
         if (len > 1) { etime[(pc + 1) & 0xffff] = ic; if (len > 2) etime[(pc + 2) & 0xffff] = ic; }
         this.lastRam = true;
         m.inRom = false;

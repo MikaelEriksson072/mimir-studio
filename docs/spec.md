@@ -649,9 +649,23 @@ så lång tid (250 ms för en hel snapshot).
   kan följa. En packad fil visar därför några dussin byte kod. Äldre crunchers ger mindre entropi, ungefär 6,5–7.
 - **Ett packarnamn i filen** (ASCII, PETSCII eller skärmkoder): Exomizer, PuCrunch, ByteBoozer, TSCrunch, Subsizer,
   Level Crusher, Time Cruncher, Dali, ZX0, Cruncher AB, Matcham, Sledgehammer eller "crunched/packed by".
+- **En känd uppackares kod vid programstarten** (`stubSignature()`): Action Replays backuper (Datels frysmodul,
+  *DISK SAVE – TURBO* och *STANDARD*) är en PRG på `$0801` vars kod på 2061 flyttar den packade datan till toppen av
+  minnet, återställer VIC, SID och CIA, stänger av modulen och fortsätter i nollsidan på `$008e`. Koden söks vid
+  programstarten och på 2061 i en fil på `$0801` (där BASIC-raden ibland är ändrad: NOP:ar, en REM). Deras packade data
+  har mestadels 6,5–7,4 bitar per byte (median 6,9), så tecknen ovan gav förut *packad* för 606 av arkivets 2700
+  backuper, *kanske* för 898 och ingenting för 1196; nu blir 2699 packade med namnet *Datel Action Replay backup*.
+  Freeze Machines backuper (Eveshams frysmodul) börjar likadant, lägger tillbaka nollsidan, stacken och färgerna ur
+  filen, återställer SID, CIA och VIC och fortsätter i nollsidan på `$007e`, vilket ingen AR-backup gör. En *Split
+  Freeze* är två filer: den första har toppen av minnet och en laddare som laddar den andra, en hel backup, över sig
+  själv och fortsätter på 2061; dess kod från `$0850` är kvar från en backup, också `jmp $007e`. Av arkivets 133 filer
+  som unp64 kallar Freeze Machine (124) eller Freeze Machine Split Freeze (9) gav tecknen förut *packad* för 31 (3 av
+  dem genom texten "a cruncher"), *kanske* för 60 och ingenting för 42; nu blir alla 133 packade med namnet *Evesham
+  Freeze Machine backup*, liksom en backup på en Kick Off-disk som unp64 inte känner igen. Ingen av de 2700 AR-backuperna
+  och ingen av 1978 andra filer ur arkivet får ett annat besked än förut.
 
-*Packad* betyder att minst hälften av fönstren ser komprimerade ut, eller lite kod och minst 7 bitar per byte, eller ett
-namn tillsammans med komprimerad data. *Kanske packad* betyder minst 20 % av fönstren i en fil med lite kod (under 10 %),
+*Packad* betyder en känd uppackares kod, eller att minst hälften av fönstren ser komprimerade ut, eller lite kod och
+minst 7 bitar per byte, eller ett namn tillsammans med komprimerad data. *Kanske packad* betyder minst 20 % av fönstren i en fil med lite kod (under 10 %),
 eller lite kod och minst 6,4 bitar per byte. Demon och vanliga program blir inte packade. Filer under 1 KB bedöms inte.
 
 **Sindri, den inbyggda uppackaren** (`packages/sindri`, `@mimir/sindri`) kör varje öppnad fil i en emulerad C64, i en egen
@@ -659,8 +673,17 @@ Web Worker. Med C64-ROM:arna från användarens VICE (mappen `C64` bredvid x64sc
 hittar; huvudprocessen läser dem, kanalen `toolchain:roms`) startar den maskinen, laddar filen och skriver `RUN`; utan
 dem kör den med små ersättare för KERNAL och BASIC. Ett nytt lager börjar när processorn hoppar in i kod som det
 körande lagret skrev och inte har kört. Varje lager får en sort (*mover*, *decoder*, *decruncher*, *jump*, sist
-*program*) och ett fingeravtryck av opkoderna det körde; `data/signatures.json` har 321 kända fingeravtryck från 135
-packare, och ett lager som liknar ett av dem till minst 80 % får dess namn. En fil som den skalar ett lager av visas som
+*program*) och ett fingeravtryck av opkoderna det körde, som de var när det körde dem (så behåller en uppackare i
+nollsidan sitt fingeravtryck fast programmets egen nollsida skrivs över den innan nästa lager börjar); `data/signatures.json`
+har 324 kända fingeravtryck från 137 packare, och ett lager som liknar ett av dem till minst 80 % får dess namn. Båda
+lagren i en Action Replay-backup (`$080d` och `$008e`) heter *Datel Action Replay backup*, i 2640 av arkivets 2700.
+Båda lagren i en Freeze Machine-backup (`$080d` och `$007e`) heter *Evesham Freeze Machine backup*: med disketten i 99
+av arkivets 124 och 1 till med `-e 2061` (ändrad BASIC-rad); i 24 slutar körningen i det andra lagret, som då är sist
+(programmet) och inte får något namn, för 22 av dem är BASIC-program som fortsätter i BASIC-ROM:en utan att ett nytt
+lager börjar. En Split Freeze packas bara upp med sin diskett (den laddar sin andra fil): 6 av 9 får båda namnen (3 av
+dem med `-e 2061`), i 3 slutar körningen i det andra lagret; utan disketten stannar de vid laddningen. Inget lager i
+en AR-backup heter Freeze Machine eller tvärtom, och på 1978 andra filer ur arkivet behöll alla 1801 namngivna lager
+sina namn. En fil som den skalar ett lager av visas som
 packad, även om tecknen ovan inte räckte, med lagren i notisen (`unpackSummary()` i `packages/core/src/sindri.ts`:
 "Sindri peels off 2 layers: Exomizer v3.0 (a decruncher at $0100) …; the program starts at $1000") och
 packarnamnen i rubriken. Skalar den inget lager av fast den körde programmet tills det stod still (eller gick tillbaka

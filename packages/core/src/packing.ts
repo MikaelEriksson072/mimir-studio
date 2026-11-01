@@ -10,8 +10,11 @@
  *    trace cannot follow, so a packed file shows a few dozen bytes of code (older crunchers also give less
  *    entropy, about 6.5-7, so this sign counts on its own when the rest is not plain)
  *  - the name of a packer or a "crunched by" line in the bytes (ASCII, PETSCII or screen codes)
+ *  - a depacker known by its code at the program start (the Action Replay's and the Freeze Machine's backups):
+ *    packed on its own
  * ===================================================================== */
 import type { Addr, AnalysisResult } from './types';
+import { $4 } from './util/hex';
 
 export interface PackingInfo {
   /** index of the file in the analysis */
@@ -24,9 +27,9 @@ export interface PackingInfo {
   entropy: number;
   /** share of the file's 1 KB windows that look compressed (at least 7.2 bits per byte) */
   packedShare: number;
-  /** where the decruncher starts: the program start */
+  /** where the decruncher starts: the program start, or where a depacker known by its code is */
   decruncher: Addr | null;
-  /** the packer named in the file, or the text that names one */
+  /** the packer named in the file or known by its depacker's code, or the text that names one */
   signature: string | null;
   reasons: string[];
 }
@@ -41,6 +44,37 @@ const SIGNATURES: [RegExp, string][] = [
   [/sledgehammer/, 'Sledgehammer'], [/compactor/, 'a compactor'],
   [/(?:crunched|packed|compressed) (?:by|with)/, 'a cruncher'], [/cruncher|crunched|packer\b/, 'a cruncher'],
 ];
+
+/** sei, lda #$7f, sta $dd0d, lda #$34, sta $01: how the freezer cartridges' backups begin */
+const FREEZER = [0x78, 0xa9, 0x7f, 0x8d, 0x0d, 0xdd, 0xa9, 0x34, 0x85, 0x01];
+
+/** Depackers known by their code at the program start: the bytes it starts with, bytes it has within its first 256. */
+const STUBS: { start: number[]; has: number[][]; name: string }[] = [
+  // The Action Replay's backups (Datel's freezer cartridge, DISK SAVE - TURBO and STANDARD): a PRG at $0801 whose code
+  // at 2061 moves the packed data to the top of memory, restores the VIC, SID and CIAs, turns the cartridge off and
+  // goes on in the zero page at $008e. In the archive this finds all 2700 files unp64 calls Action Replay v3.x or v4.x
+  // backups (made by AR 5.1, 7.2 and 7.5, among others) and none of the 137 others that start the same way.
+  { start: FREEZER, has: [[0x4c, 0x8e, 0x00]], name: 'Datel Action Replay backup' },
+  // The Freeze Machine's backups (Evesham's freezer cartridge): the same start, then the packed data moved up, the
+  // zero page, stack and colours put back from the file, the SID, CIAs and VIC restored, and on in the zero page at
+  // $007e (it unpacks the memory, restores the zero page over itself and returns into the program). A Split Freeze is
+  // two files: the first holds the top of memory and a loader that loads the second, a whole backup, over itself and
+  // goes on at 2061; its code from $0850 is left over from a backup, jmp $007e too. In the archive this finds all 133
+  // files unp64 calls Freeze Machine or Freeze Machine Split Freeze, one it does not name (a backup by its code) and
+  // none of the 2700 Action Replay backups.
+  { start: FREEZER, has: [[0x4c, 0x7e, 0x00]], name: 'Evesham Freeze Machine backup' },
+];
+
+/** The packer whose depacker is the code at `at` (peek gives -1 outside the file), or null. */
+export function stubSignature(peek: (a: number) => number, at: number): string | null {
+  const bytes = Array.from({ length: 256 }, (_, i) => peek(at + i));
+  const has = (p: number[], to = bytes.length) => {
+    for (let i = 0; i + p.length <= to; i++) if (p.every((b, j) => bytes[i + j] === b)) return true;
+    return false;
+  };
+  for (const s of STUBS) if (has(s.start, s.start.length) && s.has.every(p => has(p))) return s.name;
+  return null;
+}
 
 const entropy = (b: ArrayLike<number>, s = 0, e = b.length): number => {
   const c = new Uint32Array(256);
@@ -83,19 +117,27 @@ export function detectPacking(A: AnalysisResult, file = 0): PackingInfo | null {
   let windows = 0, high = 0;
   for (let a = s; a + WINDOW <= e; a += STEP) { windows++; if (entropy(A.mem, a, a + WINDOW) >= HIGH) high++; }
   const packedShare = windows ? high / windows : 0;
-  const signature = packerSignature(f.bytes);
+  // a known depacker at the program start, or at 2061 in a file at $0801 whose BASIC line was changed (made NOPs, a REM)
+  let known: string | null = null, knownAt: Addr | null = null;
+  for (const at of [A.entry, s === 0x0801 ? 0x080d : null]) {
+    if (known || at == null || at < s || at >= e) continue;
+    known = stubSignature(a => (a < e ? A.mem[a] : -1), at);
+    if (known) knownAt = at;
+  }
+  const signature = known ?? packerSignature(f.bytes);
   const tinyCode = codeBytes <= Math.max(64, size * 0.03) && codeBytes < 400;
 
   const reasons: string[] = [];
+  if (known) reasons.push(`the code at ${$4(knownAt!)} is the depacker of ${/^[AEIOU]/.test(known) ? 'an' : 'a'} ${known}`);
   if (packedShare > 0) reasons.push(`${Math.round(packedShare * 100)}% of the file looks compressed (1 KB windows with at least ${HIGH} bits of entropy per byte)`);
   reasons.push(`${H.toFixed(2)} bits of entropy per byte outside the code`);
   if (tinyCode) reasons.push(`only ${codeBytes} bytes of code can be traced: a decruncher that moves itself before it runs`);
-  if (signature) reasons.push(`the file names ${signature}`);
+  if (signature && !known) reasons.push(`the file names ${signature}`);
 
   let verdict: PackingInfo['verdict'] | null = null;
-  if (packedShare >= 0.5 || (tinyCode && H >= 7) || (signature && (packedShare > 0 || (tinyCode && H >= 6.3)))) verdict = 'packed';
+  if (known || packedShare >= 0.5 || (tinyCode && H >= 7) || (signature && (packedShare > 0 || (tinyCode && H >= 6.3)))) verdict = 'packed';
   // some compressed-looking windows in a file with plenty of code are music or graphics (an unpacked program)
   else if ((packedShare >= 0.2 && codeBytes < size * 0.1) || (tinyCode && H >= 6.4)) verdict = 'maybe';
   if (!verdict) return null;
-  return { file, verdict, size, codeBytes, entropy: H, packedShare, decruncher: A.entry, signature, reasons };
+  return { file, verdict, size, codeBytes, entropy: H, packedShare, decruncher: knownAt ?? A.entry, signature, reasons };
 }
