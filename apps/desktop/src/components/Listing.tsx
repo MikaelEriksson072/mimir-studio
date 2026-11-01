@@ -82,6 +82,25 @@ const bytesText = (m: ByteMove) => (m.end - m.start > 1 ? `$${h4(m.start)}-$${h4
 const intoText = (m: ByteMove, dir: 'prev' | 'next') => `the ${kindInfo(m.into.type).label} block ${dir === 'prev' ? 'above' : 'below'}`;
 const moveTip = (mv: Moves) => ['Drag the address or the bytes into the block next to it:', mv.prev && `↑ ${bytesText(mv.prev)} into ${intoText(mv.prev, 'prev')}`, mv.next && `↓ ${bytesText(mv.next)} into ${intoText(mv.next, 'next')}`].filter(Boolean).join('\n');
 
+/** find (Ctrl+F): the lines with a match and the one shown; in the rows in view the matches are marked in the text */
+export interface ListingFind { re: RegExp; hits: ReadonlySet<ListingLine>; cur: ListingLine | null }
+const HL = 'mimir-find', HL_CUR = 'mimir-find-cur';
+
+/** a Range over every match of `re` in the text of `el` (a match may run over several of its text nodes) */
+function markIn(el: Element, re: RegExp, out: Range[]) {
+  const nodes: Text[] = [], starts: number[] = [];
+  let text = '';
+  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) { nodes.push(n as Text); starts.push(text.length); text += n.nodeValue ?? ''; }
+  if (!text) return;
+  const at = (k: number): [Text, number] => { let i = starts.length - 1; while (i > 0 && starts[i] > k) i--; return [nodes[i], k - starts[i]]; };
+  for (const m of text.matchAll(re)) {
+    if (!m[0]) continue;
+    const r = new Range(), [sn, so] = at(m.index), [en, eo] = at(m.index + m[0].length);
+    r.setStart(sn, so); r.setEnd(en, eo); out.push(r);
+  }
+}
+
 interface ListingProps {
   /** the visible lines (folded blocks show only their header), their numbers in the .asm file, and the folds */
   lines: ListingLine[]; lineNo: Int32Array; folded: ReadonlySet<Addr>; hidden: Map<number, number>; onToggleFold: (blockStart: Addr) => void;
@@ -113,9 +132,10 @@ interface ListingProps {
   offsetAt?: ((a: Addr) => { n: number; file: string } | null) | null;
   /** a block whose type just changed: framed a moment, with what it became */
   changed?: Changed | null;
+  find?: ListingFind | null;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -188,9 +208,10 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   };
   useLayoutEffect(() => {
     if (!scrollReq || !box.current) return;
-    const i = lineOf[scrollReq.addr];
+    // a find hit is the line itself; an address shows the labels and comments above its line too
+    const i = scrollReq.line ? lines.indexOf(scrollReq.line) : lineOf[scrollReq.addr];
     if (i < 0) return;
-    let j = i; while (j > 0 && lines[j - 1].a === lines[i].a && ['lbl', 'hdr', 'dir', 'cmt'].includes(lines[j - 1].k) && i - j < 6) j--;
+    let j = i; while (!scrollReq.line && j > 0 && lines[j - 1].a === lines[i].a && ['lbl', 'hdr', 'dir', 'cmt'].includes(lines[j - 1].k) && i - j < 6) j--;
     const el = box.current, vis = el.clientHeight;
     const y = j * ROW;
     // a block whose type changed: its first line stays where it was on screen, with its header in view
@@ -260,6 +281,8 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     return <button className="bm-mark" aria-label={`Bookmark $${h4(at[0])}: ${b.title}`} title={tip} onMouseDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onBookmark(at[0]); }}><svg viewBox="0 0 8 11" width="8" height="11" aria-hidden="true"><path d="M0 0h8v11L4 8 0 11z" /></svg></button>; };
   /** a bookmarked line is tinted in the colour of its (first) bookmark, which its mark has too */
   const tint = (i: number) => { const at = marks.get(i); return at ? { '--bm': bookmarkCss(bookmarks[at[0]].color) } as React.CSSProperties : undefined; };
+  /** a line with a find match, and the one shown */
+  const hit = (l: ListingLine) => (find?.hits.has(l) ? (find.cur === l ? 'hit hit-cur' : 'hit') : undefined);
   // with data shown as code the listing no longer matches the .asm file line for line: addresses then
   const byLine = gutter === 'line' && !lines.some(l => 'preview' in l && l.preview);
   const first = Math.max(0, Math.floor(top / ROW) - 10), last = Math.min(lines.length, Math.ceil((top + height) / ROW) + 10);
@@ -277,7 +300,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       const inSel = !!(sel && sel.multi && blk && blk.start >= sel.start && blk.end <= sel.end);
       // the loaders this block holds a part of
       const lparts = blk ? A.loaders.flatMap(f => f.parts.filter(p => p.start < blk.end && p.end > blk.start).map(p => ({ f, p }))) : [];
-      rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into', marks.has(i) && 'bm')} style={{ top: i * ROW, ...tint(i) }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
+      rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into', marks.has(i) && 'bm', hit(l))} style={{ top: i * ROW, ...tint(i) }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
         <span className="gut" style={{ background: `var(--g-${hg})` }} />{mark(i)}{offCell(l.a)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : h4(l.a)}</span>
         <button className="fold" aria-label={folded.has(l.a) ? 'Unfold block' : 'Fold block'} aria-expanded={!folded.has(l.a)} title={folded.has(l.a) ? 'Unfold (F)' : 'Fold (F)'}
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleFold(l.a); }}><Icon name={folded.has(l.a) ? 'chevron' : 'down'} size={12} /></button>
@@ -288,7 +311,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       </div>);
       continue;
     }
-    if (l.k === 'file') { rows.push(<div key={i} className="row filebar" style={{ top: i * ROW }}><Icon name="doc" size={13} /> {l.text}</div>); continue; }
+    if (l.k === 'file') { rows.push(<div key={i} className={cx('row filebar', hit(l))} style={{ top: i * ROW }}><Icon name="doc" size={13} /> {l.text}</div>); continue; }
     // blank lines are rows of their own only when the line numbers would otherwise skip them
     if (l.k === 'blank') { if (byLine) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{offCell(null)}<span className="adr lno">{lineNo[i]}</span></div>); continue; }
     // only a line at a block's edge can move into the block next to it
@@ -297,7 +320,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const pt = n > 0 && patches.length ? patchAt(patches, l.a) : undefined;
     const ptTip = pt && `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`;
     rows.push(
-      <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm')} style={{ top: i * ROW, ...tint(i) }}
+      <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', hit(l))} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l)}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{mark(i)}
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno')} title={tip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
@@ -328,6 +351,19 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   // the frame fades as it would have since the change, also when the listing comes back from another tab
   const changedFrame = frame && changed && <div key={changed.at} className="changed" aria-hidden="true"
     style={{ top: frame.top, height: frame.height, '--since': `${Math.min(0, changed.at - Date.now())}ms` } as React.CSSProperties}><span className="changed-tag">{changed.label}</span></div>;
+  // the matches in the rows in view, marked in their text with CSS highlights (the rows render as they are)
+  useLayoutEffect(() => {
+    const reg = CSS.highlights, el = box.current;
+    if (!reg) return;
+    if (!find || !el) { reg.delete(HL); reg.delete(HL_CUR); return; }
+    const all: Range[] = [], cur: Range[] = [];
+    for (const row of el.querySelectorAll<HTMLElement>('.row.hit')) {
+      const parts = row.classList.contains('filebar') ? [row] : row.querySelectorAll('.src > :not(.zp-tag), .hdr-chip, .hdr-text');
+      for (const part of parts) markIn(part, find.re, row.classList.contains('hit-cur') ? cur : all);
+    }
+    reg.set(HL, new Highlight(...all)); reg.set(HL_CUR, new Highlight(...cur));
+  });
+  useEffect(() => () => { CSS.highlights?.delete(HL); CSS.highlights?.delete(HL_CUR); }, []);
   // where the listing is on screen after this render (the line kept in view is placed against it); runs last
   useLayoutEffect(() => { if (box.current) boxTop.current = box.current.getBoundingClientRect().top; });
   return (

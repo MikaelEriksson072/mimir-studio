@@ -657,6 +657,81 @@ test('fold and unfold blocks', async ({ page }) => {
   });
 });
 
+test('find text in the listing: every match marked, Enter and F3 step through them, a folded block opens', async ({ page }) => {
+  await waitForListing(page);
+  const input = page.getByRole('textbox', { name: 'Find in the listing' });
+  const status = page.getByRole('status', { name: 'Find result' });
+  const marked = () => page.evaluate(() => (CSS.highlights.get('mimir-find')?.size ?? 0) + (CSS.highlights.get('mimir-find-cur')?.size ?? 0));
+  const rows = await listingRows(page);
+  const uses = rows.filter(r => /sine_09b5/.test(r.text)).length;
+  expect(uses).toBeGreaterThan(1);
+  // the hit going down from the cursor's line (the instruction at start)
+  const startRow = rows.findIndex(r => !r.hdr && r.adr === '0810' && !r.text.endsWith(':'));
+  const first = rows.slice(0, startRow).filter(r => /sine_09b5/.test(r.text)).length + 1;
+
+  await test.step('Ctrl+F opens the find widget; typing goes to the first line with a match from the cursor', async () => {
+    await listing(page).focus();
+    await page.keyboard.press('Control+F');
+    await expect(input).toBeFocused();
+    await input.fill('SINE_09B5');
+    await expect(status).toHaveText(`${first} of ${uses}`);
+    await expect(listing(page).locator('.row.hit-cur')).toHaveCount(1);
+    await expect(listing(page).locator('.row.hit-cur')).toContainText('sine_09b5');
+    expect(await marked()).toBeGreaterThan(0);
+    // matching the case finds nothing; the field says so
+    await page.getByRole('button', { name: 'Match case' }).click();
+    await expect(status).toHaveText('No results');
+    await page.getByRole('button', { name: 'Match case' }).click();
+    await expect(status).toHaveText(`${first} of ${uses}`);
+  });
+
+  await test.step('Enter and Shift+Enter step through the lines, around at the end', async () => {
+    for (let k = first; k < uses; k++) await input.press('Enter');
+    await expect(status).toHaveText(`${uses} of ${uses}`);
+    await input.press('Enter');
+    await expect(status).toHaveText(`1 of ${uses}`);
+    await input.press('Shift+Enter');
+    await expect(status).toHaveText(`${uses} of ${uses}`);
+    await input.press('Shift+Enter');
+    await expect(status).toHaveText(`${uses - 1} of ${uses}`);
+  });
+
+  await test.step('Esc closes only the widget, a second Esc goes back to where the cursor was', async () => {
+    await input.press('Escape');
+    await expect(input).toBeHidden();
+    await expect(listing(page)).toBeFocused();
+    await expect(listing(page).locator('.row.hit')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(statusBar(page)).toContainText('$0810 · start');
+  });
+
+  await test.step('a match inside a folded block unfolds it, and F3 steps from the cursor', async () => {
+    const text = rows.find(r => r.adr === '09bd')!.text.split('//')[0].trim();
+    expect(rows.filter(r => r.text.includes(text)).length).toBe(1);
+    await goTo(page, '$09c5');
+    await page.keyboard.press('f');
+    await expect(headerRow(page, '09b5').locator('.hdr-folded')).toBeVisible();
+    await goTo(page, 'start');
+    await page.keyboard.press('Control+F');
+    await input.fill(text);
+    await expect(headerRow(page, '09b5').locator('.hdr-folded')).toHaveCount(0);
+    await expect(statusBar(page)).toContainText('$09bd');
+    await expect(listing(page).locator('.row.hit-cur .adr')).toHaveText('09bd');
+    // the cursor moved elsewhere: F3 goes on from there
+    await input.fill('sine_09b5');
+    await listing(page).focus();
+    await goTo(page, 'start');
+    await page.keyboard.press('F3');
+    await expect(status).toHaveText(`${first} of ${uses}`);
+  });
+
+  await test.step('the source tab finds with Monaco', async () => {
+    await page.getByRole('tab', { name: /\.asm$/ }).click();
+    await page.getByRole('button', { name: 'Find', exact: true }).click();
+    await expect(page.locator('.monaco-editor .find-widget.visible')).toBeVisible();
+  });
+});
+
 test('exclude a block from the build', async ({ page }) => {
   await waitForListing(page);
   await goTo(page, 'sine_09b5');

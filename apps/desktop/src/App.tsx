@@ -17,6 +17,7 @@ import { useUi, type Activity } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { foldLines } from './lib/fold';
+import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
 import { withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
@@ -26,7 +27,8 @@ import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
 import { Sidebar } from './components/Sidebar';
-import { Listing } from './components/Listing';
+import { Listing, type ListingFind } from './components/Listing';
+import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
 import { BitfirePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPanel, SpindlePanel, StatsPanel, XrefPanel } from './components/BottomPanel';
 import { SettingsModal, type AppPrefs } from './components/Settings';
@@ -246,6 +248,64 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   /** fold or unfold the block that starts at (or contains) `a` */
   const toggleFold = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return; setFolded(f => { const n = new Set(f); if (n.has(b.start)) n.delete(b.start); else n.add(b.start); return n; }); if (cursor != null && cursor > b.start && cursor < b.end) setCursor(b.start); };
   const foldAll = (which: 'data' | 'all' | 'none') => setFolded(which === 'none' ? new Set() : new Set(A.blocks.filter(b => which === 'all' || b.type !== 'code').map(b => b.start)));
+
+  /* ---- find in the listing (Ctrl+F): every line with a match is marked, Enter and F3 go from one to the next ---- */
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQ, setFindQ] = useState('');
+  const [findOpts, setFindOpts] = useState<FindOptions>({ matchCase: false, word: false });
+  /** the hit shown: its index in R.lines (folded blocks too) */
+  const [findCur, setFindCur] = useState<number | null>(null);
+  const [findFocus, setFindFocus] = useState(0);
+  /** Ctrl+F in the source tab: Monaco's own find */
+  const [srcFind, setSrcFind] = useState(0);
+  const findTexts = useMemo(() => (findOpen ? R.lines.map(findText) : null), [R, findOpen]);
+  const findRe = useMemo(() => (findOpen ? findRegExp(findQ, findOpts) : null), [findOpen, findQ, findOpts]);
+  const findHits = useMemo(() => (findTexts ? findLines(findTexts, findRe) : []), [findTexts, findRe]);
+  /** the hit shown, as an index into the hits (-1: none) */
+  const findAt = useMemo(() => { if (findCur == null) return -1; const k = nextHit(findHits, findCur, 1, true); return findHits[k] === findCur ? k : -1; }, [findHits, findCur]);
+  const listingFind = useMemo((): ListingFind | null => (findRe && findHits.length ? { re: findRe, hits: new Set(findHits.map(i => R.lines[i])), cur: findAt >= 0 ? R.lines[findHits[findAt]] : null } : null), [findRe, findHits, findAt, R]);
+  /** where find put the cursor last: once it is moved elsewhere (a click), the next step goes from the cursor */
+  const findAddr = useRef<Addr | null>(null);
+  /** the cursor before the first step goes into the navigation history once a find (Esc then goes back to it) */
+  const findBack = useRef(false);
+  /** the cursor's line, as an index into R.lines */
+  const cursorLineIdx = () => { const v = cursor != null ? lineOf[cursor] : -1; return v >= 0 ? Math.max(0, R.lines.indexOf(view.lines[v])) : 0; };
+  const showHit = (i: number) => {
+    const l = R.lines[i]; if (!l) return;
+    // a hit inside a folded block unfolds it
+    if (l.k !== 'hdr') for (let j = i - 1; j >= 0; j--) {
+      const h = R.lines[j];
+      if (h.k === 'file') break;
+      if (h.k === 'hdr') { const b = A.blocks[h.blk]; if (b && folded.has(b.start)) setFolded(f => { const n = new Set(f); n.delete(b.start); return n; }); break; }
+    }
+    // the cursor goes to the line's address, unless the line is in a file's head (whose lines share one address)
+    const at = l.k !== 'file' && l.k !== 'blank' && !('head' in l && l.head) && A.owner[l.a] >= 0 ? l.a : null;
+    if (at != null && at !== cursor) {
+      if (!findBack.current && cursor != null) { navHist.current.back.push(cursor); navHist.current.fwd = []; findBack.current = true; }
+      setCursor(at); setSel(null);
+    }
+    findAddr.current = at ?? cursor;
+    setFindCur(i);
+    setScrollReq({ addr: l.a, center: false, n: Date.now(), line: l });
+  };
+  const stepFind = (dir: 1 | -1) => {
+    if (!findHits.length) return;
+    // from the hit shown, or from the cursor's line once the cursor was moved elsewhere
+    const k = findCur != null && cursor === findAddr.current ? nextHit(findHits, findCur, dir) : nextHit(findHits, cursorLineIdx(), dir, true);
+    showHit(findHits[k]);
+  };
+  // typing shows the first hit from the one shown (or the cursor's line) on; without hits the one shown stays where
+  // the next search starts
+  useEffect(() => {
+    if (!findOpen || !findHits.length) return;
+    showHit(findHits[nextHit(findHits, findCur != null && cursor === findAddr.current ? findCur : cursorLineIdx(), 1, true)]);
+  }, [findQ, findOpts]); // eslint-disable-line react-hooks/exhaustive-deps
+  const openFind = () => {
+    if (!findOpen) findBack.current = false;
+    setFindOpen(true); setFindFocus(n => n + 1);
+    if (useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
+  };
+  const closeFind = () => { setFindOpen(false); listRef.current?.focus(); };
 
   /* ---- files ---- */
   /** PRGs, and VICE snapshots as their RAM from $0200: the PC and interrupt handlers they hold become entry points */
@@ -1212,6 +1272,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...(disk ? [{ id: 'eject', label: `Eject ${disk.name}`, run: ejectDisk }] : []),
     { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: () => void loadDemo() },
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
+    { id: 'find', label: tab === 'source' ? 'Find in the source' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' ? setSrcFind(n => n + 1) : openFind()) },
+    { id: 'find-next', label: 'Find: the next line with a match', key: 'F3', run: () => (findOpen ? stepFind(1) : openFind()) },
+    { id: 'find-prev', label: 'Find: the line with a match before', key: 'Shift+F3', run: () => (findOpen ? stepFind(-1) : openFind()) },
     { id: 'select-range', label: 'Select address range… (e.g. $2000-$27ff)', run: () => setModal('goto') },
     { id: 'back', label: 'Navigate back', key: 'Esc', run: goBack },
     { id: 'rename', label: 'Rename label at cursor', key: 'N', run: startRename },
@@ -1273,8 +1336,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
   ];
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -1284,6 +1347,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       const run = (id: string) => { const c = k.commands.find(x => x.id === id); if (c) { e.preventDefault(); c.run(); } };
       if (ctrl && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setModal('palette'); return; }
       if (e.key === 'F1') { e.preventDefault(); setModal('palette'); return; }
+      // Ctrl+F finds in the listing, and in the source tab with Monaco's find (in the editor Monaco takes it itself)
+      if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source') run('find'); return; }
+      if (e.key === 'F3' && k.tab === 'listing' && !k.modal) return run(e.shiftKey ? 'find-prev' : 'find-next');
       if (ctrl && !typing) {
         const map: Record<string, string> = { z: e.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', e: 'export', g: 'goto', ',': 'settings', j: 'panel', b: 'bookmarks' };
         const id = map[e.key.toLowerCase()]; if (id) return run(id);
@@ -1321,7 +1387,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         case 'Home': e.preventDefault(); moveTo(0, 1, e.shiftKey); return;
         case 'End': e.preventDefault(); moveTo(lines.length - 1, -1, e.shiftKey); return;
         case 'Enter': { const l = k.curLine; const tk = l && 'tok' in l ? l.tok.find(x => x.to != null && (x.t === 'lbl' || x.t === 'kw')) : undefined; if (tk) { e.preventDefault(); navigate(tk.to!); } return; }
-        case 'Escape': case 'Backspace': e.preventDefault(); goBack(); return;
+        // with the find widget open, Esc closes only it
+        case 'Escape': e.preventDefault(); if (k.findOpen) k.closeFind(); else goBack(); return;
+        case 'Backspace': e.preventDefault(); goBack(); return;
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
@@ -1523,6 +1591,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               <button className="icon-btn" onClick={goBack} title="Back (Esc)" aria-label="Back"><Icon name="left" size={14} /></button>
               <button className="icon-btn" onClick={goFwd} title="Forward (Alt+→)" aria-label="Forward"><Icon name="right" size={14} /></button>
               <button className="btn ghost small" onClick={() => setModal('goto')} title="Go to an address or label, or select a range (G)"><Icon name="target" size={14} /><span className="tool-label">Go to</span><kbd>G</kbd></button>
+              <button className={cx('btn ghost small', findOpen && 'on')} aria-pressed={findOpen} onClick={openFind} title="Find text in the listing: labels, instructions, operands and comments (Ctrl+F)"><Icon name="search" size={14} /><span className="tool-label">Find</span><kbd>Ctrl+F</kbd></button>
               <button className={cx('btn ghost small', dataAsCode && 'on')} aria-pressed={dataAsCode} onClick={() => setUi({ dataAsCode: !dataAsCode })} title="Data as code: show every block that is not code disassembled, to find code that is marked as data. The export does not change."><Icon name="code" size={14} /><span className="tool-label">Data as code</span></button>
               <button className={cx('btn ghost small', offsets && 'on')} aria-pressed={offsets} onClick={() => setUi({ offsets: !offsets })} title="Offset: show where each byte is in the file it was opened from (+000050), left of the address, as SourceGen does: a PRG's after its load address, a cartridge's in the .crt, a snapshot's in the .vsf"><Icon name="rows" size={14} /><span className="tool-label">Offset</span></button>
               <button className={cx('btn ghost small', cycles && 'on')} aria-pressed={cycles} onClick={() => setUi({ cycles: !cycles })} title="Cycles: show the 6510 cycles of every instruction. Select a range, or click a block header, to count it; click a branch's cycles to mark it taken."><Icon name="clock" size={14} /><span className="tool-label">Cycles</span></button>
@@ -1530,7 +1599,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 {([['addr', 'Address', 'Adr'], ['line', 'Line', 'Line']] as const).map(([k, l, s]) => <button key={k} className={cx(gutter === k && 'on')} aria-pressed={gutter === k} aria-label={l} onClick={() => setUi({ gutter: k })}><span className="seg-long">{l}</span><span className="seg-short">{s}</span></button>)}
               </div>
             </div>
-            <button className="icon-btn tab-more" aria-label="Listing tools" aria-haspopup="menu" aria-expanded={menu?.owner === 'tools'} title="Back, forward, Go to, Data as code, Cycles and the left column"
+            <button className="icon-btn tab-more" aria-label="Listing tools" aria-haspopup="menu" aria-expanded={menu?.owner === 'tools'} title="Back, forward, Go to, Find, Data as code, Cycles and the left column"
               onMouseDown={e => e.stopPropagation()}
               onClick={e => {
                 if (menu?.owner === 'tools') { setMenu(null); return; }
@@ -1539,6 +1608,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                   { label: 'Back', key: 'Esc', run: goBack },
                   { label: 'Forward', key: 'Alt+→', run: goFwd },
                   { label: 'Go to…', key: 'G', run: () => setModal('goto') },
+                  { label: 'Find…', key: 'Ctrl+F', run: openFind },
                   { sep: true },
                   { label: 'Data as code', checked: dataAsCode, run: () => setUi({ dataAsCode: !dataAsCode }) },
                   { label: 'Cycles', checked: cycles, run: () => setUi({ cycles: !cycles }) },
@@ -1566,7 +1636,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             {tab === 'listing' && project.files.length > 0 && <>
               {welcome && <div className="welcome">
                 <div><b>{project.cart && A.spaces ? `${project.cart.name} (${A.spaces.length} banks)` : project.files.map(f => f.name).join(', ')}</b> is analysed: {A.blocks.length} blocks, {A.labels.size} labels, {A.music.length ? 'SID music, ' : ''}{A.gfx.length ? `${A.gfx.length} graphics block${A.gfx.length > 1 ? 's' : ''}, ` : ''}{A.stats.illegal} undocumented opcodes.</div>
-                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
+                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range <kbd>Ctrl+F</kbd> find · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
                 <button className="icon-btn" aria-label="Dismiss" onClick={() => setUi({ welcome: false })}><Icon name="x" size={14} /></button>
               </div>}
               {packing.map((p, i) => p && !packHidden.has(project.files[i]?.id ?? String(i)) && <div key={`pack-${i}`} className="welcome preview-bar pack-bar" role="status">
@@ -1582,14 +1652,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 <div><b>Data as code:</b> blocks that are not code are shown disassembled from their start. Select the instructions that are real code and press <kbd>C</kbd> (or right-click → Mark selection as → Code). The export is unchanged.</div>
                 <button className="btn small" onClick={() => setUi({ dataAsCode: false })}>Show as classified</button>
               </div>}
+              <div className="listing-wrap">
               <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onMove={moveInto} onToken={onToken} onContext={onContext}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
-                patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} />
+                patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} />
+              {findOpen && <FindBar q={findQ} opts={findOpts} onQuery={setFindQ} onOpts={setFindOpts} count={findHits.length} at={findAt >= 0 ? findAt + 1 : null} onStep={stepFind} onClose={closeFind} focusKey={findFocus} />}
+              </div>
             </>}
             <Suspense fallback={<div className="empty">Loading…</div>}>
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
-                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} />}
+                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel}
                 onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}

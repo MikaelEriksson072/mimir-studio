@@ -18,13 +18,15 @@ interface SourceViewProps {
   scripts: Partial<Record<BuildScript, string>>; onEditScript: (path: BuildScript, text: string | null) => void;
   /** a block whose type just changed: its lines are marked a moment */
   changed?: Changed | null;
+  /** a new value opens Monaco's find (Ctrl+F outside the editor) */
+  findReq?: number;
 }
 
 const isScript = (p: string): p is BuildScript => (BUILD_SCRIPTS as readonly string[]).includes(p);
 
 const languageOf = (p: string) => p.endsWith('.asm') ? 'kickass' : p.endsWith('.md') ? 'markdown' : p.endsWith('.sh') ? 'shell' : p.endsWith('.bat') ? 'bat' : 'plaintext';
 
-export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed }: SourceViewProps) {
+export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed, findReq = 0 }: SourceViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
   const ed = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -131,6 +133,11 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     suppress.current = true; e.revealLineInCenterIfOutsideViewport(idx + 1); suppress.current = false;
   }, [state, cursor, cur?.path, R]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Ctrl+F outside the editor (or the Find button): Monaco's find widget, once the editor is there
+  const findDone = useRef(findReq);
+  const openFind = () => { const e = ed.current; if (!e) return; e.focus(); void e.getAction('actions.find')?.run(); };
+  useEffect(() => { if (state === 'ready' && findReq !== findDone.current) { findDone.current = findReq; openFind(); } }, [findReq, state]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // a block whose type just changed: from its header (and the lines above its first byte) to its last byte
   useEffect(() => {
     const monaco = monacoRef.current;
@@ -153,6 +160,7 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
             : 'Monaco · Kick Assembler syntax · read-only (edit labels, comments and types in the listing)'}</span>
         <span className="grow" />
         {cur && isScript(cur.path) && scripts[cur.path] != null && <button className="btn" title="Throw away your edits: the export writes the generated script, which follows the toolchain settings, again" onClick={() => { if (pending.current) { clearTimeout(pending.current.timer); pending.current = null; } onEditScript(cur.path as BuildScript, null); }}><Icon name="undo" />Restore generated</button>}
+        {state === 'ready' && <button className="btn" title="Find in the file (Ctrl+F); F3 / Shift+F3 go to the next and the one before" onClick={openFind}><Icon name="search" />Find</button>}
         <button className="btn" onClick={() => onCopy(cur?.text)}><Icon name="copy" />Copy file</button>
         <button className="btn primary" onClick={onExport}><Icon name="folder" />Export…</button>
       </div>
