@@ -46,6 +46,10 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   - routines nothing traced reaches, such as an init that ran before a snapshot was taken;
   - fast loaders: Spindle, Krill's loader, Bitfire, Sparkle, the Covert Bitops loader, and any other one by its drive
     code;
+  - the Action Replay's loaders: its fastload, Warp*25, the tape backups' turbo and superturbo, and the turbo tape of
+    LOAD and SAVE, in the cartridge's banks (5.1, 7.2 and 7.5 are checked against real ones) and in what it saves: the
+    loader file of a Warp*25 backup (the MK4's too) and the loader in a tape backup's header. Novaload, which the
+    7.2's Nova transfer reads, is known as well;
   - packed programs, which [Sindri](https://github.com/MikaelEriksson072/Sindri), Mimir's own unpacker, unpacks with one
     click: it runs the program in an emulated C64, reports each layer it peels off (coders, movers, decrunchers) and
     names the packer by its fingerprint. A file opened from a mounted D64 gets that disk in an emulated 1541, so a boot

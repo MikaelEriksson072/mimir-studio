@@ -747,6 +747,11 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Bitfire (Bitbreaker/Oxyron) | `adc $dd00 / stx $dd02 / lsr / lsr / dey / cpy #$01`, `ora $dd00 / stx $dd02 / ror / ror / ldx #$3f / sax` (resident.asm), och den äldre `ldy #$37 / lda $dcc9,y / sty $dd02` |
 | Sparkle (Sparta/OMG) | `lda $dd00 / sty $dd00 / lsr / lsr / dex / nop / ldy #$c0 / ora $dd00 / sty $dd00` och `and $dd00 / sta $dd00 / ora #0 / sta buffer,x / bvc` (sl.asm), i en senare version `inx` och `ora #1`; texten "sparkle" |
 | Covert Bitops loader (Cadaver) | badline-väntan `lda $d011 / clc / sbc $d012 / and #$07 / beq` följd av `lda #$10 / ora $dd00 / sta $dd00` (v3 loader.s), och `M-W` lagrat baklänges (`"W-M"`) |
+| Action Replay fastload (Datel) | byten tas emot på en rad utan badline: `bit $dd00 / bvc / sec / lda $d012 / sbc $aa / bcc / and #$07 / beq` (MK4: `cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); ett block till `$0200` (`… ora $dd00 / sta $0200,y`); stackkoden som kopierar blocken med cartridgen avbankad (`lda #$23 / sta $de00`, 128 byte till `$013f`); drivkoden: starten vid `$0150` (`sei / jsr $01xx / lda #$7a / sta $1802`), 1541-koden vid `$0300`, 1581-koden vid `$0500` (`sta $4001`); installationen som skickar `M-`, `-` och `W`/`E`/`R` var för sig |
+| Action Replay Warp*25 (Datel) | mottagarloopen som lägger tre byte per varv på stacken (`… eor $dd00 / pha / lda $dd00 …`); avkodningen `inc $01 / pla / eor #$f9 / dey / sta ($ae),y` (MK4 `dec $01`); stackkoden (`ldx #$20 / stx $de00`); 1541-koden vid `$0400` (768 byte); `B-E 2 0 18 5/6` i loaderfilen, som bara räknas med koden (andra loaders har samma B-E) |
+| Action Replay, bandbackuper (Datel) | loadern i bandets header (`$0351–$03fa`, början `lda #$0b / sta $d011 / lda #$05 / sta $01 / sta $c0`), synkbyten `"RB"`, biten genom CIA2:s timer B (`lda $dd0d / stx $dd0f / lsr / lsr / inc $d020`), första filen som skriver över vektorerna vid `$0300` och hoppar till `$0351`; sparrutinen. Turbo och superturbo har samma loader (pulslängden står på bandet) |
+| Action Replay turbo tape (Datel) | LOAD/SAVE med TAPE TURBO ON. 5.1 och 7.5: biten genom CIA1:s timer B, synk `$10 … $01`, sparrutinen. 7.2: Turbo Tape 250:s format (tröskel `$0107`, ledarbyte `$02`, synk `$09 … $01`), biten genom CIA2:s timer B med volym och ram som blinkar (`sta $d418 / sta $d020`); andra turbor läser biten likadant men utan blinket, och synken ensam räcker inte |
+| Novaload (Novagen) | biten genom toppbiten i CIA1:s timer A (`bit $dc0d / beq / lda $dc05 / stx $dc0e / eor #$80 / asl / pla / ror`); timern satt till `$81f4`, som bara räknas med biten. Action Replay 7.2:s Nova transfer läser band med samma kod |
 
 **I en VICE-snapshot** som öppnats från `$0200` (13.7) finns nollsidan och stacken bara i snapshoten. Sparkle har sin
 mottagarloop i stacken (`$0160`). En känd loaders mönster (inte de fasta sidorna) söks därför också i snapshotens
@@ -757,8 +762,16 @@ Den klassiska 2-bitsloopen `lda $dd00 / lsr / lsr / eor $dd00 …` finns i Cover
 loaders. Ensam ger den därför bara en okänd loader, med loopen beskriven. Ett namn ensamt, till exempel "KRILL." eller
 "sparkle" i en text, räcker inte. Det räknas bara med loaderns kod eller direkt efter ett drivkommando.
 
+Action Replays mönster kommer ur cartridgens ROM (5.1, 7.2 och 7.5 har samma kod på olika ställen), ur backuper och
+loaderfiler som de sparat i VICE och ur MK4:s loaderfil. Koden som ROM:et har för att kopiera till drivenheten eller
+stacken är data där, så den delen är så många byte som koden är (till exempel 768 för Warp*25:s drivkod), utom när
+koden spårats. I en cartridge hamnar varje loader i sin bank: fastload och Warp*25 i bank 2, bandloaders i bank 1 och 3.
+På 2445 program ur arkivet ändrades fyra fynd: två crackares loaders som återanvänder Warp*25-koden och två spel med
+Novaload kvar i minnet.
+
 **Andra diskladdare** känns igen på det som alla diskladdare har. De samlas i fyndet *A fast loader (not one of the known
-ones)*. Är exakt en känd loader hittad blir de i stället dess delar:
+ones)*. Är exakt en känd diskladdare hittad, eller flera av samma märke (Action Replays), blir de i stället dess delar
+(Action Replays fastload):
 
 - **Drivkod:** absolut åtkomst till 1541:ans VIA-register (`$1800–$180f`, `$1c00–$1c0f`) och GCR-väntan `bvc *` (`50 FE`),
   `lda $1c01` räknas dubbelt. Det gäller i data som C64-koden inte spårats in i. Minst tre åtkomster nära varandra (högst
@@ -771,7 +784,8 @@ ones)*. Är exakt en känd loader hittad blir de i stället dess delar:
   bara när det finns en loader att skicka.
 
 **Band:** spårad kod som väntar på CIA1:s FLAG-linje (`lda $dc0d / and #$10`, `lda #$10 / bit $dc0d` eller `lda #$90 /
-sta $dc0d`) och läser eller startar en CIA-timer högst 256 byte därifrån. **KERNAL LOAD:** varje `jsr $ffd5` i spårad kod.
+sta $dc0d`) och läser eller startar en timer i CIA1 eller CIA2 högst 256 byte därifrån, utom där en känd bandladdare
+redan hittats. **KERNAL LOAD:** varje `jsr $ffd5` i spårad kod.
 
 **Packade program:** loadern ligger packad tillsammans med resten, så den hittas inte förrän programmet är uppackat
 (8.11b). Explorer säger det. Testerna med riktiga demos (lokalt) gav, uppackade med unp64, Bitfire i Fairlights *1337* och

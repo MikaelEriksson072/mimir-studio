@@ -2,7 +2,10 @@
  *
  * Spindle, Krill's loader, Bitfire, Sparkle and the Covert Bitops loader are known by their own receive loops, install
  * commands and texts; the byte patterns come from their sources (Spindle 3.1 stage1.s, Krill's loader v194
- * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops loader v3 loader.s). Any other
+ * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops loader v3 loader.s). The Action
+ * Replay's loaders (Datel) come from its ROMs (5.1, 7.2 and 7.5 keep the same code in other places; 7.2's turbo tape differs), the backups and loader files
+ * they saved in VICE, and the MK4's loader file; Novaload is in the 7.2, whose Nova transfer reads such tapes with
+ * Novaload's own code. Any other
  * loader is known by what every disk loader has (Spindle 2.3 and an older Bitfire were read from their releases' binaries): code for the 1541 (it reads and writes the drive's VIA registers at
  * $1800 and $1c00, and waits for GCR bytes with bvc *), drive commands that upload and start it (M-W, M-E, M-R) and a
  * receive loop that reads the serial bus at $dd00 again and again. A tape turbo loader reads CIA1's FLAG line and times
@@ -22,8 +25,19 @@ interface Sign {
   page?: boolean;
   /** a resident part at a fixed place: the part is all of it when the match is inside */
   fixed?: [Addr, Addr];
+  /** code kept to be copied elsewhere (to the drive, the stack page): the part is these bytes from the match, unless it
+   *  is traced code here */
+  span?: [number, number];
+  /** other loaders have it too: it counts only with the loader's own code */
+  weak?: boolean;
 }
-interface Known { id: LoaderId; name: string; how: string; signs: Sign[]; /** a name it writes somewhere */ text?: string }
+interface Known {
+  id: LoaderId; name: string; how: string; signs: Sign[];
+  /** a name it writes somewhere */
+  text?: string;
+  /** loaders of one make (the Action Replay's): what every disk loader has goes to the main one of them */
+  group?: string; main?: boolean;
+}
 
 const KNOWN: Known[] = [
   {
@@ -69,7 +83,67 @@ const KNOWN: Known[] = [
       { pat: pat('.. 04|05|06|07 .. 57 2D 4D'), role: 'command', what: 'drive command M-W, stored backwards (its installer sends it from the end)' },
     ],
   },
+  // the Action Replay: its ROM holds the code it copies to the stack page and the drive, and the loader file it saves
+  // with a Warp*25 backup has the same code
+  {
+    id: 'ar-fastload', name: 'Action Replay fastload (Datel)', group: 'actionreplay', main: true,
+    how: '2-bit, the classic loop (lda $dd00 / lsr / lsr / eor $dd00 …) on a line with no badline; its drive code runs at $0300 in a 1541 (a 1581 has code of its own), and the cartridge banks itself in and out through $de00',
+    signs: [
+      { pat: pat('2C 00 DD 50 FB 38 AD 12 D0 E5 AA 90 04 29 07 F0 F5 A5 A8 8D 00 DD'), role: 'resident', what: 'receives a byte: waits for the drive and for a line with no badline, then reads the serial bus four times' },
+      { pat: pat('2C 00 DD 50 FB A6 9E AD 12 D0 C9 31 90 06 29 06 C9 02 F0 F3 8E 00 DD'), role: 'resident', what: 'receives the bytes (MK4): waits for the drive and for a line with no badline, then reads the serial bus four times' },
+      { pat: pat('AD 00 DD 4A 4A 0D 00 DD 4A 4A EA EA 0D 00 DD 4A 4A 0D 00 DD 99 00 02'), role: 'resident', what: 'receives a block of 256 bytes into $0200 (lda $dd00 / lsr / lsr / ora $dd00 …)' },
+      { pat: pat('A9 23 8D 00 DE B9 00 02 91 0F C8 D0 F8'), role: 'resident', what: 'copies each block from $0200 into memory with the cartridge banked out ($de00); it runs in the stack page ($013f)', span: [0, 0x80] },
+      { pat: pat('78 20 .. 01 A9 7A 8D 02 18 20 E9 F5 20 62 01 4C 00 03'), role: 'drivecode', what: 'code for the 1541 at $0150: it receives the rest of the drive code fast, then starts it at $0300', span: [0, 0x46] },
+      { pat: pat('BA 8E 3D 03 88 8C AF 02 C8 84 11 C8 84 1C'), role: 'drivecode', what: 'code for the 1541 at $0300: it reads the file and sends it a sector at a time', span: [0, 0x2f3] },
+      { pat: pat('78 A9 D8 8D 01 40 A5 4C AE 8B 02 85 0B'), role: 'drivecode', what: 'code for the 1581 at $0500 (its serial port is the CIA at $4000)', span: [0, 0x23f] },
+      { pat: pat('A9 4D 20 A8 FF A9 2D 20 A8 FF 8A 4C A8 FF'), role: 'install', what: 'sends the drive commands M-W, M-E and M-R (lda #"M" / jsr CIOUT / lda #"-" / jsr CIOUT / txa / jmp CIOUT)' },
+    ],
+  },
+  {
+    id: 'ar-warp', name: 'Action Replay Warp*25 (Datel)', group: 'actionreplay',
+    how: 'Datel\'s own disk format, about 25 times as fast as the 1541: drive code at $0400 reads it, and the C64 takes three bytes a round onto the stack (lda $dd00 / lsr / lsr / eor $dd00 … pha) and decodes them (eor #$f9); the loader file saved with a backup starts the drive code with B-E from track 18',
+    signs: [
+      { pat: pat('4A 4A 4D 00 DD 48 AD 00 DD 4A 4A 4D 00 DD'), role: 'resident', what: 'receive loop: three bytes a round, pushed onto the stack (lda $dd00 / lsr / lsr / eor $dd00 … pha)' },
+      // MK4 banks the ROMs out with dec $01, the later ones with inc $01
+      { pat: pat('C6|E6 01 68 49 F9 88 91 AE D0 F8 E6|C6 01'), role: 'resident', what: 'takes the bytes off the stack, decodes them (pla / eor #$f9) and stores them with the ROMs banked out; it runs at $0200', span: [0, 0x1c] },
+      { pat: pat('A2 20 8E 00 DE 18 65 0E 85 10 A9 02 85 0F'), role: 'resident', what: 'moves the loaded sectors on with the cartridge banked out ($de00); it runs in the stack page ($013f)', span: [0, 0x80] },
+      { pat: pat('4C 56 04 A9 B0 20 85 03 28 D0 F5 A5 0E 85 18 A5 0F 85 19'), role: 'drivecode', what: 'code for the 1541 at $0400: it reads the Warp*25 sectors', span: [0, 0x300] },
+      { pat: pat('42 2D 45 20 32 20 30 20 31 38 20 35|36'), role: 'command', what: 'drive command B-E 2 0 18 x: runs the drive code saved on track 18 (MK4 sector 5, later ones sector 6)', weak: true },
+    ],
+  },
+  {
+    id: 'ar-tape', name: 'Action Replay tape backups (Datel)', group: 'actionreplay',
+    how: 'turbo and superturbo backups: the loader is in the tape header (at $0351) and the first file starts it through the vectors at $0300; it waits for the sync bytes "RB" and tells short pulses from long by CIA2\'s timer B, whose time it reads from the tape, so both speeds load with it',
+    signs: [
+      { pat: pat('A9 0B 8D 11 D0 A9 05 85 01 85 C0 88 D0 FD CA D0 FA'), role: 'tape', what: 'the loader that goes into the tape header ($0351-$03fa): it waits for the sync bytes "RB" and reads the bits by CIA2\'s timer B', span: [0, 0xaa] },
+      { pat: pat('AD 0D DD 8E 0F DD 4A 4A EE 20 D0 60'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA2\'s timer B has run out' },
+      { pat: pat('C9 52 D0 F4 20 .. .. C9 42 D0 ED'), role: 'tape', what: 'waits for the sync bytes "RB"' },
+      { pat: pat('78 20 15 FD 20 53 E4 A9 7F 8D 0D DC 78 4C 51 03'), role: 'tape', what: 'the first file: it loads over the vectors at $0300 and jumps to the loader in the tape header ($0351)' },
+      { pat: pat('85 B6 A2 08 46 B6 A9 80 90 01 0A 8D 06 DC 90 02 09 82 8D 07 DC 2C 07 DC 30 FB A9 19'), role: 'tape', what: 'saves a backup: each bit a pulse that CIA1\'s timer B times' },
+    ],
+  },
+  {
+    id: 'ar-turbotape', name: 'Action Replay turbo tape (Datel)', group: 'actionreplay',
+    how: 'LOAD and SAVE with TAPE TURBO ON; 5.1 and 7.5 time the pulses with CIA1\'s timer B and sync on the bytes $10 … $01, 7.2 writes Turbo Tape 250\'s format (threshold $0107, leader byte $02, sync $09 … $01) and times it with CIA2\'s timer B',
+    signs: [
+      { pat: pat('2C 0D DC F0 F6 AD 20 D0 49 05 8D 20 D0 AD 07 DC 8E 0F DC 0A 60'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then CIA1\'s timer B tells short from long' },
+      { pat: pat('A0 10 84 90 20 .. .. C5 90 D0 F0 88 D0 F4'), role: 'tape', what: 'waits for the sync bytes $10 … $01' },
+      { pat: pat('8D 06 DC 90 02 09 82 8D 07 DC 2C 07 DC 30 FB EE 20 D0'), role: 'tape', what: 'saves: each bit a pulse that CIA1\'s timer B times' },
+      // other turbos read the bit the same way, but do not flash the volume and the border with it
+      { pat: pat('A9 10 2C 0D DC F0 FB AD 0D DD 8E 07 DD 48 A9 19 8D 0F DD 68 8D 18 D4 8D 20 D0'), role: 'tape', what: 'reads a bit (7.2): a pulse on the FLAG line, then CIA2\'s timer B; the border and the volume flash with each pulse' },
+      { pat: pat('A0 09 20 .. .. C9 02 F0 F9 C4 BD D0 E8'), role: 'tape', what: 'waits for the leader bytes $02, then the sync bytes $09 … $01 (7.2)', weak: true },
+    ],
+  },
+  {
+    id: 'novaload', name: 'Novaload (Novagen)',
+    how: 'tape: the top bit of CIA1\'s timer A ($81f4) tells short pulses from long; a sync byte $aa, the name, then blocks with a checksum. The Action Replay 7.2\'s Nova transfer reads Novaload tapes with the same code',
+    signs: [
+      { pat: pat('A9 10 2C 0D DC F0 FB AD 05 DC 8E 0E DC 49 80 0A 68 6A'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then the top bit of CIA1\'s timer A' },
+      { pat: pat('A9 F4 8D 04 DC A9 81 8D 05 DC'), role: 'tape', what: 'times the pulses with CIA1\'s timer A from $81f4', weak: true },
+    ],
+  },
 ];
+const BY_ID = new Map(KNOWN.map(k => [k.id, k]));
 /** the classic 2-bit receive loop: the Covert Bitops loader's, and many older loaders' */
 const CLASSIC = pat('AD 00 DD 4A 4A 4D 00 DD 4A 4A 4D 00 DD 4A 4A 4D 00 DD');
 
@@ -104,6 +178,8 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
   const blockAt = (a: Addr) => blocks.find(b => a >= b.start && a < b.end);
   /** a traced routine holds the match: the part is that code block */
   const around = (a: Addr, n: number): [Addr, Addr] => { const b = blockAt(a); return b && b.type === 'code' && b.end - b.start <= 0x400 && inCode(a) ? [b.start, b.end] : [a, a + n]; };
+  /** code kept here to run elsewhere: the bytes of its span, as far as the file goes */
+  const spanned = (a: Addr, [from, to]: [number, number]): [Addr, Addr] => { let end = Math.min(0x10000, a + to); while (end > a + 1 && owner[end - 1] !== owner[a]) end--; return [a + from, end]; };
 
   const findings: LoaderFinding[] = [];
   const overlaps = (s: Addr, e: Addr) => findings.some(f => f.parts.some(p => p.start < e && p.end > s));
@@ -111,13 +187,18 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
   // ---- the known loaders ----
   for (const k of KNOWN) {
     const parts: LoaderPart[] = [];
+    let own = false;
     for (const s of k.signs) {
       for (const a of find(s.pat)) {
-        const [start, end] = s.page ? [a, Math.min(0x10000, a + 0x100)] : s.fixed && a >= s.fixed[0] && a < s.fixed[1] ? s.fixed : around(a, s.pat.length);
+        const [start, end] = s.page ? [a, Math.min(0x10000, a + 0x100)] : s.fixed && a >= s.fixed[0] && a < s.fixed[1] ? s.fixed
+          : s.span && (s.role === 'drivecode' || !inCode(a)) ? spanned(a, s.span) : around(a, s.pat.length);
         if (parts.some(p => p.start < end && p.end > start)) continue;
         parts.push({ start, end, role: s.role, what: s.what });
+        if (!s.weak) own = true;
       }
     }
+    // what other loaders have too counts only with its own code
+    if (!own) parts.length = 0;
     if (k.text) for (const e of encodings(k.text)) for (const a of find(e)) if (!inCode(a)) parts.push({ start: a, end: a + e.length, role: 'text', what: `its name, "${k.text.replace(/\.$/, '')}"` });
     // its name alone could be any text: it counts with its code, or (below) next to drive commands
     if (parts.length) findings.push({ id: k.id, name: k.name, sure: 'match', how: k.how, parts: parts.sort((x, y) => x.start - y.start) });
@@ -128,7 +209,7 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
     let ram: Uint8Array;
     try { ram = parseVsf(f.vsf).ram; } catch { continue; }
     for (const k of KNOWN) for (const s of k.signs) {
-      if (s.page || s.fixed) continue;
+      if (s.page || s.fixed || s.weak) continue;
       for (let a = 0; a + s.pat.length <= 0x200; a++) {
         if (!s.pat.every((x, i) => owner[a + i] < 0 && (!x || x.has(ram[a + i])))) continue;
         const part: LoaderPart = { start: a, end: a + s.pat.length, role: s.role, what: `${s.what}, in the ${a < 0x100 ? 'zero page' : 'stack'}, which this snapshot is opened without`, outside: true };
@@ -220,8 +301,11 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
     for (const s of calls.keys()) { const [start, end] = around(s, 3); evidence.push({ start, end, role: 'install', what: `talks to the drive through the KERNAL (${all.join(', ')}): sends the drive code and its commands` }); }
   }
   if (evidence.length) {
-    // one known loader: these are its parts; otherwise they are a loader of their own
-    const known = findings.length === 1 ? findings[0] : null;
+    // one known disk loader, or loaders of one make (the Action Replay's): these are its parts; otherwise they are a
+    // loader of their own
+    const disk = findings.filter(f => !BY_ID.get(f.id)?.signs.every(s => s.role === 'tape'));
+    const makes = new Set(disk.map(f => BY_ID.get(f.id)?.group ?? f.id));
+    const known = makes.size === 1 ? disk.find(f => BY_ID.get(f.id)?.main) ?? disk[0] : null;
     const keep = evidence.filter(p => !(known && p.role === 'resident' && known.parts.some(q => q.role === 'resident')));
     if (known) known.parts.push(...keep.filter(p => !known.parts.some(q => q.start < p.end && q.end > p.start)));
     else if (keep.some(p => p.role === 'drivecode' || p.role === 'resident' || p.role === 'command')) {
@@ -233,8 +317,9 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
 
   // ---- tape: CIA1's FLAG line (the datasette's read line) and a timer to measure the pulses ----
   const flag = [...find(pat('AD 0D DC 29 10')), ...find(pat('A9 10 2C 0D DC')), ...find(pat('A9 90 8D 0D DC'))].filter(inCode);
-  const timers = [...find(pat('AD|AE|AC 04|05|06|07 DC')), ...find(pat('8D|8E|8C 0E|0F DC'))].filter(inCode);
-  const tape = flag.filter(a => timers.some(t => Math.abs(t - a) <= 256));
+  const timers = [...find(pat('AD|AE|AC 04|05|06|07 DC|DD')), ...find(pat('8D|8E|8C 0E|0F DC|DD'))].filter(inCode);
+  // a known tape loader is that loader's
+  const tape = flag.filter(a => timers.some(t => Math.abs(t - a) <= 256) && !overlaps(a, a + 5));
   if (tape.length) {
     const parts: LoaderPart[] = [];
     for (const a of tape) { const [start, end] = around(a, 5); if (!parts.some(p => p.start === start)) parts.push({ start, end, role: 'tape', what: 'tape turbo: waits for pulses on the FLAG line ($dc0d bit 4) and times them with a CIA timer' }); }

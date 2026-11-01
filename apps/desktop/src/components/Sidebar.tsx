@@ -366,15 +366,15 @@ const LOADER_ROLE: Record<LoaderPart['role'], string> = { resident: 'on the C64'
 function LoadersSection({ A, packed, onNavigate }: { A: AnalysisResult; packed: boolean; onNavigate: (a: Addr) => void }) {
   return (
     <SideSection id="loaders" title="Loaders" className="loader-sec" summary={A.loaders.length ? `${A.loaders.length} found` : 'none found'}>
-      {A.loaders.length ? A.loaders.map(l => (
-        <div key={l.id} className="loader" aria-label={l.name}>
+      {A.loaders.length ? A.loaders.map((l, i) => (
+        <div key={`${l.id}-${i}`} className="loader" aria-label={l.name}>
           <div className="loader-name">{l.name}{l.sure === 'likely' && <span className="pill" title="Found by what loaders do (drive code, drive commands, a receive loop), not by its own code">by its traits</span>}</div>
           <div className="muted small">{l.how}</div>
           <ul className="loader-parts">
             {l.parts.slice(0, 12).map((p, i) => (
               <li key={i} className={p.outside ? 'outside' : undefined}>{p.outside
                 ? <span className="mono" title={p.what}>${h4(p.start)}–${h4(p.end - 1)}</span>
-                : <button className="mono" title={`${p.what}\nClick to go there`} onClick={() => onNavigate(p.start)}>${h4(p.start)}–${h4(p.end - 1)}</button>}
+                : <button className="mono" title={`${p.what}\nClick to go there`} onClick={() => onNavigate(p.start)}>{bankAdr(A, p.start)}–${h4(p.end - 1)}</button>}
               <span>{LOADER_ROLE[p.role]}{p.outside && ' · not opened'}</span></li>
             ))}
             {l.parts.length > 12 && <li className="muted">and {l.parts.length - 12} more, marked in the listing</li>}

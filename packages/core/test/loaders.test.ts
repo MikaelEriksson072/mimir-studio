@@ -1,10 +1,11 @@
 /* Loaders (analyze/loaders.ts): each known loader by its own code, taken from its source (Spindle 3.1 stage1.s, Spindle
  * 2.3's spin.exe, Krill's loader v194 hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops
- * loader v3 loader.s); other disk loaders by drive code, drive commands and a receive loop; tape and KERNAL loading; and
- * the marks in the source. The programs below are those loops (illegal opcodes as .byte), with a BASIC start that
- * reaches them where the loader is called. */
+ * loader v3 loader.s); the Action Replay's fastload, Warp*25 and tape loaders and Novaload, by what their code does
+ * (written here from the cartridges' ROMs and the files they save, a few instructions each); other disk loaders by drive
+ * code, drive commands and a receive loop; tape and KERNAL loading; and the marks in the source. The programs below are
+ * those loops (illegal opcodes as .byte), with a BASIC start that reaches them where the loader is called. */
 import { describe, expect, it } from 'vitest';
-import { analyze, demoProject, makeShowcase, openC64File, parsePrg, render, verify, type LoaderFinding, type ProjectInput } from '../src';
+import { analyze, createProject, demoProject, makeCrt, makeShowcase, openC64File, openCartridge, parsePrg, render, verify, type LoaderFinding, type ProjectInput } from '../src';
 import { fromSource, snapshotOf } from './helpers/programs';
 
 const BASIC = '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n';
@@ -317,6 +318,224 @@ describe('loaders', () => {
     expect(text).toContain('// ==== end of A fast loader (not one of the known ones): its installer ====');
     // the marks are listing lines of their own
     expect(R.lines.filter(l => l.k === 'cmt' && l.mark).length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+/* The Action Replay (Datel). Its fastload receives a byte on a line with no badline; it keeps the code it copies to the
+ * stack page and to the drive in its ROM, which is data there. */
+const AR_GETBYTE = `getbyte: ldx $a9
+wait: bit $dd00
+ bvc wait
+ sec
+line: lda $d012
+ sbc $aa
+ bcc go
+ and #$07
+ beq line
+go: lda $a8
+ sta $dd00
+ lda $dd00
+ lsr
+ lsr
+ eor $dd00
+ lsr
+ lsr
+ eor $dd00
+ lsr
+ lsr
+ eor $dd00
+ stx $dd00
+ eor $a8
+ rts
+`;
+const AR_FASTLOAD = ` jsr getbyte
+ rts
+${AR_GETBYTE}.pc = $2000
+stack: .byte $a9,$23,$8d,$00,$de,$b9,$00,$02,$91,$0f,$c8,$d0,$f8
+.pc = $2100
+drive: .byte $78,$20,$8f,$01,$a9,$7a,$8d,$02,$18,$20,$e9,$f5,$20,$62,$01,$4c,$00,$03
+`;
+/** the loader file it saves with a Warp*25 backup: three bytes a round onto the stack, decoded with eor #$f9 */
+const AR_WARP = ` jsr recv
+ jsr getbyte
+ rts
+recv: ldy #$50
+loop: lda $dd00
+ lsr
+ lsr
+ eor $dd00
+ lsr
+ lsr
+ eor $dd00
+ lsr
+ lsr
+ eor $dd00
+ pha
+ lda $dd00
+ lsr
+ lsr
+ eor $dd00
+ lsr
+ lsr
+ eor $dd00
+ lsr
+ lsr
+ eor $dd00
+ pha
+ dey
+ bpl loop
+ ldy #$f0
+ inc $01
+store: pla
+ eor #$f9
+ dey
+ sta ($ae),y
+ bne store
+ dec $01
+ rts
+${AR_GETBYTE}.pc = $2000
+ .text "B-E 2 0 18 6"
+`;
+const B_E = ' rts\n.pc = $2000\n .byte $42,$2d,$45,$20,$32,$20,$30,$20,$31,$38,$20,$36\n';
+/** a turbo or superturbo backup's loader, in the tape header at $0351 */
+const AR_TAPE = `.pc = $0351
+ lda #$0b
+ sta $d011
+ lda #$05
+ sta $01
+ sta $c0
+d: dey
+ bne d
+ dex
+ bne d
+sync: jsr bit
+ bcs sync
+ jsr byte
+ cmp #$52
+ bne sync
+ jsr byte
+ cmp #$42
+ bne sync
+ rts
+byte: lda #$80
+ sta $b6
+b: jsr bit
+ ror $b6
+ bcc b
+ lda $b6
+ rts
+bit: lda #$10
+w: bit $dc0d
+ beq w
+ lda $dd0d
+ stx $dd0f
+ lsr
+ lsr
+ inc $d020
+ rts
+`;
+/** a bit as Turbo Tape 250's format has it (CIA2's timer B); the Action Replay 7.2 flashes the volume and the border with it */
+const TT250 = (flash: boolean) => ` jsr bit
+ rts
+bit: lda #$10
+w: bit $dc0d
+ beq w
+ lda $dd0d
+ stx $dd07
+ pha
+ lda #$19
+ sta $dd0f
+ pla
+${flash ? ' sta $d418\n sta $d020\n' : ''} lsr
+ lsr
+ rts
+`;
+const NOVALOAD = ` lda #$f4
+ sta $dc04
+ lda #$81
+ sta $dc05
+ jsr read
+ rts
+read: lda #$7f
+r: pha
+ inc $d020
+ ldx #$11
+ lda #$10
+w: bit $dc0d
+ beq w
+ lda $dc05
+ stx $dc0e
+ eor #$80
+ asl
+ pla
+ ror
+ bcs r
+ sta $aa
+ rts
+`;
+
+describe("the Action Replay's loaders", () => {
+  it('know its fastload by its own code, with the code it copies to the stack page and the drive', () => {
+    const [l] = loaders(AR_FASTLOAD);
+    expect(l).toMatchObject({ id: 'ar-fastload', name: 'Action Replay fastload (Datel)', sure: 'match' });
+    expect(l.parts.map(p => [p.role, p.start])).toEqual([['resident', 0x0811], ['resident', 0x2000], ['drivecode', 0x2100]]);
+    expect(l.parts[0].what).toBe('receives a byte: waits for the drive and for a line with no badline, then reads the serial bus four times');
+    // code kept to run elsewhere is its whole span, as far as the file goes
+    expect(l.parts[2]).toMatchObject({ end: 0x2112, what: 'code for the 1541 at $0150: it receives the rest of the drive code fast, then starts it at $0300' });
+  });
+
+  it('know the Warp*25 loader file, and B-E only with its code', () => {
+    const found = loaders(AR_WARP);
+    // the receive loop and the decoding are one routine here: one part
+    expect(found.map(l => [l.id, l.parts.map(p => p.role)])).toEqual([['ar-fastload', ['resident']], ['ar-warp', ['resident', 'command']]]);
+    expect(found[1].parts.map(p => p.what.split(':')[0])).toEqual(['receive loop', 'drive command B-E 2 0 18 x']);
+    // MK4 banks the ROMs out the other way round
+    expect(ids(AR_WARP.replace(' inc $01\n', ' dec $01\n').replace(' dec $01\n rts', ' inc $01\n rts'))).toEqual(['ar-fastload', 'ar-warp']);
+    // other loaders start their drive code with the same B-E
+    expect(loaders(B_E)).toEqual([]);
+  });
+
+  it('give what every disk loader has to its fastload when it finds more of its loaders', () => {
+    const found = loaders(`${AR_WARP} .byte $4d,$2d,$57,$00,$05,$20\n`);
+    expect(found.map(l => l.id)).toEqual(['ar-fastload', 'ar-warp']);
+    expect(found[0].parts.map(p => p.what)).toContain('drive command M-W $0500, 32 bytes into the drive');
+  });
+
+  it("know a tape backup's loader in the tape header, and not as an unknown tape turbo", () => {
+    const [l, ...rest] = analyze({ name: 't', files: [fromSource('t.prg', AR_TAPE)] }).loaders;
+    expect(rest).toEqual([]);
+    expect(l).toMatchObject({ id: 'ar-tape', name: 'Action Replay tape backups (Datel)' });
+    expect(l.parts[0]).toMatchObject({ start: 0x0351, role: 'tape' });
+    expect(l.parts.map(p => p.what.split(':')[0])).toContain('reads a bit');
+  });
+
+  it('know the 7.2 turbo tape by its flashes; Turbo Tape 250 elsewhere is a tape turbo timed with CIA2', () => {
+    expect(ids(TT250(true))).toEqual(['ar-turbotape']);
+    expect(ids(TT250(false))).toEqual(['tape?']);
+  });
+
+  it("know Novaload, which the 7.2's Nova transfer reads with Novaload's own code", () => {
+    const [l] = loaders(NOVALOAD);
+    expect(l).toMatchObject({ id: 'novaload', name: 'Novaload (Novagen)' });
+    // the routine that sets the timer runs straight into the one that reads: one part
+    expect(l.parts.map(p => [p.role, p.start])).toEqual([['tape', 0x080d]]);
+    // its timer on its own is not enough
+    expect(ids(' lda #$f4\n sta $dc04\n lda #$81\n sta $dc05\n rts\n')).toEqual([]);
+  });
+
+  it('know them in the banks of an Action Replay cartridge', () => {
+    const rom = (src: string) => { const b = new Uint8Array(0x2000).fill(0xff), f = fromSource('b.prg', `.pc = $8000\n${src}`); b.set(f.bytes.subarray(0, 0x2000)); return b; };
+    const empty = new Uint8Array(0x2000).fill(0xff);
+    const crt = makeCrt({ name: 'AR', hw: 1, exrom: 0, game: 1, chips: [
+      { bank: 0, load: 0x8000, bytes: empty }, { bank: 1, load: 0x8000, bytes: empty },
+      { bank: 2, load: 0x8000, bytes: rom(AR_FASTLOAD.replace('.pc = $2000', '.pc = $9000').replace('.pc = $2100', '.pc = $9100')) },
+      { bank: 3, load: 0x8000, bytes: rom(`.byte 0\n${AR_TAPE.replace('.pc = $0351\n', '')}`) },
+    ] });
+    const o = openCartridge('ar.crt', crt);
+    const A = analyze(createProject({ files: o.files, cart: o.cart }));
+    // bank 2's and bank 3's addresses
+    expect(A.loaders.map(l => [l.id, l.parts[0].start.toString(16)])).toEqual([['ar-fastload', '28004'], ['ar-tape', '38001']]);
+    expect(A.loaders[0].parts.map(p => p.start.toString(16))).toEqual(['28004', '29000', '29100']);
   });
 });
 
