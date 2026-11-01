@@ -43,9 +43,18 @@ export async function launchApp(userData: string): Promise<ElectronApplication> 
   // load out/renderer/index.html, never a dev server
   const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[0] !== 'ELECTRON_RENDERER_URL' && e[1] !== undefined));
   const profile = `--user-data-dir=${userData}`;
-  return electron.launch(packagedExe
+  const app = await electron.launch(packagedExe
     ? { executablePath: packagedExe, args: [profile], env }
     : { executablePath: electronPath, args: [mainEntry, profile], cwd: appDir, env });
+  // The windows open on the desktop, under the real mouse pointer: its moves (by hand, or sent by Windows when a window
+  // changes under it) would reach the page between the test's own, and one without the button held ends a drag in
+  // the listing (the button was let go outside the window). Playwright's input does not come through Windows, so the
+  // windows let the real mouse through to whatever is behind them.
+  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    for (const w of BrowserWindow.getAllWindows()) w.setIgnoreMouseEvents(true);
+    electronApp.on('browser-window-created', (_e, w) => w.setIgnoreMouseEvents(true));
+  });
+  return app;
 }
 
 export const test = base.extend<Fixtures & Options>({
