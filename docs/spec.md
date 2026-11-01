@@ -2024,7 +2024,12 @@ exporten skriver varje banks källa: avbilden byggs av dem alla, ingen bank tas 
 (*bank 3 · $8000 · start*), och Blocks, Symbols och Memory map visar `3:$8000`. Vyerna på 64 KB (Graphics, Memory,
 värmekartan i Inspector och Explorer, grafikförhandsvisningen) visar banken där markören är (`spaceView`,
 `spaceRender`): deras adresser är de vanliga i den banken, och det de väljer eller markerar görs till bankadresser igen.
-Inspector säger *Memory map · bank 3*, och `$01` visas med bankens minneskarta. *Go to* (G) tar banken före adressen
+Bank 0:s namn på sina egna byte hör till bank 0 och syns inte i en annan banks vy; namnen på det ingen bank har delas.
+I Graphics och Memory väljs banken i lägesraden (*Bank*, bredvid *Go*): listan har cartridgens alla banker med
+adresserna (*3 · $8000 · start*), och pilarna bredvid eller mushjulet över den stegar från bank till bank. Markören följer
+med, till samma adress när banken har den (annars dit banken startar), och markeringen med den när banken har alla dess
+byte. Bilden och raderna står kvar där de är, så samma adresser kan jämföras bank för bank. Banker som inte är med i
+projektet står i listan men går inte att välja förrän + i Explorer lägger till dem. Inspector säger *Memory map · bank 3*, och `$01` visas med bankens minneskarta. *Go to* (G) tar banken före adressen
 (`3:8000`, `3:$8000-3:$80ff`); utan den gäller markörens bank när den har adressen, annars den första som har den.
 Programstarten och användarens arbete sparas på bankadresser (projektfilens schema tar dem). Patchar kan skrivas i
 bank 0 och hamnar alltid i bank 0:s chip, inte i en annan bank på samma adress; i andra banker säger dialogen att det

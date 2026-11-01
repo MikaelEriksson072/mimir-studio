@@ -3,11 +3,12 @@
  * memory. *Font per row* draws a picture whose character rows each have their own font (2 KB apart, passing over memory
  * where no font can be) and the same 40 screen codes. A click selects a cell, Shift+click or a drag more; the selection is the listing's and is marked as Charset,
  * Sprite data, Bitmap or Screen matrix from here, or saved: as bytes, with a load address, as a Koala or Art Studio
- * picture, as a PNG image or as .byte source. */
+ * picture, as a PNG image or as .byte source. A cartridge's bank is picked in the head: the picture stays where it is,
+ * and the cursor goes along, to the same address when the bank has it. */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture, makePrg, validLabel, type Addr, type AnalysisResult, type BlockKind, type RenderResult } from '@mimir/core';
 import { Icon } from '../lib/icons';
-import { OptGroup, ViewModes, type ViewMode } from './ViewModes';
+import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
 import { parseGoto } from '../lib/goto';
 import { bitmapAround, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, NO_FONT, gfxLayout, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
@@ -57,6 +58,8 @@ interface MemoryGfxProps {
   onShow: (a: Addr) => void;
   /** save a file through a save dialog (its suggested name and bytes) */
   onSave: (name: string, bytes: Uint8Array) => void;
+  /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
+  bank?: BankPickProps | null;
 }
 
 /** a way to save the selection: the menu text, the file extension, and the bytes */
@@ -72,7 +75,7 @@ async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArr
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave }: MemoryGfxProps) {
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   const set = (p: Partial<GfxPrefs>) => setUi({ gfx: { ...useUi.getState().gfx, ...p } });
   const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip } = prefs;
@@ -145,6 +148,12 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     // the scroll event this sets off is not yours
     requestAnimationFrame(() => requestAnimationFrame(() => { restoring.current = false; }));
   }, [kind, cols, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  // another bank keeps the picture where it is, unless the cursor went elsewhere in it (the bank does not have its address)
+  const seen = useRef({ bank: bank?.value, cursor });
+  useEffect(() => {
+    const was = seen.current; seen.current = { bank: bank?.value, cursor };
+    if (was.bank !== bank?.value && cursor != null && cursor !== was.cursor && kind !== 'fontrows') scrollTo(cursor);
+  }, [bank?.value, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const point = (e: ReactMouseEvent) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); return { x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom }; };
   const anchor = useRef<Addr | null>(null), dragging = useRef(false);
@@ -241,10 +250,10 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   return (
     <div className="gfxv" tabIndex={-1} onKeyDown={key} aria-label="Memory as graphics">
       <ViewModes label="Show memory as" modes={GFX_MODES} value={kind} onChange={k => set({ kind: k })} now={now}
-        aside={kind !== 'fontrows' && <form className="gfxv-go" onSubmit={e => { e.preventDefault(); go(); }}>
+        aside={(bank || kind !== 'fontrows') && <>{bank && <BankPick {...bank} />}{kind !== 'fontrows' && <form className="gfxv-go" onSubmit={e => { e.preventDefault(); go(); }}>
           <input aria-label="Go to address, label or range" className={cx('mono', gotoErr && 'bad')} value={goto} title={gotoErr ?? 'Go to an address, a label or a range ($2000-$27ff)'} placeholder="$3000, label, range" spellCheck={false} onChange={e => { setGoto(e.target.value); setGotoErr(null); }} />
           <button className="btn small" type="submit"><Icon name="target" size={13} />Go</button>
-        </form>} />
+        </form>}</>} />
       <div className="gfxv-bar view-opts">
         {kind === 'fontrows' && <OptGroup title="Fonts">
           <AddrField label="Screen codes" aria="First row of the screen" value={rowCodes} labels={R.labels} onSet={a => set({ rowCodes: a })}

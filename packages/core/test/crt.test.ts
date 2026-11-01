@@ -292,7 +292,7 @@ describe('every bank at once, each a space of its own (13.9b)', () => {
 
   it('keeps the work on each bank in that bank: labels, comments and overrides at bank addresses', () => {
     const o = openCartridge('demo.crt', demoCartridge());
-    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, labels: { [SPACE + 0x8000]: 'bank1_text', [0x8009]: 'reset' }, comments: { [SPACE + 0x8000]: 'shown by bank 0' }, overrides: [{ start: SPACE + 0x8000, end: SPACE + 0x802a, type: 'text', props: { enc: 'screen' } }] };
+    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, labels: { [SPACE + 0x8000]: 'bank1_text', [0x8009]: 'reset', [0xc000]: 'ram_code' }, comments: { [SPACE + 0x8000]: 'shown by bank 0' }, overrides: [{ start: SPACE + 0x8000, end: SPACE + 0x802a, type: 'text', props: { enc: 'screen' } }] };
     const A = analyze(p), R = render(A, p);
     expect(R.labels.get(SPACE + 0x8000)?.name).toBe('bank1_text');
     expect(R.labels.get(0x8009)?.name).toBe('reset');
@@ -308,6 +308,10 @@ describe('every bank at once, each a space of its own (13.9b)', () => {
     expect(v.mem[0x8000]).toBe(0x0d);
     expect(spaceRender(R, A, 1).labels.get(0x8000)?.name).toBe('bank1_text');
     expect(spaceRender(R, A, 0).labels.get(0x8000)?.name).toBe('cart_vectors');
+    // bank 0's names of its own bytes are not bank 1's; the names of what no bank loads are every bank's
+    expect(spaceRender(R, A, 0).labels.get(0x8009)?.name).toBe('reset');
+    expect(spaceRender(R, A, 1).labels.has(0x8009)).toBe(false);
+    expect(spaceRender(R, A, 1).labels.get(0xc000)?.name).toBe('ram_code');
   });
 
   it('traces what one bank calls in another, and names it there (the nearest bank that has the address)', () => {

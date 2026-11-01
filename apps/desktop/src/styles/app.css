@@ -772,6 +772,9 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .opt-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 3px 10px; border-radius: 8px; border: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 45%, transparent); }
 .opt-title { font: 600 10px/1 var(--font-ui); text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-3); }
 .view-aside { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* a cartridge's bank, picked beside going to an address */
+.bank-pick { font-size: 12px; color: var(--fg-2); margin-right: 6px; }
+.bank-pick select { max-width: 210px; font-family: var(--font-code); }
 @container editor (max-width: 1000px) { .view-sub { display: none; } }
 @container editor (max-width: 600px) { .view-modes .view-label { display: none; } .view-modes button { padding: 0 9px; } }
 .gfxv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px; color: var(--fg-2); }

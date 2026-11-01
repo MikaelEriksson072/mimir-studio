@@ -285,7 +285,8 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   one bank calls in another is traced there (`ProjectInput.calls`) and named with that bank's label
   (`ProjectInput.foreign`). The worker keeps each space's analysis (`SpaceCache`) and does not send the per-space
   results to the window. The UI works on bank addresses; the 64 KB views (Graphics, Memory, the heatmaps) get the
-  cursor's bank through `spaceView`/`spaceRender`, and *Go to* takes `3:8000`. Patches are written in bank 0 only.
+  cursor's bank through `spaceView`/`spaceRender` (Graphics and Memory pick it with `BankPick`, which moves the cursor
+  to the same address in the other bank), and *Go to* takes `3:8000`. Patches are written in bank 0 only.
 - **Music.** `detectMusic()` (`packages/core/src/analyze/music.ts`) finds a player by its jump table (`JMP init`, then
   `JMP play`, up to four JMPs, or the play code right after them) and decodes the code its entries reach where the trace
   did not get to it. A snapshot taken after init ran, a play called from an interrupt the trace missed and a player

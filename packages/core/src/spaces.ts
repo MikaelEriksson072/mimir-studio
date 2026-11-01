@@ -464,11 +464,13 @@ export function spaceView(A: AnalysisResult, space: number): AnalysisResult {
   };
 }
 
-/** The names of one space at their plain addresses (the shared ones too), for the views that show one space. */
-export function spaceRender(R: RenderResult, A: Pick<AnalysisResult, 'spaces'>, space: number): RenderResult {
+/** The names of one space at their plain addresses (the shared ones too), for the views that show one space. A plain
+ *  name of a byte space 0 loads is that space's own (bank 0's ROM): it names nothing in another space. */
+export function spaceRender(R: RenderResult, A: Pick<AnalysisResult, 'spaces' | 'owner'>, space: number): RenderResult {
   if (!A.spaces) return R;
   const off = space * SPACE, labels = new Map<Addr, RenderResult['labels'] extends Map<Addr, infer V> ? V : never>();
-  for (const [a, l] of R.labels) if (a < SPACE ? !labels.has(a) : spaceOf(a) === space) labels.set(a - (a >= SPACE ? off : 0), l);
+  const shared = (a: Addr) => space === 0 || A.owner[a] < 0;
+  for (const [a, l] of R.labels) if (a < SPACE ? shared(a) && !labels.has(a) : spaceOf(a) === space) labels.set(a - (a >= SPACE ? off : 0), l);
   // a space's own label wins over a plain one at the same address
   for (const [a, l] of R.labels) if (a >= SPACE && spaceOf(a) === space) labels.set(a - off, l);
   return { ...R, labels };

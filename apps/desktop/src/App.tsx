@@ -9,7 +9,7 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  bankFiles, builtCartridge, cartBuild, cartridgeFiles, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
+  bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
@@ -39,6 +39,7 @@ import { RelocateModal, type RelocDraft } from './components/Relocate';
 import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
 import { MemoryDump } from './components/MemoryDump';
+import type { BankChoice } from './components/ViewModes';
 import { bookmarkList } from './components/Bookmarks';
 import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
@@ -476,6 +477,34 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     update(`Add bank ${bank}`, d => { d.files.push(...chips); });
     toast(`Added bank ${bank} of ${project.cart.name}: ${chips.map(f => `${f.name} at $${h4(f.load)}`).join(', ')}`, 'ok');
   };
+  /** the banks Graphics and Memory can show (13.9b): every bank of the cartridge, those in the project to pick */
+  const bankChoices = useMemo((): BankChoice[] | null => {
+    if (!crt) return null;
+    const boot = bootBank(crt), kb = (n: number) => (n % 1024 ? `${n} B` : `${n / 1024} KB`);
+    const open = new Set(project.files.map(f => f.chip));
+    return crtBanks(crt).map(({ bank, chips }) => {
+      const on = chips.some(c => open.has(c.index));
+      return {
+        bank, on,
+        text: `${bank} · ${chips.map(c => `$${h4(chipAddress(crt, c))}`).join(' + ')}${bank === boot ? ' · start' : ''}${on ? '' : ' (not in the project)'}`,
+        title: `${chips.map(c => `${kb(c.data.length)} at $${h4(chipAddress(crt, c))}`).join(', ')}${bank === boot ? ', the bank the C64 starts in' : ''}${on ? '' : '. + in the Explorer adds it'}`,
+      };
+    });
+  }, [crt, project.files]);
+  /** Graphics and Memory show another bank: the cursor goes along, to the same address when that bank has it (else to
+   *  where the bank starts), and a selection with it when the bank has all of its bytes */
+  const showBank = (bank: number) => {
+    const s = A.spaces?.find(x => x.bank === bank);
+    if (!s || s.space === space) return;
+    const to = s.space * SPACE, has = (a: Addr) => A.owner[to + a] >= 0;
+    const at = vCursor != null && has(vCursor) ? to + vCursor : s.entry ?? fileAddr(s.files[0]);
+    const moved = vSel && A.owner.subarray(to + vSel.start, to + vSel.end).every(o => o >= 0)
+      ? { ...vSel, start: to + vSel.start, end: to + vSel.end, ...(vSel.anchor != null ? { anchor: to + vSel.anchor } : {}), ...(vSel.anchorEnd != null ? { anchorEnd: to + vSel.anchorEnd } : {}) } : null;
+    navigate(at, { keepSel: true });
+    setSel(moved);
+  };
+  // one bank in the project is analysed without spaces: it is the one shown
+  const bankPick = bankChoices && { banks: bankChoices, value: A.spaces ? A.spaces.find(x => x.space === space)?.bank ?? null : crt?.chips[project.files[0]?.chip ?? -1]?.bank ?? null, onChange: showBank };
   /* ---- packed programs ---- */
   // a decruncher in front of compressed data (detectPacking), and what the unpacker finds: Sindri runs
   // every file opened (in a worker of its own, with the disk a file came from in its 1541) and keeps the result for Unpack; an external unpacker set in Settings
@@ -1802,10 +1831,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}
-              {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel}
+              {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick}
                 onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />}
-              {tab === 'mem' && <MemoryDump A={As} R={Rs} cursor={vCursor} sel={vSel}
+              {tab === 'mem' && <MemoryDump A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick}
                 onCursor={a => { const g = inBank(a); navigate(g, { noHistory: true }); setSel({ start: g, end: g + 1, multi: false, anchor: g, anchorEnd: g + 1 }); }}
                 onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onCopy={t => void copyText(t)} />}

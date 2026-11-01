@@ -3,14 +3,15 @@
  * The cursor and the selection are the listing's: a click puts the cursor on a byte, Shift+click or a drag selects,
  * the arrow keys move. The command field takes VICE's commands (`m 0801 08ff`, `ii 0400`); Copy writes the rows as
  * VICE does. Find searches text (as PETSCII and as screen codes) or bytes, marks every hit and steps through them.
- * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too. */
+ * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too. A cartridge's bank
+ * is picked in the head: the cursor goes along, to the same address when the bank has it. */
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   clipRanges, findBlock, findInMemory, h2, h4, kindInfo, loadedRanges, monitorChar, monitorPrefix, monitorRows, monitorText, MONITOR_ROW, nextZero, parseMonitorCommand,
   type Addr, type AnalysisResult, type FindAs, type MemoryMatch, type MonitorMode, type MonitorRange, type MonitorRow, type RenderResult,
 } from '@mimir/core';
 import { Icon } from '../lib/icons';
-import { OptGroup, ViewModes, type ViewMode } from './ViewModes';
+import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
 import { cx, groupOfType, ROW } from '../lib/util';
 import type { Sel } from '../lib/types';
 import { useUi, type MonPrefs } from '../store/ui';
@@ -35,9 +36,11 @@ interface MemoryDumpProps {
   onMark: (id: string, range: { start: Addr; end: Addr }) => void;
   onShow: (a: Addr) => void;
   onCopy: (text: string) => void;
+  /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
+  bank?: BankPickProps | null;
 }
 
-export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy }: MemoryDumpProps) {
+export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank }: MemoryDumpProps) {
   const prefs = useUi(s => s.mon), setUi = useUi(s => s.set);
   const set = (p: Partial<MonPrefs>) => setUi({ mon: { ...useUi.getState().mon, ...p } });
   const { mode, lower, colors } = prefs;
@@ -76,6 +79,12 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   /** an address a command goes to: scrolled to once the rows of its mode are rendered */
   const pending = useRef<Addr | null>(null);
   useEffect(() => { if (pending.current != null) { scrollTo(pending.current); pending.current = null; } });
+  // another bank keeps the rows in view, unless the cursor went elsewhere in it (the bank does not have its address)
+  const seen = useRef({ bank: bank?.value, cursor });
+  useEffect(() => {
+    const was = seen.current; seen.current = { bank: bank?.value, cursor };
+    if (was.bank !== bank?.value && cursor != null && cursor !== was.cursor) scrollTo(cursor);
+  }, [bank?.value, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [hover, setHover] = useState<Addr | null>(null);
   const [cmd, setCmd] = useState(''), [cmdErr, setCmdErr] = useState<string | null>(null);
@@ -239,7 +248,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   return (
     <div className="gfxv monv" aria-label="Memory as the VICE monitor shows it">
       <ViewModes label="Show memory as" modes={MODES} value={mode} onChange={k => set({ mode: k })} now={now}
-        aside={<><form className="gfxv-go" onSubmit={e => { e.preventDefault(); run(); }}>
+        aside={<>{bank && <BankPick {...bank} />}<form className="gfxv-go" onSubmit={e => { e.preventDefault(); run(); }}>
           <input aria-label="Monitor command" className={cx('mono', cmdErr && 'bad')} value={cmd} title={cmdErr ?? 'A VICE monitor command (m 0801 08ff, i 0801, ii 0400 07e7), or an address or label'} placeholder="m 0801 08ff" spellCheck={false}
             onChange={e => { setCmd(e.target.value); setCmdErr(null); }} />
           <button className="btn small" type="submit"><Icon name="target" size={13} />Go</button>

@@ -1,6 +1,7 @@
 /* The mode switch over the Graphics and Memory tabs: the mode the view is in stands out (filled with the accent), each
- * with its icon or monitor command and what one cell is, and a line beside it says what the view shows now. */
-import type { ReactNode } from 'react';
+ * with its icon or monitor command and what one cell is, and a line beside it says what the view shows now. With a
+ * cartridge, the bank they show is picked beside it. */
+import { useRef, type ReactNode } from 'react';
 import { Icon, type IconName } from '../lib/icons';
 import { cx } from '../lib/util';
 
@@ -34,6 +35,31 @@ export function ViewModes<K extends string>({ label, modes, value, onChange, now
       {now != null && <div className="view-now">{now}</div>}
       {aside != null && <div className="view-aside">{aside}</div>}
     </div>
+  );
+}
+
+/** a bank of the cartridge in the bank switch: `on` while it is in the project (only those are analysed) */
+export interface BankChoice { bank: number; text: string; title: string; on: boolean }
+/** the cartridge's banks, the one shown, and showing another */
+export interface BankPickProps { banks: BankChoice[]; value: number | null; onChange: (bank: number) => void }
+
+/** The bank of a cartridge the Graphics and Memory tabs show (spec 13.9b): the list, or the arrows and the mouse wheel
+ *  over it, step from bank to bank. The banks out of the project are in the list but greyed out: + in the Explorer adds them. */
+export function BankPick({ banks, value, onChange }: BankPickProps) {
+  const on = banks.filter(b => b.on), at = on.findIndex(b => b.bank === value);
+  const step = (d: number) => { const b = on[Math.max(0, Math.min(on.length - 1, at + d))]; if (b && b.bank !== value) onChange(b.bank); };
+  /** a wheel step at most every 60 ms, so a touchpad does not race through the banks */
+  const lastWheel = useRef(0);
+  const out = banks.length - on.length;
+  return (
+    <span className="gfxv-field bank-pick" title={`The cartridge bank shown here (the cursor goes along to it): its addresses are the same in every bank${out ? `. ${out} bank${out === 1 ? ' is' : 's are'} not in the project: + in the Explorer adds ${out === 1 ? 'it' : 'them'}` : ''}`}>Bank
+      <select aria-label="Cartridge bank" value={value ?? ''} onChange={e => onChange(+e.target.value)}
+        onWheel={e => { const now = performance.now(); if (!e.deltaY || now - lastWheel.current < 60) return; lastWheel.current = now; step(Math.sign(e.deltaY)); }}>
+        {banks.map(b => <option key={b.bank} value={b.bank} disabled={!b.on} title={b.title}>{b.text}</option>)}
+      </select>
+      <button className="icon-btn small" aria-label="Previous bank" title="The bank before" disabled={at <= 0} onClick={() => step(-1)}><Icon name="left" size={14} /></button>
+      <button className="icon-btn small" aria-label="Next bank" title="The bank after" disabled={at < 0 || at === on.length - 1} onClick={() => step(1)}><Icon name="right" size={14} /></button>
+    </span>
   );
 }
 

@@ -1005,6 +1005,40 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     expect((await listingRows(page)).some(r => /^bank1_text:/.test(r.text.trim()))).toBe(true);
   });
 
+  await test.step('Memory and Graphics show the bank picked over them; the cursor goes along, to the same address', async () => {
+    await page.keyboard.press('g');
+    await page.locator('#goto-input').fill('0:8009');
+    await page.locator('#goto-input').press('Enter');
+    await page.getByRole('tab', { name: 'Memory' }).click();
+    const pick = page.getByLabel('Cartridge bank');
+    const row = page.getByLabel('Memory dump').locator('.mon-row', { has: page.locator('.mon-adr', { hasText: /C:8000/ }) });
+    await expect(pick).toHaveValue('0');
+    await expect(pick.locator('option')).toHaveText(['0 · $8000 · start', '1 · $8000']);
+    // bank 0's cartridge vectors and CBM80, then bank 1's text at the same address
+    await expect(row).toContainText('09 80 34 80  c3 c2 cd 38');
+    await pick.selectOption('1');
+    await expect(statusBar(page)).toContainText('bank 1 · $8009');
+    await expect(row).toContainText('0d 09 0d 09  12 20 13 14');
+    await expect(page.locator('.monv .gfxv-info')).toContainText('$8009 = $04');
+    await expect(page.getByRole('button', { name: 'Next bank' })).toBeDisabled();
+    // Graphics shows the cursor's bank too, and the arrow steps back to bank 0
+    await page.getByRole('tab', { name: 'Graphics' }).click();
+    await expect(pick).toHaveValue('1');
+    await page.getByRole('button', { name: 'Previous bank' }).click();
+    await expect(pick).toHaveValue('0');
+    await expect(statusBar(page)).toContainText('bank 0 · $8009');
+    await expect(page.getByRole('button', { name: 'Previous bank' })).toBeDisabled();
+    // a bank out of the project is in the list, but cannot be picked until + adds it
+    await banks.getByRole('listitem').nth(1).hover();
+    await page.getByRole('button', { name: 'Leave bank 1 out of the project' }).click();
+    await expect(pick.locator('option')).toHaveText(['0 · $8000 · start', '1 · $8000 (not in the project)']);
+    await expect(pick.locator('option').nth(1)).toBeDisabled();
+    await expect(pick).toHaveValue('0');
+    await page.getByRole('button', { name: 'Add bank 1 to this project' }).click();
+    await expect(pick.locator('option').nth(1)).toBeEnabled();
+    await page.getByRole('tab', { name: 'Listing' }).click();
+  });
+
   await test.step('F7 verifies both banks and the cartridge rebuilt from them', async () => {
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
