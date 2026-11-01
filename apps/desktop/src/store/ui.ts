@@ -41,6 +41,9 @@ interface UiState {
   tab: EditorTab;
   bottom: BottomTab;
   activity: Activity;
+  /** the side panel (Explorer, Blocks, Symbols, Bookmarks, Pack) is shown; collapsed, the listing and the other views get its room */
+  sidePanel: boolean;
+  /** the bottom panel (log, problems, xrefs …) is open */
   panelOpen: boolean;
   welcome: boolean;
   heatFit: boolean;
@@ -71,13 +74,14 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'startScreen', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'startScreen', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
   tab: store.get<EditorTab>('kr.tab', 'listing'),
   bottom: 'log',
   activity: 'explorer',
+  sidePanel: store.get('kr.sidePanel', true),
   panelOpen: store.get('kr.panel', true),
   welcome: store.get('kr.welcome', true),
   heatFit: store.get('kr.fit', true),

@@ -24,7 +24,7 @@ body.dragging { cursor: col-resize; user-select: none; }
   height: 100%; display: grid;
   grid-template-columns: 48px var(--side-w) 4px minmax(0, 1fr) 4px var(--insp-w);
   grid-template-rows: 42px minmax(0, 1fr) 24px;
-  grid-template-areas: "title title title title title title" "act side . main . insp" "status status status status status status";
+  grid-template-areas: "title title title title title title" "act side side-split main insp-split insp" "status status status status status status";
 }
 .titlebar { grid-area: title; }
 .activity { grid-area: act; }
@@ -32,6 +32,14 @@ body.dragging { cursor: col-resize; user-select: none; }
 .main { grid-area: main; }
 .insp-col { grid-area: insp; }
 .statusbar { grid-area: status; }
+.side-split { grid-area: side-split; }
+.insp-split { grid-area: insp-split; }
+/* the side panel collapsed (Ctrl+Shift+B, its button, its view's button): its column and splitter go and the editor
+ * gets the room; a view's button in the activity bar brings it back. On a narrow window the side panel is a drawer. */
+@media not all and (max-width: 900px) {
+  .app.side-closed { grid-template-columns: 48px 0 0 minmax(0, 1fr) 4px var(--insp-w); }
+  .app.side-closed .sidebar, .app.side-closed .side-split, .app.side-closed .side-collapse { display: none; }
+}
 
 /* ---------- title bar ---------- */
 .titlebar { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; }
@@ -72,7 +80,10 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .sidebar { border-right: 1px solid var(--line); }
 .insp-col { border-left: 1px solid var(--line); }
 .side-inner { display: flex; flex-direction: column; min-height: 100%; }
-.side-title { padding: 12px 14px 6px; font-size: 13px; font-weight: 600; color: var(--fg); display: flex; align-items: baseline; gap: 6px; }
+.side-title { padding: 12px 14px 6px; font-size: 13px; font-weight: 600; color: var(--fg); display: flex; align-items: baseline; gap: 6px; position: sticky; top: 0; z-index: 1; background: var(--panel); }
+/* the button that collapses the side panel, over the right end of the view's title, which stays at the top as the view scrolls */
+.side-collapse { grid-area: side; align-self: start; justify-self: end; position: relative; z-index: 3; width: 26px; height: 26px; margin: 8px 12px 0 0; }
+@media not all and (max-width: 900px) { .side-title { padding-right: 46px; } }
 .side-title .muted { font-weight: 400; font-size: 12px; }
 /* a section of the side panel: a card whose title folds it up, with what it holds beside the title */
 .side-sec { margin: 4px 8px 6px; padding: 0 10px 10px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--bg) 40%, transparent); }
@@ -670,7 +681,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 /* ---------- narrow screens: drawers instead of columns ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "main" "status"; }
-  .activity, .splitter.v { display: none; }
+  .activity, .splitter.v, .side-collapse { display: none; }
   .sidebar, .insp-col { display: none; }
   .app.drawer-side .sidebar, .app.drawer-insp .insp-col { display: block; position: fixed; top: 42px; bottom: 24px; z-index: 45; width: min(330px, 88vw); box-shadow: var(--shadow); }
   .app.drawer-side .sidebar { left: 0; }

@@ -115,7 +115,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     tick();
   });
   const ui = useUi();
-  const { theme, tab, bottom, activity, panelOpen, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
+  const { theme, tab, bottom, activity, sidePanel, panelOpen, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
   const setUi = ui.set;
 
   const [srcPath, setSrcPath] = useState<string | null>(null);
@@ -418,7 +418,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     let bitfire: BitfireDisk | null = null;
     try { if (!spindle) bitfire = readBitfireDisk(bytes); } catch { /* not one */ }
     setDisk({ name, path, bytes, img, spindle, bitfire });
-    setUi({ activity: 'explorer' });
+    setUi({ activity: 'explorer', sidePanel: true });
     const kind = spindle ? `, a Spindle 3 disk with ${spindle.jobs.length} job${spindle.jobs.length === 1 ? '' : 's'}`
       : bitfire ? `, a Bitfire disk with ${bitfire.files.length} file${bitfire.files.length === 1 ? '' : 's'} of its own` : '';
     toast(`Mounted ${name}: "${img.name}", ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}`, 'ok');
@@ -731,7 +731,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [bmSel, setBmSel] = useState<Addr | null>(null);
   const [bmEdit, setBmEdit] = useState<Addr | null>(null);
   const showBookmarks = (a?: Addr) => {
-    setUi({ activity: 'bookmarks' });
+    setUi({ activity: 'bookmarks', sidePanel: true });
     if (a !== undefined) setBmSel(a);
     if (window.matchMedia?.('(max-width: 900px)').matches) setDrawer('side');
   };
@@ -1097,7 +1097,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const prefs = project.pack ?? packDefaults(A, project);
     const what = `$${h4(r.start)}-$${h4(r.end - 1)}`;
     setPack({ ...prefs, ranges: editRanges(prefs.ranges ?? [], r.start, r.end, on) }, `${on ? 'Pack' : 'Do not pack'} ${what}`);
-    setUi({ activity: 'pack' });
+    setUi({ activity: 'pack', sidePanel: true });
     toast(on ? `${what} is packed with the chosen blocks (Pack view)` : `${what} is left out of the pack`, 'ok');
   };
   /** Build and verify like Build & Run, then pack the PRGs it built with Brokkr or Exomizer as the Pack view says. */
@@ -1265,7 +1265,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     await leaveProject();
     replace(showcaseProject({ ...project.settings, bankTracking: true }));
     resetView();
-    setUi({ activity: 'bookmarks' });
+    setUi({ activity: 'bookmarks', sidePanel: true });
     toast(`Showcase loaded${left ? ` without a project (${left.name} is saved as it was)` : ''}: the Bookmarks view is a tour of it, F2 goes to the next stop`, 'ok');
   };
   const saveSettings = async (s: Settings, prefs: AppPrefs) => {
@@ -1274,6 +1274,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     setUi(prefs);
     update('Settings', d => { for (const k of Object.keys(s) as (keyof Settings)[]) if (!(TOOLCHAIN_KEYS as readonly string[]).includes(k)) (d.settings as Record<string, unknown>)[k] = s[k]; });
     setModal(null); toast('Settings saved', 'ok');
+  };
+
+  /** Ctrl+Shift+B, the side panel's own button and its view's button in the activity bar: the side panel collapsed, so the
+   *  listing and the other views get its room, or shown again (on a narrow window it is the drawer) */
+  const toggleSide = () => {
+    if (window.matchMedia?.('(max-width: 900px)').matches) { setDrawer(d => (d === 'side' ? null : 'side')); return; }
+    const open = !useUi.getState().sidePanel;
+    setUi({ sidePanel: open });
+    // the focus does not stay in the hidden panel
+    if (!open && document.activeElement?.closest('.sidebar, .side-collapse')) listRef.current?.focus();
   };
 
   /* ---- commands & keys ---- */
@@ -1325,11 +1335,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...(project.entryPoint != null ? [{ id: 'start-clear', label: `Clear the program start $${h4(project.entryPoint)} (Build & Run starts the program with RUN)`, run: () => setStart(null) }] : []),
     { id: 'xrefs', label: 'Show cross-references', key: 'X', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
     { id: 'copy-lines', label: 'Copy the selected lines (or the line at the cursor) as source', key: 'Ctrl+C', run: copyLines },
+    { id: 'side-panel', label: 'Toggle side panel (Explorer, Blocks, Symbols, Bookmarks, Pack)', key: 'Ctrl+Shift+B', run: () => toggleSide() },
     { id: 'panel', label: 'Toggle bottom panel', key: 'Ctrl+J', run: () => setUi({ panelOpen: !useUi.getState().panelOpen }) },
     { id: 'verify', label: 'Verify round-trip (re-assemble and compare)', key: 'F7', run: () => void runVerify() },
     { id: 'build', label: 'Build with KickAss.jar & run in VICE', key: 'F5', run: () => void runBuild() },
     { id: 'pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} (build, verify, pack as the Pack view says)`, run: () => void runPack() },
-    { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack' }) },
+    { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack', sidePanel: true }) },
     ...(packRes?.ok && packRes.path ? [
       ...(packRes.argv[1] === 'sfx' ? [{ id: 'pack-run', label: `Run the packed ${packRes.name} in VICE`, run: () => void runPacked() }] : []),
       { id: 'pack-save', label: `Save the packed ${packRes.name} as…`, run: () => void savePacked() },
@@ -1372,7 +1383,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       // Ctrl+↓ / Ctrl+↑: from block to block
       if (ctrl && !e.shiftKey && !e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && !typing && !k.editing && !k.modal && k.tab === 'listing') return run(e.key === 'ArrowDown' ? 'block-next' : 'block-prev');
       if (ctrl && !typing) {
-        const map: Record<string, string> = { z: e.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', e: 'export', g: 'goto', ',': 'settings', j: 'panel', b: 'bookmarks' };
+        const map: Record<string, string> = { z: e.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', e: 'export', g: 'goto', ',': 'settings', j: 'panel', b: e.shiftKey ? 'side-panel' : 'bookmarks' };
         const id = map[e.key.toLowerCase()]; if (id) return run(id);
       }
       if (ctrl && (e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'o')) return run(e.key.toLowerCase() === 's' ? 'save' : 'open');
@@ -1566,7 +1577,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', R.main ?? `${R.fileNames[0] || 'main'}.asm`], ['spec', 'doc', 'SPEC.md']];
 
   return (
-    <div className={cx('app', drawer && `drawer-${drawer}`)} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
+    <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
       <TitleBar projectName={project.name} home={home?.name ?? null} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onOpen={() => void openPrgs(false)} onSave={() => void saveProject()} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
@@ -1574,7 +1585,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         onTheme={() => setUi({ theme: theme === 'dark' ? 'light' : 'dark' })} onSettings={() => setModal('settings')}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar activity={activity} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, pack: project.pack?.ranges?.length ?? 0 }} busy={{ pack: !!packRun }} onActivity={(a: Activity) => { setUi({ activity: a }); if (narrow) setDrawer('side'); }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />
+      <ActivityBar activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, pack: project.pack?.ranges?.length ?? 0 }} busy={{ pack: !!packRun }} onActivity={(a: Activity) => {
+          // the view shown: its button collapses the side panel; collapsed, any view's button brings it back
+          if (narrow) { setUi({ activity: a }); setDrawer('side'); } else if (sidePanel && a === activity) toggleSide(); else setUi({ activity: a, sidePanel: true });
+        }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />
 
       <aside className="sidebar"><ErrorBoundary>
         <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }}
@@ -1597,7 +1611,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             onChange: setPack, onPack: () => void runPack(), onPickDir: () => void pickPackDir(), onRun: () => void runPacked(), onSave: () => void savePacked(), onSettings: () => setModal('settings'),
             onLog: () => setUi({ bottom: 'build', panelOpen: true }), onNavigate: a => { nav(a); setDrawer(null); } }} />
       </ErrorBoundary></aside>
-      <Splitter dir="v" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, side: Math.max(200, Math.min(480, useUi.getState().sizes.side + d)) } })} />
+      <button className="icon-btn side-collapse" onClick={toggleSide} aria-label="Collapse side panel" title="Collapse the side panel: the listing gets its room (Ctrl+Shift+B). The view's button in the activity bar brings it back"><Icon name="side-hide" size={16} /></button>
+      <Splitter dir="v" className="side-split" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, side: Math.max(200, Math.min(480, useUi.getState().sizes.side + d)) } })} />
 
       <main className="main">
         {/* the row fits the editor's width (container queries in app.css): the tools lose their labels, then the tabs
@@ -1720,7 +1735,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         </section>}
       </main>
 
-      <Splitter dir="v" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, insp: Math.max(260, Math.min(520, useUi.getState().sizes.insp - d)) } })} />
+      <Splitter dir="v" className="insp-split" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, insp: Math.max(260, Math.min(520, useUi.getState().sizes.insp - d)) } })} />
       <aside className="insp-col"><ErrorBoundary>
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}

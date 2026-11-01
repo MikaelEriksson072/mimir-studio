@@ -2909,6 +2909,71 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await allClosed(4);
 });
 
+test('the side panel collapses so the listing gets its room, and comes back with a view\'s button or Ctrl+Shift+B; it stays collapsed after a restart', async ({ page }) => {
+  await waitForListing(page);
+  const side = page.locator('aside.sidebar');
+  const title = side.locator('.side-title');
+  const views = page.getByRole('navigation', { name: 'Views' });
+  const explorer = views.getByRole('button', { name: 'Explorer' });
+  const collapse = page.getByRole('button', { name: 'Collapse side panel' });
+  const width = async () => Math.round((await listing(page).boundingBox())!.width);
+  await expect(explorer).toHaveAttribute('aria-pressed', 'true');
+  const open = await width();
+
+  await test.step('its button collapses it: the listing is wider by the panel, and no view\'s button is on', async () => {
+    await collapse.click();
+    await expect(side).toBeHidden();
+    await expect(collapse).toBeHidden();
+    await expect(explorer).toHaveAttribute('aria-pressed', 'false');
+    // the panel (272 px) and its splitter
+    await expect.poll(width).toBe(open + 276);
+  });
+
+  await test.step('a view\'s button brings it back with that view, and the listing is as wide as before', async () => {
+    await views.getByRole('button', { name: 'Blocks' }).click();
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Blocks');
+    await expect(views.getByRole('button', { name: 'Blocks' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(width).toBe(open);
+  });
+
+  await test.step('the button of the view shown collapses it, Ctrl+Shift+B too; Ctrl+B still shows the bookmarks', async () => {
+    await views.getByRole('button', { name: 'Blocks' }).click();
+    await expect(side).toBeHidden();
+    await listing(page).click();
+    await page.keyboard.press('Control+Shift+B');
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Blocks');
+    await page.keyboard.press('Control+Shift+B');
+    await expect(side).toBeHidden();
+    await page.keyboard.press('Control+b');
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Bookmarks');
+  });
+
+  await test.step('the command palette collapses it and brings it back', async () => {
+    const palette = async () => { await page.keyboard.press('Control+Shift+P'); const q = page.getByRole('textbox', { name: 'Command' }); await q.fill('Toggle side panel'); await q.press('Enter'); };
+    await palette();
+    await expect(side).toBeHidden();
+    await expect.poll(width).toBe(open + 276);
+    await palette();
+    await expect(side).toBeVisible();
+  });
+
+  await test.step('collapsed, it is collapsed after a restart; the Explorer\'s button brings it back', async () => {
+    await collapse.click();
+    await expect(side).toBeHidden();
+    await page.reload();
+    await waitForListing(page);
+    await expect(side).toBeHidden();
+    await expect.poll(width).toBe(open + 276);
+    await explorer.click();
+    await expect(side).toBeVisible();
+    await expect(title).toContainText('Explorer');
+    await expect.poll(width).toBe(open);
+  });
+});
+
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');
