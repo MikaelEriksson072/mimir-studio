@@ -22,7 +22,9 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* ---------- grid ---------- */
 .app {
   height: 100%; display: grid;
-  grid-template-columns: 48px var(--side-w) 4px minmax(0, 1fr) 4px var(--insp-w);
+  /* the side panel and the inspector with their splitters; folding one in sets its columns */
+  --side-col: var(--side-w); --side-gap: 4px; --insp-gap: 4px; --insp-col: var(--insp-w);
+  grid-template-columns: 48px var(--side-col) var(--side-gap) minmax(0, 1fr) var(--insp-gap) var(--insp-col);
   grid-template-rows: 42px minmax(0, 1fr) 24px;
   grid-template-areas: "title title title title title title" "act side side-split main insp-split insp" "status status status status status status";
 }
@@ -37,8 +39,19 @@ body.dragging { cursor: col-resize; user-select: none; }
 /* the side panel collapsed (Ctrl+Shift+B, its button, its view's button): its column and splitter go and the editor
  * gets the room; a view's button in the activity bar brings it back. On a narrow window the side panel is a drawer. */
 @media not all and (max-width: 900px) {
-  .app.side-closed { grid-template-columns: 48px 0 0 minmax(0, 1fr) 4px var(--insp-w); }
+  .app.side-closed { --side-col: 0px; --side-gap: 0px; }
   .app.side-closed .sidebar, .app.side-closed .side-split, .app.side-closed .side-collapse { display: none; }
+}
+/* the inspector folded in (Settings → General): a strip at the right edge, whose click opens the inspector over the
+ * editor; a click outside it or Esc folds it in again */
+.insp-rail { grid-area: insp; display: none; }
+@media not all and (max-width: 900px) {
+  .app.insp-auto { --insp-gap: 0px; --insp-col: 28px; }
+  .app.insp-auto .insp-split, .app.insp-auto .insp-col { display: none; }
+  .app.insp-auto.drawer-insp .insp-col { display: block; position: fixed; top: 42px; bottom: 24px; right: 28px; z-index: 40; width: var(--insp-w); box-shadow: var(--shadow); }
+  .app.insp-auto .insp-rail { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0; min-width: 0; border: 0; border-left: 1px solid var(--line); background: var(--bg); color: var(--fg-3); cursor: pointer; font: 600 11.5px/1 var(--font-ui); letter-spacing: 0.04em; }
+  .app.insp-auto .insp-rail span { writing-mode: vertical-rl; }
+  .app.insp-auto .insp-rail:hover, .app.insp-auto .insp-rail.on { color: var(--fg); background: var(--panel); }
 }
 
 /* ---------- title bar ---------- */
@@ -604,6 +617,9 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .build-log.stale { opacity: 0.6; }
 
 /* ---------- inspector ---------- */
+/* its title, with the button that folds it in (or keeps it open), stays at the top as the inspector scrolls */
+.insp-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 8px 0 12px; background: var(--panel); font-size: 13px; font-weight: 600; color: var(--fg); }
+.insp-head .insp-mode { width: 26px; height: 26px; }
 .inspector { display: flex; flex-direction: column; }
 .insp-sec { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
 .heat-wrap { position: relative; }
@@ -681,7 +697,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 /* ---------- narrow screens: drawers instead of columns ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "main" "status"; }
-  .activity, .splitter.v, .side-collapse { display: none; }
+  .activity, .splitter.v, .side-collapse, .insp-mode { display: none; }
   .sidebar, .insp-col { display: none; }
   .app.drawer-side .sidebar, .app.drawer-insp .insp-col { display: block; position: fixed; top: 42px; bottom: 24px; z-index: 45; width: min(330px, 88vw); box-shadow: var(--shadow); }
   .app.drawer-side .sidebar { left: 0; }

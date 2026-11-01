@@ -13,7 +13,7 @@ import {
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
 import { forgetUnsavedWork, useProject } from './store/project';
-import { useUi, type Activity } from './store/ui';
+import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
@@ -115,7 +115,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     tick();
   });
   const ui = useUi();
-  const { theme, tab, bottom, activity, sidePanel, panelOpen, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
+  const { theme, tab, bottom, activity, sidePanel, panelOpen, inspector, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
   const setUi = ui.set;
 
   const [srcPath, setSrcPath] = useState<string | null>(null);
@@ -1272,6 +1272,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const tc = pickToolchain(s);
     try { setToolchain(kr ? await kr.setSettings(tc) : tc); } catch (e) { toast(`Toolchain settings rejected: ${errorText(e)}`, 'err'); return; }
     setUi(prefs);
+    setDrawer(d => (d === 'insp' ? null : d));
     update('Settings', d => { for (const k of Object.keys(s) as (keyof Settings)[]) if (!(TOOLCHAIN_KEYS as readonly string[]).includes(k)) (d.settings as Record<string, unknown>)[k] = s[k]; });
     setModal(null); toast('Settings saved', 'ok');
   };
@@ -1285,6 +1286,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // the focus does not stay in the hidden panel
     if (!open && document.activeElement?.closest('.sidebar, .side-collapse')) listRef.current?.focus();
   };
+  /** folds in the inspector opened over the editor from its strip (the drawer `insp`, as on a narrow window) */
+  const closeInspector = () => {
+    setDrawer(d => (d === 'insp' ? null : d));
+    // the focus does not stay in the hidden inspector
+    if (document.activeElement?.closest('.insp-col')) listRef.current?.focus();
+  };
+  /** the inspector always open beside the editor, or folded in until it is needed (also Settings → General) */
+  const setInspector = (m: InspectorMode) => { closeInspector(); setUi({ inspector: m }); };
 
   /* ---- commands & keys ---- */
   const undoLabel = past.length ? past[past.length - 1].label : null;
@@ -1336,6 +1345,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'xrefs', label: 'Show cross-references', key: 'X', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
     { id: 'copy-lines', label: 'Copy the selected lines (or the line at the cursor) as source', key: 'Ctrl+C', run: copyLines },
     { id: 'side-panel', label: 'Toggle side panel (Explorer, Blocks, Symbols, Bookmarks, Pack)', key: 'Ctrl+Shift+B', run: () => toggleSide() },
+    ...(inspector === 'auto' ? [{ id: 'inspector-show', label: 'Show the inspector (the memory map, the block at the cursor, its preview)', run: () => setDrawer('insp') }] : []),
+    { id: 'inspector-mode', label: inspector === 'auto' ? 'Keep the inspector open beside the editor' : 'Fold in the inspector (a strip at the right edge opens it when you need it)', run: () => setInspector(inspector === 'auto' ? 'open' : 'auto') },
     { id: 'panel', label: 'Toggle bottom panel', key: 'Ctrl+J', run: () => setUi({ panelOpen: !useUi.getState().panelOpen }) },
     { id: 'verify', label: 'Verify round-trip (re-assemble and compare)', key: 'F7', run: () => void runVerify() },
     { id: 'build', label: 'Build with KickAss.jar & run in VICE', key: 'F5', run: () => void runBuild() },
@@ -1366,8 +1377,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
   ];
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind, drawer, closeInspector });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind, drawer, closeInspector };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -1393,6 +1404,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (e.key === 'F9') return run('quicksave');
       if (e.key === 'F7') return run('verify');
       if (typing || k.editing || k.modal || ctrl || (e.altKey && !['ArrowLeft', 'ArrowRight'].includes(e.key))) return;
+      // the inspector opened from its strip (or a narrow window's drawer): Esc folds it in, and only that
+      if (e.key === 'Escape' && k.drawer === 'insp') { e.preventDefault(); k.closeInspector(); return; }
       if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goBack(); return; }
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goFwd(); return; }
       if (e.key === 'F2') return run(e.shiftKey ? 'bookmark-prev' : 'bookmark-next');
@@ -1550,6 +1563,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const path = useMemo(() => (cycleRange ? cyclePath(A, cycleRange.start, cycleRange.end, taken) : null), [A, cycleRange?.start, cycleRange?.end, taken]); // eslint-disable-line react-hooks/exhaustive-deps
   const curLabel = cursor != null ? (() => { for (let p = cursor; p >= 0 && cursor - p < 4096; p--) { const l = R.labels.get(p); if (l) return p === cursor ? l.name : `${l.name}+${cursor - p}`; if (blk && p <= blk.start) break; } return null; })() : null;
   const narrow = window.matchMedia?.('(max-width: 900px)').matches;
+  // the inspector opened from its strip folds in again at a click outside it, which still does what it does (menus
+  // and dialogs over everything do not count); on a narrow window the drawer's backdrop takes the click
+  const inspOut = inspector === 'auto' && drawer === 'insp' && !narrow;
+  useEffect(() => {
+    if (!inspOut) return;
+    const down = (e: PointerEvent) => { if (!(e.target as Element | null)?.closest?.('.insp-col, .insp-rail, .ctx, .modal-back')) setDrawer(null); };
+    window.addEventListener('pointerdown', down, true);
+    return () => window.removeEventListener('pointerdown', down, true);
+  }, [inspOut]);
   const nav = (a: Addr) => navigate(a, { center: true, listing: true });
   /** "Go to" with a range: select its loaded part as one anchor, like a block header */
   const selectRange = (s: Addr, e: Addr) => {
@@ -1577,7 +1599,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', R.main ?? `${R.fileNames[0] || 'main'}.asm`], ['spec', 'doc', 'SPEC.md']];
 
   return (
-    <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
+    <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
       <TitleBar projectName={project.name} home={home?.name ?? null} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onOpen={() => void openPrgs(false)} onSave={() => void saveProject()} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
@@ -1736,7 +1758,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       </main>
 
       <Splitter dir="v" className="insp-split" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, insp: Math.max(260, Math.min(520, useUi.getState().sizes.insp - d)) } })} />
-      <aside className="insp-col"><ErrorBoundary>
+      <aside className="insp-col">
+        <div className="insp-head"><span>Inspector</span><span className="grow" />
+          {inspector === 'auto'
+            ? <button className="icon-btn insp-mode" onClick={() => setInspector('open')} aria-label="Keep the inspector open" title="Keep the inspector open beside the editor (Settings → General)"><Icon name="pin" size={15} /></button>
+            : <button className="icon-btn insp-mode" onClick={() => setInspector('auto')} aria-label="Fold in the inspector" title="Fold the inspector into a strip at the right edge: the listing gets its room, and a click on the strip opens it when you need it (Settings → General)"><Icon name="insp-hide" size={16} /></button>}
+        </div>
+        <ErrorBoundary>
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
@@ -1744,6 +1772,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
+      {inspector === 'auto' && <button className={cx('insp-rail', drawer === 'insp' && 'on')} onClick={() => (drawer === 'insp' ? closeInspector() : setDrawer('insp'))} aria-label="Inspector" aria-expanded={drawer === 'insp'}
+        title={drawer === 'insp' ? 'Fold in the inspector (a click outside it or Esc does too)' : 'Open the inspector: the memory map, the block at the cursor and its preview'}><Icon name="panel" size={16} /><span>Inspector</span></button>}
 
       <StatusBar A={A} fileCount={project.files.length} cursor={cursor} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} cycles={path && path.instructions ? path.total : null}
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null} />
@@ -1751,7 +1781,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
       {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, or a .d64 to mount it</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen }} desktop={!!kr} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector }} desktop={!!kr} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}

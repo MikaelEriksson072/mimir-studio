@@ -8,6 +8,9 @@ export type EditorTab = 'listing' | 'source' | 'spec' | 'gfx' | 'mem';
 export type BottomTab = 'log' | 'problems' | 'xrefs' | 'irqs' | 'spindle' | 'bitfire' | 'stats' | 'build';
 export type Activity = 'explorer' | 'blocks' | 'symbols' | 'bookmarks' | 'pack';
 export interface Sizes { side: number; insp: number; bottom: number }
+/** the inspector (the panel on the right): always open, or folded into a strip at the right edge that opens it over the
+ *  editor when it is needed and folds it in again at a click outside it */
+export type InspectorMode = 'open' | 'auto';
 /** what the listing's left column shows: the memory address of the line, or its line number in the .asm file */
 export type Gutter = 'addr' | 'line';
 /** the Graphics tab: memory as characters, sprites or bitmaps, and how it is drawn */
@@ -45,6 +48,7 @@ interface UiState {
   sidePanel: boolean;
   /** the bottom panel (log, problems, xrefs …) is open */
   panelOpen: boolean;
+  inspector: InspectorMode;
   welcome: boolean;
   heatFit: boolean;
   gutter: Gutter;
@@ -74,7 +78,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'startScreen', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'startScreen', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -83,6 +87,7 @@ export const useUi = create<UiState>((set) => ({
   activity: 'explorer',
   sidePanel: store.get('kr.sidePanel', true),
   panelOpen: store.get('kr.panel', true),
+  inspector: store.get<InspectorMode>('kr.inspector', 'open') === 'auto' ? 'auto' : 'open',
   welcome: store.get('kr.welcome', true),
   heatFit: store.get('kr.fit', true),
   gutter: store.get<Gutter>('kr.gutter', 'addr'),

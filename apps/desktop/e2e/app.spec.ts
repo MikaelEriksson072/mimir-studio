@@ -2974,6 +2974,98 @@ test('the side panel collapses so the listing gets its room, and comes back with
   });
 });
 
+test('the inspector folds into a strip at the right edge (Settings → General): it opens over the editor when needed and folds in at a click outside it', async ({ page }) => {
+  await waitForListing(page);
+  const insp = page.locator('aside.insp-col');
+  const rail = page.getByRole('button', { name: 'Inspector', exact: true });
+  const width = async () => Math.round((await listing(page).boundingBox())!.width);
+  const settings = async () => {
+    await page.keyboard.press('Control+,');
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await dialog.getByRole('tab', { name: 'General' }).click();
+    return dialog;
+  };
+  const choose = async (mode: 'open' | 'auto') => {
+    const dialog = await settings();
+    await dialog.getByLabel('Inspector (the panel on the right)').selectOption(mode);
+    await dialog.getByRole('button', { name: 'Save settings' }).click();
+    await expect(dialog).toBeHidden();
+  };
+  await expect(insp).toBeVisible();
+  await expect(rail).toBeHidden();
+  const open = await width();
+
+  await test.step('Settings folds it in: a strip at the right edge, and the listing gets its room', async () => {
+    await choose('auto');
+    await expect(insp).toBeHidden();
+    await expect(rail).toBeVisible();
+    await expect(rail).toHaveAttribute('aria-expanded', 'false');
+    // the inspector (312 px) and its splitter, less the strip (28 px)
+    await expect.poll(width).toBe(open + 288);
+  });
+
+  await test.step('a click on the strip opens it over the editor, and a click inside it keeps it open', async () => {
+    await rail.click();
+    await expect(insp).toBeVisible();
+    await expect(rail).toHaveAttribute('aria-expanded', 'true');
+    await expect(insp).toContainText('Memory map');
+    expect(await width()).toBe(open + 288);
+    const bytes = insp.getByRole('button', { name: 'Bytes', exact: true });
+    await bytes.click();
+    await expect(bytes).toHaveAttribute('aria-pressed', 'true');
+    await expect(insp).toBeVisible();
+  });
+
+  await test.step('a click outside folds it in and still does what it does there: the cursor goes to the line clicked', async () => {
+    await listing(page).locator('.row', { hasText: 'jsr sub_0866' }).click();
+    await expect(insp).toBeHidden();
+    await expect(rail).toHaveAttribute('aria-expanded', 'false');
+    await expect(statusBar(page)).toContainText('$0813');
+  });
+
+  await test.step('Esc folds it in; the strip again, and the command palette, open it', async () => {
+    await rail.click();
+    await expect(insp).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(insp).toBeHidden();
+    // Esc folded it in, and only that: the listing did not go back
+    await expect(statusBar(page)).toContainText('$0813');
+    await page.keyboard.press('Control+Shift+P');
+    const q = page.getByRole('textbox', { name: 'Command' });
+    await q.fill('Show the inspector');
+    await q.press('Enter');
+    await expect(insp).toBeVisible();
+    await rail.click();
+    await expect(insp).toBeHidden();
+  });
+
+  await test.step('its pin keeps it open beside the editor, and its button at the top folds it in again', async () => {
+    await rail.click();
+    await insp.getByRole('button', { name: 'Keep the inspector open', exact: true }).click();
+    await expect(rail).toBeHidden();
+    await expect(insp).toBeVisible();
+    await expect.poll(width).toBe(open);
+    await insp.getByRole('button', { name: 'Fold in the inspector', exact: true }).click();
+    await expect(insp).toBeHidden();
+    await expect(rail).toBeVisible();
+    await expect.poll(width).toBe(open + 288);
+  });
+
+  await test.step('folded in, it is folded in after a restart, as Settings says; Always open brings it back', async () => {
+    await page.reload();
+    await waitForListing(page);
+    await expect(insp).toBeHidden();
+    await expect(rail).toBeVisible();
+    const dialog = await settings();
+    await expect(dialog.getByLabel('Inspector (the panel on the right)')).toHaveValue('auto');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await choose('open');
+    await expect(insp).toBeVisible();
+    await expect(rail).toBeHidden();
+    await expect.poll(width).toBe(open);
+  });
+});
+
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');
