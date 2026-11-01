@@ -2412,6 +2412,65 @@ test('Ctrl+C copies the selected lines of the listing as source, and the line at
   expect(await clipboard()).toMatch(/^sta COLOR_RAM\+24\*40\+39\b/);
 });
 
+test('Ctrl over a line peeks at its block the other way: code as bytes and text, data as code', async ({ page }) => {
+  await waitForListing(page);
+  const peek = page.locator('.peek');
+  const row = (adr: string) => listing(page).locator('.row', { has: page.locator('.adr', { hasText: new RegExp(`^${adr}$`) }) }).last();
+  const hover = async (r: Locator) => { const b = (await r.locator('.src').boundingBox())!; await page.mouse.move(b.x + 60, b.y + b.height / 2); return b; };
+
+  await test.step('code: its bytes from the line on, with them as PETSCII and as screen codes', async () => {
+    // fx_091e: lda SID_OSC3 / and #$0f / sta COLOR_RAM+24*40+39 / rts
+    await goTo(page, 'fx_091e');
+    const at = await hover(row('091e'));
+    await page.keyboard.down('Control');
+    await expect(peek).toBeVisible();
+    await expect(peek).toContainText('as bytes and text');
+    await expect(peek.locator('.peek-head')).toContainText('fx_091e · $091e–$0926');
+    await expect(peek.locator('.p-hex').nth(1)).toHaveText('ad 1b d4 29 0f 8d e7 db');
+    await expect(peek.locator('.p-hex').nth(2)).toHaveText('60');
+    // the line's bytes are marked; the box is beside the line, not over it
+    await expect(peek.locator('.p-hex .on')).toHaveText(['ad', ' 1b', ' d4']);
+    const box = (await peek.boundingBox())!;
+    expect(box.y >= at.y + at.height || box.y + box.height <= at.y).toBe(true);
+    // with Ctrl held it follows the pointer
+    await hover(row('0921'));
+    await expect(peek.locator('.p-hex').nth(1)).toHaveText('29 0f 8d e7 db 60');
+    await page.keyboard.up('Control');
+    await expect(peek).toBeHidden();
+  });
+
+  await test.step('data: as code, from the block\'s start', async () => {
+    // "HELLO FROM THE MIMIR STUDIO DEMO!" in screen codes: H ($08) is php, E L ($05 $0c) ora $0c
+    await goTo(page, '$0985');
+    await hover(row('0985'));
+    await page.keyboard.down('Control');
+    await expect(peek).toContainText('as code');
+    const first = peek.locator('.peek-row').first();
+    await expect(first.locator('.p-adr')).toHaveText('0985');
+    await expect(first.locator('.p-src')).toHaveText('php');
+    await expect(peek.locator('.peek-row').nth(1).locator('.p-src')).toHaveText('ora $0c');
+    await expect(first).toHaveClass(/\bon\b/);
+    await page.keyboard.up('Control');
+    await expect(peek).toBeHidden();
+  });
+
+  await test.step('a key pressed with Ctrl closes it until Ctrl is let go', async () => {
+    await hover(row('0985'));
+    await page.keyboard.down('Control');
+    await expect(peek).toBeVisible();
+    await page.keyboard.press('Shift');
+    await expect(peek).toBeHidden();
+    await page.mouse.move(10, 10);
+    await hover(row('0985'));
+    await page.waitForTimeout(300);
+    await expect(peek).toBeHidden();
+    await page.keyboard.up('Control');
+    await page.keyboard.down('Control');
+    await expect(peek).toBeVisible();
+    await page.keyboard.up('Control');
+  });
+});
+
 test('the Memory tab shows the program as the VICE monitor does: m, i and ii', async ({ app, page }) => {
   await waitForListing(page);
   const dump = page.getByLabel('Memory dump');

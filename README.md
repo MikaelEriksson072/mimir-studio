@@ -161,7 +161,8 @@ packed file.
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview. `G` goes to an address or label, `Ctrl+F` finds text (labels,
    instructions, operands, comments), `Ctrl+↓` / `Ctrl+↑` go to the next or previous block and `X` lists who
-   references the line. Pointing at an undocumented opcode says what it does and which flags it changes.
+   references the line. Pointing at an undocumented opcode says what it does and which flags it changes. Hold `Ctrl`
+   over a line to see its block the other way: code as bytes with their PETSCII and screen-code text, data as code.
 3. **Fix what the heuristics got wrong.** `N` renames, `;` comments, and `C`, `D`, `W` and `T` mark the selection as
    code, bytes, words or text. Right-click for everything else. `Ctrl+Z` undoes, and `Ctrl+C` copies the selected
    lines as source.

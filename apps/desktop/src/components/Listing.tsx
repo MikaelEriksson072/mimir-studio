@@ -1,10 +1,12 @@
 /* Listing — virtualized, interactive view of the shared line model (spec 6, "one line model, two views"). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
-import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, offsetText, OPC, patchAt, patchEnd, relocAt, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
+import { createPortal } from 'react-dom';
+import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { Icon } from '../lib/icons';
+import { peekOf, type Peek, type PeekNames } from '../lib/peek';
 import type { Changed, Editing, ScrollReq, Sel } from '../lib/types';
-import type { Gutter } from '../store/ui';
+import { useUi, type Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
 import { bookmarkCss } from './Bookmarks';
 
@@ -133,9 +135,11 @@ interface ListingProps {
   /** a block whose type just changed: framed a moment, with what it became */
   changed?: Changed | null;
   find?: ListingFind | null;
+  /** the labels and zero-page variables the peek's instructions use */
+  names: PeekNames;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -206,6 +210,49 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const handle = !e.shiftKey && l.k !== 'hdr' && (e.target as HTMLElement).closest('.adr, .hex');
     startDrag(i, e.clientY, handle ? movesOf(A, l) : null);
   };
+
+  // The peek: Ctrl held over a line shows its block the other way than the listing does (lib/peek.ts), beside the
+  // pointer. Ctrl pressed shows it after a moment, so Ctrl+C and the other keys with Ctrl show none; a key pressed with
+  // Ctrl closes it until Ctrl is let go. `x`: where the pointer came onto the row; `top`: the row's top on screen.
+  const lower = useUi(s => s.mon.lower);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const peekKeys = useRef({ quiet: false, timer: 0 });
+  const [peekRow, setPeekRow] = useState<{ i: number; x: number; top: number } | null>(null);
+  /** the peek at the line under the pointer (none over the edit popover, or when the pointer is not on the listing) */
+  const peekNow = () => {
+    const p = pointer.current, el = box.current;
+    const over = p && el && !peekKeys.current.quiet ? document.elementFromPoint(p.x, p.y) : null;
+    if (!p || !el || !over || !el.contains(over) || over.closest('.edit-pop')) { setPeekRow(null); return; }
+    const r = el.getBoundingClientRect(), i = Math.floor((p.y - r.top + el.scrollTop) / ROW);
+    const top = r.top + i * ROW - el.scrollTop;
+    setPeekRow(q => (i < 0 || i >= latest.current.lines.length ? null : q && q.i === i && q.top === top ? q : { i, x: q?.i === i ? q.x : p.x, top }));
+  };
+  useEffect(() => {
+    const k = peekKeys.current;
+    const off = () => { clearTimeout(k.timer); setPeekRow(null); };
+    const keyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') { if (!e.repeat) { k.quiet = false; clearTimeout(k.timer); k.timer = window.setTimeout(peekNow, 150); } return; }
+      k.quiet = e.ctrlKey || e.metaKey; off();
+    };
+    const keyUp = (e: KeyboardEvent) => { if (e.key === 'Control' || e.key === 'Meta') { k.quiet = false; off(); } };
+    const blur = () => { k.quiet = false; off(); };
+    window.addEventListener('keydown', keyDown, true); window.addEventListener('keyup', keyUp, true); window.addEventListener('blur', blur);
+    return () => { window.removeEventListener('keydown', keyDown, true); window.removeEventListener('keyup', keyUp, true); window.removeEventListener('blur', blur); clearTimeout(k.timer); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const peekMove = (e: ReactMouseEvent) => {
+    pointer.current = { x: e.clientX, y: e.clientY };
+    if ((e.ctrlKey || e.metaKey) && !e.buttons && !peekKeys.current.quiet) { clearTimeout(peekKeys.current.timer); peekNow(); } else if (peekRow) setPeekRow(null);
+  };
+  const peek = useMemo((): Peek | null => {
+    const l = peekRow ? lines[peekRow.i] : null;
+    if (!l || l.k === 'blank' || l.k === 'file') return null;
+    const b = findBlock(A.blocks, l.a);
+    // a relocated block is read where its bytes run, in the blocks inside it
+    if (!b || b.type === 'reloc' || l.a < b.start || l.a >= b.end) return null;
+    // a block the listing shows as code (code, or data shown as code) is shown as bytes, the others as code
+    const at = lines[lineOf[l.a]], shownAsCode = b.type === 'code' || !!(at && 'preview' in at && at.preview);
+    return peekOf(A, names, b, l.a, 'n' in l ? l.n : 0, !shownAsCode);
+  }, [peekRow?.i, lines, lineOf, A, names]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     if (!scrollReq || !box.current) return;
     // a find hit is the line itself; an address shows the labels and comments above its line too
@@ -371,10 +418,54 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   // where the listing is on screen after this render (the line kept in view is placed against it); runs last
   useLayoutEffect(() => { if (box.current) boxTop.current = box.current.getBoundingClientRect().top; });
   return (
-    <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => setTop(e.currentTarget.scrollTop)} aria-label="Disassembly listing">
+    <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => { setTop(e.currentTarget.scrollTop); if (peekRow) peekNow(); }} aria-label="Disassembly listing"
+      onMouseMove={peekMove} onMouseLeave={() => { pointer.current = null; clearTimeout(peekKeys.current.timer); setPeekRow(null); }}>
       <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{chip}</div>
+      {peek && peekRow && <PeekBox peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} />}
     </div>
   );
+}
+
+/** The peek beside the pointer: below the row it is on, or above it where the window ends (it takes no clicks) */
+function PeekBox({ peek, A, names, lower, x, top }: { peek: Peek; A: AnalysisResult; names: PeekNames; lower: boolean; x: number; top: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    el.style.left = `${Math.max(8, Math.min(x + 14, window.innerWidth - w - 8))}px`;
+    el.style.top = `${top + ROW + 4 + h <= window.innerHeight - 8 ? top + ROW + 4 : Math.max(8, top - 4 - h)}px`;
+    el.style.visibility = 'visible';
+  });
+  const b = peek.block, name = names.labels.get(b.start)?.name;
+  const marked = (a: Addr) => !!peek.mark && a >= peek.mark.start && a < peek.mark.end;
+  const text = (a: Addr, n: number, screen: boolean) => Array.from({ length: n }, (_, k) => {
+    const c = monitorChar(A.mem[a + k], screen, lower);
+    return <span key={k} className={cx(!c && 'dot', c?.inv && 'inv', marked(a + k) && 'on')}>{c ? c.ch : '.'}</span>;
+  });
+  return createPortal(
+    <div ref={ref} className={cx('peek', peek.as)} role="tooltip" aria-label={`${kindInfo(b.type).label} block ${peek.as === 'bytes' ? 'as bytes and text' : 'as code'}`}>
+      <div className="peek-head">
+        <span className="hdr-chip" style={{ '--c': `var(--g-${groupOfKind(b.type)})` } as React.CSSProperties}>{kindInfo(b.type).label}</span>
+        <span className="mono">{name ? `${name} · ` : ''}${h4(b.start)}–${h4(b.end - 1)}</span>
+        <span className="peek-as">{peek.as === 'bytes' ? 'as bytes and text' : 'as code'}</span>
+      </div>
+      {peek.as === 'bytes' ? <>
+        <div className="peek-row cols"><span className="p-adr" /><span className="p-hex"><b>bytes</b></span><span className="p-txt"><b>PETSCII</b></span><span className="p-txt"><b>screen</b></span></div>
+        {peek.rows.map(r => (
+          <div key={r.a} className="peek-row">
+            <span className="p-adr">{h4(r.a)}</span>
+            <span className="p-hex">{Array.from({ length: r.n }, (_, k) => <span key={k} className={cx(marked(r.a + k) && 'on')}>{k ? ' ' : ''}{h2(A.mem[r.a + k])}</span>)}</span>
+            <span className="p-txt">{text(r.a, r.n, false)}</span>
+            <span className="p-txt">{text(r.a, r.n, true)}</span>
+          </div>))}
+      </> : peek.lines.map(l => (
+        <div key={l.a} className={cx('peek-row', peek.mark && l.a < peek.mark.end && l.a + l.n > peek.mark.start && 'on')}>
+          <span className="p-adr">{h4(l.a)}</span>
+          <span className="p-hex">{[...A.mem.subarray(l.a, l.a + l.n)].map(h2).join(' ')}</span>
+          <span className="p-src"><LineBody l={l} onToken={() => { }} mem={A.mem} /></span>
+        </div>))}
+      {peek.rest > 0 && <div className="peek-more">… {peek.rest} more byte{peek.rest === 1 ? '' : 's'} to ${h4(b.end - 1)}</div>}
+    </div>, document.body);
 }
 
 function EditPopover({ top, editing, onCommit, onCancel, error, setError }: { top: number; editing: Editing; onCommit: (v: string) => void; onCancel: () => void; error: string | null; setError: (e: string | null) => void }) {
