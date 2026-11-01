@@ -189,6 +189,41 @@ test.describe('the start screen', () => {
   });
 });
 
+test('another program opened in a project is work without a project: the project stays as it was', async ({ workDir: work, app, page }) => {
+  const file = join(work, 'keep', 'keep.mimir.json');
+  await waitForListing(page);
+  await page.keyboard.press('Control+s');
+  const dialog = page.getByRole('dialog', { name: 'Create a project from this work' });
+  await dialog.getByLabel('Name').fill('keep');
+  await stubDialogs(app, { open: [work] });
+  await dialog.getByRole('button', { name: 'Change…' }).click();
+  await dialog.getByRole('button', { name: 'Create project and move the work' }).click();
+  // the title bar can show the project a moment before the dialog has gone, and keys wait for that
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Project keep' })).toBeVisible();
+  await rename(page, OLD, NEW);
+  await expect.poll(() => readFileSync(file, 'utf8'), { timeout: 10_000 }).toContain(NEW);
+
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/loader-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded loader-demo.prg at $0801; without a project (keep is saved as it was; Save makes a project of this)')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'No project' })).toBeVisible();
+  await page.waitForTimeout(1200);
+  const kept = readFileSync(file, 'utf8');
+  expect(kept).toContain(NEW);
+  expect(kept).toContain('raster-demo.prg');
+  expect(kept).not.toContain('loader-demo.prg');
+
+  // the project opens as it was, from the start screen's list
+  await page.getByRole('button', { name: 'No project' }).click();
+  await page.getByRole('menuitem', { name: 'Start screen' }).click();
+  await expect(page.getByRole('button', { name: 'Continue with the work without a project' })).toContainText('loader-demo');
+  await page.getByRole('listitem').filter({ hasText: 'keep' }).getByRole('button', { name: /^keep/ }).click();
+  await waitForListing(page);
+  await expect(page.getByRole('button', { name: 'Project keep' })).toBeVisible();
+  expect(occurrences(await listingRows(page), NEW)).toBeGreaterThanOrEqual(4);
+});
+
 test('a project made afterwards from the work without one: the work and its export move into the project\'s folder', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await rename(page, OLD, NEW);
@@ -210,6 +245,7 @@ test('a project made afterwards from the work without one: the work and its expo
     await stubDialogs(app, { open: [parent] });
     await dialog.getByRole('button', { name: 'Change…' }).click();
     await dialog.getByRole('button', { name: 'Create project and move the work' }).click();
+    await expect(dialog).toBeHidden();
     await expect(toast(page, `Created the project raster in ${dir}: the work is saved there, with the export`)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Project raster' })).toBeVisible();
     expect(readFileSync(join(dir, 'raster.mimir.json'), 'utf8')).toContain(NEW);

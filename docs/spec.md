@@ -2095,8 +2095,11 @@ för det i mappar där:
 
 Mapparna skapas när något skrivs i dem. Spara-dialogerna (grafik, patchar, den packade filen, quicksaves, en kopia av
 projektfilen) öppnas i projektets mapp. Varje ändring sparas i projektfilen en halv sekund efter den (och innan
-projektet lämnas eller fönstret stängs); **Save** (Ctrl+S) sparar direkt. Att öppna en PRG, en snapshot eller en
-cartridge i ett projekt ger projektet de filerna, som ett steg Ctrl+Z ångrar. Showcase-demon och en projektfil som
+projektet lämnas eller fönstret stängs); **Save** (Ctrl+S) sparar direkt. Ett projekt skrivs aldrig över av ett annat
+program: en PRG, en snapshot, en cartridge eller en fil från en disk som öppnas i ett projekt som har filer blir arbete
+utan projekt, och projektet ligger kvar som det sparades (titelraden säger *No project*, Save gör ett projekt av det).
+Ett nytt, tomt projekt tar emot det som öppnas, som ett steg Ctrl+Z ångrar. Filer som läggs till (Add PRG, Shift när
+filer släpps, en bank till) och en fil som packas upp stannar i projektet. Showcase-demon och en projektfil som
 släpps på fönstret lämnar projektet (som är sparat) och blir arbete utan projekt. En projektfil öppnad med **Open
 project** gör sin mapp till projektets, också för filer sparade före projekten.
 

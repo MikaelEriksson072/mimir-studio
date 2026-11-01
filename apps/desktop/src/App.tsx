@@ -227,13 +227,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     window.addEventListener('beforeunload', flush);
     return () => { window.removeEventListener('beforeunload', flush); flush(); };
   }, [saveNow]);
-  /** the work goes on without a project (the project's last change is saved first) */
-  const leaveProject = async () => {
-    if (!home) return;
-    await saveNow();
+  /** the work goes on without a project, at once: the project's last change is saved (the change waiting is taken as it
+   *  is), and the project stays as it was. Returns the project left */
+  const leaveProject = (): ProjectHome | null => {
+    if (!home) return null;
+    void saveNow();
     setHome(null);
     setExportDir(null);
-    await kr?.workUnsaved();
+    void kr?.workUnsaved();
+    return home;
   };
   const toStartScreen = async () => { await saveNow(); onStartScreen(); };
 
@@ -342,13 +344,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (!opened.length) return;
     // a cartridge's chips open as a project of their own, with the image (13.9): a project holds one cartridge
     const cart = opened.find(f => f.cart)?.cart;
-    if (cart && !(add && project.cart && project.cart.name === cart.name && project.cart.crt.length === cart.crt.length)) {
+    const ownCart = !!cart && !(add && project.cart && project.cart.name === cart.name && project.cart.crt.length === cart.crt.length);
+    // files that take the place of a project's are work without a project: the project stays as it was saved (an empty
+    // project, just made, takes them)
+    const left = (ownCart || !add) && home && project.files.length ? leaveProject() : null;
+    const undoLabel = left ? undefined : opts.undoLabel ?? (home ? `Open ${cart && ownCart ? cart.name : opened.map(f => f.name).join(', ')}` : undefined);
+    const leftNote = left ? `; without a project (${left.name} is saved as it was; Save makes a project of this)` : '';
+    const note = opts.note && `${opts.note}${left ? leftNote : opts.undoLabel ? '. Ctrl+Z goes back to the project before' : ''}`;
+    if (cart && ownCart) {
       const files: LoadedFile[] = opened.map(({ id, name, load, bytes, chip, cart: c }) => ({ id, name, load, bytes, ...(c === cart && chip != null ? { chip } : {}) }));
-      replace(createProject({ files, settings: project.settings, cart }), opts.undoLabel ?? (home ? `Open ${cart.name}` : undefined)); resetView();
+      replace(createProject({ files, settings: project.settings, cart }), undoLabel); resetView();
       let what = '';
       try { what = `: ${describeCrt(parseCrt(cart.crt, cart.name))}`; } catch { /* the files say enough */ }
       const chips = files.filter(f => f.chip != null);
-      toast(`Opened the cartridge ${cart.name}${what}; ${chips.length > 4 ? `${chips.length} chips, every bank in the listing` : chips.map(f => `${f.name} at $${h4(f.load)}`).join(', ')}${add ? ' (a project holds one cartridge, so it is a project of its own)' : ''}`, 'ok');
+      toast(`Opened the cartridge ${cart.name}${what}; ${chips.length > 4 ? `${chips.length} chips, every bank in the listing` : chips.map(f => `${f.name} at $${h4(f.load)}`).join(', ')}${add ? ' (a project holds one cartridge, so it is a project of its own)' : ''}${leftNote}`, 'ok');
       return;
     }
     // a snapshot is kept with its file: Build & Run restarts it as it was
@@ -357,10 +366,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // a snapshot's BASIC SYS is the program start: its RAM from $0200 cannot be started with RUN
     const start = add ? undefined : opened.find(f => f.start != null)?.start;
     if (add) update(`Add ${files.map(f => f.name).join(', ')}`, d => { d.files.push(...files); for (const e of entries) if (!d.entries.includes(e)) d.entries.push(e); });
-    // in a project the files it held come back with Ctrl+Z
-    else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: project.settings }), entries, entryPoint: start ?? null }, opts.undoLabel ?? (home ? `Open ${files.map(f => f.name).join(', ')}` : undefined)); resetView(); }
-    if (opts.note) { toast(opts.note, 'ok'); return; }
-    toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}`, 'ok');
+    // an empty project's nothing comes back with Ctrl+Z
+    else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: project.settings }), entries, entryPoint: start ?? null }, undoLabel); resetView(); }
+    if (note) { toast(note, 'ok'); return; }
+    toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}${leftNote}`, 'ok');
   };
   const openPrgs = async (add: boolean) => {
     if (!kr) return needDesktop();
@@ -374,7 +383,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (!r.found) { toast(`No VICE quicksave yet: in VICE, Snapshot → Quicksave snapshot (Alt+F11) writes ${r.path}`, 'warn'); return; }
       const f = r.files[0], at = new Date(r.saved).toLocaleTimeString();
       const traced = f.entries?.length ? `, traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : '';
-      addFiles(r.files, false, { undoLabel: 'Open the VICE quicksave', note: `Opened the VICE quicksave from ${at}: ${f.snapshot ?? f.name}${traced}. Ctrl+Z goes back to the project before` });
+      addFiles(r.files, false, { undoLabel: 'Open the VICE quicksave', note: `Opened the VICE quicksave from ${at}: ${f.snapshot ?? f.name}${traced}` });
     } catch (e) { toast(`VICE quicksave: ${errorText(e)}`, 'err'); }
   };
   /** what the Explorer says about it: the newest quicksave and when it was saved, or where VICE will write one */
@@ -393,7 +402,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (!r.found) return;
       const f = r.files[0];
       const traced = f.entries?.length ? `, traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : '';
-      addFiles(r.files, false, { undoLabel: `Open the quicksave "${q.name}"`, note: `Opened the quicksave "${q.name}": ${f.snapshot ?? f.name}${traced}. Ctrl+Z goes back to the project before` });
+      addFiles(r.files, false, { undoLabel: `Open the quicksave "${q.name}"`, note: `Opened the quicksave "${q.name}": ${f.snapshot ?? f.name}${traced}` });
     } catch (e) { toast(`VICE quicksave: ${errorText(e)}`, 'err'); refreshQuicksave(); }
   };
   const renameKeptQuicksave = async (q: QuicksaveEntry, name: string) => {
@@ -611,7 +620,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       const buf = new Uint8Array(await f.arrayBuffer());
       try {
         // a project file dropped on the window: its folder is not known, so it is work without a project
-        if (/\.json$/i.test(f.name)) { const p = deserializeProject(JSON.parse(new TextDecoder().decode(buf)) as SerializedProject); await leaveProject(); replace(p); resetView(); toast(`Opened project ${f.name} as work without a project: Save creates a project from it`, 'ok'); continue; }
+        if (/\.json$/i.test(f.name)) { const p = deserializeProject(JSON.parse(new TextDecoder().decode(buf)) as SerializedProject); leaveProject(); replace(p); resetView(); toast(`Opened project ${f.name} as work without a project: Save creates a project from it`, 'ok'); continue; }
         if (/\.d64$/i.test(f.name)) { mountBytes(f.name, null, buf); continue; }
         // a cartridge image (known by its header): the chips of its boot bank, with the image
         if (isCrt(buf)) { const o = openCartridge(f.name, buf); prgs.push(...o.files.map(x => ({ ...withId(x), cart: o.cart }))); continue; }
@@ -1345,10 +1354,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   /** the showcase (core/showcase.ts) with its tour in the Bookmarks view. It needs bank tracking: its bitmap logo sits
    *  above a text screen, and only that tells the two $d018 values apart */
-  const loadDemo = async () => {
+  const loadDemo = () => {
     // the showcase is not a project's work: a project is saved as it is and left
-    const left = home;
-    await leaveProject();
+    const left = leaveProject();
     replace(showcaseProject({ ...project.settings, bankTracking: true }));
     resetView();
     setUi({ activity: 'bookmarks', sidePanel: true });
@@ -1392,7 +1400,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...packing.flatMap((p, i) => (p ? [{ id: `unpack-${i}`, label: external ? `Unpack ${project.files[i]?.name} with ${unpackerName}` : `Unpack ${project.files[i]?.name}`, run: () => void unpackFile(i) }] : [])),
     { id: 'terminal', label: 'Open a terminal in the project folder (VICE on PATH, kickass runs Kick Assembler)', run: () => void openTerminal() },
     ...(disk ? [{ id: 'eject', label: `Eject ${disk.name}`, run: ejectDisk }] : []),
-    { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: () => void loadDemo() },
+    { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: loadDemo },
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
     { id: 'find', label: tab === 'source' ? 'Find in the source' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' ? setSrcFind(n => n + 1) : openFind()) },
     { id: 'find-next', label: 'Find: the next line with a match', key: 'F3', run: () => (findOpen ? stepFind(1) : openFind()) },
@@ -1719,7 +1727,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
       <aside className="sidebar"><ErrorBoundary>
         <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }}
-          onOpen={() => void openPrgs(false)} onAdd={() => void openPrgs(true)} onDemo={() => void loadDemo()}
+          onOpen={() => void openPrgs(false)} onAdd={() => void openPrgs(true)} onDemo={loadDemo}
           quicksave={{ info: qsInfo, follow: followQuicksave, onOpen: () => void openQuicksave(), onFollow: v => setUi({ followQuicksave: v }),
             kept: qsList, onOpenKept: q => void openKeptQuicksave(q), onRenameKept: (q, name) => void renameKeptQuicksave(q, name), onSaveKept: q => void saveKeptQuicksave(q),
             onFavouriteKept: (q, on) => void favouriteKeptQuicksave(q, on) }}

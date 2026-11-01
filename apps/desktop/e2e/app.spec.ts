@@ -870,6 +870,7 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
     await dialog.getByRole('button', { name: 'Change…' }).click();
     await expect(dialog.locator('.np-parent')).toContainText(work);
     await dialog.getByRole('button', { name: 'Create project and move the work' }).click();
+    await expect(dialog).toBeHidden();
     await expect(toast(page, `Created the project demo in ${join(work, 'demo')}: the work is saved there`)).toBeVisible();
     expect(readFileSync(join(work, 'demo', 'demo.mimir.json'), 'utf8')).toContain(NEW);
     await expect(page.getByRole('button', { name: 'Project demo' })).toBeVisible();
