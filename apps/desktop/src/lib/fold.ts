@@ -1,5 +1,6 @@
 /* Folding in the listing: a folded block shows only its header line. The view keeps each line's number in its
- * .asm file, and the header of a folded block stands for every address of the block (cursor, scrolling, keys). */
+ * .asm file, and the header of a folded block stands for every address of the block (cursor, scrolling, keys).
+ * Ctrl+↓ / Ctrl+↑ go from block header to block header. */
 import type { Addr, Block, ListingLine } from '@mimir/core';
 import { fileLineNumbers } from './lines';
 
@@ -32,4 +33,15 @@ export function foldLines(all: readonly ListingLine[], blocks: readonly Block[],
     for (let a = s; a < e && a < size; a++) if (lineOf[a] < 0) lineOf[a] = i;
   });
   return { lines, lineNo: Int32Array.from(no), lineOf, hidden };
+}
+
+/** Ctrl+↓ / Ctrl+↑: the block header to go to from line `from` (indices into the listing's lines, `hdrs` the headers'
+ *  in order; -1 for none). Down: the next block's. Up: the line's own block's, or the one before when the cursor is
+ *  at its start (`atStart`). Before the first header (a file's head) going up finds none; past the last, going down. */
+export function blockStep(hdrs: readonly number[], from: number, dir: 1 | -1, atStart: boolean): number {
+  // the last header on or before the line
+  let lo = 0, hi = hdrs.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (hdrs[mid] <= from) lo = mid + 1; else hi = mid; }
+  const k = dir > 0 ? lo : atStart ? lo - 2 : lo - 1;
+  return k >= 0 && k < hdrs.length ? hdrs[k] : -1;
 }

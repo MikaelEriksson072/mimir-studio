@@ -1018,6 +1018,7 @@ Pefchain läser det, med drivern och rutinerna efter `#`.
 | Bokmärke | `B`, högerklick → *Add bookmark…* / *Edit bookmark…*, `+` i bokmärkeslistan, kommandopaletten | En redigerare överst i bokmärkespanelen i sidofältet, med adress, titel och anteckning. Den täcker inte listningen, som visar koden på adressen mitt i bilden. Ändras adressen visar listningen den nya platsen, och *Cursor line* tar raden markören står på (man kan klicka i koden medan man skriver). `Esc` stänger utan att spara. Titeln föreslås från etiketten på adressen, annars `$xxxx`. Adressen kan ändras (bokmärket flyttas) men måste ligga i en laddad fil, och två bokmärken kan inte dela adress. `B` på en rad som redan har ett bokmärke redigerar det. Det gäller också en `.byte`-rad eller ett ihopfällt block som innehåller bokmärkets adress. Raden får en liten bokmärkessymbol i vänsterkanten; ett klick på den öppnar listan med anteckningen. Bokmärken sparas i projektfilen men aldrig i källkoden, och de ångras med `Ctrl+Z` |
 | Bokmärkeslistan | `Ctrl+B`, aktivitetsradens bokmärkesknapp (visar antalet) | Alla bokmärken sorterade efter adress, med adress och titel, och filtrerbara på titel, anteckning och adress. Ett klick visar hela anteckningen med *Go to*, *Edit* och *Delete*, och ett klick till döljer den. Ett dubbelklick går till platsen i koden |
 | Nästa / föregående bokmärke | `F2` / `Shift+F2` | Går till bokmärket efter eller före markörens rad och börjar om från första eller sista. Titeln visas i en toast |
+| Nästa / föregående block | `Ctrl+↓` / `Ctrl+↑`, pilarna *Next block* / *Previous block* i listningens verktygsrad (när raden är bred nog) och ⋯-menyn, kommandopaletten | `Ctrl+↓` går till nästa blocks början. `Ctrl+↑` går till början av blocket markören står i, och står den redan där till blocket före. Blockets rubrik hamnar överst i listningen med raden ovanför, så man kan bläddra block för block. Ihopfällda block förblir ihopfällda och markören stannar på rubriken, så *Fold all blocks* och sedan `Ctrl+↓` går igenom blocken ett i taget. En följd av hopp läggs en gång i navigeringshistoriken, så `Esc` går tillbaka dit markören stod före det första. Efter det sista blocket och före det första händer ingenting (`blockStep` i `apps/desktop/src/lib/fold.ts`) |
 | Patch | `P`, högerklick → *Patch selection/line/block with new code…*, kommandopaletten | Ny kod skrivs över markeringen (eller raden vid markören) i de laddade bytena; `P` på en patchad rad redigerar patchen (10.2) |
 | Lägg till startpunkt | `E` | Spårning från adressen |
 | Programstart | Explorer → *Program start* (adress eller etikett), högerklick → *Set as program start*, kommandopaletten | Ersätter den detekterade starten (8.2); *Use the detected start* tar bort valet |
@@ -2101,11 +2102,17 @@ Paneler storleksändras med drag och mins per användare. Under 900 px bredd bli
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:
-- **Under 1060 px:** listningens verktyg (bakåt, framåt, *Go to*, *Data as code*, *Offset*, *Cycles*, vänsterkolumnen *Adr*/*Line*)
-  visar bara sina ikoner. Namnen finns kvar för skärmläsare och i verktygstipsen.
-- **Under 860 px:** flikarna blir smalare.
-- **Under 760 px:** verktygen flyttar in i menyn **⋯** (*Listing tools*). Där är *Data as code*, *Cycles* och
+- **Under 1300 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.
+- **Under 1210 px:** listningens verktyg (bakåt, framåt, föregående och nästa block, *Go to*, *Find*, *Data as code*,
+  *Offset*, *Cycles*, vänsterkolumnen *Adr*/*Line*) visar bara sina ikoner. Namnen finns kvar för skärmläsare och i
+  verktygstipsen.
+- **Under 960 px:** flikarna blir smalare, och knapparna för föregående och nästa block lämnar raden (`Ctrl+↑` / `Ctrl+↓`
+  och kommandopaletten finns kvar).
+- **Under 820 px:** verktygen flyttar in i menyn **⋯** (*Listing tools*). Där är *Data as code*, *Cycles* och
   vänsterkolumnens val bockade när de är på, och samma knapp stänger menyn.
+
+Gränserna är mätta med demons flikar och lite marginal för ett längre filnamn. Standardfönstret (1480 px, editorn 824 px)
+har verktygen i raden, och raden får plats utan att något kapas i varje fönsterbredd (ett e2e-test går igenom 2000–1100 px).
 - **Under 520 px:** de andra flikarna än den valda visar bara sin ikon, med namnet som verktygstips.
 
 Källflikens filnamn kortas med "…" (högst 12 em, 8 em på smal rad). Verktygen syns därmed också i smala fönster, där

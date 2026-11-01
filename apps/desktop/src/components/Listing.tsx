@@ -216,7 +216,8 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const y = j * ROW;
     // a block whose type changed: its first line stays where it was on screen, with its header in view
     const kept = scrollReq.y != null ? Math.max(0, Math.min(i * ROW - scrollReq.y, y)) : null;
-    if (kept != null && (i + 1) * ROW <= kept + vis) el.scrollTop = kept;
+    if (scrollReq.top) el.scrollTop = Math.max(0, (i - 1) * ROW);
+    else if (kept != null && (i + 1) * ROW <= kept + vis) el.scrollTop = kept;
     else if (scrollReq.center || y < el.scrollTop || (i + 1) * ROW > el.scrollTop + vis) el.scrollTop = Math.max(0, y - Math.floor(vis / 3));
     // the rows at the new place render now, not after the scroll event
     setTop(el.scrollTop);

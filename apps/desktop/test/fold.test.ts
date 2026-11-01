@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, demoProject, findBlock, lineText, render } from '@mimir/core';
-import { foldLines } from '../src/lib/fold';
+import { blockStep, foldLines } from '../src/lib/fold';
 import { fileLineNumbers } from '../src/lib/lines';
 
 const p = demoProject();
@@ -38,5 +38,33 @@ describe('folding the listing', () => {
     const at = v.lineOf[code.start];
     expect(v.lines[at]).toMatchObject({ a: code.start });
     expect(v.lines[at].k).not.toBe('hdr');
+  });
+});
+
+describe('from block to block (Ctrl+↓ / Ctrl+↑)', () => {
+  const hdrs = [3, 10, 20];
+  it('goes down to the next block, from the file head to the first', () => {
+    expect(blockStep(hdrs, 0, 1, false)).toBe(3);
+    expect(blockStep(hdrs, 3, 1, true)).toBe(10);
+    expect(blockStep(hdrs, 12, 1, false)).toBe(20);
+    expect(blockStep(hdrs, 25, 1, false)).toBe(-1);
+    expect(blockStep([], 0, 1, false)).toBe(-1);
+  });
+
+  it('goes up to the start of its own block, then to the one before', () => {
+    expect(blockStep(hdrs, 14, -1, false)).toBe(10);
+    expect(blockStep(hdrs, 11, -1, true)).toBe(3);
+    // a folded block: the cursor's line is its header
+    expect(blockStep(hdrs, 10, -1, true)).toBe(3);
+    expect(blockStep(hdrs, 4, -1, true)).toBe(-1);
+    expect(blockStep(hdrs, 1, -1, false)).toBe(-1);
+  });
+
+  it('visits every block of the demo, in the order of the listing', () => {
+    const h = R.lines.flatMap((l, i) => (l.k === 'hdr' ? [i] : []));
+    expect(h.length).toBe(A.blocks.length);
+    const seen: number[] = [];
+    for (let i = blockStep(h, -1, 1, false); i >= 0; i = blockStep(h, i, 1, true)) seen.push(R.lines[i].a);
+    expect(seen).toEqual(A.blocks.map(b => b.start));
   });
 });

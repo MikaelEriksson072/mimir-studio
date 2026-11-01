@@ -732,6 +732,63 @@ test('find text in the listing: every match marked, Enter and F3 step through th
   });
 });
 
+test('Ctrl+↓ and Ctrl+↑ go from block to block, the header at the top of the listing', async ({ app, page }) => {
+  await waitForListing(page);
+  /** the block's header is at the top of the listing, below the line above it */
+  const atTop = async (adr: string) => {
+    const box = await listing(page).boundingBox(), row = await headerRow(page, adr).boundingBox();
+    return !!box && !!row && row.y - box.y >= 0 && row.y - box.y <= 2 * 20;
+  };
+  await expect(statusBar(page)).toContainText('$0810 · start');
+  await listing(page).focus();
+
+  await test.step('Ctrl+↓ goes to the next block; Esc goes back from a run of them at once', async () => {
+    await page.keyboard.press('Control+ArrowDown');
+    await expect(statusBar(page)).toContainText('$0866 · sub_0866');
+    await expect.poll(() => atTop('0866')).toBe(true);
+    await page.keyboard.press('Control+ArrowDown');
+    await expect(statusBar(page)).toContainText('$08ae · sub_08ae');
+    await expect.poll(() => atTop('08ae')).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(statusBar(page)).toContainText('$0810 · start');
+  });
+
+  await test.step('Ctrl+↑ goes to the start of the block, then to the one before', async () => {
+    await goTo(page, '$0870');
+    await page.keyboard.press('Control+ArrowUp');
+    await expect(statusBar(page)).toContainText('$0866 · sub_0866');
+    await page.keyboard.press('Control+ArrowUp');
+    await expect(statusBar(page)).toContainText('$0810 · start');
+  });
+
+  await test.step('a folded block stays folded: the cursor stops on its header', async () => {
+    await goTo(page, 'sine_09b5');
+    await page.keyboard.press('f');
+    await expect(headerRow(page, '09b5').locator('.hdr-folded')).toBeVisible();
+    await goTo(page, 'txt_0985');
+    await page.keyboard.press('Control+ArrowDown');
+    await expect(statusBar(page)).toContainText('$09b5 · sine_09b5');
+    await page.keyboard.press('Control+ArrowDown');
+    await expect(statusBar(page)).toContainText('$0ab5');
+    await page.keyboard.press('Control+ArrowUp');
+    await expect(statusBar(page)).toContainText('$09b5 · sine_09b5');
+    await expect(headerRow(page, '09b5').locator('.hdr-folded')).toBeVisible();
+  });
+
+  await test.step('the buttons in the toolbar do the same (a wide window has them), and the last block goes no further', async () => {
+    await expect(page.getByRole('button', { name: 'Next block', exact: true })).toBeHidden();
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1920, 920); });
+    await page.getByRole('button', { name: 'Next block', exact: true }).click();
+    await expect(statusBar(page)).toContainText('$0ab5');
+    await expect(listing(page)).toBeFocused();
+    await page.getByRole('button', { name: 'Previous block', exact: true }).click();
+    await expect(statusBar(page)).toContainText('$09b5 · sine_09b5');
+    await goTo(page, 'charset_3000');
+    await page.keyboard.press('Control+ArrowDown');
+    await expect(statusBar(page)).toContainText('$3000 · charset_3000');
+  });
+});
+
 test('exclude a block from the build', async ({ page }) => {
   await waitForListing(page);
   await goTo(page, 'sine_09b5');
@@ -3049,6 +3106,13 @@ test('the tab row fits a small window: the listing tools lose their labels, then
     // the ⋯ button closes its menu again
     await more.click();
     await expect(page.getByRole('menu')).toBeHidden();
+  });
+
+  await test.step('every width between: the row fits, nothing is cut off', async () => {
+    for (let w = 2000; w >= 1100; w -= 20) {
+      await size(w);
+      await expect.poll(fits, { message: `a ${w} px window` }).toBe(true);
+    }
   });
 
   await test.step('narrower: the other tabs show only their icons and still open by name', async () => {

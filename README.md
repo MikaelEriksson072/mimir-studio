@@ -152,7 +152,8 @@ packed file.
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview. `G` goes to an address or label, `Ctrl+F` finds text (labels,
-   instructions, operands, comments) and `X` lists who references the line. Pointing at an undocumented opcode says what it does and which flags it changes.
+   instructions, operands, comments), `Ctrl+↓` / `Ctrl+↑` go to the next or previous block and `X` lists who
+   references the line. Pointing at an undocumented opcode says what it does and which flags it changes.
 3. **Fix what the heuristics got wrong.** `N` renames, `;` comments, and `C`, `D`, `W` and `T` mark the selection as
    code, bytes, words or text. Right-click for everything else. `Ctrl+Z` undoes, and `Ctrl+C` copies the selected
    lines as source.

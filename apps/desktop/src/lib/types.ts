@@ -9,8 +9,9 @@ export interface MountedDisk { name: string; path: string | null; bytes: Uint8Ar
  * `anchor`..`anchorEnd` is the line or block picked first; extending the selection always keeps it whole. */
 export interface Sel { start: Addr; end: Addr; multi: boolean; anchor?: Addr; anchorEnd?: Addr }
 /** `y`: keep the line at this height in the listing (px from its top), where it was before its block changed type;
- *  `line`: show this line (a find hit) rather than the address's */
-export interface ScrollReq { addr: Addr; center: boolean; n: number; y?: number; line?: ListingLine }
+ *  `line`: show this line (a find hit) rather than the address's; `top`: put the line at the top of the listing, with
+ *  the line above it (a block header, Ctrl+↓ / Ctrl+↑) */
+export interface ScrollReq { addr: Addr; center: boolean; n: number; y?: number; line?: ListingLine; top?: boolean }
 /** a block whose type just changed (the listing frames it a moment, with `label` on it); `at`: when */
 export interface Changed { start: Addr; end: Addr; label: string; at: number }
 /** inline edit popover: a label, a line's trailing comment, or a comment line / block (`block`) above a line */

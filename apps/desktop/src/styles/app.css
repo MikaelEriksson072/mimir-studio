@@ -212,24 +212,30 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .count { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 8px; background: var(--line); color: var(--fg-2); }
 .count.bad { background: var(--err); color: #fff; }
 .tab-tools { display: flex; align-items: center; gap: 4px; padding: 0 8px; }
-/* the editor's tab row fits its width, not the window's (the side panels take a share): the tools lose their labels
-   first, then the tabs get narrower, then the tools move into the ⋯ menu and the other tabs show only their icons */
+/* the editor's tab row fits its width, not the window's (the side panels take a share): the tools lose their key
+   hints and then their labels first, then the tabs get narrower and the block buttons go (Ctrl+↓ / Ctrl+↑ stay), then
+   the tools move into the ⋯ menu and the other tabs show only their icons. The widths are measured with the demo's
+   tabs and a little more for a longer name; the default window (1480 px) has the tools in the row */
 .main { container: editor / inline-size; }
 .main-tabs .tab-label { overflow: hidden; text-overflow: ellipsis; max-width: 12em; }
 .main-tabs .tab-tools kbd { margin-left: 2px; }
 .main-tabs .tab-more { display: none; align-self: center; margin: 0 4px; color: var(--fg); }
 .seg-short { display: none; }
-@container editor (max-width: 1060px) {
-  .main-tabs .tool-label, .main-tabs .tab-tools kbd { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@container editor (max-width: 1300px) {
+  .main-tabs .tab-tools kbd { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@container editor (max-width: 1210px) {
+  .main-tabs .tool-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .main-tabs .tab-tools .btn.small { padding: 0 6px; }
   .main-tabs .seg-long { display: none; }
   .main-tabs .seg-short { display: inline; }
 }
-@container editor (max-width: 860px) {
+@container editor (max-width: 960px) {
   .main-tabs .tab { padding: 0 10px; }
+  .main-tabs .tool-block { display: none; }
   .main-tabs .tab-label { max-width: 8em; }
 }
-@container editor (max-width: 760px) {
+@container editor (max-width: 820px) {
   .main-tabs .tab-tools { display: none; }
   .main-tabs .tab-more { display: inline-grid; }
 }

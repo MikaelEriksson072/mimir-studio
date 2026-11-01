@@ -16,7 +16,7 @@ import { forgetUnsavedWork, useProject } from './store/project';
 import { useUi, type Activity } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
-import { foldLines } from './lib/fold';
+import { blockStep, foldLines } from './lib/fold';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
 import { withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
@@ -306,6 +306,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
   };
   const closeFind = () => { setFindOpen(false); listRef.current?.focus(); };
+
+  /* ---- Ctrl+↓ / Ctrl+↑: the next block, or the start of the cursor's block and then the one before; the block's
+     header goes to the top of the listing. Folded blocks stay folded: the cursor stops on their header ---- */
+  /** the block headers, as indices into R.lines */
+  const hdrLines = useMemo(() => R.lines.flatMap((l, i) => (l.k === 'hdr' ? [i] : [])), [R]);
+  /** where the last jump put the cursor: a run of jumps goes into the navigation history once (Esc goes back) */
+  const blockAddr = useRef<Addr | null>(null);
+  const jumpBlock = (dir: 1 | -1) => {
+    if (useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
+    const from = cursor != null ? cursorLineIdx() : -1;
+    const l = R.lines[blockStep(hdrLines, from, dir, cursor != null && findBlock(A.blocks, cursor)?.start === cursor)];
+    if (!l) return;
+    if (cursor != null && cursor !== l.a && cursor !== blockAddr.current) { navHist.current.back.push(cursor); navHist.current.fwd = []; }
+    blockAddr.current = l.a;
+    setCursor(l.a); setSel(null);
+    setScrollReq({ addr: l.a, center: false, n: Date.now(), line: l, top: true });
+  };
 
   /* ---- files ---- */
   /** PRGs, and VICE snapshots as their RAM from $0200: the PC and interrupt handlers they hold become entry points */
@@ -1275,6 +1292,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'find', label: tab === 'source' ? 'Find in the source' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' ? setSrcFind(n => n + 1) : openFind()) },
     { id: 'find-next', label: 'Find: the next line with a match', key: 'F3', run: () => (findOpen ? stepFind(1) : openFind()) },
     { id: 'find-prev', label: 'Find: the line with a match before', key: 'Shift+F3', run: () => (findOpen ? stepFind(-1) : openFind()) },
+    { id: 'block-next', label: 'Go to the next block', key: 'Ctrl+↓', run: () => jumpBlock(1) },
+    { id: 'block-prev', label: 'Go to the start of the block, or the block before', key: 'Ctrl+↑', run: () => jumpBlock(-1) },
     { id: 'select-range', label: 'Select address range… (e.g. $2000-$27ff)', run: () => setModal('goto') },
     { id: 'back', label: 'Navigate back', key: 'Esc', run: goBack },
     { id: 'rename', label: 'Rename label at cursor', key: 'N', run: startRename },
@@ -1350,6 +1369,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       // Ctrl+F finds in the listing, and in the source tab with Monaco's find (in the editor Monaco takes it itself)
       if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source') run('find'); return; }
       if (e.key === 'F3' && k.tab === 'listing' && !k.modal) return run(e.shiftKey ? 'find-prev' : 'find-next');
+      // Ctrl+↓ / Ctrl+↑: from block to block
+      if (ctrl && !e.shiftKey && !e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && !typing && !k.editing && !k.modal && k.tab === 'listing') return run(e.key === 'ArrowDown' ? 'block-next' : 'block-prev');
       if (ctrl && !typing) {
         const map: Record<string, string> = { z: e.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', e: 'export', g: 'goto', ',': 'settings', j: 'panel', b: 'bookmarks' };
         const id = map[e.key.toLowerCase()]; if (id) return run(id);
@@ -1590,6 +1611,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             <div className="tab-tools">
               <button className="icon-btn" onClick={goBack} title="Back (Esc)" aria-label="Back"><Icon name="left" size={14} /></button>
               <button className="icon-btn" onClick={goFwd} title="Forward (Alt+→)" aria-label="Forward"><Icon name="right" size={14} /></button>
+              <button className="icon-btn tool-block" onClick={() => { jumpBlock(-1); listRef.current?.focus(); }} title="Previous block: the start of the cursor's block, then the one before (Ctrl+↑)" aria-label="Previous block"><Icon name="up" size={14} /></button>
+              <button className="icon-btn tool-block" onClick={() => { jumpBlock(1); listRef.current?.focus(); }} title="Next block (Ctrl+↓)" aria-label="Next block"><Icon name="down" size={14} /></button>
               <button className="btn ghost small" onClick={() => setModal('goto')} title="Go to an address or label, or select a range (G)"><Icon name="target" size={14} /><span className="tool-label">Go to</span><kbd>G</kbd></button>
               <button className={cx('btn ghost small', findOpen && 'on')} aria-pressed={findOpen} onClick={openFind} title="Find text in the listing: labels, instructions, operands and comments (Ctrl+F)"><Icon name="search" size={14} /><span className="tool-label">Find</span><kbd>Ctrl+F</kbd></button>
               <button className={cx('btn ghost small', dataAsCode && 'on')} aria-pressed={dataAsCode} onClick={() => setUi({ dataAsCode: !dataAsCode })} title="Data as code: show every block that is not code disassembled, to find code that is marked as data. The export does not change."><Icon name="code" size={14} /><span className="tool-label">Data as code</span></button>
@@ -1599,7 +1622,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 {([['addr', 'Address', 'Adr'], ['line', 'Line', 'Line']] as const).map(([k, l, s]) => <button key={k} className={cx(gutter === k && 'on')} aria-pressed={gutter === k} aria-label={l} onClick={() => setUi({ gutter: k })}><span className="seg-long">{l}</span><span className="seg-short">{s}</span></button>)}
               </div>
             </div>
-            <button className="icon-btn tab-more" aria-label="Listing tools" aria-haspopup="menu" aria-expanded={menu?.owner === 'tools'} title="Back, forward, Go to, Find, Data as code, Cycles and the left column"
+            <button className="icon-btn tab-more" aria-label="Listing tools" aria-haspopup="menu" aria-expanded={menu?.owner === 'tools'} title="Back, forward, the next and previous block, Go to, Find, Data as code, Cycles and the left column"
               onMouseDown={e => e.stopPropagation()}
               onClick={e => {
                 if (menu?.owner === 'tools') { setMenu(null); return; }
@@ -1607,6 +1630,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 setMenu({ owner: 'tools', x: r.right - 240, y: r.bottom + 2, items: [
                   { label: 'Back', key: 'Esc', run: goBack },
                   { label: 'Forward', key: 'Alt+→', run: goFwd },
+                  { label: 'Previous block', key: 'Ctrl+↑', run: () => jumpBlock(-1) },
+                  { label: 'Next block', key: 'Ctrl+↓', run: () => jumpBlock(1) },
                   { label: 'Go to…', key: 'G', run: () => setModal('goto') },
                   { label: 'Find…', key: 'Ctrl+F', run: openFind },
                   { sep: true },
@@ -1636,7 +1661,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             {tab === 'listing' && project.files.length > 0 && <>
               {welcome && <div className="welcome">
                 <div><b>{project.cart && A.spaces ? `${project.cart.name} (${A.spaces.length} banks)` : project.files.map(f => f.name).join(', ')}</b> is analysed: {A.blocks.length} blocks, {A.labels.size} labels, {A.music.length ? 'SID music, ' : ''}{A.gfx.length ? `${A.gfx.length} graphics block${A.gfx.length > 1 ? 's' : ''}, ` : ''}{A.stats.illegal} undocumented opcodes.</div>
-                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range <kbd>Ctrl+F</kbd> find · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
+                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range <kbd>Ctrl+F</kbd> find <kbd>Ctrl+↓</kbd><kbd>Ctrl+↑</kbd> next/previous block · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
                 <button className="icon-btn" aria-label="Dismiss" onClick={() => setUi({ welcome: false })}><Icon name="x" size={14} /></button>
               </div>}
               {packing.map((p, i) => p && !packHidden.has(project.files[i]?.id ?? String(i)) && <div key={`pack-${i}`} className="welcome preview-bar pack-bar" role="status">
