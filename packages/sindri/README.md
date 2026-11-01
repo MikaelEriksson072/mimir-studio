@@ -37,6 +37,14 @@ that layer starts:
 Layers begun inside a subroutine call or an interrupt that returns to where it was called from were temporary and join
 the caller again: a decruncher called with `JSR`, speedcode a program generates, an interrupt handler it writes.
 
+A BASIC program that jumps back into BASIC goes on with itself: the commands of a BASIC extension end in a jump to
+NEWSTT, and a program may `RUN` itself again and again. That starts a layer only when BASIC goes on with text written
+since BASIC last went on from there: from the first line, a program a depacker it called wrote, or one not run yet
+(`POKE 44` and `RUN`); in the middle of the program, what the program rewrote itself. Until November 2026 every such
+jump was a layer, so a Loadstar program with an extension made thousands and took minutes; on the 550 files of the
+comparison with unp64 (with the ROMs and with the stand-ins) and on a sample of 1978 files of the archive (intros,
+demos and games) every layer, name and saved program stayed.
+
 The run stops when the newest layer settles (it stops streaming new data through memory), loads a file (without a
 disk), returns to BASIC, crashes or runs out of time. The newest layer is then the unpacked program. When an intro waits before anything
 was unpacked, keys are pressed in turn (space and fire first, then return, N, F1, Y, F7, 1).
@@ -187,10 +195,11 @@ pnpm test
 The tests build packed programs with a small 6502 assembler (an RLE cruncher whose decruncher runs at `$0100`, stays in
 high memory, is called with `JSR` or ends in BASIC's `RUN`, an XOR coder in front of it, an intro that waits for space,
 an autostart over the BASIC vectors) and run them with the stand-ins and, when VICE's ROMs are found, with the real
-ROMs. When Exomizer is installed, an Exomizer 3 self-extracting file is unpacked too. The drive tests check the GCR
-tracks sector by sector, have the DOS read sectors all over a disk, and, with VICE's ROMs, follow a boot file that
-loads the next file through the KERNAL and one that sends drive code of its own with `M-W`, starts it with `M-E` and
-receives a sector over the serial bus bit by bit.
+ROMs. With the ROMs, small BASIC programs with an extension go on with themselves and RUN themselves again without new
+layers, packed or not, and one that RUNs another program starts a layer. When Exomizer is installed, an Exomizer 3
+self-extracting file is unpacked too. The drive tests check the GCR tracks sector by sector, have the DOS read sectors
+all over a disk, and, with VICE's ROMs, follow a boot file that loads the next file through the KERNAL and one that
+sends drive code of its own with `M-W`, starts it with `M-E` and receives a sector over the serial bus bit by bit.
 
 ## Limits
 

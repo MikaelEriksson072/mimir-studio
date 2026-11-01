@@ -117,3 +117,21 @@ export const SYS_LINE = `
 .byte 0
 .word 0
 `;
+
+/** the keywords the tests' BASIC programs use, with their tokens */
+const KEYWORDS: [string, number][] = [['GOTO', 0x89], ['THEN', 0xa7], ['POKE', 0x97], ['RUN', 0x8a], ['SYS', 0x9e], ['IF', 0x8b], ['+', 0xaa], ['=', 0xb2], ['<', 0xb3]];
+
+/** A BASIC program at `start`: its lines tokenized and linked, and the end mark after them. */
+export function basic(lines: [number, string][], start = 0x0801): string {
+  const bytes: number[] = [];
+  for (const [number, text] of lines) {
+    const body: number[] = [];
+    for (let i = 0; i < text.length;) {
+      const k = KEYWORDS.find(([word]) => text.startsWith(word, i));
+      if (k) { body.push(k[1]); i += k[0].length; } else body.push(text.charCodeAt(i++));
+    }
+    const next = start + bytes.length + 4 + body.length + 1;
+    bytes.push(next & 0xff, next >> 8, number & 0xff, number >> 8, ...body, 0);
+  }
+  return `* = ${start}\n${byteLines([...bytes, 0, 0])}`;
+}

@@ -3,10 +3,11 @@
  *
  * A layer begins when the CPU jumps (JMP, JSR, RTS, RTI, BRK or an interrupt) into code that the running layer
  * wrote and has not run yet: a depacker that copied itself to $0100, the program it decrunched, the code a decoder
- * decrypted. Jumping into BASIC's RUN counts too. Memory is copied at each layer's start, with the bytes that belong
- * to the program it starts. Layers begun inside a subroutine call or an interrupt that then returns to where it was
- * called from were temporary (a depacker called with JSR, generated speedcode, a new IRQ handler): they join the
- * layer that made the call again.
+ * decrypted. Jumping into BASIC's RUN counts too, but not a BASIC program going on with itself (an extension's command
+ * ending in NEWSTT, RUN again). Memory is copied at each layer's start, with the bytes that belong to the program it
+ * starts. Layers begun inside a subroutine call or an interrupt that then returns to where it was called from were
+ * temporary (a depacker called with JSR, generated speedcode, a new IRQ handler): they join the layer that made the
+ * call again.
  *
  * The run stops when the newest layer settles (writes no new memory for a while), loads a file, returns to BASIC,
  * crashes or runs out of time. With a disk, a 1541 is on the serial bus and loading goes on: the KERNAL's and fast
@@ -155,6 +156,8 @@ class Layer {
 
 /** BASIC's ways into RUN and READY: a depacker jumping here starts a BASIC program */
 const BASIC_ENTRIES = [0xa7ae, 0xa871, 0xa659, 0xa660, 0xa68e, 0xa533, 0xa474, 0xa480, 0xa483, 0xe37b, 0xe386];
+/** those that go on with the program in memory (NEWSTT, RUN, CLR, LINKPRG) rather than to the READY prompt */
+const RUN_ENTRIES = new Set([0xa7ae, 0xa871, 0xa659, 0xa660, 0xa68e, 0xa533]);
 const TRANSFER = new Uint8Array(0x102);
 for (const op of [0x4c, 0x6c, 0x20, 0x60, 0x40, 0x00, OP_IRQ, OP_NMI]) TRANSFER[op] = 1;
 const VIA: Record<number, Via> = { 0x4c: 'jmp', 0x6c: 'jmp', 0x20: 'jsr', 0x60: 'rts', 0x40: 'rti', 0x00: 'brk', [OP_IRQ]: 'irq', [OP_NMI]: 'nmi' };
@@ -196,6 +199,8 @@ class Session {
   readonly o: UnpackOptions;
   /** the layer that last executed each instruction start */
   readonly eid = new Int32Array(0x10000).fill(-3);
+  /** when BASIC last went on from each byte of program text (NEWSTT at the end of a statement, RUN at the start) */
+  private readonly basicRan = new Uint32Array(0x10000);
   private readonly special = new Uint8Array(0x10000);
   private readonly traps = new Map<number, Trap>();
   private readonly loadAt: number;
@@ -493,12 +498,41 @@ class Session {
   /** a trap or a BASIC entry at `pc`; true when a trap did the work (the instruction there is not run) */
   private specialAt(pc: number): boolean {
     const m = this.m, page = m.map[pc >> 8], flags = this.special[pc];
-    if (flags & 2 && this.started && this.lastRam && TRANSFER[m.cpu.lastOp] && (page === BASIC || page === KERNAL)) this.enter(pc, true);
+    if (flags & 2 && this.started && this.lastRam && TRANSFER[m.cpu.lastOp] && (page === BASIC || page === KERNAL) && this.startsBasic(pc)) this.enter(pc, true);
+    if (pc === 0xa7ae && page === BASIC) this.basicGoesOn(m.ram[0x7a] | (m.ram[0x7b] << 8));
     if (flags & 1) {
       const t = this.traps.get(pc);
       if (t && t.rom === page) return t.run();
     }
     return false;
+  }
+
+  /**
+   * Whether the jump into BASIC at `pc` starts a layer. From machine code it does. A BASIC program going back into
+   * BASIC (an extension's command or a SYS routine ending in NEWSTT, RUN again) goes on with the program it was running,
+   * unless BASIC goes on with text written since BASIC last went on from there: started from its first line (RUN, or
+   * NEWSTT after a CLR), a program a depacker it called wrote, or one not run yet; in the middle of the program, what
+   * the layer itself rewrote.
+   */
+  private startsBasic(pc: number): boolean {
+    if (!RUN_ENTRIES.has(pc) || !this.cur!.basic) return true;
+    const { ram, wid, wtime } = this.m, ran = this.basicRan;
+    const start = ram[0x2b] | (ram[0x2c] << 8), end = ram[0x2d] | (ram[0x2e] << 8), at = ram[0x7a] | (ram[0x7b] << 8);
+    if (pc !== 0xa7ae || at === start - 1) {
+      // the first line's link (high byte) and line number, which NEWSTT reads, and its first token
+      for (let a = start + 1; a <= start + 4; a++) if (wtime[a & 0xffff] > ran[a & 0xffff]) return true;
+      return false;
+    }
+    // (not in the program: BASIC goes on in direct mode)
+    if (at < start || at >= end) return true;
+    // the end of the statement BASIC goes on from, and the next statement or the next line
+    const next = ram[at] ? [at, at + 1] : [at, at + 2, at + 3, at + 4, at + 5];
+    return next.some(a => a < end && wid[a] === this.curId && wtime[a] > ran[a]);
+  }
+
+  /** BASIC goes on from `at`: the end of a statement or the byte before the first line, and the statement or line after it */
+  private basicGoesOn(at: number): void {
+    for (let a = at; a < at + 6; a++) this.basicRan[a & 0xffff] = this.m.icount;
   }
 
   /** A new layer starts at `pc`. */
@@ -820,6 +854,7 @@ class Session {
       const start = m.ram[0x2b] | (m.ram[0x2c] << 8);
       this.basicStatements = basicLines(peek, start, 256).flatMap(l => statements(l.bytes));
       this.basicPos = 0;
+      this.basicGoesOn(start - 1);
     }
     this.basicRunning = true;
     while (this.basicPos < this.basicStatements.length) {

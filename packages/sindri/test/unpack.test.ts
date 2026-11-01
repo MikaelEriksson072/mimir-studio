@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { unpack, type UnpackResult } from '../src/index.ts';
 import { findRoms } from '../src/node.ts';
-import { asm, byteLines, SYS_LINE } from './asm.ts';
+import { asm, basic, byteLines, SYS_LINE } from './asm.ts';
 import { coded, pack, PROGRAM } from './packers.ts';
 
 const roms = findRoms();
@@ -136,6 +136,54 @@ ${byteLines(code)}
     });
   });
 }
+
+describe.skipIf(!roms)('BASIC programs, with the ROMs', () => {
+  const go = (prg: Uint8Array) => unpack(prg, { roms, keys: false, maxCycles: 20_000_000 });
+  /** a BASIC extension, installed with SYS2304: its command `!` flashes the border and goes on with NEWSTT */
+  const WEDGE = `
+* = $0900
+       lda #<wedge
+       sta $0308
+       lda #>wedge
+       sta $0309
+       rts
+wedge: jsr $0073
+       cmp #$21
+       beq bang
+       jsr $0079
+       jmp $a7e7
+bang:  inc $d020
+       jsr $0073
+       jmp $a7ae`;
+  /** a loop through the extension's command, then RUN again, for ever */
+  const LOOP = basic([[10, 'SYS2304'], [20, '!:X=X+1:IFX<50THEN20'], [30, 'RUN']]);
+
+  it('takes a BASIC program going on with itself for no new layer: an extension\'s command, RUN again', () => {
+    const r = go(asm(`${LOOP}\n${WEDGE}`).prg);
+    // (the extension starts the program, and its first jump into BASIC is one from machine code)
+    expect(r.layers.map(l => [l.entry, l.basic])).toEqual([[0x0900, false], [0xa7ae, true]]);
+    expect(r.stop.reason).toBe('settled');
+  });
+
+  it('starts a layer at the BASIC program a depacker wrote, and none when it goes on with itself', () => {
+    const program = asm(`${LOOP}\n${WEDGE}`);
+    const r = go(pack(program, { exit: 'basic' }).prg);
+    expect(r.layers.map(l => [l.entry, l.basic])).toEqual([[0x080d, false], [0x0100, false], [0xa659, true], [0xa7ae, true]]);
+    expect(r.saved).toMatchObject({ layer: 3, basic: true, start: 0x0801, entry: 0x0900 });
+    expect([...r.saved!.prg.subarray(2, program.prg.length)]).toEqual([...program.prg.subarray(2)]);
+    expect(r.stop.reason).toBe('settled');
+  });
+
+  it('starts a layer at a BASIC program RUN for the first time', () => {
+    // the first program moves BASIC's start to $1001 and RUNs the second, which loops through the command
+    const r = go(asm(`${basic([[10, 'SYS2304:!:POKE44,16:RUN']])}
+${WEDGE}
+${basic([[10, '!:GOTO10']], 0x1001)}`).prg);
+    expect(r.layers.map(l => [l.entry, l.via, l.basic])).toEqual([[0x0900, 'start', false], [0xa7ae, 'jmp', true], [0xa871, 'rts', true]]);
+    expect(r.saved).toMatchObject({ layer: 2, basic: true, entry: 0x1001 });
+    expect(r.stop.reason).toBe('settled');
+  });
+});
 
 const EXOMIZER = ['C:\\C64\\exomizer-3.1.1\\win32\\exomizer.exe', '/usr/bin/exomizer', '/usr/local/bin/exomizer'].find(p => existsSync(p));
 
