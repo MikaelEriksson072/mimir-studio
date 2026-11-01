@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { demoProject } from '@mimir/core';
-import { commit, commitReplace, HISTORY_LIMIT, initHistory, redo, undo } from '../src/store/history';
+import { commit, commitReplace, HISTORY_LIMIT, initHistory, ownChanges, redo, undo, type HistoryStep } from '../src/store/history';
 
 describe('patch-based undo/redo', () => {
   it('undoes and redoes project edits with patches, keeping file buffers shared', () => {
@@ -50,5 +50,45 @@ describe('patch-based undo/redo', () => {
     for (let i = 0; i < HISTORY_LIMIT + 20; i++) h = commit(h, `step ${i}`, d => { d.name = `n${i}`; });
     expect(h.past).toHaveLength(HISTORY_LIMIT);
     expect(h.past[0].label).toBe('step 20');
+  });
+});
+
+describe('changes of the present\'s own (the work without a project asks before it is replaced)', () => {
+  it('an edit is a change; a value replaced whole has none until it is edited, and Ctrl+Z brings the changes back', () => {
+    let h = initHistory(demoProject());
+    expect(ownChanges(h)).toBe(false);
+    h = commit(h, 'Rename', d => { d.labels[0x0810] = 'main'; });
+    expect(ownChanges(h)).toBe(true);
+    h = commitReplace(h, 'Open the VICE quicksave', { ...demoProject(), name: 'quicksave' });
+    expect(ownChanges(h)).toBe(false);
+    expect(ownChanges(redo(undo(h)))).toBe(false);
+    expect(ownChanges(undo(h))).toBe(true);
+    expect(ownChanges(undo(undo(h)))).toBe(false);
+    h = commit(h, 'Rename', d => { d.labels[0x0810] = 'start'; });
+    expect(ownChanges(h)).toBe(true);
+  });
+
+  it('a history can start with changes (the work the window kept), and carried steps are none', () => {
+    const settings = (s: HistoryStep) => s.patches.every(p => p.path[0] === 'settings');
+    let h = initHistory(demoProject(), true);
+    expect(ownChanges(h)).toBe(true);
+    expect(ownChanges(undo(commit(h, 'Rename', d => { d.name = 'x'; })))).toBe(true);
+    h = commitReplace(h, 'Open', { ...demoProject(), name: 'other' });
+    h = commit(h, 'Settings', d => { d.settings.addrComments = !d.settings.addrComments; });
+    expect(ownChanges(h)).toBe(true);
+    expect(ownChanges(h, settings)).toBe(false);
+  });
+
+  it('steps dropped off the start leave what they changed', () => {
+    let h = initHistory(demoProject());
+    h = commit(h, 'Rename', d => { d.name = 'renamed'; });
+    for (let i = 0; i < HISTORY_LIMIT + 5; i++) h = commit(h, `Settings ${i}`, d => { d.settings.addrComments = i % 2 === 0; });
+    while (h.past.length) h = undo(h);
+    expect(h.present.name).toBe('renamed');
+    expect(ownChanges(h)).toBe(true);
+    let r = commitReplace(initHistory(demoProject(), true), 'Open', { ...demoProject(), name: 'opened' });
+    for (let i = 0; i < HISTORY_LIMIT; i++) r = commitReplace(r, `Open ${i}`, { ...demoProject(), name: `opened ${i}` });
+    while (r.past.length) r = undo(r);
+    expect(ownChanges(r)).toBe(false);
   });
 });

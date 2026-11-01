@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { createProject, demoProject } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
-import { unsavedWork, useProject } from '../store/project';
+import { unsavedWork, unsavedWorkChanged, useProject } from '../store/project';
 import { useUi } from '../store/ui';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { ProjectStartInfo, RecentProject } from '../../shared/ipc';
@@ -75,14 +75,42 @@ export function NewProjectForm({ name: name0, parent: parent0, moving, submit, o
 }
 
 /** "Create a project from this work": the New project form in a dialog */
-export function CreateProjectModal(p: Omit<NewProjectProps, 'parent' | 'onCancel'> & { onClose: () => void }) {
+export function CreateProjectModal({ title = 'Create a project from this work', ...p }: Omit<NewProjectProps, 'parent' | 'onCancel'> & { title?: string; onClose: () => void }) {
   const [parent, setParent] = useState<string | null>(null);
   useEffect(() => { kr?.projectStart().then(i => setParent(i.parent), () => setParent('')); }, []);
   return (
-    <Modal title="Create a project from this work" onClose={p.onClose}>
+    <Modal title={title} onClose={p.onClose}>
       <div className="modal-body">
         {parent == null ? <div className="muted">…</div> : <NewProjectForm {...p} parent={parent} onCancel={p.onClose} />}
       </div>
+    </Modal>
+  );
+}
+
+interface UnsavedWorkProps {
+  /** the work without a project */
+  name: string;
+  /** what takes its place */
+  what: string;
+  /** the project that is open, which `what` leaves (saved as it is); null: the work open is the work without a project */
+  left: string | null;
+  onSave: () => void;
+  onDiscard: () => void;
+  onClose: () => void;
+}
+
+/** "The work is not saved": work without a project, with changes that are in no project, about to be replaced. Save
+ *  makes a project of it first */
+export function UnsavedWorkModal({ name, what, left, onSave, onDiscard, onClose }: UnsavedWorkProps) {
+  return (
+    <Modal title={left ? 'The work without a project is not saved' : 'The work is not saved'} onClose={onClose}>
+      <div className="modal-body unsaved-work">
+        {left
+          ? <p>The work without a project Mimir keeps, <b>{name}</b>, has changes that are in no project. Opening {what} leaves {left} (saved as it is) and makes it the work without a project instead: the changes would be gone.</p>
+          : <p><b>{name}</b> is work without a project, and its changes are in no project. Opening {what} takes its place: the changes would be gone.</p>}
+        <p className="muted">Save as a project puts the work in a folder of its own, and {what} opens after that.</p>
+      </div>
+      <div className="modal-foot"><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn" onClick={onDiscard}>Do not save</button><button className="btn primary" autoFocus onClick={onSave}>Save as a project…</button></div>
     </Modal>
   );
 }
@@ -118,7 +146,8 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
   };
   /** the work without a project the window kept (else the showcase demo, as on the first start) */
   const withoutProject = async () => {
-    enter(unsavedWork() ?? demoProject(settings()), null);
+    const kept = unsavedWork();
+    enter(kept ?? demoProject(settings()), null, !!kept && unsavedWorkChanged());
     await kr?.workUnsaved();
     onStarted();
   };

@@ -7,6 +7,8 @@ interface TitleBarProps {
   projectName: string; undoLabel: string | null; canRedo: boolean; theme: string;
   /** the project's name (null: work without a project); its button opens what can be done with it */
   home: string | null; onProject: (e: MouseEvent<HTMLElement>) => void;
+  /** the work without a project has changes that are in no project */
+  changed?: boolean;
   verifyState: 'ok' | 'bad' | null; busy: boolean;
   /** the project was opened from a VICE snapshot: Build & Run restarts it as it was */
   snapshot?: boolean;
@@ -22,9 +24,11 @@ export function TitleBar(p: TitleBarProps) {
     <header className="titlebar">
       <button className="icon-btn only-narrow" aria-label="Toggle sidebar" onClick={p.onToggleSide}><Icon name="menu" /></button>
       <div className="brand"><Logo className="brand-logo" size={20} /><span className="brand-name">Mimir</span><span className="brand-sub">Studio</span></div>
-      <button className={cx('proj-chip', !p.home && 'unsaved')} onMouseDown={e => e.stopPropagation()} onClick={p.onProject} aria-haspopup="menu" aria-label={p.home ? `Project ${p.home}` : 'No project'}
-        title={p.home ? `The project ${p.home}: Mimir saves it in its folder as you work` : 'Work without a project: Mimir keeps it for the next start. Save (Ctrl+S) creates a project and moves the work into its folder'}>
-        <Icon name={p.home ? 'folder' : 'doc'} size={14} /><span>{p.home ?? 'No project'}</span><Icon name="down" size={12} />
+      <button className={cx('proj-chip', !p.home && 'unsaved')} onMouseDown={e => e.stopPropagation()} onClick={p.onProject} aria-haspopup="menu" aria-label={p.home ? `Project ${p.home}` : p.changed ? 'No project, changes not saved' : 'No project'}
+        title={p.home ? `The project ${p.home}: Mimir saves it in its folder as you work`
+          : p.changed ? 'Work without a project, with changes that are in no project: Mimir keeps it for the next start, and asks before a file opened takes its place. Save (Ctrl+S) creates a project and moves the work into its folder'
+          : 'Work without a project: Mimir keeps it for the next start. Save (Ctrl+S) creates a project and moves the work into its folder'}>
+        <Icon name={p.home ? 'folder' : 'doc'} size={14} /><span>{p.home ?? 'No project'}</span>{!p.home && p.changed && <span className="proj-dot" aria-hidden="true" />}<Icon name="down" size={12} />
       </button>
       <div className="tb-group hide-narrow">
         <button className="btn ghost" onClick={p.onOpen} title="Open PRG files (Ctrl+O)"><Icon name="upload" />Open</button>

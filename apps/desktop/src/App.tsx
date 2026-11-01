@@ -13,7 +13,7 @@ import {
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
-import { forgetUnsavedWork, useProject } from './store/project';
+import { forgetUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
@@ -45,7 +45,7 @@ import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
 import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { CreateProjectModal, StartScreen } from './components/Start';
+import { CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { IdentifyResponse, OpenedPrg, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
 
@@ -239,6 +239,42 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   const toStartScreen = async () => { await saveNow(); onStartScreen(); };
 
+  /* ---- work without a project, with changes that are in no project, asks before something takes its place: Save makes
+     a project of it first ---- */
+  const unsavedChanges = useProject(s => !s.home && workChanged(s));
+  type Ask = { what: string; kept: Project | null; go: () => void };
+  /** what waits for the answer; `kept`: the work without a project the window keeps (a project is open), else the work open */
+  const [unsavedAsk, setUnsavedAsk] = useState<Ask | null>(null);
+  /** "Save as a project…": the work made a project, then `go` */
+  const [saveFirst, setSaveFirst] = useState<Ask | null>(null);
+  /** what goes on once the work is a project: after the render that has the project */
+  const [afterSave, setAfterSave] = useState<{ go: () => void } | null>(null);
+  useEffect(() => { if (afterSave) { setAfterSave(null); afterSave.go(); } }, [afterSave]);
+  /**
+   * True when `what` would take the place of work without a project that has changes in no project: it asks first, and
+   * `go` runs once the work is saved as a project, or is not to be. `leaves`: in a project, `what` leaves it and becomes
+   * the work without a project, in place of the one the window keeps.
+   */
+  const askFirst = (what: string, leaves: boolean, go: () => void): boolean => {
+    if (!kr) return false;
+    const kept = home && leaves ? unsavedWork() : null;
+    if (home ? !kept || !unsavedWorkChanged() : !workChanged(useProject.getState())) return false;
+    setUnsavedAsk({ what, kept, go });
+    return true;
+  };
+  /** the work (or the one the window keeps) made a project, as "Save as a project…" asked; then what waited */
+  const saveFirstAs = async (name: string, parent: string) => {
+    const s = saveFirst;
+    if (!kr || !s) return;
+    if (s.kept) {
+      const r = await kr.createProject({ name, parent, project: s.kept });
+      forgetUnsavedWork();
+      toast(`Created the project ${r.home.name} in ${r.home.dir}: the work without a project is saved there`, 'ok');
+    } else await createFromWork(name, parent);
+    setSaveFirst(null);
+    setAfterSave({ go: s.go });
+  };
+
   const navigate = useCallback((addr: Addr, opts: NavOptions = {}) => {
     if (addr == null || addr < 0 || addr >= A.owner.length) return;
     if (A.owner[addr] < 0) { toast(`$${h4(addr)} is not part of any loaded file`, 'warn'); return; }
@@ -339,12 +375,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   /* ---- files ---- */
   /** PRGs, and VICE snapshots as their RAM from $0200: the PC and interrupt handlers they hold become entry points */
-  /** `undoLabel`: the new project is an undoable step (Ctrl+Z brings the one before back); `note`: the toast instead */
-  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string } = {}) => {
+  /** `undoLabel`: the new project is an undoable step (Ctrl+Z brings the one before back); `note`: the toast instead;
+   *  `what`: what "The work is not saved" calls it (the files' names), `asked`: that was answered */
+  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean } = {}) => {
     if (!opened.length) return;
     // a cartridge's chips open as a project of their own, with the image (13.9): a project holds one cartridge
     const cart = opened.find(f => f.cart)?.cart;
     const ownCart = !!cart && !(add && project.cart && project.cart.name === cart.name && project.cart.crt.length === cart.crt.length);
+    if ((ownCart || !add) && !opts.asked
+      && askFirst(opts.what ?? (cart && ownCart ? cart.name : opened.map(f => f.name).join(', ')), !!home && project.files.length > 0, () => later.current.addFiles(opened, add, { ...opts, asked: true }))) return;
     // files that take the place of a project's are work without a project: the project stays as it was saved (an empty
     // project, just made, takes them)
     const left = (ownCart || !add) && home && project.files.length ? leaveProject() : null;
@@ -383,7 +422,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (!r.found) { toast(`No VICE quicksave yet: in VICE, Snapshot → Quicksave snapshot (Alt+F11) writes ${r.path}`, 'warn'); return; }
       const f = r.files[0], at = new Date(r.saved).toLocaleTimeString();
       const traced = f.entries?.length ? `, traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : '';
-      addFiles(r.files, false, { undoLabel: 'Open the VICE quicksave', note: `Opened the VICE quicksave from ${at}: ${f.snapshot ?? f.name}${traced}` });
+      addFiles(r.files, false, { undoLabel: 'Open the VICE quicksave', note: `Opened the VICE quicksave from ${at}: ${f.snapshot ?? f.name}${traced}`, what: 'the VICE quicksave' });
     } catch (e) { toast(`VICE quicksave: ${errorText(e)}`, 'err'); }
   };
   /** what the Explorer says about it: the newest quicksave and when it was saved, or where VICE will write one */
@@ -402,7 +441,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (!r.found) return;
       const f = r.files[0];
       const traced = f.entries?.length ? `, traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : '';
-      addFiles(r.files, false, { undoLabel: `Open the quicksave "${q.name}"`, note: `Opened the quicksave "${q.name}": ${f.snapshot ?? f.name}${traced}` });
+      addFiles(r.files, false, { undoLabel: `Open the quicksave "${q.name}"`, note: `Opened the quicksave "${q.name}": ${f.snapshot ?? f.name}${traced}`, what: `the quicksave "${q.name}"` });
     } catch (e) { toast(`VICE quicksave: ${errorText(e)}`, 'err'); refreshQuicksave(); }
   };
   const renameKeptQuicksave = async (q: QuicksaveEntry, name: string) => {
@@ -614,13 +653,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (r) { enter(r.project, r.home); resetView(); setExportDir(null); toast(`Opened the project ${r.home.name} (${r.home.dir})`, 'ok'); }
     } catch (e) { toast(errorText(e), 'err'); }
   };
+  /** a project file dropped on the window: its folder is not known, so it is work without a project */
+  const openDroppedProject = (p: Project, name: string) => { leaveProject(); replace(p); resetView(); toast(`Opened project ${name} as work without a project: Save creates a project from it`, 'ok'); };
   const readDropped = async (list: FileList, add: boolean) => {
     const prgs: OpenedPrg[] = [];
     for (const f of Array.from(list)) {
       const buf = new Uint8Array(await f.arrayBuffer());
       try {
-        // a project file dropped on the window: its folder is not known, so it is work without a project
-        if (/\.json$/i.test(f.name)) { const p = deserializeProject(JSON.parse(new TextDecoder().decode(buf)) as SerializedProject); leaveProject(); replace(p); resetView(); toast(`Opened project ${f.name} as work without a project: Save creates a project from it`, 'ok'); continue; }
+        if (/\.json$/i.test(f.name)) {
+          const p = deserializeProject(JSON.parse(new TextDecoder().decode(buf)) as SerializedProject);
+          if (!askFirst(f.name, !!home, () => later.current.openDroppedProject(p, f.name))) openDroppedProject(p, f.name);
+          continue;
+        }
         if (/\.d64$/i.test(f.name)) { mountBytes(f.name, null, buf); continue; }
         // a cartridge image (known by its header): the chips of its boot bank, with the image
         if (isCrt(buf)) { const o = openCartridge(f.name, buf); prgs.push(...o.files.map(x => ({ ...withId(x), cart: o.cart }))); continue; }
@@ -1354,7 +1398,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   /** the showcase (core/showcase.ts) with its tour in the Bookmarks view. It needs bank tracking: its bitmap logo sits
    *  above a text screen, and only that tells the two $d018 values apart */
-  const loadDemo = () => {
+  const loadDemo = (asked = false) => {
+    if (!asked && askFirst('the showcase demo', !!home, () => later.current.loadDemo(true))) return;
     // the showcase is not a project's work: a project is saved as it is and left
     const left = leaveProject();
     replace(showcaseProject({ ...project.settings, bankTracking: true }));
@@ -1362,6 +1407,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     setUi({ activity: 'bookmarks', sidePanel: true });
     toast(`Showcase loaded${left ? ` without a project (${left.name} is saved as it was)` : ''}: the Bookmarks view is a tour of it, F2 goes to the next stop`, 'ok');
   };
+  /** the actions as this render has them: an answer to "The work is not saved" goes on with the work as it is then (a
+   *  project made of it first) */
+  const later = useRef({ addFiles, loadDemo, openDroppedProject });
+  later.current = { addFiles, loadDemo, openDroppedProject };
   const saveSettings = async (s: Settings, prefs: AppPrefs) => {
     const tc = pickToolchain(s);
     try { setToolchain(kr ? await kr.setSettings(tc) : tc); } catch (e) { toast(`Toolchain settings rejected: ${errorText(e)}`, 'err'); return; }
@@ -1400,7 +1449,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...packing.flatMap((p, i) => (p ? [{ id: `unpack-${i}`, label: external ? `Unpack ${project.files[i]?.name} with ${unpackerName}` : `Unpack ${project.files[i]?.name}`, run: () => void unpackFile(i) }] : [])),
     { id: 'terminal', label: 'Open a terminal in the project folder (VICE on PATH, kickass runs Kick Assembler)', run: () => void openTerminal() },
     ...(disk ? [{ id: 'eject', label: `Eject ${disk.name}`, run: ejectDisk }] : []),
-    { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: loadDemo },
+    { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: () => loadDemo() },
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
     { id: 'find', label: tab === 'source' ? 'Find in the source' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' ? setSrcFind(n => n + 1) : openFind()) },
     { id: 'find-next', label: 'Find: the next line with a match', key: 'F3', run: () => (findOpen ? stepFind(1) : openFind()) },
@@ -1472,8 +1521,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
   ];
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind, drawer, closeInspector });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal, extendTo, findOpen, closeFind, drawer, closeInspector };
+  // the dialogs of "The work is not saved" hold the keys too
+  const dialog = modal ?? (unsavedAsk || saveFirst ? 'project' : null);
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, findOpen, closeFind, drawer, closeInspector });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, findOpen, closeFind, drawer, closeInspector };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -1713,7 +1764,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
-      <TitleBar projectName={project.name} home={home?.name ?? null} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
+      <TitleBar projectName={project.name} home={home?.name ?? null} changed={unsavedChanges} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onOpen={() => void openPrgs(false)} onSave={() => void saveProject()} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
         onVerify={() => void runVerify()} onExport={() => void exportProject()} onBuild={() => void runBuild()} onTerminal={() => void openTerminal()}
@@ -1727,7 +1778,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
       <aside className="sidebar"><ErrorBoundary>
         <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }}
-          onOpen={() => void openPrgs(false)} onAdd={() => void openPrgs(true)} onDemo={loadDemo}
+          onOpen={() => void openPrgs(false)} onAdd={() => void openPrgs(true)} onDemo={() => loadDemo()}
           quicksave={{ info: qsInfo, follow: followQuicksave, onOpen: () => void openQuicksave(), onFollow: v => setUi({ followQuicksave: v }),
             kept: qsList, onOpenKept: q => void openKeptQuicksave(q), onRenameKept: (q, name) => void renameKeptQuicksave(q, name), onSaveKept: q => void saveKeptQuicksave(q),
             onFavouriteKept: (q, on) => void favouriteKeptQuicksave(q, on) }}
@@ -1900,6 +1951,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
       {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
+      {unsavedAsk && <UnsavedWorkModal name={(unsavedAsk.kept ?? project).name} what={unsavedAsk.what} left={unsavedAsk.kept && home ? home.name : null}
+        onSave={() => { setSaveFirst(unsavedAsk); setUnsavedAsk(null); }} onDiscard={() => { setUnsavedAsk(null); unsavedAsk.go(); }} onClose={() => setUnsavedAsk(null)} />}
+      {saveFirst && <CreateProjectModal title={saveFirst.kept ? 'Create a project from the work without a project' : undefined} name={(saveFirst.kept ?? project).name}
+        moving={saveFirst.kept ? ['the work without a project (its files, labels, comments, bookmarks and patches)'] : movingText()} submit={`Create project, then open ${saveFirst.what}`} onCreate={saveFirstAs} onClose={() => setSaveFirst(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}
       <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} />{t.msg}</div>)}</div>
     </div>

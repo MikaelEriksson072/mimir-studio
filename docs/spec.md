@@ -2124,6 +2124,22 @@ appens egna mappar i temp, som tas bort), och arbetet fortsätter i projektet. F
 projekt längre. Ett projekt som öppnas medan det finns arbete utan projekt lämnar det kvar: startskärmen erbjuder
 båda.
 
+**Ändringar som inte är sparade.** Fönstret håller bara ett arbete utan projekt, så Mimir varnar innan det ersätts
+medan det har ändringar som inte finns i något projekt (etiketter, kommentarer, block, bokmärken, patchar … sedan filen
+öppnades; inställningarna räknas inte, det som öppnas i stället tar dem med sig). Titelradens *No project* har då en
+prick (*No project, changes not saved*). En PRG, en snapshot, en cartridge, en fil från en disk, en quicksave (också en
+som öppnas av sig själv), showcase-demon eller en projektfil som släpps på fönstret frågar först, i **The work is not
+saved**: **Save as a project…** gör ett projekt av arbetet (samma dialog som Save, med *Create project, then open …*)
+och öppnar sedan filen, som arbete utan projekt bredvid det nya projektet; **Do not save** öppnar filen i arbetets
+ställe; **Cancel** (Esc) lämnar allt som det var. I ett projekt frågar en fil som lämnar projektet på samma sätt för
+arbetet utan projekt som fönstret håller (**The work without a project is not saved**: Save gör ett projekt av det,
+projektet som är öppet ligger kvar som det sparades). Ett projekt har inga osparade ändringar: det sparas medan du
+arbetar. Ett arbete utan projekt som bara är en öppnad fil, eller vars ändringar är ångrade, frågar inget. Om arbetet har
+ändringar sparas med arbetet (`localStorage`, `kr.projectChanged`), så pricken och frågan finns kvar efter en omstart;
+arbete som sparades innan Mimir höll reda på det räknas som ändrat. Historiken vet det (`ownChanges`,
+`store/history.ts`): ett steg sedan arbetet senast ersattes i sin helhet är en ändring, och Ctrl+Z tillbaka över en
+öppnad fil ger arbetet före den med sina ändringar.
+
 Huvudprocessen håller reda på det (`projects.json` i appens datamapp): det som valdes sist, de senaste projekten och
 mappen nya projekt läggs i. Ett projekt i listan öppnas utan dialog (sökvägen kommer från listan, inte från
 renderaren); mappen nya projekt läggs i är den huvudprocessen föreslår eller en vald i sessionen, och projektets mapp
@@ -2133,8 +2149,10 @@ får skrivas i när projektet öppnats eller skapats.
 projekt inte skapas två gånger, och att exporten kopieras medan bygget och den packade filen flyttas.
 `e2e/projects.spec.ts`: startskärmen vid första starten, ett nytt projekt (mappen, en PRG öppnad i det, ändringar
 sparade i projektfilen, Ctrl+E till `source`), nästa start (Continue med Enter, omladdning utan startskärm, tillbaka
-till startskärmen), arbete utan projekt bredvid ett projekt, och ett projekt skapat av arbetet med exporten flyttad
-dit.
+till startskärmen), arbete utan projekt bredvid ett projekt, ett projekt skapat av arbetet med exporten flyttad
+dit, och frågan innan arbete med ändringar ersätts (Cancel, Save as a project…, Do not save, pricken efter en
+omladdning). `test/history.test.ts`: vilka steg som är ändringar, efter Ctrl+Z, med inställningar och när historiken
+blir för lång.
 
 ## 14. UI/UX-specifikation
 

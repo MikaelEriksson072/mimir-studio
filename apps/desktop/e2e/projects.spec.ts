@@ -224,6 +224,74 @@ test('another program opened in a project is work without a project: the project
   expect(occurrences(await listingRows(page), NEW)).toBeGreaterThanOrEqual(4);
 });
 
+test('work without a project, with changes, asks before a file takes its place: Cancel, Save as a project first, or not', async ({ workDir: work, app, page }) => {
+  const loader = join(repoDir, 'fixtures/prg/loader-demo.prg');
+  const dir = join(work, 'raster'), file = join(dir, 'raster.mimir.json');
+  const work0 = page.locator('.cmd-search');
+  await waitForListing(page);
+  await expect(page.getByRole('button', { name: 'No project', exact: true })).toBeVisible();
+  await rename(page, OLD, NEW);
+  // the title bar marks it
+  await expect(page.getByRole('button', { name: 'No project, changes not saved' })).toBeVisible();
+  const ask = page.getByRole('dialog', { name: 'The work is not saved' });
+
+  await test.step('Cancel: the work stays as it is', async () => {
+    await stubDialogs(app, { open: [loader] });
+    await page.keyboard.press('Control+o');
+    await expect(ask).toContainText('raster-demo is work without a project, and its changes are in no project. Opening loader-demo.prg takes its place: the changes would be gone.');
+    await ask.getByRole('button', { name: 'Cancel' }).click();
+    await expect(ask).toBeHidden();
+    await expect(work0).toContainText('raster-demo');
+    expect(occurrences(await listingRows(page), NEW)).toBeGreaterThanOrEqual(4);
+  });
+
+  await test.step('Save as a project: the work is made a project, then the file opens without one', async () => {
+    await page.keyboard.press('Control+o');
+    await ask.getByRole('button', { name: 'Save as a project…' }).click();
+    await expect(ask).toBeHidden();
+    const create = page.getByRole('dialog', { name: 'Create a project from this work' });
+    await create.getByLabel('Name').fill('raster');
+    await stubDialogs(app, { open: [work] });
+    await create.getByRole('button', { name: 'Change…' }).click();
+    await create.getByRole('button', { name: 'Create project, then open loader-demo.prg' }).click();
+    await expect(create).toBeHidden();
+    await expect(toast(page, 'Loaded loader-demo.prg at $0801; without a project (raster is saved as it was; Save makes a project of this)')).toBeVisible();
+    await expect(work0).toContainText('loader-demo');
+    await expect(page.getByRole('button', { name: 'No project', exact: true })).toBeVisible();
+    const saved = readFileSync(file, 'utf8');
+    expect(saved).toContain(NEW);
+    expect(saved).not.toContain('loader-demo.prg');
+  });
+
+  await test.step('the mark is kept over a reload', async () => {
+    await expect(statusBar(page)).toContainText(/analysis [0-9]/);
+    await rename(page, 'sub_0814', 'send_drive');
+    await expect(page.getByRole('button', { name: 'No project, changes not saved' })).toBeVisible();
+    await page.waitForTimeout(1000);
+    await page.reload();
+    await waitForListing(page);
+    await expect(page.getByRole('button', { name: 'No project, changes not saved' })).toBeVisible();
+  });
+
+  await test.step('in a project, a file that leaves it asks for the work without a project the window keeps; Do not save opens it', async () => {
+    await page.getByRole('button', { name: 'No project' }).click();
+    await page.getByRole('menuitem', { name: 'Start screen' }).click();
+    await page.getByRole('listitem').filter({ hasText: 'raster' }).getByRole('button', { name: /^raster/ }).click();
+    await waitForListing(page);
+    await expect(page.getByRole('button', { name: 'Project raster' })).toBeVisible();
+    await stubDialogs(app, { open: [prg] });
+    await page.keyboard.press('Control+o');
+    const kept = page.getByRole('dialog', { name: 'The work without a project is not saved' });
+    await expect(kept).toContainText('The work without a project Mimir keeps, loader-demo, has changes that are in no project. Opening raster-demo.prg leaves raster (saved as it is) and makes it the work without a project instead');
+    await kept.getByRole('button', { name: 'Do not save' }).click();
+    await expect(kept).toBeHidden();
+    await expect(toast(page, 'Loaded raster-demo.prg at $0801; without a project (raster is saved as it was; Save makes a project of this)')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'No project', exact: true })).toBeVisible();
+    expect(occurrences(await listingRows(page), NEW)).toBe(0);
+    expect(readFileSync(file, 'utf8')).toContain(NEW);
+  });
+});
+
 test('a project made afterwards from the work without one: the work and its export move into the project\'s folder', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await rename(page, OLD, NEW);

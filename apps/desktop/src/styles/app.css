@@ -982,6 +982,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .proj-chip .icon:first-child { color: var(--accent); }
 .proj-chip.unsaved { border-style: dashed; color: var(--fg-2); }
 .proj-chip.unsaved .icon:first-child { color: var(--fg-3); }
+.proj-chip .proj-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.unsaved-work p { margin: 4px 0 8px; font-size: 13px; line-height: 1.5; }
 .empty-project { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; padding: 24px; text-align: center; color: var(--fg-2); }
 .empty-project > .icon { color: var(--fg-3); }
 .empty-project h2 { margin: 4px 0 0; font-size: 16px; font-weight: 600; color: var(--fg); }
