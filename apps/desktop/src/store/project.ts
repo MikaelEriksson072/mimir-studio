@@ -22,9 +22,9 @@ export function unsavedWork(): Project | null {
 }
 
 /** whether the work without a project the window kept has changes that are not in a project (work kept before Mimir
- *  told them apart may have) */
+ *  told them apart has none: it is mostly the demo, left behind when projects came) */
 export function unsavedWorkChanged(): boolean {
-  return store.get<boolean | null>(CHANGED_KEY, null) ?? store.get<unknown>(SAVED_KEY, null) != null;
+  return store.get<boolean>(CHANGED_KEY, false);
 }
 
 /** Whether the work has changes since it was opened: the work without a project's are in no project. Settings are none,

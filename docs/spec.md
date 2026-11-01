@@ -2136,7 +2136,8 @@ arbetet utan projekt som fönstret håller (**The work without a project is not 
 projektet som är öppet ligger kvar som det sparades). Ett projekt har inga osparade ändringar: det sparas medan du
 arbetar. Ett arbete utan projekt som bara är en öppnad fil, eller vars ändringar är ångrade, frågar inget. Om arbetet har
 ändringar sparas med arbetet (`localStorage`, `kr.projectChanged`), så pricken och frågan finns kvar efter en omstart;
-arbete som sparades innan Mimir höll reda på det räknas som ändrat. Historiken vet det (`ownChanges`,
+arbete som sparades innan Mimir höll reda på det räknas inte som ändrat (det är oftast raster-demon, kvar sedan
+tiden före projekten, och frågan gällde då något du inte arbetar med). Historiken vet det (`ownChanges`,
 `store/history.ts`): ett steg sedan arbetet senast ersattes i sin helhet är en ändring, och Ctrl+Z tillbaka över en
 öppnad fil ger arbetet före den med sina ändringar.
 

@@ -292,6 +292,34 @@ test('work without a project, with changes, asks before a file takes its place: 
   });
 });
 
+test('work without a project kept by an older Mimir has no changes: a file opened in a project asks nothing about it', async ({ workDir: work, app, page }) => {
+  const file = join(work, 'bacchus', 'bacchus.mimir.json');
+  await waitForListing(page);
+  await page.getByRole('button', { name: 'No project' }).click();
+  await page.getByRole('menuitem', { name: 'Start screen' }).click();
+  await page.getByRole('button', { name: 'New project…' }).click();
+  const form = page.getByRole('form', { name: 'New project' });
+  await form.getByLabel('Name').fill('bacchus');
+  await stubDialogs(app, { open: [work] });
+  await form.getByRole('button', { name: 'Change…' }).click();
+  await form.getByRole('button', { name: 'Create project' }).click();
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/loader-demo.prg')] });
+  await page.locator('.empty-project').getByRole('button', { name: 'Open PRG…' }).click();
+  await expect(toast(page, 'Loaded loader-demo.prg at $0801')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Project bacchus' })).toBeVisible();
+  // the demo is the work without a project the window keeps, as an older Mimir kept it: with no word of changes
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kr.project') ?? 'null')?.name)).toBe('raster-demo');
+  await page.evaluate(() => localStorage.removeItem('kr.projectChanged'));
+
+  await stubDialogs(app, { open: [prg] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801; without a project (bacchus is saved as it was; Save makes a project of this)')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /is not saved$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'No project', exact: true })).toBeVisible();
+  await page.waitForTimeout(1200);
+  expect(readFileSync(file, 'utf8')).toContain('loader-demo.prg');
+});
+
 test('a project made afterwards from the work without one: the work and its export move into the project\'s folder', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await rename(page, OLD, NEW);
