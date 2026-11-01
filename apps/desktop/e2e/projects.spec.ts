@@ -98,6 +98,57 @@ test.describe('the start screen', () => {
     });
   });
 
+  test('the start screen turned off goes on with the project at the next start; Settings turns it on again', async ({ workDir: work, userData, app, page }) => {
+    const toggle = page.getByRole('checkbox', { name: /^Show this window when Mimir starts/ });
+    await expect(toggle).toBeChecked();
+    await toggle.uncheck();
+    await expect(page.locator('.start-toggle')).toContainText('Settings → General turns it on again');
+    await page.getByRole('button', { name: 'New project…' }).click();
+    const form = page.getByRole('form', { name: 'New project' });
+    await form.getByLabel('Name').fill('quiet');
+    await stubDialogs(app, { open: [work] });
+    await form.getByRole('button', { name: 'Change…' }).click();
+    await form.getByRole('button', { name: 'Create project' }).click();
+    await expect(page.getByRole('button', { name: 'Project quiet' })).toBeVisible();
+    await app.close();
+
+    let again = await launchApp(userData);
+    try {
+      const page2 = await again.firstWindow();
+      // straight into the project, without the start screen
+      await expect(page2.getByRole('button', { name: 'Project quiet' })).toBeVisible();
+      await expect(toast(page2, `Opened the project quiet (${join(work, 'quiet')})`)).toBeVisible();
+      await expect(page2.getByRole('button', { name: 'New project…' })).toHaveCount(0);
+      // the project button still shows it, with the box unticked
+      await page2.getByRole('button', { name: 'Project quiet' }).click();
+      await page2.getByRole('menuitem', { name: 'Close the project (start screen)' }).click();
+      await expect(page2.getByRole('checkbox', { name: /^Show this window when Mimir starts/ })).not.toBeChecked();
+      await page2.getByRole('button', { name: 'Continue with the project quiet' }).click();
+      await expect(page2.getByRole('button', { name: 'Project quiet' })).toBeVisible();
+      // Settings → General turns it on again (the title bar's button: the window that just opened may not listen for
+      // Ctrl+, yet)
+      await page2.getByRole('button', { name: 'Settings' }).click();
+      const settings = page2.getByRole('dialog', { name: 'Settings' });
+      await settings.getByRole('tab', { name: 'General' }).click();
+      const on = settings.getByRole('checkbox', { name: /^Show the start screen when Mimir starts/ });
+      await expect(on).not.toBeChecked();
+      await on.check();
+      await settings.getByRole('button', { name: 'Save settings' }).click();
+      await expect(settings).toBeHidden();
+    } finally {
+      await again.close();
+    }
+
+    again = await launchApp(userData);
+    try {
+      const page3 = await again.firstWindow();
+      await expect(page3.getByRole('button', { name: 'Continue with the project quiet' })).toBeVisible();
+      await expect(page3.getByRole('checkbox', { name: /^Show this window when Mimir starts/ })).toBeChecked();
+    } finally {
+      await again.close();
+    }
+  });
+
   test('without a project as before; the work comes back at the next start, next to the project worked on last', async ({ workDir: work, userData, app, page }) => {
     await page.getByRole('button', { name: 'Without a project' }).click();
     await waitForListing(page);

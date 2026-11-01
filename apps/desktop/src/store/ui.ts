@@ -53,6 +53,8 @@ interface UiState {
   offsets: boolean;
   /** a new VICE quicksave (Alt+F11 in VICE) is opened when it is written */
   followQuicksave: boolean;
+  /** the start screen is shown when the app starts; off: it goes on with what was worked on last */
+  startScreen: boolean;
   /** the side panel's sections opened in this run (by id); not persisted: every section is closed when the app starts */
   sideOpen: string[];
   /** the user's own bookmark colours, for every project: eight places, each #rrggbb or empty */
@@ -69,7 +71,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'panelOpen', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'startScreen', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -84,6 +86,7 @@ export const useUi = create<UiState>((set) => ({
   cycles: store.get('kr.cycles', false),
   offsets: store.get('kr.offsets', true),
   followQuicksave: store.get('kr.followQuicksave', true),
+  startScreen: store.get('kr.startScreen', true),
   sideOpen: [],
   bmColors: bmColorsOf(store.get<unknown>('kr.bmColors', [])),
   gfx: gfxPrefs(store.get<Partial<GfxPrefs>>('kr.gfx', {})),

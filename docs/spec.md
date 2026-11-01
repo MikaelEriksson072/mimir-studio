@@ -2019,7 +2019,10 @@ arbetet utan projekt; knappen har fokus så Enter fortsätter), **New project…
 ur listan). Namnet prövas som Windows prövar ett mappnamn (inga `<>:"/\|?*`, inte en enhet som `CON`, inte slut på
 punkt); finns redan ett projekt med namnet i mappen skapas inget. Ett nytt projekt är tomt: listningen visar **Open
 PRG…**, **Mount D64…** och **VICE quicksave**. Laddas fönstret om fortsätter det med det som valts i körningen, utan
-startskärmen. Projektknappen i titelraden (projektets namn, eller *No project*) har **Show the project folder**,
+startskärmen. Rutan **Show this window when Mimir starts** (ibockad från början) stänger av startskärmen: appen
+fortsätter då direkt med det du arbetade med sist, projektet eller arbetet utan projekt, och visar startskärmen bara när
+det projektet inte finns kvar. **Settings → General** (*Show the start screen when Mimir starts*) slår på den igen;
+valet sparas av fönstret (`localStorage`, `kr.startScreen`), inte i projektet. Projektknappen i titelraden (projektets namn, eller *No project*) har **Show the project folder**,
 **Save a copy of the project file…**, **Open project…** och **Close the project** (tillbaka till startskärmen).
 
 **Utan projekt** arbetar du som förut: fönstret sparar arbetet (`localStorage`) till nästa start, exporten frågar

@@ -1,4 +1,5 @@
-/* Settings: toolchain (stored by the main process), analysis and Kick Assembler output (stored in the project). */
+/* Settings: toolchain (stored by the main process), analysis and Kick Assembler output (stored in the project), and
+ * the app's own preferences (General, kept by the window). */
 import { useState } from 'react';
 import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
@@ -6,16 +7,24 @@ import { Modal } from './Modal';
 
 type Key = keyof Settings;
 
-export function SettingsModal({ settings, desktop, onSave, onClose }: { settings: Settings; desktop: boolean; onSave: (s: Settings) => void; onClose: () => void }) {
+/** the app's own preferences in Settings → General */
+export interface AppPrefs {
+  /** the start screen is shown when the app starts */
+  startScreen: boolean;
+}
+const DEFAULT_PREFS: AppPrefs = { startScreen: true };
+
+export function SettingsModal({ settings, prefs: prefs0, desktop, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
   const [s, setS] = useState<Settings>(settings);
-  const [tab, setTab] = useState<'toolchain' | 'analysis' | 'output'>('toolchain');
+  const [prefs, setPrefs] = useState<AppPrefs>(prefs0);
+  const [tab, setTab] = useState<'toolchain' | 'analysis' | 'output' | 'general'>('toolchain');
   const set = <K extends Key>(k: K, v: Settings[K]) => setS(o => ({ ...o, [k]: v }));
   const txt = (k: Key, label: string, help?: string) => <label className="field"><span>{label}</span><input id={`set-${k}`} className="mono" value={String(s[k])} onChange={e => set(k, e.target.value as never)} spellCheck={false} />{help && <small className="muted">{help}</small>}</label>;
   const chk = (k: Key, label: string, help?: string) => <label className="check"><input id={`set-${k}`} type="checkbox" checked={!!s[k]} onChange={e => set(k, e.target.checked as never)} /><span>{label}{help && <small className="muted"> — {help}</small>}</span></label>;
   const sel = (k: Key, label: string, opts: [string | number, string][]) => <label className="field"><span>{label}</span><select id={`set-${k}`} value={String(s[k])} onChange={e => set(k, (isNaN(+e.target.value) ? e.target.value : +e.target.value) as never)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>;
   return (
     <Modal title="Settings" onClose={onClose} wide>
-      <div className="seg wide" role="tablist">{([['toolchain', 'Toolchain'], ['analysis', 'Analysis'], ['output', 'Kick Assembler output']] as const).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{l}</button>)}</div>
+      <div className="seg wide" role="tablist">{([['toolchain', 'Toolchain'], ['analysis', 'Analysis'], ['output', 'Kick Assembler output'], ['general', 'General']] as const).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{l}</button>)}</div>
       <div className="modal-body">
         {tab === 'toolchain' && <>
           {txt('javaPath', 'Java executable', 'Kick Assembler needs Java 8 or later.')}
@@ -58,8 +67,13 @@ export function SettingsModal({ settings, desktop, onSave, onClose }: { settings
           <p className="muted small">Written only when the project has bookmarks or comments. Both formats list them by address, each with its place in the .asm file and the code around it.</p>
           <p className="muted small">Mnemonics are always written in lower case: Kick Assembler 5.x rejects upper-case mnemonics.</p>
         </>}
+        {tab === 'general' && <>
+          <label className="check"><input id="set-startScreen" type="checkbox" checked={prefs.startScreen} onChange={e => setPrefs(p => ({ ...p, startScreen: e.target.checked }))} />
+            <span>Show the start screen when Mimir starts<small className="muted"> — continue, a new project, open one, or work without a project. Off: Mimir goes on with what you worked on last (the start screen still comes when that project is gone). The project button in the title bar shows it at any time</small></span></label>
+          <p className="muted small">{desktop ? 'Kept by the app (not in the project).' : 'Running outside the desktop app: there is no start screen.'}</p>
+        </>}
       </div>
-      <div className="modal-foot"><button className="btn ghost" onClick={() => setS({ ...DEFAULT_SETTINGS })}>Restore defaults</button><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(s)}>Save settings</button></div>
+      <div className="modal-foot"><button className="btn ghost" onClick={() => { setS({ ...DEFAULT_SETTINGS }); setPrefs(DEFAULT_PREFS); }}>Restore defaults</button><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(s, prefs)}>Save settings</button></div>
     </Modal>
   );
 }

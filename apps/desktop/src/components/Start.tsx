@@ -6,6 +6,7 @@ import { createProject, demoProject } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
 import { unsavedWork, useProject } from '../store/project';
+import { useUi } from '../store/ui';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { ProjectStartInfo, RecentProject } from '../../shared/ipc';
 import { Logo } from './Logo';
@@ -101,6 +102,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
   const { enter } = useProject.getState();
   const settings = () => useProject.getState().present.settings;
   const [unsaved] = useState(unsavedWork);
+  const showAtStart = useUi(s => s.startScreen);
 
   const run = async (fn: () => Promise<void>) => {
     if (busy) return;
@@ -143,6 +145,13 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
         else onStarted();
         return;
       }
+      // the start screen turned off: straight on with what was worked on last (a project that is gone, or nothing to
+      // go on with, still shows it)
+      if (resume && !useUi.getState().startScreen) {
+        const last = i.last;
+        if (last?.kind === 'project' && last.exists) { await openProject(last.home.file).catch((e: unknown) => { setInfo(i); setError(errorText(e)); }); return; }
+        if (last?.kind === 'unsaved') { await withoutProject(); return; }
+      }
       setInfo(i);
     }, (e: unknown) => setError(errorText(e)));
     return () => { gone = true; };
@@ -155,11 +164,12 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
   const recent = (info?.recent ?? []).filter(r => r.file !== lastProject?.file);
   const unsavedText = unsaved ? (unsaved.files.length ? unsaved.files.map(f => f.name).slice(0, 3).join(', ') + (unsaved.files.length > 3 ? ` and ${unsaved.files.length - 3} more` : '') : 'no files') : '';
 
+  // until it is known whether there is a start screen to show
+  if (!info && !error) return <div className="boot">Opening…</div>;
   return (
     <div className="start">
       <div className="start-box">
         <div className="start-brand"><Logo size={44} /><div><h1>Mimir <span>Studio</span></h1><p>Re-assemble C64 programs into Kick Assembler projects</p></div></div>
-        {!info && !error && <div className="muted start-wait">…</div>}
         {info && <>
           {(lastProject || unsaved) && <div className="start-cards">
             {lastProject && <button className="start-card primary" autoFocus disabled={busy} onClick={() => void run(() => openProject(lastProject.file))} aria-label={`Continue with the project ${lastProject.name}`}>
@@ -193,6 +203,10 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
             </ul>
           </section>}
           <p className="start-hint">Without a project you work as before, and Mimir keeps the work for the next start. <b>Save</b> (Ctrl+S) then creates a project and moves the work into its folder.</p>
+          <label className="check start-toggle">
+            <input type="checkbox" checked={showAtStart} onChange={e => useUi.getState().set({ startScreen: e.target.checked })} />
+            <span>Show this window when Mimir starts{!showAtStart && <small className="muted"> — Mimir goes on with what you worked on last; Settings → General turns it on again</small>}</span>
+          </label>
         </>}
         {error && <div className="np-error" role="alert">{error}</div>}
       </div>

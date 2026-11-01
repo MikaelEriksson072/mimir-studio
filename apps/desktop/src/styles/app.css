@@ -861,7 +861,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .start-brand h1 { margin: 0; font: 400 24px/1.1 var(--font-pixel); letter-spacing: 0.02em; }
 .start-brand h1 span { font: 500 12px var(--font-ui); color: var(--fg-3); letter-spacing: 0.14em; text-transform: uppercase; margin-left: 4px; }
 .start-brand p { margin: 4px 0 0; color: var(--fg-2); font-size: 12.5px; }
-.start-wait { padding: 20px 0; }
+.start-toggle { margin: 2px 0 0; color: var(--fg-2); }
 .start-cards { display: flex; flex-direction: column; gap: 8px; }
 .start-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); text-align: left; cursor: pointer; color: var(--fg-2); }
 .start-card:hover:not(:disabled) { border-color: var(--fg-3); background: var(--panel-2); }
