@@ -43,9 +43,15 @@ export function fileSpaces(project: { files: readonly FileInput[]; cart?: Projec
 
 interface Split { space: number; bank: number; files: number[]; input: ProjectInput }
 
-/** what a space has loaded, and the first space that has an address, from its files */
-function loadedMaps(project: ProjectInput, parts: readonly Pick<Split, 'space' | 'files'>[]) {
-  const has = parts.map(p => { const m = new Uint8Array(SPACE); for (const i of p.files) { const f = project.files[i]; m.fill(1, f.load, Math.min(SPACE, f.load + f.bytes.length)); } return m; });
+/** what a space has loaded, and the first space that has an address, from its files and where its relocated blocks
+ *  run (8.1b) */
+function loadedMaps(project: ProjectInput, parts: readonly (Pick<Split, 'space' | 'files'> & { input?: ProjectInput })[]) {
+  const has = parts.map(p => {
+    const m = new Uint8Array(SPACE);
+    for (const i of p.files) { const f = project.files[i]; m.fill(1, f.load, Math.min(SPACE, f.load + f.bytes.length)); }
+    for (const r of p.input?.relocs ?? []) m.fill(1, r.to, Math.min(SPACE, r.to + r.end - r.start));
+    return m;
+  });
   const first = (a: Addr): number => { for (let i = 0; i < has.length; i++) if (has[i][a]) return i; return -1; };
   return { has, first };
 }
@@ -84,13 +90,15 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
   const overrides = ranged<Override>(project.overrides).map(os => os.map(o => (o.props?.init != null || o.props?.play != null
     ? { ...o, props: { ...o.props, ...(o.props.init != null ? { init: spaceAddr(o.props.init) } : {}), ...(o.props.play != null ? { play: spaceAddr(o.props.play) } : {}) } } : o)));
   const bankZones = ranged(project.bankZones);
+  // a relocated block runs in the bank it is loaded in
+  const relocs = ranged(project.relocs).map(rs => rs.map(r => ({ ...r, to: spaceAddr(r.to) })));
   const patches = parts.map((): NonNullable<ProjectInput['patches']> => []);
   for (const p of project.patches || []) for (const i of route(p.start)) patches[i].push({ ...p, start: spaceAddr(p.start) });
   const ep = project.entryPoint;
   parts.forEach((p, i) => {
     p.input = {
       ...project, files: p.files.map(fi => project.files[fi]), labels: labels[i], comments: comments[i], blockComments: blockComments[i], notes: notes[i], bookmarks: bookmarks[i],
-      entries: entries[i], excluded: excluded[i], binary: binary[i], overrides: overrides[i], bankZones: bankZones[i], patches: patches[i],
+      entries: entries[i], excluded: excluded[i], binary: binary[i], overrides: overrides[i], bankZones: bankZones[i], relocs: relocs[i], patches: patches[i],
       entryPoint: ep != null && spaceOf(ep) === p.space ? spaceAddr(ep) : null,
       ...(p.space ? { bank: p.bank } : {}),
     };
@@ -108,7 +116,7 @@ const CALL_ROUNDS = 4;
 export type SpaceCache = Map<number, { files: readonly FileInput[]; cart: unknown; key: string; calls: Addr[]; A: AnalysisResult }>;
 
 /** what decides a space's analysis besides its files (the same objects while they do not change) */
-const inputKey = (p: ProjectInput): string => JSON.stringify([p.overrides, p.entries, p.entryPoint, p.bankZones, p.settings, p.calls, p.bank]);
+const inputKey = (p: ProjectInput): string => JSON.stringify([p.overrides, p.entries, p.entryPoint, p.bankZones, p.relocs, p.settings, p.calls, p.bank]);
 
 /** The analysis of a project, a space per bank of its cartridge, merged; one space: `analyze` as it is. */
 export function analyze(project: ProjectInput, cache?: SpaceCache): AnalysisResult {
@@ -157,7 +165,7 @@ function mergeAnalyses(project: ProjectInput, parts: Split[], results: AnalysisR
     smc: new Map(), offsetOf: new Map(), lohiTabs: new Map(), ijumps: [], inlineCalls: new Set(), log: [], textPtrs: new Map(),
     stats: { ...base0.stats, mn: {}, modes: {}, illegal: 0, illegalList: [], ins: 0, bytesByType: {}, codeBytes: 0, total: 0, xrefs: 0, entries: 0, labels: 0, ms: 0 },
     mcfg: base0.mcfg ? { port, vic, changes: new Map(), forcedPort, forcedVic, cart: base0.mcfg.cart } : null,
-    loaders: [], raster: [], delays: [], spindle: [], deep: null, spaces: [], parts: results,
+    loaders: [], raster: [], delays: [], spindle: [], deep: null, relocs: [], copies: [], spaces: [], parts: results,
   };
   const sum = (to: Record<string, number>, from: Record<string, number>) => { for (const [k, v] of Object.entries(from)) to[k] = (to[k] ?? 0) + v; };
   results.forEach((A, i) => {
@@ -207,6 +215,8 @@ function mergeAnalyses(project: ProjectInput, parts: Split[], results: AnalysisR
     out.stats.illegal += st.illegal; out.stats.illegalList.push(...st.illegalList.map(at)); out.stats.ins += st.ins; out.stats.codeBytes += st.codeBytes; out.stats.total += st.total;
     out.stats.xrefs += st.xrefs; out.stats.entries += st.entries; out.stats.labels += st.labels; out.stats.ms += st.ms;
     if (A.deep) out.deep = out.deep ? { ...out.deep, rounds: Math.max(out.deep.rounds, A.deep.rounds), before: out.deep.before + A.deep.before, after: out.deep.after + A.deep.after, rejected: out.deep.rejected + A.deep.rejected, cuts: out.deep.cuts + A.deep.cuts, branches: out.deep.branches + A.deep.branches, ms: out.deep.ms + A.deep.ms } : { ...A.deep };
+    out.relocs.push(...A.relocs.map(r => ({ start: at(r.start), end: at(r.start) + (r.end - r.start), to: at(r.to), file: file(r.file) })));
+    out.copies.push(...A.copies.map(c => ({ ...c, start: at(c.start), end: at(c.start) + (c.end - c.start), to: at(c.to), loop: at(c.loop), at: at(c.at), jump: at(c.jump) })));
     const entry = A.entry == null ? null : at(A.entry);
     if (out.entry == null && entry != null && s === parts[0].space) out.entry = entry;
     out.spaces!.push({ space: s, bank: p.bank, files: p.files, cart: A.mcfg?.cart ?? 'none', entry });
@@ -449,7 +459,8 @@ export function spaceView(A: AnalysisResult, space: number): AnalysisResult {
     loaders: A.loaders.filter(f => f.parts.some(x => mine(x.start))).map(f => ({ ...f, parts: f.parts.filter(x => mine(x.start)).map(x => ({ ...x, start: l(x.start), end: l(x.start) + (x.end - x.start) })) })),
     raster: A.raster.filter(r => mine(r.handler)).map(r => ({ ...r, handler: l(r.handler), setAt: r.setAt == null ? null : l(r.setAt), installedAt: r.installedAt == null ? null : l(r.installedAt), from: r.from == null ? null : l(r.from), d011: r.d011 && { ...r.d011, at: l(r.d011.at) } })),
     delays: A.delays.filter(d => mine(d.branch)).map(d => ({ ...d, branch: l(d.branch), by: l(d.by), read: l(d.read), start: l(d.start), end: l(d.start) + (d.end - d.start), ins: d.ins.map(l) })),
-    spindle: [], spaces: undefined, parts: undefined,
+    spindle: [], relocs: A.relocs.filter(r => mine(r.start)).map(r => ({ ...r, start: l(r.start), end: l(r.start) + (r.end - r.start), to: l(r.to) })),
+    copies: A.copies.filter(c => mine(c.start)).map(c => ({ ...c, start: l(c.start), end: l(c.start) + (c.end - c.start), to: l(c.to), loop: l(c.loop), at: l(c.at), jump: l(c.jump) })), spaces: undefined, parts: undefined,
   };
 }
 

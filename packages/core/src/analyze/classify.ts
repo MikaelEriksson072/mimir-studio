@@ -71,6 +71,8 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
     for (let a = k.start; a < k.end; a++) tm[a] = k.type;
     known.set(k.start, { props: k.props, reason: k.reason });
   }
+  // 8.1b: where a relocated block is loaded, one block that says where it runs (the blocks there say what it is)
+  for (const r of ctx.relocs) known.set(r.start, { props: { to: r.to }, reason: `you relocated it: it runs at ${$4(r.to)}-${$4(r.to + r.end - r.start - 1)}` });
   for (let a = 0; a < 0x10000; a++) if (ov[a] && owner[a] >= 0 && ov[a] !== T.CODE) tm[a] = ov[a];
 
   // ---- 5.11 data objects & classification of remaining data ----

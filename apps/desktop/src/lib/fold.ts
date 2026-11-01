@@ -1,7 +1,8 @@
 /* Folding in the listing: a folded block shows only its header line. The view keeps each line's number in its
- * .asm file, and the header of a folded block stands for every address of the block (cursor, scrolling, keys).
+ * .asm file, and the header of a folded block stands for every address of the block (cursor, scrolling, keys); a
+ * folded relocated block (8.1b) hides its .pseudopc and the blocks in it, and stands for where they run too.
  * Ctrl+↓ / Ctrl+↑ go from block header to block header. */
-import type { Addr, Block, ListingLine } from '@mimir/core';
+import type { Addr, Block, ListingLine, Reloc } from '@mimir/core';
 import { fileLineNumbers } from './lines';
 
 export interface ListingView {
@@ -14,23 +15,36 @@ export interface ListingView {
   hidden: Map<number, number>;
 }
 
-/** `size`: how many addresses there are (64 KB, or a cartridge's banks as spaces of their own, spec 13.9b) */
-export function foldLines(all: readonly ListingLine[], blocks: readonly Block[], folded: ReadonlySet<Addr>, size = 0x10000): ListingView {
+/** `size`: how many addresses there are (64 KB, or a cartridge's banks as spaces of their own, spec 13.9b);
+ *  `relocs`: the relocated blocks, whose folded header stands for where they run too */
+export function foldLines(all: readonly ListingLine[], blocks: readonly Block[], folded: ReadonlySet<Addr>, size = 0x10000, relocs: readonly Reloc[] = []): ListingView {
   const nums = fileLineNumbers(all);
   const lines: ListingLine[] = [], no: number[] = [], hidden = new Map<number, number>(), foldedAt = new Map<number, Block>();
   let fold = -1; // view index of the folded header whose lines are being skipped
+  let nest = 0; // in a folded relocated block: how many .pseudopc are open, its own too
+  const hide = () => hidden.set(fold, (hidden.get(fold) || 0) + 1);
   all.forEach((l, i) => {
-    if (l.k === 'hdr' || l.k === 'file') fold = -1;
+    const open = l.k === 'dir' && l.reloc === 'open', close = (l.k === 'dir' || l.k === 'cmt') && l.reloc === 'close';
+    if (nest > 0) { hide(); if (open) nest++; else if (close && --nest === 0) fold = -1; return; }
+    // a block where a relocated block runs ends at the `}` too (and where it pauses or goes on)
+    if (l.k === 'hdr' || l.k === 'file' || close || (l.k === 'dir' && (l.reloc === 'pause' || l.reloc === 'resume'))) fold = -1;
     // the blank line after a block stays: it separates the folded header from the next block
-    if (fold >= 0 && l.k !== 'blank') { hidden.set(fold, (hidden.get(fold) || 0) + 1); return; }
+    if (fold >= 0 && l.k !== 'blank') { hide(); if (open && foldedAt.get(fold)?.type === 'reloc') nest = 1; return; }
     if (l.k === 'hdr') { const b = blocks[l.blk]; if (b && folded.has(b.start)) { fold = lines.length; foldedAt.set(fold, b); } }
     lines.push(l); no.push(nums[i]);
   });
   const lineOf = new Int32Array(size).fill(-1);
+  const put = (s: Addr, e: Addr, i: number) => { for (let a = s; a < e && a < size; a++) if (lineOf[a] < 0) lineOf[a] = i; };
   lines.forEach((l, i) => {
     const b = foldedAt.get(i);
-    const [s, e] = b ? [b.start, b.end] : 'n' in l && l.n > 0 ? [l.a, l.a + l.n] : [0, 0];
-    for (let a = s; a < e && a < size; a++) if (lineOf[a] < 0) lineOf[a] = i;
+    if (b) put(b.start, b.end, i); else if ('n' in l && l.n > 0) put(l.a, l.a + l.n, i);
+  });
+  // a folded relocated block stands for where it runs, and where the blocks relocated from there run
+  foldedAt.forEach((b, i) => {
+    if (b.type !== 'reloc') return;
+    const spans = [[b.start, b.end]];
+    for (let k = 0; k < spans.length; k++) for (const r of relocs) if (r.start >= spans[k][0] && r.start < spans[k][1] && !spans.some(([s]) => s === r.to)) spans.push([r.to, r.to + r.end - r.start]);
+    for (const [s, e] of spans.slice(1)) put(s, e, i);
   });
   return { lines, lineNo: Int32Array.from(no), lineOf, hidden };
 }

@@ -80,6 +80,32 @@ export function allOpcodesProgram(opcodes: readonly { op: number; mn: string; mo
 }
 
 /** A program loaded into zero page so instructions address program labels in zp: exercises .zp/.abs. */
+/** 8.1b: 10 SYS2061, then a copy loop that copies $1000-$1010 to $2000 and jumps there; at $1000 the code assembled to
+ *  run at $2000 (relocate $1000-$1010 to $2000 to read it there) */
+export const RELOC_SRC = `
+.pc = $0801 "Basic"
+.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00
+.pc = $080d "Code"
+start:
+        ldx #$10
+copy:   lda $1000,x
+        sta $2000,x
+        dex
+        bpl copy
+        jmp $2000
+.pc = $1000 "Moved"
+.pseudopc $2000 {
+moved:
+        inc $d020
+        jsr sub
+        jmp moved
+sub:    lda tab,x
+        rts
+tab:    .byte 1,2,3,4
+}
+`;
+export const relocProgram = (): FileInput => fromSource('moved.prg', RELOC_SRC);
+
 export function zeroPageProgram(): FileInput {
   return fromSource('zp.prg', `
 .pc = $00f0 "ZP"

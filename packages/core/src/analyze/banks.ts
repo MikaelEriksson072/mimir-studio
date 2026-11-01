@@ -57,7 +57,7 @@ export function memConfig(ctx: Ctx): MemConfigInfo {
   // A cartridge's chip runs where it is mapped in: ROML with LORAM and HIRAM, a 16K cartridge's ROMH with HIRAM, and
   // in Ultimax mode whatever $01 says
   const { cart, owner, files } = ctx;
-  const chip = (n: number) => owner[n] >= 0 && files[owner[n]].chip != null;
+  const chip = (n: number) => owner[n] >= 0 && files[owner[n]]?.chip != null;
   const runnable = (n: number) => cart === 'ultimax' && chip(n) ? ALL_PORTS
     : cart !== 'none' && n >= 0x8000 && n < 0xa000 && chip(n) ? ROML_IN
     : cart === '16k' && n >= 0xa000 && n < 0xc000 && chip(n) ? KERNAL_IN

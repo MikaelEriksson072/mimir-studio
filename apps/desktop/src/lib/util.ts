@@ -3,8 +3,8 @@ import type { TypeGroup } from '@mimir/core';
 
 export const ROW = 20;
 
-export const GROUP_ORDER: TypeGroup[] = ['code', 'basic', 'gfx', 'music', 'table', 'text', 'data', 'fill'];
-export const GROUP_LABEL: Record<TypeGroup, string> = { code: 'Code', basic: 'BASIC', gfx: 'Graphics', music: 'Music / SID', table: 'Tables', text: 'Text', data: 'Data', fill: 'Fill / unused' };
+export const GROUP_ORDER: TypeGroup[] = ['code', 'basic', 'gfx', 'music', 'table', 'text', 'data', 'fill', 'reloc'];
+export const GROUP_LABEL: Record<TypeGroup, string> = { code: 'Code', basic: 'BASIC', gfx: 'Graphics', music: 'Music / SID', table: 'Tables', text: 'Text', data: 'Data', fill: 'Fill / unused', reloc: 'Relocated (runs elsewhere)' };
 /** group of a type-map id (A.tm, header lines) */
 export const groupOfType = (t: number): TypeGroup => typeInfo(t).group;
 /** group of a block kind */

@@ -109,6 +109,7 @@ Playwright inspector).
 | deep analysis from the Problems tab | `fixtures/vsf/raster-demo.vsf` shows 4 problems (*BRK at $ffd2 …*: the snapshot's RAM under the ROMs is traced); ticking *Deep analysis* over the list gives *4 → 0 problems in 3 rounds, … s*, *No problems found.*, the log line *The JSR at $088f to $ffd2 reaches the KERNAL ROM there …*, and `F7` verifies; *Settings → Analysis* shows it ticked, and unticked there the 4 problems are back |
 | cycle counting: cycles per line, a block's total, and branches taken or not | *Cycles* shows `6` on `inc VIC_IRQ_STATUS`, `4+` on `lda colors_0939,y` and `2/3` on `beq loop_08c2`; the `sub_0866` header counts `$0866–$08ad`: 104 cycles (status bar too); clicking `beq skip_0895`'s `2/3` marks it taken: 95, the skipped lines are dimmed and the inspector's box is ticked; unticking it gives 104 again; *Cycles* off removes the column and the section |
 | timing code: a delay a timer sets the branch into is marked, and what it reads gets no label | a PRG written by the test (`lda $dc06 / eor #$07 / sta smc+1 / bpl * / lda #$a9 / lda #$a9 / lda $eaa5`, loaded up to `$eaff`) shows `bpl delay_0817` with *0-7 bytes into the delay, by CIA1_TB_LO ($dc06)*, the comment line *delay: the bpl at $0815 goes 0-7 bytes into it … 8 down to 0 cycles*, three rows marked *delay*, `lda $eaa5` and no `data_eaa5`; `F7` verifies |
+| relocate code the program copies elsewhere: Problems finds the copy, the listing reads it where it runs, names go along | `fixtures/prg/moved-demo.prg` copies `$1000-$1010` to `$2000` and jumps there: Problems' hint (*The loop at $080f copies … the jmp at $0818 goes there*) has *Relocate…*, which fills in the dialog (start, end, runs at `$2000`; `$0900` is refused as loaded); then `lda reloc_1000,x`, `sta l_2000,x`, `jmp l_2000`, a *Relocated* header, `.pseudopc $2000 {` at `$1000` and `inc VIC_BORDER_COLOR` at `$2000` with the stripe and the inspector's notice; a name given at `$2009` goes along when `R` makes it run at `$c000` (Problems then says the loop copies it to `$2000`), `F7` verifies, `Ctrl+Z`, and *Stop relocating* puts the name back at `$1009` |
 | Problems warns when bank tracking is off and I/O is written as labels, and turns it on | a dump from `$0801` over `$d000-$d02f` (written by the test) with *Follow the memory configuration* unticked shows `sta …_d020` and a Problems row *Bank tracking is off … 2 I/O addresses … written as labels* (address `$d020`); its *Turn on* button ticks the setting, the row goes away, the listing shows `sta VIC_BORDER_COLOR`, and `Ctrl+Z` brings the row back |
 | the installed app unpacks with Sindri: no unp64 comes with it | only with `MIMIR_E2E_EXE`: there is no `resources\unp64`, a fresh profile has an empty external unpacker and `{in}` in Settings, and *Unpack* turns `packed-demo.prg` back into the demo (12287 bytes at `$0801-$37ff`) starting at `$0810` |
 | a packed PRG is reported and unpacked with Sindri, or an external unpacker | `fixtures/prg/packed-demo.prg` (the demo packed by `fakePack`, a real 6502 decruncher) shows *packed-demo.prg is packed.* with Sindri's layers (*an unknown mover at $080d …, then an unknown decoder at $0340 …; the program starts at $0810*), the *packed* badge and a Problems entry; *Unpack* opens `packed-demo-unpacked.prg` with the start `$0810`, the *Layer report* lists layers 0-2, and `F7` verifies; with Node and `packages/core/test/helpers/fake-unp64.cjs {in}` (a stand-in that writes and prints like unp64) as the external unpacker in Settings, *Unpack with node* does the same, names the packer (FakePack) and shows its output |
@@ -200,7 +201,28 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
 - **One line model, two views.** `render()` produces `Line[]`; the listing renders the tokens interactively and the
   `.asm` files are the same lines as text.
 - **Worker.** The renderer posts the project to `analysis.worker.ts` (debounced 30 ms). `analyze()` re-runs only when
-  files, overrides, entries, bank zones or settings change; renames and comments only re-render.
+  files, overrides, entries, bank zones, relocated blocks or settings change; renames and comments only re-render.
+- **Relocated blocks.** `Project.relocs` (`{ start, end, to }`, spec 8.1b) are bytes the program copies elsewhere to run
+  there. `placeRelocs()` (`analyze/memory.ts`) puts a copy of them at `to`, owned during the analysis by
+  `files.length + k` (so no instruction or block runs from it into other bytes) and by their file in the result
+  (`fileOwners`); where they are loaded `applyOverrides` makes them one `reloc` block (`T.RELOC`), which tracing does
+  not enter. One is placed once its bytes are one piece of a file or of another one's copy (relocated again, in
+  rounds) and nothing is loaded where it runs; otherwise the log says why. `render()` writes the blocks of a copy where
+  it is loaded, inside `.pseudopc to { … }` (no `.pc` there; music without its `.pc`); Kick Assembler cannot nest
+  `.pseudopc`, so one relocated from inside another pauses that one (`}`, its label a `.label`, then `.pseudopc` where
+  the other goes on). Lines inside come in load order (`lpos`) for the notes, and `Line.reloc` marks the
+  `.pseudopc`/`}` lines for folding. The subset assembler knows `.pseudopc`. `relocs.ts` has what the UI and the CLI
+  share: `relocAt`/`loadAddress` (the offset column, patches: `Patch.at` is where a patch's bytes are in the file),
+  `relocProblem` (the dialog's checks), `codeWhereLoaded`, and `addReloc`/`moveReloc`/`removeReloc`, which move the
+  user's work on the bytes with them (`moveKeys`: names, comments, notes, bookmarks, overrides and bank zones cut at the
+  edges, entries, the start, excluded and binary blocks, patches, blocks relocated from there). `findCopies()`
+  (`analyze/copies.ts`) finds `lda src,x / sta dst,x` loops whose index start and end are known and a jump or call into
+  where nothing is loaded, with a routine where it goes in (not text, not NOPs), without code the program enters where
+  it is loaded; of copies to one place the one the jump follows. On 284 programs from the CSDB intro collection
+  (unpacked with Sindri first) it suggests 101 in 98 of them, and every one, relocated, assembles byte for byte. A run of Sindri whose
+  only layers move code to relocated or suggested blocks is no packing notice (`onlyRelocates`, `src/lib/packing.ts`).
+  The app: R or right-click → *Relocate…* (`components/Relocate.tsx`), the hint's *Relocate…* button in Problems, the
+  inspector's notice, a stripe beside the gutter of lines where a block runs.
 - **Build & Run with a program start.** When the program start is set by hand (Explorer → Program start), VICE loads
   the PRG without RUN and types `sys <start>` (`-autoload … -keybuf "sys2150\n"`); without it (or after *Clear*) the PRG is autostarted as
   before. A PRG that overwrites BASIC's work area ($0002-$03ff, a memory dump say) leaves no BASIC to type into (nor

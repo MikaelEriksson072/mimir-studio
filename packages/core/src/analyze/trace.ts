@@ -3,6 +3,7 @@ import type { EntryKind, LogEntry } from '../types';
 import { cutKey, forkTrace, type Ctx } from './context';
 import { cutFor } from './deep';
 import { OPC, type OpcodeInfo } from '../cpu/opcodes';
+import { T } from '../model';
 import { decode } from '../cpu/decode';
 import { $4, h2 } from '../util/hex';
 
@@ -82,7 +83,11 @@ export function trace(ctx: Ctx): void {
           break;
         }
       }
-      if (forcedData(pc)) { L('warn', `Code path runs into user-defined data at ${$4(pc)}`, pc, 'code'); break; }
+      if (forcedData(pc)) {
+        const r = ctx.ov[pc] === T.RELOC ? ctx.relocs.find(x => pc >= x.start && pc < x.end) : undefined;
+        L('warn', r ? `Code path runs into ${$4(pc)}, where the block that runs at ${$4(r.to)} is loaded (relocated): it is traced where it runs, at ${$4(r.to + pc - r.start)}` : `Code path runs into user-defined data at ${$4(pc)}`, pc, 'code');
+        break;
+      }
       const info = OPC[mem[pc]];
       // a deep analysis: code writes the instruction here, BRK or JAM now, so it is set at run time
       if (deep?.written?.[pc] && !ctx.onTrial && (info.jam || info.flow === 'brk')) { L('info', `The code writes the instruction at ${$4(pc)} ($${h2(mem[pc])} now), so it is set at run time and the path stops there`, pc, 'deep'); break; }

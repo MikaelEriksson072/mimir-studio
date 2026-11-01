@@ -1,7 +1,7 @@
 /* The packed notice: the heuristics' verdict together with what Sindri finds, or what unp64 -i says. */
 import { describe, expect, it } from 'vitest';
 import type { LayerReport, PackingInfo, UnpackRun } from '@mimir/core';
-import { withIdentified, withUnpackRun } from '../src/lib/packing';
+import { onlyRelocates, withIdentified, withUnpackRun } from '../src/lib/packing';
 
 const h: PackingInfo = { file: 0, verdict: 'maybe', size: 6000, codeBytes: 46, entropy: 6.7, packedShare: 0, decruncher: 0x080d, signature: 'a cruncher', reasons: ['6.70 bits of entropy per byte outside the code'] };
 const file = { index: 0, size: 6000, entry: 0x080d };
@@ -12,6 +12,27 @@ const run = (layers: [number, LayerReport['kind'], string?][], stop: UnpackRun['
   const unpacked = ls.length > 1, last = ls[ls.length - 1];
   return { unpacked, layers: ls, stop: { reason: stop, pc: 0x1000, detail: '', cycle: 0 }, saved: unpacked ? { layer: last.index, prg: new Uint8Array(3), start: 0x0801, end: 0x2000, entry: last.entry, basic: false, port: 0x37, interrupts: true } : null, basic: [], roms: 'stand-ins (no ROM files)', drive: null, cycles: 0, ms: 1 };
 };
+
+describe('onlyRelocates (8.1b)', () => {
+  // a mover at $080d that writes $2000-$2010 and jumps there
+  const mover = (written: { start: number; end: number }[]): UnpackRun => {
+    const r = run([[0x080d, 'mover'], [0x2000, 'program']]);
+    return { ...r, layers: r.layers.map(l => (l.kind === 'mover' ? { ...l, written } : l)) };
+  };
+  const A = (relocs: { start: number; end: number; to: number }[], copies: typeof relocs = []) => ({ relocs: relocs.map(r => ({ ...r, file: 0 })), copies: copies.map(c => ({ ...c, loop: 0x080f, at: 0x0812, jump: 0x0818 })) });
+
+  it('a program that only copies code to where it is relocated, or to a copy the analysis suggests relocating, is not packed', () => {
+    expect(onlyRelocates(mover([{ start: 0x2000, end: 0x2010 }]), A([{ start: 0x1000, end: 0x1011, to: 0x2000 }]))).toBe(true);
+    expect(onlyRelocates(mover([{ start: 0x2000, end: 0x2010 }]), A([], [{ start: 0x1000, end: 0x1011, to: 0x2000 }]))).toBe(true);
+  });
+
+  it('one that writes more, decrunches, or moves to where nothing is relocated is', () => {
+    expect(onlyRelocates(mover([{ start: 0x2000, end: 0x2011 }]), A([{ start: 0x1000, end: 0x1011, to: 0x2000 }]))).toBe(false);
+    expect(onlyRelocates(mover([{ start: 0x2000, end: 0x2010 }]), A([]))).toBe(false);
+    expect(onlyRelocates(run([[0x080d, 'decruncher'], [0x2000, 'program']]), A([{ start: 0x1000, end: 0x1011, to: 0x2000 }]))).toBe(false);
+    expect(onlyRelocates(undefined, A([]))).toBe(false);
+  });
+});
 
 describe('withUnpackRun', () => {
   it('keeps the heuristics while the unpacker runs', () => {

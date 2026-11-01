@@ -198,6 +198,7 @@ interface Project {
   notes: Record<Addr, Note>;              // egna kommentarrader och kommentarblock ovanför en adress
   bookmarks: Record<Addr, Bookmark>;      // bokmärken: titel och anteckning per adress, skrivs aldrig till källkoden (10)
   bankZones: BankZone[];                  // ordnad lista, senare vinner: vad koden i ett intervall körs med
+  relocs: Reloc[];                        // byte som programmet kopierar till en annan adress och kör där (8.1b)
   excluded: Addr[];                       // starten på block som lämnas utanför bygget (11.5)
   binary: Addr[];                         // starten på block som sparas som binärfil (11.6)
   settings: Settings;
@@ -219,10 +220,16 @@ interface BankZone {                      // se 8.7b
   vicBank?: number | null;                // VIC-bank 0–3; null = tillbaka till detektering
 }
 
+interface Reloc {                         // se 8.1b
+  start: Addr; end: Addr;                 // där byten ligger i filen (end exklusiv)
+  to: Addr;                               // där de körs
+}
+
 interface LoadedFile { id: string; name: string; load: Addr; bytes: Uint8Array; }
 
 type BlockKind = 'code' | 'data' | 'words' | 'text' | 'table' | 'lohi' | 'sprite'
-               | 'charset' | 'bitmap' | 'screen' | 'music' | 'fill' | 'basic';
+               | 'charset' | 'bitmap' | 'screen' | 'music' | 'fill' | 'basic'
+               | 'reloc';                 // där ett flyttat block ligger (8.1b)
 
 interface Override {
   start: Addr; end: Addr;                 // end exklusiv
@@ -321,6 +328,41 @@ Analysen är en deterministisk pipeline. Varje steg är O(n) över max 64 KB och
 ### 8.1 Minnesbild
 
 Alla filer läggs i en 64 KB-bild; `owner[addr]` anger vilken fil som äger byten (senare fil vinner vid överlapp, med varning). Flera filer analyseras tillsammans, så korsreferenser mellan t.ex. `main.prg` och `music.prg` löses upp.
+
+### 8.1b Flyttade block (relokering)
+
+Program kopierar ofta kod till en annan adress innan den körs där: en överföringsrutin till kassettbufferten
+(`$033c`) eller skärmen som laddar nästa del, kod under KERNAL eller i nollsidan. Byten ligger då på en adress i filen
+och körs på en annan, och koden i dem är skriven för den andra (`jmp $2000`, inte `jmp $1000`). Ett flyttat block
+(`Project.relocs`: `start`–`end` i filen körs på `to`) gör att analysen läser dem där de körs:
+
+- **Minnesbilden.** Efter filerna läggs en kopia av byten på `to` (`placeRelocs`). Under analysen ägs kopian av
+  `files.length + k`, så att ingen instruktion och inget block går från den in i andra byte; i resultatet ägs den av
+  filen byten är från, och `AnalysisResult.relocs` säger var varje block är laddat och körs. Där byten är laddade är de
+  ett block av typen *Relocated* (`T.RELOC`, typen vinner över allt som markerats där) med en etikett (`reloc_1000`);
+  spårningen går inte in där, och en kodväg som gör det får en varning som säger var koden körs. Referenser till
+  laddplatsen skrivs från blockets etikett (`lda reloc_1000+5`, hur långt in det än är).
+- **Villkor.** Byten ska vara ett stycke av en fil, eller av ett annat flyttat blocks kopia (ett block flyttat igen
+  därifrån; de läggs ut i omgångar), och där de körs får ingenting vara laddat, varken en fil, ett annat flyttat block
+  eller blockets egna byte. Ett block som inte kan läggas ut står i loggen med skälet. Kopieringsloopens
+  `sta $2000,x` från blockets byte är kopieringen, inte självmodifierande kod. I en cartridge körs blocket i banken
+  det är laddat i (13.9b).
+- **Källkoden.** Blocken där det körs skrivs där byten är laddade, i `.pseudopc to { … }`: etiketten för laddplatsen
+  före, inga `.pc` inuti (musik utan sin `.pc = music.location`), och `}` efter. Kick Assembler kan inte nästla
+  `.pseudopc`, så ett block flyttat igen inifrån ett annat pausar det: `}`, blockets etikett som `.label`, dess egen
+  `.pseudopc`, och sedan `.pseudopc` där det första fortsätter. Filhuvudet listar filens flyttade block. Hela blocket
+  kan lämnas utanför bygget (11.5) eller sparas som binärfil (11.6, etiketterna där det körs blir `.label`); ett block
+  där det körs kan inte lämnas utanför för sig. Den inbyggda assemblern klarar `.pseudopc`, och KickAss.jar bygger
+  alltihop byte för byte (`kickass.integration.test.ts`).
+- **Upptäckt.** `findCopies` hittar loopar `lda src,x / sta dst,x` (eller `,y`), flera par en sida isär blir ett
+  block, där indexregistrets start (`ldx #`) och slut (`dex/bpl`, `dex/bne`, `inx/bne`, `inx/cpx #/bne`, `bcc`) går
+  att läsa, kopian hamnar där ingenting är laddat, och koden hoppar eller anropar dit. Där hoppet går in ska byten
+  vara en rutin (inte text, inte NOP), och kod som programmet går in i där den är laddad (en loop som kopierar några
+  byte mer än sin rutin, in i en subrutin) hålls utanför. Av kopior till samma plats vinner den som hoppet följer
+  direkt efter (en text som kopieras till skärmen på `$0400` går ofta dit också). Varje kopia blir ett tips i
+  Problems med *Relocate…*. På 284 intros ur CSDB:s samling (uppackade med Sindri först) hittas 101 i 98 av dem, och varenda
+  en assembleras byte för byte när den flyttas. En körning av Sindri vars enda lager flyttar kod dit ett flyttat (eller
+  föreslaget) block körs ger ingen packningsnotis (8.11b).
 
 ### 8.2 Startpunkter
 
@@ -1019,7 +1061,8 @@ Pefchain läser det, med drivern och rutinerna efter `#`.
 | Bokmärkeslistan | `Ctrl+B`, aktivitetsradens bokmärkesknapp (visar antalet) | Alla bokmärken sorterade efter adress, med adress och titel, och filtrerbara på titel, anteckning och adress. Ett klick visar hela anteckningen med *Go to*, *Edit* och *Delete*, och ett klick till döljer den. Ett dubbelklick går till platsen i koden |
 | Nästa / föregående bokmärke | `F2` / `Shift+F2` | Går till bokmärket efter eller före markörens rad och börjar om från första eller sista. Titeln visas i en toast |
 | Nästa / föregående block | `Ctrl+↓` / `Ctrl+↑`, pilarna *Next block* / *Previous block* i listningens verktygsrad (när raden är bred nog) och ⋯-menyn, kommandopaletten | `Ctrl+↓` går till nästa blocks början. `Ctrl+↑` går till början av blocket markören står i, och står den redan där till blocket före. Blockets rubrik hamnar överst i listningen med raden ovanför, så man kan bläddra block för block. Ihopfällda block förblir ihopfällda och markören stannar på rubriken, så *Fold all blocks* och sedan `Ctrl+↓` går igenom blocken ett i taget. En följd av hopp läggs en gång i navigeringshistoriken, så `Esc` går tillbaka dit markören stod före det första. Efter det sista blocket och före det första händer ingenting (`blockStep` i `apps/desktop/src/lib/fold.ts`) |
-| Patch | `P`, högerklick → *Patch selection/line/block with new code…*, kommandopaletten | Ny kod skrivs över markeringen (eller raden vid markören) i de laddade bytena; `P` på en patchad rad redigerar patchen (10.2) |
+| Patch | `P`, högerklick → *Patch selection/line/block with new code…*, kommandopaletten | Ny kod skrivs över markeringen (eller raden vid markören) i de laddade bytena; `P` på en patchad rad redigerar patchen (10.2). I ett flyttat block assembleras den där koden körs och skrivs där filen har byten (`Patch.at`) |
+| Flytta ett block (relokera) | `R`, högerklick → *Relocate selection/block…*, inspektorns *Relocate…*, *Relocate…* på ett tips i Problems, kommandopaletten | En dialog med start, slut (inklusive) och adressen byten körs på (8.1b), ifylld från markeringen, blocket vid markören eller kopieringsloopen tipset gäller. Den säger direkt vad som är i vägen (något laddat där det skulle köras, blockets egna byte, en fil- eller patchgräns), varnar för kod som också körs där den är laddad, och räknar upp vad som följer med. Användarens namn, kommentarer, kommentarrader, bokmärken, markeringar (kapade vid kanterna), startpunkter, programstart, uteslutna och binära block, patchar och block flyttade därifrån flyttas till där byten körs (`addReloc`). På ett flyttat block (där det är laddat eller körs) ger `R` samma dialog för att köra det någon annanstans (`moveReloc`, allt följer med) eller *Stop relocating* (`removeReloc`, allt går tillbaka). Listningen visar raderna där blocket körs med körningsadressen, filens offset för laddplatsen och en rand i blocktypens färg (*Relocated*), och inspektorn säger var blocket är laddat och körs. Ångras med `Ctrl+Z` |
 | Lägg till startpunkt | `E` | Spårning från adressen |
 | Programstart | Explorer → *Program start* (adress eller etikett), högerklick → *Set as program start*, kommandopaletten | Ersätter den detekterade starten (8.2); *Use the detected start* tar bort valet |
 | Korsreferenser | `X` | Bottenpanelen visar alla referenser till raden |

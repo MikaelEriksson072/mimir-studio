@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { analyze, bankFiles, comparePrg, createProject, exportFiles, formatOverride, h4, makeDemo, makePrg, OPC, openC64File, openCartridge, parsePrg, planPatch, render, showcaseProject, withPatch, type ProjectInput } from '../src';
 import { findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
-import { allOpcodesProgram, fromSource, randomPrg, seededProject, SETTING_VARIANTS, zeroPageProgram } from './helpers/programs';
+import { allOpcodesProgram, fromSource, randomPrg, relocProgram, seededProject, SETTING_VARIANTS, zeroPageProgram } from './helpers/programs';
 
 const jar = process.env.KICKASS_JAR || findKickAssJar();
 const java = process.env.JAVA || 'java';
@@ -64,6 +64,17 @@ function cases(): Case[] {
       bankZones: [{ start: 0xc01a, end: 0xc01e, port: 0x34 }],
     },
   });
+  {
+    // 8.1b: a block the program copies to $2000 to run there, written inside .pseudopc; one relocated again from there
+    // ($2009-$200c to $c000: Kick Assembler cannot nest .pseudopc, so the outer one pauses), and the whole block left
+    // out or saved as a binary file
+    const moved = { name: 'moved', files: [relocProgram()], relocs: [{ start: 0x1000, end: 0x1011, to: 0x2000 }] };
+    out.push({ name: 'a relocated block (.pseudopc)', project: moved });
+    out.push({ name: 'a block relocated from where another one runs (.pseudopc in .pseudopc)', project: { ...moved, relocs: [...moved.relocs, { start: 0x2009, end: 0x200d, to: 0xc000 }], labels: { 0x2009: 'sub', 0xc000: 'sub_c000' } } });
+    out.push({ name: 'a relocated block that ends with one relocated from it', project: { ...moved, relocs: [...moved.relocs, { start: 0x200d, end: 0x2011, to: 0xc000 }] } });
+    out.push({ name: 'a relocated block left out of the build', project: { ...moved, excluded: [0x1000] } });
+    out.push({ name: 'a relocated block saved as a binary file', project: { ...moved, binary: [0x1000] } });
+  }
   out.push({ name: 'all opcodes', project: { name: 'opcodes', files: [allOpcodesProgram(OPC)] } });
   out.push({ name: 'zero-page program (.zp/.abs)', project: { name: 'zp', files: [zeroPageProgram()] } });
   // shapes the fuzz test found: wrapping branches at $0000, word tables, music overrides

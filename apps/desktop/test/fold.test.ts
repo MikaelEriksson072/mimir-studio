@@ -1,11 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import { analyze, demoProject, findBlock, lineText, render } from '@mimir/core';
+import { analyze, assemble, demoProject, findBlock, lineText, parsePrg, render, type ProjectInput } from '@mimir/core';
 import { blockStep, foldLines } from '../src/lib/fold';
 import { fileLineNumbers } from '../src/lib/lines';
 
 const p = demoProject();
 const A = analyze(p);
 const R = render(A, p);
+
+describe('folding a relocated block (8.1b)', () => {
+  // $1000-$1010 runs at $2000 ($2009-$200c of it again at $c000): its .pseudopc pauses for the one relocated from it
+  const src = `.pc = $0801
+.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00
+.pc = $080d
+ jmp $2000
+.pc = $1000
+.pseudopc $2000 {
+m: inc $d020
+ jsr s
+ jmp m
+s: lda t,x
+ rts
+t: .byte 1,2,3,4
+}`;
+  const prg = assemble({ 'm.asm': src }, 'm.asm').prg!;
+  const q: ProjectInput = { files: [parsePrg('m.prg', prg)], relocs: [{ start: 0x1000, end: 0x1011, to: 0x2000 }, { start: 0x2009, end: 0x200d, to: 0xc000 }] };
+  const B = analyze(q), S = render(B, q);
+
+  it('hides its .pseudopc and every block in it, and stands for where they run', () => {
+    const v = foldLines(S.lines, B.blocks, new Set([0x1000]), B.mem.length, B.relocs);
+    const h = v.lines.findIndex(l => l.k === 'hdr' && l.a === 0x1000);
+    expect(v.lines.some(l => l.k === 'dir' && l.reloc)).toBe(false);
+    expect(v.lines.some(l => l.a >= 0x2000 && l.a < 0x2011 && l.k !== 'blank')).toBe(false);
+    for (const a of [0x1000, 0x2000, 0x2010, 0xc000, 0xc003]) expect(v.lineOf[a], `$${a.toString(16)}`).toBe(h);
+    // it is the file's last block: nothing comes after its header
+    expect(h).toBe(v.lines.length - 1);
+  });
+
+  it('folding a block where it runs ends at the pause of its .pseudopc', () => {
+    const code = findBlock(B.blocks, 0x2000)!;
+    const v = foldLines(S.lines, B.blocks, new Set([code.start]), B.mem.length, B.relocs);
+    expect(v.lines.some(l => l.k === 'dir' && l.reloc === 'pause')).toBe(true);
+    expect(v.lines.some(l => l.k === 'dir' && l.reloc === 'open' && l.a === 0x2009)).toBe(true);
+  });
+});
 
 describe('folding the listing', () => {
   it('shows every line when nothing is folded', () => {

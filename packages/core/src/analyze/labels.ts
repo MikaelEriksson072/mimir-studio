@@ -66,15 +66,18 @@ export function makeLabels(ctx: Ctx, cls: Classification, vic: VicEvidence): { l
       case 'screen': return `screen_${h4(addr)}`;
       case 'fill': return `buf_${h4(addr)}`;
       case 'code': return `l_${h4(addr)}`;
+      case 'reloc': return `reloc_${h4(addr)}`;
       default: return `${written(addr) ? 'var' : indexedRef(addr) ? 'tbl' : 'data'}_${h4(addr)}`;
     }
   };
   for (const addr of [...objStarts].sort((x, y) => x - y)) {
-    if (!loaded(addr) || tm[addr] === T.MUSIC || codeOwner[addr] >= 0) continue;
+    // inside a relocated block where it is loaded the source counts from its start (`reloc_1000+5`): a label there would
+    // be inside its .pseudopc, at the address the bytes run at
+    if (!loaded(addr) || tm[addr] === T.MUSIC || codeOwner[addr] >= 0 || (tm[addr] === T.RELOC && !ctx.relocs.some(r => r.start === addr))) continue;
     setLabel(addr, dataName(addr), 'data');
   }
   for (const b of blocks) {
-    if (b.type === 'lohi' || b.type === 'text' || b.type === 'sprite' || b.type === 'charset' || b.type === 'bitmap' || b.type === 'screen' || b.type === 'table' || b.type === 'words' || (b.type === 'code' && b.user)) setLabel(b.start, dataName(b.start), 'data');
+    if (b.type === 'lohi' || b.type === 'text' || b.type === 'sprite' || b.type === 'charset' || b.type === 'bitmap' || b.type === 'screen' || b.type === 'table' || b.type === 'words' || b.type === 'reloc' || (b.type === 'code' && b.user)) setLabel(b.start, dataName(b.start), 'data');
   }
   for (const b of blocks) if (b.type === 'sprite') for (let s = b.start + 64; s < b.end; s += 64) if (vic.sprites.some(x => x.addr === s)) setLabel(s, `spr_${h4(s)}`, 'data');
 
