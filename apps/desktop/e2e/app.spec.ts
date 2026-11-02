@@ -848,21 +848,33 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
   await waitForListing(page);
   const prg = join(repoDir, 'fixtures/prg/raster-demo.prg');
 
-  await test.step('Ctrl+O opens a PRG', async () => {
+  const file = page.getByRole('button', { name: 'File', exact: true });
+  const menu = page.getByRole('menu');
+
+  await test.step('File → Open PRG files… opens a PRG; the File button closes its menu too', async () => {
+    await file.click();
+    await expect(file).toHaveAttribute('aria-expanded', 'true');
+    await expect(menu.getByRole('menuitem')).toHaveText(['Open PRG files…Ctrl+O', 'Save: create a project from this work…Ctrl+S']);
+    await file.click();
+    await expect(menu).toBeHidden();
+    await expect(file).toHaveAttribute('aria-expanded', 'false');
+
     await stubDialogs(app, { open: [prg] });
-    await page.keyboard.press('Control+o');
+    await file.click();
+    await menu.getByRole('menuitem', { name: 'Open PRG files…' }).click();
     await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
     await expect(statusBar(page)).toContainText('$0810 · start');
   });
 
-  await test.step('rename, then Ctrl+S makes a project of the work', async () => {
+  await test.step('rename, then File → Save makes a project of the work', async () => {
     await goTo(page, OLD);
     await page.keyboard.press('n');
     await page.getByLabel('Label at $092d').fill(NEW);
     await page.getByLabel('Label at $092d').press('Enter');
     await expect(statusBar(page)).toContainText(`$092d · ${NEW}`);
 
-    await page.keyboard.press('Control+s');
+    await file.click();
+    await menu.getByRole('menuitem', { name: 'Save: create a project from this work…' }).click();
     const dialog = page.getByRole('dialog', { name: 'Create a project from this work' });
     await expect(dialog.getByLabel('Name')).toHaveValue('raster-demo');
     await dialog.getByLabel('Name').fill('demo');
@@ -874,6 +886,10 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
     await expect(toast(page, `Created the project demo in ${join(work, 'demo')}: the work is saved there`)).toBeVisible();
     expect(readFileSync(join(work, 'demo', 'demo.mimir.json'), 'utf8')).toContain(NEW);
     await expect(page.getByRole('button', { name: 'Project demo' })).toBeVisible();
+
+    await file.click();
+    await menu.getByRole('menuitem', { name: 'Save project' }).click();
+    await expect(toast(page, `Project saved to ${join(work, 'demo', 'demo.mimir.json')}`)).toBeVisible();
   });
 
   await test.step("Ctrl+E verifies and exports the Kick Assembler project into the project's source folder", async () => {

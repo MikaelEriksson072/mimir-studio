@@ -1790,13 +1790,22 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       { label: home ? 'Close the project (start screen)' : 'Start screen', run: () => void toStartScreen() },
     ] });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
+  /** the title bar's File menu: open PRG files, save the project (a project made of the work without one) */
+  const fileMenu = (e: ReactMouseEvent<HTMLElement>) => {
+    if (menu?.owner === 'file') { setMenu(null); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu({ owner: 'file', x: r.left, y: r.bottom + 2, items: [
+      { label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false) },
+      { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
+    ] });
+  };
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] =[['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
       <TitleBar projectName={project.name} home={home?.name ?? null} changed={unsavedChanges} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
-        onOpen={() => void openPrgs(false)} onSave={() => void saveProject()} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
+        onFile={fileMenu} fileOpen={menu?.owner === 'file'} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
         onVerify={() => void runVerify()} onExport={() => void exportProject()} onBuild={() => void runBuild()} onTerminal={() => void openTerminal()}
         editor={editors?.current?.name ?? null} onEditor={() => void openEditor()}
         onTheme={() => setUi({ theme: theme === 'dark' ? 'light' : 'dark' })} onSettings={() => setModal('settings')}

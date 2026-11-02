@@ -14,7 +14,9 @@ interface TitleBarProps {
   snapshot?: boolean;
   /** the project was opened from a cartridge: Build & Run attaches the rebuilt image */
   cartridge?: boolean;
-  onOpen: () => void; onSave: () => void; onUndo: () => void; onRedo: () => void; onPalette: () => void;
+  /** the File menu (open PRG files, save the project): its button opens it, and closes it while it is open */
+  onFile: (e: MouseEvent<HTMLElement>) => void; fileOpen: boolean;
+  onUndo: () => void; onRedo: () => void; onPalette: () => void;
   onVerify: () => void; onExport: () => void; onBuild: () => void; onTerminal: () => void; onTheme: () => void; onSettings: () => void;
   /** the external editor the export opens in (null: none is set and none was found) */
   editor: string | null; onEditor: () => void;
@@ -33,8 +35,7 @@ export function TitleBar(p: TitleBarProps) {
         <Icon name={p.home ? 'folder' : 'doc'} size={14} /><span>{p.home ?? 'No project'}</span>{!p.home && p.changed && <span className="proj-dot" aria-hidden="true" />}<Icon name="down" size={12} />
       </button>
       <div className="tb-group hide-narrow">
-        <button className="btn ghost" onClick={p.onOpen} title="Open PRG files (Ctrl+O)"><Icon name="upload" />Open</button>
-        <button className="btn ghost" onClick={p.onSave} title={p.home ? 'Save the project (Ctrl+S); Mimir also saves it as you work' : 'Create a project from this work: a folder of its own, where the work moves (Ctrl+S)'}><Icon name="download" />Save</button>
+        <button className="btn ghost" onMouseDown={e => e.stopPropagation()} onClick={p.onFile} aria-haspopup="menu" aria-expanded={p.fileOpen} title="Open PRG files (Ctrl+O) and save the project (Ctrl+S)">File<Icon name="down" size={12} /></button>
         <button className="icon-btn" onClick={p.onUndo} disabled={!p.undoLabel} title={p.undoLabel ? `Undo: ${p.undoLabel} (Ctrl+Z)` : 'Nothing to undo'} aria-label="Undo"><Icon name="undo" /></button>
         <button className="icon-btn" onClick={p.onRedo} disabled={!p.canRedo} title="Redo (Ctrl+Y)" aria-label="Redo"><Icon name="redo" /></button>
       </div>
