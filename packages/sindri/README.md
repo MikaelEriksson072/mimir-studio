@@ -122,6 +122,17 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
 `0x080d` or `2061`. In this folder, `pnpm unpack game.prg` does the same, and
 `pnpm --filter @mimir/sindri unpack game.prg` anywhere in the repository.
 
+The disk is given on its own, and `--file` names a file on it. A path with spaces goes in quotes, or the shell gives
+it in pieces:
+
+```
+sindri "C:\C64\Demos\001. The Lab\side1.d64" -o lab.prg
+sindri "C:\C64\Demos\001. The Lab\side1.d64" --file "PART*" -o part.prg
+```
+
+When the arguments do not name one file, Sindri says what is wrong before anything runs: a path that came in pieces,
+the disk given to `--file`, more files than one, or none.
+
 ### ROMs
 
 The ROM files are not included. Sindri looks for a VICE installation (in `C:\C64`, Program Files and the usual

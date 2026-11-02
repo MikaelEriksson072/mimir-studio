@@ -1,6 +1,6 @@
 /* sindri <file.prg | disk.d64> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
  * or newer runs the TypeScript as it is), or `pnpm unpack` in this folder. */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unpack, type LayerReport, type Saved, type UnpackOptions } from './session.ts';
@@ -33,7 +33,7 @@ program can go on loading from it, with the KERNAL or a fast loader of its own.
   --trace        print every layer change and key press as it happens
   --learn NAME   add the depackers' fingerprints to the signature list as NAME
 
-Addresses: $080d, 0x080d or 2061.`;
+Addresses: $080d, 0x080d or 2061. A path with spaces goes in quotes: sindri "C:\\C64\\The Lab\\side1.d64".`;
 
 const hex4 = (v: number) => '$' + v.toString(16).padStart(4, '0');
 const range = (r: Range) => r.start === r.end ? hex4(r.start) : `${hex4(r.start)}-${hex4(r.end)}`;
@@ -67,11 +67,32 @@ function startHint(s: Saved): string {
   return s.basic ? `RUN (SYS ${s.entry} = ${hex4(s.entry)}${port})` : `SYS ${s.entry} = ${hex4(s.entry)}${port}${s.interrupts ? '' : ', interrupts off'}`;
 }
 
+/**
+ * Say what is wrong when the arguments do not name one file: a path with spaces and no quotes around it, which the
+ * shell gives in pieces; the disk given to --file, which names a file on it; more files than one; or none.
+ */
+function badFiles(argv: string[], inputs: string[], fileName: string | null, isFile: (p: string) => boolean, path: string): never {
+  const quote = (p: string) => (/\s/.test(p) ? `"${p}"` : p);
+  let whole: { path: string; from: number; to: number } | null = null;
+  for (let i = 0; i < argv.length && !whole; i++) for (let j = argv.length; j > i + 1 && !whole; j--) {
+    const p = argv.slice(i, j).join(' ');
+    if (isFile(p)) whole = { path: p, from: i, to: j };
+  }
+  const at = fileName === null ? -1 : argv.lastIndexOf('--file') + 1;
+  const disk = whole && whole.from <= at && at < whole.to ? whole.path : !inputs.length && fileName !== null && (isFile(fileName) || /\.d64$/i.test(fileName)) ? fileName : null;
+  if (disk) throw new Error(`--file takes the name of a file on the disk, not the disk: give the disk on its own${disk === whole?.path ? ', in quotes as its path has spaces' : ''}, as in sindri ${quote(disk)} (its first PRG, or --file NAME after it for another)`);
+  if (whole) throw new Error(`a path with spaces goes in quotes: sindri ${quote(whole.path)}`);
+  if (inputs.length > 1) throw new Error(`one file at a time, not ${inputs.length}: ${inputs.map(f => `"${f}"`).join(', ')} (a path with spaces goes in quotes)`);
+  if (!inputs.length) throw new Error(fileName !== null ? `no file given: --file NAME picks a file on the disk given with it, as in sindri disk.d64 --file ${quote(fileName)}` : 'no file given');
+  throw new Error(`no file ${path}`);
+}
+
 function main(argv: string[]): number {
   if (!argv.length || argv.includes('-h') || argv.includes('--help')) { console.log(HELP); return argv.length ? 0 : 2; }
   const cwd = process.env.INIT_CWD ?? process.cwd();
   const o: UnpackOptions = {};
-  let input: string | null = null, out: string | null = null, info = false, all = false, json = false, learn: string | null = null;
+  const inputs: string[] = [];
+  let out: string | null = null, info = false, all = false, json = false, learn: string | null = null;
   let roms: string | null | false = null, fileName: string | null = null, diskPath: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -95,12 +116,12 @@ function main(argv: string[]): number {
       case '--learn': learn = argv[++i]; break;
       default:
         if (a.startsWith('-')) throw new Error(`unknown option ${a}`);
-        if (input) throw new Error('one file at a time');
-        input = a;
+        inputs.push(a);
     }
   }
-  if (!input) throw new Error('no file given');
-  const path = resolve(cwd, input);
+  const isFile = (p: string) => statSync(resolve(cwd, p), { throwIfNoEntry: false })?.isFile() ?? false;
+  if (inputs.length !== 1 || !isFile(inputs[0])) badFiles(argv, inputs, fileName, isFile, resolve(cwd, inputs[0] ?? '.'));
+  const path = resolve(cwd, inputs[0]);
   let file = new Uint8Array(readFileSync(path));
   let base = join(dirname(path), basename(path, extname(path))), shown = basename(path);
   if (/\.d64$/i.test(path)) {
