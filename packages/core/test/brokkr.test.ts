@@ -99,6 +99,28 @@ describe('packing with Brokkr', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it('puts the decruncher, its tables and zero page where they are set, and keeps memory free, as the command does', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-brokkr-'));
+    try {
+      const prefs = P({ decruncherAt: 0xc000, tablesAt: 0xc400, zp: 0x22, keep: [{ start: 0x0334, end: 0x0400 }] });
+      const r = await packWithBrokkr([{ name: 'raster demo.prg', prg: demo.prg }], prefs);
+      expect(r.ok).toBe(true);
+      expect(r.argv).toEqual(['brokkr', 'sfx', '--start', 'sys', '--zp', '$22', '--at', '$c000', '--table', '$c400', '--keep', '$0334-$03ff', '-o', 'raster demo-brokkr.prg', 'raster demo.prg']);
+      expect(r.report.layout.find(a => a.name === 'Decruncher')).toMatchObject({ start: 0xc000, note: 'zero page $22-$2a' });
+      expect(r.report.layout.find(a => a.name === 'Decrunch table')?.start).toBe(0xc400);
+      expect(r.check?.status).toBe('same');
+      for (const i of r.inputs) await writeFile(join(dir, i.name), i.prg);
+      const run = spawnSync(process.execPath, [cli, ...r.argv.slice(1), '-q'], { cwd: dir, encoding: 'utf8' });
+      expect(run.stderr).toBe('');
+      expect(new Uint8Array(await readFile(join(dir, r.name!)))).toEqual(r.prg);
+      // in the way: the program
+      expect(await packWithBrokkr([{ name: 'raster demo.prg', prg: demo.prg }], P({ decruncherAt: 0x1000 })))
+        .toMatchObject({ ok: false, error: expect.stringMatching(/lies in the program/) });
+      // crunched data has no decruncher of Brokkr's to place
+      expect(brokkrArgs(P({ mode: 'mem', decruncherAt: 0xc000, keep: [{ start: 0xc000, end: 0xd000 }] }), ['a.prg'], 'a-brokkr.prg')).toEqual(['brokkr', 'mem', '-o', 'a-brokkr.prg', 'a.prg']);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it("packs in Brokkr's fast format, as the command it shows does", async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mimir-brokkr-'));
     try {

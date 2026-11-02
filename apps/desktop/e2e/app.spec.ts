@@ -2362,6 +2362,26 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await view.getByRole('button', { name: 'Clear the folder' }).click();
     await expect(folder).toHaveText(/^Not set/);
   });
+
+  await test.step("the decruncher's memory: where it, its tables and zero page go, and memory kept free", async () => {
+    await view.getByLabel('Format').selectOption('exomizer');
+    await openSection(page, "Decruncher's memory");
+    for (const [label, value] of [['Decruncher at', '$c000'], ['Tables at', '$c400'], ['Zero page at', '$22']]) {
+      await view.getByLabel(label, { exact: true }).fill(value);
+      await view.getByLabel(label, { exact: true }).press('Enter');
+    }
+    const keep = view.getByLabel('Keep free', { exact: true });
+    await keep.fill('$d000-$c000');
+    await expect(view).toContainText('the last address comes before the first');
+    await keep.fill('$0334-$03ff');
+    await keep.press('Enter');
+    await expect(cmd).toHaveText('brokkr sfx --start sys --zp $22 --at $c000 --table $c400 --keep $0334-$03ff -o raster-demo-brokkr.prg raster-demo.prg');
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    await expect(card).not.toContainText('Out of date', { timeout: 120_000 });
+    await expect(card).toContainText("Decrunched in Brokkr's emulated C64");
+    await expect(card).toContainText('$c000–$c0cc');
+    await expect(card).toContainText('$c400–$c49b');
+  });
 });
 
 test('pack with Exomizer: the whole build or chosen blocks, checked with desfx, saved with a dialog', async ({ workDir: work, app, page }) => {
@@ -3160,9 +3180,9 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
   await expect(loaders.locator('.sec-sum')).toHaveText('none found');
 
-  // the Pack view's sections (What to pack, Packed file, Self-extracting, Command) are closed too
+  // the Pack view's sections (What to pack, Packed file, Self-extracting, Decruncher's memory, Command) are closed too
   await views.getByRole('button', { name: 'Pack' }).click();
-  await allClosed(4);
+  await allClosed(5);
   await openSection(page, 'Command');
 
   // a restart (the reload starts the window afresh, its saved preferences read again): every section closed again,
@@ -3175,7 +3195,7 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await allClosed(5);
   await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
   await views.getByRole('button', { name: 'Pack' }).click();
-  await allClosed(4);
+  await allClosed(5);
 });
 
 test('the side panel collapses so the listing gets its room, and comes back with a view\'s button or Ctrl+Shift+B; it stays collapsed after a restart', async ({ page }) => {

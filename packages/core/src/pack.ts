@@ -8,6 +8,7 @@ import { h2, h4 } from './util/hex';
 export const DEFAULT_PACK: PackPrefs = {
   packer: 'brokkr', effort: 'normal', format: 'exomizer', mode: 'sfx', ranges: null, start: 'sys', jmp: null, effect: 'default', ramExit: null, irqExit: null,
   memLoad: 'auto', forward: false, compat: false, fast: false, extra: '', out: '', dir: '',
+  zp: null, decruncherAt: null, tablesAt: null, keep: [],
 };
 
 /** Which settings take effect with this packer, format, kind of file and start: the Pack view shows only these. */
@@ -27,6 +28,8 @@ export function packOptions(p: PackPrefs) {
     // Brokkr's own formats are decrunched backward; a self-extracting file brings its own decruncher, which reads
     // literal sequences
     forward: !sfx && exo, compat: !sfx && exo,
+    // where Brokkr's decruncher works while a self-extracting file decrunches
+    place: brokkr && sfx,
   };
 }
 
@@ -39,8 +42,27 @@ export function packEffective(p: PackPrefs): PackPrefs {
     jmp: on.jmp ? p.jmp : null, effect: on.effect ? p.effect : d.effect, ramExit: on.ramExit ? p.ramExit : null,
     irqExit: on.irqExit ? p.irqExit : null, memLoad: on.memLoad ? p.memLoad : d.memLoad, forward: on.forward && p.forward,
     compat: on.compat && p.compat, fast: on.fast && p.fast, extra: on.extra ? p.extra : '',
+    zp: on.place ? p.zp : null, decruncherAt: on.place ? p.decruncherAt : null, tablesAt: on.place ? p.tablesAt : null,
+    keep: on.place ? p.keep : [],
   };
 }
+
+/** Ranges to keep free as typed, `$c000-$cfff, $0334-$03ff` (each its first and last address), joined where they
+ * touch; a string says what is wrong. */
+export function parseKeep(text: string): PackRange[] | string {
+  const out: PackRange[] = [];
+  for (const part of text.split(',').map(s => s.trim()).filter(Boolean)) {
+    const m = /^\$?([0-9a-f]{1,4})\s*-\s*\$?([0-9a-f]{1,4})$/i.exec(part);
+    if (!m) return `"${part}" is not a range: give its first and last address, $c000-$cfff.`;
+    const start = parseInt(m[1], 16), last = parseInt(m[2], 16);
+    if (last < start) return `In "${part}" the last address comes before the first.`;
+    out.push({ start, end: last + 1 });
+  }
+  return mergeRanges(out);
+}
+
+/** Ranges as parseKeep reads them. */
+export const keepText = (ranges: readonly PackRange[]): string => ranges.map(r => `$${h4(r.start)}-$${h4(r.end - 1)}`).join(', ');
 
 /** a built PRG as Exomizer gets it: its file name in the pack folder, load address and bytes (without the address) */
 export interface PackFile { name: string; load: Addr; bytes: Uint8Array }

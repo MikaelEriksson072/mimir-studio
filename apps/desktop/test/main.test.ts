@@ -367,6 +367,12 @@ describe('schemas', () => {
     expect(packFolderSchema.safeParse({ dir: '' }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, format: 'brokkr' } }).success).toBe(true);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, format: 'fast' } }).success).toBe(true);
+    // project files from before the decruncher's memory could be set have none of it: Brokkr places it all
+    const { zp: _zp, decruncherAt: _at, tablesAt: _table, keep: _keep, ...unplaced } = DEFAULT_PACK;
+    expect(packSchema.parse({ files, prefs: unplaced }).prefs).toMatchObject({ zp: null, decruncherAt: null, tablesAt: null, keep: [] });
+    expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, zp: 0x22, decruncherAt: 0xc000, tablesAt: 0xc400, keep: [{ start: 0x0334, end: 0x0400 }] } }).success).toBe(true);
+    expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, zp: 0x100 } }).success).toBe(false);
+    expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, keep: [{ start: 0xc000, end: 0xc000 }] } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, format: 'zx0' } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, packer: 'zip' } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, effort: 'ultra' } }).success).toBe(false);

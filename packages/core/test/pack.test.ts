@@ -9,8 +9,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  checkDecrunched, DEFAULT_PACK, editRanges, extraProblem, makeDemo, makePrg, mergeRanges, packArgs, packEffective, packFileName, packImage, packInputs, packOptions, packOutName,
-  packParts, packProblem, parseExomizer, parsePrg, rangeCover, type PackPrefs,
+  checkDecrunched, DEFAULT_PACK, editRanges, extraProblem, keepText, makeDemo, makePrg, mergeRanges, packArgs, packEffective, packFileName, packImage, packInputs,
+  packOptions, packOutName, packParts, packProblem, parseExomizer, parseKeep, parsePrg, rangeCover, type PackPrefs, type PackRange,
 } from '../src';
 import { findExomizer, findVice, runExomizer } from '../src/node';
 import { fromSource, rng } from './helpers/programs';
@@ -68,19 +68,30 @@ describe('the settings that take effect', () => {
   it('shows for each packer, format and kind of file only what it uses', () => {
     expect(shown(packOptions(P()))).toEqual(['effect', 'extra', 'fast', 'irqExit', 'ramExit', 'start']);
     expect(shown(packOptions(P({ mode: 'mem' })))).toEqual(['compat', 'extra', 'fast', 'forward', 'memLoad']);
-    expect(shown(packOptions(P({ packer: 'brokkr' })))).toEqual(['effect', 'effort', 'format', 'irqExit', 'ramExit', 'start']);
+    // where Brokkr's decruncher works, in a self-extracting file
+    expect(shown(packOptions(P({ packer: 'brokkr' })))).toEqual(['effect', 'effort', 'format', 'irqExit', 'place', 'ramExit', 'start']);
     expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem' })))).toEqual(['compat', 'effort', 'format', 'forward', 'memLoad']);
     // Brokkr's own formats are decrunched backward by Brokkr's decruncher; the fast one does not flash the border
     expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem', format: 'brokkr' })))).toEqual(['effort', 'format', 'memLoad']);
-    expect(shown(packOptions(P({ packer: 'brokkr', format: 'fast' })))).toEqual(['effort', 'format', 'irqExit', 'ramExit', 'start']);
+    expect(shown(packOptions(P({ packer: 'brokkr', format: 'fast' })))).toEqual(['effort', 'format', 'irqExit', 'place', 'ramExit', 'start']);
     expect(packOptions(P({ start: 'jmp' })).jmp).toBe(true);
     expect(packOptions(P({ start: 'basic' })).ramExit).toBe(false);
   });
 
   it('puts the hidden ones at their defaults', () => {
-    const typed = P({ packer: 'brokkr', format: 'fast', mode: 'mem', effect: 'none', ramExit: 0x35, irqExit: false, forward: true, compat: true, fast: true, extra: '-p 4', jmp: 0x1000 });
-    expect(packEffective(typed)).toEqual({ ...typed, effect: 'default', ramExit: null, irqExit: null, forward: false, compat: false, fast: false, extra: '', jmp: null });
+    const typed = P({ packer: 'brokkr', format: 'fast', mode: 'mem', effect: 'none', ramExit: 0x35, irqExit: false, forward: true, compat: true, fast: true, extra: '-p 4', jmp: 0x1000,
+      zp: 0x22, decruncherAt: 0xc000, tablesAt: 0xc400, keep: [{ start: 0xc000, end: 0xd000 }] });
+    expect(packEffective(typed)).toEqual({ ...typed, effect: 'default', ramExit: null, irqExit: null, forward: false, compat: false, fast: false, extra: '', jmp: null,
+      zp: null, decruncherAt: null, tablesAt: null, keep: [] });
     expect(packEffective(P({ effort: 'max', format: 'brokkr' }))).toEqual(P());
+  });
+
+  it('reads the ranges to keep free as typed, and says what is wrong', () => {
+    expect(parseKeep('$c000-$cfff, 0334-03ff, $c800-$d0ff')).toEqual([{ start: 0x0334, end: 0x0400 }, { start: 0xc000, end: 0xd100 }]);
+    expect(keepText(parseKeep('$0334-$03ff') as PackRange[])).toBe('$0334-$03ff');
+    expect(parseKeep('')).toEqual([]);
+    expect(parseKeep('$c000')).toMatch(/is not a range/);
+    expect(parseKeep('$d000-$c000')).toMatch(/last address comes before the first/);
   });
 
   it('names the files so Exomizer reads one name, and refuses paths and -o in the extra options', () => {

@@ -40,6 +40,20 @@ export interface SfxOptions {
   crunch?: CrunchOptions;
   /** Exomizer format: a table of its own for the offsets of length 3 (-P+16); 'auto' crunches both ways */
   fourTables?: boolean | 'auto';
+  /** where the decruncher keeps its working data while it decrunches; what is left out, Brokkr places */
+  place?: SfxPlace;
+}
+
+/** Where the decruncher works: its zero page, its resident part, its tables, and memory it stays out of. */
+export interface SfxPlace {
+  /** the first of its zero page bytes */
+  zp?: number;
+  /** the resident part of the decruncher */
+  decruncher?: number;
+  /** its tables, one after the other from here (each at the start of a page where it must be) */
+  tables?: number;
+  /** ranges [start, end) the decruncher, its zero page, its tables and the crunched data stay out of */
+  keep?: [number, number][];
 }
 
 export interface Area { name: string; start: number; end: number; note?: string }
@@ -225,8 +239,26 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   const line = basicLine(o.line ?? 0, 0x080d);
   if (line.length !== 12) throw new BrokkrError('BRK-E901', 'The BASIC line is not 12 bytes long. This is a bug in Brokkr.');
   const sysAt = 0x0801 + line.length;
+  const keep: Range[] = (o.place?.keep ?? []).map(r => [r[0], r[1]]);
+  for (const r of keep) {
+    if (!(r[0] >= 0 && r[0] < r[1] && r[1] <= 0x10000)) throw new BrokkrError('BRK-E144', `The range to keep free ${h4(r[0])}-${h4(r[1] - 1)} is not a range of memory.`, 'Give its first and last address, the first the lower one: $c000-$cfff.');
+  }
   const zpFor = (bytes: number) => {
-    const z = ZP_SPOTS.find(s => s + bytes <= 0x100 && !overlaps([s, s + bytes], U));
+    const want = o.place?.zp;
+    if (want != null) {
+      const Z: Range = [want, want + bytes];
+      if (want < 2 || want + bytes > 0x100) {
+        throw new BrokkrError('BRK-E141', `The decruncher's ${bytes} zero page bytes from ${h2(want)} do not fit in $02-$ff.`, `Give a zero page address from $02 to ${h2(0x100 - bytes)}.`);
+      }
+      if (overlaps(Z, U)) {
+        throw new BrokkrError('BRK-E142', `The decruncher's zero page bytes ${span(Z[0], Z[1])} lie in the program ${span(lo, hi)}, which it writes while it decrunches.`,
+          'Give zero page bytes that the program does not hold.');
+      }
+      const k = keep.find(r => overlaps(r, Z));
+      if (k) throw new BrokkrError('BRK-E143', `The decruncher's zero page bytes ${span(Z[0], Z[1])} lie in ${span(k[0], k[1])}, which it is to keep free.`);
+      return want;
+    }
+    const z = ZP_SPOTS.find(s => s + bytes <= 0x100 && !overlaps([s, s + bytes], U) && !keep.some(r => overlaps(r, [s, s + bytes])));
     if (z == null) throw new BrokkrError('BRK-E140', `The program ${span(lo, hi)} covers every zero page place the decruncher could use (${bytes} bytes from ${ZP_SPOTS.map(h2).join(', ')}).`, 'Leave the zero page out of what is packed.');
     return z;
   };
@@ -290,6 +322,37 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
     }));
   } else kits = yield* exomizerKits();
 
+  /** Why a kit finds no room with the places it was told: the first thing in the way of one of them. */
+  const placeProblem = (k: Kit): string => {
+    const p = o.place ?? {};
+    const Z: Range = [k.zp, k.zp + k.zpBytes];
+    const exitRom: Range[] = [IO, ...((ramExit & 3) === 3 ? [[0xa000, 0xc000] as Range] : []), ...(ramExit & 2 ? [[0xe000, 0x10000] as Range] : [])];
+    const told: [string, Range][] = [];
+    if (p.decruncher != null) told.push([`The decruncher (${k.bSize} bytes) at ${span(p.decruncher, Math.min(0x10000, p.decruncher + k.bSize))}`, [p.decruncher, p.decruncher + k.bSize]]);
+    if (p.tables != null && k.tables.length) {
+      let a = p.tables, first = -1;
+      for (const t of k.tables) { a = Math.ceil(a / (t.align ?? 1)) * (t.align ?? 1); if (first < 0) first = a; a += t.size; }
+      told.push([`Its ${k.tables.map(t => t.what.toLowerCase()).join(' and ')} at ${span(first, Math.min(0x10000, a))}`, [first, a]]);
+    }
+    const fileEnd = sysAt + PROLOGUE_SIZE + k.bSize + k.stream.length + k.aDown;
+    for (const [i, [what, r]] of told.entries()) {
+      if (r[1] > 0x10000) return `${what} goes past $ffff.`;
+      if (overlaps(r, U)) return `${what} lies in the program ${span(lo, hi)}, which it writes while it decrunches.`;
+      if (overlaps(r, STACK)) return `${what} covers the top of the stack ${span(STACK[0], STACK[1])}, which the decruncher needs while it runs.`;
+      if (overlaps(r, [0, 0x100])) return `${what} lies in the zero page.`;
+      if (overlaps(r, Z)) return `${what} covers its zero page bytes ${span(Z[0], Z[1])}.`;
+      const kk = keep.find(x => overlaps(x, r));
+      if (kk) return `${what} lies in ${span(kk[0], kk[1])}, which it is to keep free.`;
+      if (i === 0 && p.decruncher != null && exitRom.some(x => overlaps(x, r))) {
+        return `${what} lies under ROM or I/O once $01 is ${h2(ramExit)} after decrunching, and the decruncher's last instructions run there.`;
+      }
+      if (overlaps(r, [0x0801, fileEnd])) return `${what} lies in the self-extracting file itself (about ${span(0x0801, fileEnd)}), which it is copied out of or filled after.`;
+    }
+    if (told.length === 2 && overlaps(told[0][1], told[1][1])) return `${told[0][0]} and ${told[1][0].replace(/^Its/, 'its')} overlap.`;
+    const where = told.map(([w]) => w.replace(/^Its/, 'its')).join(' and ');
+    return `There is no room for the crunched data (${k.stream.length} bytes)${where ? ` with ${where.charAt(0).toLowerCase()}${where.slice(1)}` : ''}${keep.length ? `, outside ${keep.map(r => span(r[0], r[1])).join(', ')}` : ''}, next to the program ${span(lo, hi)}.`;
+  };
+
   /**
    * A layout: the file is the BASIC line, then either a prologue, the resident part, the stream and the start
    * (`end`: the stream moves down, away from the start), or the start, the resident part and the stream (`start`:
@@ -312,21 +375,34 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
       const exitRom: Range[] = [IO];
       if ((ramExit & 3) === 3) exitRom.push([0xa000, 0xc000]);
       if (ramExit & 2) exitRom.push([0xe000, 0x10000]);
-      for (const bAt of [...LOW.filter(r => r[1] - r[0] >= bSize).map(r => r[0]), ...places(bSize, [U, file, Z, STACK, [0, 0x100], ...exitRom], 0x0400, 0x10000)]) {
+      const fits = (r: Range, size: number) => r[1] - r[0] >= size && !keep.some(x => overlaps(x, [r[0], r[0] + size]));
+      const fixedB = o.place?.decruncher;
+      const bAts = fixedB != null ? [fixedB]
+        : [...LOW.filter(r => fits(r, bSize)).map(r => r[0]), ...places(bSize, [U, file, Z, STACK, [0, 0x100], ...exitRom, ...keep], 0x0400, 0x10000)];
+      for (const bAt of bAts) {
         const B: Range = [bAt, bAt + bSize];
-        if ([U, file, Z, STACK].some(r => overlaps(r, B))) continue;
-        // each table in the first place that misses the rest
+        if ([U, file, Z, STACK, ...keep].some(r => overlaps(r, B))) continue;
+        if (fixedB != null && (B[1] > 0x10000 || [[0, 0x100] as Range, ...exitRom].some(r => overlaps(r, B)))) continue;
+        // each table in the first place that misses the rest, or one after the other from where it was told
         const tables: Range[] = [];
+        let next = o.place?.tables;
         for (const t of k.tables) {
-          const blocked = [U, B, Z, A, STACK, [0, 0x100] as Range, ...tables];
+          const blocked = [U, B, Z, A, STACK, [0, 0x100] as Range, ...keep, ...tables];
           const align = t.align ?? 1;
-          const at = [...LOW.filter(r => r[1] - r[0] >= t.size && r[0] % align === 0).map(r => r[0]), ...places(t.size, blocked, 0x0400, 0x10000, align)]
-            .find(a => !blocked.some(r => overlaps(r, [a, a + t.size])));
+          let at: number | undefined;
+          if (next != null) {
+            const a = Math.ceil(next / align) * align;
+            if (a + t.size <= 0x10000 && !blocked.some(r => overlaps(r, [a, a + t.size]))) at = a;
+            next = a + t.size;
+          } else {
+            at = [...LOW.filter(r => fits(r, t.size) && r[0] % align === 0).map(r => r[0]), ...places(t.size, blocked, 0x0400, 0x10000, align)]
+              .find(a => !blocked.some(r => overlaps(r, [a, a + t.size])));
+          }
           if (at == null) break;
           tables.push([at, at + t.size]);
         }
         if (tables.length < k.tables.length) continue;
-        const blocked: Range[] = [B, ...tables, Z, STACK, [0, 2], ...io];
+        const blocked: Range[] = [B, ...tables, Z, STACK, [0, 2], ...io, ...keep];
         const free = (a: number) => a >= 2 && a + C <= 0x10000 && (layout === 'end' ? a < fC : a >= fC)
           && !blocked.some(r => overlaps(r, [a, a + C]));
         // in place (starting the safety margin before the data, or lower), else above the data
@@ -374,6 +450,8 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   }
   if (!chosen) {
     const k = kits.reduce((x, y) => (y.size < x.size ? y : x));
+    const told = o.place && (o.place.decruncher != null || (o.place.tables != null && k.tables.length > 0) || keep.length > 0);
+    if (told) throw new BrokkrError('BRK-E155', placeProblem(k), 'Give other addresses, or leave them out and Brokkr places them.');
     if (sysAt + PROLOGUE_SIZE + k.bSize + k.stream.length + k.aDown > 0xd000) {
       throw new BrokkrError('BRK-E130', `The self-extracting file would reach past $d000 (the crunched data is ${k.stream.length} bytes): a file that loads into $d000 and up writes over I/O.`,
         'Make the program smaller or leave parts out, or pack them with `mem` and load them with a loader.');
@@ -399,7 +477,7 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   if (overlaps(X, [0x0400, 0x07e8]) && !overlaps(U, [0x0400, 0x07e8])) warnings.push(`The crunched data lies on the screen (${span(Math.max(x, 0x0400), Math.min(x + C, 0x07e8))}) while decrunching, so the screen shows it.`);
   if (overlaps(B, [0x0400, 0x07e8])) warnings.push(`The decruncher runs on the screen (${span(B[0], B[1])}), as the program leaves no room for it in $0100-$01df or $0334-$03ff.`);
   for (let i = 0; i < tables.length; i++) {
-    if (overlaps(tables[i], [0x0400, 0x07e8]) && !overlaps(U, [0x0400, 0x07e8])) warnings.push(`The decruncher's ${k.tables[i].what.toLowerCase()} are on the screen (${span(tables[i][0], tables[i][1])}) while it decrunches.`);
+    if (overlaps(tables[i], [0x0400, 0x07e8]) && !overlaps(U, [0x0400, 0x07e8])) warnings.push(`The decruncher's ${k.tables[i].what.toLowerCase()} ${k.tables[i].what.endsWith('s') ? 'are' : 'is'} on the screen (${span(tables[i][0], tables[i][1])}) while it decrunches.`);
   }
 
   const tableDefs = Object.fromEntries(k.tables.map((t, i) => [t.name, tables[i][0]]));

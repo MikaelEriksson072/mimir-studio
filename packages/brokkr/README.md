@@ -110,6 +110,19 @@ While it decrunches, Brokkr sets `$01` itself so that everything the decruncher 
 ROMs and I/O. It puts the decruncher in the stack page or at `$0334` where it can, so nothing shows on the screen, and
 says so when the program leaves no room but the screen. The file must load below `$d000`.
 
+Where the decruncher works can also be told:
+
+- `--at <address>`: its resident part, the code that runs while it decrunches.
+- `--table <address>`: its tables, one after the other (Brokkr's own format's each at the start of a page).
+- `--zp <address>`: the first of its zero page bytes (9 for Exomizer's format, 12 for Brokkr's own, 10 for the fast
+  one).
+- `--keep <first-last>[,<first-last>…]`: memory the decruncher, its tables, its zero page and the crunched data stay
+  out of, for a program that expects something there to be as it was when it starts: `--keep $0334-$03ff,$c000-$cfff`.
+
+What is left out, Brokkr places as before. When something is in the way of a place it is told (the program, the stack,
+ROM where the decruncher's last instructions run, memory to keep free, the other part), it says what, with the code
+`BRK-E155`; the file is checked in the emulated C64 as any other.
+
 ### `mem`: crunched data for your own decruncher
 
 `brokkr mem` writes the crunched data with the address it decrunches to, as `exomizer mem` does: backward by default
@@ -163,6 +176,7 @@ The disk image you give is not changed.
 | | |
 |---|---|
 | `--format exomizer\|brokkr\|fast` | the stream format ([The formats](#the-formats)) |
+| `--at`, `--table`, `--zp`, `--keep` | for `sfx` and `d64`: where the decruncher works ([`sfx`](#sfx-a-self-extracting-program)) |
 | `--effort fast\|normal\|max` | how hard it crunches: `fast` takes a quarter of the time for streams about 1.7 % larger, `max` searches further on every core but one |
 | `--threads <n>` | the threads for `--effort max` |
 | `-o <file>` | the output (default `<first file>-brokkr.prg`, `.bin`, `.d64` or `.asm`) |

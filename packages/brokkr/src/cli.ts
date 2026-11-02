@@ -14,7 +14,7 @@ import { memBrkFile, memCrunchOptions, memFastFile, memFile, rawBrk, rawFast, ra
 import { encodingText, parseEncoding, protocol, type Protocol } from './format.ts';
 import { defaultThreads, Pool } from './node.ts';
 import { crunchSearch } from './search.ts';
-import { sfxAsync, type SfxFormat, type SfxResult, type Start } from './sfx.ts';
+import { sfxAsync, type SfxFormat, type SfxPlace, type SfxResult, type Start } from './sfx.ts';
 
 const USAGE = `Brokkr, a C64 cruncher: Exomizer 3 streams, smaller and faster; or its own formats, smaller still or
 faster to decrunch
@@ -48,6 +48,11 @@ sfx:
   --irq <on|off>         interrupts after decrunching (default on with the KERNAL in)
   --no-effect            no border flashing
   --four-tables          a table of its own for length 3 (-P+16); "auto" tries both
+  --zp <a>  --at <a>  --table <a>
+                         where the decruncher keeps its zero page bytes, its resident part and its
+                         tables while it decrunches (default: where Brokkr finds room)
+  --keep <a-b>[,<a-b>]   memory the decruncher, its tables and the crunched data stay out of
+                         (also for d64)
 mem:
   -f                     crunch forward
   -l <address|none>      the load address (default: in place)
@@ -67,7 +72,7 @@ interface Args { _: string[]; [k: string]: string | boolean | string[] }
 
 function parseArgs(argv: string[]): Args {
   const a: Args = { _: [] };
-  const takes = new Set(['o', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'four-tables', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
+  const takes = new Set(['o', 'keep', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'four-tables', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--') { a._.push(...argv.slice(i + 1)); break; }
@@ -124,6 +129,20 @@ function loadInputs(names: string[]): { inputs: Input[]; start: number; data: Ui
   const data = new Uint8Array(end - start);
   for (const i of inputs) data.set(i.bytes, i.start - start);
   return { inputs, start, data };
+}
+
+/** --zp, --at, --table and --keep for a self-extracting file: where its decruncher works */
+function placeOf(a: Args): SfxPlace | undefined {
+  const opt = (k: string) => (a[k] != null ? number(String(a[k]), `--${k}`) : undefined);
+  const keep = a.keep != null ? String(a.keep).split(',').map(r => {
+    const m = /^\s*([^-\s]+)\s*-\s*([^-\s]+)\s*$/.exec(r);
+    if (!m) throw new BrokkrError('BRK-E016', `--keep takes ranges as first-last address, $c000-$cfff, not "${r.trim()}".`);
+    const from = number(m[1], 'The range\'s first address'), to = number(m[2], 'The range\'s last address');
+    if (to < from || to > 0xffff) throw new BrokkrError('BRK-E016', `--keep ${r.trim()} is not a range of memory: its last address must be from its first to $ffff.`);
+    return [from, to + 1] as [number, number];
+  }) : undefined;
+  const place: SfxPlace = { zp: opt('zp'), decruncher: opt('at'), tables: opt('table'), keep };
+  return Object.values(place).some(v => v != null) ? place : undefined;
 }
 
 function formatOf(a: Args): SfxFormat {
@@ -205,7 +224,7 @@ async function main(argv: string[]): Promise<number> {
         const r: SfxResult = await sfxAsync(data, start, {
           start: st, ramExit: a['ram-exit'] != null ? number(String(a['ram-exit']), '$01') : undefined,
           irqExit: a.irq != null ? String(a.irq) === 'on' : undefined, effect: !a['no-effect'],
-          fourTables: a['four-tables'] === 'auto' ? 'auto' : a['four-tables'] != null && a['four-tables'] !== 'off',
+          fourTables: a['four-tables'] === 'auto' ? 'auto' : a['four-tables'] != null && a['four-tables'] !== 'off', place: placeOf(a),
           format, crunch: o,
         }, crunch);
         const out = outName(files[0], '.prg', a.o);
@@ -269,7 +288,7 @@ async function main(argv: string[]): Promise<number> {
           const load = prg[0] | (prg[1] << 8), data = prg.subarray(2);
           const mode = a.mode ?? (load === 0x0801 && findStart(data) ? 'sfx' : 'mem');
           let bytes: Uint8Array;
-          if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format, crunch: o }, crunch)).prg;
+          if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format, crunch: o, place: placeOf(a) }, crunch)).prg;
           else if (mode === 'mem' && format === 'brokkr') bytes = memBrkFile(data, load, crunchBrk(data.slice().reverse(), { effort: o.effort })).bytes;
           else if (mode === 'mem' && format === 'fast') bytes = memFastFile(data, load, crunchFast(data.slice().reverse(), { effort: o.effort })).bytes;
           else if (mode === 'mem') bytes = memFile(data, load, await crunch(data.slice().reverse(), memCrunchOptions({ crunch: o })), { crunch: o }).bytes;

@@ -4,7 +4,7 @@
  * with the packer, format and kind of file chosen (packOptions); they are kept in the project. Pack builds, verifies
  * and packs. */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { editRanges, extraProblem, h2, h4, kindInfo, loadAddress, loadRange, mergeRanges, packOptions, packProblem, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
+import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, mergeRanges, packOptions, packProblem, parseKeep, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
 import type { PackResponse } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
 import { SideSection } from './SideSection';
@@ -92,6 +92,21 @@ function TextField({ id, label, value, placeholder, error, help, onCommit }: { i
     <div className="field"><label htmlFor={id}>{label}</label>
       <input id={id} className="mono" value={text} placeholder={placeholder} spellCheck={false} onChange={e => setText(e.target.value)} onBlur={commit} onKeyDown={enter} />
       {error ? <small className="err-text">{error}</small> : help && <small className="muted">{help}</small>}
+    </div>
+  );
+}
+
+/** Address ranges as typed (`$c000-$cfff, $0334-$03ff`), committed when they read as ranges; what is wrong below. */
+function RangesField({ id, label, value, placeholder, help, onCommit }: { id: string; label: string; value: PackPrefs['keep']; placeholder?: string; help?: string; onCommit: (v: PackPrefs['keep']) => void }) {
+  const [text, setText] = useState(keepText(value));
+  useEffect(() => setText(keepText(value)), [value]);
+  const r = parseKeep(text);
+  const commit = () => { if (typeof r !== 'string' && keepText(r) !== keepText(value)) onCommit(r); };
+  return (
+    <div className="field"><label htmlFor={id}>{label}</label>
+      <input id={id} className={cx('mono', typeof r === 'string' && 'bad')} value={text} placeholder={placeholder} spellCheck={false}
+        onChange={e => setText(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }} />
+      {typeof r === 'string' ? <small className="err-text">{r}</small> : help && <small className="muted">{help}</small>}
     </div>
   );
 }
@@ -252,6 +267,21 @@ export function PackView(p: PackViewProps) {
           {o.forward && <label className="check"><input id="pack-forward" type="checkbox" checked={prefs.forward} onChange={e => set({ forward: e.target.checked }, 'Pack: forward')} /><span>Crunch forward (-f)<small className="muted"> — the default decrunches backward</small></span></label>}
           {o.compat && <label className="check"><input id="pack-compat" type="checkbox" checked={prefs.compat} onChange={e => set({ compat: e.target.checked }, 'Pack: no literal sequences')} /><span>No literal sequences ({brokkr ? '-T 5' : '-c'})<small className="muted"> — for old decrunchers</small></span></label>}
           <p className="muted small">{DECRUNCH[brokkr ? prefs.format : 'exomizer-tool']}</p>
+        </SideSection>
+      )}
+      {o.place && (
+        <SideSection id="pack-work" title="Decruncher's memory"
+          summary={prefs.decruncherAt != null || prefs.tablesAt != null || prefs.zp != null || prefs.keep.length ? 'as set' : 'where Brokkr finds room'}>
+          <div className="pack-row">
+            <HexField id="pack-dec-at" label="Decruncher at" value={prefs.decruncherAt} placeholder="Auto" onCommit={v => set({ decruncherAt: v }, 'Pack: decruncher address')} />
+            <HexField id="pack-tables-at" label="Tables at" value={prefs.tablesAt} placeholder="Auto" onCommit={v => set({ tablesAt: v }, 'Pack: tables address')} />
+          </div>
+          <div className="pack-row">
+            <HexField id="pack-zp" label="Zero page at" value={prefs.zp} max={0xff} placeholder="Auto" onCommit={v => set({ zp: v != null && v < 2 ? 2 : v }, 'Pack: zero page address')} />
+          </div>
+          <RangesField id="pack-keep" label="Keep free" value={prefs.keep} placeholder="$c000-$cfff, $0334-$03ff" onCommit={v => set({ keep: v }, 'Pack: memory to keep free')}
+            help="Memory the decruncher, its tables and the crunched data stay out of while it decrunches." />
+          <p className="muted small">Left empty, Brokkr puts the decruncher and its tables where the program leaves room, the stack page and $0334 first. The packed file says where they went.</p>
         </SideSection>
       )}
 

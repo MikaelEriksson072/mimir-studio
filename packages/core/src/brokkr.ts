@@ -7,7 +7,7 @@
  * ===================================================================== */
 import {
   BrokkrError, crunchBrk, crunchData, crunchFast, memBrkFile, memCrunchOptions, memFastFile, memFile, sfxAsync, T,
-  type CrunchOptions, type Crunched, type Start,
+  type CrunchOptions, type Crunched, type SfxPlace, type Start,
 } from '@mimir/brokkr';
 import type { PackPrefs } from './types';
 import { packEffective, packFileName, packImage, packInputs, packOutName, packParts, shellWord, type ExomizerReport, type PackCheck } from './pack';
@@ -53,6 +53,10 @@ export function brokkrArgs(prefs: PackPrefs, inputs: readonly string[], out: str
     if (p.effect === 'none') args.push('--no-effect');
     if (p.ramExit != null) args.push('--ram-exit', $2(p.ramExit));
     if (p.irqExit != null) args.push('--irq', p.irqExit ? 'on' : 'off');
+    if (p.zp != null) args.push('--zp', $2(p.zp));
+    if (p.decruncherAt != null) args.push('--at', $4(p.decruncherAt));
+    if (p.tablesAt != null) args.push('--table', $4(p.tablesAt));
+    if (p.keep.length) args.push('--keep', p.keep.map(r => `${$4(r.start)}-${$4(r.end - 1)}`).join(','));
   } else {
     if (p.forward) args.push('-f');
     if (p.memLoad !== 'auto') args.push('-l', p.memLoad === 'none' ? 'none' : $4(p.memLoad));
@@ -61,6 +65,11 @@ export function brokkrArgs(prefs: PackPrefs, inputs: readonly string[], out: str
   if (p.effort !== 'normal') args.push('--effort', p.effort);
   return [...args, '-o', out, ...inputs];
 }
+
+/** where the decruncher works, as the settings say (none: Brokkr places all of it) */
+const placeOf = (p: PackPrefs): SfxPlace | undefined =>
+  p.zp == null && p.decruncherAt == null && p.tablesAt == null && !p.keep.length ? undefined
+    : { zp: p.zp ?? undefined, decruncher: p.decruncherAt ?? undefined, tables: p.tablesAt ?? undefined, keep: p.keep.map(r => [r.start, r.end] as [number, number]) };
 
 const empty = (): ExomizerReport => ({ crunched: null, saved: null, layout: [], decruncher: [], entry: null, errors: [] });
 
@@ -95,7 +104,7 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
       const start: Start = prefs.start === 'jmp' ? prefs.jmp! : prefs.start;
       const r = await sfxAsync(image.bytes, image.start, {
         start, ramExit: prefs.ramExit ?? undefined, irqExit: prefs.irqExit ?? undefined, effect: prefs.effect !== 'none', crunch: crunchOptions,
-        format: prefs.format,
+        format: prefs.format, place: placeOf(prefs),
       }, crunch);
       const layout = r.areas.filter(a => a.name !== 'File').map(a => ({ name: a.name, start: a.start, end: a.end, ...(a.note ? { note: a.note } : {}) }));
       for (const a of r.areas) lines.push(`  ${a.name.padEnd(16)} ${range(a.start, a.end)}${a.note ? `  ${a.note}` : ''}`);

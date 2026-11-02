@@ -189,6 +189,13 @@ export interface PackPrefs {
   /** a folder the packed file is written to as well, picked in a dialog (a folder kept in the project is asked for
    * again in a new session); empty: only the app's own pack folder */
   dir: string;
+  /** Brokkr, sfx: where the decruncher works while it decrunches: the first of its zero page bytes, its resident part
+   * and its tables (null: where Brokkr finds room) */
+  zp: Addr | null;
+  decruncherAt: Addr | null;
+  tablesAt: Addr | null;
+  /** Brokkr, sfx: ranges the decruncher, its tables and the crunched data stay out of */
+  keep: PackRange[];
 }
 
 /**

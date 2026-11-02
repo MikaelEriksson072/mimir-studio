@@ -1781,6 +1781,12 @@ medianprogrammet, 0,4 som bäst). Den blinkar inte med kanten (effekten döljs).
 uppackaren för egen kod skrivs med `brokkr decruncher --format fast`. Ett första försök med bitar i ZX0:s stil blev bara
 1,27 gånger så snabbt och lämnades.
 
+- *Decruncher's memory* (Brokkr, *Self-extracting*): var uppackaren arbetar medan den packar upp. *Decruncher at*,
+  *Tables at* och *Zero page at* (`PackPrefs.decruncherAt`, `tablesAt`, `zp`; tomma: där Brokkr hittar plats) blir
+  `--at`, `--table` och `--zp`, och *Keep free* (`PackPrefs.keep`, intervall som `$c000-$cfff, $0334-$03ff`, ett
+  felskrivet sägs under fältet) blir `--keep`: minne som uppackaren, dess tabeller, nollsidebytes och den packade datan
+  håller sig borta från. Står något i vägen för en angiven plats säger Brokkr vad (`BRK-E155`). En projektfil från före
+  dem har inga: Brokkr placerar allt.
 - *Self-extracting*: Brokkr planerar var uppackarens två delar, dess tabell, nollsidebytes och den packade datan ska ligga
   (helst stackens sida `$0100-$01e7` och `$0334-$03ff`, så att inget syns på skärmen), så att uppackaren aldrig skriver över
   byte den inte läst, och väljer `$01` medan den packar upp så att allt den läser och skriver är RAM (`$34` när data

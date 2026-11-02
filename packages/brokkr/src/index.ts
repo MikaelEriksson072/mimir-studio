@@ -1,7 +1,7 @@
 /* Brokkr's API, without file-system access or threads (those are in ./node.ts). */
 export { crunchData, PROFILES, type CrunchOptions, type Crunched, type CrunchStats, type Effort, type Profile } from './crunch.ts';
 export { crunchSearch, localRunner, type Runner, type Job, type Task, type TaskResult } from './search.ts';
-export { sfx, sfxAsync, findSys, ramFor, type SfxOptions, type SfxResult, type SfxFormat, type Area, type Start, type CrunchRequest } from './sfx.ts';
+export { sfx, sfxAsync, findSys, ramFor, type SfxOptions, type SfxResult, type SfxFormat, type SfxPlace, type Area, type Start, type CrunchRequest } from './sfx.ts';
 export {
   mem, memFile, memCrunchOptions, raw, rawFile, memBrk, memBrkFile, rawBrk, memFast, memFastFile, rawFast,
   type MemOptions, type MemResult, type MemBrkResult, type MemFastResult, type RawOptions, type RawResult,

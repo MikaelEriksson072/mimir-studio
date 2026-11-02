@@ -35,6 +35,11 @@ export const packPrefsSchema = z.object({
   out: z.string().max(128),
   // project files from before it have none: only the app's pack folder
   dir: z.string().max(1024).default(''),
+  // project files from before they could be placed have none: Brokkr places the decruncher's working data
+  zp: z.number().int().min(2).max(0xff).nullable().default(null),
+  decruncherAt: z.number().int().min(0).max(0xffff).nullable().default(null),
+  tablesAt: z.number().int().min(0).max(0xffff).nullable().default(null),
+  keep: z.array(packRange).max(64).default([]),
 }).strict();
 const blockKinds = ['code', 'data', 'words', 'text', 'table', 'lohi', 'sprite', 'charset', 'bitmap', 'screen', 'music', 'fill', 'basic'] as const satisfies readonly BlockKind[];
 

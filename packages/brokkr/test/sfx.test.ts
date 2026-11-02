@@ -40,6 +40,30 @@ describe('self-extracting files', () => {
     for (const a of [dec, table]) expect(a.end <= 0x0300 || a.start >= 0xc000).toBe(true);
   });
 
+  it('keep the decruncher, its tables and zero page where they are told, and out of memory to keep free', () => {
+    const prog = basicProgram(programLike(20000, 2), 2064);
+    const told = sfx(prog, 0x0801, { place: { zp: 0x22, decruncher: 0xc000, tables: 0xc400 } });
+    expect(area(told, 'Decruncher')).toMatchObject({ start: 0xc000, note: 'zero page $22-$2a' });
+    expect(area(told, 'Decrunch table').start).toBe(0xc400);
+    const kept = sfx(prog, 0x0801, { place: { keep: [[0x0100, 0x0200], [0x0334, 0x0400]] } });
+    for (const a of [area(kept, 'Decruncher'), area(kept, 'Decrunch table'), area(kept, 'Crunched data')]) {
+      expect(a.end <= 0x0100 || (a.start >= 0x0200 && a.end <= 0x0334) || a.start >= 0x0400).toBe(true);
+    }
+    // the tables of Brokkr's own format at the start of the pages after it
+    const own = sfx(prog, 0x0801, { format: 'brokkr', place: { tables: 0xc080 } });
+    expect(area(own, 'Probabilities').start).toBe(0xc100);
+    expect(area(own, 'Quarter squares').start).toBe(0xc300);
+  });
+
+  it('say what is in the way of where they are told to go', () => {
+    const prog = basicProgram(programLike(8000, 2), 2064);
+    expect(() => sfx(prog, 0x0801, { place: { decruncher: 0x1000 } })).toThrow(/decruncher .* at \$1000.* lies in the program \$0801/);
+    expect(() => sfx(prog, 0x0801, { place: { decruncher: 0xe000 } })).toThrow(/under ROM or I\/O once \$01 is \$37/);
+    expect(() => sfx(prog, 0x0801, { place: { decruncher: 0xc000, keep: [[0xc000, 0xd000]] } })).toThrow(/lies in \$c000–\$cfff, which it is to keep free/);
+    expect(() => sfx(prog, 0x0801, { place: { zp: 0xfa } })).toThrow(/zero page bytes from \$fa do not fit/);
+    expect(() => sfx(prog, 0x0801, { place: { zp: 0x22, decruncher: 0xc000, tables: 0xc000 } })).toThrow(/overlap/);
+  });
+
   it('run a BASIC program with RUN', () => {
     const r = sfx(basicProgram(programLike(3000, 5)), 0x0801, { start: 'basic' });
     expect(r.basic).toBe(true);
