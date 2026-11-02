@@ -1782,7 +1782,13 @@ uppackaren för egen kod skrivs med `brokkr decruncher --format fast`. Ett förs
 1,27 gånger så snabbt och lämnades.
 
 - *Decruncher's memory* (Brokkr, *Self-extracting*): var uppackaren arbetar medan den packar upp. *Decruncher at*,
-  *Tables at* och *Zero page at* (`PackPrefs.decruncherAt`, `tablesAt`, `zp`; tomma: där Brokkr hittar plats) blir
+  *Tables at* och *Zero page at* (`PackPrefs.decruncherAt`, `tablesAt`, `zp`) är menyer: *Auto* (där Brokkr hittar
+  plats), platser som passar (`MEMORY_PLACES`: stackens sida, bandbufferten, BASIC:s inmatningsbuffert, fritt RAM vid
+  `$c000`, skärmen; `ZP_PLACES`: nollsidans platser Brokkr själv provar, med vad C64:an annars har där) och *An address
+  of your own…*, som visar ett fält för adressen. Under varje står hur många byte delen tar med formatet och starten
+  (`packNeeds`, från Brokkrs `decruncherNeeds`, utan att något packas: minst och mest) och var den då slutar, eller vad
+  som är fel: att den inte ryms på den valda platsen, går förbi `$ffff` (`$ff`), eller att tabellerna ligger över
+  uppackaren. *Keep free* säger hur många byte den håller fria. De blir
   `--at`, `--table` och `--zp`, och *Keep free* (`PackPrefs.keep`, intervall som `$c000-$cfff, $0334-$03ff`, ett
   felskrivet sägs under fältet) blir `--keep`: minne som uppackaren, dess tabeller, nollsidebytes och den packade datan
   håller sig borta från. Står något i vägen för en angiven plats säger Brokkr vad (`BRK-E155`). En projektfil från före

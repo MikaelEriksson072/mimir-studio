@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findSys, ramFor, sfx } from '../src/sfx.ts';
+import { decruncherNeeds, findSys, ramFor, sfx } from '../src/sfx.ts';
 import { EXOMIZER, basicProgram, programLike, rng } from './tools.ts';
 
 // sfx() runs every file it makes in an emulated C64 and compares the memory with the program; these tests make
@@ -53,6 +53,22 @@ describe('self-extracting files', () => {
     const own = sfx(prog, 0x0801, { format: 'brokkr', place: { tables: 0xc080 } });
     expect(area(own, 'Probabilities').start).toBe(0xc100);
     expect(area(own, 'Quarter squares').start).toBe(0xc300);
+  });
+
+  it('say what their decruncher takes before anything is crunched, as the files they make take it', () => {
+    const prog = basicProgram(programLike(20000, 2), 2064);
+    for (const format of ['exomizer', 'brokkr', 'fast'] as const) {
+      const needs = decruncherNeeds({ format });
+      const r = sfx(prog, 0x0801, { format });
+      const dec = area(r, 'Decruncher'), zp = /zero page \$([0-9a-f]+)-\$([0-9a-f]+)/.exec(dec.note!)!;
+      expect(dec.end - dec.start).toBeGreaterThanOrEqual(needs.resident.min);
+      expect(dec.end - dec.start).toBeLessThanOrEqual(needs.resident.max);
+      expect(parseInt(zp[2], 16) - parseInt(zp[1], 16) + 1).toBe(needs.zp);
+      const tables = r.areas.filter(a => ['Decrunch table', 'Probabilities', 'Quarter squares'].includes(a.name)).reduce((n, a) => n + a.end - a.start, 0);
+      expect(tables).toBeGreaterThanOrEqual(needs.tables.min);
+      expect(tables).toBeLessThanOrEqual(needs.tables.max);
+    }
+    expect(decruncherNeeds({ format: 'fast', start: 'basic' }).resident.max).toBeGreaterThan(decruncherNeeds({ format: 'fast' }).resident.max);
   });
 
   it('say what is in the way of where they are told to go', () => {

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   checkDecrunched, DEFAULT_PACK, editRanges, extraProblem, keepText, makeDemo, makePrg, mergeRanges, packArgs, packEffective, packFileName, packImage, packInputs,
-  packOptions, packOutName, packParts, packProblem, parseExomizer, parseKeep, parsePrg, rangeCover, type PackPrefs, type PackRange,
+  MEMORY_PLACES, packOptions, packOutName, packParts, packProblem, parseExomizer, parseKeep, parsePrg, placeSpan, rangeCover, ZP_PLACES, type PackPrefs, type PackRange,
 } from '../src';
 import { findExomizer, findVice, runExomizer } from '../src/node';
 import { fromSource, rng } from './helpers/programs';
@@ -92,6 +92,14 @@ describe('the settings that take effect', () => {
     expect(parseKeep('')).toEqual([]);
     expect(parseKeep('$c000')).toMatch(/is not a range/);
     expect(parseKeep('$d000-$c000')).toMatch(/last address comes before the first/);
+  });
+
+  it('offers places that suit the decruncher, and says where a part set at an address ends', () => {
+    expect(MEMORY_PLACES.map(p => p.at)).toContain(0x0100);
+    expect(MEMORY_PLACES.find(p => p.at === 0x0334)?.room).toBe(204);
+    expect(ZP_PLACES.every(p => p.at >= 2 && p.at + 9 <= 0x100)).toBe(true);
+    expect(placeSpan(0xc000, 229)).toEqual({ start: 0xc000, end: 0xc0e5 });
+    expect(placeSpan(0xc080, 1536, 256)).toEqual({ start: 0xc100, end: 0xc700 });
   });
 
   it('names the files so Exomizer reads one name, and refuses paths and -o in the extra options', () => {

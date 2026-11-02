@@ -202,7 +202,9 @@ const r = sfx(program, 0x0801, { format: 'fast' });   // program: the bytes afte
 // r.prg is the file, r.areas the layout, r.cycles the time it took in the emulated C64
 ```
 
-`src/node.ts` adds the pool of worker threads that `--effort max` uses.
+`decruncherNeeds({ format, start })` says what a self-extracting file's decruncher takes before anything is crunched:
+its resident part's bytes (the least and the most), its tables' and its zero page's. `src/node.ts` adds the pool of
+worker threads that `--effort max` uses.
 
 ## Better than Exomizer 3.1.1 at
 

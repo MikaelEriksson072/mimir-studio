@@ -61,6 +61,36 @@ export function parseKeep(text: string): PackRange[] | string {
   return mergeRanges(out);
 }
 
+/** A place on a C64 that suits a part of Brokkr's decruncher, for the Pack view's menus: its address, what it is (a few
+ * words, for a menu), and the bytes from there that are free to use while it decrunches. */
+export interface PackPlace { at: Addr; what: string; room: number }
+
+/** For the decruncher's resident part and its tables. */
+export const MEMORY_PLACES: readonly PackPlace[] = [
+  { at: 0x0100, what: 'stack page', room: 0xe8 },
+  { at: 0x0334, what: 'tape buffer', room: 0xcc },
+  { at: 0x0200, what: 'BASIC input buffer', room: 0x81 },
+  { at: 0xc000, what: 'free RAM', room: 0x1000 },
+  { at: 0x0400, what: 'screen (shows)', room: 0x3e8 },
+];
+
+/** For its zero page bytes: the places Brokkr looks at itself, and what the C64 keeps there otherwise. */
+export const ZP_PLACES: readonly PackPlace[] = [
+  { at: 0xf7, what: 'RS-232, free $fb–$fe', room: 9 },
+  { at: 0x02, what: 'BASIC work bytes', room: 0x20 },
+  { at: 0x22, what: 'BASIC temp pointers', room: 0x20 },
+  { at: 0x57, what: 'BASIC float work', room: 0x20 },
+  { at: 0x92, what: 'tape and serial bytes', room: 0x11 },
+  { at: 0xa3, what: 'serial and tape bytes', room: 0x0d },
+  { at: 0xb0, what: 'tape bytes', room: 0x10 },
+];
+
+/** Where a part of `size` bytes set at `at` lies, from the first multiple of `align` there: [start, end). */
+export const placeSpan = (at: Addr, size: number, align = 1): { start: Addr; end: number } => {
+  const start = Math.ceil(at / align) * align;
+  return { start, end: start + size };
+};
+
 /** Ranges as parseKeep reads them. */
 export const keepText = (ranges: readonly PackRange[]): string => ranges.map(r => `$${h4(r.start)}-$${h4(r.end - 1)}`).join(', ');
 

@@ -2363,18 +2363,33 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await expect(folder).toHaveText(/^Not set/);
   });
 
-  await test.step("the decruncher's memory: where it, its tables and zero page go, and memory kept free", async () => {
+  await test.step("the decruncher's memory: places that suit it or one's own, the bytes each takes and where it ends", async () => {
     await view.getByLabel('Format').selectOption('exomizer');
-    await openSection(page, "Decruncher's memory");
-    for (const [label, value] of [['Decruncher at', '$c000'], ['Tables at', '$c400'], ['Zero page at', '$22']]) {
-      await view.getByLabel(label, { exact: true }).fill(value);
-      await view.getByLabel(label, { exact: true }).press('Enter');
-    }
+    const section = await openSection(page, "Decruncher's memory");
+    const line = (id: string) => section.locator(`#${id} ~ small`);
+    const dec = view.getByLabel('Decruncher at', { exact: true });
+    await expect(line('pack-dec-at')).toHaveText('Takes 205 to 229 bytes, where Brokkr finds room.');
+    await dec.selectOption({ label: '$0334: tape buffer' });
+    await expect(line('pack-dec-at')).toHaveText('It takes up to 229 bytes, and the tape buffer has 204.');
+    await dec.selectOption({ label: '$c000: free RAM' });
+    await expect(line('pack-dec-at')).toHaveText('Takes 205 to 229 bytes: $c000–$c0e4 at most.');
+    const tables = view.getByLabel('Tables at', { exact: true });
+    await tables.selectOption({ label: 'An address of your own…' });
+    await expect(line('pack-tables-at')).toHaveText('Type the address below.');
+    await view.getByLabel('Tables address', { exact: true }).fill('$c080');
+    await view.getByLabel('Tables address', { exact: true }).press('Enter');
+    await expect(line('pack-tables-at')).toHaveText('It overlaps the decruncher ($c000–$c0e4).');
+    await view.getByLabel('Tables address', { exact: true }).fill('$c400');
+    await view.getByLabel('Tables address', { exact: true }).press('Enter');
+    await expect(line('pack-tables-at')).toHaveText('Takes 156 bytes: $c400–$c49b.');
+    await view.getByLabel('Zero page at', { exact: true }).selectOption({ label: '$22: BASIC temp pointers' });
+    await expect(line('pack-zp')).toHaveText('Takes 9 bytes: $22–$2a.');
     const keep = view.getByLabel('Keep free', { exact: true });
     await keep.fill('$d000-$c000');
     await expect(view).toContainText('the last address comes before the first');
     await keep.fill('$0334-$03ff');
     await keep.press('Enter');
+    await expect(section).toContainText('Keeps 204 bytes free');
     await expect(cmd).toHaveText('brokkr sfx --start sys --zp $22 --at $c000 --table $c400 --keep $0334-$03ff -o raster-demo-brokkr.prg raster-demo.prg');
     await view.getByRole('button', { name: 'Pack', exact: true }).click();
     await expect(card).not.toContainText('Out of date', { timeout: 120_000 });

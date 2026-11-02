@@ -4,7 +4,7 @@
  * with the packer, format and kind of file chosen (packOptions); they are kept in the project. Pack builds, verifies
  * and packs. */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, mergeRanges, packOptions, packProblem, parseKeep, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
+import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, MEMORY_PLACES, mergeRanges, packNeeds, packOptions, packProblem, parseKeep, placeSpan, ZP_PLACES, type PackPlace, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
 import type { PackResponse } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
 import { SideSection } from './SideSection';
@@ -96,6 +96,45 @@ function TextField({ id, label, value, placeholder, error, help, onCommit }: { i
   );
 }
 
+/** What a part of the decruncher takes: its bytes (the least and the most), from a multiple of `align`. */
+interface PartNeed { min: number; max: number; align?: number }
+
+/** Where a part of the decruncher goes: Auto, one of the places that suit it, or an address of one's own; below it, the
+ * bytes it takes and where it would end, or what is wrong with the place. */
+function PlaceField({ id, label, value, places, max, need, clash, onCommit }: { id: string; label: string; value: Addr | null; places: readonly PackPlace[]; max: number; need: PartNeed; clash?: string | null; onCommit: (v: Addr | null) => void }) {
+  const known = (v: Addr | null) => v == null || places.some(p => p.at === v);
+  const [own, setOwn] = useState(!known(value));
+  useEffect(() => { if (!known(value)) setOwn(true); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hex = (v: number) => `$${max > 0xff ? h4(v) : h2(v)}`;
+  const bytes = need.min === need.max ? `${need.max} bytes` : `${need.min} to ${need.max} bytes`;
+  const preset = value != null ? places.find(p => p.at === value) : undefined;
+  let info: ReactNode = `Takes ${bytes}, where Brokkr finds room.`, warn: string | null = null;
+  if (value != null) {
+    const span = placeSpan(value, need.max, need.align);
+    const top = max + 1;
+    info = <>Takes {bytes}: <span className="mono">{hex(span.start)}–{span.end > top ? `past ${hex(max)}` : hex(span.end - 1)}</span>{need.min !== need.max ? ' at most' : ''}.</>;
+    if (span.end > top) warn = `It goes past ${hex(max)}: ${need.max} bytes from ${hex(span.start)} need room to ${hex(span.end - 1)}.`;
+    else if (preset && span.end - value > preset.room) warn = `It takes up to ${need.max} bytes, and the ${preset.what} has ${preset.room}.`;
+    else if (clash) warn = clash;
+  } else if (own) info = 'Type the address below.';
+  return (
+    <div className="field"><label htmlFor={id}>{label}</label>
+      <select id={id} value={own ? 'own' : value == null ? 'auto' : String(value)} onChange={e => {
+        const v = e.target.value;
+        if (v === 'own') { setOwn(true); return; }
+        setOwn(false);
+        onCommit(v === 'auto' ? null : Number(v));
+      }}>
+        <option value="auto">Auto: where Brokkr finds room</option>
+        {places.map(p => <option key={p.at} value={p.at}>{hex(p.at)}: {p.what}</option>)}
+        <option value="own">An address of your own…</option>
+      </select>
+      {own && <HexField id={`${id}-own`} label={`${label.replace(/ at$/, '')} address`} value={value} max={max} placeholder={hex(places[0]?.at ?? 0)} onCommit={onCommit} />}
+      <small className={warn ? 'warn-text' : 'muted'}>{warn ?? info}</small>
+    </div>
+  );
+}
+
 /** Address ranges as typed (`$c000-$cfff, $0334-$03ff`), committed when they read as ranges; what is wrong below. */
 function RangesField({ id, label, value, placeholder, help, onCommit }: { id: string; label: string; value: PackPrefs['keep']; placeholder?: string; help?: string; onCommit: (v: PackPrefs['keep']) => void }) {
   const [text, setText] = useState(keepText(value));
@@ -131,6 +170,12 @@ export function PackView(p: PackViewProps) {
   const brokkr = prefs.packer !== 'exomizer', sfx = prefs.mode === 'sfx';
   // what is shown: only the settings that take effect
   const o = packOptions(prefs);
+  // what the decruncher takes, and whether its tables would lie over it where both are set
+  const needs = packNeeds(prefs);
+  const decSpan = prefs.decruncherAt != null ? placeSpan(prefs.decruncherAt, needs.resident.max) : null;
+  const tabSpan = prefs.tablesAt != null ? placeSpan(prefs.tablesAt, needs.tables.max, needs.tables.align) : null;
+  const tablesClash = decSpan && tabSpan && decSpan.start < tabSpan.end && tabSpan.start < decSpan.end
+    ? `It overlaps the decruncher ($${h4(decSpan.start)}–$${h4(decSpan.end - 1)}).` : null;
   const ready = desktop && (brokkr || !!exomizer) && !problem && !busy && !packing;
   // a new result comes into view when the pack is done (not the one there was when the view opened)
   const resultRef = useRef<HTMLDivElement>(null), seen = useRef(result);
@@ -272,15 +317,18 @@ export function PackView(p: PackViewProps) {
       {o.place && (
         <SideSection id="pack-work" title="Decruncher's memory"
           summary={prefs.decruncherAt != null || prefs.tablesAt != null || prefs.zp != null || prefs.keep.length ? 'as set' : 'where Brokkr finds room'}>
-          <div className="pack-row">
-            <HexField id="pack-dec-at" label="Decruncher at" value={prefs.decruncherAt} placeholder="Auto" onCommit={v => set({ decruncherAt: v }, 'Pack: decruncher address')} />
-            <HexField id="pack-tables-at" label="Tables at" value={prefs.tablesAt} placeholder="Auto" onCommit={v => set({ tablesAt: v }, 'Pack: tables address')} />
-          </div>
-          <div className="pack-row">
-            <HexField id="pack-zp" label="Zero page at" value={prefs.zp} max={0xff} placeholder="Auto" onCommit={v => set({ zp: v != null && v < 2 ? 2 : v }, 'Pack: zero page address')} />
-          </div>
+          <PlaceField id="pack-dec-at" label="Decruncher at" value={prefs.decruncherAt} places={MEMORY_PLACES} max={0xffff} need={needs.resident}
+            onCommit={v => set({ decruncherAt: v }, 'Pack: decruncher address')} />
+          {needs.tables.max > 0
+            ? <PlaceField id="pack-tables-at" label="Tables at" value={prefs.tablesAt} places={MEMORY_PLACES} max={0xffff} need={needs.tables} clash={tablesClash}
+              onCommit={v => set({ tablesAt: v }, 'Pack: tables address')} />
+            : <p className="muted small">The fast format's decruncher has no tables.</p>}
+          <PlaceField id="pack-zp" label="Zero page at" value={prefs.zp} places={ZP_PLACES} max={0xff} need={{ min: needs.zp, max: needs.zp }}
+            onCommit={v => set({ zp: v != null && v < 2 ? 2 : v }, 'Pack: zero page address')} />
           <RangesField id="pack-keep" label="Keep free" value={prefs.keep} placeholder="$c000-$cfff, $0334-$03ff" onCommit={v => set({ keep: v }, 'Pack: memory to keep free')}
-            help="Memory the decruncher, its tables and the crunched data stay out of while it decrunches." />
+            help={prefs.keep.length
+              ? `Keeps ${prefs.keep.reduce((n, r) => n + r.end - r.start, 0)} bytes free: the decruncher, its tables and the crunched data stay out of them.`
+              : 'Memory the decruncher, its tables and the crunched data stay out of while it decrunches.'} />
           <p className="muted small">Left empty, Brokkr puts the decruncher and its tables where the program leaves room, the stack page and $0334 first. The packed file says where they went.</p>
         </SideSection>
       )}

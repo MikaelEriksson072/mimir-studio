@@ -139,6 +139,46 @@ function build(source: string, defs: Record<string, number>, at?: number): Retur
   }
 }
 
+/** What a self-extracting file's decruncher takes while it decrunches: its resident part, its tables and its zero page. */
+export interface DecruncherNeeds {
+  /** the resident part's bytes: the least and the most it takes (Exomizer's format has a decruncher with and one
+   * without literal sequences, Brokkr's own one with quarter squares and one without) */
+  resident: { min: number; max: number };
+  /** the tables, one block from a multiple of `align`: what they are, and the least and the most bytes they take */
+  tables: { what: string; min: number; max: number; align: number };
+  zp: number;
+}
+
+const needsCache = new Map<string, DecruncherNeeds>();
+
+/**
+ * What the decruncher of a self-extracting file in this format takes, with this start, effect and `$01`, before
+ * anything is crunched: for a form that says where it may go and where it would end.
+ */
+export function decruncherNeeds(o: Pick<SfxOptions, 'format' | 'start' | 'effect' | 'ramExit' | 'irqExit' | 'fourTables'> = {}): DecruncherNeeds {
+  const key = JSON.stringify([o.format, o.start, o.effect, o.ramExit, o.irqExit, o.fourTables]);
+  const known = needsCache.get(key);
+  if (known) return known;
+  const basic = o.start === 'basic', ramExit = basic ? 0x37 : o.ramExit ?? 0x37;
+  const exit = { RAM_EXIT: ramExit, IRQ_EXIT: (o.irqExit ?? (ramExit & 2) !== 0) ? 1 : 0, START: 0x1000, BASIC: basic ? 1 : 0, BASIC_END: 0x2000, EFFECT: o.effect === false ? 0 : 1 };
+  const size = (source: string, defs: Record<string, number>) => build(source, { ...exit, ZP: 0x02, STREAM_END: 0x1000, ...defs }, 0x1000).bytes.length;
+  let needs: DecruncherNeeds;
+  if (o.format === 'brokkr') {
+    const sizes = [size(brkResident(true), { QSQ: 1, PROBS: 0x2000, SQ: 0x2200 }), size(brkResident(false), { QSQ: 0, PROBS: 0x2000, SQ: 0 })];
+    needs = { resident: { min: Math.min(...sizes), max: Math.max(...sizes) }, tables: { what: 'probabilities and quarter squares', min: 512, max: 512 + 1024, align: 256 }, zp: BRK_ZP_BYTES };
+  } else if (o.format === 'fast') {
+    const n = size(FAST_RESIDENT, {});
+    needs = { resident: { min: n, max: n }, tables: { what: 'no tables', min: 0, max: 0, align: 1 }, zp: FAST_ZP_BYTES };
+  } else {
+    const fours = o.fourTables === 'auto' ? [0, 1] : [o.fourTables === true ? 1 : 0];
+    const sizes = fours.flatMap(four => [0, 1].map(litseq => size(SFX_RESIDENT, { SFX: 1, FOUR: four, REUSE: 1, LITSEQ: litseq, MIRRORS: 0, TABLE: 0x2000 })));
+    const tables = fours.map(four => 3 * (four ? 68 : 52));
+    needs = { resident: { min: Math.min(...sizes), max: Math.max(...sizes) }, tables: { what: 'decrunch table', min: Math.min(...tables), max: Math.max(...tables), align: 1 }, zp: ZP_BYTES };
+  }
+  needsCache.set(key, needs);
+  return needs;
+}
+
 /** Free places of `size` bytes in [from, to) that miss every blocked range, at multiples of `align`, lowest first. */
 function places(size: number, blocked: Range[], from: number, to: number, align = 1): number[] {
   const out: number[] = [];

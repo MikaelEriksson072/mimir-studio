@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workerFile } from '@mimir/brokkr/node';
-import { brokkrArgs, DEFAULT_PACK, makeDemo, makePrg, packWithBrokkr, parsePrg, type PackPrefs } from '../src';
+import { brokkrArgs, DEFAULT_PACK, makeDemo, makePrg, packNeeds, packWithBrokkr, parsePrg, type PackPrefs } from '../src';
 import { packWithBrokkrThreads } from '../src/node';
 
 const P = (o: Partial<PackPrefs> = {}): PackPrefs => ({ ...DEFAULT_PACK, ...o });
@@ -97,6 +97,14 @@ describe('packing with Brokkr', () => {
       expect(backward.ok).toBe(true);
       expect(backward.prg).toEqual(mem.prg);
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('says what the decruncher takes with the settings, before anything is packed', () => {
+    expect(packNeeds(P())).toMatchObject({ resident: { min: 205, max: 229 }, tables: { min: 156, max: 156 }, zp: 9 });
+    expect(packNeeds(P({ format: 'brokkr' }))).toMatchObject({ tables: { min: 512, max: 1536, align: 256 }, zp: 12 });
+    expect(packNeeds(P({ format: 'fast' })).tables.max).toBe(0);
+    // RUN ends the decruncher with a longer exit
+    expect(packNeeds(P({ start: 'basic' })).resident.max).toBeGreaterThan(packNeeds(P()).resident.max);
   });
 
   it('puts the decruncher, its tables and zero page where they are set, and keeps memory free, as the command does', async () => {

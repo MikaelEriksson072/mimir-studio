@@ -6,8 +6,8 @@
  * line of the standalone Brokkr that makes the same file.
  * ===================================================================== */
 import {
-  BrokkrError, crunchBrk, crunchData, crunchFast, memBrkFile, memCrunchOptions, memFastFile, memFile, sfxAsync, T,
-  type CrunchOptions, type Crunched, type SfxPlace, type Start,
+  BrokkrError, crunchBrk, crunchData, crunchFast, decruncherNeeds, memBrkFile, memCrunchOptions, memFastFile, memFile, sfxAsync, T,
+  type CrunchOptions, type Crunched, type DecruncherNeeds, type SfxPlace, type Start,
 } from '@mimir/brokkr';
 import type { PackPrefs } from './types';
 import { packEffective, packFileName, packImage, packInputs, packOutName, packParts, shellWord, type ExomizerReport, type PackCheck } from './pack';
@@ -65,6 +65,13 @@ export function brokkrArgs(prefs: PackPrefs, inputs: readonly string[], out: str
   if (p.effort !== 'normal') args.push('--effort', p.effort);
   return [...args, '-o', out, ...inputs];
 }
+
+/** What Brokkr's decruncher takes with these settings while a self-extracting file decrunches, before anything is
+ * crunched: its resident part, its tables and its zero page (the Pack view says from it where each would end). */
+export const packNeeds = (prefs: PackPrefs): DecruncherNeeds => {
+  const p = packEffective(prefs);
+  return decruncherNeeds({ format: p.format, start: p.start === 'jmp' ? 0x1000 : p.start, effect: p.effect !== 'none', ramExit: p.ramExit ?? undefined, irqExit: p.irqExit ?? undefined });
+};
 
 /** where the decruncher works, as the settings say (none: Brokkr places all of it) */
 const placeOf = (p: PackPrefs): SfxPlace | undefined =>
