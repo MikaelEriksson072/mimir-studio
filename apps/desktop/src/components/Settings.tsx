@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
 import type { InspectorMode } from '../store/ui';
+import type { EditorInfo } from '../../shared/ipc';
 import { Modal } from './Modal';
 
 type Key = keyof Settings;
@@ -17,7 +18,8 @@ export interface AppPrefs {
 }
 const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open' };
 
-export function SettingsModal({ settings, prefs: prefs0, desktop, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
+/** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them) */
+export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
   const [s, setS] = useState<Settings>(settings);
   const [prefs, setPrefs] = useState<AppPrefs>(prefs0);
   const [tab, setTab] = useState<'toolchain' | 'analysis' | 'output' | 'general'>('toolchain');
@@ -39,8 +41,14 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, onSave, onClos
           {txt('outDir', 'Output folder')}
           {txt('unpackerPath', 'External unpacker (optional)', 'Empty: Sindri, the built-in unpacker, unpacks packed (crunched) PRGs. It runs the program in an emulated C64, with the ROMs of the VICE above (or of another VICE it finds), and reports each layer it peels off. An external unpacker such as unp64 runs instead, on a copy of the PRG in a folder of its own.')}
           {txt('unpackerArgs', 'External unpacker arguments', '{in} is the packed PRG, {out} a name for the result; without {out} the file it writes is picked up. unp64: {in} · exomizer: desfx -o {out} {in}')}
+          {/* labelled by id: a label around the row would take the editors' buttons into the field's name */}
+          <div className="field"><label htmlFor="set-editorPath">External editor</label>
+            <div className="field-row"><input id="set-editorPath" className="mono" value={s.editorPath} placeholder={editors[0]?.path ?? 'Sublime Text or Visual Studio Code'} onChange={e => set('editorPath', e.target.value)} spellCheck={false} />
+              {editors.map(e => <button key={e.path} type="button" className="btn small" title={`Use ${e.path}`} onClick={() => set('editorPath', e.path)}>{e.name}</button>)}</div>
+            <small className="muted">The Editor button opens the export's folder in it, with its first .asm file open (and exports the project first when it has not been). Empty: the first found of Sublime Text and Visual Studio Code{desktop ? (editors.length ? `, here ${editors[0].name}` : ', and neither was found') : ''}.</small></div>
+          {txt('editorArgs', 'External editor arguments', "{dir} is the export's folder, {file} its first .asm file. Sublime Text and Visual Studio Code: {dir} {file} (the folder, with the file open in it) · Notepad++: {file}")}
           {txt('exomizerPath', 'Exomizer', 'Packs in the Pack view when Exomizer is chosen there instead of Brokkr, the built-in cruncher. The installed app comes with Exomizer 3.1.1 (resources\\exomizer in its folder) and uses it unless you pick another. Empty: Brokkr only.')}
-          <p className="muted small">{desktop ? 'Stored by the app (not in the project). The main process starts Java, VICE, an external unpacker and Exomizer with argument lists, never through a shell.' : 'Running outside the desktop app: these paths only fill in the exported build scripts.'}</p>
+          <p className="muted small">{desktop ? 'Stored by the app (not in the project). The main process starts Java, VICE, an external unpacker, Exomizer and the editor with argument lists, never through a shell.' : 'Running outside the desktop app: these paths only fill in the exported build scripts.'}</p>
         </>}
         {tab === 'analysis' && <>
           {chk('illegal', 'Trace undocumented opcodes', 'LAX, SAX, DCP, ISC… common in demos')}

@@ -114,9 +114,13 @@ export interface Settings {
   exomizerPath: string;
   /** VICE's quicksave snapshot; empty: C64SC.vsf / C64.vsf in VICE's settings folder, where Alt+F11 writes it */
   viceQuicksave: string;
+  /** the external editor the export opens in (empty: the first found of Sublime Text and Visual Studio Code) and its
+   * argument template: {dir} the export's folder, {file} its first .asm file */
+  editorPath: string;
+  editorArgs: string;
 }
 
-export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave'>;
+export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs'>;
 
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment. */
 export interface Note { text: string; block?: boolean }

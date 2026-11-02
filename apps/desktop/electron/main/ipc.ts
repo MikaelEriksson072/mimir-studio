@@ -5,22 +5,23 @@ import { existsSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { assertEntryName, type PathPolicy } from './paths';
 import { z, type ZodTypeAny } from 'zod';
 import { CHANNELS, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult } from '../../shared/ipc';
-import type { PathPolicy } from './paths';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
 import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
 import { PROJECT_FOLDERS } from '../../shared/projects';
 import { createBuildFolder, readDiskImage, readPrgFiles, readProjectFile, writeExportFolder, writeProjectFile, type ExportWatcher } from './project-fs';
-import { buildWithKickAssembler, c64Roms, identifyWithTool, keepPacked, openTerminal, packWithBrokkr, packWithExomizer, runInVice, unpackWithTool } from './toolchain';
+import { buildWithKickAssembler, c64Roms, currentEditor, identifyWithTool, keepPacked, openInEditor, openTerminal, packWithBrokkr, packWithExomizer, runInVice, unpackWithTool } from './toolchain';
 import { viceAttach, viceCommand } from './vice-monitor';
 import { quicksaveFileName, quicksaveFiles, quicksaveInfo, readQuicksave, type QuicksaveHistory, type QuicksaveWatcher } from './quicksave';
 import { charRomFiles, readCharRom } from './chargen';
 import { openC64File } from '@mimir/core';
+import { findEditors } from '@mimir/core/node';
 import { openedPrg } from './project-fs';
 import {
-  buildSchema, diskOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
+  buildSchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
 } from './schemas';
 
@@ -222,6 +223,15 @@ export function registerIpc(deps: IpcDeps): void {
     return existsSync(source) ? source : projects.current.dir;
   };
   handle(CHANNELS.terminalOpen, terminalOpenSchema, req => openTerminal(req.dir ? policy.assert(req.dir, 'Folder') : projectTerminal() ?? lastChosen ?? homedir(), settings.get()));
+  // the editor comes from the settings (or is one found where it installs itself), never from the renderer
+  handle(CHANNELS.editorOpen, editorOpenSchema, req => {
+    const dir = req.dir ? policy.assert(req.dir, 'Folder') : projects.current ? join(projects.current.dir, PROJECT_FOLDERS.source) : null;
+    return dir ? openInEditor(dir, assertEntryName(req.file), settings.get()) : { opened: false, dir: null };
+  });
+  handle(CHANNELS.editorFind, z.undefined().or(z.object({}).strict()), () => {
+    const found = findEditors();
+    return { current: currentEditor(settings.get(), found), found };
+  });
   handle(CHANNELS.viceAttach, viceAttachSchema, req => viceAttach(req));
   handle(CHANNELS.viceCommand, viceCommandSchema, req => viceCommand(req));
   // the file comes from the settings (or VICE's own folder), never from the renderer

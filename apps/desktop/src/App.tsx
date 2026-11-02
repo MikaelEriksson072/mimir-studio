@@ -47,7 +47,7 @@ import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
-import type { IdentifyResponse, OpenedPrg, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
+import type { EditorFindResult, IdentifyResponse, OpenedPrg, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
@@ -56,6 +56,8 @@ const kr = window.kr;
 /** how long a block whose type changed stays framed (the .changed animation in app.css) */
 const CHANGED_MS = 4000;
 const pickToolchain = (s: Settings): ToolchainSettings => Object.fromEntries(TOOLCHAIN_KEYS.map(k => [k, s[k]])) as ToolchainSettings;
+/** the source shown first and opened in the external editor: the first file's, or a cartridge's banks in one source */
+const mainSource = (R: RenderResult): string => R.main ?? `${R.fileNames[0] || 'main'}.asm`;
 
 type Range = { start: Addr; end: Addr };
 /** The selection from its anchor (or `from` when there is none yet) to `r`; anchor and target both stay whole. */
@@ -143,6 +145,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [exportDir, setExportDir] = useState<string | null>(null);
   /** the files that export was of (their ids): it moves into a project made from the work only while they are the work's */
   const exportedFiles = useRef<string | null>(null);
+  /** Sublime Text and VS Code where they are installed, and the editor the Editor button opens the export in */
+  const [editors, setEditors] = useState<EditorFindResult | null>(null);
+  useEffect(() => { kr?.findEditors().then(setEditors).catch(() => setEditors(null)); }, [toolchain.editorPath]);
   const filesOf = (p: Project) => p.files.map(f => f.id).join(',');
   /** the last unpack (shown above the listing with the layer report, or the external unpacker's output) */
   const [unpacked, setUnpacked] = useState<{ ok: boolean; title: string; output: string; label: string } | null>(null);
@@ -1229,6 +1234,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     try { const r = await kr.openTerminal(exportDir ? { dir: exportDir } : {}); toast(`Terminal opened in ${r.dir}`, 'ok'); } catch (e) { toast(errorText(e), 'err'); }
   };
 
+  /** the export in the external editor (the one in Settings, else Sublime Text or VS Code): its folder, with its first
+   * .asm file open. The last export is opened as it is; before the first one the project is exported (to its source
+   * folder, without a project to a folder picked) */
+  const openEditor = async () => {
+    if (!kr) return needDesktop();
+    if (!project.files.length) { toast('Nothing to edit yet: open a PRG first', 'warn'); return; }
+    if (editors && !editors.current) { toast('No external editor was found: install Sublime Text or Visual Studio Code, or set one in Settings → Toolchain', 'warn'); setModal('settings'); return; }
+    try {
+      let r = await kr.openEditor({ ...(exportDir ? { dir: exportDir } : {}), file: mainSource(R) });
+      if (!r.opened) {
+        const w = await exportProject();
+        if (!w) return;
+        r = await kr.openEditor({ dir: w.dir, file: w.main });
+        if (!r.opened) throw new Error(`${w.main} is not in ${w.dir}`);
+      }
+      toast(`${r.editor} opened ${r.dir} with ${r.file}`, 'ok');
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
+
   /* ---- pack with Brokkr or Exomizer (the Pack view) ---- */
   const setPack = (p: PackPrefs, label: string) => update(label, d => { d.pack = p; });
   /** pack the range too (on) or leave it out; the Pack view then shows the chosen blocks */
@@ -1315,18 +1339,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     try { const r = await kr.saveFile({ name: packRes.name, bytes: packRes.prg, title: 'Save the packed file' }); if (r) toast(`Saved ${r.path}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
 
-  /** verify, then export to the project's source folder (`elsewhere`, or without a project: to a folder picked) */
-  const exportProject = async (elsewhere = false) => {
-    if (!kr) return needDesktop();
+  /** verify, then export to the project's source folder (`elsewhere`, or without a project: to a folder picked); the
+   * folder and its first source, or null when nothing was exported */
+  const exportProject = async (elsewhere = false): Promise<{ dir: string; main: string } | null> => {
+    if (!kr) { needDesktop(); return null; }
     const res = await runVerify({ quiet: true });
-    if (!res) return;
+    if (!res) return null;
     try {
       // the render that was verified (runVerify waited for the latest analysis)
       const { R: R1, project: p1, S: S1 } = latest.current;
       const w = await kr.writeExport({ target: home && !elsewhere ? 'project' : 'pick', files: exportFiles(p1, R1, S1, res.V, new Date()) });
       if (w) { setExportDir(w.dir); exportedFiles.current = filesOf(p1); }
       if (w) toast(res.ok ? `Exported verified Kick Assembler project to ${w.dir} (${w.written.length} files)` : `Exported to ${w.dir}, but the round-trip check failed; see Build output`, res.ok ? 'ok' : 'warn');
-    } catch (e) { toast(`Export failed: ${errorText(e)}`, 'err'); }
+      return w && { dir: w.dir, main: mainSource(R1) };
+    } catch (e) { toast(`Export failed: ${errorText(e)}`, 'err'); return null; }
   };
   /** Ctrl+S: the project saved to its project file now; work without a project becomes a project */
   const saveProject = async () => {
@@ -1448,6 +1474,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'quicksave-follow', label: followQuicksave ? 'Stop opening each new VICE quicksave' : 'Open each new VICE quicksave (Alt+F11 in VICE) by itself', run: () => setUi({ followQuicksave: !followQuicksave }) },
     ...packing.flatMap((p, i) => (p ? [{ id: `unpack-${i}`, label: external ? `Unpack ${project.files[i]?.name} with ${unpackerName}` : `Unpack ${project.files[i]?.name}`, run: () => void unpackFile(i) }] : [])),
     { id: 'terminal', label: 'Open a terminal in the project folder (VICE on PATH, kickass runs Kick Assembler)', run: () => void openTerminal() },
+    { id: 'editor', label: `Open the export in ${editors?.current?.name ?? 'an external editor'} (its folder, with ${mainSource(R)} open)`, run: () => void openEditor() },
     ...(disk ? [{ id: 'eject', label: `Eject ${disk.name}`, run: ejectDisk }] : []),
     { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: () => loadDemo() },
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
@@ -1760,7 +1787,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       { label: home ? 'Close the project (start screen)' : 'Start screen', run: () => void toStartScreen() },
     ] });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', R.main ?? `${R.fileNames[0] || 'main'}.asm`], ['spec', 'doc', 'SPEC.md']];
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] = [['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
@@ -1768,6 +1795,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onOpen={() => void openPrgs(false)} onSave={() => void saveProject()} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
         onVerify={() => void runVerify()} onExport={() => void exportProject()} onBuild={() => void runBuild()} onTerminal={() => void openTerminal()}
+        editor={editors?.current?.name ?? null} onEditor={() => void openEditor()}
         onTheme={() => setUi({ theme: theme === 'dark' ? 'light' : 'dark' })} onSettings={() => setModal('settings')}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
@@ -1945,7 +1973,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
       {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, or a .d64 to mount it</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector }} desktop={!!kr} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}

@@ -487,9 +487,9 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .bm-editor .field { margin-bottom: 7px; }
 .bm-editor textarea { min-height: 120px; font: 13px/1.5 var(--font-ui); }
 .bm-editor > .small { margin: 0 0 8px; }
-.bm-addr-row { display: flex; gap: 6px; }
-.bm-addr-row input { flex: 1; min-width: 0; }
-.bm-addr-row .btn { height: 28px; }
+.bm-addr-row, .field-row { display: flex; gap: 6px; }
+.bm-addr-row input, .field-row input { flex: 1; min-width: 0; }
+.bm-addr-row .btn, .field-row .btn { height: 28px; flex: none; }
 .bm-item.editing { box-shadow: inset 0 0 0 1px var(--accent); }
 /* the editor's colours: the presets (--sw), then the user's own; the bookmark's has a ring */
 .bm-colors { gap: 6px; }

@@ -4,9 +4,9 @@ import { existsSync, statSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import type { BrokkrPack, KickProblem, ToolchainSettings } from '@mimir/core';
-import { canIdentify, findC64Roms, identifyPacker, launchTerminal, launchVice, runExomizer, runKickAssembler, runUnpacker, splitArgs } from '@mimir/core/node';
+import { canIdentify, editorName, findC64Roms, findEditors, identifyPacker, launchEditor, launchTerminal, launchVice, runExomizer, runKickAssembler, runUnpacker, splitArgs } from '@mimir/core/node';
 import { rm, writeFile } from 'node:fs/promises';
-import type { BuildRequest, BuildResult, IdentifyResponse, PackRequest, PackResponse, RomsResponse, RunRequest, RunResult, TerminalOpenResult, UnpackRequest, UnpackResponse } from '../../shared/ipc';
+import type { BuildRequest, BuildResult, EditorInfo, EditorOpenResult, IdentifyResponse, PackRequest, PackResponse, RomsResponse, RunRequest, RunResult, TerminalOpenResult, UnpackRequest, UnpackResponse } from '../../shared/ipc';
 import { createBuildFolder } from './project-fs';
 import { assertEntryName, type PathPolicy } from './paths';
 
@@ -124,6 +124,23 @@ export async function openTerminal(dir: string, settings: ToolchainSettings): Pr
   const has = (p: string) => !!p && existsSync(p);
   await launchTerminal({ dir, java: settings.javaPath || 'java', kickJar: has(settings.kickJar) ? settings.kickJar : undefined, vicePath: has(settings.vicePath) ? settings.vicePath : undefined });
   return { dir };
+}
+
+/** The editor the export opens in: the one in the settings, else the first found (Sublime Text, Visual Studio Code). */
+export function currentEditor(settings: ToolchainSettings, found: EditorInfo[] = findEditors()): EditorInfo | null {
+  const set = settings.editorPath.trim();
+  return set ? { name: editorName(set), path: set } : found[0] ?? null;
+}
+
+/** The folder `dir` (already checked against the path policy) in the external editor, with `file` in it open; nothing
+ * is started while `file` is not there. */
+export async function openInEditor(dir: string, file: string, settings: ToolchainSettings, found?: EditorInfo[]): Promise<EditorOpenResult> {
+  if (!existsSync(join(dir, file))) return { opened: false, dir };
+  const editor = currentEditor(settings, found);
+  if (!editor) throw new Error('No external editor was found: install Sublime Text or Visual Studio Code, or set an editor in Settings → Toolchain.');
+  if (!existsSync(editor.path)) throw new Error(`${editor.name} not found at "${editor.path}". Set the path in Settings → Toolchain.`);
+  await launchEditor({ exe: editor.path, args: settings.editorArgs, dir, file });
+  return { opened: true, dir, file, editor: editor.name };
 }
 
 export async function runInVice(req: RunRequest, settings: ToolchainSettings, policy: PathPolicy): Promise<RunResult> {

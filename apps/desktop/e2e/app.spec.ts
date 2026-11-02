@@ -1180,6 +1180,54 @@ test('the Terminal button opens a terminal in the project folder', async ({ work
   });
 });
 
+test('the Editor button opens the export in the external editor, with its first .asm file', async ({ workDir: work, app, page }) => {
+  await waitForListing(page);
+  // the editor set in Settings; what the main process starts is recorded instead of opening a real editor
+  const subl = join(work, 'Sublime Text', 'subl.exe');
+  mkdirSync(dirname(subl), { recursive: true });
+  writeFileSync(subl, '');
+  await app.evaluate((_e, exe) => {
+    const req = (process as unknown as { mainModule: { require: (m: string) => any } }).mainModule.require; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const cp = req('node:child_process'), { EventEmitter } = req('node:events');
+    const g = globalThis as unknown as { spawned: { file: string; args: string[]; cwd: string }[] };
+    g.spawned = [];
+    const real = cp.spawn;
+    cp.spawn = (file: string, args: string[], o: { cwd: string }) => {
+      // Kick Assembler (verify, export) still runs for real
+      if (file !== exe) return real(file, args, o);
+      g.spawned.push({ file, args, cwd: o.cwd });
+      const child = Object.assign(new EventEmitter(), { pid: 4242, unref: () => {} });
+      setImmediate(() => child.emit('spawn'));
+      return child;
+    };
+  }, subl);
+  const spawned = () => app.evaluate(() => (globalThis as unknown as { spawned: { file: string; args: string[]; cwd: string }[] }).spawned);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('#set-editorPath').fill(subl);
+  await expect(page.locator('#set-editorArgs')).toHaveValue('{dir} {file}');
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden();
+  const editor = page.getByRole('button', { name: 'Editor', exact: true });
+  await expect(editor).toHaveAttribute('title', /^Open the export in Sublime Text:/);
+  const out = join(work, 'export');
+
+  await test.step('before an export it exports the project first, then opens that', async () => {
+    await stubDialogs(app, { open: [out] });
+    await editor.click();
+    await expect(toast(page, `Exported verified Kick Assembler project to ${out}`)).toBeVisible({ timeout: 90_000 });
+    await expect(toast(page, `Sublime Text opened ${out} with raster-demo.asm`)).toBeVisible();
+    expect(await spawned()).toEqual([{ file: subl, args: [out, join(out, 'raster-demo.asm')], cwd: out }]);
+  });
+
+  await test.step('after it, the export is opened as it is', async () => {
+    writeFileSync(join(out, 'raster-demo.asm'), '// edited in the editor\n');
+    await editor.click();
+    await expect.poll(async () => (await spawned()).length).toBe(2);
+    expect((await spawned())[1]).toEqual({ file: subl, args: [out, join(out, 'raster-demo.asm')], cwd: out });
+    expect(readFileSync(join(out, 'raster-demo.asm'), 'utf8')).toBe('// edited in the editor\n');
+  });
+});
+
 test('a packed PRG is reported and unpacked with Sindri, or an external unpacker', async ({ app, page }) => {
   // fixtures/prg/packed-demo.prg: the demo behind a decruncher stub (fakePack: a mover, then a decoder at $0340),
   // which Sindri runs in its emulated C64; fake-unp64.cjs (a stand-in for unp64, run with this Node)

@@ -79,6 +79,9 @@ export const DEFAULT_SETTINGS: Settings = {
   exomizerPath: '',
   // VICE's quicksave snapshot (empty: the one VICE writes in its settings folder)
   viceQuicksave: '',
+  // the external editor for the export (empty: the first found of Sublime Text and Visual Studio Code); {dir} the
+  // export's folder, {file} its first .asm file
+  editorPath: '', editorArgs: '{dir} {file}',
 };
 
-export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave'] as const;
+export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs'] as const;

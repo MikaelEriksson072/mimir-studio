@@ -3,6 +3,8 @@ export type { KickRunOptions, KickRunResult, ViceLaunch, ViceStart } from './too
 export { findC64Roms, findExomizer, findKickAssJar, findUnp64, findVice, viceRomFolders } from './detect';
 export { launchTerminal, terminalCommand, windowsStartLine } from './terminal';
 export type { TerminalCommand, TerminalLaunch } from './terminal';
+export { editorCommand, editorName, findEditors, launchEditor } from './editor';
+export type { EditorCommand, EditorInfo, EditorLaunch, EditorWhere } from './editor';
 export { canIdentify, identifyPacker, pickUnpacked, runUnpacker, UNPACK_OUT, unpackArgs, unpackEntry, unpackInputName, unpackPacker } from './unpack';
 export type { IdentifyResult, UnpackOptions, UnpackResult } from './unpack';
 export { DESFX_OUT, runExomizer } from './exomizer';

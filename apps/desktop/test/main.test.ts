@@ -11,8 +11,8 @@ import { assertEntryName, PathPolicy } from '../electron/main/paths';
 import { bringOldSettings } from '../electron/main/migrate';
 import { RecentFolders } from '../electron/main/recent';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { diskOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema } from '../electron/main/schemas';
-import { buildWithKickAssembler, keepPacked, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
+import { diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema } from '../electron/main/schemas';
+import { buildWithKickAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
 import { charRomFiles, readCharRom } from '../electron/main/chargen';
@@ -20,11 +20,11 @@ import { createProjectFolder, gatherWork, homeOf, isOwnTemp, nearestFolder, Proj
 import { projectNameOf, projectNameProblem } from '../shared/projects';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
-const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', ...patch });
+const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen'].sort());
   });
 });
 
@@ -670,6 +670,35 @@ describe('toolchain runner', () => {
     expect(r.prg!.subarray(2)).toEqual(p.files[0].bytes);
     expect(r.outputs[0].vsPath).not.toBeNull();
   }, 60_000);
+
+  it('opens the export in the editor of the settings, else the first found, once its source is there', async () => {
+    const found = [{ name: 'Sublime Text', path: 'C:\\Program Files\\Sublime Text\\subl.exe' }, { name: 'Visual Studio Code', path: 'C:\\VS Code\\Code.exe' }];
+    expect(currentEditor(toolchain(), found)).toEqual(found[0]);
+    expect(currentEditor(toolchain({ editorPath: ' C:\\VS Code\\bin\\code.cmd ' }), found)).toEqual({ name: 'Visual Studio Code', path: 'C:\\VS Code\\bin\\code.cmd' });
+    expect(currentEditor(toolchain(), [])).toBeNull();
+    const dir = tmp();
+    // nothing exported there yet: nothing is started
+    expect(await openInEditor(dir, 'demo.asm', toolchain(), [])).toEqual({ opened: false, dir });
+    writeFileSync(join(dir, 'demo.asm'), '');
+    await expect(openInEditor(dir, 'demo.asm', toolchain(), [])).rejects.toThrow(/No external editor was found/);
+    await expect(openInEditor(dir, 'demo.asm', toolchain({ editorPath: join(dir, 'subl.exe') }), [])).rejects.toThrow(/subl\.exe/);
+  });
+
+  it('starts the editor with the folder and the file, detached', async () => {
+    // the editor is this Node, writing what it was given into the folder
+    const dir = tmp(), script = "require('fs').writeFileSync(require('path').join(process.argv[1],'argv.json'),JSON.stringify(process.argv.slice(1)))";
+    writeFileSync(join(dir, 'demo.asm'), '');
+    expect(await openInEditor(dir, 'demo.asm', toolchain({ editorPath: process.execPath, editorArgs: `-e "${script}" {dir} {file}` }), [])).toMatchObject({ opened: true, dir, file: 'demo.asm' });
+    await expect.poll(() => existsSync(join(dir, 'argv.json')), { timeout: 10_000 }).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, 'argv.json'), 'utf8'))).toEqual([dir, join(dir, 'demo.asm')]);
+  });
+
+  it('takes a plain .asm name to open in the editor', () => {
+    expect(editorOpenSchema.parse({ file: 'demo.asm' })).toEqual({ file: 'demo.asm' });
+    expect(editorOpenSchema.parse({ dir: 'C:\\w', file: 'demo.asm' })).toEqual({ dir: 'C:\\w', file: 'demo.asm' });
+    expect(() => editorOpenSchema.parse({ file: 'demo.asm', exe: 'calc.exe' })).toThrow();
+    expect(() => editorOpenSchema.parse({})).toThrow();
+  });
 
   it('needs an Exomizer that exists', async () => {
     const req = { files: [{ name: 'game.prg', prg: Uint8Array.of(1, 8, 0) }], prefs: DEFAULT_PACK };

@@ -20,6 +20,8 @@ export const CHANNELS = {
   toolchainBuild: 'toolchain:build',
   toolchainRun: 'toolchain:run',
   terminalOpen: 'terminal:open',
+  editorOpen: 'editor:open',
+  editorFind: 'editor:find',
   toolchainUnpack: 'toolchain:unpack',
   toolchainIdentify: 'toolchain:identify',
   toolchainRoms: 'toolchain:roms',
@@ -148,6 +150,20 @@ export interface TerminalOpenRequest { dir?: string }
 export interface TerminalOpenResult { dir: string }
 
 /**
+ * The export in the external editor (the one in the settings, else the first found of Sublime Text and Visual Studio
+ * Code): its folder, with `file` (its first source, a plain .asm name) open in it. `dir`: a folder opened in this
+ * session (the last export); without one the project's source folder.
+ */
+export interface EditorOpenRequest { dir?: string; file: string }
+/** `opened` false: `file` is not in that folder (nothing is exported there yet, or there is no project) and no editor
+ *  was started */
+export type EditorOpenResult = { opened: true; dir: string; file: string; editor: string } | { opened: false; dir: string | null };
+export interface EditorInfo { name: string; path: string }
+/** Sublime Text and Visual Studio Code where they are installed, and the editor the export opens in (null: none is set
+ *  and none was found) */
+export interface EditorFindResult { current: EditorInfo | null; found: EditorInfo[] }
+
+/**
  * Unpack a packed PRG (load address first) with the external unpacker of the toolchain settings (unp64; when none
  * is set, the renderer runs Sindri itself). It runs on a copy in a build folder of its own; `prg` is the file it wrote, `entry` the start address it reported.
  */
@@ -240,6 +256,9 @@ export interface KrApi {
   build(req: BuildRequest): Promise<BuildResult>;
   run(req: RunRequest): Promise<RunResult>;
   openTerminal(req?: TerminalOpenRequest): Promise<TerminalOpenResult>;
+  /** the export's folder in the external editor, with its first .asm file open */
+  openEditor(req: EditorOpenRequest): Promise<EditorOpenResult>;
+  findEditors(): Promise<EditorFindResult>;
   unpack(req: UnpackRequest): Promise<UnpackResponse>;
   identifyPacker(req: UnpackRequest): Promise<IdentifyResponse>;
   c64Roms(): Promise<RomsResponse>;

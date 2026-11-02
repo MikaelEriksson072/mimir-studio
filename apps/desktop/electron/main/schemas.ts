@@ -64,6 +64,8 @@ export const toolchainSettingsSchema = z.object({
   unpackerArgs: z.string().max(1024),
   exomizerPath: z.string().max(1024),
   viceQuicksave: z.string().max(1024),
+  editorPath: z.string().max(1024),
+  editorArgs: z.string().max(1024),
 });
 
 export const settingsSchema = toolchainSettingsSchema.partial().extend({
@@ -168,6 +170,8 @@ export const projectForgetSchema = z.object({ file: z.string().min(1).max(4096) 
 export const prgOpenSchema = z.object({ paths: z.array(z.string().max(4096)).max(64).optional(), zeroPage: z.boolean().optional() }).default({});
 export const diskOpenSchema = z.object({ path: z.string().max(4096).optional() }).default({});
 export const terminalOpenSchema = z.object({ dir: z.string().min(1).max(4096).optional() }).default({});
+/** the folder of the export (one of this session) and its first source, a plain .asm name */
+export const editorOpenSchema = z.object({ dir: z.string().min(1).max(4096).optional(), file: z.string().min(1).max(255) }).strict();
 /** a packed PRG (load address first) for the external unpacker */
 export const unpackSchema = z.object({ name: fileName, prg: z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG') });
 export const exportWriteSchema = z.object({
