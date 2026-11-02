@@ -54,6 +54,13 @@ export async function launchApp(userData: string): Promise<ElectronApplication> 
     for (const w of BrowserWindow.getAllWindows()) w.setIgnoreMouseEvents(true);
     electronApp.on('browser-window-created', (_e, w) => w.setIgnoreMouseEvents(true));
   });
+  // The window opens at 1480 × 920 (electron/main), but Windows shrinks it to a smaller screen's work area (a laptop
+  // screen of 1440 × 900 at 200 %: 1440 × 852), and the editor column then has the narrower tab row. The tests see the
+  // window as it opens on a screen it fits on, whatever screen they run on.
+  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    for (const w of BrowserWindow.getAllWindows()) w.setSize(1480, 920);
+    electronApp.on('browser-window-created', (_e, w) => w.setSize(1480, 920));
+  });
   return app;
 }
 

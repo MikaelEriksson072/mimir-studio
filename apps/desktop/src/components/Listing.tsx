@@ -278,7 +278,9 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   const place = () => {
     const el = box.current, k = keep.current; if (!el || !k) return;
     const i = lineOf[k.addr]; if (i < 0) return;
-    el.scrollTop = Math.max(0, el.getBoundingClientRect().top + i * ROW - k.y);
+    // a whole pixel: on a 200 % screen the scroll position takes half pixels, rounded up, and the line would creep up
+    // a quarter of a pixel each time Data as code is turned on or off
+    el.scrollTop = Math.max(0, Math.round(el.getBoundingClientRect().top + i * ROW - k.y));
     setTop(el.scrollTop);
   };
   useLayoutEffect(() => {

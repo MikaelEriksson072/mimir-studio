@@ -45,8 +45,9 @@ pnpm --filter @mimir/desktop e2e
 ```
 
 The script runs `electron-vite build` and then `playwright test`, which starts `out/main/index.js` with
-`_electron.launch` and a fresh `--user-data-dir` per test (no saved settings, no projects, no autosaved work); the
-fixture answers the start screen with *Without a project*, so the demo program is loaded (`test.use({ start: 'none' })`
+`_electron.launch` and a fresh `--user-data-dir` per test (no saved settings, no projects, no autosaved work), in a
+window of 1480 × 920 as the app opens it on a screen it fits on (a smaller screen, a 1440 × 900 laptop's say, would
+shrink it to its work area and the listing's tools into the ⋯ menu); the fixture answers the start screen with *Without a project*, so the demo program is loaded (`test.use({ start: 'none' })`
 leaves the start screen to the test, and `launchApp(userData)` starts the app again with the same profile). No browser download is needed; the tests use the Electron binary from `node_modules`.
 To rerun them without rebuilding: `pnpm --filter @mimir/desktop exec playwright test` (`--debug` opens the
 Playwright inspector).

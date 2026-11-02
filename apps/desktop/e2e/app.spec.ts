@@ -950,6 +950,8 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     await expect.poll(() => page.locator('.side-sec').evaluateAll(s => s.map(e => e.getAttribute('aria-label'))))
       .toEqual(['Files', 'Cartridge', 'VICE quicksave', 'Loaders', 'Program start', 'Memory map']);
     // both banks in the listing, each under its own file bar; bank 0's vectors and signature, and the code they start
+    // (read once the analysis is done: on a slow machine, a laptop on battery say, it is still running here)
+    await expect(statusBar(page)).not.toContainText('analysing');
     const rows = await listingRows(page);
     expect(rows.filter(r => /\.asm · bank \d+$/.test(r.text.trim())).map(r => r.text.trim())).toEqual(['bank00_8000.asm · bank 0', 'bank01_8000.asm · bank 1']);
     expect(rows.some(r => /^cart_vectors:/.test(r.text.trim()))).toBe(true);
