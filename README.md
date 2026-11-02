@@ -89,7 +89,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   reads it where it runs, so its labels, references and blocks have the addresses it runs at, and the source writes
   it where it is loaded, inside `.pseudopc`. Names, comments, marks, bookmarks and patches on the bytes go along when
   it is relocated, runs somewhere else or stops being relocated. The analysis finds the copy loops itself
-  (`lda $1000,x / sta $2000,x` and a jump there), and Problems offers the relocation in one click: in 284 cracktros and
+  (`lda $1000,x / sta $2000,x` and a jump there), and the *Relocated* tab lists them beside what is relocated (where
+  each block is loaded and runs), each a click from relocating it, running it elsewhere or stopping: in 284 cracktros and
   intros from CSDB it finds 101, and each one, relocated, assembles back byte for byte.
 - **Patches.** Select lines and press `P` to write new code over them, in Kick Assembler with the program's labels and
   the hardware names. The editor shows each line's address and bytes as you type, `Tab` steps from instruction to

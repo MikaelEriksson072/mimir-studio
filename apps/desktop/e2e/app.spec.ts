@@ -1861,6 +1861,20 @@ test('relocate code the program copies elsewhere: Problems finds the copy, the l
     await expect(page.locator('.inspector')).toContainText('It runs here because the program copies the relocated block reloc_1000 ($1000–$1010) to $2000–$2010.');
   });
 
+  await test.step('the Relocated tab lists the block, where it is loaded and where it runs', async () => {
+    const tab = page.getByRole('tab', { name: /^Relocated/ });
+    await expect(tab.locator('.count')).toHaveText('1');
+    await tab.click();
+    const row = page.getByRole('table', { name: 'Relocated blocks' }).locator('tbody tr');
+    await expect(row).toHaveCount(1);
+    await expect(row.locator('td')).toHaveText(['reloc_1000', '$1000–$1010', '$2000–$2010', '17', 'moved-demo.prg', /Runs at…\s*Stop relocating/]);
+    // the copy loop is relocated: none is left to suggest
+    await expect(page.getByRole('table', { name: 'Copy loops found' })).toHaveCount(0);
+    // a click on the row goes to where it runs
+    await row.click();
+    await expect(statusBar(page)).toContainText('$2000');
+  });
+
   await test.step('a name given where it runs goes along when it runs elsewhere, and back when it is not relocated', async () => {
     await goTo(page, '$2009');
     await page.keyboard.press('n');
@@ -1875,11 +1889,13 @@ test('relocate code the program copies elsewhere: Problems finds the copy, the l
     await expect(dialog).toContainText('Going along to $c000: 1 name.');
     await dialog.getByRole('button', { name: 'Run it there' }).click();
     await expect(toast(page, '$1000–$1010 runs at $c000–$c010 now')).toBeVisible();
-    // the loop still copies it to $2000: there nothing is loaded now, and Problems says so (the listing follows once
-    // the analysis of the edit is in)
+    // the loop still copies it to $2000: there nothing is loaded now, and the Relocated tab says so (the listing follows
+    // once the analysis of the edit is in)
     await expect.poll(async () => (await listingRows(page)).find(r => r.text === 'blink:')?.adr).toBe('c009');
     expect(rowAt(await listingRows(page), '0818')?.text).toMatch(/^jmp \$2000/);
-    await expect(page.locator('.loglist .logrow', { hasText: 'but it is relocated to run at $c000' })).toBeVisible();
+    const copy = page.getByRole('table', { name: 'Copy loops found' }).locator('tbody tr');
+    await expect(copy).toContainText('relocated to run at $c000');
+    await expect(copy.getByRole('button', { name: 'Run it there…' })).toBeVisible();
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
     // Ctrl+Z: at $2000 again
@@ -1892,6 +1908,20 @@ test('relocate code the program copies elsewhere: Problems finds the copy, the l
     await expect(toast(page, '$1000–$1010 is read where it is loaded again')).toBeVisible();
     await expect.poll(async () => (await listingRows(page)).find(r => r.text === 'blink:')?.adr).toBe('1009');
     expect((await listingRows(page)).some(r => /\.pseudopc/.test(r.text))).toBe(false);
+  });
+
+  await test.step('the Relocated tab offers the copy loop again, and its Relocate… fills in the dialog', async () => {
+    // F7 showed the build output
+    await page.getByRole('tab', { name: /^Relocated/ }).click();
+    await expect(page.getByRole('table', { name: 'Relocated blocks' })).toHaveCount(0);
+    await expect(page.locator('.relocs')).toContainText('Nothing is relocated.');
+    const copy = page.getByRole('table', { name: 'Copy loops found' }).locator('tbody tr');
+    await expect(copy.locator('td')).toHaveText(['loop_080f', '$1000–$1010', '$2000–$2010', 'jmp at $0818', 'Relocate…']);
+    await copy.getByRole('button', { name: 'Relocate…' }).click();
+    await expect(dialog.getByLabel('Start (loaded at)')).toHaveValue('$1000');
+    await expect(dialog.getByLabel('Runs at')).toHaveValue('$2000');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
   });
 });
 

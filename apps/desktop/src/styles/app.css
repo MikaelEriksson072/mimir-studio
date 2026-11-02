@@ -597,6 +597,13 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .spindle-head > span { flex: 1; min-width: 0; }
 .spindle-head .btn { flex: none; }
 .tbl tbody tr.running { background: color-mix(in srgb, var(--ok) 9%, transparent); }
+/* the Relocated tab (8.1b): its rows' buttons, the dialog's button in the head, blocks that are not placed */
+.relocs .xref-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 6px; }
+.relocs .reloc-new { margin-left: auto; }
+.relocs .reloc-copies { margin-top: 14px; }
+.relocs .row-actions { white-space: nowrap; text-align: right; }
+.relocs .row-actions .btn + .btn { margin-left: 6px; }
+.tbl tbody tr.not-placed td:first-child { box-shadow: inset 2px 0 var(--warn); }
 .tbl tbody tr.running:hover { background: color-mix(in srgb, var(--ok) 15%, transparent); }
 .spindle .pill { margin-left: 6px; }
 .spindle .script-line { white-space: pre; }

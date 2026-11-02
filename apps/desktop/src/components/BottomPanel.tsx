@@ -1,8 +1,8 @@
-/* Bottom panel: analysis log, problems, cross-references, raster IRQs, the Spindle script, a Bitfire disk's files,
- * statistics, build output. */
+/* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
+ * disk's files, statistics, build output. */
 import {
   BITFIRE_VERSION, bitfireFileName, d64writeScript, decode, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
-  type Addr, type AnalysisResult, type BitfireFile, type CartBuild, type DeepReport, type RasterIrq, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob,
+  type Addr, type AnalysisResult, type BitfireFile, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
 import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -92,6 +92,78 @@ export function RasterPanel({ A, R, onNavigate }: { A: AnalysisResult; R: Render
           </tr>
         ))}
       </tbody></table>
+    </div>
+  );
+}
+
+interface RelocPanelProps {
+  A: AnalysisResult; R: RenderResult;
+  /** the project's relocated blocks: those the analysis could not place are listed with why */
+  relocs: readonly Reloc[];
+  onNavigate: (a: Addr) => void;
+  /** open the Relocate dialog: for these bytes (on a relocated block: where it runs), or for a copy loop's store */
+  onRelocate: (range: { start: Addr; end: Addr } | null, copyAt?: Addr) => void;
+  onUnrelocate: (start: Addr) => void;
+}
+
+/** The Relocated tab (spec 8.1b): the blocks the program copies elsewhere to run there, where each is loaded and runs,
+ *  and the copy loops the analysis found that are not relocated yet, each with what can be done about it. */
+export function RelocPanel({ A, R, relocs, onNavigate, onRelocate, onUnrelocate }: RelocPanelProps) {
+  const span = (s: Addr, e: Addr) => `$${h4(s)}–$${h4(e - 1)}`;
+  const link = (a: Addr, text?: string) => <button className="addr-link" title={`$${h4(a)}`} onClick={e => { e.stopPropagation(); onNavigate(a); }}>{text ?? R.labels.get(a)?.name ?? `$${h4(a)}`}</button>;
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  // those in the project the analysis did not place: the log says why
+  const left = relocs.filter(r => !A.relocs.some(x => x.start === r.start));
+  const why = (r: Reloc) => A.log.find(l => l.cat === 'reloc' && l.lvl === 'warn' && l.addr === r.start)?.msg.replace(/^.*? is not placed: /, '') ?? 'it is not placed';
+  const n = A.relocs.length + left.length;
+  return (
+    <div className="xref relocs">
+      <div className="xref-head">{n} relocated block{n === 1 ? '' : 's'}{A.copies.length ? `, ${A.copies.length} copy loop${A.copies.length === 1 ? '' : 's'} found` : ''}
+        <span className="muted"> · bytes the program copies elsewhere to run there: read where they run, written where they are loaded inside .pseudopc</span>
+        <button className="btn small reloc-new" onClick={() => onRelocate(null)} title="Relocate the selection, or the block at the cursor (R)">Relocate…</button></div>
+      {n > 0 ? (
+        <table className="tbl" aria-label="Relocated blocks"><thead><tr><th>Block</th><th>Loaded at</th><th>Runs at</th><th>Bytes</th><th>File</th><th /></tr></thead><tbody>
+          {A.relocs.map(r => (
+            <tr key={r.start} onClick={() => onNavigate(r.to)}>
+              <td className="mono">{link(r.start)}</td>
+              <td className="mono">{span(r.start, r.end)}</td>
+              <td className="mono">{link(r.to, span(r.to, r.to + r.end - r.start))}</td>
+              <td className="mono">{r.end - r.start}</td>
+              <td>{A.files[r.file]?.name ?? '—'}</td>
+              <td className="row-actions" onClick={stop}>
+                <button className="btn small" onClick={() => onRelocate({ start: r.start, end: r.end })} title="Give another address it runs at">Runs at…</button>
+                <button className="btn small ghost" onClick={() => onUnrelocate(r.start)} title="Read the bytes where they are loaded again; names and comments go back with them">Stop relocating</button>
+              </td>
+            </tr>
+          ))}
+          {left.map(r => (
+            <tr key={`left-${r.start}`} className="not-placed" onClick={() => onNavigate(r.start)}>
+              <td className="mono">${h4(r.start)}</td>
+              <td className="mono">{span(r.start, r.end)}</td>
+              <td className="mono">{span(r.to, r.to + r.end - r.start)}</td>
+              <td className="mono">{r.end - r.start}</td>
+              <td className="warn-text">not placed: {why(r)}</td>
+              <td className="row-actions" onClick={stop}><button className="btn small ghost" onClick={() => onUnrelocate(r.start)}>Stop relocating</button></td>
+            </tr>
+          ))}
+        </tbody></table>
+      ) : <div className="empty small">Nothing is relocated. Select the bytes a program copies to another address before it runs them there, and press R: the analysis then reads them where they run.</div>}
+      {A.copies.length > 0 && <>
+        <div className="xref-head reloc-copies">Copy loops found <span className="muted">· a loop copies code where nothing is loaded, and the program jumps there</span></div>
+        <table className="tbl" aria-label="Copy loops found"><thead><tr><th>Loop</th><th>Copies</th><th>To</th><th>Goes there</th><th /></tr></thead><tbody>
+          {A.copies.map(c => {
+            const other = A.relocs.find(r => r.start === c.start);
+            return (
+              <tr key={c.at} onClick={() => onNavigate(c.loop)}>
+                <td className="mono">{link(c.loop)}</td>
+                <td className="mono">{link(c.start, span(c.start, c.end))}</td>
+                <td className="mono">{span(c.to, c.to + c.end - c.start)}{other && <span className="muted"> · relocated to run at ${h4(other.to)}</span>}</td>
+                <td className="mono">{OPC[A.mem[c.jump]].mn.toLowerCase()} at {link(c.jump, `$${h4(c.jump)}`)}</td>
+                <td className="row-actions" onClick={stop}><button className="btn small" onClick={() => onRelocate(null, c.at)} title={`Relocate ${span(c.start, c.end)} to run at $${h4(c.to)}`}>{other ? 'Run it there…' : 'Relocate…'}</button></td>
+              </tr>);
+          })}
+        </tbody></table>
+      </>}
     </div>
   );
 }
@@ -301,4 +373,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['stats', 'Statistics'], ['build', 'Build output']];

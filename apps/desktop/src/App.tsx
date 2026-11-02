@@ -31,7 +31,7 @@ import { Sidebar } from './components/Sidebar';
 import { Listing, type ListingFind } from './components/Listing';
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
-import { BitfirePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPanel, SpindlePanel, StatsPanel, XrefPanel } from './components/BottomPanel';
+import { BitfirePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPanel, RelocPanel, SpindlePanel, StatsPanel, XrefPanel } from './components/BottomPanel';
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
@@ -1514,6 +1514,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'start', label: 'Set the program start to the cursor line', run: () => { const a = lineAddr(); if (a != null) setStart(a); } },
     ...(project.entryPoint != null ? [{ id: 'start-clear', label: `Clear the program start $${h4(project.entryPoint)} (Build & Run starts the program with RUN)`, run: () => setStart(null) }] : []),
     { id: 'xrefs', label: 'Show cross-references', key: 'X', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
+    { id: 'relocs', label: 'Show the relocated blocks and the copy loops found (Relocated tab)', run: () => setUi({ bottom: 'relocs', panelOpen: true }) },
     { id: 'copy-lines', label: 'Copy the selected lines (or the line at the cursor) as source', key: 'Ctrl+C', run: copyLines },
     { id: 'side-panel', label: 'Toggle side panel (Explorer, Blocks, Symbols, Bookmarks, Pack)', key: 'Ctrl+Shift+B', run: () => toggleSide() },
     ...(inspector === 'auto' ? [{ id: 'inspector-show', label: 'Show the inspector (the memory map, the block at the cursor, its preview)', run: () => setDrawer('insp') }] : []),
@@ -1747,6 +1748,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   // the Spindle script tab is there when the analysis found Spindle's drivers
   const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire));
   const shownBottom = bottomTabs.some(([k]) => k === bottom) ? bottom : 'log';
+  /** the Relocated tab's count: the relocated blocks (placed or not) and the copy loops found */
+  const relocCount = project.relocs.length + A.copies.length;
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   // cycle counting: the selection, else the code block at the cursor, along the path with the branches marked taken
   const cycleRange = !cycles ? null : sel && sel.multi ? { start: sel.start, end: sel.end } : blk && blk.type === 'code' ? { start: blk.start, end: blk.end } : null;
@@ -1931,7 +1934,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         {tab !== 'spec' && panelOpen && <Splitter dir="h" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, bottom: Math.max(120, Math.min(520, useUi.getState().sizes.bottom - d)) } })} />}
         {tab !== 'spec' && <section className={cx('bottom', !panelOpen && 'collapsed')} aria-label="Panels">
           <div className="tabs small" role="tablist">
-            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : null; return (
+            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : null; return (
               <button key={k} role="tab" aria-selected={shownBottom === k} className={cx('tab', shownBottom === k && 'on')} onClick={() => setUi({ bottom: k, panelOpen: true })}>{l}{n != null && <span className={cx('count', k === 'problems' && problems.some(p => p.lvl === 'err') && 'bad')}>{n}</span>}</button>); })}
             <span className="grow" />
             <button className="icon-btn panel-toggle" onClick={() => setUi({ panelOpen: !panelOpen })} aria-label={panelOpen ? 'Collapse panel' : 'Expand panel'} title={panelOpen ? 'Collapse panel' : 'Expand panel'}><Icon name="down" size={14} className={panelOpen ? '' : 'flip'} /></button>
@@ -1941,6 +1944,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             {shownBottom === 'problems' && <ProblemsPanel items={problems} onNavigate={nav} deep={A.deep} on={!!project.settings.deepAnalysis} busy={busy} onDeep={on => update(on ? 'Deep analysis on' : 'Deep analysis off', d => { d.settings.deepAnalysis = on; })} />}
             {shownBottom === 'xrefs' && <XrefPanel A={A} R={R} cursor={cursor} onNavigate={nav} S={S} />}
             {shownBottom === 'irqs' && <RasterPanel A={A} R={R} onNavigate={nav} />}
+            {shownBottom === 'relocs' && <RelocPanel A={A} R={R} relocs={project.relocs} onNavigate={nav} onRelocate={(r, copyAt) => startRelocate(r, copyAt)} onUnrelocate={unrelocate} />}
             {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} />}
             {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
