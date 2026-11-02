@@ -84,21 +84,27 @@ export async function packWithBrokkr(req: PackRequest, policy: PathPolicy, pack:
   const dir = policy.allow(await createBuildFolder('pack'));
   const r = await pack(req);
   for (const f of r.inputs) await writeFile(join(dir, f.name), f.prg);
-  if (r.ok && r.name && r.prg) await writeFile(join(dir, r.name), r.prg);
+  const files = r.ok ? (r.files ?? []).map(f => ({ ...f, path: join(dir, f.name) })) : [];
+  for (const f of files) await writeFile(f.path, f.prg);
   return {
-    ok: r.ok, output: r.output, argv: r.argv, ms: r.ms, dir, packed: r.packed, report: r.report,
+    ok: r.ok, output: r.output, argv: r.argv, commands: r.commands, ms: r.ms, dir, packed: r.packed, report: r.report,
     check: r.check && { ...r.check, argv: [], output: '' }, error: r.error,
-    ...(r.ok && r.name && r.prg ? { name: r.name, path: join(dir, r.name), prg: r.prg } : {}),
+    ...(r.ok && r.name && r.prg ? { name: r.name, path: join(dir, r.name), prg: r.prg, files } : {}),
   };
 }
 
-/** The packed file also in the folder the Pack view names (`PackPrefs.dir`, `to`: checked against the path policy),
+/** The packed files also in the folder the Pack view names (`PackPrefs.dir`, `to`: checked against the path policy),
  * which the result then points at, so Run in VICE runs that copy. */
 export async function keepPacked(r: PackResponse, to: string | null): Promise<PackResponse> {
   if (!to || !r.ok || !r.name || !r.prg) return r;
   const path = join(to, r.name);
   await writeFile(path, r.prg);
-  return { ...r, path };
+  const files = r.files && await Promise.all(r.files.map(async f => {
+    const at = join(to, f.name);
+    if (at !== path) await writeFile(at, f.prg);
+    return { ...f, path: at };
+  }));
+  return { ...r, path, ...(files ? { files } : {}) };
 }
 
 /** Brokkr in a worker thread: out/main/brokkr-worker.js, built from electron/main/brokkr-worker.ts. */

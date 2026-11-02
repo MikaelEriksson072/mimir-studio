@@ -40,6 +40,9 @@ export const packPrefsSchema = z.object({
   decruncherAt: z.number().int().min(0).max(0xffff).nullable().default(null),
   tablesAt: z.number().int().min(0).max(0xffff).nullable().default(null),
   keep: z.array(packRange).max(64).default([]),
+  // project files from before them: crunched data in one file, with the decruncher written next to it
+  split: z.boolean().default(false),
+  decruncher: z.boolean().default(true),
 }).strict();
 const blockKinds = ['code', 'data', 'words', 'text', 'table', 'lohi', 'sprite', 'charset', 'bitmap', 'screen', 'music', 'fill', 'basic'] as const satisfies readonly BlockKind[];
 

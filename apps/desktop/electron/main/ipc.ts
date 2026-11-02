@@ -194,7 +194,7 @@ export function registerIpc(deps: IpcDeps): void {
     // a project's packed file goes in its packed folder
     const to = req.prefs.dir ? policy.assert(req.prefs.dir, 'The folder for the packed file (choose it again in the Pack view)') : projects.folder('packed');
     const r = await (req.prefs.packer === 'exomizer' ? packWithExomizer(req, settings.get(), policy) : packWithBrokkr(req, policy));
-    if (to && r.name) watcher.wrote(join(to, r.name));
+    if (to && r.name) for (const name of r.files?.map(f => f.name) ?? [r.name]) watcher.wrote(join(to, name));
     return keepPacked(r, to);
   });
   handle(CHANNELS.packFolder, packFolderSchema, async (req, e): Promise<PackFolderResult | null> => {

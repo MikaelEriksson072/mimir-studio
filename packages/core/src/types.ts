@@ -190,12 +190,18 @@ export interface PackPrefs {
    * again in a new session); empty: only the app's own pack folder */
   dir: string;
   /** Brokkr, sfx: where the decruncher works while it decrunches: the first of its zero page bytes, its resident part
-   * and its tables (null: where Brokkr finds room) */
+   * and its tables (null: where Brokkr finds room). Brokkr, mem with `decruncher`: where the decruncher written goes,
+   * its zero page and its tables (null: its defaults; the PRG at $c000, the source where it is imported) */
   zp: Addr | null;
   decruncherAt: Addr | null;
   tablesAt: Addr | null;
   /** Brokkr, sfx: ranges the decruncher, its tables and the crunched data stay out of */
   keep: PackRange[];
+  /** Brokkr, mem: each part crunched into a file of its own (the chosen blocks: each range; the whole build: each PRG) */
+  split: boolean;
+  /** Brokkr, mem, decrunched backward: Brokkr's decruncher written next to the crunched files, as Kick Assembler source
+   * and as a PRG, one for all of them (each file is checked with it in Brokkr's emulated C64) */
+  decruncher: boolean;
 }
 
 /**

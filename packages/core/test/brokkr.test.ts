@@ -40,12 +40,17 @@ describe('packing with Brokkr', () => {
     expect(r.check).toMatchObject({ status: 'same', text: expect.stringMatching(/starts at \$1000/) });
   });
 
-  it('writes crunched data (mem) whose stream it decrunches again', async () => {
+  it('writes crunched data (mem) with its decruncher, which decrunches it in an emulated C64', async () => {
     const r = await packWithBrokkr([{ name: 'game.prg', prg: demo.prg }], P({ mode: 'mem', memLoad: 'none' }));
     expect(r.ok).toBe(true);
     expect(r.name).toBe('game-brokkr.bin');
     expect(r.prg!.length).toBeLessThan(f.bytes.length);
-    expect(r.check?.text).toMatch(/decrunched the stream again/);
+    expect(r.files?.map(x => x.name)).toEqual(['game-brokkr.bin', 'game-brokkr-decrunch.prg', 'game-brokkr-decrunch.asm']);
+    expect(r.check).toMatchObject({ status: 'same', text: expect.stringMatching(/^Decrunched by game-brokkr-decrunch\.prg in Brokkr's emulated C64: \$0801–\$[0-9a-f]{4} has the same \d+ bytes/) });
+    expect(r.report.layout.map(a => a.name)).toEqual(['Decrunched data', 'Decruncher', 'Decrunch table']);
+    const alone = await packWithBrokkr([{ name: 'game.prg', prg: demo.prg }], P({ mode: 'mem', decruncher: false }));
+    expect(alone.files?.map(x => x.name)).toEqual(['game-brokkr.prg']);
+    expect(alone.check?.text).toMatch(/decrunched the stream again/);
     expect(brokkrArgs(P({ mode: 'mem', memLoad: 0x2000, forward: true, compat: true, effort: 'fast' }), ['a.prg'], 'a-brokkr.prg'))
       .toEqual(['brokkr', 'mem', '-f', '-l', '$2000', '-T', '5', '--effort', 'fast', '-o', 'a-brokkr.prg', 'a.prg']);
   });
@@ -91,7 +96,7 @@ describe('packing with Brokkr', () => {
       expect(new Uint8Array(await readFile(join(dir, r.name!)))).toEqual(r.prg);
       const mem = await packWithBrokkr([{ name: 'game.prg', prg }], P({ format: 'brokkr', mode: 'mem' }));
       expect(mem.ok).toBe(true);
-      expect(mem.check?.text).toMatch(/decruncher --format brokkr/);
+      expect(mem.check?.text).toMatch(/^Decrunched by game-brokkr-decrunch\.prg in Brokkr's emulated C64/);
       // forward is for Exomizer's format: the Pack view hides it here, so a stale tick changes nothing
       const backward = await packWithBrokkr([{ name: 'game.prg', prg }], P({ format: 'brokkr', mode: 'mem', forward: true }));
       expect(backward.ok).toBe(true);
@@ -143,7 +148,43 @@ describe('packing with Brokkr', () => {
       expect(new Uint8Array(await readFile(join(dir, r.name!)))).toEqual(r.prg);
       const mem = await packWithBrokkr([{ name: 'game.prg', prg: demo.prg }], P({ format: 'fast', mode: 'mem' }));
       expect(mem.ok).toBe(true);
-      expect(mem.check?.text).toMatch(/decruncher --format fast/);
+      expect(mem.check?.text).toMatch(/^Decrunched by game-brokkr-decrunch\.prg in Brokkr's emulated C64/);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("crunches each part into a file of its own, with one decruncher for all, as the commands it shows do", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-brokkr-'));
+    try {
+      const prg = makePrg(0x1000, bytes(0x3000, i => (i * 13) ^ (i >> 3)));
+      const prefs = P({ mode: 'mem', format: 'fast', split: true, decruncherAt: 0x9000, ranges: [{ start: 0x1000, end: 0x1800 }, { start: 0x2400, end: 0x3000 }] });
+      const r = await packWithBrokkr([{ name: 'game.prg', prg }], prefs);
+      expect(r.ok).toBe(true);
+      expect(r.files?.map(x => x.name)).toEqual(['game-brokkr-1000.prg', 'game-brokkr-2400.prg', 'game-brokkr-decrunch.prg', 'game-brokkr-decrunch.asm']);
+      // the stream: the address after the file's last byte as loaded
+      const [, end, stream] = /^\$1000–\$17ff, loaded at \$[0-9a-f]{4}–\$([0-9a-f]{4}): stream \$([0-9a-f]{4})$/.exec(r.files![0].note)!;
+      expect(parseInt(stream, 16)).toBe(parseInt(end, 16) + 1);
+      expect(r.files![2].note).toMatch(/^the decruncher at \$9000–\$90e0: set stream \(\$fa\)/);
+      expect(r.check).toMatchObject({ status: 'same', text: expect.stringMatching(/each of the 2 files gives the same bytes/) });
+      expect(r.report.layout.map(a => a.name)).toEqual(['Decruncher']);
+      expect(r.commands.map(c => c[c.indexOf('-o') + 1])).toEqual(['game-brokkr-1000.prg', 'game-brokkr-2400.prg', 'game-brokkr-decrunch.asm', 'game-brokkr-decrunch.prg']);
+      expect(r.commands[3]).toEqual(['brokkr', 'decruncher', '--format', 'fast', '--at', '$9000', '-o', 'game-brokkr-decrunch.prg']);
+      // the standalone Brokkr makes the same files; the source Mimir writes names the files at its top
+      for (const i of r.inputs) await writeFile(join(dir, i.name), i.prg);
+      for (const c of r.commands) expect(spawnSync(process.execPath, [cli, ...c.slice(1), '-q'], { cwd: dir, encoding: 'utf8' }).stderr).toBe('');
+      for (const x of r.files!) {
+        const made = new Uint8Array(await readFile(join(dir, x.name)));
+        if (x.name.endsWith('.asm')) expect(new TextDecoder().decode(x.prg).endsWith(new TextDecoder().decode(made))).toBe(true);
+        else expect(made).toEqual(x.prg);
+      }
+      expect(new TextDecoder().decode(r.files![3].prg)).toMatch(/^\/\/ +game-brokkr-2400\.prg: loaded at .*, decrunches to \$2400–\$2fff$/m);
+      // the whole build: a file for each PRG
+      const two = await packWithBrokkr([{ name: 'a.prg', prg: makePrg(0x2000, bytes(3000)) }, { name: 'b.prg', prg: makePrg(0x6000, bytes(2000, i => i * 3)) }], P({ mode: 'mem', split: true }));
+      expect(two.files?.map(x => x.name)).toEqual(['a-brokkr-2000.prg', 'a-brokkr-6000.prg', 'a-brokkr-decrunch.prg', 'a-brokkr-decrunch.asm']);
+      expect(two.check?.status).toBe('same');
+      // a decruncher where a file decrunches does not decrunch it
+      const over = await packWithBrokkr([{ name: 'game.prg', prg }], { ...prefs, decruncherAt: 0x1100 });
+      expect(over.check).toMatchObject({ status: 'differs', text: expect.stringMatching(/game-brokkr-1000\.prg loads at \$[0-9a-f]{4}–\$[0-9a-f]{4}, over the decruncher \(\$1100–\$11e0\)/) });
+      expect(await packWithBrokkr([{ name: 'game.prg', prg }], { ...prefs, decruncherAt: 0xff80 })).toMatchObject({ ok: false, error: expect.stringMatching(/does not fit from \$ff80/) });
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 

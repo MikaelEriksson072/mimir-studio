@@ -370,6 +370,9 @@ describe('schemas', () => {
     // project files from before the decruncher's memory could be set have none of it: Brokkr places it all
     const { zp: _zp, decruncherAt: _at, tablesAt: _table, keep: _keep, ...unplaced } = DEFAULT_PACK;
     expect(packSchema.parse({ files, prefs: unplaced }).prefs).toMatchObject({ zp: null, decruncherAt: null, tablesAt: null, keep: [] });
+    // ... and from before a file for each part: crunched data in one file, with the decruncher written next to it
+    const { split: _split, decruncher: _dec, ...single } = DEFAULT_PACK;
+    expect(packSchema.parse({ files, prefs: single }).prefs).toMatchObject({ split: false, decruncher: true });
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, zp: 0x22, decruncherAt: 0xc000, tablesAt: 0xc400, keep: [{ start: 0x0334, end: 0x0400 }] } }).success).toBe(true);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, zp: 0x100 } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, keep: [{ start: 0xc000, end: 0xc000 }] } }).success).toBe(false);
@@ -751,6 +754,22 @@ describe('toolchain runner', () => {
     const failed = await keepPacked({ ...r, ok: false, name: 'other.prg' }, out);
     expect(existsSync(join(out, 'other.prg'))).toBe(false);
     expect(failed.path).toBe(r.path);
+  });
+
+  it('writes crunched data in a file for each block, and the decruncher for them all, to both folders', async () => {
+    const policy = new PathPolicy(), out = tmp();
+    const prg = Uint8Array.from([0x00, 0x10, ...Array.from({ length: 0x2000 }, (_, i) => ((i * 7) ^ (i >> 4)) & 0xff)]);
+    const prefs = { ...DEFAULT_PACK, mode: 'mem' as const, split: true, ranges: [{ start: 0x1000, end: 0x1800 }, { start: 0x2400, end: 0x3000 }], dir: out };
+    const r = await keepPacked(await packWithBrokkr({ files: [{ name: 'game.prg', prg }], prefs }, policy, q => packWithBrokkrCore(q.files, q.prefs)), out);
+    expect(r.check?.status).toBe('same');
+    expect(r.files?.map(f => [f.name, f.kind])).toEqual([['game-brokkr-1000.prg', 'packed'], ['game-brokkr-2400.prg', 'packed'], ['game-brokkr-decrunch.prg', 'decruncher'], ['game-brokkr-decrunch.asm', 'source']]);
+    for (const f of r.files!) {
+      expect(f.path).toBe(join(out, f.name));
+      expect(readFileSync(f.path)).toEqual(Buffer.from(f.prg));
+      expect(readFileSync(join(r.dir, f.name))).toEqual(Buffer.from(f.prg));
+    }
+    expect(readFileSync(join(out, 'game-brokkr-decrunch.asm'), 'utf8')).toMatch(/^\.const ZP = \$f7/m);
+    expect(r.commands).toHaveLength(4);
   });
 
   it.skipIf(!javaOk)('turns Kick Assembler errors into problems with file and line', async () => {

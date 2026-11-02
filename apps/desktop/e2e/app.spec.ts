@@ -2303,18 +2303,71 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     expect(await packedSize()).toBeLessThanOrEqual(normal);
   });
 
-  await test.step('crunched data: Brokkr decrunches the stream again and says where it loads in place', async () => {
+  await test.step('crunched data with its decruncher, a PRG and source, which decrunches it in an emulated C64', async () => {
     await view.getByLabel('Effort').selectOption('normal');
     await view.getByRole('tab', { name: 'Crunched data' }).click();
     await openSection(page, 'Crunched data');
-    await expect(cmd).toHaveText('brokkr mem -o raster-demo-brokkr.prg raster-demo.prg');
+    const decruncher = ['brokkr decruncher -o raster-demo-brokkr-decrunch.asm', 'brokkr decruncher -o raster-demo-brokkr-decrunch.prg'];
+    await expect(cmd).toHaveText(['brokkr mem -o raster-demo-brokkr.prg raster-demo.prg', ...decruncher].join('\n'));
     // no start and nothing after decrunching: your own code decrunches it
     await expect(view.getByLabel('Start', { exact: true })).toHaveCount(0);
     await expect(view.getByLabel('Flash the border while decrunching')).toHaveCount(0);
+    await expect(view.getByLabel(/Write the decruncher too/)).toBeChecked();
+    // where the decruncher written goes: its own defaults, or as set
+    const section = await openSection(page, "Decruncher's memory");
+    const line = (id: string) => section.locator(`#${id} ~ small`);
+    await expect(line('pack-dec-at')).toHaveText(/^Takes \d+ bytes: \$c000–\$c[0-9a-f]{3} in the PRG; the source goes where you #import it\.$/);
+    await expect(line('pack-tables-at')).toHaveText('Takes 156 bytes: $0334–$03cf.');
+    await expect(line('pack-zp')).toHaveText('Takes 9 bytes: $f7–$ff.');
+    await expect(view.getByLabel('Keep free', { exact: true })).toHaveCount(0);
     await view.getByLabel('No literal sequences (-T 5)').check();
+    await expect(cmd).toHaveText(['brokkr mem -T 5 -o raster-demo-brokkr.prg raster-demo.prg', ...decruncher.map(c => c.replace(' -o', ' --no-literal-sequences -o'))].join('\n'));
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    await expect(card).toContainText("Decrunched by raster-demo-brokkr-decrunch.prg in Brokkr's emulated C64: $0801–$37ff has the same 12287 bytes", { timeout: 90_000 });
+    const written = card.getByRole('list', { name: 'Files written' });
+    await expect(written.getByRole('listitem')).toHaveCount(3);
+    await expect(written).toContainText(/raster-demo-brokkr-decrunch\.prg.*the decruncher at \$c000–\$c[0-9a-f]{3}: set stream \(\$c[0-9a-f]{3}\) to the address after a file's last byte, then jsr \$c000/);
+    await expect(written).toContainText('the decruncher as Kick Assembler source, to #import (it goes where it is imported)');
+    // without it, Brokkr decrunches the stream again
+    await view.getByLabel(/Write the decruncher too/).uncheck();
     await expect(cmd).toHaveText('brokkr mem -T 5 -o raster-demo-brokkr.prg raster-demo.prg');
+    await expect(page.getByRole('region', { name: "Decruncher's memory", exact: true })).toHaveCount(0);
     await view.getByRole('button', { name: 'Pack', exact: true }).click();
     await expect(card).toContainText(/Brokkr decrunched the stream again: the same 12287 bytes\. In place it loads at \$0[0-9a-f]{3} or lower\./, { timeout: 90_000 });
+    await view.getByLabel(/Write the decruncher too/).check();
+  });
+
+  await test.step('a file for each block, with one decruncher for all, and each file saved on its own', async () => {
+    const ranges = view.getByRole('list', { name: 'Ranges to pack' });
+    await view.getByRole('tab', { name: 'Chosen blocks' }).click();
+    await goTo(page, '$0900-$0fff');
+    await view.getByRole('button', { name: /^Selection \$0900–\$0fff$/ }).click();
+    await goTo(page, '$2000-$27ff');
+    await view.getByRole('button', { name: /^Selection \$2000–\$27ff$/ }).click();
+    await expect(ranges).toHaveText('$0900–$0fff$2000–$27ff');
+    const split = view.getByLabel(/A file for each block/);
+    await expect(view.getByText('— 2 files, one decruncher for all, instead of one')).toBeVisible();
+    await split.check();
+    await expect(cmd).toHaveText([
+      'brokkr mem -T 5 -o raster-demo-brokkr-0900.prg raster-demo.prg,$0900,255,1792', 'brokkr mem -T 5 -o raster-demo-brokkr-2000.prg raster-demo.prg,$2000,6143,2048',
+      'brokkr decruncher --no-literal-sequences -o raster-demo-brokkr-decrunch.asm', 'brokkr decruncher --no-literal-sequences -o raster-demo-brokkr-decrunch.prg',
+    ].join('\n'));
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    await expect(card).toContainText('each of the 2 files gives the same bytes', { timeout: 90_000 });
+    await expect(card.locator('.pack-result-head')).toHaveText('2 crunched files');
+    await expect(toast(page, /^Packed 3840 bytes into 2 files \(\d+ bytes\) with the decruncher, decrunch verified$/)).toBeVisible();
+    const written = card.getByRole('list', { name: 'Files written' });
+    await expect(written.getByRole('listitem')).toHaveCount(4);
+    await expect(written).toContainText(/raster-demo-brokkr-2000\.prg.*\$2000–\$27ff, loaded at \$[0-9a-f]{4}–\$[0-9a-f]{4}: stream \$[0-9a-f]{4}/);
+    await expect(card.getByRole('button', { name: 'Save as…', exact: true })).toHaveCount(0);
+    const out = join(work, 'level2.prg');
+    await stubDialogs(app, { save: out });
+    await card.getByRole('button', { name: 'Save raster-demo-brokkr-2000.prg as…' }).click();
+    await expect(toast(page, `Saved ${out}`)).toBeVisible();
+    expect((await dialogOptions(app)).pop()).toMatchObject({ title: 'Save raster-demo-brokkr-2000.prg', defaultPath: expect.stringMatching(/raster-demo-brokkr-2000\.prg$/) });
+    expect(readFileSync(out).length).toBeGreaterThan(2);
+    await split.uncheck();
+    await view.getByRole('tab', { name: 'Whole build' }).click();
   });
 
   await test.step("Brokkr's own format: a self-extracting file with its probabilities, checked the same way", async () => {
@@ -2322,7 +2375,8 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     // decrunched backward by Brokkr's own decruncher: no forward, no literal sequences to leave out
     await expect(view.getByLabel(/Crunch forward/)).toHaveCount(0);
     await expect(view.getByLabel(/No literal sequences/)).toHaveCount(0);
-    await expect(cmd).toHaveText('brokkr mem --format brokkr -o raster-demo-brokkr.prg raster-demo.prg');
+    await expect(cmd).toHaveText(['brokkr mem --format brokkr -o raster-demo-brokkr.prg raster-demo.prg',
+      'brokkr decruncher --format brokkr -o raster-demo-brokkr-decrunch.asm', 'brokkr decruncher --format brokkr -o raster-demo-brokkr-decrunch.prg'].join('\n'));
     await view.getByRole('tab', { name: 'Self-extracting' }).click();
     // the -T 5 ticked for crunched data takes no effect in a self-extracting file
     await expect(cmd).toHaveText('brokkr sfx --format brokkr --start sys -o raster-demo-brokkr.prg raster-demo.prg');

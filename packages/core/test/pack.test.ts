@@ -69,11 +69,15 @@ describe('the settings that take effect', () => {
     expect(shown(packOptions(P()))).toEqual(['effect', 'extra', 'fast', 'irqExit', 'ramExit', 'start']);
     expect(shown(packOptions(P({ mode: 'mem' })))).toEqual(['compat', 'extra', 'fast', 'forward', 'memLoad']);
     // where Brokkr's decruncher works, in a self-extracting file
-    expect(shown(packOptions(P({ packer: 'brokkr' })))).toEqual(['effect', 'effort', 'format', 'irqExit', 'place', 'ramExit', 'start']);
-    expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem' })))).toEqual(['compat', 'effort', 'format', 'forward', 'memLoad']);
+    expect(shown(packOptions(P({ packer: 'brokkr' })))).toEqual(['effect', 'effort', 'format', 'irqExit', 'keep', 'place', 'ramExit', 'start']);
+    // Brokkr's crunched data: a file for each part, and the decruncher written next to it, which goes where it is set
+    expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem' })))).toEqual(['compat', 'decruncher', 'effort', 'format', 'forward', 'memLoad', 'place', 'split']);
+    expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem', decruncher: false })))).toEqual(['compat', 'decruncher', 'effort', 'format', 'forward', 'memLoad', 'split']);
+    // ... which reads backward
+    expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem', forward: true })))).toEqual(['compat', 'effort', 'format', 'forward', 'memLoad', 'split']);
     // Brokkr's own formats are decrunched backward by Brokkr's decruncher; the fast one does not flash the border
-    expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem', format: 'brokkr' })))).toEqual(['effort', 'format', 'memLoad']);
-    expect(shown(packOptions(P({ packer: 'brokkr', format: 'fast' })))).toEqual(['effort', 'format', 'irqExit', 'place', 'ramExit', 'start']);
+    expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem', format: 'brokkr', forward: true })))).toEqual(['decruncher', 'effort', 'format', 'memLoad', 'place', 'split']);
+    expect(shown(packOptions(P({ packer: 'brokkr', format: 'fast' })))).toEqual(['effort', 'format', 'irqExit', 'keep', 'place', 'ramExit', 'start']);
     expect(packOptions(P({ start: 'jmp' })).jmp).toBe(true);
     expect(packOptions(P({ start: 'basic' })).ramExit).toBe(false);
   });
@@ -81,8 +85,10 @@ describe('the settings that take effect', () => {
   it('puts the hidden ones at their defaults', () => {
     const typed = P({ packer: 'brokkr', format: 'fast', mode: 'mem', effect: 'none', ramExit: 0x35, irqExit: false, forward: true, compat: true, fast: true, extra: '-p 4', jmp: 0x1000,
       zp: 0x22, decruncherAt: 0xc000, tablesAt: 0xc400, keep: [{ start: 0xc000, end: 0xd000 }] });
-    expect(packEffective(typed)).toEqual({ ...typed, effect: 'default', ramExit: null, irqExit: null, forward: false, compat: false, fast: false, extra: '', jmp: null,
-      zp: null, decruncherAt: null, tablesAt: null, keep: [] });
+    expect(packEffective(typed)).toEqual({ ...typed, effect: 'default', ramExit: null, irqExit: null, forward: false, compat: false, fast: false, extra: '', jmp: null, keep: [] });
+    // where the decruncher goes takes effect only with the decruncher written
+    expect(packEffective({ ...typed, decruncher: false })).toMatchObject({ zp: null, decruncherAt: null, tablesAt: null, split: false });
+    expect(packEffective(P({ mode: 'sfx', split: true, decruncher: false }))).toEqual(P({ mode: 'sfx' }));
     expect(packEffective(P({ effort: 'max', format: 'brokkr' }))).toEqual(P());
   });
 

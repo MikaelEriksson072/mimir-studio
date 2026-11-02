@@ -8,7 +8,7 @@ import { h2, h4 } from './util/hex';
 export const DEFAULT_PACK: PackPrefs = {
   packer: 'brokkr', effort: 'normal', format: 'exomizer', mode: 'sfx', ranges: null, start: 'sys', jmp: null, effect: 'default', ramExit: null, irqExit: null,
   memLoad: 'auto', forward: false, compat: false, fast: false, extra: '', out: '', dir: '',
-  zp: null, decruncherAt: null, tablesAt: null, keep: [],
+  zp: null, decruncherAt: null, tablesAt: null, keep: [], split: false, decruncher: true,
 };
 
 /** Which settings take effect with this packer, format, kind of file and start: the Pack view shows only these. */
@@ -16,6 +16,8 @@ export function packOptions(p: PackPrefs) {
   const brokkr = p.packer !== 'exomizer', sfx = p.mode === 'sfx';
   // Exomizer's stream: Exomizer's own, or Brokkr's in Exomizer's format
   const exo = !brokkr || p.format === 'exomizer';
+  // Brokkr's decruncher of mem files reads backward
+  const decruncher = brokkr && !sfx && !(exo && p.forward);
   return {
     format: brokkr, effort: brokkr, fast: !brokkr, extra: !brokkr,
     start: sfx, jmp: sfx && p.start === 'jmp',
@@ -28,8 +30,11 @@ export function packOptions(p: PackPrefs) {
     // Brokkr's own formats are decrunched backward; a self-extracting file brings its own decruncher, which reads
     // literal sequences
     forward: !sfx && exo, compat: !sfx && exo,
-    // where Brokkr's decruncher works while a self-extracting file decrunches
-    place: brokkr && sfx,
+    // Brokkr's crunched data: each part a file of its own, and the decruncher for them all written next to them
+    split: brokkr && !sfx, decruncher,
+    // where Brokkr's decruncher works while a self-extracting file decrunches, or where the one written goes; what
+    // a self-extracting file keeps free
+    place: brokkr && (sfx || (decruncher && p.decruncher)), keep: brokkr && sfx,
   };
 }
 
@@ -43,7 +48,7 @@ export function packEffective(p: PackPrefs): PackPrefs {
     irqExit: on.irqExit ? p.irqExit : null, memLoad: on.memLoad ? p.memLoad : d.memLoad, forward: on.forward && p.forward,
     compat: on.compat && p.compat, fast: on.fast && p.fast, extra: on.extra ? p.extra : '',
     zp: on.place ? p.zp : null, decruncherAt: on.place ? p.decruncherAt : null, tablesAt: on.place ? p.tablesAt : null,
-    keep: on.place ? p.keep : [],
+    keep: on.keep ? p.keep : [], split: on.split ? p.split : d.split, decruncher: on.decruncher ? p.decruncher : d.decruncher,
   };
 }
 

@@ -1781,7 +1781,7 @@ medianprogrammet, 0,4 som bäst). Den blinkar inte med kanten (effekten döljs).
 uppackaren för egen kod skrivs med `brokkr decruncher --format fast`. Ett första försök med bitar i ZX0:s stil blev bara
 1,27 gånger så snabbt och lämnades.
 
-- *Decruncher's memory* (Brokkr, *Self-extracting*): var uppackaren arbetar medan den packar upp. *Decruncher at*,
+- *Decruncher's memory* (Brokkr, *Self-extracting*; för *Crunched data*, se nedan): var uppackaren arbetar medan den packar upp. *Decruncher at*,
   *Tables at* och *Zero page at* (`PackPrefs.decruncherAt`, `tablesAt`, `zp`) är menyer: *Auto* (där Brokkr hittar
   plats), platser som passar (`MEMORY_PLACES`: stackens sida, bandbufferten, BASIC:s inmatningsbuffert, fritt RAM vid
   `$c000`, skärmen; `ZP_PLACES`: nollsidans platser Brokkr själv provar, med vad C64:an annars har där) och *An address
@@ -1799,9 +1799,23 @@ uppackaren för egen kod skrivs med `brokkr decruncher --format fast`. Ett förs
   ligger under I/O; då blinkar inte kanten). Filen körs sedan i Brokkrs emulerade C64 från SYS-raden tills programmet
   startar, och minnet jämförs med det som packades. Kontrollen syns som *Decrunched in Brokkr's emulated C64: … has the
   same … bytes, and it starts at $….*
-- *Crunched data*: Exomizers mem-format (`-T4` som standard, för `exodecrunch.s`). Strömmen packas upp igen och jämförs,
-  och kortet säger var den laddas för uppackning på plats. Brokkrs egen uppackare som Kick Assembler-källa skrivs med
-  `brokkr decruncher`.
+- *Crunched data*: Exomizers mem-format (`-T4` som standard, för `exodecrunch.s`), eller Brokkrs egna. Med *Write the
+  decruncher too* (`PackPrefs.decruncher`, på som standard; inte med *Crunch forward*, för uppackaren läser bakåt)
+  skrivs Brokkrs uppackare bredvid: `<namn>-decrunch.prg`, assemblerad vid *Decruncher at* (`$c000` på *Auto*), att
+  ladda och anropa, och `<namn>-decrunch.asm`, samma uppackare som Kick Assembler-källa att #importa, med nollsidan,
+  tabellerna och adressen som konstanter överst (utan `* =` på *Auto*: den hamnar där den importeras) och de packade
+  filerna uppräknade med var de laddas. *Decruncher's memory* visar då *Decruncher at*, *Tables at* och *Zero page at*
+  med uppackarens egna platser på *Auto* (tabellerna i Exomizers format vid `$0334`, i Brokkrs eget på sidan efter
+  uppackaren; nollsidan sist, upp till `$ff`) och exakt hur många byte varje del tar, men inte *Keep free*. Varje packad
+  fil körs genom PRG:n i Brokkrs emulerade C64 med `$01` satt så att allt är RAM (`checkDecruncher`), och kortet säger
+  *Decrunched by <namn>-decrunch.prg in Brokkr's emulated C64: … has the same … bytes* (och vilket `$01` det kräver när
+  det inte är `$37`); en fil som laddas eller packas upp över uppackaren, dess tabeller eller nollsida sägs i stället.
+  Utan uppackaren packas strömmen upp igen och jämförs, och kortet säger var den laddas för uppackning på plats.
+  *A file for each block* / *A file for each PRG* (`PackPrefs.split`, när det finns mer än en del: valda intervall
+  eller byggda PRG:er) packar varje del i en egen fil, `<namn>-<startadress>.prg`, med en uppackare för alla; kommandot
+  har då ett `brokkr mem` per fil och två `brokkr decruncher`. Kortet räknar upp varje fil, med var den laddas och vad
+  `stream` ska sättas till, och var och en kan sparas för sig (*Save … as…*). Allt skrivs i packmappen och i mappen som
+  *Folder* anger.
 - Effekt: kantblink eller inget (`--no-effect`). Uppackaren skriver varje literal till `$d020`; i VICE syns det som
   ränder i kanten medan filen packas upp. Kanten blinkar inte när I/O är bortkopplat under uppackningen, och inte i det
   snabba formatet (där döljs kryssrutan). `$01` och avbrott efter uppackningen som för Exomizer; med RUN är `$01` alltid

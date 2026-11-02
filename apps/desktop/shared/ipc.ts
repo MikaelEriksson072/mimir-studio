@@ -191,10 +191,15 @@ export interface PackFolderRequest { dir?: string; ask?: boolean }
 export interface PackFolderResult { dir: string }
 export interface PackResponse {
   ok: boolean; output: string; argv: string[]; ms: number;
+  /** Brokkr: its commands for all the files (argv is the first) */
+  commands?: string[][];
   /** the pack folder (open in this session: the packed file can be run in VICE) */
   dir: string;
   /** the packed file: its name, path (in `PackPrefs.dir` when that is set, else in the pack folder) and bytes */
   name?: string; path?: string; prg?: Uint8Array;
+  /** Brokkr: every file written, where it is written and what it is (crunched data with `split`: one for each part;
+   * next to crunched data, the decruncher's PRG and source) */
+  files?: { name: string; path: string; prg: Uint8Array; kind: 'packed' | 'decruncher' | 'source'; note: string }[];
   /** the memory that was packed */
   packed: { start: number; length: number } | null;
   report: ExomizerReport;

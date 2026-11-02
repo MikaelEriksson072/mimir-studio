@@ -2,13 +2,11 @@
  * or the error with its code), for editors and build tools. */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import { brkDecrunchSource } from './brk-decruncher.ts';
 import { crunchBrk, type BrkCrunched } from './crunch-brk.ts';
 import { crunchFast, type FastCrunched } from './fast.ts';
-import { fastDecrunchSource } from './fast-decruncher.ts';
 import { crunchData, PROFILES, type CrunchOptions, type Crunched, type Effort } from './crunch.ts';
 import { Disk } from './d64.ts';
-import { decrunchSource } from './decruncher.ts';
+import { decruncherFile } from './decrunch-file.ts';
 import { BrokkrError, h2, h4, span } from './errors.ts';
 import { memBrkFile, memCrunchOptions, memFastFile, memFile, rawBrk, rawFast, rawFile, type MemOptions } from './files.ts';
 import { encodingText, parseEncoding, protocol, type Protocol } from './format.ts';
@@ -27,14 +25,15 @@ commands:
   raw <file>...          a bare stream (exomizer raw)
   d64 <disk> [name]...   list a disk, or pack the files named on it (sfx where they start
                          with a SYS line, mem where not) into a new disk image
-  decruncher             write Brokkr's 6502 decruncher of mem files as Kick Assembler source
+  decruncher             write Brokkr's 6502 decruncher of mem files: Kick Assembler source, or with
+                         -o <file>.prg the decruncher assembled at --at ($c000), to load and jsr to
 
 files: a .prg (its load address first), <file>@<address> for raw bytes, or as Exomizer takes
 a part of a file, <file>,<address>[,<offset>[,<length>]]; several are merged into one memory
 image (a later one wins, gaps are zero).
 
 options:
-  -o <file>              the output (default: <first file>-brokkr.prg, .bin, .d64, .asm)
+  -o <file>              the output (default: <first file>-brokkr.prg, .bin, .d64; brokkr_decrunch.asm)
   --format <f>           exomizer (default): Exomizer 3's format; brokkr: Brokkr's own, about 6.5 %
                          smaller, decrunched about 8 times slower with 0.9-1.9 KB more RAM; fast: Brokkr's
                          fast one, whole bytes, about 13 % larger and decrunched about 1.8 times as fast
@@ -64,7 +63,8 @@ d64:
   --mode <sfx|mem>       pack every named file this way
 decruncher:
   --zp <a> --table <a> --at <a> --four --no-reuse --effect --no-literal-sequences
-  with --format brokkr: --zp <a> --table <page> (1.5 KB) --small (0.5 KB, slower) --at <a> --effect
+  with --format brokkr: --zp <a> --table <page> (1.5 KB, default the page after the decruncher)
+                        --small (0.5 KB, slower) --at <a> --effect
   with --format fast: --zp <a> --at <a>
 `;
 
@@ -307,15 +307,19 @@ async function main(argv: string[]): Promise<number> {
       const format = formatOf(a), own = format === 'brokkr';
       const table = opt('table');
       if (own && table != null && table & 0xff) throw new BrokkrError('BRK-E015', `--table for Brokkr's own format is the start of a page ($c000), not ${h4(table)}.`);
-      const src = own
-        ? brkDecrunchSource({ zp: opt('zp'), table, at: opt('at'), small: !!a.small, effect: !!a.effect })
-        : format === 'fast'
-        ? fastDecrunchSource({ zp: opt('zp'), at: opt('at') })
-        : decrunchSource({ zp: opt('zp'), table, at: opt('at'), four: !!a.four, reuse: !a['no-reuse'], effect: !!a.effect, literalSequences: !a['no-literal-sequences'] });
-      const out = typeof a.o === 'string' ? a.o : 'brokkr_decrunch.asm';
-      writeFileSync(out, src);
-      say(`${out}: Brokkr's decruncher ${own ? 'of its own format ' : format === 'fast' ? 'of its fast format ' : ''}for Kick Assembler`);
-      result = { output: { file: out } };
+      const d = decruncherFile({
+        format, zp: opt('zp'), table, at: opt('at'), small: !!a.small, effect: !!a.effect && format !== 'fast',
+        four: !!a.four, reuse: !a['no-reuse'], literalSequences: !a['no-literal-sequences'],
+      });
+      // a .prg is the decruncher assembled at --at ($c000); anything else is its source
+      const out = typeof a.o === 'string' ? a.o : 'brokkr_decrunch.asm', prg = /\.prg$/i.test(out);
+      writeFileSync(out, prg ? d.prg : d.source);
+      const of = own ? 'of its own format ' : format === 'fast' ? 'of its fast format ' : '';
+      say(prg
+        ? `${out}: Brokkr's decruncher ${of}at ${span(d.start, d.end)} (${d.end - d.start} bytes): set stream (${d.stream < 0x100 ? h2(d.stream) : h4(d.stream)}) to the address after the crunched data, then jsr ${h4(d.entry)}`
+        : `${out}: Brokkr's decruncher ${of}for Kick Assembler`);
+      say(`  zero page ${h2(d.zp.start)}–${h2(d.zp.end - 1)}${d.tables ? `, tables ${span(d.tables.start, d.tables.end)}` : ''}`);
+      result = { output: { file: out, ...(prg ? { start: d.start, end: d.end, entry: d.entry, stream: d.stream } : {}) }, zp: d.zp, tables: d.tables };
     } else {
       throw new BrokkrError('BRK-E010', `"${command}" is not a command.`, 'brokkr --help lists them.');
     }

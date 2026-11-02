@@ -1310,10 +1310,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       setPackRes({ ...r, key: packKeyOf(prefs, filesKey(R)) });
       const from = res.kick?.compared[0] ? `the PRG KickAss.jar built, ${res.kick.compared[0].prgPath}` : 'the PRG the built-in assembler built';
       const check = !r.check ? '' : r.check.argv.length ? `\n\n> ${r.check.argv.map(shellWord).join(' ')}\n${r.check.output.trim()}\n${r.check.text}` : `\n${r.check.text}`;
-      setBuild(b => b && { ...b, log: `${b.log}\n\n> ${r.argv.map(shellWord).join(' ')}\n(in ${r.dir}, from ${from})\n${r.output.trim()}${check}${r.ok ? '' : `\n${r.error}`}` });
+      const commands = (r.commands ?? [r.argv]).map(c => `> ${c.map(shellWord).join(' ')}`).join('\n');
+      setBuild(b => b && { ...b, log: `${b.log}\n\n${commands}\n(in ${r.dir}, from ${from})\n${r.output.trim()}${check}${r.ok ? '' : `\n${r.error}`}` });
       if (!r.ok) { setUi({ bottom: 'build', panelOpen: true }); toast(`${packer}: ${r.error}`, 'err'); return; }
       const bad = r.check?.status === 'differs';
-      toast(`Packed ${r.packed?.length ?? 0} bytes into ${dir || home ? r.path : r.name} (${r.prg?.length ?? 0} bytes)${r.check?.status === 'same' ? ', decrunch verified' : bad ? ', but it does not decrunch to the same bytes' : ''}`, bad ? 'err' : 'ok');
+      // crunched data in a file for each part says how many, and that the decruncher is written with them
+      const packed = r.files?.filter(f => f.kind === 'packed') ?? [];
+      const into = packed.length > 1 ? `${packed.length} files (${packed.reduce((n, f) => n + f.prg.length, 0)} bytes)` : `${dir || home ? r.path : r.name} (${r.prg?.length ?? 0} bytes)`;
+      const decruncher = r.files?.some(f => f.kind === 'decruncher') ? ' with the decruncher' : '';
+      toast(`Packed ${r.packed?.length ?? 0} bytes into ${into}${decruncher}${r.check?.status === 'same' ? ', decrunch verified' : bad ? ', but it does not decrunch to the same bytes' : ''}`, bad ? 'err' : 'ok');
     } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
   };
   /** the packed file in VICE (with the build's labels, which name the decrunched program) */
@@ -1333,10 +1338,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (!kr) return needDesktop();
     try { const r = await kr.saveFile({ name, bytes, title: 'Save graphics' }); if (r) toast(`Saved ${r.path} (${bytes.length} bytes)`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
-  const savePacked = async () => {
+  /** a file the pack wrote (the packed file, when none is named), through a save dialog */
+  const savePacked = async (file?: { name: string; prg: Uint8Array }) => {
     if (!kr) return needDesktop();
-    if (!packRes?.prg || !packRes.name) return;
-    try { const r = await kr.saveFile({ name: packRes.name, bytes: packRes.prg, title: 'Save the packed file' }); if (r) toast(`Saved ${r.path}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+    const f = file ?? (packRes?.prg && packRes.name ? { name: packRes.name, prg: packRes.prg } : null);
+    if (!f) return;
+    try { const r = await kr.saveFile({ name: f.name, bytes: f.prg, title: file ? `Save ${f.name}` : 'Save the packed file' }); if (r) toast(`Saved ${r.path}`, 'ok'); } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
 
   /** verify, then export to the project's source folder (`elsewhere`, or without a project: to a folder picked); the
@@ -1834,7 +1841,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? { addr: bmEdit, cursorAt: lineAddr() ?? null, onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); }, onPreview: a => navigate(a, { center: true, listing: true, noHistory: true }) } : null}
           pack={{ A, R, project, cursor, sel, prefs: packPrefs, exomizer: toolchain.exomizerPath, desktop: !!kr, busy: buildBusy, packing: packRun, result: packRes, current: packKey,
-            onChange: setPack, onPack: () => void runPack(), onPickDir: () => void pickPackDir(), onRun: () => void runPacked(), onSave: () => void savePacked(), onSettings: () => setModal('settings'),
+            onChange: setPack, onPack: () => void runPack(), onPickDir: () => void pickPackDir(), onRun: () => void runPacked(), onSave: () => void savePacked(), onSaveFile: f => void savePacked(f), onSettings: () => setModal('settings'),
             onLog: () => setUi({ bottom: 'build', panelOpen: true }), onNavigate: a => { nav(a); setDrawer(null); } }} />
       </ErrorBoundary></aside>
       <button className="icon-btn side-collapse" onClick={toggleSide} aria-label="Collapse side panel" title="Collapse the side panel: the listing gets its room (Ctrl+Shift+B). The view's button in the activity bar brings it back"><Icon name="side-hide" size={16} /></button>

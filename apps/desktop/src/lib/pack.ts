@@ -2,7 +2,7 @@
  * built PRGs (Exomizer), or packs them the same way with Brokkr, which Build & Run verified to be the loaded files
  * byte for byte. */
 import {
-  brokkrArgs, DEFAULT_PACK, packArgs, packEffective, packFileName, packImage, packInputs, packOutName, packParts, rangeCover, shellWord,
+  brokkrCommands, brokkrPlan, DEFAULT_PACK, packArgs, packEffective, packFileName, packImage, packInputs, packOutName, packParts, rangeCover, shellWord,
   type AnalysisResult, type FileInput, type PackPart, type PackPrefs, type Project,
 } from '@mimir/core';
 
@@ -21,21 +21,24 @@ export const basicSys = (A: Pick<AnalysisResult, 'basics'>): number | null => A.
 /** the built files as the pack folder names them: `<source name>.prg`, as Kick Assembler writes them */
 export const packNames = (fileNames: readonly string[]): string[] => fileNames.map(n => packFileName(`${n}.prg`));
 
-export interface PackCommand { args: string[]; text: string; out: string; parts: PackPart[]; size: number }
+/** `outs`: every file it writes (Brokkr: one for each part, with `split`, and the decruncher's PRG and source) */
+export interface PackCommand { args: string[]; text: string; out: string; outs: string[]; parts: PackPart[]; size: number }
 
 /** The command for `prefs` on these files (`exe`: Exomizer's executable name as shown); for Brokkr, the standalone
  * Brokkr's command that makes the same file in the pack folder. */
 export function packCommand(prefs: PackPrefs, files: readonly Pick<FileInput, 'load' | 'bytes'>[], fileNames: readonly string[], exe = 'exomizer'): PackCommand {
   const names = packNames(fileNames);
-  const parts = packParts(prefs.ranges, files.map((f, i) => ({ name: names[i] ?? `file${i + 1}.prg`, load: f.load, bytes: f.bytes })));
+  const named = files.map((f, i) => ({ name: names[i] ?? `file${i + 1}.prg`, load: f.load, bytes: f.bytes }));
+  const parts = packParts(prefs.ranges, named);
   const out = packOutName(prefs, names[0] ?? 'packed.prg');
   const size = packImage(parts)?.bytes.length ?? 0;
   if (prefs.packer !== 'exomizer') {
-    const argv = brokkrArgs(prefs, packInputs(parts), out);
-    return { args: argv.slice(1), out, parts, size, text: argv.map(shellWord).join(' ') };
+    const plan = brokkrPlan(prefs, named), commands = brokkrCommands(prefs, plan);
+    const outs = [...plan.files.map(f => f.out), ...(plan.decruncher ? [plan.decruncher.prg, plan.decruncher.source] : [])];
+    return { args: commands[0].slice(1), out: plan.files[0].out, outs, parts, size, text: commands.map(c => c.map(shellWord).join(' ')).join('\n') };
   }
   const args = packArgs(prefs, packInputs(parts), out);
-  return { args, out, parts, size, text: [exe, ...args].map(shellWord).join(' ') };
+  return { args, out, outs: [out], parts, size, text: [exe, ...args].map(shellWord).join(' ') };
 }
 
 /** A warning about settings the packer would refuse or that would not start the program, or null. */

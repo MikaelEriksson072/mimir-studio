@@ -4,7 +4,7 @@
  * with the packer, format and kind of file chosen (packOptions); they are kept in the project. Pack builds, verifies
  * and packs. */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, MEMORY_PLACES, mergeRanges, packNeeds, packOptions, packProblem, parseKeep, placeSpan, ZP_PLACES, type PackPlace, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
+import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, MEMORY_PLACES, mergeRanges, packDecruncher, packEffective, packNeeds, packOptions, packProblem, parseKeep, placeSpan, ZP_PLACES, type PackPlace, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
 import type { PackResponse } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
 import { SideSection } from './SideSection';
@@ -33,6 +33,8 @@ export interface PackViewProps {
   current: string;
   onChange: (p: PackPrefs, label: string) => void;
   onPack: () => void; onRun: () => void; onSave: () => void; onLog: () => void; onSettings: () => void;
+  /** one of the files the pack wrote, through a save dialog */
+  onSaveFile: (f: { name: string; prg: Uint8Array }) => void;
   /** a dialog for the folder the packed file is written to (`PackPrefs.dir`) */
   onPickDir: () => void;
   onNavigate: (a: Addr) => void;
@@ -100,8 +102,9 @@ function TextField({ id, label, value, placeholder, error, help, onCommit }: { i
 interface PartNeed { min: number; max: number; align?: number }
 
 /** Where a part of the decruncher goes: Auto, one of the places that suit it, or an address of one's own; below it, the
- * bytes it takes and where it would end, or what is wrong with the place. */
-function PlaceField({ id, label, value, places, max, need, clash, onCommit }: { id: string; label: string; value: Addr | null; places: readonly PackPlace[]; max: number; need: PartNeed; clash?: string | null; onCommit: (v: Addr | null) => void }) {
+ * bytes it takes and where it would end, or what is wrong with the place. Auto is where Brokkr finds room, or (the
+ * decruncher written next to crunched data) an address of its own, `auto.at`, with `auto.note` after where it ends. */
+function PlaceField({ id, label, value, places, max, need, clash, auto, onCommit }: { id: string; label: string; value: Addr | null; places: readonly PackPlace[]; max: number; need: PartNeed; clash?: string | null; auto?: { at: Addr; note?: string } | null; onCommit: (v: Addr | null) => void }) {
   const known = (v: Addr | null) => v == null || places.some(p => p.at === v);
   const [own, setOwn] = useState(!known(value));
   useEffect(() => { if (!known(value)) setOwn(true); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -109,6 +112,10 @@ function PlaceField({ id, label, value, places, max, need, clash, onCommit }: { 
   const bytes = need.min === need.max ? `${need.max} bytes` : `${need.min} to ${need.max} bytes`;
   const preset = value != null ? places.find(p => p.at === value) : undefined;
   let info: ReactNode = `Takes ${bytes}, where Brokkr finds room.`, warn: string | null = null;
+  if (value == null && auto) {
+    const span = placeSpan(auto.at, need.max, need.align);
+    info = <>Takes {bytes}: <span className="mono">{hex(span.start)}–{hex(span.end - 1)}</span>{auto.note ?? ''}.</>;
+  }
   if (value != null) {
     const span = placeSpan(value, need.max, need.align);
     const top = max + 1;
@@ -125,7 +132,7 @@ function PlaceField({ id, label, value, places, max, need, clash, onCommit }: { 
         setOwn(false);
         onCommit(v === 'auto' ? null : Number(v));
       }}>
-        <option value="auto">Auto: where Brokkr finds room</option>
+        <option value="auto">{auto ? `Auto: ${hex(auto.at)}` : 'Auto: where Brokkr finds room'}</option>
         {places.map(p => <option key={p.at} value={p.at}>{hex(p.at)}: {p.what}</option>)}
         <option value="own">An address of your own…</option>
       </select>
@@ -172,11 +179,21 @@ export function PackView(p: PackViewProps) {
   const o = packOptions(prefs);
   // what the decruncher takes, and whether its tables would lie over it where both are set
   const needs = packNeeds(prefs);
-  const decSpan = prefs.decruncherAt != null ? placeSpan(prefs.decruncherAt, needs.resident.max) : null;
+  // the decruncher written next to crunched data: where each part goes on Auto (its own defaults), and what is wrong
+  const written = packEffective(prefs).decruncher && o.decruncher;
+  const autoOf = (patch: Partial<PackPrefs>) => { const d = written ? packDecruncher({ ...prefs, ...patch }) : null; return d && typeof d !== 'string' ? d : null; };
+  const auto = written ? {
+    decruncher: { at: autoOf({ decruncherAt: null })?.start ?? 0xc000, note: ' in the PRG; the source goes where you #import it' },
+    tables: autoOf({ tablesAt: null })?.tables ?? null, zp: autoOf({ zp: null })?.zp ?? null,
+  } : null;
+  const decProblem = written ? (d => typeof d === 'string' ? d : null)(packDecruncher(prefs)) : null;
+  const decSpan = prefs.decruncherAt != null || auto ? placeSpan(prefs.decruncherAt ?? auto!.decruncher.at, needs.resident.max) : null;
   const tabSpan = prefs.tablesAt != null ? placeSpan(prefs.tablesAt, needs.tables.max, needs.tables.align) : null;
   const tablesClash = decSpan && tabSpan && decSpan.start < tabSpan.end && tabSpan.start < decSpan.end
     ? `It overlaps the decruncher ($${h4(decSpan.start)}–$${h4(decSpan.end - 1)}).` : null;
-  const ready = desktop && (brokkr || !!exomizer) && !problem && !busy && !packing;
+  // the parts that can each be a file of their own: the ranges chosen, or the built PRGs
+  const parts = prefs.ranges ? mergeRanges(prefs.ranges).length : project.files.length;
+  const ready = desktop && (brokkr || !!exomizer) && !problem && !decProblem && !busy && !packing;
   // a new result comes into view when the pack is done (not the one there was when the view opened)
   const resultRef = useRef<HTMLDivElement>(null), seen = useRef(result);
   useEffect(() => {
@@ -311,25 +328,36 @@ export function PackView(p: PackViewProps) {
           {typeof prefs.memLoad === 'number' && <HexField id="pack-load-at" label="Load at" value={prefs.memLoad} onCommit={v => set({ memLoad: v ?? 'auto' }, 'Pack: load address')} />}
           {o.forward && <label className="check"><input id="pack-forward" type="checkbox" checked={prefs.forward} onChange={e => set({ forward: e.target.checked }, 'Pack: forward')} /><span>Crunch forward (-f)<small className="muted"> — the default decrunches backward</small></span></label>}
           {o.compat && <label className="check"><input id="pack-compat" type="checkbox" checked={prefs.compat} onChange={e => set({ compat: e.target.checked }, 'Pack: no literal sequences')} /><span>No literal sequences ({brokkr ? '-T 5' : '-c'})<small className="muted"> — for old decrunchers</small></span></label>}
-          <p className="muted small">{DECRUNCH[brokkr ? prefs.format : 'exomizer-tool']}</p>
+          {o.split && parts > 1 && <label className="check"><input id="pack-split" type="checkbox" checked={prefs.split} onChange={e => set({ split: e.target.checked }, 'Pack: a file for each part')} />
+            <span>{prefs.ranges ? 'A file for each block' : 'A file for each PRG'}<small className="muted"> — {parts} files{written ? ', one decruncher for all' : ''}, instead of one</small></span></label>}
+          {o.decruncher && <label className="check"><input id="pack-decruncher" type="checkbox" checked={prefs.decruncher} onChange={e => set({ decruncher: e.target.checked }, 'Pack: write the decruncher')} />
+            <span>Write the decruncher too<small className="muted"> — a PRG to load and call, and Kick Assembler source to #import</small></span></label>}
+          <p className="muted small">{written
+            ? <>Next to the crunched {prefs.split && parts > 1 ? 'files' : 'file'}, Brokkr writes its decruncher, <span className="mono">{cmd.outs.find(n => n.endsWith('.prg') && n.includes('-decrunch'))}</span> and <span className="mono">.asm</span>, and decrunches each file with it in its emulated C64. For each file, set <span className="mono">stream</span> to the address after its last byte, then <span className="mono">jsr</span> to the decruncher.</>
+            : !o.decruncher && brokkr ? <>Brokkr's decruncher reads backward: for data crunched forward, use Exomizer's <span className="mono">exodecrunch.s</span>.</>
+            : DECRUNCH[brokkr ? prefs.format : 'exomizer-tool']}</p>
         </SideSection>
       )}
       {o.place && (
         <SideSection id="pack-work" title="Decruncher's memory"
-          summary={prefs.decruncherAt != null || prefs.tablesAt != null || prefs.zp != null || prefs.keep.length ? 'as set' : 'where Brokkr finds room'}>
-          <PlaceField id="pack-dec-at" label="Decruncher at" value={prefs.decruncherAt} places={MEMORY_PLACES} max={0xffff} need={needs.resident}
+          summary={prefs.decruncherAt != null || prefs.tablesAt != null || prefs.zp != null || (o.keep && prefs.keep.length) ? 'as set' : sfx ? 'where Brokkr finds room' : "the decruncher's own"}>
+          <PlaceField id="pack-dec-at" label="Decruncher at" value={prefs.decruncherAt} places={MEMORY_PLACES} max={0xffff} need={needs.resident} auto={auto?.decruncher}
             onCommit={v => set({ decruncherAt: v }, 'Pack: decruncher address')} />
           {needs.tables.max > 0
             ? <PlaceField id="pack-tables-at" label="Tables at" value={prefs.tablesAt} places={MEMORY_PLACES} max={0xffff} need={needs.tables} clash={tablesClash}
+              auto={auto && auto.tables && { at: auto.tables.start, note: prefs.format === 'brokkr' && prefs.tablesAt == null ? ', the page after the decruncher' : undefined }}
               onCommit={v => set({ tablesAt: v }, 'Pack: tables address')} />
             : <p className="muted small">The fast format's decruncher has no tables.</p>}
-          <PlaceField id="pack-zp" label="Zero page at" value={prefs.zp} places={ZP_PLACES} max={0xff} need={{ min: needs.zp, max: needs.zp }}
+          <PlaceField id="pack-zp" label="Zero page at" value={prefs.zp} places={ZP_PLACES} max={0xff} need={{ min: needs.zp, max: needs.zp }} auto={auto?.zp && { at: auto.zp.start }}
             onCommit={v => set({ zp: v != null && v < 2 ? 2 : v }, 'Pack: zero page address')} />
-          <RangesField id="pack-keep" label="Keep free" value={prefs.keep} placeholder="$c000-$cfff, $0334-$03ff" onCommit={v => set({ keep: v }, 'Pack: memory to keep free')}
+          {o.keep && <RangesField id="pack-keep" label="Keep free" value={prefs.keep} placeholder="$c000-$cfff, $0334-$03ff" onCommit={v => set({ keep: v }, 'Pack: memory to keep free')}
             help={prefs.keep.length
               ? `Keeps ${prefs.keep.reduce((n, r) => n + r.end - r.start, 0)} bytes free: the decruncher, its tables and the crunched data stay out of them.`
-              : 'Memory the decruncher, its tables and the crunched data stay out of while it decrunches.'} />
-          <p className="muted small">Left empty, Brokkr puts the decruncher and its tables where the program leaves room, the stack page and $0334 first. The packed file says where they went.</p>
+              : 'Memory the decruncher, its tables and the crunched data stay out of while it decrunches.'} />}
+          {decProblem && <p className="err-text small">{decProblem}</p>}
+          <p className="muted small">{sfx
+            ? 'Left empty, Brokkr puts the decruncher and its tables where the program leaves room, the stack page and $0334 first. The packed file says where they went.'
+            : 'Where the decruncher written goes, with its tables and zero page. The source takes them as constants at its top; it does not change $01, so all of it must be RAM while it decrunches.'}</p>
         </SideSection>
       )}
 
@@ -339,7 +367,7 @@ export function PackView(p: PackViewProps) {
         <button className="btn primary pack-go" disabled={!ready} onClick={p.onPack} title="Build and verify with Build & Run's toolchain, then pack the result">
           {packing ? <><span className="spinner" aria-hidden />Packing…</> : <><Icon name="download" size={14} />{busy ?? 'Pack'}</>}</button>
         {!packing && <p className="muted small">Pack builds and verifies the program first, like Build &amp; Run.</p>}
-        {packing ? <PackingCard packing={packing} /> : <div ref={resultRef}>{result && <PackResultCard result={result} fresh={fresh} onRun={p.onRun} onSave={p.onSave} onLog={p.onLog} />}</div>}
+        {packing ? <PackingCard packing={packing} /> : <div ref={resultRef}>{result && <PackResultCard result={result} fresh={fresh} onRun={p.onRun} onSave={p.onSave} onSaveFile={p.onSaveFile} onLog={p.onLog} />}</div>}
       </SideSection>
     </div>
   );
@@ -358,7 +386,8 @@ function PackingCard({ packing }: { packing: PackProgress }) {
   const p = packing.prefs, brokkr = p.packer !== 'exomizer', sfx = p.mode === 'sfx', verifying = packing.step === 'verify';
   const who = brokkr ? 'Brokkr' : 'Exomizer';
   const how = brokkr ? `${FORMAT_NAME[p.format]}, effort ${p.effort === 'max' ? 'Max, on every core' : p.effort === 'fast' ? 'Fast' : 'Normal'}` : sfx ? 'a self-extracting program' : 'crunched data';
-  const check = !sfx ? (brokkr ? 'then Brokkr decrunches the stream again and compares' : null)
+  const written = packEffective(p).decruncher && packOptions(p).decruncher;
+  const check = !sfx ? (written ? "then each file is decrunched by the decruncher in Brokkr's emulated C64 and compared" : brokkr ? 'then Brokkr decrunches the stream again and compares' : null)
     : brokkr ? "then the file runs in Brokkr's emulated C64 and is compared" : "then Exomizer's desfx decrunches it and it is compared";
   const step = (current: boolean, done: boolean, title: string, note?: string | null) => (
     <li className={cx(current && 'now', done && 'done')}>
@@ -377,7 +406,7 @@ function PackingCard({ packing }: { packing: PackProgress }) {
   );
 }
 
-function PackResultCard({ result: r, fresh, onRun, onSave, onLog }: { result: PackResult; fresh: boolean; onRun: () => void; onSave: () => void; onLog: () => void }) {
+function PackResultCard({ result: r, fresh, onRun, onSave, onSaveFile, onLog }: { result: PackResult; fresh: boolean; onRun: () => void; onSave: () => void; onSaveFile: (f: { name: string; prg: Uint8Array }) => void; onLog: () => void }) {
   if (!r.ok) {
     return (
       <div className="pack-result bad" role="status">
@@ -386,13 +415,24 @@ function PackResultCard({ result: r, fresh, onRun, onSave, onLog }: { result: Pa
         <div className="bm-actions"><button className="btn small" onClick={onLog}>Show output</button></div>
       </div>);
   }
-  const size = r.prg?.length ?? 0, from = r.packed?.length ?? 0;
+  // several files: crunched data in a file for each part, or with the decruncher written next to it
+  const files = r.files && r.files.length > 1 ? r.files : null;
+  const packed = files?.filter(f => f.kind === 'packed') ?? [];
+  const size = packed.length > 1 ? packed.reduce((n, f) => n + f.prg.length, 0) : r.prg?.length ?? 0, from = r.packed?.length ?? 0;
   const sfx = r.argv[1] === 'sfx';
   const after = (what: string) => r.report.decruncher.find(d => d.what === what)?.exit;
   return (
     <div className={cx('pack-result', r.check?.status === 'differs' ? 'bad' : 'ok', !fresh && 'stale')} role="status" aria-label="Packed file">
-      <div className="pack-result-head"><Icon name={r.check?.status === 'differs' ? 'err' : 'ok'} size={14} /><b className="mono" title={r.path}>{r.name}</b></div>
-      <div className="small">{from ? <>{from} bytes packed to {size} ({Math.round((size / from) * 100)} %)</> : null}{r.packed ? <span className="muted mono"> · ${h4(r.packed.start)}–${h4(r.packed.start + r.packed.length - 1)}</span> : null}</div>
+      <div className="pack-result-head"><Icon name={r.check?.status === 'differs' ? 'err' : 'ok'} size={14} /><b className="mono" title={r.path}>{packed.length > 1 ? `${packed.length} crunched files` : r.name}</b></div>
+      <div className="small">{from ? <>{from} bytes packed to {size} ({Math.round((size / from) * 100)} %)</> : null}{r.packed && packed.length <= 1 ? <span className="muted mono"> · ${h4(r.packed.start)}–${h4(r.packed.start + r.packed.length - 1)}</span> : null}</div>
+      {files && <ul className="pack-out" aria-label="Files written">
+        {files.map(f => (
+          <li key={f.name}>
+            <div className="pack-out-head"><span className="mono" title={f.path}>{f.name}</span><span className="muted small">{fmtBytes(f.prg.length)}</span>
+              <button className="icon-btn" aria-label={`Save ${f.name} as…`} title={`Save ${f.name} as…`} onClick={() => onSaveFile(f)}><Icon name="download" size={11} /></button></div>
+            <div className="muted small">{f.note}</div>
+          </li>))}
+      </ul>}
       {r.path && !r.path.startsWith(r.dir) && <div className="small">Written to <span className="mono" title={r.path}>{r.path.replace(/[\\/][^\\/]*$/, '')}</span></div>}
       {r.check && <div className={cx('small', r.check.status === 'same' ? 'ok-text' : r.check.status === 'differs' ? 'err-text' : 'muted')}>{r.check.text}</div>}
       {!sfx && !r.check && <div className="muted small">Crunched data: not run or checked here.</div>}
@@ -404,7 +444,7 @@ function PackResultCard({ result: r, fresh, onRun, onSave, onLog }: { result: Pa
       {!fresh && <div className="warn-text small">Out of date: the program or the pack settings changed since.</div>}
       <div className="bm-actions">
         {sfx && <button className="btn small primary" onClick={onRun}><Icon name="play" size={12} />Run in VICE</button>}
-        <button className="btn small" onClick={onSave}><Icon name="download" size={12} />Save as…</button>
+        {!files && <button className="btn small" onClick={onSave}><Icon name="download" size={12} />Save as…</button>}
         <button className="btn small ghost" onClick={onLog}>Output</button>
       </div>
     </div>

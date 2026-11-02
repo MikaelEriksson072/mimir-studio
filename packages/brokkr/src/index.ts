@@ -13,6 +13,7 @@ export { crunchFast, readFast, writeFast, FastError, type FastCrunched, type Fas
 export { fastDecrunchSource, FAST_ZP_BYTES } from './fast-decruncher.ts';
 export { Disk, type DiskFile } from './d64.ts';
 export { decrunchSource, ZP_BYTES } from './decruncher.ts';
+export { decruncherFile, checkDecruncher, DECRUNCHER_AT, type DecruncherFile, type DecruncherOptions } from './decrunch-file.ts';
 export { assemble, AsmError, type Assembled } from './asm.ts';
 export { Machine } from './emulate.ts';
 export { BrokkrError } from './errors.ts';

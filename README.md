@@ -109,7 +109,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   fastest decrunching one of whole bytes: 13 % more, decrunched about twice as fast. Exomizer itself is still a choice.
   The view shows only the settings that work for the packer, format and kind of file you choose: what to pack, the
   packed file (format, effort, name, and a folder it is written to each time), then how a self-extracting file starts (start, `$01` and interrupts after, the
-  border flash) or how crunched data loads, and the exact command it runs.
+  border flash) or how crunched data loads, and the exact command it runs. Crunched data can go in a file for each block
+  (or PRG), and Brokkr writes its decruncher next to it, one for all of them, as a PRG to load and call and as Kick
+  Assembler source to #import; each file is decrunched with that PRG in the emulated C64 before it is handed over.
 - **The toolchain is built in:** Kick Assembler builds, VICE (`F5`), Brokkr or Exomizer packing in the *Pack* view, and a
   terminal with the tools on its `PATH`.
 

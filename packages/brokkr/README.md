@@ -160,6 +160,24 @@ flag: the crunched data, the data and the decruncher must be RAM while it runs. 
 also decrunches files made by `exomizer mem`: for streams crunched without `-T4` (Brokkr's default), set `MIRRORS` to 1
 in its constants.
 
+#### One decruncher for many files
+
+The decruncher is the same for every file crunched in its format with the same options, so crunch each part on its
+own and keep one decruncher in memory for all of them. With `-o` ending in `.prg`, `brokkr decruncher` writes it
+assembled, at `--at` (`$c000` when it is not given), to load like any other file:
+
+```
+brokkr mem --format fast level1.prg -o level1-packed.prg
+brokkr mem --format fast level2.prg -o level2-packed.prg
+brokkr decruncher --format fast --at $c000 -o decrunch.prg
+```
+
+It prints what to call: `decrunch.prg: Brokkr's decruncher of its fast format at $c000–$c0e0 (225 bytes): set stream
+($fa) to the address after the crunched data, then jsr $c000`, and the zero page and the tables it uses. For each
+file, set those two bytes (low byte first) to the address after its last byte as loaded and `jsr` to the decruncher.
+`--json` gives `entry`, `stream`, `zp` and `tables` as numbers. The tables of Brokkr's own format go on the page after
+the decruncher unless `--table` says otherwise.
+
 ### `raw`: a bare stream
 
 `brokkr raw` writes the stream alone, as `exomizer raw` does: `-b` crunches backward, `-r` writes the file reversed.
@@ -176,7 +194,7 @@ The disk image you give is not changed.
 | | |
 |---|---|
 | `--format exomizer\|brokkr\|fast` | the stream format ([The formats](#the-formats)) |
-| `--at`, `--table`, `--zp`, `--keep` | for `sfx` and `d64`: where the decruncher works ([`sfx`](#sfx-a-self-extracting-program)) |
+| `--at`, `--table`, `--zp`, `--keep` | for `sfx` and `d64`: where the decruncher works ([`sfx`](#sfx-a-self-extracting-program)); for `decruncher`, where it goes (not `--keep`) |
 | `--effort fast\|normal\|max` | how hard it crunches: `fast` takes a quarter of the time for streams about 1.7 % larger, `max` searches further on every core but one |
 | `--threads <n>` | the threads for `--effort max` |
 | `-o <file>` | the output (default `<first file>-brokkr.prg`, `.bin`, `.d64` or `.asm`) |
@@ -203,8 +221,10 @@ const r = sfx(program, 0x0801, { format: 'fast' });   // program: the bytes afte
 ```
 
 `decruncherNeeds({ format, start })` says what a self-extracting file's decruncher takes before anything is crunched:
-its resident part's bytes (the least and the most), its tables' and its zero page's. `src/node.ts` adds the pool of
-worker threads that `--effort max` uses.
+its resident part's bytes (the least and the most), its tables' and its zero page's. `decruncherFile({ format, at })`
+gives the decruncher of mem files as source and as a PRG, with its entry, its `stream` bytes, its zero page and its
+tables; `checkDecruncher(file, crunched, data)` runs a crunched file through that PRG in the emulated C64 and compares
+what it wrote. `src/node.ts` adds the pool of worker threads that `--effort max` uses.
 
 ## Better than Exomizer 3.1.1 at
 
