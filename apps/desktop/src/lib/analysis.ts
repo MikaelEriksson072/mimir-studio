@@ -31,7 +31,8 @@ export interface Analysis {
 export function useAnalysis(project: Project, opts: RenderOptions = {}): { analysis: Analysis | null; error: string | null; busy: boolean } {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** the request the last result or error belongs to (a superseded one is dropped and never lands) */
+  const [landed, setLanded] = useState(0);
   // Immer keeps unchanged branches referentially equal, so identity tells what changed
   const last = useRef<{ files: unknown; overrides: unknown; entries: unknown; entryPoint: unknown; bankZones: unknown; relocs: unknown; settings: unknown; cart: unknown; key: number } | null>(null);
   const aKey = useMemo(() => {
@@ -42,11 +43,16 @@ export function useAnalysis(project: Project, opts: RenderOptions = {}): { analy
     return last.current!.key;
   }, [project.files, project.overrides, project.entries, project.entryPoint, project.bankZones, project.relocs, project.settings, project.cart]);
 
+  // what the effect below is asked to analyse: a new number in the render that commits an edit, so busy shows in that
+  // same commit (set in the effect, it would render a task later, and a wait for "analysing" to go could pass before
+  // the analysis even started)
+  const asked = useMemo(() => ++keyCounter, [project, aKey, opts.dataAsCode]);
+  const busy = landed !== asked;
+
   const seq = useRef(0);
   const hasResult = analysis != null;
   useEffect(() => {
     const mine = ++seq.current;
-    setBusy(true);
     const timer = setTimeout(async () => {
       try {
         const res = await analysisWorker().run(project, aKey, opts);
@@ -59,7 +65,7 @@ export function useAnalysis(project: Project, opts: RenderOptions = {}): { analy
       } catch (e) {
         if (mine === seq.current) setError(String((e as Error)?.message ?? e));
       } finally {
-        if (mine === seq.current) setBusy(false);
+        if (mine === seq.current) setLanded(asked);
       }
     }, hasResult ? 30 : 0);
     return () => clearTimeout(timer);
