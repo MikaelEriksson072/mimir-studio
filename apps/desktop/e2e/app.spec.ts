@@ -854,7 +854,7 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
   await test.step('File → Open PRG files… opens a PRG; the File button closes its menu too', async () => {
     await file.click();
     await expect(file).toHaveAttribute('aria-expanded', 'true');
-    await expect(menu.getByRole('menuitem')).toHaveText(['Open PRG files…Ctrl+O', 'Save: create a project from this work…Ctrl+S']);
+    await expect(menu.getByRole('menuitem')).toHaveText(['Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount D64 disk image…', 'Save: create a project from this work…Ctrl+S']);
     await file.click();
     await expect(menu).toBeHidden();
     await expect(file).toHaveAttribute('aria-expanded', 'false');
@@ -903,6 +903,79 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
     expect(existsSync(join(out, 'original', 'raster-demo.prg'))).toBe(true);
     // nothing to put in it: no bookmarks, no comments
     expect(existsSync(join(out, 'NOTES.html'))).toBe(false);
+  });
+});
+
+test('the File menu opens each kind of file with a dialog of its own, and the Explorer shows it in its section', async ({ app, page }) => {
+  await waitForListing(page);
+  const file = page.getByRole('button', { name: 'File', exact: true });
+  const explorer = page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Explorer' });
+  const expanded = (name: string) => page.getByRole('region', { name, exact: true }).locator('.sec-toggle');
+  /** the title, filters and selection of the last open dialog */
+  const lastDialog = () => app.evaluate(() => {
+    const all = (globalThis as unknown as { dialogOptions?: { title?: string; filters?: { name: string; extensions: string[] }[]; properties?: string[] }[] }).dialogOptions ?? [];
+    const o = all[all.length - 1];
+    return { title: o?.title, filters: o?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: o?.properties };
+  });
+  /** another view in the side panel, every Explorer section closed: the File menu's choice brings them back */
+  const elsewhere = async () => {
+    for (const t of await page.locator('.side-sec .sec-toggle[aria-expanded="true"]').all()) await t.click();
+    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Blocks' }).click();
+    await expect(explorer).toHaveAttribute('aria-pressed', 'false');
+  };
+  const choose = async (item: string, path: string) => {
+    await stubDialogs(app, { open: [path] });
+    await file.click();
+    await page.getByRole('menu').getByRole('menuitem', { name: item }).click();
+  };
+
+  await test.step('Mount D64 disk image…: the Explorer, with the disk open', async () => {
+    await elsewhere();
+    await choose('Mount D64 disk image…', join(repoDir, 'fixtures/d64/mimir-demo.d64'));
+    await expect(toast(page, 'Mounted mimir-demo.d64')).toBeVisible();
+    await expect(explorer).toHaveAttribute('aria-pressed', 'true');
+    await expect(expanded('Disk')).toHaveAttribute('aria-expanded', 'true');
+    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByRole('list', { name: 'Files on mimir-demo.d64' }).getByRole('listitem')).toHaveCount(3);
+  });
+
+  await test.step('Open PRG files…: PRGs, several at once, and the files open', async () => {
+    await elsewhere();
+    await choose('Open PRG files…', join(repoDir, 'fixtures/prg/raster-demo.prg'));
+    await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+    expect(await lastDialog()).toEqual({ title: 'Open PRG files', filters: ['C64 programs: prg PRG', 'All files: *'], properties: ['openFile', 'multiSelections'] });
+    await expect(explorer).toHaveAttribute('aria-pressed', 'true');
+    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('.file-name')).toHaveText(['raster-demo.prg']);
+  });
+
+  await test.step('Open a VICE snapshot (.vsf)…: one snapshot, and the files open', async () => {
+    await elsewhere();
+    await choose('Open a VICE snapshot (.vsf)…', join(repoDir, 'fixtures/vsf/raster-demo.vsf'));
+    await expect(toast(page, /Loaded raster-demo\.prg at \$0200 from a VICE/)).toBeVisible();
+    expect(await lastDialog()).toEqual({ title: 'Open a VICE snapshot', filters: ['VICE snapshots: vsf VSF', 'All files: *'], properties: ['openFile'] });
+    await expect(explorer).toHaveAttribute('aria-pressed', 'true');
+    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  await test.step('Open a cartridge (.crt)…: one cartridge, and its banks open', async () => {
+    await elsewhere();
+    await choose('Open a cartridge (.crt)…', join(repoDir, 'fixtures/crt/mimir-demo.crt'));
+    await expect(toast(page, 'Opened the cartridge mimir-demo.crt')).toBeVisible();
+    expect(await lastDialog()).toEqual({ title: 'Open a cartridge', filters: ['C64 cartridges: crt CRT', 'All files: *'], properties: ['openFile'] });
+    await expect(explorer).toHaveAttribute('aria-pressed', 'true');
+    await expect(expanded('Cartridge')).toHaveAttribute('aria-expanded', 'true');
+    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByRole('list', { name: 'Banks of mimir-demo.crt' }).getByRole('listitem')).toHaveCount(2);
+  });
+
+  await test.step('Ctrl+O still asks for any of them, and leaves the side panel as it is', async () => {
+    await elsewhere();
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+    await page.keyboard.press('Control+o');
+    await expect(statusBar(page)).toContainText('$0810 · start');
+    expect((await lastDialog()).filters).toEqual(['C64 programs, VICE snapshots and cartridges: prg PRG vsf VSF crt CRT', 'All files: *']);
+    await expect(explorer).toHaveAttribute('aria-pressed', 'false');
   });
 });
 

@@ -613,6 +613,9 @@ describe('project files', () => {
     expect(zp).toMatchObject({ load: 0x0002, start: 0x0810 });
     expect(zp.bytes.length).toBe(0xfffe);
     expect(prgOpenSchema.parse({ zeroPage: true })).toEqual({ zeroPage: true });
+    // the File menu's choices: what the dialog asks for
+    for (const kind of ['prg', 'crt', 'vsf'] as const) expect(prgOpenSchema.parse({ kind })).toEqual({ kind });
+    expect(() => prgOpenSchema.parse({ kind: 'd64' })).toThrow();
   });
 
   it('opens a cartridge as every chip, each with the image, which the project schemas keep with work at bank addresses', async () => {

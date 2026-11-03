@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { assertEntryName, type PathPolicy } from './paths';
 import { z, type ZodTypeAny } from 'zod';
-import { CHANNELS, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult } from '../../shared/ipc';
+import { CHANNELS, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind } from '../../shared/ipc';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
 import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
@@ -47,6 +47,15 @@ const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undef
 const SAVE_KINDS: Record<string, string> = {
   prg: 'C64 program', bin: 'Binary data', '64c': 'Charset with load address', kla: 'Koala Painter picture', art: 'Art Studio picture',
   png: 'PNG image', asm: 'Kick Assembler source',
+};
+
+/** the open dialog for each of the File menu's choices (`any`: Ctrl+O, Open PRG… elsewhere): a cartridge or a snapshot
+ *  is one file, a project of its own */
+const OPEN_KINDS: Record<'any' | PrgOpenKind, { title: string; name: string; extensions: string[]; many: boolean }> = {
+  any: { title: 'Open PRG files', name: 'C64 programs, VICE snapshots and cartridges', extensions: ['prg', 'PRG', 'vsf', 'VSF', 'crt', 'CRT'], many: true },
+  prg: { title: 'Open PRG files', name: 'C64 programs', extensions: ['prg', 'PRG'], many: true },
+  crt: { title: 'Open a cartridge', name: 'C64 cartridges', extensions: ['crt', 'CRT'], many: false },
+  vsf: { title: 'Open a VICE snapshot', name: 'VICE snapshots', extensions: ['vsf', 'VSF'], many: false },
 };
 
 async function pickPaths(e: IpcMainInvokeEvent, options: OpenDialogOptions): Promise<string[]> {
@@ -146,7 +155,8 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.prgOpen, prgOpenSchema, async (req, e) => {
     let paths = req.paths?.map(p => policy.assert(p, 'PRG file')) ?? [];
     if (!req.paths?.length) {
-      paths = await pick(e, 'prg', { title: 'Open PRG files', properties: ['openFile', 'multiSelections'], filters: [{ name: 'C64 programs, VICE snapshots and cartridges', extensions: ['prg', 'PRG', 'vsf', 'VSF', 'crt', 'CRT'] }, { name: 'All files', extensions: ['*'] }] });
+      const ask = OPEN_KINDS[req.kind ?? 'any'];
+      paths = await pick(e, 'prg', { title: ask.title, properties: ask.many ? ['openFile', 'multiSelections'] : ['openFile'], filters: [{ name: ask.name, extensions: ask.extensions }, { name: 'All files', extensions: ['*'] }] });
       for (const p of paths) chose(dirname(p), 'prg');
     }
     return readPrgFiles(paths, { zeroPage: req.zeroPage });

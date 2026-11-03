@@ -174,8 +174,8 @@ export const projectCreateSchema = z.object({
   gather: z.object({ exportDir: z.string().max(4096), buildDir: z.string().max(4096), packed: z.string().max(4096) }).partial().strict().optional(),
 });
 export const projectForgetSchema = z.object({ file: z.string().min(1).max(4096) }).strict();
-/** `zeroPage`: VICE snapshots open from $0002 (zero page and stack included) */
-export const prgOpenSchema = z.object({ paths: z.array(z.string().max(4096)).max(64).optional(), zeroPage: z.boolean().optional() }).default({});
+/** `zeroPage`: VICE snapshots open from $0002 (zero page and stack included); `kind`: what the dialog asks for */
+export const prgOpenSchema = z.object({ paths: z.array(z.string().max(4096)).max(64).optional(), zeroPage: z.boolean().optional(), kind: z.enum(['prg', 'crt', 'vsf']).optional() }).default({});
 export const diskOpenSchema = z.object({ path: z.string().max(4096).optional() }).default({});
 export const terminalOpenSchema = z.object({ dir: z.string().min(1).max(4096).optional() }).default({});
 /** the folder of the export (one of this session) and its first source, a plain .asm name */

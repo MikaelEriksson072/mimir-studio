@@ -47,7 +47,7 @@ import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
-import type { EditorFindResult, IdentifyResponse, OpenedPrg, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
+import type { EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
@@ -389,8 +389,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   /* ---- files ---- */
   /** PRGs, and VICE snapshots as their RAM from $0200: the PC and interrupt handlers they hold become entry points */
   /** `undoLabel`: the new project is an undoable step (Ctrl+Z brings the one before back); `note`: the toast instead;
-   *  `what`: what "The work is not saved" calls it (the files' names), `asked`: that was answered */
-  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean } = {}) => {
+   *  `what`: what "The work is not saved" calls it (the files' names), `asked`: that was answered;
+   *  `show`: the Explorer shows what was opened (the File menu's choices), the cartridge or the files */
+  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean; show?: boolean } = {}) => {
     if (!opened.length) return;
     // a cartridge's chips open as a project of their own, with the image (13.9): a project holds one cartridge
     const cart = opened.find(f => f.cart)?.cart;
@@ -406,6 +407,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (cart && ownCart) {
       const files: LoadedFile[] = opened.map(({ id, name, load, bytes, chip, cart: c }) => ({ id, name, load, bytes, ...(c === cart && chip != null ? { chip } : {}) }));
       replace(createProject({ files, settings: project.settings, cart }), undoLabel); resetView();
+      if (opts.show) showSection('cart');
       let what = '';
       try { what = `: ${describeCrt(parseCrt(cart.crt, cart.name))}`; } catch { /* the files say enough */ }
       const chips = files.filter(f => f.chip != null);
@@ -420,12 +422,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (add) update(`Add ${files.map(f => f.name).join(', ')}`, d => { d.files.push(...files); for (const e of entries) if (!d.entries.includes(e)) d.entries.push(e); });
     // an empty project's nothing comes back with Ctrl+Z
     else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: project.settings }), entries, entryPoint: start ?? null }, undoLabel); resetView(); }
+    if (opts.show) showSection('files');
     if (note) { toast(note, 'ok'); return; }
     toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}${leftNote}`, 'ok');
   };
-  const openPrgs = async (add: boolean) => {
+  /** `kind`: the File menu's choice, what the dialog asks for; what it opens is shown in the Explorer */
+  const openPrgs = async (add: boolean, kind?: PrgOpenKind) => {
     if (!kr) return needDesktop();
-    try { addFiles(await kr.openPrg({ zeroPage: !!project.settings.snapshotZeroPage }), add); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(await kr.openPrg({ zeroPage: !!project.settings.snapshotZeroPage, ...(kind ? { kind } : {}) }), add, { show: !!kind }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /** the Explorer shown, with its section `id` open (the others as they were) */
+  const showSection = (id: string) => {
+    const open = useUi.getState().sideOpen;
+    setUi({ activity: 'explorer', sidePanel: true, ...(open.includes(id) ? {} : { sideOpen: [...open, id] }) });
   };
   /* ---- VICE's quicksave snapshot: Alt+F11 in VICE writes it, F9 here opens it, and each new one opens by itself ---- */
   const openQuicksave = async () => {
@@ -490,7 +499,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     let bitfire: BitfireDisk | null = null;
     try { if (!spindle) bitfire = readBitfireDisk(bytes); } catch { /* not one */ }
     setDisk({ name, path, bytes, img, spindle, bitfire });
-    setUi({ activity: 'explorer', sidePanel: true });
+    showSection('disk');
     const kind = spindle ? `, a Spindle 3 disk with ${spindle.jobs.length} job${spindle.jobs.length === 1 ? '' : 's'}`
       : bitfire ? `, a Bitfire disk with ${bitfire.files.length} file${bitfire.files.length === 1 ? '' : 's'} of its own` : '';
     toast(`Mounted ${name}: "${img.name}", ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}`, 'ok');
@@ -1492,6 +1501,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const commands: Command[] = [
     { id: 'open', label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false) },
     { id: 'add', label: 'Add PRG to project…', run: () => void openPrgs(true) },
+    { id: 'open-crt', label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
+    { id: 'open-vsf', label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
     { id: 'mount', label: 'Mount D64 disk image…', run: () => void mountDisk() },
     { id: 'quicksave', label: 'Open the VICE quicksave snapshot (Alt+F11 in VICE saves one)', key: 'F9', run: () => void openQuicksave() },
     { id: 'quicksave-follow', label: followQuicksave ? 'Stop opening each new VICE quicksave' : 'Open each new VICE quicksave (Alt+F11 in VICE) by itself', run: () => setUi({ followQuicksave: !followQuicksave }) },
@@ -1813,12 +1824,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       { label: home ? 'Close the project (start screen)' : 'Start screen', run: () => void toStartScreen() },
     ] });
   };
-  /** the title bar's File menu: open PRG files, save the project (a project made of the work without one) */
+  /** the title bar's File menu: what to open (PRGs, a cartridge, a VICE snapshot, a D64 to mount), each shown in its
+   *  section of the Explorer, and save the project (a project made of the work without one) */
   const fileMenu = (e: ReactMouseEvent<HTMLElement>) => {
     if (menu?.owner === 'file') { setMenu(null); return; }
     const r = e.currentTarget.getBoundingClientRect();
     setMenu({ owner: 'file', x: r.left, y: r.bottom + 2, items: [
-      { label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false) },
+      { label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false, 'prg') },
+      { label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
+      { label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
+      { label: 'Mount D64 disk image…', run: () => void mountDisk() },
+      { sep: true },
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
   };
