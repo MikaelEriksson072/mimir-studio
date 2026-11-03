@@ -2,7 +2,7 @@
  * Analysis engine: a deterministic pipeline over at most 64 KB.
  * The whole chain re-runs after every override (spec section 8).
  * ===================================================================== */
-import type { AnalysisResult, GfxCandidate, MemConfigInfo, MusicInfo, ProjectInput, VicEvidence } from '../types';
+import type { Addr, AnalysisResult, GfxCandidate, MemConfigInfo, MusicInfo, ProjectInput, VicEvidence } from '../types';
 import { DEFAULT_SETTINGS } from '../model';
 import { $4, now } from '../util/hex';
 import { createContext, type Ctx, type Deep } from './context';
@@ -23,6 +23,7 @@ import { deepLog, learn, problemCount } from './deep';
 import { findDelays } from './delay';
 import { findSpindle } from './spindle';
 import { findCopies } from './copies';
+import { textUnderCode } from './strings';
 
 export { findBlock } from './classify';
 
@@ -30,14 +31,14 @@ export { findBlock } from './classify';
 const DEEP_ROUNDS = 6;
 
 export function analyze(project: ProjectInput): AnalysisResult {
-  if (!project.settings?.deepAnalysis) return analyzeOnce(project, null)[0];
+  if (!project.settings?.deepAnalysis) return analyzeNormal(project)[0];
   // 5.17: the normal analysis tells how many problems the deep one starts from
   const t0 = now();
-  const [normal] = analyzeOnce({ ...project, settings: { ...DEFAULT_SETTINGS, ...project.settings, deepAnalysis: false } }, null);
+  const [normal, text] = analyzeNormal({ ...project, settings: { ...DEFAULT_SETTINGS, ...project.settings, deepAnalysis: false } });
   const before = problemCount(normal.log);
-  const deep: Deep = { port: null, main: 0, written: null, noReturn: new Set() };
+  const deep: Deep = { port: null, main: 0, written: null, noReturn: new Set(), text };
   let A: AnalysisResult, ctx: Ctx, rounds = 0;
-  do [A, ctx] = analyzeOnce(project, deep);
+  do [A, ctx] = analyzeOnce(project, deep, deep.text);
   while (++rounds < DEEP_ROUNDS && learn(A, ctx, deep));
   deepLog(A, ctx, before, rounds);
   const report = A.deep!;
@@ -47,7 +48,16 @@ export function analyze(project: ProjectInput): AnalysisResult {
   return { ...normal, S: A.S, deep: { ...report, after: before } };
 }
 
-function analyzeOnce(project: ProjectInput, deepIn: Deep | null): [AnalysisResult, Ctx] {
+/** A normal analysis, done again when its code islands took bytes of a string handed to a print routine (5.5b): the
+ *  islands of the second one keep out of them. Also those bytes. */
+function analyzeNormal(project: ProjectInput): [AnalysisResult, Set<Addr>] {
+  const [A, ctx] = analyzeOnce(project, null, null);
+  const text = ctx.S.codeIslands ? textUnderCode(ctx) : new Set<Addr>();
+  return [text.size ? analyzeOnce(project, null, text)[0] : A, text];
+}
+
+/** One whole analysis; its code islands keep out of the bytes in `text` (strings handed to print routines). */
+function analyzeOnce(project: ProjectInput, deepIn: Deep | null, text: ReadonlySet<Addr> | null): [AnalysisResult, Ctx] {
   const t0 = now();
   const ctx = createContext(project, deepIn);
 
@@ -101,7 +111,7 @@ function analyzeOnce(project: ProjectInput, deepIn: Deep | null): [AnalysisResul
   let logAt = ctx.log.length, rounds = 0;
   stage(true);
   for (; ctx.S.codeIslands && rounds < 4; rounds++) {
-    const islands = codeIslands(ctx, cls.blocks, cls.music, deep ? a => ctx.rejected.has(a) : undefined);
+    const islands = codeIslands(ctx, cls.blocks, cls.music, deep ? a => ctx.rejected.has(a) : undefined, text);
     if (!islands.length) break;
     takeBack(logAt);
     for (const c of islands) { ctx.enqueue(c.at, 'guess'); if (!deep) island(c); }

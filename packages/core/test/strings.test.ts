@@ -1,6 +1,6 @@
 /* 5.5b strings handed to print routines: where the parameters at a call say the string is, as long as the routine says. */
 import { describe, expect, it } from 'vitest';
-import { analyze, findBlock, render, verify, type FileInput } from '../src';
+import { analyze, findBlock, render, verify, type FileInput, type Settings } from '../src';
 import { fromSource } from './helpers/programs';
 
 const PRINT = `print: sta $fb
@@ -13,9 +13,9 @@ loop: lda ($fb),y
  bne loop
 done: rts
 `;
-function run(src: string) {
+function run(src: string, settings: Partial<Settings> = {}) {
   const file: FileInput = fromSource('p.prg', `.pc = $c000\n.encoding "petscii_upper"\n${src}`);
-  const p = { name: 't', files: [file] };
+  const p = { name: 't', files: [file], settings };
   const A = analyze(p), R = render(A, p);
   expect(verify(A, R).ok).toBe(true);
   const text = (a: number) => { const b = findBlock(A.blocks, a); return b && b.start === a && b.type === 'text' ? { end: b.end, reason: b.reason } : null; };
@@ -193,6 +193,34 @@ l: lda ($fb),y
  jmp $ffcc
 buf: .byte 1, 2, 3, 4, 5, 6, 7, 8`);
     expect(findBlock(A.blocks, 0xc01e)?.type).not.toBe('text');
+  });
+
+  it('a code island found with the call that prints a string keeps out of the string, in a deep analysis too', () => {
+    // a cartridge bank with no start of its own (Bacchus' Action Replay, bank 2): its code is islands, and the end of
+    // the string, "HUS...", $0d, $0d, $00, decodes as pha / eor $53,x / rol $2e2e / ora $000d on into the code after it
+    const src = `
+ rts
+ lda #0
+ sta $d020
+ lda #<msg
+ ldy #>msg
+ jsr $ab1e
+ jmp $c000
+msg: .byte $93
+ .text "  THIS LOADER WAS BROKEN BY BACCHUS..."
+ .byte $0d, $0d, $00
+after: inc $01
+ pla
+ eor #$f9
+ dey
+ sta $d020
+ bne after
+ rts`;
+    for (const deepAnalysis of [false, true]) {
+      const { A, text } = run(src, { deepAnalysis });
+      expect(text(0xc010), `deep: ${deepAnalysis}`).toEqual({ end: 0xc03a, reason: 'printed by STROUT ($ab1e) from $c00a' });
+      expect(findBlock(A.blocks, 0xc03a)).toMatchObject({ start: 0xc03a, type: 'code' });
+    }
   });
 });
 

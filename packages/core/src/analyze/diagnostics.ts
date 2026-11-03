@@ -34,7 +34,7 @@ export interface CodeIsland { at: Addr; end: Addr; n: number; last: string }
  * it left out) looks for routines all through the block and lets their branches leave it, as each one is traced on
  * trial (5.17).
  */
-export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], left?: (a: Addr) => boolean): CodeIsland[] {
+export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], left?: (a: Addr) => boolean, text?: ReadonlySet<Addr> | null): CodeIsland[] {
   const { mem, insLen, codeOwner, xrefs } = ctx;
   const out: CodeIsland[] = [];
   const asData = (a: Addr) => (xrefs.get(a) || []).some(x => x.kind === 'read' || x.kind === 'write' || x.kind === 'rmw');
@@ -46,6 +46,8 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
     while (p < e && n < 64) {
       const o = OPC[mem[p]];
       if (o.ill || o.jam || o.flow === 'brk' || p + o.len > e) return null;
+      // not over a string a print routine is handed (5.5b)
+      if (text) for (let k = 0; k < o.len; k++) if (text.has(p + k)) return null;
       const t = decode(mem, p).target;
       // a deep analysis traces the routine on trial, branches out of the block too
       if (o.flow === 'br' && !(t! >= s && t! < e) && !insLen[t!] && !left) return null;
@@ -65,7 +67,7 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
     let s = b.start;
     let z = 0; while (s + z < b.end && mem[s + z] === mem[s]) z++;
     if (z >= 3) s += z;
-    while (s < b.end && asData(s)) s++;
+    while (s < b.end && (asData(s) || text?.has(s))) s++;
     if (left) {
       for (let a = s; a + 6 <= b.end;) {
         let f = 0; while (a + f < b.end && mem[a + f] === mem[a]) f++;

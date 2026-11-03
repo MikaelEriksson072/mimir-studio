@@ -114,6 +114,8 @@ export interface Deep {
   written: Uint8Array | null;
   /** JSRs to routines that never return */
   noReturn: Set<Addr>;
+  /** the bytes of strings handed to print routines that code islands keep out of (5.5b) */
+  text: Set<Addr>;
 }
 
 /** The entry points a deep analysis traces on trial before it keeps them. */
@@ -138,7 +140,7 @@ export function createContext(project: ProjectInput, deep: Deep | null = null): 
     entryKind: new Map(), queue: [],
     ijumps: [], inlineCalls: new Set(), entry: null,
     ev: emptyEvidence(), lohiTabs: new Map(), wordTables: new Map(), delays: new Map(), delayIns: new Set(), spindle: [],
-    deep: S.deepAnalysis ? deep ?? { port: null, main: 0, written: null, noReturn: new Set() } : null,
+    deep: S.deepAnalysis ? deep ?? { port: null, main: 0, written: null, noReturn: new Set(), text: new Set() } : null,
     pending: [], rejected: new Map(), cuts: new Map(), flagCut: new Map(), onTrial: false,
   } as unknown as Ctx;
   return bind(ctx);

@@ -16,6 +16,7 @@ import { OPC } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
 import { areaAt, banked, portsOf, reaches, type CartMode } from '../c64/memconfig';
 import { $4 } from '../util/hex';
+import { textUnderCode } from './strings';
 
 /** What the Problems tab lists from the log. */
 export const isProblem = (l: LogEntry): boolean => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint';
@@ -70,7 +71,9 @@ export function learn(A: AnalysisResult, ctx: Ctx, deep: Deep): boolean {
   if (port) for (let a = 0; a < 0x10000; a++) if (insLen[a] && !banked(a)) main |= port[a];
   const written = new Uint8Array(0x10000);
   for (const [to, xs] of xrefs) if (xs.some(x => (x.kind === 'write' || x.kind === 'rmw') && insLen[x.from])) written[to] = 1;
-  const next: Deep = { port, main, written, noReturn: new Set() };
+  // the strings handed to print routines that the round's code islands took: the next round's keep out of them
+  const text = new Set([...deep.text, ...textUnderCode(ctx)]);
+  const next: Deep = { port, main, written, noReturn: new Set(), text };
   const loaded = (a: Addr) => owner[a] >= 0;
   const would = new Map<number, CutWhy>();
   const calls: Addr[] = [];
@@ -88,7 +91,7 @@ export function learn(A: AnalysisResult, ctx: Ctx, deep: Deep): boolean {
     would.set(cutKey(pc, pc + 3), 'noreturn');
   }
   const same = would.size === ctx.cuts.size && [...would].every(([k, w]) => ctx.cuts.get(k) === w);
-  const changed = !same || main !== deep.main;
+  const changed = !same || main !== deep.main || text.size !== deep.text.size;
   Object.assign(deep, next);
   return changed;
 }

@@ -1,7 +1,7 @@
 /* 5.5b strings handed to print routines: the ROM's (STROUT, SETNAM) and the program's own routines that print a string
  * through CHROUT. The parameters at a call tell where the string is; the routine tells how long it is: the length it is
  * given, the count its loop compares the index with, or the byte that ends it. */
-import type { Ctx } from './context';
+import { PET_CTRL, type Ctx } from './context';
 import type { Addr } from '../types';
 import { BRANCHES, CLOBBER_A, OPC, SHIFT_MN } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
@@ -296,4 +296,41 @@ export function stringLen(mem: Uint8Array, s: Addr, max: number, str: StringEv):
   if (!str.end) return null;
   for (let i = 0; i < 256 && s + i < 0x10000; i++) if (str.end.includes(mem[s + i])) return Math.min(i + 1, max);
   return null;
+}
+
+/** Any PETSCII character, graphics too, or a control code. */
+const printable = (b: number) => (b >= 0x20 && b < 0x80) || b >= 0xa0 || PET_CTRL.has(b);
+
+/**
+ * How long the string a print routine is handed at `s` is, at most `max` bytes, when that many bytes read as text (a
+ * loop that writes a file through CHROUT can write anything); null when it is not known or not text. An empty string,
+ * only the byte that ends it, is no text.
+ */
+export function handedLen(mem: Uint8Array, s: Addr, max: number, str: StringEv): number | null {
+  const n = stringLen(mem, s, max, str);
+  if (n == null || (str.end && n < 2 && str.end.includes(mem[s]))) return null;
+  let ok = 0; for (let i = 0; i < n; i++) if (printable(mem[s + i]) || str.end?.includes(mem[s + i])) ok++;
+  return ok >= n * 0.8 ? n : null;
+}
+
+/** A letter (of either case set), digit, punctuation or control code. */
+const isChar = (b: number) => (b >= 0x20 && b <= 0x5f) || (b >= 0x61 && b <= 0x7a) || (b >= 0xc1 && b <= 0xda) || PET_CTRL.has(b);
+
+/**
+ * The bytes of the strings handed to print routines that code is traced over. A code island (5.13) is a guess, and one
+ * found in the same round as the call that prints a string can start inside the string and decode on into the code
+ * after it ("HUS...", $0d, $0d, $00 before `inc $01`): the islands of the next analysis keep out of these bytes. Only a
+ * string of 4 bytes or more that is nearly all letters, digits, punctuation and control codes counts.
+ */
+export function textUnderCode(ctx: Pick<Ctx, 'ev' | 'mem' | 'insLen' | 'codeOwner' | 'owner'>): Set<Addr> {
+  const { mem, insLen, codeOwner, owner } = ctx, out = new Set<Addr>();
+  for (const [s, str] of ctx.ev.strings) {
+    let max = 0; while (max < 256 && s + max < 0x10000 && owner[s + max] === owner[s]) max++;
+    const n = handedLen(mem, s, max, str);
+    if (!n || n < 4) continue;
+    let chars = 0, code = false;
+    for (let a = s; a < s + n; a++) { if (isChar(mem[a]) || str.end?.includes(mem[a])) chars++; if (insLen[a] || codeOwner[a] >= 0) code = true; }
+    if (code && chars >= n * 0.9) for (let a = s; a < s + n; a++) out.add(a);
+  }
+  return out;
 }

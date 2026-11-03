@@ -5,7 +5,7 @@ import { T, TYPE_BY_KEY, typeInfo } from '../model';
 import { OPC } from '../cpu/opcodes';
 import { banksOf, ioVisible, reachesForName } from '../c64/memconfig';
 import { $2, $4, word } from '../util/hex';
-import { d018Case, printCase, stringLen, stringSwitch, type CaseSwitch, type PrintCase, type StringEv } from './strings';
+import { d018Case, handedLen as handed, printCase, stringSwitch, type CaseSwitch, type PrintCase, type StringEv } from './strings';
 
 export interface Classification {
   tm: Uint8Array;
@@ -104,16 +104,8 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
     while (s + n < e) { const b = mem[s + n]; if (b === 0) { n++; break; } if (!validChar(b, enc)) break; n++; }
     return n;
   };
-  // a string handed to a print routine: as long as its parameters or its loop say, when that many bytes read as text
-  // (a loop that writes a file through CHROUT can write anything); any PETSCII character counts, graphics too
-  const printable = (b: number) => (b >= 0x20 && b < 0x80) || b >= 0xa0 || PET_CTRL.has(b);
-  const handedLen = (s: Addr, e: Addr, str: StringEv): number | null => {
-    const n = stringLen(mem, s, e - s, str);
-    // an empty string, only the byte that ends it, is no text
-    if (n == null || (str.end && n < 2 && str.end.includes(mem[s]))) return null;
-    let ok = 0; for (let i = 0; i < n; i++) if (printable(mem[s + i]) || str.end?.includes(mem[s + i])) ok++;
-    return ok >= n * 0.8 ? n : null;
-  };
+  // a string handed to a print routine is as long as its parameters or its loop say, when that many bytes read as text
+  const handedLen = (s: Addr, e: Addr, str: StringEv): number | null => handed(mem, s, e - s, str);
   // such a string goes on over the object starts in it (a byte the code changes): the rest of it, where one cuts it
   const carry = new Map<Addr, { left: number; from: Addr; cs: ReturnType<PrintCase> | null }>();
   /** where the data the walk splits at object starts ends, from `e` on */

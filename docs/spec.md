@@ -678,6 +678,12 @@ kvitterar ett avbrott: `$40` avslutar många tabeller. Dessutom gäller:
   kopia av spelarens kod);
 - **ingen 1541-kod:** högst en åtkomst till driverns VIA (`$1800–$180F`, `$1C00–$1C0F`) eller `bvc *`, för en
   snabbladdares drivkod är data för C64:an.
+- **inte över en utskriven sträng:** en ö som hittas i samma varv som anropet som skriver ut en sträng (8.5) kan börja
+  inne i strängen och avkodas vidare in i koden efter den (*HUS...*, `$0d`, `$0d`, `$00` blir `pha / eor $53,x /
+  rol $2e2e / ora $000d` före `inc $01`, i en cartridgebank utan egen start). Byten i strängar till utskriftsrutiner som
+  kod spårats över (minst 4 byte, nästan bara bokstäver, siffror, skiljetecken och styrkoder) håller öarna sig därför
+  utanför i nästa analys: den vanliga analysen görs om en gång när det händer, och en djupanalys tar med byten till nästa
+  varv (`textUnderCode()` i `strings.ts`).
 
 Starten blir en ingångspunkt av sorten `guess` (etikett `code_xxxx`, i inspektorn *Unreached code* med knappen *Mark
 as data*). Spårningen fortsätter därifrån, så också det rutinen installerar (en IRQ via `$fffe`) och anropar hittas.
