@@ -46,6 +46,31 @@ describe('memory graphics layout', () => {
     expect(bitmapAround(0x5123)).toEqual({ start: 0x4000, end: 0x4000 + 8000 });
     expect(spritePointer(0x2000)).toEqual({ pointer: 0x80, bank: 0 });
     expect(spritePointer(0x7fc0)).toEqual({ pointer: 0xff, bank: 1 });
+    // in a cartridge's bank 1 (bank addresses, 13.9b): the same, in that bank
+    expect(charsetAround(0x18456)).toEqual({ start: 0x18000, end: 0x18800 });
+    expect(spritePointer(0x1a000)).toEqual({ pointer: 0x80, bank: 2 });
+  });
+
+  it('lays every bank out at once: their parts one after the other, nothing between them', () => {
+    // two 8 KB banks at $8000: bank 0's and bank 1's ($18000) rows, 40 characters (320 bytes) a row
+    const L = gfxLayout('chars', 40, 0, [{ start: 0x8000, end: 0xa000 }, { start: 0x18000, end: 0x1a000 }]);
+    const perBank = Math.ceil(0x2000 / 320);
+    expect(L).toMatchObject({ rows: 2 * perBank, size: 0x1a000, height: 2 * perBank * 8 });
+    expect(rowAddr(L, 0)).toBe(0x8000);
+    expect(rowAddr(L, perBank)).toBe(0x18000);
+    expect(rowAddr(L, L.rows)).toBe(0x1a000);
+    // the last row of bank 0 is short: no cell after $9fff
+    expect(cellAt(L, 8 * 39, (perBank - 1) * 8)).toBeNull();
+    expect(cellAt(L, 0, perBank * 8)).toBe(0x18000);
+    expect(cellOf(L, 0x18008)).toEqual({ start: 0x18008, x: 8, y: perBank * 8, w: 8, h: 8 });
+    // memory between the parts is not laid out
+    expect(cellOf(L, 0xc000)).toBeNull();
+    expect(cellOf(L, 0x10000)).toBeNull();
+    // a band of rows: bank 1's first row drawn at the top of the band
+    const mem = new Uint8Array(0x1a000); mem[0x18000] = 0xff;
+    const px = new Uint8ClampedArray(L.width * 8 * 4);
+    drawMemory(px, L, mem, () => true, false, { bg: 0, fg: 1, mc1: 2, mc2: 3 }, undefined, undefined, perBank, perBank + 1);
+    expect([...px.subarray(0, 3)]).toEqual([255, 255, 255]);
   });
 });
 

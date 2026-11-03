@@ -9,7 +9,7 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
+  bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
@@ -561,28 +561,63 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       };
     });
   }, [crt, project.files]);
+  /** All banks in one .asm (13.9c), from the Explorer or the bank list; with it Graphics and Memory show every bank */
+  const oneSource = (on: boolean) => update(on ? 'Every bank in one source' : 'A source per chip', d => { d.settings.cartOneSource = on; });
+  /** every bank at once in Graphics and Memory (13.9b): with All banks in one .asm and more than one bank, as the source
+   *  has them; a font per row stays in one bank */
+  const allBanks = !!project.settings.cartOneSource && (A.spaces?.length ?? 0) > 1;
+  const allGfx = allBanks && ui.gfx.kind !== 'fontrows';
+  /** the banks' loaded memory for Graphics with every bank: from 8 KB to 8 KB, so the cells are where the VIC has them */
+  const bankParts = useMemo(() => {
+    if (!A.spaces) return null;
+    const out: { start: Addr; end: Addr }[] = [];
+    for (const r of loadedRanges(A.owner)) {
+      const s = r.start - (r.start & 0x1fff), e = r.end + ((0x2000 - (r.end & 0x1fff)) & 0x1fff), last = out[out.length - 1];
+      if (last && last.end >= s && spaceOf(last.start) === spaceOf(s)) last.end = Math.max(last.end, e); else out.push({ start: s, end: e });
+    }
+    return out;
+  }, [A]);
+  /** an address with its bank, `1:$8000` */
+  const bankText = (a: Addr) => `${bankAt(a) ?? 0}:$${h4(spaceAddr(a))}`;
   /** Graphics and Memory show another bank: the cursor goes along, to the same address when that bank has it (else to
-   *  where the bank starts), and a selection with it when the bank has all of its bytes */
+   *  where the bank starts), and a selection with it when the bank has all of its bytes. From every bank at once, it
+   *  turns All banks in one .asm off */
   const showBank = (bank: number) => {
     const s = A.spaces?.find(x => x.bank === bank);
-    if (!s || s.space === space) return;
+    if (!s || (!allBanks && s.space === space)) return;
     const to = s.space * SPACE, has = (a: Addr) => A.owner[to + a] >= 0;
-    // the cursor in the bank shown, else the top of the view
-    const here = vCursor ?? viewStart?.addr ?? null;
+    // the cursor in the bank shown (with every bank: wherever it is), else the top of the view
+    const top = lastView && spaceOf(lastView.addr) === space ? lastView.addr - base : null;
+    const here = allBanks ? (cursor != null ? spaceAddr(cursor) : top) : vCursor ?? top;
     const at = here != null && has(here) ? to + here : s.entry ?? fileAddr(s.files[0]);
-    const moved = vSel && A.owner.subarray(to + vSel.start, to + vSel.end).every(o => o >= 0)
-      ? { ...vSel, start: to + vSel.start, end: to + vSel.end, ...(vSel.anchor != null ? { anchor: to + vSel.anchor } : {}), ...(vSel.anchorEnd != null ? { anchorEnd: to + vSel.anchorEnd } : {}) } : null;
+    const from = allBanks ? (sel ? sel.start - spaceAddr(sel.start) : 0) : 0, ps = allBanks ? sel : vSel;
+    const moved = ps && A.owner.subarray(to + ps.start - from, to + ps.end - from).every(o => o >= 0)
+      ? { ...ps, start: to + ps.start - from, end: to + ps.end - from, ...(ps.anchor != null ? { anchor: to + ps.anchor - from } : {}), ...(ps.anchorEnd != null ? { anchorEnd: to + ps.anchorEnd - from } : {}) } : null;
+    if (allBanks) { oneSource(false); toast(`Bank ${bank}: All banks in one .asm is off, so the export writes a source per chip again (Ctrl+Z turns it back on)`, 'ok'); }
     navigate(at, { keepSel: true });
     setSel(moved);
   };
-  /** where Graphics and Memory open (14.6b): where the editor was last, in the bank they show, unless a jump is newer */
+  /** where Graphics and Memory open (14.6b): where the editor was last, in the bank they show (or anywhere, with every
+   *  bank), unless a jump is newer */
   const lastView = viewAt.current;
-  const viewStart = lastView && (!scrollReq || scrollReq.n < lastView.n) && spaceOf(lastView.addr) === space
-    ? { addr: lastView.addr - base, end: spaceOf(lastView.end) === space ? lastView.end - base : SPACE } : null;
-  /** Graphics or Memory scrolled: the addresses at its top and bottom, in the bank it shows */
-  const seeView = (top: Addr, end: Addr) => seeAt({ addr: inBank(top), end: inBank(end), n: Date.now() });
+  const fresh = lastView && (!scrollReq || scrollReq.n < lastView.n) ? lastView : null;
+  const startIn = (all: boolean) => (!fresh ? null : all ? { addr: fresh.addr, end: fresh.end }
+    : spaceOf(fresh.addr) === space ? { addr: fresh.addr - base, end: spaceOf(fresh.end) === space ? fresh.end - base : SPACE } : null);
+  /** Graphics or Memory scrolled: the addresses at its top and bottom, in the bank it shows (bank addresses with every
+   *  bank, where the bank to show later is the cursor's while it is on screen, as in the listing) */
+  const seeIn = (all: boolean) => (top: Addr, end: Addr) => (all
+    ? seeAt({ addr: top, end, n: Date.now() }, cursor != null && cursor >= top && cursor < end ? cursor : top)
+    : seeAt({ addr: inBank(top), end: inBank(end), n: Date.now() }));
   // one bank in the project is analysed without spaces: it is the one shown
-  const bankPick = bankChoices && { banks: bankChoices, value: A.spaces ? A.spaces.find(x => x.space === space)?.bank ?? null : crt?.chips[project.files[0]?.chip ?? -1]?.bank ?? null, onChange: showBank };
+  const bankPick = bankChoices && {
+    banks: bankChoices, all: (A.spaces?.length ?? 0) > 1,
+    value: allBanks ? 'all' as const : A.spaces ? A.spaces.find(x => x.space === space)?.bank ?? null : crt?.chips[project.files[0]?.chip ?? -1]?.bank ?? null,
+    onChange: (b: number | 'all') => {
+      if (b !== 'all') { showBank(b); return; }
+      oneSource(true);
+      toast('All banks: Graphics and Memory show every bank, and All banks in one .asm is on, so the export writes every bank in one source (Ctrl+Z turns it off)', 'ok');
+    },
+  };
   /* ---- packed programs ---- */
   // a decruncher in front of compressed data (detectPacking), and what the unpacker finds: Sindri runs
   // every file opened (in a worker of its own, with the disk a file came from in its 1541) and keeps the result for Unpack; an external unpacker set in Settings
@@ -1868,7 +1903,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
-          onOneSource={on => update(on ? 'Every bank in one source' : 'A source per chip', d => { d.settings.cartOneSource = on; })} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
+          onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
           disk={disk} packing={packing} onMount={() => void mountDisk()} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? { addr: bmEdit, cursorAt: lineAddr() ?? null, onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); }, onPreview: a => navigate(a, { center: true, listing: true, noHistory: true }) } : null}
@@ -1970,13 +2005,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}
-              {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick} start={viewStart} onView={seeView}
-                onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
-                onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />}
-              {tab === 'mem' && <MemoryDump A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick} start={viewStart} onView={seeView}
-                onCursor={a => { const g = inBank(a); navigate(g, { noHistory: true }); setSel({ start: g, end: g + 1, multi: false, anchor: g, anchorEnd: g + 1 }); }}
-                onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
-                onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onCopy={t => void copyText(t)} />}
+              {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
+                  another way of showing opens the tab anew */}
+              {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} onView={seeIn(allGfx)}
+                parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
+                onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
+                onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />)(allGfx ? (a: Addr) => a : inBank)}
+              {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} onView={seeIn(allBanks)}
+                spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
+                onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}
+                onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
+                onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onShow={a => navigate(g(a), { center: true, listing: true })} onCopy={t => void copyText(t)} />)(allBanks ? (a: Addr) => a : inBank)}
             </Suspense>
           </ErrorBoundary>
         </div>

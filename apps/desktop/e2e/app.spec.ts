@@ -1108,7 +1108,7 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     const pick = page.getByLabel('Cartridge bank');
     const row = page.getByLabel('Memory dump').locator('.mon-row', { has: page.locator('.mon-adr', { hasText: /C:8000/ }) });
     await expect(pick).toHaveValue('0');
-    await expect(pick.locator('option')).toHaveText(['0 · $8000 · start', '1 · $8000']);
+    await expect(pick.locator('option')).toHaveText(['All banks', '0 · $8000 · start', '1 · $8000']);
     // bank 0's cartridge vectors and CBM80, then bank 1's text at the same address
     await expect(row).toContainText('09 80 34 80  c3 c2 cd 38');
     await pick.selectOption('1');
@@ -1130,7 +1130,7 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     await expect(pick.locator('option').nth(1)).toBeDisabled();
     await expect(pick).toHaveValue('0');
     await page.getByRole('button', { name: 'Add bank 1 to this project' }).click();
-    await expect(pick.locator('option').nth(1)).toBeEnabled();
+    await expect(pick.locator('option[value="1"]')).toBeEnabled();
     // the listing has bank 1 again once its analysis is in (the option is enabled as + adds it, before that): bank 0
     // alone is analysed without banks, and the status bar then shows the cursor without its bank. Scrolled before
     // that, the listing ends in bank 0, and Memory rightly opens there
@@ -1152,6 +1152,42 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
       return parseInt(/C:([0-9a-f]{4})/.exec(row?.textContent ?? '')?.[1] ?? '', 16);
     })).toBe(top - (top % 16));
     await expect(row).toContainText('0d 09 0d 09');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+  });
+
+  await test.step('All banks shows every bank in Memory and Graphics, and is All banks in one .asm', async () => {
+    const pick = page.getByLabel('Cartridge bank'), one = page.getByRole('checkbox', { name: 'All banks in one .asm' });
+    const dump = page.getByLabel('Memory dump');
+    await page.getByRole('tab', { name: 'Memory' }).click();
+    await pick.selectOption('all');
+    await expect(one).toBeChecked();
+    // the dump starts where the listing was, in bank 1: its line over its rows, at bank addresses
+    await expect(dump.locator('.mon-bank', { hasText: 'bank 1' })).toHaveText('bank 1 · $8000–$9fff');
+    // a command takes the bank before the address: bank 0 is before bank 1
+    const command = async (c: string) => { await page.getByLabel('Monitor command').fill(c); await page.getByLabel('Monitor command').press('Enter'); };
+    await command('m 0:8000');
+    await expect(dump.locator('.mon-bank', { hasText: 'bank 0' })).toHaveText('bank 0 · $8000–$9fff');
+    await expect(statusBar(page)).toContainText('bank 0 · $8000');
+    await expect(page.locator('.monv .gfxv-info')).toContainText('0:$8000 = $09');
+    await command('m 1:8000');
+    await expect(statusBar(page)).toContainText('bank 1 · $8000');
+    await expect(page.locator('.monv .gfxv-info')).toContainText('1:$8000 = $0d');
+    // Graphics lays both banks out, one after the other
+    await page.getByRole('tab', { name: 'Graphics' }).click();
+    await expect(pick).toHaveValue('all');
+    await expect(page.locator('.gfxv-row.bank-top')).toHaveCount(2);
+    await expect(page.locator('.gfxv-row.bank-top').nth(1)).toContainText('1:$8000');
+    await expect(page.locator('.gfxv-info')).toContainText('cursor 1:$8000');
+    // the checkbox off: one bank again, the cursor's
+    await one.uncheck();
+    await expect(pick).toHaveValue('1');
+    await expect(page.locator('.gfxv-row.bank-top')).toHaveCount(0);
+    // on with the checkbox, off by picking one bank
+    await one.check();
+    await expect(pick).toHaveValue('all');
+    await pick.selectOption('0');
+    await expect(one).not.toBeChecked();
+    await expect(statusBar(page)).toContainText('bank 0 · $8000');
     await page.getByRole('tab', { name: 'Listing' }).click();
   });
 

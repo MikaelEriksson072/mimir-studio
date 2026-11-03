@@ -819,6 +819,10 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .gfxv-row { position: absolute; left: 0; right: 0; display: flex; align-items: flex-start; gap: 6px; font: 11px/1 var(--font-code); color: var(--fg-3); }
 .gfxv-row i { width: 3px; align-self: stretch; flex: none; }
 .gfxv-row span { padding-top: 1px; }
+/* every bank at once: room for the bank before the address, and a line over each bank's first row */
+.gfxv-gutter.banks { width: 78px; }
+.gfxv-row.bank-top { box-shadow: inset 0 1px 0 var(--accent); }
+.gfxv-row.bank-top span { color: var(--fg-2); font-weight: 600; }
 .gfxv-canvas { position: relative; flex: none; cursor: crosshair; }
 .gfxv-canvas canvas { display: block; image-rendering: pixelated; }
 .gfxv-selrect { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: inset 0 0 0 1px var(--accent-hi); }
@@ -908,6 +912,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .mon-row { position: absolute; left: 0; height: 20px; line-height: 20px; padding-left: 12px; white-space: pre; font: 13px/20px var(--font-code); color: var(--fg); }
 .mon-adr { color: var(--syn-label); }
 .mon-gap { color: var(--fg-3); font-style: italic; }
+/* every bank at once: the line over a bank's rows */
+.mon-gap.mon-bank { color: var(--fg-2); font-style: normal; font-weight: 600; border-top: 1px solid var(--line-2); }
 .mon-b, .mon-c { border-radius: 2px; }
 .mon-c.dot { color: var(--fg-3); }
 .mon-c.inv { background: var(--fg); color: var(--editor); }

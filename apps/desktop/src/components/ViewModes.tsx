@@ -40,21 +40,25 @@ export function ViewModes<K extends string>({ label, modes, value, onChange, now
 
 /** a bank of the cartridge in the bank switch: `on` while it is in the project (only those are analysed) */
 export interface BankChoice { bank: number; text: string; title: string; on: boolean }
-/** the cartridge's banks, the one shown, and showing another */
-export interface BankPickProps { banks: BankChoice[]; value: number | null; onChange: (bank: number) => void }
+/** the cartridge's banks, the one shown (`all`: every bank at once), and showing another; `all`: every bank at once can
+ *  be picked (more than one bank in the project) */
+export interface BankPickProps { banks: BankChoice[]; value: number | 'all' | null; onChange: (bank: number | 'all') => void; all?: boolean }
 
 /** The bank of a cartridge the Graphics and Memory tabs show (spec 13.9b): the list, or the arrows and the mouse wheel
- *  over it, step from bank to bank. The banks out of the project are in the list but greyed out: + in the Explorer adds them. */
-export function BankPick({ banks, value, onChange }: BankPickProps) {
-  const on = banks.filter(b => b.on), at = on.findIndex(b => b.bank === value);
-  const step = (d: number) => { const b = on[Math.max(0, Math.min(on.length - 1, at + d))]; if (b && b.bank !== value) onChange(b.bank); };
+ *  over it, step from bank to bank; *All banks*, first, shows them all, one after the other. It is All banks in one .asm,
+ *  so only a pick in the list changes it, not the arrows or the wheel. The banks out of the project are in the list but
+ *  greyed out: + in the Explorer adds them. */
+export function BankPick({ banks, value, onChange, all }: BankPickProps) {
+  const on = banks.filter(b => b.on), at = value === 'all' ? -1 : on.findIndex(b => b.bank === value);
+  const step = (d: number) => { if (at < 0) return; const b = on[Math.max(0, Math.min(on.length - 1, at + d))]; if (b && b.bank !== value) onChange(b.bank); };
   /** a wheel step at most every 60 ms, so a touchpad does not race through the banks */
   const lastWheel = useRef(0);
   const out = banks.length - on.length;
   return (
     <span className="gfxv-field bank-pick" title={`The cartridge bank shown here (the cursor goes along to it): its addresses are the same in every bank${out ? `. ${out} bank${out === 1 ? ' is' : 's are'} not in the project: + in the Explorer adds ${out === 1 ? 'it' : 'them'}` : ''}`}>Bank
-      <select aria-label="Cartridge bank" value={value ?? ''} onChange={e => onChange(+e.target.value)}
+      <select aria-label="Cartridge bank" value={value ?? ''} onChange={e => onChange(e.target.value === 'all' ? 'all' : +e.target.value)}
         onWheel={e => { const now = performance.now(); if (!e.deltaY || now - lastWheel.current < 60) return; lastWheel.current = now; step(Math.sign(e.deltaY)); }}>
+        {all && <option value="all" title="Every bank one after the other, as the listing shows them. The same as All banks in one .asm in the Explorer's Cartridge section: picking it turns that on, picking one bank turns it off">All banks</option>}
         {banks.map(b => <option key={b.bank} value={b.bank} disabled={!b.on} title={b.title}>{b.text}</option>)}
       </select>
       <button className="icon-btn small" aria-label="Previous bank" title="The bank before" disabled={at <= 0} onClick={() => step(-1)}><Icon name="left" size={14} /></button>

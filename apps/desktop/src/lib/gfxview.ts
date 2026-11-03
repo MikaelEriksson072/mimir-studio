@@ -1,5 +1,7 @@
 /* The memory graphics browser (spec 14.5): all 64 KB drawn as characters, sprites, bitmaps or screens, ICU64-style,
- * and pictures made of a font per character row. Pure geometry and drawing, so the view and the tests share them. */
+ * and pictures made of a font per character row. With every bank of a cartridge at once (13.9b) the rows are the
+ * banks' loaded parts one after the other, at bank addresses. Pure geometry and drawing, so the view and the tests
+ * share them. */
 import { DEMO_FONT, type Addr } from '@mimir/core';
 import { C64, hexRgb } from './palette';
 
@@ -23,6 +25,11 @@ export interface GfxLayout {
   /** a font per row: the 40 screen codes every row shows, and the font of each row (2 KB apart, where a font can be) */
   codes?: Uint8Array;
   rowStarts?: Addr[];
+  /** the memory laid out ends here: 64 KB, or past the last bank */
+  size: number;
+  /** parts of memory laid out one after the other (every bank at once): each row's first address, and where the part
+   *  the row is in ends (no cell starts there or after it) */
+  parts?: { starts: Addr[]; ends: Addr[] };
 }
 
 /** bytes a bitmap frame shows: 40 x 25 cells of 8 bytes */
@@ -30,14 +37,23 @@ export const BITMAP_BYTES = 8000;
 /** bytes a screen shows: 40 x 25 screen codes */
 export const SCREEN_BYTES = 1000;
 
-export function gfxLayout(kind: GfxKind, cols: number, offset = 0): GfxLayout {
+/** `parts`: only these ranges, one after the other (every bank of a cartridge: its loaded memory at bank addresses,
+ *  each starting on 8 KB so the cells stay where the VIC has them); the grid's offset moves each part's first cell */
+export function gfxLayout(kind: GfxKind, cols: number, offset = 0, parts?: readonly { start: Addr; end: Addr }[]): GfxLayout {
   const g = kind === 'chars' ? { unit: 8, cellW: 8, cellH: 8, gapX: 0, gapY: 0, cols }
     : kind === 'sprites' ? { unit: 64, cellW: 24, cellH: 21, gapX: 2, gapY: 2, cols }
       : kind === 'screens' ? { unit: 0x400, cellW: 320, cellH: 200, gapX: 8, gapY: 8, cols }
         : { unit: 0x2000, cellW: 320, cellH: 200, gapX: 0, gapY: 8, cols: 1 };
   const off = ((offset % g.unit) + g.unit) % g.unit;
-  const rows = Math.ceil((0x10000 - off) / (g.unit * g.cols));
-  return { kind, ...g, offset: off, rows, width: g.cols * (g.cellW + g.gapX), height: rows * (g.cellH + g.gapY) };
+  const width = g.cols * (g.cellW + g.gapX);
+  if (!parts) {
+    const rows = Math.ceil((0x10000 - off) / (g.unit * g.cols));
+    return { kind, ...g, offset: off, rows, width, height: rows * (g.cellH + g.gapY), size: 0x10000 };
+  }
+  const starts: Addr[] = [], ends: Addr[] = [];
+  for (const p of parts) for (let a = p.start + off; a < p.end; a += g.unit * g.cols) { starts.push(a); ends.push(p.end); }
+  const rows = starts.length, size = parts.reduce((n, p) => Math.max(n, p.end), 0);
+  return { kind, ...g, offset: off, rows, width, height: rows * (g.cellH + g.gapY), size, parts: { starts, ends } };
 }
 
 /** the most character rows a font-per-row picture has: a screen's */
@@ -74,16 +90,27 @@ export function fontRowsLayout(starts: Addr[], codes: ArrayLike<number>): GfxLay
   const rowStarts = starts.length ? starts.slice(0, FONT_ROWS) : [0];
   const c = new Uint8Array(40); for (let i = 0; i < 40; i++) c[i] = codes[i] ?? i;
   const n = rowStarts.length;
-  return { kind: 'fontrows', unit: 0x800, cols: 1, cellW: 320, cellH: 8, gapX: 0, gapY: 0, offset: rowStarts[0], rows: n, width: 320, height: n * 8, codes: c, rowStarts };
+  return { kind: 'fontrows', unit: 0x800, cols: 1, cellW: 320, cellH: 8, gapX: 0, gapY: 0, offset: rowStarts[0], rows: n, width: 320, height: n * 8, codes: c, rowStarts, size: 0x10000 };
 }
 
 /** the bytes of one row of cells */
 export const rowBytes = (L: GfxLayout) => L.unit * L.cols;
 /** the address of the first byte in row `r` (`rows`: just past the last row) */
 export const rowAddr = (L: GfxLayout, r: number) => {
-  const s = L.rowStarts;
+  const s = L.rowStarts, p = L.parts;
+  if (p) return r < p.starts.length ? p.starts[r] : p.ends[p.ends.length - 1] ?? 0;
   return s ? (r < s.length ? s[r] : s[s.length - 1] + 0x800) : L.offset + r * rowBytes(L);
 };
+/** no cell of row `r` starts at or after this: the end of its part, or of memory */
+const rowEnd = (L: GfxLayout, r: number) => L.parts?.ends[r] ?? L.size;
+/** the row whose bytes hold `a` (parts only), or -1 */
+function partRow(L: GfxLayout, a: Addr): number {
+  const s = L.parts!.starts;
+  let lo = 0, hi = s.length - 1;
+  if (hi < 0 || a < s[0]) return -1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (s[mid] <= a) lo = mid; else hi = mid - 1; }
+  return a < Math.min(s[lo] + rowBytes(L), L.parts!.ends[lo]) ? lo : -1;
+}
 
 /** the cell under a point (pixels at zoom 1), as the address of its first byte; null in a gap or past the end */
 export function cellAt(L: GfxLayout, x: number, y: number): Addr | null {
@@ -91,11 +118,16 @@ export function cellAt(L: GfxLayout, x: number, y: number): Addr | null {
   if (c < 0 || c >= L.cols || r < 0 || r >= L.rows) return null;
   if (x - c * (L.cellW + L.gapX) >= L.cellW || y - r * (L.cellH + L.gapY) >= L.cellH) return null;
   const a = rowAddr(L, r) + c * L.unit;
-  return a < 0x10000 ? a : null;
+  return a < rowEnd(L, r) ? a : null;
 }
 
 /** the cell holding `a`: its first byte and where it is drawn */
 export function cellOf(L: GfxLayout, a: Addr): { start: Addr; x: number; y: number; w: number; h: number } | null {
+  if (L.parts) {
+    const r = partRow(L, a); if (r < 0) return null;
+    const c = Math.floor((a - L.parts.starts[r]) / L.unit);
+    return { start: L.parts.starts[r] + c * L.unit, x: c * (L.cellW + L.gapX), y: r * (L.cellH + L.gapY), w: L.cellW, h: L.cellH };
+  }
   if (a < L.offset || a > 0xffff) return null;
   if (L.rowStarts) {
     // a font per row: the row whose font holds `a` (none in memory the rows skip)
@@ -117,7 +149,7 @@ export function byteAt(L: GfxLayout, x: number, y: number): Addr | null {
       // a font per row: the character's line in the row's font
       : L.kind === 'fontrows' ? start + L.codes![xi >> 3] * 8 + yi
         : start + ((yi >> 3) * 40 + (xi >> 3)) * 8 + (yi & 7);
-  return a <= 0xffff ? a : null;
+  return a < L.size ? a : null;
 }
 
 /** the bytes a cell stands for (a bitmap frame: 8000, not the 8 KB step; a screen: 1000, not the 1 KB step) */
@@ -127,7 +159,7 @@ export const cellBytes = (L: GfxLayout) => (L.kind === 'bitmap' ? BITMAP_BYTES :
 export function cellRange(L: GfxLayout, a: Addr, b: Addr): { start: Addr; end: Addr } | null {
   const x = cellOf(L, Math.min(a, b)), y = cellOf(L, Math.max(a, b));
   if (!x || !y) return null;
-  return { start: x.start, end: Math.min(0x10000, y.start + cellBytes(L)) };
+  return { start: x.start, end: Math.min(L.size, y.start + cellBytes(L)) };
 }
 
 /** the rectangles a range covers, one per row (cells are drawn row by row) */
@@ -135,7 +167,7 @@ export function rangeRects(L: GfxLayout, start: Addr, end: Addr): { x: number; y
   const out: { x: number; y: number; w: number; h: number }[] = [];
   // a font per row: every row whose font the range touches
   if (L.rowStarts) return L.rowStarts.flatMap((s, r) => (s < end && s + L.unit > start ? [{ x: 0, y: r * L.cellH, w: L.cellW, h: L.cellH }] : []));
-  const a = cellOf(L, Math.max(start, L.offset)), b = cellOf(L, Math.min(end, 0x10000, rowAddr(L, L.rows)) - 1);
+  const a = cellOf(L, L.parts ? start : Math.max(start, L.offset)), b = cellOf(L, Math.min(end, L.size, rowAddr(L, L.rows)) - 1);
   if (!a || !b || end <= start) return out;
   const stepX = L.cellW + L.gapX, stepY = L.cellH + L.gapY;
   for (let y = a.y; y <= b.y; y += stepY) {
@@ -145,14 +177,14 @@ export function rangeRects(L: GfxLayout, start: Addr, end: Addr): { x: number; y
   return out;
 }
 
-/** the 2 KB charset (VIC alignment) around `a` */
-export const charsetAround = (a: Addr) => ({ start: a & 0xf800, end: (a & 0xf800) + 0x800 });
+/** the 2 KB charset (VIC alignment) around `a` (in its cartridge bank) */
+export const charsetAround = (a: Addr) => ({ start: a - (a & 0x7ff), end: a - (a & 0x7ff) + 0x800 });
 /** the 8 KB-aligned bitmap around `a` (8000 bytes) */
-export const bitmapAround = (a: Addr) => ({ start: a & 0xe000, end: (a & 0xe000) + BITMAP_BYTES });
-/** what the VIC calls the sprite at `a`: its pointer value (in its 16 KB bank) and the bank */
-export const spritePointer = (a: Addr) => ({ pointer: (a & 0x3fff) >> 6, bank: a >> 14 });
-/** what the VIC calls the screen at `a` (1 KB aligned): the high nibble of $d018 and the bank; null when not aligned */
-export const screenPointer = (a: Addr) => ((a & 0x3ff) === 0 ? { d018: (a & 0x3fff) >> 10, bank: a >> 14 } : null);
+export const bitmapAround = (a: Addr) => ({ start: a - (a & 0x1fff), end: a - (a & 0x1fff) + BITMAP_BYTES });
+/** what the VIC calls the sprite at `a`: its pointer value (in its 16 KB VIC bank) and that VIC bank */
+export const spritePointer = (a: Addr) => ({ pointer: (a & 0x3fff) >> 6, bank: (a & 0xffff) >> 14 });
+/** what the VIC calls the screen at `a` (1 KB aligned): the high nibble of $d018 and the VIC bank; null when not aligned */
+export const screenPointer = (a: Addr) => ((a & 0x3ff) === 0 ? { d018: (a & 0x3fff) >> 10, bank: (a & 0xffff) >> 14 } : null);
 
 /** screen code order of the built-in letters: @, A-Z, then space to ? (the graphics are left empty) */
 const SCREEN_ORDER = '@ABCDEFGHIJKLMNOPQRSTUVWXYZ[£]↑← !"#$%&\'()*+,-./0123456789:;<=>?';
@@ -171,11 +203,11 @@ export function builtinFont(): Uint8Array {
 export interface GfxColors { bg: number; fg: number; mc1: number; mc2: number }
 
 /**
- * Draw all memory in layout `L` into RGBA `px` (L.width x L.height): hires, or multicolor (pairs of bits: bg, mc1, mc2,
- * fg). Screens draw each screen code with `font` (2 KB). Bytes that are not loaded are drawn dark, so the program
- * stands out; gaps get `gap`.
+ * Draw the rows `from` to `to` of layout `L` (all of them by default) into RGBA `px` (L.width x their height): hires,
+ * or multicolor (pairs of bits: bg, mc1, mc2, fg). Screens draw each screen code with `font` (2 KB). Bytes that are
+ * not loaded are drawn dark, so the program stands out; gaps get `gap`.
  */
-export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array, loaded: (a: Addr) => boolean, mc: boolean, colors: GfxColors, font?: Uint8Array, gap: [number, number, number] = [24, 24, 32]): void {
+export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array, loaded: (a: Addr) => boolean, mc: boolean, colors: GfxColors, font?: Uint8Array, gap: [number, number, number] = [24, 24, 32], from = 0, to = L.rows): void {
   const pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => hexRgb(C64[i & 15]));
   // not loaded: a blue-grey of its own, so it differs from loaded bytes in any colours (a black background too)
   const dimmed = pal.map(([r, g, b]) => [r * 0.25 + 34, g * 0.25 + 34, b * 0.25 + 52]);
@@ -185,16 +217,16 @@ export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array,
     if (mc) for (let k = 0; k < 4; k++) { const c = p[(b >> (6 - k * 2)) & 3]; put(x + k * 2, y, c); put(x + k * 2 + 1, y, c); }
     else for (let k = 0; k < 8; k++) put(x + k, y, (b >> (7 - k)) & 1 ? p[3] : p[0]);
   };
-  const byte = (a: Addr, x: number, y: number) => { if (a <= 0xffff) bits(mem[a], loaded(a) ? pal : dimmed, x, y); };
+  const byte = (a: Addr, x: number, y: number) => { if (a < mem.length) bits(mem[a], loaded(a) ? pal : dimmed, x, y); };
   const f = L.kind === 'screens' ? font ?? builtinFont() : null;
   const stepX = L.cellW + L.gapX, stepY = L.cellH + L.gapY;
-  for (let r = 0; r < L.rows; r++) for (let c = 0; c < L.cols; c++) {
-    const base = rowAddr(L, r) + c * L.unit, ox = c * stepX, oy = r * stepY;
-    if (base > 0xffff) continue;
+  for (let r = Math.max(0, from); r < Math.min(to, L.rows); r++) for (let c = 0; c < L.cols; c++) {
+    const base = rowAddr(L, r) + c * L.unit, ox = c * stepX, oy = (r - from) * stepY;
+    if (base >= rowEnd(L, r)) continue;
     if (L.kind === 'chars') for (let y = 0; y < 8; y++) byte(base + y, ox, oy + y);
     else if (L.kind === 'sprites') for (let y = 0; y < 21; y++) for (let k = 0; k < 3; k++) byte(base + y * 3 + k, ox + k * 8, oy + y);
     else if (L.kind === 'fontrows') for (let x = 0; x < 40; x++) for (let y = 0; y < 8; y++) byte(base + L.codes![x] * 8 + y, x * 8, oy + y);
-    else if (f) for (let i = 0; i < SCREEN_BYTES && base + i <= 0xffff; i++) {
+    else if (f) for (let i = 0; i < SCREEN_BYTES && base + i < mem.length; i++) {
       const p = loaded(base + i) ? pal : dimmed, g = mem[base + i] * 8, x = ox + (i % 40) * 8, y0 = oy + Math.floor(i / 40) * 8;
       for (let y = 0; y < 8; y++) bits(f[g + y], p, x, y0 + y);
     }
@@ -222,14 +254,14 @@ export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr,
     if (mc) for (let k = 0; k < 4; k++) { const c = pal[(b >> (6 - k * 2)) & 3]; put(x + k * 2, y, c); put(x + k * 2 + 1, y, c); }
     else for (let k = 0; k < 8; k++) put(x + k, y, (b >> (7 - k)) & 1 ? pal[3] : pal[0]);
   };
-  const byte = (a: Addr, x: number, y: number) => { if (a < end && a <= 0xffff) bits(mem[a], x, y); };
+  const byte = (a: Addr, x: number, y: number) => { if (a < end && a < mem.length) bits(mem[a], x, y); };
   const f = kind === 'screens' ? opts.font ?? builtinFont() : null;
   for (let i = 0; i < n; i++) {
     const base = bases ? bases[i] ?? start : start + i * g.unit, ox = (i % cols) * g.w, oy = Math.floor(i / cols) * g.h;
     if (kind === 'chars') for (let y = 0; y < 8; y++) byte(base + y, ox, oy + y);
     else if (kind === 'sprites') for (let y = 0; y < 21; y++) for (let k = 0; k < 3; k++) byte(base + y * 3 + k, ox + k * 8, oy + y);
     else if (kind === 'fontrows') for (let x = 0; x < 40; x++) for (let y = 0; y < 8; y++) byte(base + (opts.codes?.[x] ?? x) * 8 + y, x * 8, oy + y);
-    else if (f) for (let j = 0; j < SCREEN_BYTES && base + j < end && base + j <= 0xffff; j++) {
+    else if (f) for (let j = 0; j < SCREEN_BYTES && base + j < end && base + j < mem.length; j++) {
       const code = mem[base + j];
       for (let y = 0; y < 8; y++) bits(f[code * 8 + y], ox + (j % 40) * 8, oy + Math.floor(j / 40) * 8 + y);
     }

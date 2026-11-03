@@ -2056,7 +2056,20 @@ I Graphics och Memory väljs banken i lägesraden (*Bank*, bredvid *Go*): listan
 adresserna (*3 · $8000 · start*), och pilarna bredvid eller mushjulet över den stegar från bank till bank. Markören följer
 med, till samma adress när banken har den (annars dit banken startar), och markeringen med den när banken har alla dess
 byte. Bilden och raderna står kvar där de är, så samma adresser kan jämföras bank för bank. Banker som inte är med i
-projektet står i listan men går inte att välja förrän + i Explorer lägger till dem. Inspector säger *Memory map · bank 3*, och `$01` visas med bankens minneskarta. *Go to* (G) tar banken före adressen
+projektet står i listan men går inte att välja förrän + i Explorer lägger till dem.
+
+**All banks**, först i listan (när mer än en bank är med i projektet), visar alla banker på en gång, som listningen: Memory
+med varje banks rader efter varandra under en rad med bankens nummer (*bank 1 · $8000–$bfff*), Graphics med bankernas
+laddade minne efter varandra (från 8 KB till 8 KB, så att cellerna står där VIC har dem) och bankens första rad markerad.
+Adresserna skrivs med banken (`1:$8000`), kommandot i Memory och *Go* i Graphics tar `3:8000`, och en adress utan bank
+gäller markörens bank. En markering i Graphics stannar i en bank. Valet är detsamma som *All banks in one .asm* i
+Explorer: att välja All banks sätter på den, att välja en bank stänger av den (en toast säger det, Ctrl+Z ångrar), och
+rutan i Explorer byter vyerna mellan alla banker och en. Pilarna och mushjulet stegar bara mellan banker, så exporten byts
+aldrig av misstag. Font per row visar en bank även med All banks (markörens). Graphics ritar bara raderna på skärmen och en
+skärm över och under (`drawMemory` med ett radintervall), så en EasyFlash på 1 MB (64 banker) går också: All banks i
+Screens är 422 000 pixlar högt men ritas på en duk lika stor som fönstret.
+
+Inspector säger *Memory map · bank 3*, och `$01` visas med bankens minneskarta. *Go to* (G) tar banken före adressen
 (`3:8000`, `3:$8000-3:$80ff`); utan den gäller markörens bank när den har adressen, annars den första som har den.
 Programstarten och användarens arbete sparas på bankadresser (projektfilens schema tar dem). Patchar kan skrivas i
 bank 0 och hamnar alltid i bank 0:s chip, inte i en annan bank på samma adress; i andra banker säger dialogen att det
@@ -2448,7 +2461,9 @@ markören på skärmen i den förra fliken kommer den med på skärmen i den nya
   *Show in listing*) efter att fliken scrollades, börjar nästa flik vid markören som förut.
 - **Banker:** med en cartridge (13.9b) visar Graphics och Memory banken där listningen står: markörens bank när markören
   är på skärmen, annars den översta radens. Är listningen scrollad in i bank 1 med markören kvar i bank 0 öppnar Memory
-  alltså bank 1 där, och markören står kvar. Ett hopp och bankväljaren tar vyerna till sin bank.
+  alltså bank 1 där, och markören står kvar. Ett hopp och bankväljaren tar vyerna till sin bank. Med All banks står
+  vyerna på samma bankadress som listningen, bland alla banker, och den bank de säger sig vara i är markörens när
+  markören är på skärmen.
 
 **Test:** e2e-testet på `fixtures/vsf/raster-demo.vsf` (allt RAM från `$0200` laddat) scrollar Graphics till `$7d00` och
 öppnar listningen där, scrollar listningen vidare och öppnar Memory och Graphics där, går tillbaka från en flik som inte

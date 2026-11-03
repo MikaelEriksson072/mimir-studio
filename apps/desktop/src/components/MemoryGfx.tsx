@@ -4,8 +4,10 @@
  * where no font can be) and the same 40 screen codes. A click selects a cell, Shift+click or a drag more; the selection is the listing's and is marked as Charset,
  * Sprite data, Bitmap or Screen matrix from here, or saved: as bytes, with a load address, as a Koala or Art Studio
  * picture, as a PNG image or as .byte source. A cartridge's bank is picked in the head: the picture stays where it is,
- * and the cursor goes along, to the same address when the bank has it. The tab opens where the editor was in memory
- * (the listing's or Memory's top, spec 14.6b), and says where it was scrolled to for the tab opened next. */
+ * and the cursor goes along, to the same address when the bank has it; *All banks* lays every bank's loaded memory out
+ * one after the other, at bank addresses (`1:$8000`). The tab opens where the editor was in memory (the listing's or
+ * Memory's top, spec 14.6b), and says where it was scrolled to for the tab opened next. Only the rows on screen and a
+ * screen above and below are drawn, so a cartridge of 1 MB fits too. */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture, makePrg, validLabel, type Addr, type AnalysisResult, type BlockKind, type RenderResult } from '@mimir/core';
 import { Icon } from '../lib/icons';
@@ -65,6 +67,12 @@ interface MemoryGfxProps {
   start?: { addr: Addr; end: Addr } | null;
   /** scrolled: the addresses at the top and the bottom of the picture */
   onView?: (top: Addr, end: Addr) => void;
+  /** every bank at once (13.9b): A and R at bank addresses, and the banks' loaded memory to lay out (null: 64 KB) */
+  parts?: readonly { start: Addr; end: Addr }[] | null;
+  /** an address as the tab writes it (`1:$8000` with every bank; `$8000` without) */
+  fmt?: (a: Addr) => string;
+  /** an address typed without a bank (or with one, `3:8000`), at its bank address */
+  resolve?: (a: Addr, bank: number | null) => Addr;
 }
 
 /** a way to save the selection: the menu text, the file extension, and the bytes */
@@ -80,7 +88,9 @@ async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArr
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, onView }: MemoryGfxProps) {
+const plainAddr = (a: Addr) => `$${h4(a)}`;
+
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   const set = (p: Partial<GfxPrefs>) => setUi({ gfx: { ...useUi.getState().gfx, ...p } });
   const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip } = prefs;
@@ -100,7 +110,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   /** a wheel step at most every 60 ms, so a touchpad does not race through the list */
   const lastWheel = useRef(0);
   const fontRows = useMemo(() => fontRowStarts(rowFonts, rowCount, rowSkip), [rowFonts, rowCount, rowSkip]);
-  const L = useMemo(() => (kind === 'fontrows' ? fontRowsLayout(fontRows.starts, codes) : gfxLayout(kind, cols, offset)), [kind, cols, offset, fontRows, codes]);
+  const L = useMemo(() => (kind === 'fontrows' ? fontRowsLayout(fontRows.starts, codes) : gfxLayout(kind, cols, offset, parts ?? undefined)), [kind, cols, offset, fontRows, codes, parts]);
   const canvas = useRef<HTMLCanvasElement>(null), scroller = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Addr | null>(null);
   /** a font per row: the row and column under the pointer */
@@ -119,13 +129,27 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   }, [screenFont, romBytes, A]);
   const charsets = A.blocks.filter(b => b.type === 'charset');
 
+  // the rows drawn: those on screen and a screen's worth above and below, drawn again when the scrolling leaves them
+  const [band, setBand] = useState(() => ({ from: 0, to: Math.min(L.rows, 64), L }));
+  const fitBand = () => {
+    const el = scroller.current; if (!el) return;
+    const rowPx = (L.cellH + L.gapY) * zoom, first = Math.floor(el.scrollTop / rowPx), last = Math.min(L.rows, Math.ceil((el.scrollTop + el.clientHeight) / rowPx));
+    const n = Math.max(1, last - first);
+    setBand(b => (b.L === L && b.from <= first && b.to >= last ? b : { from: Math.max(0, first - n), to: Math.min(L.rows, last + n), L }));
+  };
   useEffect(() => {
+    const el = scroller.current; if (!el) return;
+    const ro = new ResizeObserver(() => fitBand()); ro.observe(el);
+    return () => ro.disconnect();
+  }, [L, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  const stepY = L.cellH + L.gapY, bandRows = band.L === L ? band : { from: 0, to: Math.min(L.rows, 64) };
+  useLayoutEffect(() => {
     const cv = canvas.current; if (!cv) return;
-    const ctx = cv.getContext('2d'); if (!ctx) return;
-    const img = ctx.createImageData(L.width, L.height);
-    drawMemory(img.data, L, A.mem, a => A.owner[a] >= 0, mc, colors, kind === 'screens' ? font : undefined);
+    const ctx = cv.getContext('2d'), h = (bandRows.to - bandRows.from) * stepY; if (!ctx || h <= 0) return;
+    const img = ctx.createImageData(L.width, h);
+    drawMemory(img.data, L, A.mem, a => A.owner[a] >= 0, mc, colors, kind === 'screens' ? font : undefined, undefined, bandRows.from, bandRows.to);
     ctx.putImageData(img, 0, 0);
-  }, [A, L, mc, colors, kind, font]);
+  }, [A, L, mc, colors, kind, font, bandRows.from, bandRows.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scrollTo = (a: Addr, G: GfxLayout = L) => { const c = cellOf(G, a), el = scroller.current; if (c && el) el.scrollTop = Math.max(0, c.y * zoom - el.clientHeight / 3); };
   /** the cell of `a` is on screen */
@@ -140,11 +164,12 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   const onScroll = () => {
     const el = scroller.current;
     if (!el || restoring.current || kind === 'fontrows') return;
+    fitBand();
     const row = (y: number) => Math.floor(y / zoom / (L.cellH + L.gapY));
-    topAt.current = Math.min(0xffff, rowAddr(L, row(el.scrollTop)));
+    topAt.current = Math.min(L.size - 1, rowAddr(L, row(el.scrollTop)));
     if (own.current != null && Math.abs(el.scrollTop - own.current) < 1) return;
     own.current = null;
-    onView?.(topAt.current, Math.min(0x10000, rowAddr(L, row(el.scrollTop + el.clientHeight) + 1)));
+    onView?.(topAt.current, Math.min(L.size, rowAddr(L, row(el.scrollTop + el.clientHeight) + 1)));
   };
   /** opening the tab where the editor was (14.6b): that address in the top row, and the cursor on screen when the view
    *  it is from had it */
@@ -172,6 +197,8 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     // the scroll event this sets off is not yours
     requestAnimationFrame(() => requestAnimationFrame(() => { restoring.current = false; }));
   }, [kind, cols, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  // another layout, or the scrolling that came with it: the rows drawn are the ones on screen
+  useLayoutEffect(() => { fitBand(); }, [L, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
   // another bank keeps the picture where it is, unless the cursor went off screen in it (the bank does not have its address)
   const seen = useRef({ bank: bank?.value, cursor });
   useEffect(() => {
@@ -181,13 +208,18 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
 
   const point = (e: ReactMouseEvent) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); return { x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom }; };
   const anchor = useRef<Addr | null>(null), dragging = useRef(false);
+  /** the cells from the anchor to `a`; with every bank, inside the anchor's bank (a block is in one bank) */
+  const cellsTo = (a: Addr) => {
+    const r = cellRange(L, anchor.current!, a), b = anchor.current! - (anchor.current! & 0xffff);
+    return r && parts ? { start: Math.max(r.start, b), end: Math.min(r.end, b + 0x10000) } : r;
+  };
   const down = (e: ReactMouseEvent) => {
     if (e.button !== 0) return;
     e.preventDefault(); (e.currentTarget as HTMLElement).closest<HTMLElement>('.gfxv')?.focus();
     const { x, y } = point(e), a = cellAt(L, x, y);
     if (a == null) return;
     if (!(e.shiftKey && anchor.current != null)) anchor.current = a;
-    const r = cellRange(L, anchor.current!, a); if (r) onSelect(r.start, r.end);
+    const r = cellsTo(a); if (r) onSelect(r.start, r.end);
     dragging.current = true;
   };
   const move = (e: ReactMouseEvent) => {
@@ -196,15 +228,15 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     if (kind === 'fontrows') setHoverAt({ row: Math.floor(y / 8), col: Math.floor(x / 8) });
     if (!dragging.current || !(e.buttons & 1) || anchor.current == null) { dragging.current = false; return; }
     const a = cellAt(L, x, y); if (a == null) return;
-    const r = cellRange(L, anchor.current, a); if (r && (!sel || r.start !== sel.start || r.end !== sel.end)) onSelect(r.start, r.end);
+    const r = cellsTo(a); if (r && (!sel || r.start !== sel.start || r.end !== sel.end)) onSelect(r.start, r.end);
   };
   const go = () => {
-    const t = parseGoto(goto, n => { for (const [a, l] of R.labels) if (l.name === n) return a; return undefined; });
+    const t = parseGoto(goto, n => { for (const [a, l] of R.labels) if (l.name === n) return a; return undefined; }, resolve);
     if ('error' in t) { setGotoErr(t.error); return; }
     setGotoErr(null);
     // a screen can be stored anywhere: the grid moves so that one starts where it goes to
     const at = 'addr' in t ? t.addr : t.start;
-    const G = kind === 'screens' && cellOf(L, at)?.start !== at ? gfxLayout(kind, cols, at % L.unit) : L;
+    const G = kind === 'screens' && cellOf(L, at)?.start !== at ? gfxLayout(kind, cols, at % L.unit, parts ?? undefined) : L;
     if (G !== L) set({ offset: G.offset });
     scrollTo(at, G);
     if ('addr' in t) { const r = cellRange(G, t.addr, t.addr); if (r) { anchor.current = r.start; onSelect(r.start, r.end); } }
@@ -214,15 +246,15 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
 
   const range = sel?.multi || (sel && sel.end - sel.start > 1) ? { start: sel!.start, end: sel!.end } : null;
   const rects = range ? rangeRects(L, range.start, range.end) : [];
-  const stepY = L.cellH + L.gapY, rowH = stepY * zoom, every = Math.max(1, Math.ceil(14 / rowH));
+  const rowH = stepY * zoom, every = Math.max(1, Math.ceil(14 / rowH));
   const blockAt = (a: Addr) => findBlock(A.blocks, a);
-  const blockText = (a: Addr) => { const b = blockAt(a); if (!b) return 'not loaded'; const l = R.labels.get(b.start); return `${kindInfo(b.type).label}${l ? ` ${l.name}` : ''} ($${h4(b.start)}–$${h4(b.end - 1)})`; };
+  const blockText = (a: Addr) => { const b = blockAt(a); if (!b) return 'not loaded'; const l = R.labels.get(b.start); return `${kindInfo(b.type).label}${l ? ` ${l.name}` : ''} (${fmt(b.start)}–${fmt(b.end - 1)})`; };
   const hoverText = hover == null ? null : [
-    `$${h4(hover)} = $${h2(A.mem[hover])}`,
-    kind === 'chars' ? `char $${h2((hover & 0x7ff) >> 3)} of the 2 KB at $${h4(hover & 0xf800)}` : kind === 'sprites' ? (p => `sprite pointer $${h2(p.pointer)} in VIC bank ${p.bank}`)(spritePointer(hover))
-      : kind === 'screens' ? (c => { const i = hover - c, p = screenPointer(c); return `row ${Math.floor(i / 40)}, column ${i % 40} of the screen at $${h4(c)}${p ? ` ($d018 = $${p.d018.toString(16)}x in VIC bank ${p.bank})` : ''}`; })(cellOf(L, hover)?.start ?? hover)
+    `${fmt(hover)} = $${h2(A.mem[hover])}`,
+    kind === 'chars' ? `char $${h2((hover & 0x7ff) >> 3)} of the 2 KB at ${fmt(charsetAround(hover).start)}` : kind === 'sprites' ? (p => `sprite pointer $${h2(p.pointer)} in VIC bank ${p.bank}`)(spritePointer(hover))
+      : kind === 'screens' ? (c => { const i = hover - c, p = screenPointer(c); return `row ${Math.floor(i / 40)}, column ${i % 40} of the screen at ${fmt(c)}${p ? ` ($d018 = $${p.d018.toString(16)}x in VIC bank ${p.bank})` : ''}`; })(cellOf(L, hover)?.start ?? hover)
         : kind === 'fontrows' ? (hoverAt ? `row ${hoverAt.row}, column ${hoverAt.col}: char $${h2(codes[hoverAt.col])} of the font at $${h4(rowAddr(L, hoverAt.row))}` : '')
-          : `bitmap at $${h4(hover & 0xe000)}`,
+          : `bitmap at ${fmt(bitmapAround(hover).start)}`,
     blockText(hover),
   ].join(' · ');
   const marks = MARKS[kind];
@@ -241,7 +273,8 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   }, [saveOpen]);
   const saveName = (r: { start: Addr }) => {
     const b = blockAt(r.start), l = b && b.start === r.start ? R.labels.get(b.start)?.name : undefined;
-    return l && validLabel(l) ? l : `${kind === 'chars' ? 'charset' : kind === 'sprites' ? 'sprites' : kind === 'screens' ? 'screen' : kind === 'fontrows' ? 'fonts' : 'bitmap'}_${h4(r.start)}`;
+    // `1:$8000` in a file name: bank 1, `1_8000`
+    return l && validLabel(l) ? l : `${kind === 'chars' ? 'charset' : kind === 'sprites' ? 'sprites' : kind === 'screens' ? 'screen' : kind === 'fontrows' ? 'fonts' : 'bitmap'}_${fmt(r.start).replace('$', '').replace(':', '_')}`;
   };
   const saveAs: SaveAs[] = !range ? [] : (() => {
     const data = () => A.mem.slice(range.start, range.end);
@@ -251,12 +284,13 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     ];
     return [
       { id: 'bin', label: 'Raw bytes (.bin)', ext: 'bin', make: data },
-      kind === 'chars' ? { id: '64c', label: 'Charset with its load address (.64c)', ext: '64c', make: () => makePrg(range.start, data()) }
-        : { id: 'prg', label: 'With its load address (.prg)', ext: 'prg', make: () => makePrg(range.start, data()) },
+      // the load address in its bank
+      kind === 'chars' ? { id: '64c', label: 'Charset with its load address (.64c)', ext: '64c', make: () => makePrg(range.start & 0xffff, data()) }
+        : { id: 'prg', label: 'With its load address (.prg)', ext: 'prg', make: () => makePrg(range.start & 0xffff, data()) },
       ...(kind === 'bitmap' ? (mc ? pictures : [...pictures].reverse()) : []),
       { id: 'png', label: 'Image as shown here (.png)', ext: 'png', make: () => pngOf(gfxImage(kind, A.mem, range.start, range.end, mc, colors, { font: kind === 'screens' ? font : undefined, codes, rows: L.rowStarts })) },
       // the fonts of a font-per-row picture are characters
-      { id: 'asm', label: 'Kick Assembler source, .byte rows (.asm)', ext: 'asm', make: () => new TextEncoder().encode(gfxSource(kind === 'fontrows' ? 'chars' : kind, saveName(range), range.start, data())) },
+      { id: 'asm', label: 'Kick Assembler source, .byte rows (.asm)', ext: 'asm', make: () => new TextEncoder().encode(gfxSource(kind === 'fontrows' ? 'chars' : kind, saveName(range), range.start & 0xffff, data())) },
     ];
   })();
   const save = async (s: SaveAs) => { setSaveOpen(false); if (range) onSave(`${saveName(range)}.${s.ext}`, await s.make()); };
@@ -316,7 +350,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
               <option value="rom">C64 ROM, upper case{rom && !rom.found ? ' (not found)' : ''}</option>
               <option value="rom-lower">C64 ROM, lower case{rom && !rom.found ? ' (not found)' : ''}</option>
               <option value="builtin">Built-in letters and digits</option>
-              {charsets.length > 0 && <optgroup label="Charsets found">{charsets.map(b => <option key={b.start} value={`$${h4(b.start)}`}>${h4(b.start)}{R.labels.get(b.start) ? ` ${R.labels.get(b.start)!.name}` : ''}</option>)}</optgroup>}
+              {charsets.length > 0 && <optgroup label="Charsets found">{charsets.map(b => <option key={b.start} value={`$${h4(b.start)}`}>{fmt(b.start)}{R.labels.get(b.start) ? ` ${R.labels.get(b.start)!.name}` : ''}</option>)}</optgroup>}
               <optgroup label="2 KB of memory at">{Array.from({ length: 32 }, (_, i) => i * 0x800).filter(a => !charsets.some(b => b.start === a)).map(a => <option key={a} value={`$${h4(a)}`}>${h4(a)}</option>)}</optgroup>
             </select></label>
         </OptGroup>}
@@ -331,9 +365,9 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
       </div>
       <div className="gfxv-sel" role="status">
         {range ? <>
-          <span><b className="mono">${h4(range.start)}–${h4(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
+          <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           <span className="grow" />
-          {whole && <button className="btn small" onClick={() => { const r = whole.of(range.start); anchor.current = r.start; onSelect(r.start, Math.min(0x10000, r.end)); }}>{whole.label}</button>}
+          {whole && <button className="btn small" onClick={() => { const r = whole.of(range.start); anchor.current = r.start; onSelect(r.start, Math.min(L.size, r.end)); }}>{whole.label}</button>}
           {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}
           <span className="gfxv-save" ref={saveRef}>
             <button className="btn small" aria-haspopup="menu" aria-expanded={saveOpen} onClick={() => setSaveOpen(o => !o)} title="Save the selection as a file"><Icon name="download" size={13} />Save…</button>
@@ -347,22 +381,23 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
       </div>
       <div className="gfxv-scroll" ref={scroller} onScroll={onScroll}>
         <div className="gfxv-inner" style={{ height: L.height * zoom }}>
-          <div className="gfxv-gutter" aria-hidden="true">
+          <div className={cx('gfxv-gutter', parts && 'banks')} aria-hidden="true">
             {Array.from({ length: L.rows }, (_, r) => {
-              const a = rowAddr(L, r), b = a <= 0xffff ? blockAt(a) : null;
-              return <div key={r} className="gfxv-row" data-addr={a <= 0xffff ? h4(a) : undefined} style={{ top: r * rowH, height: rowH }}>
-                <i style={b ? { background: `var(--g-${groupOfKind(b.type)})` } : undefined} />{r % every === 0 && a <= 0xffff && <span>${h4(a)}</span>}
+              // with every bank: a bank's first row is marked, and its address always written
+              const a = rowAddr(L, r), b = a < L.size ? blockAt(a) : null, first = !!parts && (r === 0 || rowAddr(L, r - 1) >> 16 !== a >> 16);
+              return <div key={r} className={cx('gfxv-row', first && 'bank-top')} data-addr={a < L.size ? h4(a) : undefined} style={{ top: r * rowH, height: rowH }}>
+                <i style={b ? { background: `var(--g-${groupOfKind(b.type)})` } : undefined} />{(r % every === 0 || first) && a < L.size && <span>{fmt(a)}</span>}
               </div>;
             })}
           </div>
           <div className="gfxv-canvas" style={{ width: L.width * zoom, height: L.height * zoom }} onMouseDown={down} onMouseMove={move} onMouseLeave={() => { setHover(null); setHoverAt(null); }} onMouseUp={() => { dragging.current = false; }}
             onDoubleClick={e => { const { x, y } = point(e); const a = byteAt(L, x, y); if (a != null) onShow(a); }}>
-            <canvas ref={canvas} width={L.width} height={L.height} style={{ width: L.width * zoom, height: L.height * zoom }} aria-label={kind === 'fontrows' ? 'A font per row' : `Memory as ${kind}`} />
+            <canvas ref={canvas} width={L.width} height={Math.max(1, (bandRows.to - bandRows.from) * stepY)} style={{ position: 'absolute', left: 0, top: bandRows.from * rowH, width: L.width * zoom, height: (bandRows.to - bandRows.from) * rowH }} aria-label={kind === 'fontrows' ? 'A font per row' : `Memory as ${kind}`} />
             {rects.map((r, i) => <div key={i} className="gfxv-selrect" style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom }} />)}
           </div>
         </div>
       </div>
-      <div className="gfxv-info mono small">{hoverText ?? (cursor != null ? `cursor $${h4(cursor)} · ${blockText(cursor)}` : ' ')}</div>
+      <div className="gfxv-info mono small">{hoverText ?? (cursor != null ? `cursor ${fmt(cursor)} · ${blockText(cursor)}` : ' ')}</div>
     </div>
   );
 }

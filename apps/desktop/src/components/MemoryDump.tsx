@@ -4,7 +4,8 @@
  * the arrow keys move. The command field takes VICE's commands (`m 0801 08ff`, `ii 0400`); Copy writes the rows as
  * VICE does. Find searches text (as PETSCII and as screen codes) or bytes, marks every hit and steps through them.
  * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too. A cartridge's bank
- * is picked in the head: the cursor goes along, to the same address when the bank has it. The tab opens where the
+ * is picked in the head: the cursor goes along, to the same address when the bank has it; *All banks* shows every
+ * bank after the other, each under a line with its number, at bank addresses (`1:$8000`). The tab opens where the
  * editor was in memory (the listing's or Graphics' top, spec 14.6b), and says where it was scrolled to for the tab opened next. */
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
@@ -27,7 +28,9 @@ const MARKS: [string, string][] = [['text', 'Text'], ['textsc', 'Text (screen co
 const FIND_AS: [FindAs, string, string][] = [['text', 'Text', 'Text as the dump shows it, as PETSCII and as screen codes, in any case'], ['bytes', 'Bytes', 'Hex bytes: a9 00 8d, and ?? for any byte']];
 const MATCHED: Record<MemoryMatch['as'], string> = { petscii: 'PETSCII', screen: 'screen codes', both: 'PETSCII and screen codes', bytes: 'bytes' };
 
-type Item = { row: MonitorRow } | { gap: MonitorRange };
+/** a gap: memory between two loaded ranges that is not loaded; with every bank, a bank's line above its rows (`bank`,
+ *  and where its loaded memory ends) */
+type Item = { row: MonitorRow } | { gap: MonitorRange & { bank?: number; to?: Addr } };
 
 interface MemoryDumpProps {
   A: AnalysisResult; R: RenderResult; cursor: Addr | null; sel: Sel | null;
@@ -43,9 +46,19 @@ interface MemoryDumpProps {
   start?: { addr: Addr; end: Addr } | null;
   /** scrolled: the addresses at the top and the bottom of the dump */
   onView?: (top: Addr, end: Addr) => void;
+  /** every bank at once (13.9b): A and R at bank addresses, and the bank of each space (null: 64 KB) */
+  spaces?: readonly { space: number; bank: number }[] | null;
+  /** an address as the tab writes it (`1:$8000` with every bank; `$8000` without) */
+  fmt?: (a: Addr) => string;
+  /** an address typed without a bank (or with one, `3:8000`), at its bank address */
+  resolve?: (a: Addr, bank: number | null) => Addr;
 }
 
-export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, onView }: MemoryDumpProps) {
+const plainAddr = (a: Addr) => `$${h4(a)}`;
+/** the line over a bank's rows: `bank 1 · $8000–$9fff` */
+const bankLine = (bank: number, start: Addr, end: Addr) => `bank ${bank} · $${h4(start & 0xffff)}–$${h4((end - 1) & 0xffff)}`;
+
+export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, onView, spaces, fmt = plainAddr, resolve }: MemoryDumpProps) {
   const prefs = useUi(s => s.mon), setUi = useUi(s => s.set);
   const set = (p: Partial<MonPrefs>) => setUi({ mon: { ...useUi.getState().mon, ...p } });
   const { mode, lower, colors } = prefs;
@@ -53,12 +66,21 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   const ranges = useMemo(() => loadedRanges(A.owner), [A]);
   /** where a command started the rows (`m 0985`: a row at $0985, as in VICE); null: at each range's start */
   const [origin, setOrigin] = useState<Addr | null>(null);
-  // the rows of each loaded range, with a line for the memory between them
+  /** the bank of an address in every bank's memory */
+  const bankOf = (a: Addr) => spaces?.find(x => x.space === Math.floor(a / 0x10000))?.bank ?? 0;
+  // the rows of each loaded range, with a line for the memory between them; with every bank, a line over each bank
   const items = useMemo(() => {
     const out: Item[] = [];
-    ranges.forEach((r, i) => { if (i) out.push({ gap: { start: ranges[i - 1].end, end: r.start } }); for (const row of monitorRows([r], perRow, origin ?? undefined)) out.push({ row }); });
+    ranges.forEach((r, i) => {
+      const prev = ranges[i - 1], sp = Math.floor(r.start / 0x10000);
+      if (spaces && (!prev || Math.floor(prev.start / 0x10000) !== sp)) {
+        const to = ranges.filter(x => Math.floor(x.start / 0x10000) === sp).reduce((n, x) => Math.max(n, x.end), r.end);
+        out.push({ gap: { start: r.start, end: r.start, bank: bankOf(r.start), to } });
+      } else if (prev) out.push({ gap: { start: prev.end, end: r.start } });
+      for (const row of monitorRows([r], perRow, origin ?? undefined)) out.push({ row });
+    });
     return out;
-  }, [ranges, perRow, origin]);
+  }, [ranges, perRow, origin, spaces]); // eslint-disable-line react-hooks/exhaustive-deps
   /** the item index of the row holding `a` (or the one after, for an address that is not loaded) */
   const indexOf = (a: Addr) => {
     let lo = 0, hi = items.length - 1;
@@ -139,7 +161,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   /** the loaded byte `d` bytes from `a` (over the gaps between the loaded ranges), or null at the ends */
   const step = (a: Addr, d: number): Addr | null => {
     let b = a + d;
-    if (b < 0 || b > 0xffff) return null;
+    if (b < 0 || b >= A.owner.length) return null;
     if (A.owner[b] >= 0) return b;
     const r = d > 0 ? ranges.find(x => x.start > a) : [...ranges].reverse().find(x => x.end <= a);
     return r ? (d > 0 ? r.start : r.end - 1) : null;
@@ -178,7 +200,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     if (start == null || A.owner[start] < 0) return;
     const from = range ? range.end : start;
     const z = nextZero(A.mem, ranges, from);
-    if (z == null) { setZeroErr(`${range ? `No 0 byte after $${h4(range.end - 1)}` : `No 0 byte from $${h4(start)} on`} before the loaded bytes end.`); return; }
+    if (z == null) { setZeroErr(`${range ? `No 0 byte after ${fmt(range.end - 1)}` : `No 0 byte from ${fmt(start)} on`} before the loaded bytes end.`); return; }
     anchor.current = start;
     onSelect(start, z + 1);
     // the info line shows the 0
@@ -196,7 +218,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   const hits = 'matches' in found ? found.matches : [];
   useEffect(() => { setHitIdx(null); }, [found]);
   const hitMap = useMemo(() => {
-    const m = new Uint8Array(0x10000);
+    const m = new Uint8Array(A.mem.length);
     for (const h of hits) m.fill(1, h.start, h.end);
     if (hitIdx != null && hits[hitIdx]) m.fill(2, hits[hitIdx].start, hits[hitIdx].end);
     return m;
@@ -221,14 +243,24 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
       : !hits.length ? 'No matches'
         : `${hitIdx != null ? `${hitIdx + 1} of ` : ''}${hits.length}${found.more ? '+' : ''} match${hits.length === 1 ? '' : 'es'}${hitIdx != null ? ` · ${MATCHED[hits[hitIdx].as]}` : ''}`;
 
-  const labelAt = (n: string) => { for (const [a, l] of R.labels) if (l.name === n) return a; return undefined; };
   const run = () => {
+    // with every bank: a label is where it is and `3:8000` in bank 3; a plain address is in the cursor's bank when it
+    // has it (else the first that has it), and an end in the bank of the start
+    const exact = new Set<Addr>();
+    const labelAt = (n: string) => {
+      const b = resolve && /^(\d{1,3}):\$?([0-9a-f]{1,4})$/i.exec(n);
+      const a = b ? resolve(parseInt(b[2], 16), +b[1]) : [...R.labels].find(([, l]) => l.name === n)?.[0];
+      if (a != null) exact.add(a);
+      return a;
+    };
     const c = parseMonitorCommand(cmd, labelAt);
     if ('error' in c) { setCmdErr(c.error); return; }
     setCmdErr(null);
     if (c.mode) set({ mode: c.mode });
     if (c.start == null) return;
-    if (A.owner[c.start] < 0 && !ranges.some(r => r.start > c.start! && (c.end == null || r.start < c.end))) { setCmdErr(`$${h4(c.start)} is not loaded.`); return; }
+    if (resolve && !exact.has(c.start)) c.start = resolve(c.start, null);
+    if (resolve && c.end != null && !exact.has(c.end - 1)) c.end = c.start - (c.start & 0xffff) + c.end;
+    if (A.owner[c.start] < 0 && !ranges.some(r => r.start > c.start! && (c.end == null || r.start < c.end))) { setCmdErr(`${fmt(c.start)} is not loaded.`); return; }
     const first = A.owner[c.start] >= 0 ? c.start : ranges.find(r => r.start > c.start!)!.start;
     anchor.current = first;
     setOrigin(first);
@@ -236,11 +268,20 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     pending.current = first;
   };
   const copyRanges = () => (range ? clipRanges(ranges, range.start, range.end) : ranges);
-  const copy = () => onCopy(monitorText(A.mem, copyRanges(), mode, { lower, perRow }));
-  const blockText = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return 'not loaded'; const l = R.labels.get(b.start); return `${kindInfo(b.type).label}${l ? ` ${l.name}` : ''} ($${h4(b.start)}–$${h4(b.end - 1)})`; };
+  // with every bank: each bank's rows under its line, as the dump shows them
+  const copy = () => {
+    const rs = copyRanges();
+    if (!spaces) { onCopy(monitorText(A.mem, rs, mode, { lower, perRow })); return; }
+    const parts = [...new Set(rs.map(r => Math.floor(r.start / 0x10000)))].map(sp => {
+      const mine = rs.filter(r => Math.floor(r.start / 0x10000) === sp);
+      return `${bankLine(bankOf(mine[0].start), mine[0].start, mine[mine.length - 1].end)}\n${monitorText(A.mem, mine, mode, { lower, perRow })}`;
+    });
+    onCopy(parts.join('\n'));
+  };
+  const blockText = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return 'not loaded'; const l = R.labels.get(b.start); return `${kindInfo(b.type).label}${l ? ` ${l.name}` : ''} (${fmt(b.start)}–${fmt(b.end - 1)})`; };
   const byteText = (a: Addr) => {
     const b = A.mem[a], p = monitorChar(b, false, lower), s = monitorChar(b, true, lower);
-    return [`$${h4(a)} = $${h2(b)} · ${b} · %${b.toString(2).padStart(8, '0')}`, `PETSCII ${p ? `“${p.ch}”` : 'control or graphics'}`, `screen code ${s ? `“${s.ch}”${s.inv ? ' inverse' : ''}` : 'graphics'}`, blockText(a)].join(' · ');
+    return [`${fmt(a)} = $${h2(b)} · ${b} · %${b.toString(2).padStart(8, '0')}`, `PETSCII ${p ? `“${p.ch}”` : 'control or graphics'}`, `screen code ${s ? `“${s.ch}”${s.inv ? ' inverse' : ''}` : 'graphics'}`, blockText(a)].join(' · ');
   };
 
   const first = Math.max(0, Math.floor(top / ROW) - 4), last = Math.min(items.length, Math.ceil((top + height) / ROW) + 4);
@@ -248,7 +289,9 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   for (let i = first; i < last; i++) {
     const it = items[i];
     if ('gap' in it) {
-      rows.push(<div key={i} className="mon-row mon-gap" style={{ top: i * ROW }}>{`  $${h4(it.gap.start)}–$${h4(it.gap.end - 1)} not loaded`}</div>);
+      const g = it.gap;
+      rows.push(g.bank != null ? <div key={i} className="mon-row mon-gap mon-bank" style={{ top: i * ROW }}>{bankLine(g.bank, g.start, g.to ?? g.end)}</div>
+        : <div key={i} className="mon-row mon-gap" style={{ top: i * ROW }}>{`  ${fmt(g.start)}–${fmt(g.end - 1)} not loaded`}</div>);
       continue;
     }
     const { a, n } = it.row;
@@ -305,7 +348,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
       {zeroErr && <div className="gfxv-sel err-text small" role="alert">{zeroErr}</div>}
       <div className="gfxv-sel" role="status">
         {range ? <>
-          <span><b className="mono">${h4(range.start)}–${h4(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
+          <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           {zeroBtn}
           <span className="grow" />
           {MARKS.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}

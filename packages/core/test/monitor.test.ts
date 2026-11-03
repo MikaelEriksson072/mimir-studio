@@ -47,6 +47,15 @@ describe('the dump', () => {
     expect(monitorRows([{ start: 0x0801, end: 0x0805 }], 16, 0x0810)).toEqual([{ a: 0x0801, n: 4 }]);
   });
 
+  it('has a cartridge\'s banks one after the other, each a range of its own, the rows at the address in the bank', () => {
+    // two banks, each loaded from $8000 to the end of its 64 KB: two ranges, not one across the banks
+    const o = new Int16Array(0x20000).fill(-1);
+    o.fill(0, 0x8000, 0x10000); o.fill(1, 0x18000, 0x20000);
+    expect(loadedRanges(o)).toEqual([{ start: 0x8000, end: 0x10000 }, { start: 0x18000, end: 0x20000 }]);
+    const m = new Uint8Array(0x20000); m[0x18000] = 0x41;
+    expect(monitorLine(m, { a: 0x18000, n: 16 }, 'm').slice(0, 13)).toBe('>C:8000  41 0');
+  });
+
   it('writes m rows as VICE does: groups of four, the text column in place on a short row', () => {
     expect(monitorLine(mem, { a: 0x0801, n: 16 }, 'm')).toBe('>C:0801  0b 08 0a 00  9e 32 30 36  34 00 00 00  00 00 00 20   .....2064...... ');
     expect(monitorLine(mem, { a: 0x08f1, n: 15 }, 'm')).toBe(">C:08f1  8d 27 d0 ee  f0 08 ad 2e  09 4a 4a 4a  29 03 aa      .'.......JJJ)..");

@@ -15,13 +15,14 @@ export interface MonitorRow { a: Addr; n: number }
 /** bytes per row as VICE prints them in an 80-column monitor: 16 for `m`, 40 for `i` and `ii` */
 export const MONITOR_ROW: Record<MonitorMode, number> = { m: 16, i: 40, ii: 40 };
 
-/** The loaded parts of memory (`owner[a] >= 0`), in address order. */
+/** The loaded parts of memory (`owner[a] >= 0`), in address order. A cartridge's banks one after the other (13.9b)
+ *  are ranges at bank addresses, never one range across two banks. */
 export function loadedRanges(owner: ArrayLike<number>): MonitorRange[] {
   const out: MonitorRange[] = [];
-  for (let a = 0; a < 0x10000; a++) {
-    if (owner[a] < 0) continue;
+  for (let a = 0; a < owner.length;) {
+    if (owner[a] < 0) { a++; continue; }
     const start = a;
-    while (a < 0x10000 && owner[a] >= 0) a++;
+    do a++; while (a < owner.length && owner[a] >= 0 && a % 0x10000);
     out.push({ start, end: a });
   }
   return out;
@@ -84,21 +85,21 @@ export function monitorChar(b: number, screen: boolean, lower = false): MonitorC
 
 /** The row's text column: a character per byte, `.` for one the C64 shows as a control code or graphics. */
 export const monitorTextOf = (mem: ArrayLike<number>, row: MonitorRow, screen: boolean, lower = false): string =>
-  Array.from({ length: row.n }, (_, i) => monitorChar(mem[(row.a + i) & 0xffff], screen, lower)?.ch ?? '.').join('');
+  Array.from({ length: row.n }, (_, i) => monitorChar(mem[(row.a + i) % mem.length], screen, lower)?.ch ?? '.').join('');
 
 /** The row's hex column for `m`: groups of four, a short last row padded so the text column stays in place. */
 export function monitorHexOf(mem: ArrayLike<number>, row: MonitorRow, perRow = MONITOR_ROW.m): string {
   const groups: string[] = [];
   for (let g = 0; g < perRow; g += 4) {
     const bytes: string[] = [];
-    for (let i = g; i < Math.min(g + 4, perRow); i++) bytes.push(i < row.n ? h2(mem[(row.a + i) & 0xffff]) : '  ');
+    for (let i = g; i < Math.min(g + 4, perRow); i++) bytes.push(i < row.n ? h2(mem[(row.a + i) % mem.length]) : '  ');
     groups.push(bytes.join(' '));
   }
   return groups.join('  ');
 }
 
-/** `>C:0801  ` for `m` and `i`, `*C:0801  ` for `ii`, as VICE starts the rows */
-export const monitorPrefix = (mode: MonitorMode, a: Addr): string => `${mode === 'ii' ? '*' : '>'}C:${h4(a)}  `;
+/** `>C:0801  ` for `m` and `i`, `*C:0801  ` for `ii`, as VICE starts the rows (a bank address as the address in its bank) */
+export const monitorPrefix = (mode: MonitorMode, a: Addr): string => `${mode === 'ii' ? '*' : '>'}C:${h4(a & 0xffff)}  `;
 
 /** A row as VICE prints it. `lower`: the lower case character set; `perRow`: bytes per `m` row (16, or 8 like a 40-column monitor). */
 export function monitorLine(mem: ArrayLike<number>, row: MonitorRow, mode: MonitorMode, opts: { lower?: boolean; perRow?: number } = {}): string {

@@ -298,6 +298,11 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   tab opened next starts there unless the last `ScrollReq` (a jump) is newer. A tab's own scroll as it opens is not
   reported (`quietly`), so going back to a tab not scrolled meanwhile lands exactly where it was. Graphics and Memory show
   `viewSpace`, the bank the listing was in (the cursor's while it is on screen), which a jump also sets.
+- **All banks in Graphics and Memory** (spec 13.9b). With *All banks in one .asm* (`settings.cartOneSource`) and more
+  than one bank, the two tabs get the merged `AnalysisResult` at bank addresses instead of `spaceView`'s 64 KB:
+  `MemoryDump` puts a line over each bank (`spaces`), `MemoryGfx` lays out only the banks' loaded memory
+  (`gfxLayout(…, parts)`, rows found with a binary search) and draws a band of rows on a canvas the size of the window.
+  `fmt` writes `1:$8000`, `resolve` takes typed addresses into a bank. The bank list's *All banks* sets the same setting.
 - **Music.** `detectMusic()` (`packages/core/src/analyze/music.ts`) finds a player by its jump table (`JMP init`, then
   `JMP play`, up to four JMPs, or the play code right after them) and decodes the code its entries reach where the trace
   did not get to it. A snapshot taken after init ran, a play called from an interrupt the trace missed and a player
