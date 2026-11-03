@@ -4,7 +4,8 @@
  * where no font can be) and the same 40 screen codes. A click selects a cell, Shift+click or a drag more; the selection is the listing's and is marked as Charset,
  * Sprite data, Bitmap or Screen matrix from here, or saved: as bytes, with a load address, as a Koala or Art Studio
  * picture, as a PNG image or as .byte source. A cartridge's bank is picked in the head: the picture stays where it is,
- * and the cursor goes along, to the same address when the bank has it. */
+ * and the cursor goes along, to the same address when the bank has it. The tab opens where the editor was in memory
+ * (the listing's or Memory's top, spec 14.6b), and says where it was scrolled to for the tab opened next. */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture, makePrg, validLabel, type Addr, type AnalysisResult, type BlockKind, type RenderResult } from '@mimir/core';
 import { Icon } from '../lib/icons';
@@ -60,6 +61,10 @@ interface MemoryGfxProps {
   onSave: (name: string, bytes: Uint8Array) => void;
   /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
   bank?: BankPickProps | null;
+  /** where the editor was in memory (14.6b): the tab opens with it at the top (null: at the cursor) */
+  start?: { addr: Addr; end: Addr } | null;
+  /** scrolled: the addresses at the top and the bottom of the picture */
+  onView?: (top: Addr, end: Addr) => void;
 }
 
 /** a way to save the selection: the menu text, the file extension, and the bytes */
@@ -75,7 +80,7 @@ async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArr
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank }: MemoryGfxProps) {
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, onView }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   const set = (p: Partial<GfxPrefs>) => setUi({ gfx: { ...useUi.getState().gfx, ...p } });
   const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip } = prefs;
@@ -123,22 +128,41 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   }, [A, L, mc, colors, kind, font]);
 
   const scrollTo = (a: Addr, G: GfxLayout = L) => { const c = cellOf(G, a), el = scroller.current; if (c && el) el.scrollTop = Math.max(0, c.y * zoom - el.clientHeight / 3); };
+  /** the cell of `a` is on screen */
+  const onScreen = (a: Addr) => { const c = cellOf(L, a), el = scroller.current; return !!c && !!el && c.y * zoom >= el.scrollTop && (c.y + L.cellH) * zoom <= el.scrollTop + el.clientHeight; };
   // the address at the top of the picture, where you scrolled to: another view, other columns or another zoom keep it
   // at the top (a font per row has fonts for rows and leaves it). It only follows your scrolling, so going through
   // bitmaps (8 KB a row) and back finds the same row again
   const topAt = useRef<Addr | null>(null), restoring = useRef(false), opened = useRef(false);
+  // the scroll the tab makes itself as it opens is not where you went: the other tabs are not told of that position
+  const own = useRef<number | null>(null);
+  const quietly = (f: () => void) => { f(); own.current = scroller.current?.scrollTop ?? null; };
   const onScroll = () => {
     const el = scroller.current;
     if (!el || restoring.current || kind === 'fontrows') return;
-    topAt.current = Math.min(0xffff, rowAddr(L, Math.floor(el.scrollTop / zoom / (L.cellH + L.gapY))));
+    const row = (y: number) => Math.floor(y / zoom / (L.cellH + L.gapY));
+    topAt.current = Math.min(0xffff, rowAddr(L, row(el.scrollTop)));
+    if (own.current != null && Math.abs(el.scrollTop - own.current) < 1) return;
+    own.current = null;
+    onView?.(topAt.current, Math.min(0x10000, rowAddr(L, row(el.scrollTop + el.clientHeight) + 1)));
+  };
+  /** opening the tab where the editor was (14.6b): that address in the top row, and the cursor on screen when the view
+   *  it is from had it */
+  const showFrom = (v: { addr: Addr; end: Addr }) => {
+    const el = scroller.current, c = cellOf(L, v.addr); if (!el || !c) return;
+    el.scrollTop = c.y * zoom;
+    topAt.current = v.addr;
+    if (cursor != null && cursor >= v.addr && cursor < v.end && !onScreen(cursor)) scrollTo(cursor);
   };
   useLayoutEffect(() => {
     const el = scroller.current, top = topAt.current;
-    // opening the tab shows the cursor (or the selection)
+    // opening the tab shows where the editor was, else the cursor (or the selection)
     if (!opened.current || top == null || kind === 'fontrows') {
+      const first = !opened.current;
       opened.current = true;
+      if (first && start && kind !== 'fontrows') { quietly(() => showFrom(start)); return; }
       const a = sel?.multi ? sel.start : cursor;
-      if (a != null) scrollTo(a);
+      if (a != null) { if (first) quietly(() => scrollTo(a)); else scrollTo(a); }
       return;
     }
     const c = cellOf(L, top);
@@ -148,11 +172,11 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     // the scroll event this sets off is not yours
     requestAnimationFrame(() => requestAnimationFrame(() => { restoring.current = false; }));
   }, [kind, cols, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
-  // another bank keeps the picture where it is, unless the cursor went elsewhere in it (the bank does not have its address)
+  // another bank keeps the picture where it is, unless the cursor went off screen in it (the bank does not have its address)
   const seen = useRef({ bank: bank?.value, cursor });
   useEffect(() => {
     const was = seen.current; seen.current = { bank: bank?.value, cursor };
-    if (was.bank !== bank?.value && cursor != null && cursor !== was.cursor && kind !== 'fontrows') scrollTo(cursor);
+    if (was.bank !== bank?.value && cursor != null && cursor !== was.cursor && kind !== 'fontrows' && !onScreen(cursor)) scrollTo(cursor);
   }, [bank?.value, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const point = (e: ReactMouseEvent) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); return { x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom }; };

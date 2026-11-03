@@ -293,6 +293,11 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   results to the window. The UI works on bank addresses; the 64 KB views (Graphics, Memory, the heatmaps) get the
   cursor's bank through `spaceView`/`spaceRender` (Graphics and Memory pick it with `BankPick`, which moves the cursor
   to the same address in the other bank), and *Go to* takes `3:8000`. Patches are written in bank 0 only.
+- **Tabs that follow each other** (spec 14.6b). The listing, Graphics and Memory each report where they were scrolled
+  (`ViewAt`: the top and bottom address, and the listing's own scroll position and lines) to `seeAt` in `App.tsx`; the
+  tab opened next starts there unless the last `ScrollReq` (a jump) is newer. A tab's own scroll as it opens is not
+  reported (`quietly`), so going back to a tab not scrolled meanwhile lands exactly where it was. Graphics and Memory show
+  `viewSpace`, the bank the listing was in (the cursor's while it is on screen), which a jump also sets.
 - **Music.** `detectMusic()` (`packages/core/src/analyze/music.ts`) finds a player by its jump table (`JMP init`, then
   `JMP play`, up to four JMPs, or the play code right after them) and decodes the code its entries reach where the trace
   did not get to it. A snapshot taken after init ran, a play called from an interrupt the trace missed and a player

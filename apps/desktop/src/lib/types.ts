@@ -12,6 +12,11 @@ export interface Sel { start: Addr; end: Addr; multi: boolean; anchor?: Addr; an
  *  `line`: show this line (a find hit) rather than the address's; `top`: put the line at the top of the listing, with
  *  the line above it (a block header, Ctrl+↓ / Ctrl+↑) */
 export interface ScrollReq { addr: Addr; center: boolean; n: number; y?: number; line?: ListingLine; top?: boolean }
+/** Where in memory the editor is (spec 14.6b): the address at the top of the listing, of Graphics or of Memory, as it
+ *  was scrolled last; the one of these tabs opened next starts there, unless a jump (a ScrollReq) is newer. `end`: the
+ *  address at the bottom; `top` and `lines`: the listing's own scroll position and the lines it was in, so the listing
+ *  comes back exactly where it was while its lines are the same */
+export interface ViewAt { addr: Addr; end: Addr; n: number; top?: number; lines?: readonly ListingLine[] }
 /** a block whose type just changed (the listing frames it a moment, with `label` on it); `at`: when */
 export interface Changed { start: Addr; end: Addr; label: string; at: number }
 /** inline edit popover: a label, a line's trailing comment, or a comment line / block (`block`) above a line */

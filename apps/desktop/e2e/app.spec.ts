@@ -1056,6 +1056,23 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     await page.getByRole('button', { name: 'Add bank 1 to this project' }).click();
     await expect(pick.locator('option').nth(1)).toBeEnabled();
     await page.getByRole('tab', { name: 'Listing' }).click();
+    // the listing scrolled into bank 1 (the cursor stays in bank 0, off screen): Memory opens in bank 1, there
+    const top = await listing(page).evaluate(async el => {
+      el.scrollTop = el.scrollHeight;
+      await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const rows = [...el.querySelectorAll<HTMLElement>('.row')].filter(r => r.querySelector('.adr')?.textContent?.trim()).sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top));
+      return parseInt(rows.find(r => parseFloat(r.style.top) >= el.scrollTop - 1)?.querySelector('.adr')?.textContent ?? '', 16);
+    });
+    await page.getByRole('tab', { name: 'Memory' }).click();
+    await expect(pick).toHaveValue('1');
+    await expect(statusBar(page)).toContainText('bank 0 · $8009');
+    // the dump's top row holds the listing's top address, and bank 1's bytes are shown
+    await expect.poll(() => page.getByLabel('Memory dump').evaluate(el => {
+      const row = [...el.querySelectorAll<HTMLElement>('.mon-row')].find(r => parseFloat(r.style.top) <= el.scrollTop + 1 && parseFloat(r.style.top) + 20 > el.scrollTop + 1);
+      return parseInt(/C:([0-9a-f]{4})/.exec(row?.textContent ?? '')?.[1] ?? '', 16);
+    })).toBe(top - (top % 16));
+    await expect(row).toContainText('0d 09 0d 09');
+    await page.getByRole('tab', { name: 'Listing' }).click();
   });
 
   await test.step('F7 verifies both banks and the cartridge rebuilt from them', async () => {
@@ -2095,6 +2112,73 @@ test('deep analysis from the Problems tab: a snapshot\'s ROM calls are not trace
   await settings.getByLabel('Deep analysis (slower)').uncheck();
   await settings.getByRole('button', { name: 'Save settings' }).click();
   await expect(tab.locator('.count')).toHaveText('4');
+});
+
+test('the listing, Graphics and Memory open where the one before was in memory, unless a jump is newer', async ({ app, page }) => {
+  // spec 14.6b, on fixtures/vsf/raster-demo.vsf: all the RAM from $0200 is loaded, so every tab has every address
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
+  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await expect(toast(page, /^Loaded raster-demo\.prg at \$0200/)).toBeVisible();
+  // the snapshot's analysis is in (a new project starts the place over)
+  await expect(statusBar(page)).toContainText(/1 file · 6\d KB/);
+  const scroller = page.locator('.gfxv-scroll'), dump = page.getByLabel('Memory dump');
+  // the address at the top of each tab
+  const listTop = () => listing(page).evaluate(el => {
+    const rows = [...el.querySelectorAll<HTMLElement>('.row')].filter(r => r.querySelector('.adr')?.textContent?.trim()).sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top));
+    return parseInt(rows.find(r => parseFloat(r.style.top) >= el.scrollTop - 1)?.querySelector('.adr')?.textContent ?? '', 16);
+  });
+  const gfxTop = () => scroller.evaluate(el => {
+    const rows = [...el.querySelectorAll<HTMLElement>('.gfxv-row')];
+    return parseInt(rows.find(r => r.offsetTop <= el.scrollTop + 1 && r.offsetTop + r.offsetHeight > el.scrollTop + 1)?.dataset.addr ?? '', 16);
+  });
+  const memTop = () => dump.evaluate(el => {
+    const row = [...el.querySelectorAll<HTMLElement>('.mon-row')].find(r => parseFloat(r.style.top) <= el.scrollTop + 1 && parseFloat(r.style.top) + 20 > el.scrollTop + 1);
+    return parseInt(/C:([0-9a-f]{4})/.exec(row?.textContent ?? '')?.[1] ?? '', 16);
+  });
+  const tab = (name: string) => page.getByRole('tab', { name, exact: true }).click();
+
+  await test.step('Graphics scrolled to $7d00: the listing opens with it at the top', async () => {
+    await tab('Graphics');
+    // 40 characters of 8 bytes at zoom 2: a row is 320 bytes and 16 pixels, so 1600 pixels down is $7d00
+    await scroller.evaluate(el => { el.scrollTop = 1600; });
+    await expect.poll(gfxTop).toBe(0x7d00);
+    await tab('Listing');
+    await expect.poll(async () => { const a = await listTop(); return a <= 0x7d00 && a > 0x7d00 - 0x40; }).toBe(true);
+  });
+
+  let at = 0;
+  await test.step('the listing scrolled further: Memory opens with that row at the top, and Graphics after it', async () => {
+    await listing(page).evaluate(el => { el.scrollTop += 2000; });
+    await expect.poll(async () => { at = await listTop(); return at > 0x7d00; }).toBe(true);
+    await tab('Memory');
+    await expect.poll(async () => { const a = await memTop(); return a <= at && at < a + 16; }).toBe(true);
+    // Memory scrolled on: Graphics opens there, and the listing too, as Graphics was not scrolled
+    await dump.evaluate(el => { el.scrollTop += 4000; });
+    await expect.poll(async () => { at = await memTop(); return at >= 0x8000; }).toBe(true);
+    await tab('Graphics');
+    await expect.poll(gfxTop).toBe(Math.floor(at / 320) * 320);
+    await tab('Listing');
+    await expect.poll(async () => { const a = await listTop(); return a <= at && a > at - 0x40; }).toBe(true);
+  });
+
+  await test.step('back from a tab not scrolled, the listing is exactly where it was', async () => {
+    const before = await listing(page).evaluate(el => el.scrollTop);
+    await tab('Memory');
+    await tab('Listing');
+    await expect.poll(() => listing(page).evaluate(el => el.scrollTop)).toBe(before);
+  });
+
+  await test.step('a jump is newer: a byte clicked in Memory is what the listing shows', async () => {
+    await tab('Memory');
+    await dump.evaluate(el => { el.scrollTop = 0; });
+    await expect.poll(memTop).toBe(0x0200);
+    await dump.locator('[data-a="528"].mon-b').click();
+    await expect(statusBar(page)).toContainText('$0210');
+    await tab('Listing');
+    await expect(listing(page).locator('.row.cur')).toBeInViewport();
+  });
 });
 
 test('the Graphics tab keeps the address you scrolled to at the top when the view changes', async ({ page }) => {

@@ -1,11 +1,11 @@
 /* Listing — virtualized, interactive view of the shared line model (spec 6, "one line model, two views"). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
+import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, SPACE, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { Icon } from '../lib/icons';
 import { peekOf, type Peek, type PeekNames } from '../lib/peek';
-import type { Changed, Editing, ScrollReq, Sel } from '../lib/types';
+import type { Changed, Editing, ScrollReq, Sel, ViewAt } from '../lib/types';
 import { useUi, type Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
 import { bookmarkCss } from './Bookmarks';
@@ -137,9 +137,14 @@ interface ListingProps {
   find?: ListingFind | null;
   /** the labels and zero-page variables the peek's instructions use */
   names: PeekNames;
+  /** where the editor was in memory (spec 14.6b): the listing opens there, unless the scroll request is newer */
+  startAt?: ViewAt | null;
+  /** the listing scrolled: where it is now, and the address whose bank Graphics and Memory show (the cursor's while it
+   *  is on screen) */
+  onView?: (v: ViewAt, shows: Addr) => void;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -253,7 +258,40 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const at = lines[lineOf[l.a]], shownAsCode = b.type === 'code' || !!(at && 'preview' in at && at.preview);
     return peekOf(A, names, b, l.a, 'n' in l ? l.n : 0, !shownAsCode);
   }, [peekRow?.i, lines, lineOf, A, names]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** the line of `a`, or of the nearest address in its bank that has one (after it first) */
+  const lineNear = (a: Addr): number => {
+    if (lineOf[a] >= 0) return lineOf[a];
+    const s = a - (a % SPACE), e = Math.min(s + SPACE, lineOf.length);
+    for (let b = a + 1; b < e; b++) if (lineOf[b] >= 0) return lineOf[b];
+    for (let b = Math.min(a, e) - 1; b >= s; b--) if (lineOf[b] >= 0) return lineOf[b];
+    return -1;
+  };
+  /** the listing opens where the editor was (14.6b): where the listing itself was while its lines are the same, else
+   *  with the line of the address at the top, its labels and comments with it; the cursor comes into view when the
+   *  view that place is from had it on screen */
+  const placeAt = (v: ViewAt): boolean => {
+    const el = box.current; if (!el) return false;
+    if (v.lines === lines && v.top != null) { el.scrollTop = v.top; setTop(el.scrollTop); return true; }
+    const i = lineNear(v.addr); if (i < 0) return false;
+    let j = i; while (j > 0 && lines[j - 1].a === lines[i].a && ['lbl', 'hdr', 'dir', 'cmt'].includes(lines[j - 1].k) && i - j < 6) j--;
+    el.scrollTop = j * ROW;
+    const ci = cursor != null && cursor >= v.addr && cursor < v.end ? lineOf[cursor] : -1;
+    if (ci >= 0 && (ci + 1) * ROW > el.scrollTop + el.clientHeight) el.scrollTop = Math.max(0, ci * ROW - Math.floor(el.clientHeight / 3));
+    setTop(el.scrollTop);
+    return true;
+  };
+  /** the listing scrolled: its top line, its bottom line, and the scroll position, for the tab opened next */
+  const report = () => {
+    const el = box.current; if (!el || !onView || !lines.length) return;
+    const t = Math.min(lines.length - 1, Math.floor(el.scrollTop / ROW)), b = Math.min(lines.length - 1, Math.floor((el.scrollTop + el.clientHeight) / ROW));
+    const ci = cursor != null ? lineOf[cursor] : -1;
+    onView({ addr: lines[t].a, end: lines[b].a + 1, n: Date.now(), top: el.scrollTop, lines }, ci >= t && ci <= b ? cursor! : lines[t].a);
+  };
+  const opened = useRef(false);
   useLayoutEffect(() => {
+    // opening the listing: where the editor was in memory, unless a jump since then is newer
+    const first = !opened.current; opened.current = true;
+    if (first && startAt && startAt.n > (scrollReq?.n ?? 0) && placeAt(startAt)) return;
     if (!scrollReq || !box.current) return;
     // a find hit is the line itself; an address shows the labels and comments above its line too
     const i = scrollReq.line ? lines.indexOf(scrollReq.line) : lineOf[scrollReq.addr];
@@ -420,7 +458,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   // where the listing is on screen after this render (the line kept in view is placed against it); runs last
   useLayoutEffect(() => { if (box.current) boxTop.current = box.current.getBoundingClientRect().top; });
   return (
-    <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => { setTop(e.currentTarget.scrollTop); if (peekRow) peekNow(); }} aria-label="Disassembly listing"
+    <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => { setTop(e.currentTarget.scrollTop); if (peekRow) peekNow(); report(); }} aria-label="Disassembly listing"
       onMouseMove={peekMove} onMouseLeave={() => { pointer.current = null; clearTimeout(peekKeys.current.timer); setPeekRow(null); }}>
       <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{chip}</div>
       {peek && peekRow && <PeekBox peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} />}

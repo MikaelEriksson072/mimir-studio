@@ -23,7 +23,7 @@ import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
-import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem } from './lib/types';
+import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
 import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
@@ -169,9 +169,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const view = useMemo(() => foldLines(R.lines, A.blocks, folded, A.mem.length, A.relocs), [R, A, folded]);
   const excludedSet = useMemo(() => new Set(project.excluded), [project.excluded]);
   const lineOf = view.lineOf;
+  /* ---- where in memory the editor is (14.6b): the listing, Graphics and Memory each say where they were scrolled to,
+     and the one opened next starts there (a jump since then wins). `viewSpace`: the bank that place is in ---- */
+  const viewAt = useRef<ViewAt | null>(null);
+  const [viewSpace, setViewSpace] = useState<number | null>(null);
+  const seeAt = (v: ViewAt, shows: Addr = v.addr) => { viewAt.current = v; const s = spaceOf(shows); setViewSpace(x => (x === s ? x : s)); };
   /* ---- a cartridge's banks are spaces of their own (13.9b): the listing shows them all, one after the other, at bank
-     addresses (space * $10000 + address); the 64 KB views (Graphics, Memory, the heatmap) show the bank of the cursor ---- */
-  const space = spaceOf(cursor ?? A.entry ?? 0);
+     addresses (space * $10000 + address); the 64 KB views (Graphics, Memory, the heatmap) show the bank of the cursor,
+     and Graphics and Memory the bank the editor is in ---- */
+  const space = (tab === 'gfx' || tab === 'mem') && viewSpace != null && A.spaces?.some(s => s.space === viewSpace) ? viewSpace : spaceOf(cursor ?? A.entry ?? 0);
   const base = space * SPACE;
   const As = useMemo(() => spaceView(A, space), [A, space]);
   const Rs = useMemo(() => spaceRender(R, A, space), [R, A, space]);
@@ -287,6 +293,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (opts.center) { const b = findBlock(A.blocks, addr); unfold([...(b && addr !== b.start ? [b.start] : []), ...relocsAround(addr)]); }
     if (cursor != null && cursor !== addr && !opts.noHistory) { navHist.current.back.push(cursor); navHist.current.fwd = []; }
     setCursor(addr);
+    // a jump takes Graphics and Memory to its bank
+    setViewSpace(spaceOf(addr));
     if (!opts.keepSel) setSel(null);
     if (!opts.fromSource) setScrollReq({ addr, center: !!opts.center, n: Date.now() });
     if (opts.listing && useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
@@ -296,7 +304,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   /** the relocated blocks the bytes at `a` run in, the innermost first (where each one is loaded) */
   const relocsAround = (a: Addr): Addr[] => { const out: Addr[] = []; for (let r = relocAt(A, a); r && out.length < 64; r = relocAt(A, r.start)) out.push(r.start); return out; };
   const unfold = (starts: Addr[]) => { const shut = starts.filter(s => folded.has(s)); if (shut.length) setFolded(f => { const n = new Set(f); for (const s of shut) n.delete(s); return n; }); };
-  const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; };
+  const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; viewAt.current = null; setViewSpace(null); };
   /** fold or unfold the block that starts at (or contains) `a` */
   const toggleFold = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return; setFolded(f => { const n = new Set(f); if (n.has(b.start)) n.delete(b.start); else n.add(b.start); return n; }); if (cursor != null && cursor > b.start && cursor < b.end) setCursor(b.start); };
   // a relocated block holds code too: it is no block of data to fold
@@ -550,12 +558,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const s = A.spaces?.find(x => x.bank === bank);
     if (!s || s.space === space) return;
     const to = s.space * SPACE, has = (a: Addr) => A.owner[to + a] >= 0;
-    const at = vCursor != null && has(vCursor) ? to + vCursor : s.entry ?? fileAddr(s.files[0]);
+    // the cursor in the bank shown, else the top of the view
+    const here = vCursor ?? viewStart?.addr ?? null;
+    const at = here != null && has(here) ? to + here : s.entry ?? fileAddr(s.files[0]);
     const moved = vSel && A.owner.subarray(to + vSel.start, to + vSel.end).every(o => o >= 0)
       ? { ...vSel, start: to + vSel.start, end: to + vSel.end, ...(vSel.anchor != null ? { anchor: to + vSel.anchor } : {}), ...(vSel.anchorEnd != null ? { anchorEnd: to + vSel.anchorEnd } : {}) } : null;
     navigate(at, { keepSel: true });
     setSel(moved);
   };
+  /** where Graphics and Memory open (14.6b): where the editor was last, in the bank they show, unless a jump is newer */
+  const lastView = viewAt.current;
+  const viewStart = lastView && (!scrollReq || scrollReq.n < lastView.n) && spaceOf(lastView.addr) === space
+    ? { addr: lastView.addr - base, end: spaceOf(lastView.end) === space ? lastView.end - base : SPACE } : null;
+  /** Graphics or Memory scrolled: the addresses at its top and bottom, in the bank it shows */
+  const seeView = (top: Addr, end: Addr) => seeAt({ addr: inBank(top), end: inBank(end), n: Date.now() });
   // one bank in the project is analysed without spaces: it is the one shown
   const bankPick = bankChoices && { banks: bankChoices, value: A.spaces ? A.spaces.find(x => x.space === space)?.bank ?? null : crt?.chips[project.files[0]?.chip ?? -1]?.bank ?? null, onChange: showBank };
   /* ---- packed programs ---- */
@@ -1929,7 +1945,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onMove={moveInto} onToken={onToken} onContext={onContext}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
-                patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R} />
+                patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}
+                startAt={viewAt.current} onView={seeAt} />
               {findOpen && <FindBar q={findQ} opts={findOpts} onQuery={setFindQ} onOpts={setFindOpts} count={findHits.length} at={findAt >= 0 ? findAt + 1 : null} onStep={stepFind} onClose={closeFind} focusKey={findFocus} />}
               </div>
             </>}
@@ -1937,10 +1954,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}
-              {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick}
+              {tab === 'gfx' && <MemoryGfx A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick} start={viewStart} onView={seeView}
                 onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />}
-              {tab === 'mem' && <MemoryDump A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick}
+              {tab === 'mem' && <MemoryDump A={As} R={Rs} cursor={vCursor} sel={vSel} bank={bankPick} start={viewStart} onView={seeView}
                 onCursor={a => { const g = inBank(a); navigate(g, { noHistory: true }); setSel({ start: g, end: g + 1, multi: false, anchor: g, anchorEnd: g + 1 }); }}
                 onSelect={(s, e) => { setSel({ start: inBank(s), end: inBank(e), multi: true, anchor: inBank(s), anchorEnd: inBank(e) }); setCursor(inBank(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r) => mark(id, r && { start: inBank(r.start), end: inBank(r.end) })} onShow={a => navigate(inBank(a), { center: true, listing: true })} onCopy={t => void copyText(t)} />}

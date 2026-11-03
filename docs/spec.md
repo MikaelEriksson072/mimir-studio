@@ -2281,7 +2281,8 @@ grupper med rubrik: *Fonts* (Font per row), *Layout* (per rad, zoom, förskjutni
 **Samma adresser i alla lägen:** adressen överst i bilden, dit man scrollat eller gått med *Go*, står kvar överst när
 man byter läge, antal per rad eller zoom. Raden med den adressen hamnar överst, och i Bitmaps är det den 8 KB-ruta den
 ligger i. Adressen följer bara ens egen scrollning, så Characters → Bitmaps → Characters hittar samma teckenrad igen.
-Font per row har fonter i stället för adresser och lämnar den orörd. När fliken öppnas visas markören, eller markeringen.
+Font per row har fonter i stället för adresser och lämnar den orörd. När fliken öppnas börjar den där listningen eller
+Memory stod (14.6b), eller vid markören (eller markeringen) när ett hopp är nyare.
 
 Det finns fem lägen:
 - **Characters:** 8 byte per tecken, 16, 32, 40 (standard, en skärms bredd) eller 64 per rad. Med *Other…* skrivs
@@ -2429,6 +2430,30 @@ tecknet som PETSCII och som skärmkod, och blocket. *Block colours* färgar byte
 i monitorn), som laddar demon och skriver `m 0801 08ff`, `i` och `ii`. Radadresserna och hexkolumnen ska vara exakt de VICE
 skriver, och textkolumnen bytena själva. E2e-testet går igenom `m`, `i` och `ii`, markören, piltangenterna, ett kommando,
 *Copy selection*, *Mark as Bytes* och dubbelklicket till listningen.
+
+### 14.6b Flikarna följer varandra i minnet
+
+Listningen, Graphics och Memory visar samma minne på tre sätt, och den flik man byter till börjar där man var i den förra
+(`ViewAt` i `src/lib/types.ts`). Varje flik säger när den scrollas vilken adress som står överst och vilken som står
+nederst. Listningen tar sin översta rad (och sin exakta scrollposition), Graphics sin översta bildrad och Memory sin
+översta monitorrad. Fliken som öppnas sedan ställer den adressen överst: listningen med adressens rad och dess etiketter och
+kommentarer, Graphics med raden som har adressen, Memory med monitorraden. En adress som inte är laddad (en mörk rad i
+Graphics, en rad om minne som inte är laddat) ger listningen närmaste laddade adress i samma bank, först efter den. Stod
+markören på skärmen i den förra fliken kommer den med på skärmen i den nya.
+
+- **Tillbaka utan att ha scrollat:** fliken man kom från säger ingenting när den bara öppnas, så listningen → Memory →
+  listningen står exakt där den stod, så länge listningens rader är desamma (samma analys och veckningar). Det gäller
+  också vägen över källan och SPEC.md.
+- **Ett hopp är nyare:** har markören flyttats med ett hopp (*Go to*, en länk, Explorer, Bookmarks, ett klick i Memory,
+  *Show in listing*) efter att fliken scrollades, börjar nästa flik vid markören som förut.
+- **Banker:** med en cartridge (13.9b) visar Graphics och Memory banken där listningen står: markörens bank när markören
+  är på skärmen, annars den översta radens. Är listningen scrollad in i bank 1 med markören kvar i bank 0 öppnar Memory
+  alltså bank 1 där, och markören står kvar. Ett hopp och bankväljaren tar vyerna till sin bank.
+
+**Test:** e2e-testet på `fixtures/vsf/raster-demo.vsf` (allt RAM från `$0200` laddat) scrollar Graphics till `$7d00` och
+öppnar listningen där, scrollar listningen vidare och öppnar Memory och Graphics där, går tillbaka från en flik som inte
+scrollats till exakt samma scrollposition och låter ett klick i Memory vinna. Cartridge-testet scrollar listningen in i
+bank 1 och öppnar Memory i bank 1.
 
 ### 14.7 Showcase-demon (Demo)
 

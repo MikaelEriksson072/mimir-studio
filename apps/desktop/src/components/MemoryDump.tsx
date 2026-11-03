@@ -4,7 +4,8 @@
  * the arrow keys move. The command field takes VICE's commands (`m 0801 08ff`, `ii 0400`); Copy writes the rows as
  * VICE does. Find searches text (as PETSCII and as screen codes) or bytes, marks every hit and steps through them.
  * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too. A cartridge's bank
- * is picked in the head: the cursor goes along, to the same address when the bank has it. */
+ * is picked in the head: the cursor goes along, to the same address when the bank has it. The tab opens where the
+ * editor was in memory (the listing's or Graphics' top, spec 14.6b), and says where it was scrolled to for the tab opened next. */
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   clipRanges, findBlock, findInMemory, h2, h4, kindInfo, loadedRanges, monitorChar, monitorPrefix, monitorRows, monitorText, MONITOR_ROW, nextZero, parseMonitorCommand,
@@ -38,9 +39,13 @@ interface MemoryDumpProps {
   onCopy: (text: string) => void;
   /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
   bank?: BankPickProps | null;
+  /** where the editor was in memory (14.6b): the tab opens with it in the top row (null: at the cursor) */
+  start?: { addr: Addr; end: Addr } | null;
+  /** scrolled: the addresses at the top and the bottom of the dump */
+  onView?: (top: Addr, end: Addr) => void;
 }
 
-export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank }: MemoryDumpProps) {
+export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, onView }: MemoryDumpProps) {
   const prefs = useUi(s => s.mon), setUi = useUi(s => s.set);
   const set = (p: Partial<MonPrefs>) => setUi({ mon: { ...useUi.getState().mon, ...p } });
   const { mode, lower, colors } = prefs;
@@ -74,16 +79,39 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     else if (y < el.scrollTop) el.scrollTop = y;
     else if (y + ROW > el.scrollTop + el.clientHeight) el.scrollTop = y + ROW - el.clientHeight;
   };
-  // opening the tab, or another layout, shows the cursor (or the selection)
-  useEffect(() => { const a = sel?.multi ? sel.start : cursor; if (a != null) scrollTo(a); }, [mode, perRow]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** the row of `a` is on screen */
+  const onScreen = (a: Addr) => { const el = scroller.current, y = indexOf(a) * ROW; return !!el && y >= el.scrollTop && y + ROW <= el.scrollTop + el.clientHeight; };
+  // the scroll the tab makes itself as it opens is not where you went: the other tabs are not told of that position
+  const own = useRef<number | null>(null), opened = useRef(false);
+  const quietly = (f: () => void) => { f(); own.current = scroller.current?.scrollTop ?? null; };
+  /** scrolled: the addresses at the top and the bottom, for the tab opened next */
+  const report = (el: HTMLDivElement) => {
+    if (!onView || !items.length || (own.current != null && Math.abs(el.scrollTop - own.current) < 1)) return;
+    own.current = null;
+    const at = (y: number) => items[Math.max(0, Math.min(items.length - 1, Math.floor(y / ROW)))];
+    const t = at(el.scrollTop), b = at(el.scrollTop + el.clientHeight);
+    onView('row' in t ? t.row.a : t.gap.start, 'row' in b ? b.row.a + b.row.n : b.gap.end);
+  };
+  // opening the tab shows where the editor was (that address in the top row, and the cursor on screen when the view it
+  // is from had it), else the cursor (or the selection); another layout shows the cursor
+  useEffect(() => {
+    const first = !opened.current; opened.current = true;
+    const el = scroller.current;
+    if (first && start && el) {
+      quietly(() => { el.scrollTop = indexOf(start.addr) * ROW; if (cursor != null && cursor >= start.addr && cursor < start.end && !onScreen(cursor)) scrollTo(cursor); });
+      return;
+    }
+    const a = sel?.multi ? sel.start : cursor;
+    if (a != null) { if (first) quietly(() => scrollTo(a)); else scrollTo(a); }
+  }, [mode, perRow]); // eslint-disable-line react-hooks/exhaustive-deps
   /** an address a command goes to: scrolled to once the rows of its mode are rendered */
   const pending = useRef<Addr | null>(null);
   useEffect(() => { if (pending.current != null) { scrollTo(pending.current); pending.current = null; } });
-  // another bank keeps the rows in view, unless the cursor went elsewhere in it (the bank does not have its address)
+  // another bank keeps the rows in view, unless the cursor went off screen in it (the bank does not have its address)
   const seen = useRef({ bank: bank?.value, cursor });
   useEffect(() => {
     const was = seen.current; seen.current = { bank: bank?.value, cursor };
-    if (was.bank !== bank?.value && cursor != null && cursor !== was.cursor) scrollTo(cursor);
+    if (was.bank !== bank?.value && cursor != null && cursor !== was.cursor && !onScreen(cursor)) scrollTo(cursor);
   }, [bank?.value, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [hover, setHover] = useState<Addr | null>(null);
@@ -287,7 +315,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
           {cursor != null && A.owner[cursor] >= 0 && <><span className="grow" />{zeroBtn}</>}
         </>}
       </div>
-      <div className="monv-scroll" ref={scroller} tabIndex={0} aria-label="Memory dump" onScroll={e => setTop(e.currentTarget.scrollTop)} onKeyDown={key}
+      <div className="monv-scroll" ref={scroller} tabIndex={0} aria-label="Memory dump" onScroll={e => { setTop(e.currentTarget.scrollTop); report(e.currentTarget); }} onKeyDown={key}
         onMouseDown={down} onMouseMove={move} onMouseLeave={() => setHover(null)} onMouseUp={() => { dragging.current = false; }}
         onDoubleClick={e => { const a = addrOf(e); if (a != null) onShow(a); }}>
         <div className="monv-inner" style={{ height: items.length * ROW + 8 }}>{rows}</div>
