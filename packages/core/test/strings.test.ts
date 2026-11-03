@@ -222,6 +222,78 @@ after: inc $01
       expect(findBlock(A.blocks, 0xc03a)).toMatchObject({ start: 0xc03a, type: 'code' });
     }
   });
+
+  // as in the Fairlight cartridge: the string follows the JSR; the routine keeps Y first, prints the characters other
+  // than its $01 (a count of spaces) on a branch's side, through $e716, and returns after the 0
+  const INLINE = `print: sty $24
+ pla
+ sta $22
+ pla
+ sta $23
+ ldy #0
+loop: iny
+ lda ($22),y
+ beq done
+ cmp #$01
+ bne out
+ iny
+ lda ($22),y
+ tax
+sp: lda #$20
+ jsr $ffd2
+ dex
+ bne sp
+ beq loop
+out: jsr $e716
+ bcc loop
+done: tya
+ clc
+ adc $22
+ tay
+ lda $23
+ adc #0
+ pha
+ tya
+ pha
+ ldy $24
+ rts
+`;
+
+  it('a routine that prints the string after the JSR to it: the string is text and the code goes on after it', () => {
+    const { A, text, src } = run(`
+ jsr print
+ .text "HELLO"
+ .byte 0
+ lda #1
+ sta $d020
+ rts
+${INLINE}`);
+    expect(text(0xc003)).toEqual({ end: 0xc009, reason: 'printed by the routine at $c00f from $c000' });
+    expect(findBlock(A.blocks, 0xc009)).toMatchObject({ start: 0xc009, type: 'code' });
+    expect(A.labels.get(0xc00f)?.name).toBe('print_c00f');
+    expect(src).toContain('jsr print_c00f                  // prints the string after it\n');
+    expect(A.log).toContainEqual(expect.objectContaining({ lvl: 'ok', msg: 'JSR $c00f prints the string after it ($c003-$c008); the code goes on at $c009', addr: 0xc000 }));
+    expect(A.log).toContainEqual(expect.objectContaining({ lvl: 'ok', msg: 'Print routine at $c00f: the string after the JSR to it, ended by $00' }));
+    expect(A.log.some(l => /pops its return address/.test(l.msg))).toBe(false);
+  });
+
+  it('a routine nothing traced reaches that starts by printing the string after a JSR is code, however short', () => {
+    for (const deepAnalysis of [false, true]) {
+      const { A, text } = run(`
+ jsr print
+ .byte 0
+ rts
+error: jsr print
+ .byte $0d
+ .text "WRONG FILETYPE"
+ .byte 0
+ jmp $c000
+${INLINE}`, { deepAnalysis });
+      expect(text(0xc008), `deep: ${deepAnalysis}`).toEqual({ end: 0xc018, reason: 'printed by the routine at $c01b from $c005' });
+      expect(findBlock(A.blocks, 0xc005)).toMatchObject({ start: 0xc005, type: 'code' });
+      expect(findBlock(A.blocks, 0xc018)).toMatchObject({ type: 'code' });
+    }
+  });
 });
 
 /** 5.5c: printed text is in the case the program prints in. */

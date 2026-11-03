@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { detectMusic } from '../../src/analyze/music';
-import { CHAR_OUT, d018Case, handedText, printCase, printers, printLoop, sentCase, stringLen, stringSwitch } from '../../src/analyze/strings';
+import { CHAR_OUT, d018Case, handedText, inlineString, popsReturn, printCase, printers, printLoop, sentCase, stringLen, stringSwitch } from '../../src/analyze/strings';
 
 export interface Edit { find: string; replace: string }
 export interface Deviation { why: string; edits: Edit[] }
@@ -253,6 +253,23 @@ export const DEVIATIONS: Deviation[] = [
       { find: "t += p.enc === 'screen' ? ' (screen codes)' : ' (PETSCII)';", replace: "t += p.enc === 'screen' ? ' (screen codes)' : p.enc === 'petscii-mixed' ? ' (PETSCII, mixed case)' : ' (PETSCII)';" },
     ],
   },
+  {
+    why: 'A routine that prints the string after the JSR to it (spec 5.5b; the Fairlight cartridge\'s `jsr $8604 / .text "FILENAME PLEASE: " / .byte 0`) stopped the trace with "inline data follows", or, as it keeps Y before it pulls its return address (`sty $24 / pla / sta $22 / pla`), was not seen at all and its string was decoded as code. A routine that pulls its return address after up to three stores reads the bytes after the JSR; when it prints them (found by production code, `strs`, also where the character is printed on a branch\'s side), the string is text and the code goes on after it',
+    edits: [
+      {
+        find: "          if (loaded(t) && mem[t] === 0x68 && mem[(t + 1) & 0xffff] === 0x85 && mem[(t + 3) & 0xffff] === 0x68) {\n            inlineCalls.add(pc);\n            L('warn', `JSR ${$4(t)} pops its return address; inline data follows ${$4(next)}`, pc, 'code');\n            break;\n          }\n",
+        replace: "          if (loaded(t) && strs.popsReturn(mem, t)) {\n            inlineCalls.add(pc);\n            const str = strs.inlineString({ mem, insLen, skip, owner }, pc, t);\n            if (str) { L('ok', `JSR ${$4(t)} prints the string after it (${$4(str.s)}-${$4(str.s + str.n - 1)}); the code goes on at ${$4(str.s + str.n)}`, pc, 'code'); enqueue(str.s + str.n, 'jmp'); }\n            else L('warn', `JSR ${$4(t)} pops its return address; inline data follows ${$4(next)}`, pc, 'code');\n            break;\n          }\n",
+      },
+      {
+        find: "        if (!P) return;\n        const val = (p) => (p === 'a' ? A",
+        replace: "        if (!P) return;\n        if (P.ptr === 'after') { if (mn === 'JSR' && inlineCalls.has(pc)) addString((pc + 2 + P.offset) & 0xffff, { len: lenOf(P.len, P.offset), end: P.end, by: strs.handedText(P, pc) }); return; }\n        const val = (p) => (p === 'a' ? A",
+      },
+      {
+        find: "    if (A.inlineCalls.has(pc)) cm.push('inline data follows');\n",
+        replace: "    if (A.inlineCalls.has(pc)) { const tb = A.blockAt((pc + 3) & 0xffff); cm.push(tb && tb.type === T.TEXT && tb.reason.endsWith(` from ${$4(pc)}`) ? 'prints the string after it' : 'inline data follows'); }\n",
+      },
+    ],
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -271,7 +288,7 @@ export function loadReference(): ReferenceKR {
   // The prototype is an IIFE that installs itself on `window` or `globalThis`: hand it a private root
   // (same realm, so typed arrays and Maps compare normally), the production music detection and print routines.
   const root: { KR?: ReferenceKR } = {};
-  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase });
+  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase, popsReturn, inlineString });
   cached = root.KR;
   return cached;
 }

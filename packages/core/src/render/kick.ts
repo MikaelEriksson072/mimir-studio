@@ -271,7 +271,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     if (into) cm.push(`0-${into.most} bytes into the delay, by ${timerName(into)}`);
     if (delayAt.has(pc)) cm.push('delay');
     if (o.flow === 'jmpi') { const t = [...A.lohiTabs.values()].find(t => t.dest === d.v && t.code); cm.push(t ? `jump table: ${t.len} targets` : 'indirect jump'); }
-    if (A.inlineCalls.has(pc)) cm.push('inline data follows');
+    if (A.inlineCalls.has(pc)) {
+      // a routine that prints the string after the JSR (5.5b): the text block after it says so
+      const t = findBlock(A.blocks, (pc + 3) & 0xffff);
+      cm.push(t?.type === 'text' && t.reason.endsWith(` from $${h4(pc)}`) ? 'prints the string after it' : 'inline data follows');
+    }
     // the register's description, also when the operand is written as the raw address
     if (S.hwComments) { const hsTok = opTok.find(t => (t.t === 'hw' || t.t === 'num') && t.sym); if (hsTok && hsTok.sym && hsTok.sym.desc) cm.push(hsTok.sym.desc); }
     if (S.hwComments && A.mcfg) {

@@ -112,6 +112,8 @@ export function evidence(ctx: Ctx): void {
       if (sw) cases.push(sw);
       const P = printer(t);
       if (!P) return;
+      // the string that follows a JSR (the trace goes on after it)
+      if (P.ptr === 'after') { if (mn === 'JSR' && inlineCalls.has(pc)) addString((pc + 2 + P.offset) & 0xffff, { len: lenOf(P.len, P.offset), end: P.end, by: handedText(P, pc) }); return; }
       const val = (p: Place): Reg | null => (p === 'a' ? a() : p === 'x' ? x() : p === 'y' ? y() : recent.get(p) ?? null);
       const lo = val(P.ptr[0]), hi = val(P.ptr[1]);
       if (lo?.v == null || hi?.v == null) return;

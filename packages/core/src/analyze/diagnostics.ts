@@ -7,6 +7,7 @@ import { decode } from '../cpu/decode';
 import { hwSymbol, isIO } from '../c64/symbols';
 import { $4, now } from '../util/hex';
 import { trial } from './trace';
+import { inlineString, popsReturn } from './strings';
 
 /**
  * Without bank tracking an access to I/O inside the loaded bytes (a memory dump over $d000-$dfff) names the RAM byte
@@ -35,15 +36,17 @@ export interface CodeIsland { at: Addr; end: Addr; n: number; last: string }
  * trial (5.17).
  */
 export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], left?: (a: Addr) => boolean, text?: ReadonlySet<Addr> | null): CodeIsland[] {
-  const { mem, insLen, codeOwner, xrefs } = ctx;
+  const { mem, insLen, codeOwner, xrefs, loaded } = ctx;
   const out: CodeIsland[] = [];
   const asData = (a: Addr) => (xrefs.get(a) || []).some(x => x.kind === 'read' || x.kind === 'write' || x.kind === 'rmw');
   // 1541 code in the C64's memory (a fast loader's drive code) is data here: it reads the drive's VIA registers
   // ($1800-$180f, $1c00-$1c0f) or waits for a GCR byte with `bvc *`
   const via = (t: Addr | null) => t != null && ((t >= 0x1800 && t < 0x1810) || (t >= 0x1c00 && t < 0x1c10));
-  const routine = (s: Addr, e: Addr): CodeIsland | null => {
-    let p = s, n = 0, drive = 0, ack = false, last: OpcodeInfo | null = null;
+  /** the routine at `s` in a block that ends at `e`; `starts` gets its instructions' starts */
+  const routine = (s: Addr, e: Addr, starts?: Addr[]): CodeIsland | null => {
+    let p = s, n = 0, strings = 0, drive = 0, ack = false, last: OpcodeInfo | null = null;
     while (p < e && n < 64) {
+      starts?.push(p);
       const o = OPC[mem[p]];
       if (o.ill || o.jam || o.flow === 'brk' || p + o.len > e) return null;
       // not over a string a print routine is handed (5.5b)
@@ -58,9 +61,16 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
       if (o.mode === 'abs' && ((t === 0xd019 && o.access !== 'read') || ((t === 0xdc0d || t === 0xdd0d) && o.access !== 'write'))) ack = true;
       n++; p += o.len;
       if (o.flow === 'ret' || o.flow === 'jmp' || o.flow === 'jmpi') { last = o; break; }
+      // a routine that prints the string after the JSR goes on after it (5.5b); other data there is not known. Such a
+      // string counts as four instructions: `jsr print / "WRONG FILETYPE", 0 / jmp error` is a routine
+      if (o.flow === 'jsr' && loaded(t!) && popsReturn(mem, t!)) {
+        const str = inlineString(ctx, p - 3, t!);
+        if (!str || str.s + str.n > e) return null;
+        p = str.s + str.n; strings++;
+      }
     }
     // an interrupt handler acknowledges its interrupt; $40 (RTI) ends many a table
-    return last && n >= 6 && drive < 2 && (last.mn !== 'RTI' || ack) ? { at: s, end: p, n, last: last.mn } : null;
+    return last && n + 4 * strings >= 6 && drive < 2 && (last.mn !== 'RTI' || ack) ? { at: s, end: p, n, last: last.mn } : null;
   };
   for (const b of blocks) {
     if (b.type !== 'data' || b.user || b.end - b.start < 12) continue;
@@ -68,18 +78,30 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
     let z = 0; while (s + z < b.end && mem[s + z] === mem[s]) z++;
     if (z >= 3) s += z;
     while (s < b.end && (asData(s) || text?.has(s))) s++;
+    // first the routines that start with a call that prints the string after it (5.5b): as sure a start as any
+    const sure: CodeIsland[] = [];
+    for (let a = s; a + 3 <= b.end; a++) {
+      if (mem[a] !== 0x20 || left?.(a) || (sure.length && a < sure[sure.length - 1].end)) continue;
+      const t = mem[a + 1] | (mem[a + 2] << 8), r = loaded(t) && popsReturn(mem, t) ? routine(a, b.end) : null;
+      if (r) sure.push(r);
+    }
+    out.push(...sure);
+    // another island keeps out of them, or runs into one at its start
+    const clear = (r: CodeIsland, starts: Addr[]) => sure.every(f => f.end <= r.at || f.at >= r.end || starts.includes(f.at));
     if (left) {
       for (let a = s; a + 6 <= b.end;) {
+        const in_ = sure.find(f => a >= f.at && a < f.end);
+        if (in_) { a = in_.end; continue; }
         let f = 0; while (a + f < b.end && mem[a + f] === mem[a]) f++;
         if (f >= 3) { a += f; continue; }
-        const r = left(a) || asData(a) ? null : routine(a, b.end);
-        if (r) { out.push(r); a = r.end; } else a++;
+        const starts: Addr[] = [], r = left(a) || asData(a) ? null : routine(a, b.end, starts);
+        if (r && clear(r, starts)) { out.push(r); a = r.end; } else a++;
       }
       continue;
     }
     for (let k = 0; k < 8 && s + k < b.end; k++) {
-      const r = routine(s + k, b.end);
-      if (r) { out.push(r); break; }
+      const starts: Addr[] = [], r = routine(s + k, b.end, starts);
+      if (r && clear(r, starts)) { out.push(r); break; }
     }
   }
   return out;

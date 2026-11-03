@@ -19,9 +19,11 @@ export interface Printer extends StringEnd {
   kind: 'print' | 'name';
   /** "STROUT ($ab1e)", "the routine at $0840" */
   name: string;
-  /** where its caller puts the string's address: the low and the high byte */
-  ptr: [Place, Place];
-  /** the index its loop starts with, added to the address (a count counts from it) */
+  /** where its caller puts the string's address: the low and the high byte; `after`: the string follows the JSR (the
+   *  routine pulls its return address off the stack and goes on after the string) */
+  ptr: [Place, Place] | 'after';
+  /** the index its loop starts with, added to the address (a count counts from it); after a JSR, to the address it
+   *  pushes, the JSR's last byte */
   offset: number;
 }
 
@@ -71,7 +73,7 @@ export function printLoop(ctx: Code, at: Addr): PrintLoop | null {
     return false;
   };
   const out: StringEnd = {};
-  let chr = true, pushed = false, printed: Addr | null = null, decided = false;
+  let chr = true, pushed = false, decided = false;
   /** Z tells whether the character is this byte */
   let z: number | null = 0;
   /** the index was compared with this count, or with the byte at this address */
@@ -85,7 +87,7 @@ export function printLoop(ctx: Code, at: Addr): PrintLoop | null {
     if (flow === 'jmp') { if (inLoop(d.target!)) break; pc = d.target!; continue; }
     if (flow === 'jsr') {
       // the character routines keep A; another routine is not known to
-      if (CHAR_OUT.has(d.target!)) { if (chr) printed ??= pc; } else chr = false;
+      if (!CHAR_OUT.has(d.target!)) chr = false;
       z = null; count = null; pc = next; continue;
     }
     if (flow === 'br') {
@@ -114,25 +116,59 @@ export function printLoop(ctx: Code, at: Addr): PrintLoop | null {
     if (!KEEPS_Z.has(mn)) z = null;
     pc = next;
   }
-  return printed != null ? { ...out, out: printed } : null;
+  const via = printedAt(ctx, at);
+  return via != null ? { ...out, out: via } : null;
 }
 
-/** A symbolic register: an entry register, a known value, or unknown. */
-type Sym = Reg8 | number | null;
+/**
+ * The call that prints the character the load at `at` reads, on any path through the loop, the nearest first (a loop
+ * that tests for characters it prints its own way prints the others on a branch's side): a JSR or JMP to a character
+ * routine with the character still in A. Null: none.
+ */
+function printedAt(ctx: Code, at: Addr): Addr | null {
+  const { mem, insLen, skip } = ctx;
+  const seen = new Set<number>();
+  const todo: [Addr, boolean, boolean][] = [[(at + insLen[at]) & 0xffff, true, false]];
+  for (let n = 0; todo.length && n < 96; n++) {
+    let [pc, chr, pushed] = todo.shift()!;
+    // not back into the loop, and once a place with the character in A or not
+    if (!insLen[pc] || skip.has(pc) || (pc <= at && at - pc <= 6) || seen.has(pc * 2 + +chr)) continue;
+    seen.add(pc * 2 + +chr);
+    const d = decode(mem, pc), { mn, mode, flow } = d.info, next = (pc + insLen[pc]) & 0xffff;
+    if ((flow === 'jsr' || flow === 'jmp') && chr && CHAR_OUT.has(d.target!)) return pc;
+    if (flow === 'ret' || flow === 'jmpi' || flow === 'brk' || flow === 'jam') continue;
+    if (flow === 'jsr') { todo.push([next, chr && CHAR_OUT.has(d.target!), pushed]); continue; }
+    if (flow === 'jmp') { todo.push([d.target!, chr, pushed]); continue; }
+    if (flow === 'br') { todo.push([next, chr, pushed], [d.target!, chr, pushed]); continue; }
+    if (mn === 'PHA') pushed = chr;
+    else if (mn === 'PLA') chr = pushed;
+    else if (writesA(mn, mode)) chr = false;
+    todo.push([next, chr, pushed]);
+  }
+  return null;
+}
+
+/** A symbolic register: an entry register, a byte of the return address pulled off the stack, a known value, or
+ *  unknown. */
+type Sym = Reg8 | 'ret0' | 'ret1' | number | null;
+const isReg = (s: Sym | undefined): s is Reg8 => s === 'a' || s === 'x' || s === 'y';
 
 /**
- * The program's own routine at `t` that takes a string: it keeps the string's address from two registers, or reads it
- * from a zero page pair its caller sets, and prints the string through CHROUT; or it hands its registers on to another
- * such routine (a call, or a jump to the ROM's) before it changes them.
+ * The program's own routine at `t` that takes a string: it keeps the string's address from two registers, reads it
+ * from a zero page pair its caller sets, or pulls it off the stack as its return address (the string follows the JSR),
+ * and prints the string through CHROUT; or it hands its registers on to another such routine (a call, or a jump to the
+ * ROM's) before it changes them.
  */
 function ownPrinter(ctx: Code, t: Addr, printer: (a: Addr) => Printer | null): Printer | null {
   const { mem, insLen, skip } = ctx;
   const R: Record<Reg8, Sym> = { a: 'a', x: 'x', y: 'y' };
   const stores = new Map<Addr, Sym>();
+  // what is on the stack: pushed here (unknown), or below them the return address, pulled low byte first
+  let pushed = 0, pulled = 0, lost = false;
   /** a place of a routine handed on, as this routine's caller sets it (undefined: the caller does not) */
   const handOn = (p: Place): Place | undefined => {
     const s = typeof p === 'string' ? R[p] : stores.has(p) ? stores.get(p)! : p;
-    return typeof s === 'string' ? s : typeof p === 'number' && !stores.has(p) ? p : undefined;
+    return isReg(s) ? s : typeof p === 'number' && !stores.has(p) ? p : undefined;
   };
   const name = `the routine at ${$4(t)}`;
   for (let pc = t, n = 0; n < 24 && insLen[pc] && !skip.has(pc); n++) {
@@ -143,6 +179,8 @@ function ownPrinter(ctx: Code, t: Addr, printer: (a: Addr) => Printer | null): P
     if ((flow === 'jsr' || flow === 'jmp') && !CHAR_OUT.has(d.target!)) {
       const P = printer(d.target!);
       if (P) {
+        // the string after a JSR follows this routine's caller only where a jump goes on with the stack as it was
+        if (P.ptr === 'after') return flow === 'jmp' && !pushed && !pulled && !lost ? { ...P, name } : null;
         const lo = handOn(P.ptr[0]), hi = handOn(P.ptr[1]), lenAt = P.lenAt != null ? handOn(P.lenAt) : undefined;
         return lo === undefined || hi === undefined ? null : { ...P, name, ptr: [lo, hi], lenAt };
       }
@@ -151,15 +189,22 @@ function ownPrinter(ctx: Code, t: Addr, printer: (a: Addr) => Printer | null): P
     }
     if (flow === 'jmp') return null;
     if (mn === 'LDA' && mode === 'izy') {
-      const lo = handOn(d.v!), hi = handOn((d.v! + 1) & 0xff);
-      const loop = typeof R.y === 'number' && lo !== undefined && hi !== undefined ? printLoop(ctx, pc) : null;
+      const y = R.y, lo = stores.get(d.v!), hi = stores.get((d.v! + 1) & 0xff);
+      if (typeof y !== 'number') return null;
+      const after = lo === 'ret0' && hi === 'ret1', loLoc = handOn(d.v!), hiLoc = handOn((d.v! + 1) & 0xff);
+      const loop = after || (loLoc !== undefined && hiLoc !== undefined) ? printLoop(ctx, pc) : null;
       if (!loop) return null;
-      return { kind: 'print', name, ptr: [lo!, hi!], offset: R.y as number, end: loop.end, len: loop.len, lenAt: loop.lenAt != null ? handOn(loop.lenAt) : undefined };
+      return { kind: 'print', name, ptr: after ? 'after' : [loLoc!, hiLoc!], offset: y, end: loop.end, len: loop.len, lenAt: loop.lenAt != null && !after ? handOn(loop.lenAt) : undefined };
     }
     const r = mn === 'STA' ? R.a : mn === 'STX' ? R.x : mn === 'STY' ? R.y : undefined;
     if ((mode === 'zp' || mode === 'abs') && (d.info.access === 'write' || d.info.access === 'rmw')) stores.set(d.target!, r ?? null);
     const step = (v: Sym, k: number): Sym => (typeof v === 'number' ? (v + k) & 0xff : null);
+    const pull = (): Sym => (pushed ? (pushed--, null) : lost || pulled > 1 ? null : pulled++ ? 'ret1' : 'ret0');
     switch (mn) {
+      case 'PHA': case 'PHP': pushed++; break;
+      case 'PLA': R.a = pull(); break;
+      case 'PLP': pull(); break;
+      case 'TXS': lost = true; break;
       case 'LDA': R.a = mode === 'imm' ? d.v! : null; break;
       case 'LDX': R.x = mode === 'imm' ? d.v! : null; break;
       case 'LDY': R.y = mode === 'imm' ? d.v! : null; break;
@@ -190,7 +235,8 @@ export function printers(ctx: Ctx, found: Map<Addr, Printer>): (t: Addr) => Prin
     memo.set(t, P);
     if (P) {
       found.set(t, P);
-      ctx.L('ok', `${P.kind === 'name' ? 'File name' : 'Print'} routine at ${$4(t)}: the string's address in ${placeText(P.ptr[0])}/${placeText(P.ptr[1])}${endText(P)}`, t, 'data');
+      const where = P.ptr === 'after' ? 'the string after the JSR to it' : `the string's address in ${placeText(P.ptr[0])}/${placeText(P.ptr[1])}`;
+      ctx.L('ok', `${P.kind === 'name' ? 'File name' : 'Print'} routine at ${$4(t)}: ${where}${endText(P)}`, t, 'data');
     }
     return P;
   };
@@ -291,7 +337,7 @@ export function printCase(switches: CaseSwitch[], L: Ctx['L']): PrintCase {
 }
 
 /** How long the string at `s` is, at most `max` bytes: its length, or up to the byte that ends it (null: not known). */
-export function stringLen(mem: Uint8Array, s: Addr, max: number, str: StringEv): number | null {
+export function stringLen(mem: Uint8Array, s: Addr, max: number, str: Pick<StringEv, 'len' | 'end'>): number | null {
   if (str.len != null) return Math.min(str.len, max);
   if (!str.end) return null;
   for (let i = 0; i < 256 && s + i < 0x10000; i++) if (str.end.includes(mem[s + i])) return Math.min(i + 1, max);
@@ -306,7 +352,7 @@ const printable = (b: number) => (b >= 0x20 && b < 0x80) || b >= 0xa0 || PET_CTR
  * loop that writes a file through CHROUT can write anything); null when it is not known or not text. An empty string,
  * only the byte that ends it, is no text.
  */
-export function handedLen(mem: Uint8Array, s: Addr, max: number, str: StringEv): number | null {
+export function handedLen(mem: Uint8Array, s: Addr, max: number, str: Pick<StringEv, 'len' | 'end'>): number | null {
   const n = stringLen(mem, s, max, str);
   if (n == null || (str.end && n < 2 && str.end.includes(mem[s]))) return null;
   let ok = 0; for (let i = 0; i < n; i++) if (printable(mem[s + i]) || str.end?.includes(mem[s + i])) ok++;
@@ -333,4 +379,38 @@ export function textUnderCode(ctx: Pick<Ctx, 'ev' | 'mem' | 'insLen' | 'codeOwne
     if (code && chars >= n * 0.9) for (let a = s; a < s + n; a++) out.add(a);
   }
   return out;
+}
+
+/** `sta`, `stx` and `sty` to the zero page or an absolute address: they leave the stack as it is. */
+const STORES = new Set([0x84, 0x85, 0x86, 0x8c, 0x8d, 0x8e]);
+
+/**
+ * Does the routine at `t` pull its return address off the stack first (`pla / sta zp / pla`, after up to three stores
+ * that leave the stack, `sty $24`)? Then the bytes after a JSR to it are data it reads, not code.
+ */
+export function popsReturn(mem: Uint8Array, t: Addr): boolean {
+  let p = t;
+  for (let k = 0; k < 3 && STORES.has(mem[p]); k++) p = (p + OPC[mem[p]].len) & 0xffff;
+  return mem[p] === 0x68 && mem[(p + 1) & 0xffff] === 0x85 && mem[(p + 3) & 0xffff] === 0x68;
+}
+
+/**
+ * The string after the JSR at `pc` to `t`, a routine that pulls its return address off the stack (`popsReturn`) and
+ * prints what follows it: where it is and how long, to the byte that ends it or its count. The routine is decoded from
+ * its bytes, which may not be traced yet; it goes on after the string. Null: it prints none, or its end is not found.
+ */
+export function inlineString(ctx: Pick<Ctx, 'mem' | 'insLen' | 'skip' | 'owner'>, pc: Addr, t: Addr): { s: Addr; n: number } | null {
+  const { mem, owner } = ctx, insLen = ctx.insLen.slice();
+  for (let p = t, k = 0; k < 64 && owner[p] === owner[t]; k++) {
+    const o = OPC[mem[p]];
+    if (o.jam || o.unstable) break;
+    if (!insLen[p]) insLen[p] = o.len;
+    p = (p + o.len) & 0xffff;
+  }
+  const P = ownPrinter({ mem, insLen, skip: ctx.skip }, t, () => null);
+  if (!P || P.ptr !== 'after') return null;
+  const s = (pc + 2 + P.offset) & 0xffff;
+  let max = 0; while (max < 256 && s + max < 0x10000 && owner[s + max] === owner[pc]) max++;
+  const n = handedLen(mem, s, max, { len: P.len != null && P.len > P.offset ? P.len - P.offset : undefined, end: P.end });
+  return n && s + n < 0x10000 && owner[s + n] === owner[pc] ? { s, n } : null;
 }
