@@ -4,10 +4,10 @@ import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type Op
 import { existsSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { assertEntryName, type PathPolicy } from './paths';
 import { z, type ZodTypeAny } from 'zod';
-import { CHANNELS, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind } from '../../shared/ipc';
+import { CHANNELS, type AsmPickResult, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind } from '../../shared/ipc';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
 import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
@@ -195,6 +195,15 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   handle(CHANNELS.toolchainBuild, buildSchema, req => buildWithKickAssembler(req, settings.get(), policy));
+  // a source of the user's to build where it is (Pack from the start screen): its folder is allowed, as a dialog's
+  handle(CHANNELS.asmPick, z.undefined().or(z.object({}).strict()), async (_req, e): Promise<AsmPickResult | null> => {
+    const [path] = await pick(e, 'asm', { title: 'Choose a Kick Assembler source to pack', properties: ['openFile'], filters: [{ name: 'Kick Assembler source', extensions: ['asm', 'ASM'] }, { name: 'All files', extensions: ['*'] }] });
+    if (!path) return null;
+    const entry = basename(path);
+    if (!/\.asm$/i.test(entry)) throw new Error(`${entry} is not a .asm file: Kick Assembler builds .asm sources`);
+    assertEntryName(entry);
+    return { path, dir: chose(dirname(path), 'asm'), entry };
+  });
   handle(CHANNELS.toolchainRun, runSchema, req => runInVice(req, settings.get(), policy));
   handle(CHANNELS.toolchainUnpack, unpackSchema, req => unpackWithTool(req, settings.get()));
   handle(CHANNELS.toolchainIdentify, unpackSchema, req => identifyWithTool(req, settings.get()));

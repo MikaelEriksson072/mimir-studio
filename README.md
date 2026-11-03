@@ -152,7 +152,8 @@ This writes `Mimir-Studio-<version>-setup.exe` and a portable `.exe` to `apps/de
 
 When Mimir starts, it asks what to work on: **Continue** with what you did last, a **New project…**, **Open project…**,
 or **Without a project** (untick *Show this window when Mimir starts* to go straight on with what you did last;
-*Settings → General* brings the start screen back). A project is a folder of its own: the project file (`<name>.mimir.json`), the Kick Assembler
+*Settings → General* brings the start screen back). **Pack a file…** there packs PRG files, or a Kick Assembler source
+it assembles first, with Brokkr or Exomizer as they are: no project, no analysis. A project is a folder of its own: the project file (`<name>.mimir.json`), the Kick Assembler
 source (`source`), the build (`build`) and the packed file (`packed`) go there, Mimir saves the project as you work, and
 the next start offers to continue it. Without a project you work as before, and Mimir keeps the work for the next
 start; *Save* (`Ctrl+S`) then creates a project and moves the work into its folder, with the last export, build and

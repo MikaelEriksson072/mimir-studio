@@ -27,8 +27,10 @@ export class PathPolicy {
   }
 }
 
-/** A plain file name inside the build folder (no folders, no traversal). */
+/** A plain file name inside the build folder (no folders, no traversal), not taken for an option (no leading -). Spaces
+ *  and letters of any language are fine: Kick Assembler gets it as one argument. */
 export function assertEntryName(entry: string): string {
-  if (typeof entry !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*\.asm$/.test(entry)) throw new Error(`invalid source file name "${entry}"`);
+  // eslint-disable-next-line no-control-regex
+  if (typeof entry !== 'string' || !/^[^\\/:*?"<>|\u0000-\u001f.-][^\\/:*?"<>|\u0000-\u001f]*\.asm$/i.test(entry)) throw new Error(`invalid source file name "${entry}"`);
   return entry;
 }

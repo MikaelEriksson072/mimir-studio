@@ -1011,3 +1011,24 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .empty-project h2 { margin: 4px 0 0; font-size: 16px; font-weight: 600; color: var(--fg); }
 .empty-project p { margin: 0; max-width: 460px; font-size: 12.5px; }
 .empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 8px 0 4px; }
+
+/* ---------- Pack a file, from the start screen (QuickPack) ---------- */
+.start.quick-pack { place-items: start center; padding-top: 28px; }
+.qp-box { width: min(1040px, 100%); display: flex; flex-direction: column; gap: 14px; }
+.qp-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.qp-head h1 { margin: 0; font-size: 18px; font-weight: 600; }
+.qp-head .muted { font-size: 12.5px; }
+.qp-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 400px); gap: 16px; align-items: start; }
+@media (max-width: 760px) { .qp-cols { grid-template-columns: minmax(0, 1fr); } }
+.qp-what { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.qp-card { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); }
+.qp-card h2 { margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); }
+.qp-card p { margin: 4px 0; }
+.qp-pick { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.qp-files, .qp-source { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 10px; }
+.qp-path { overflow-wrap: anywhere; }
+.qp-problems { margin: 4px 0; padding-left: 16px; }
+.qp-log summary { cursor: pointer; color: var(--fg-2); font-size: 12px; }
+.qp-log pre { margin: 8px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.qp-settings { min-width: 0; padding: 8px 0; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); }
+.qp-settings > .seg.wide.pack-seg { margin: 0 10px 8px; }

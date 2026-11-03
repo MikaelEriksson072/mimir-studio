@@ -34,7 +34,7 @@ export async function readPrgFiles(paths: string[], opts: OpenOptions = {}): Pro
   for (const p of paths) {
     const bytes = new Uint8Array(await readFile(p));
     if (isCrt(bytes)) { const o = openCartridge(basename(p), bytes); out.push(...o.files.map(f => ({ ...withId(f), cart: o.cart }))); continue; }
-    out.push(openedPrg(openC64File(basename(p), bytes, opts)));
+    out.push({ ...openedPrg(openC64File(basename(p), bytes, opts)), path: p });
   }
   return out;
 }

@@ -5,9 +5,9 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { join } from 'node:path';
 import { z } from 'zod';
 
-export type RecentKind = 'prg' | 'disk' | 'project' | 'export' | 'pack' | 'snapshot';
+export type RecentKind = 'prg' | 'disk' | 'project' | 'export' | 'pack' | 'snapshot' | 'asm';
 
-const KINDS = ['prg', 'disk', 'project', 'export', 'pack', 'snapshot'] as const satisfies readonly RecentKind[];
+const KINDS = ['prg', 'disk', 'project', 'export', 'pack', 'snapshot', 'asm'] as const satisfies readonly RecentKind[];
 const folder = z.string().min(1).max(4096);
 const fileSchema = z.object({ last: folder.optional(), ...Object.fromEntries(KINDS.map(k => [k, folder.optional()])) }).partial();
 

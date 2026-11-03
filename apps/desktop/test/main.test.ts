@@ -24,7 +24,7 @@ const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings =>
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen'].sort());
   });
 });
 
@@ -41,8 +41,8 @@ describe('PathPolicy', () => {
   });
 
   it('accepts only plain .asm names as build entries', () => {
-    expect(assertEntryName('raster-demo.asm')).toBe('raster-demo.asm');
-    for (const bad of ['../x.asm', 'a/b.asm', 'C:\\x.asm', 'x.prg', '-oops.asm', '']) expect(() => assertEntryName(bad)).toThrow();
+    for (const ok of ['raster-demo.asm', 'my border.asm', 'spel_för_c64.ASM', 'intro (v2).asm']) expect(assertEntryName(ok)).toBe(ok);
+    for (const bad of ['../x.asm', 'a/b.asm', 'C:\\x.asm', 'x.prg', '-oops.asm', '.hidden.asm', 'a:b.asm', '']) expect(() => assertEntryName(bad)).toThrow();
   });
 });
 

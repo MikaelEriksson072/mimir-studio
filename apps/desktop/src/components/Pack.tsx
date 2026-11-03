@@ -4,7 +4,7 @@
  * with the packer, format and kind of file chosen (packOptions); they are kept in the project. Pack builds, verifies
  * and packs. */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, MEMORY_PLACES, mergeRanges, packDecruncher, packEffective, packNeeds, packOptions, packProblem, parseKeep, placeSpan, ZP_PLACES, type PackPlace, rangeCover, relocAt, type Addr, type AnalysisResult, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
+import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, MEMORY_PLACES, mergeRanges, packDecruncher, packEffective, packNeeds, packOptions, packProblem, parseKeep, placeSpan, ZP_PLACES, type PackPlace, rangeCover, relocAt, type Addr, type AnalysisResult, type FileInput, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
 import type { PackResponse } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
 import { SideSection } from './SideSection';
@@ -15,8 +15,11 @@ import type { Sel } from '../lib/types';
 /** the last pack, with the fingerprint of what it packed (prefs and build) */
 export interface PackResult extends PackResponse { key: string }
 
-/** a pack under way: building and verifying first, then packing (crunching and checking) with these settings */
-export interface PackProgress { step: 'verify' | 'pack'; since: number; prefs: PackPrefs }
+/** a pack under way: building and verifying first, then packing (crunching and checking) with these settings;
+ * `before`: what comes before packing, as the card names it (missing: building and verifying; null: nothing) */
+export interface PackProgress { step: 'verify' | 'pack'; since: number; prefs: PackPrefs; before?: { title: string; doing: string } | null }
+
+const BUILD_FIRST = { title: 'Build and verify the program', doing: 'Building and verifying…' };
 
 export interface PackViewProps {
   A: AnalysisResult; R: RenderResult; project: Project; cursor: Addr | null; sel: Sel | null;
@@ -143,7 +146,7 @@ function PlaceField({ id, label, value, places, max, need, clash, auto, onCommit
 }
 
 /** Address ranges as typed (`$c000-$cfff, $0334-$03ff`), committed when they read as ranges; what is wrong below. */
-function RangesField({ id, label, value, placeholder, help, onCommit }: { id: string; label: string; value: PackPrefs['keep']; placeholder?: string; help?: string; onCommit: (v: PackPrefs['keep']) => void }) {
+export function RangesField({ id, label, value, placeholder, help, onCommit }: { id: string; label: string; value: PackPrefs['keep']; placeholder?: string; help?: string; onCommit: (v: PackPrefs['keep']) => void }) {
   const [text, setText] = useState(keepText(value));
   useEffect(() => setText(keepText(value)), [value]);
   const r = parseKeep(text);
@@ -158,13 +161,10 @@ function RangesField({ id, label, value, placeholder, help, onCommit }: { id: st
 }
 
 export function PackView(p: PackViewProps) {
-  const { A, R, project, cursor, sel, prefs, exomizer, desktop, busy, packing, result, current } = p;
+  const { A, R, project, cursor, sel, prefs } = p;
   const [q, setQ] = useState('');
   const set = (patch: Partial<PackPrefs>, label: string) => p.onChange({ ...prefs, ...patch }, label);
-  const exe = exomizer ? exomizer.split(/[\\/]/).pop()! : 'exomizer';
-  const cmd = packCommand(prefs, project.files, R.fileNames, exe);
-  const problem = packProblem(prefs) ?? (prefs.ranges && !cmd.parts.length ? 'None of the chosen ranges holds loaded bytes.' : null);
-  const warning = packWarning(prefs, A);
+  const cmd = packCommand(prefs, project.files, R.fileNames);
   const ranges = prefs.ranges ?? [];
   const toggle = (start: Addr, end: Addr, on: boolean, what: string) => set({ ranges: editRanges(ranges, start, end, on) }, `${on ? 'Pack' : 'Do not pack'} ${what}`);
   // what is packed is the built PRG: where a relocated block runs (8.1b), its bytes are where it is loaded
@@ -173,44 +173,12 @@ export function PackView(p: PackViewProps) {
   const blk = at != null ? A.blocks.find(b => at >= b.start && at < b.end) : undefined;
   const ql = q.trim().toLowerCase().replace(/^\$/, '');
   const list = prefs.ranges ? A.blocks.filter(b => { const l = R.labels.get(b.start); return !relocAt(A, b.start) && (!ql || h4(b.start).includes(ql) || kindInfo(b.type).label.toLowerCase().includes(ql) || !!l?.name.toLowerCase().includes(ql)); }) : [];
-  const fresh = !!result && result.key === current;
-  const brokkr = prefs.packer !== 'exomizer', sfx = prefs.mode === 'sfx';
-  // what is shown: only the settings that take effect
-  const o = packOptions(prefs);
-  // what the decruncher takes, and whether its tables would lie over it where both are set
-  const needs = packNeeds(prefs);
-  // the decruncher written next to crunched data: where each part goes on Auto (its own defaults), and what is wrong
-  const written = packEffective(prefs).decruncher && o.decruncher;
-  const autoOf = (patch: Partial<PackPrefs>) => { const d = written ? packDecruncher({ ...prefs, ...patch }) : null; return d && typeof d !== 'string' ? d : null; };
-  const auto = written ? {
-    decruncher: { at: autoOf({ decruncherAt: null })?.start ?? 0xc000, note: ' in the PRG; the source goes where you #import it' },
-    tables: autoOf({ tablesAt: null })?.tables ?? null, zp: autoOf({ zp: null })?.zp ?? null,
-  } : null;
-  const decProblem = written ? (d => typeof d === 'string' ? d : null)(packDecruncher(prefs)) : null;
-  const decSpan = prefs.decruncherAt != null || auto ? placeSpan(prefs.decruncherAt ?? auto!.decruncher.at, needs.resident.max) : null;
-  const tabSpan = prefs.tablesAt != null ? placeSpan(prefs.tablesAt, needs.tables.max, needs.tables.align) : null;
-  const tablesClash = decSpan && tabSpan && decSpan.start < tabSpan.end && tabSpan.start < decSpan.end
-    ? `It overlaps the decruncher ($${h4(decSpan.start)}–$${h4(decSpan.end - 1)}).` : null;
-  // the parts that can each be a file of their own: the ranges chosen, or the built PRGs
-  const parts = prefs.ranges ? mergeRanges(prefs.ranges).length : project.files.length;
-  const ready = desktop && (brokkr || !!exomizer) && !problem && !decProblem && !busy && !packing;
-  // a new result comes into view when the pack is done (not the one there was when the view opened)
-  const resultRef = useRef<HTMLDivElement>(null), seen = useRef(result);
-  useEffect(() => {
-    if (packing || !result || result === seen.current) return;
-    seen.current = result;
-    reveal(resultRef.current);
-  }, [result, packing]);
+  const brokkr = prefs.packer !== 'exomizer';
 
   return (
     <div className="side-inner pack-view">
       <div className="side-title">Pack <span className="muted">{brokkr ? 'Brokkr' : 'Exomizer'}</span></div>
-      <div className="seg wide pack-seg" role="tablist" aria-label="Packer">
-        <button role="tab" aria-selected={brokkr} className={cx(brokkr && 'on')} title="Brokkr, the built-in cruncher: Exomizer 3 streams, crunched smaller and faster, checked in an emulated C64" onClick={() => !brokkr && set({ packer: 'brokkr' }, 'Pack with Brokkr')}>Brokkr</button>
-        <button role="tab" aria-selected={!brokkr} className={cx(!brokkr && 'on')} title="Exomizer 3, the tool set in Settings → Toolchain" onClick={() => brokkr && set({ packer: 'exomizer' }, 'Pack with Exomizer')}>Exomizer</button>
-      </div>
-      {!desktop && <p className="muted small pack-note">Packing needs the desktop app.</p>}
-      {desktop && !brokkr && !exomizer && <div className="pack-note"><p className="muted small">No Exomizer is set. The installed app comes with Exomizer 3.1.1; or set your own.</p><button className="btn small" onClick={p.onSettings}>Settings…</button></div>}
+      <PackerChoice prefs={prefs} set={set} exomizer={p.exomizer} desktop={p.desktop} onSettings={p.onSettings} />
 
       <SideSection id="pack-what" title="What to pack">
         <div className="seg wide pack-seg" role="tablist" aria-label="What to pack">
@@ -255,6 +223,84 @@ export function PackView(p: PackViewProps) {
         </>}
       </SideSection>
 
+      <PackSettings prefs={prefs} set={set} files={project.files} fileNames={R.fileNames} entry={A.entry} warning={packWarning(prefs, A)}
+        exomizer={p.exomizer} desktop={p.desktop} busy={p.busy} packing={p.packing} result={p.result} current={p.current}
+        before="Pack builds and verifies the program first, like Build & Run." packTitle="Build and verify with Build & Run's toolchain, then pack the result"
+        noDir="Not set: the file stays in the app's pack folder (Save as… copies it)."
+        onPack={p.onPack} onRun={p.onRun} onSave={p.onSave} onSaveFile={p.onSaveFile} onLog={p.onLog} onPickDir={p.onPickDir} />
+    </div>
+  );
+}
+
+/** Brokkr or Exomizer, and what the one chosen still needs. */
+export function PackerChoice({ prefs, set, exomizer, desktop, onSettings }: { prefs: PackPrefs; set: (patch: Partial<PackPrefs>, label: string) => void; exomizer: string; desktop: boolean; onSettings?: () => void }) {
+  const brokkr = prefs.packer !== 'exomizer';
+  return <>
+    <div className="seg wide pack-seg" role="tablist" aria-label="Packer">
+      <button role="tab" aria-selected={brokkr} className={cx(brokkr && 'on')} title="Brokkr, the built-in cruncher: Exomizer 3 streams, crunched smaller and faster, checked in an emulated C64" onClick={() => !brokkr && set({ packer: 'brokkr' }, 'Pack with Brokkr')}>Brokkr</button>
+      <button role="tab" aria-selected={!brokkr} className={cx(!brokkr && 'on')} title="Exomizer 3, the tool set in Settings → Toolchain" onClick={() => brokkr && set({ packer: 'exomizer' }, 'Pack with Exomizer')}>Exomizer</button>
+    </div>
+    {!desktop && <p className="muted small pack-note">Packing needs the desktop app.</p>}
+    {desktop && !brokkr && !exomizer && <div className="pack-note"><p className="muted small">No Exomizer is set. The installed app comes with Exomizer 3.1.1; or set your own{onSettings ? '' : ' in Settings → Toolchain'}.</p>{onSettings && <button className="btn small" onClick={onSettings}>Settings…</button>}</div>}
+  </>;
+}
+
+export interface PackSettingsProps {
+  prefs: PackPrefs;
+  set: (patch: Partial<PackPrefs>, label: string) => void;
+  /** the files packed, and their names as the pack folder writes them (without .prg) */
+  files: readonly Pick<FileInput, 'load' | 'bytes'>[]; fileNames: readonly string[];
+  /** where the program starts: a jump's address to begin with */
+  entry: Addr | null;
+  /** what keeps the settings from starting the program (packWarning), or null */
+  warning: string | null;
+  exomizer: string; desktop: boolean; busy: string | null; packing: PackProgress | null; result: PackResult | null; current: string;
+  /** what Pack does before it packs (under the button), and the button's title */
+  before: string; packTitle: string;
+  /** what the Folder field says when none is chosen */
+  noDir: string;
+  onPack: () => void; onRun: () => void; onSave: () => void; onLog: () => void;
+  onSaveFile: (f: { name: string; prg: Uint8Array }) => void;
+  onPickDir: () => void;
+}
+
+/** The packed file, how it starts or is decrunched, the decruncher's memory, the command and the Pack button with what
+ * it made: the Pack view's and the quick pack's, whatever is packed. */
+export function PackSettings(p: PackSettingsProps) {
+  const { prefs, set, files, fileNames, entry, warning, exomizer, desktop, busy, packing, result, current } = p;
+  const exe = exomizer ? exomizer.split(/[\\/]/).pop()! : 'exomizer';
+  const cmd = packCommand(prefs, files, fileNames, exe);
+  const problem = packProblem(prefs) ?? (prefs.ranges && !cmd.parts.length ? 'None of the chosen ranges holds loaded bytes.' : null);
+  const fresh = !!result && result.key === current;
+  const brokkr = prefs.packer !== 'exomizer', sfx = prefs.mode === 'sfx';
+  // what is shown: only the settings that take effect
+  const o = packOptions(prefs);
+  // what the decruncher takes, and whether its tables would lie over it where both are set
+  const needs = packNeeds(prefs);
+  // the decruncher written next to crunched data: where each part goes on Auto (its own defaults), and what is wrong
+  const written = packEffective(prefs).decruncher && o.decruncher;
+  const autoOf = (patch: Partial<PackPrefs>) => { const d = written ? packDecruncher({ ...prefs, ...patch }) : null; return d && typeof d !== 'string' ? d : null; };
+  const auto = written ? {
+    decruncher: { at: autoOf({ decruncherAt: null })?.start ?? 0xc000, note: ' in the PRG; the source goes where you #import it' },
+    tables: autoOf({ tablesAt: null })?.tables ?? null, zp: autoOf({ zp: null })?.zp ?? null,
+  } : null;
+  const decProblem = written ? (d => typeof d === 'string' ? d : null)(packDecruncher(prefs)) : null;
+  const decSpan = prefs.decruncherAt != null || auto ? placeSpan(prefs.decruncherAt ?? auto!.decruncher.at, needs.resident.max) : null;
+  const tabSpan = prefs.tablesAt != null ? placeSpan(prefs.tablesAt, needs.tables.max, needs.tables.align) : null;
+  const tablesClash = decSpan && tabSpan && decSpan.start < tabSpan.end && tabSpan.start < decSpan.end
+    ? `It overlaps the decruncher ($${h4(decSpan.start)}–$${h4(decSpan.end - 1)}).` : null;
+  // the parts that can each be a file of their own: the ranges chosen, or the files
+  const parts = prefs.ranges ? mergeRanges(prefs.ranges).length : files.length;
+  const ready = desktop && (brokkr || !!exomizer) && files.length > 0 && !problem && !decProblem && !busy && !packing;
+  // a new result comes into view when the pack is done (not the one there was when the view opened)
+  const resultRef = useRef<HTMLDivElement>(null), seen = useRef(result);
+  useEffect(() => {
+    if (packing || !result || result === seen.current) return;
+    seen.current = result;
+    reveal(resultRef.current);
+  }, [result, packing]);
+
+  return <>
       <SideSection id="pack-file" title="Packed file">
         <div className="seg wide pack-seg" role="tablist" aria-label="Kind of packed file">
           <button role="tab" aria-selected={sfx} className={cx(sfx && 'on')} title={`A program that decrunches itself and starts (${brokkr ? 'brokkr' : 'exomizer'} sfx)`} onClick={() => set({ mode: 'sfx' }, 'Pack as a self-extracting program')}>Self-extracting</button>
@@ -277,7 +323,7 @@ export function PackView(p: PackViewProps) {
         {o.extra && <TextField id="pack-extra" label="More options" value={prefs.extra} placeholder="-p 4 -Di_line_number=1987" error={extraProblem(prefs.extra)} onCommit={v => set({ extra: v }, 'Pack: options')} />}
         <TextField id="pack-out" label="File name" value={prefs.out} placeholder={cmd.out} onCommit={v => set({ out: v }, 'Pack: file name')} />
         <div className="field"><label htmlFor="pack-dir">Folder</label>
-          <output id="pack-dir" className={cx('pack-dir', prefs.dir ? 'mono' : 'empty')}>{prefs.dir || "Not set: the file stays in the app's pack folder (Save as… copies it)."}</output>
+          <output id="pack-dir" className={cx('pack-dir', prefs.dir ? 'mono' : 'empty')}>{prefs.dir || p.noDir}</output>
           <div className="bm-actions pack-dir-actions">
             <button className="btn small" disabled={!desktop} onClick={p.onPickDir} title="Choose the folder the packed file is written to each time">Choose…</button>
             {prefs.dir && <button className="btn small ghost" aria-label="Clear the folder" title="Write to no folder: the file stays in the app's pack folder" onClick={() => set({ dir: '' }, 'Pack: no folder')}>Clear</button>}
@@ -288,13 +334,13 @@ export function PackView(p: PackViewProps) {
       {sfx ? (
         <SideSection id="pack-sfx" title="Self-extracting">
           <div className="field"><label htmlFor="pack-start">Start</label>
-            <select id="pack-start" value={prefs.start} onChange={e => set({ start: e.target.value as PackPrefs['start'], ...(e.target.value === 'jmp' && prefs.jmp == null ? { jmp: A.entry } : {}) }, 'Pack: start')}>
+            <select id="pack-start" value={prefs.start} onChange={e => set({ start: e.target.value as PackPrefs['start'], ...(e.target.value === 'jmp' && prefs.jmp == null ? { jmp: entry } : {}) }, 'Pack: start')}>
               <option value="sys">SYS in the BASIC line</option>
               <option value="jmp">Jump to an address</option>
               <option value="basic">RUN (a BASIC program)</option>
             </select></div>
           {o.jmp && <HexField id="pack-jmp" label="Jump to" value={prefs.jmp} placeholder="$0810" onCommit={v => set({ jmp: v }, 'Pack: jump address')}
-            help={A.entry != null && A.entry !== prefs.jmp ? `The program start is $${h4(A.entry)}.` : undefined} />}
+            help={entry != null && entry !== prefs.jmp ? `The program start is $${h4(entry)}.` : undefined} />}
           {warning && <p className="warn-text small">{warning}</p>}
           <div className="pack-row">
             {o.ramExit && <HexField id="pack-ram" label="$01 after" value={prefs.ramExit} max={0xff} placeholder="$37" onCommit={v => set({ ramExit: v }, 'Pack: $01 after decrunching')} />}
@@ -364,13 +410,12 @@ export function PackView(p: PackViewProps) {
       <SideSection id="pack-command" title="Command">
         <pre className="pack-cmd mono" aria-label={brokkr ? 'Brokkr command' : 'Exomizer command'} title={brokkr ? 'What the standalone Brokkr runs to make the same file, in the pack folder' : undefined}>{cmd.text}</pre>
         {problem && <p className="err-text small">{problem}</p>}
-        <button className="btn primary pack-go" disabled={!ready} onClick={p.onPack} title="Build and verify with Build & Run's toolchain, then pack the result">
+        <button className="btn primary pack-go" disabled={!ready} onClick={p.onPack} title={p.packTitle}>
           {packing ? <><span className="spinner" aria-hidden />Packing…</> : <><Icon name="download" size={14} />{busy ?? 'Pack'}</>}</button>
-        {!packing && <p className="muted small">Pack builds and verifies the program first, like Build &amp; Run.</p>}
+        {!packing && p.before && <p className="muted small">{p.before}</p>}
         {packing ? <PackingCard packing={packing} /> : <div ref={resultRef}>{result && <PackResultCard result={result} fresh={fresh} onRun={p.onRun} onSave={p.onSave} onSaveFile={p.onSaveFile} onLog={p.onLog} />}</div>}
       </SideSection>
-    </div>
-  );
+  </>;
 }
 
 const FORMAT_NAME: Record<PackFormat, string> = { exomizer: "Exomizer's format", brokkr: "Brokkr's own format", fast: "Brokkr's fast format" };
@@ -384,6 +429,7 @@ function PackingCard({ packing }: { packing: PackProgress }) {
   const s = Math.max(0, Math.floor((now - packing.since) / 1000));
   const time = s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const p = packing.prefs, brokkr = p.packer !== 'exomizer', sfx = p.mode === 'sfx', verifying = packing.step === 'verify';
+  const before = packing.before === undefined ? BUILD_FIRST : packing.before;
   const who = brokkr ? 'Brokkr' : 'Exomizer';
   const how = brokkr ? `${FORMAT_NAME[p.format]}, effort ${p.effort === 'max' ? 'Max, on every core' : p.effort === 'fast' ? 'Fast' : 'Normal'}` : sfx ? 'a self-extracting program' : 'crunched data';
   const written = packEffective(p).decruncher && packOptions(p).decruncher;
@@ -397,9 +443,9 @@ function PackingCard({ packing }: { packing: PackProgress }) {
   return (
     <div ref={ref} className="pack-progress" role="status" aria-label="Packing">
       <div className="pack-progress-bar" aria-hidden />
-      <div className="pack-progress-head"><b>{verifying ? 'Building and verifying…' : `Packing with ${who}…`}</b><span className="mono muted" title="Time since Pack was pressed">{time}</span></div>
+      <div className="pack-progress-head"><b>{verifying && before ? before.doing : `Packing with ${who}…`}</b><span className="mono muted" title="Time since Pack was pressed">{time}</span></div>
       <ol className="pack-steps">
-        {step(verifying, !verifying, 'Build and verify the program')}
+        {before && step(verifying, !verifying, before.title)}
         {step(!verifying, false, `${sfx ? 'Crunch and check' : 'Crunch'} with ${who}`, check ? `${how}; ${check}.` : `${how}.`)}
       </ol>
     </div>

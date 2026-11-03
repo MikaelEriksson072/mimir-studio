@@ -21,6 +21,7 @@ export const CHANNELS = {
   toolchainRun: 'toolchain:run',
   terminalOpen: 'terminal:open',
   editorOpen: 'editor:open',
+  asmPick: 'asm:pick',
   editorFind: 'editor:find',
   toolchainUnpack: 'toolchain:unpack',
   toolchainIdentify: 'toolchain:identify',
@@ -87,8 +88,8 @@ export interface ProjectSaveResult { path: string }
 export type PrgOpenKind = 'prg' | 'crt' | 'vsf';
 export interface PrgOpenRequest { paths?: string[]; zeroPage?: boolean; kind?: PrgOpenKind }
 /** an opened PRG; a VICE snapshot also gives the entry points it holds, its program start and what it is; a chip of a
- *  cartridge (`chip`) the image it is from (the same object for every chip of it) */
-export type OpenedPrg = LoadedFile & { entries?: number[]; snapshot?: string; start?: number; cart?: Cartridge };
+ *  cartridge (`chip`) the image it is from (the same object for every chip of it); `path`: the file it was read from */
+export type OpenedPrg = LoadedFile & { entries?: number[]; snapshot?: string; start?: number; cart?: Cartridge; path?: string };
 
 /** A .d64 disk image to mount. `path` given: read it (in a folder the user picked); otherwise a file dialog. */
 export interface DiskOpenRequest { path?: string }
@@ -108,6 +109,10 @@ export interface ExportWriteRequest {
   files: Record<string, string | Uint8Array>;
 }
 export interface ExportWriteResult { dir: string; written: string[] }
+
+/** A Kick Assembler source picked in a dialog: its path, its folder (open in this session: it can be built there) and
+ *  its file name, the entry to build. */
+export interface AsmPickResult { path: string; dir: string; entry: string }
 
 /** Assemble each entry (an .asm file in `dir`) with KickAss.jar from the settings. */
 export interface BuildRequest { dir: string; entries: string[] }
@@ -261,6 +266,8 @@ export interface KrApi {
   openDisk(req?: DiskOpenRequest): Promise<DiskOpenResult | null>;
   writeExport(req: ExportWriteRequest): Promise<ExportWriteResult | null>;
   build(req: BuildRequest): Promise<BuildResult>;
+  /** a Kick Assembler source picked in a dialog, to build where it is; null: cancelled */
+  pickAsm(): Promise<AsmPickResult | null>;
   run(req: RunRequest): Promise<RunResult>;
   openTerminal(req?: TerminalOpenRequest): Promise<TerminalOpenResult>;
   /** the export's folder in the external editor, with its first .asm file open */

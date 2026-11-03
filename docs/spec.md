@@ -1423,6 +1423,7 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `disk:open` | renderer → main | `{ path? }` → `{ path, name, bytes }` för en `.d64` (dialog om sökväg saknas; `null` om den avbryts) |
 | `export:write` | renderer → main | `{ dir \| target, files: Record<string, string \| Uint8Array> }` → `{ dir, written: string[] }`; `target`: `pick` (mappdialog), `temp` (ny mapp i temp), `project` (projektets `source`), `build` (projektets `build`, utan projekt en ny mapp i temp) |
 | `toolchain:build` | renderer → main | `{ dir, entries: string[] }` → `{ ok, stdout, problems: Problem[], prg?: Uint8Array }` |
+| `asm:pick` | renderer → main | → `{ path, dir, entry }`: en Kick Assembler-källa vald i en dialog, att bygga där den ligger (13.8b); mappen får byggas i under sessionen (`null` om dialogen avbryts) |
 | `toolchain:run` | renderer → main | `{ prgPath, labelsPath?, start?, disk? }` → `{ pid, via: 'run' \| 'sys' \| 'monitor' }` |
 | `toolchain:pack` | renderer → main | `{ files: { name, prg }[], prefs: PackPrefs }` → `{ ok, output, argv, dir, name?, path?, prg?, packed, report, check, error? }`: Brokkr i en arbetstråd eller Exomizer, efter `prefs.packer`; filen skrivs också i `prefs.dir` när den är satt (en mapp vald i sessionen), och `path` pekar dit (13.8) |
 | `pack:folder` | renderer → main | `{ dir?, ask? }` → `{ dir }`: mappen för den packade filen; en mapp sessionen redan får skriva i ges tillbaka direkt, annars (och alltid med `ask`) frågar en mappdialog som öppnas där (`null` om den avbryts) |
@@ -1942,6 +1943,30 @@ tom inställning behålls.
   effekt i det snabba. Sist väljs en mapp med en stubbad dialog, filen hamnar där (kortet säger *Written to*, toasten ger
   sökvägen) och *Clear* tar bort mappen igen.
 
+### 13.8b Packa en fil utan projekt
+
+**Pack a file…** på startskärmen (13.10) packar en fil med Brokkr eller Exomizer som den är, utan projekt och utan
+analys. Till vänster väljs vad som packas: **PRG files…** (en eller flera, packade tillsammans till en fil; en senare
+vinner där de överlappar) eller **Kick Assembler source…** (en `.asm`). En källa assembleras med KickAss.jar där den
+ligger, som dess egen `build.bat` skulle göra (`out\<namn>.prg` i dess mapp), när den väljs och igen före varje
+packning, så att en ändrad källa packas som den är nu; gick det inte står Kick Assemblers fel under filen. Filnamn med
+mellanslag och bokstäver från alla språk går bra (`assertEntryName` tar inte ett namn som börjar med `-` eller `.`, eller
+ett med en mapp i). **Whole file** packar filerna hela, **Address ranges** bara de intervall som skrivs
+(`$0801-$1fff, $c000-$cfff`).
+
+Till höger är Pack-vyns inställningar (`PackerChoice` och `PackSettings` i `Pack.tsx`, samma komponenter): packare,
+självuppackande eller packad data, format, start, `$01` och avbrott efter, avpackarens minne, kommandot och resultatet
+med **Run in VICE** och **Save as…**. Utan analys läses BASIC-raden med `parseBasic` direkt ur en PRG som laddar på
+`$0801`: har den en SYS startar programmet där (**SYS in the BASIC line**), annars hoppar det till laddadressen. Den
+packade filen hamnar bredvid det som packades, om inte **Choose…** väljer en annan mapp. Inställningarna sparas i
+fönstret (`kr.quickPack`) till nästa gång; mapp, filnamn, intervall och start följer de filer som väljs. **Start** går
+tillbaka till startskärmen.
+
+**Test:** `e2e/quickpack.spec.ts`: en kopia av `raster-demo.prg` packas med Brokkr (*SYS 2064*, start *sys*, mappen
+bredvid), filen `raster-demo-brokkr.prg` blir mindre och laddar på `$0801`; *Address ranges* föreslår filens intervall
+och *Start* går tillbaka. Med KickAss.jar assembleras `my border.asm` (mellanslag i namnet) till `out\my border.prg` och
+packas, och en källa med fel visar Kick Assemblers *Unknown symbol*. `test/main.test.ts` prövar filnamnen.
+
 ### 13.9 Cartridges (.crt)
 
 En cartridge-avbild öppnas som en PRG: med *Open PRG…* (dialogen visar `.prg`, `.vsf` och `.crt`), genom att släppa den
@@ -2148,7 +2173,7 @@ project** gör sin mapp till projektets, också för filer sparade före projekt
 **Startskärmen** visas när appen startar: **Continue** med det du arbetade med sist (projektet, med dess mapp, eller
 arbetet utan projekt; knappen har fokus så Enter fortsätter), **New project…** (namn och mappen det läggs i: först
 `Dokument\Mimir`, sedan där det senaste lades; `Change…` väljer en annan i en mappdialog), **Open project…**,
-**Without a project** och de senast öppnade projekten (högst 10; ett som inte finns kvar är överstruket, × stryker det
+**Without a project**, **Pack a file…** (13.8b) och de senast öppnade projekten (högst 10; ett som inte finns kvar är överstruket, × stryker det
 ur listan). Namnet prövas som Windows prövar ett mappnamn (inga `<>:"/\|?*`, inte en enhet som `CON`, inte slut på
 punkt); finns redan ett projekt med namnet i mappen skapas inget. Ett nytt projekt är tomt: listningen visar **Open
 PRG…**, **Mount D64…** och **VICE quicksave**. Laddas fönstret om fortsätter det med det som valts i körningen, utan

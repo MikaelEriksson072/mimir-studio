@@ -1,5 +1,5 @@
-/* The start screen: go on with what was worked on last, start a new project, open one, or work without a project as
- * before. A project is a folder of its own: its project file and what Mimir writes for it (the Kick Assembler source,
+/* The start screen: go on with what was worked on last, start a new project, open one, work without a project as
+ * before, or pack a file with Brokkr or Exomizer as it is (QuickPack). A project is a folder of its own: its project file and what Mimir writes for it (the Kick Assembler source,
  * the build, the packed file) go there. The New project form is the one "Create a project from this work" shows too. */
 import { useEffect, useState, type FormEvent } from 'react';
 import { createProject, demoProject } from '@mimir/core';
@@ -11,6 +11,7 @@ import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { ProjectStartInfo, RecentProject } from '../../shared/ipc';
 import { Logo } from './Logo';
 import { Modal } from './Modal';
+import { QuickPack } from './QuickPack';
 
 const kr = window.kr;
 
@@ -127,6 +128,8 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
+  /** Pack a file: the quick pack in place of the start screen */
+  const [packing, setPacking] = useState(false);
   const { enter } = useProject.getState();
   const settings = () => useProject.getState().present.settings;
   const [unsaved] = useState(unsavedWork);
@@ -195,6 +198,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
 
   // until it is known whether there is a start screen to show
   if (!info && !error) return <div className="boot">Opening…</div>;
+  if (packing) return <QuickPack onBack={() => setPacking(false)} />;
   return (
     <div className="start">
       <div className="start-box">
@@ -219,6 +223,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
               <button className={cx('btn', !lastProject && !unsaved && 'primary')} disabled={busy} onClick={() => setCreating(true)}><Icon name="plus" size={14} />New project…</button>
               <button className="btn" disabled={busy} onClick={() => void run(() => openProject())}><Icon name="upload" size={14} />Open project…</button>
               {!unsaved && <button className="btn ghost" disabled={busy} onClick={() => void run(withoutProject)} title="Work as before: open PRG files right away, and create a project from the work when you want to keep it">Without a project</button>}
+              <button className="btn ghost" disabled={busy} onClick={() => setPacking(true)} title="Pack PRG files or a Kick Assembler source with Brokkr or Exomizer as they are: no project, no analysis"><Icon name="pack" size={14} />Pack a file…</button>
             </div>}
           {recent.length > 0 && <section className="start-recent" aria-label="Recent projects">
             <h2>Recent projects</h2>

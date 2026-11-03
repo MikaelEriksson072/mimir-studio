@@ -23,6 +23,7 @@ const api: KrApi = {
   openDisk: req => invoke(CHANNELS.diskOpen, req ?? {}),
   writeExport: req => invoke(CHANNELS.exportWrite, req),
   build: req => invoke(CHANNELS.toolchainBuild, req),
+  pickAsm: () => invoke(CHANNELS.asmPick),
   run: req => invoke(CHANNELS.toolchainRun, req),
   openTerminal: req => invoke(CHANNELS.terminalOpen, req ?? {}),
   openEditor: req => invoke(CHANNELS.editorOpen, req),
