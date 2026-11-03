@@ -19,8 +19,10 @@ import { kickMnemonic, lineText } from './lines';
 import { hardwareInclude } from './include';
 
 const ID_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** the words Kick Assembler 5.25 does not take as a label (measured with KickAss.jar; in this case only, `TRUE` is one) */
+const KEYWORDS = new Set(['true', 'false', 'null', 'var', 'const']);
 /** A valid, non-mnemonic Kick Assembler identifier. */
-export const validLabel = (name: string): boolean => ID_RE.test(name) && !ENC[name.toUpperCase()] && name.length <= 64;
+export const validLabel = (name: string): boolean => ID_RE.test(name) && !ENC[name.toUpperCase()] && !KEYWORDS.has(name) && name.length <= 64;
 
 /** Per-file render state, also passed to operand formatting. */
 interface RenderCtx {

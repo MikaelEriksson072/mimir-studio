@@ -3,7 +3,8 @@
  * The cursor and the selection are the listing's: a click puts the cursor on a byte, Shift+click or a drag selects,
  * the arrow keys move. The command field takes VICE's commands (`m 0801 08ff`, `ii 0400`); Copy writes the rows as
  * VICE does. Find searches text (as PETSCII and as screen codes) or bytes, marks every hit and steps through them.
- * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too. A cartridge's bank
+ * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too; Enter marks the
+ * selection as the text the dump shows (screen codes in `ii`), named by its first word (`textLabel`). A cartridge's bank
  * is picked in the head: the cursor goes along, to the same address when the bank has it; *All banks* shows every
  * bank after the other, each under a line with its number, at bank addresses (`1:$8000`). The tab opens where the
  * editor was in memory (the listing's or Graphics' top, spec 14.6b), and says where it was scrolled to for the tab opened next. */
@@ -23,8 +24,11 @@ const MODES: ViewMode<MonitorMode>[] = [
   { key: 'i', label: 'PETSCII', badge: 'i', name: 'PETSCII (i)', title: 'PETSCII text, 40 bytes a row, as the monitor command i' },
   { key: 'ii', label: 'Screen codes', badge: 'ii', name: 'Screen codes (ii)', title: 'Screen codes, 40 bytes a row, as the monitor command ii' },
 ];
-/** what a selection can be marked as from here */
-const MARKS: [string, string][] = [['text', 'Text'], ['textsc', 'Text (screen codes)'], ['bytes', 'Bytes'], ['code', 'Code']];
+/** what a selection can be marked as from here: text in the character set the dump shows (the lower case one: mixed case) */
+const marks = (lower: boolean): [string, string][] => [
+  lower ? ['textmix', 'Text (mixed case)'] : ['text', 'Text'], lower ? ['textscmix', 'Text (screen codes, mixed case)'] : ['textsc', 'Text (screen codes)'],
+  ['bytes', 'Bytes'], ['code', 'Code'],
+];
 const FIND_AS: [FindAs, string, string][] = [['text', 'Text', 'Text as the dump shows it, as PETSCII and as screen codes, in any case'], ['bytes', 'Bytes', 'Hex bytes: a9 00 8d, and ?? for any byte']];
 const MATCHED: Record<MemoryMatch['as'], string> = { petscii: 'PETSCII', screen: 'screen codes', both: 'PETSCII and screen codes', bytes: 'bytes' };
 
@@ -136,6 +140,8 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     if (was.bank !== bank?.value && cursor != null && cursor !== was.cursor && !onScreen(cursor)) scrollTo(cursor);
   }, [bank?.value, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Enter marks the selection as the text the dump shows: screen codes in `ii`, else PETSCII
+  const MARK = marks(lower), enter = mode === 'ii' ? 1 : 0;
   const [hover, setHover] = useState<Addr | null>(null);
   const [cmd, setCmd] = useState(''), [cmdErr, setCmdErr] = useState<string | null>(null);
   const anchor = useRef<Addr | null>(null), dragging = useRef(false);
@@ -183,6 +189,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); e.stopPropagation(); findInput.current?.select(); return; }
     if (e.key === 'F3') { e.preventDefault(); e.stopPropagation(); goHit(e.shiftKey ? -1 : 1); return; }
     if (e.key === '0' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); toZero(); return; }
+    if (e.key === 'Enter' && range && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); onMark(MARK[enter][0], range); return; }
     if (e.key === 'Escape') { e.stopPropagation(); anchor.current = null; onClear(); }
   };
   // Shift+arrows: the selection grows from the anchor; the cursor shown is the moving end
@@ -351,10 +358,11 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
           <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           {zeroBtn}
           <span className="grow" />
-          {MARKS.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}
+          {MARK.map(([id, label], i) => <button key={id} className={cx('btn small', i === enter && 'primary')} onClick={() => onMark(id, range)}
+            title={i < 2 ? `Mark the selection as ${label.toLowerCase()}, named by its first word${i === enter ? ' (Enter)' : ''}` : undefined}>Mark as {label}{i === enter && <kbd>Enter</kbd>}</button>)}
           <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name="list" size={13} />Show in listing</button>
         </> : <>
-          <span className="muted">Click a byte to put the cursor there, Shift+click or drag to select, arrow keys to move, <kbd>0</kbd> to select to the 0 that ends a text. Double-click shows it in the listing.</span>
+          <span className="muted">Click a byte to put the cursor there, Shift+click or drag to select, arrow keys to move, <kbd>0</kbd> to select to the 0 that ends a text, <kbd>Enter</kbd> to mark the selection as text named by its first word. Double-click shows it in the listing.</span>
           {cursor != null && A.owner[cursor] >= 0 && <><span className="grow" />{zeroBtn}</>}
         </>}
       </div>

@@ -6,7 +6,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, TOOLCHAIN_KEYS, validLabel, withId,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
@@ -792,15 +792,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const b = findBlock(A.blocks, cursor); if (!b) return null;
     return { start: curLine && curLine.a != null ? curLine.a : cursor, end: b.end };
   };
-  const mark = (id: string, range?: { start: Addr; end: Addr }) => {
+  /** `name`: a text is named by its first word (the Memory tab), unless its start has a name you gave it */
+  const mark = (id: string, range?: { start: Addr; end: Addr }, opts?: { name?: boolean }) => {
     const r = range || targetRange(); if (!r) return;
     const rl = A.relocs.find(x => x.start < r.end && r.start < x.end);
     if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside .pseudopc`, 'warn'); return; }
-    const m = MARK_AS.find(x => x.id === id);
+    const m = MARK_AS.find(x => x.id === id), enc = m?.props?.enc;
+    const name = opts?.name && enc && !R.labels.get(r.start)?.user ? textLabel(A.mem, r.start, r.end, enc.startsWith('screen'), enc.endsWith('mixed'), n => nameTaken(n, r.start)) : null;
     // the analysis merges every block (and earlier override) inside the range into the new one; code stays split per routine
     const merged = id === 'code' ? 0 : A.blocks.filter(b => b.start < r.end && b.end > r.start).length;
-    update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${m ? m.label : id}`, d => { d.overrides.push({ start: r.start, end: r.end, type: MARK_TYPE[id], ...(m?.props ? { props: { ...m.props } } : {}) }); });
-    toast(`$${h4(r.start)}–$${h4(r.end - 1)} marked as ${m ? m.label : id}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
+    update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${m ? m.label : id}${name ? ` named ${name}` : ''}`, d => {
+      d.overrides.push({ start: r.start, end: r.end, type: MARK_TYPE[id], ...(m?.props ? { props: { ...m.props } } : {}) });
+      if (name) d.labels[r.start] = name;
+    });
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} marked as ${m ? m.label : id}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
     showChanged(r.start, r.end, `Marked as ${m ? m.label : id}`);
   };
   /** a data, table or word block's number format and items a row (an override like the block, with them) */
@@ -905,6 +910,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     toast(`$${h4(r.start)}–$${h4(r.end - 1)} is read where it is loaded again: its names and comments went back with it (Ctrl+Z relocates it again)`, 'ok');
     showChanged(r.start, r.end, 'No longer relocated');
   };
+  /** another address has the name, or a zero-page variable (they share the name space) */
+  const nameTaken = (name: string, addr: Addr) => [...R.labels].some(([a, l]) => a !== addr && l.name === name) || [...R.zp].some(([a, z]) => a !== addr && !z.off && z.name === name);
   const rename = (addr: Addr, name: string): boolean => {
     if (name && !validLabel(name)) { setLabelError('Use letters, digits and _ only, start with a letter or _, and avoid mnemonic names.'); toast(`"${name}" is not a valid Kick Assembler label`, 'err'); return false; }
     for (const [a, l] of R.labels) if (a !== addr && l.name === name) { setLabelError(`"${name}" is already used at $${h4(a)}.`); toast(`"${name}" is already used at $${h4(a)}`, 'err'); return false; }
@@ -2015,7 +2022,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
                 onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
-                onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onShow={a => navigate(g(a), { center: true, listing: true })} onCopy={t => void copyText(t)} />)(allBanks ? (a: Addr) => a : inBank)}
+                onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) }, { name: true })} onShow={a => navigate(g(a), { center: true, listing: true })} onCopy={t => void copyText(t)} />)(allBanks ? (a: Addr) => a : inBank)}
             </Suspense>
           </ErrorBoundary>
         </div>

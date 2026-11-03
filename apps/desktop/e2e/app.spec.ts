@@ -2947,6 +2947,17 @@ test('the Memory tab shows the program as the VICE monitor does: m, i and ii', a
     await expect(page.locator('.monv [role="alert"]')).toContainText('neither a hex address nor a label');
   });
 
+  await test.step('Enter marks a selection as the text the dump shows, named by its first word', async () => {
+    await command('ii 0985 0995');
+    await expect(page.getByRole('button', { name: /Mark as Text \(screen codes\)/ })).toHaveClass(/primary/);
+    await dump.focus();
+    await page.keyboard.press('Enter');
+    await expect(toast(page, '$0985–$0995 marked as Text (screen codes), named hello')).toBeVisible();
+    await expect(bar).toContainText('Text hello ($0985–$0995)');
+    await page.keyboard.press('Control+z');
+    await expect(bar).toContainText('Text txt_0985');
+  });
+
   await test.step('a selection is marked from here, and a double-click shows the byte in the listing', async () => {
     await command('m 3000 3007');
     await page.getByRole('button', { name: 'Mark as Bytes' }).click();
@@ -3973,7 +3984,7 @@ test('the Memory tab selects from the start of a text to the 0 that ends it, wit
     await byte(0x0949).click();
     await page.keyboard.press('0');
     await page.keyboard.press('0');
-    await view.getByRole('button', { name: 'Mark as Text', exact: true }).click();
+    await view.getByRole('button', { name: /^Mark as Text\s*Enter$/ }).click();
     await page.getByRole('tab', { name: 'Listing' }).click();
     await goTo(page, '$0949');
     await expect(headerRow(page, '0949')).toContainText('$0949-$0984');

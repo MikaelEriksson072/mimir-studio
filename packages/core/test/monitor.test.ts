@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findInMemory, loadedRanges, makeDemo, MAX_MATCHES, monitorChar, monitorLine, monitorRows, monitorText, nextZero, parseMonitorCommand, petsciiToScreen, parsePrg } from '../src';
+import { findInMemory, loadedRanges, makeDemo, MAX_MATCHES, monitorChar, monitorLine, monitorRows, monitorText, nextZero, parseMonitorCommand, petsciiToScreen, parsePrg, textLabel, TEXT_LABEL_MAX } from '../src';
 import { findVice } from '../src/node';
 
 const mem = new Uint8Array(0x10000);
@@ -128,6 +128,48 @@ describe('the 0 that ends a text', () => {
     expect(nextZero(m, r, 0x1001)).toBeNull();
     expect(nextZero(m, r, 0x1005)).toBeNull();
     expect(nextZero(m, r, 0x1006)).toBe(0x1007);
+  });
+});
+
+describe('the label of a text marked in the Memory tab', () => {
+  const name = (s: string | number[], o: { screen?: boolean; lower?: boolean; taken?: (n: string) => boolean } = {}) => {
+    const m = Uint8Array.from(typeof s === 'string' ? [...s].map(c => c.charCodeAt(0)) : s);
+    return textLabel(m, 0, m.length, !!o.screen, o.lower, o.taken);
+  };
+  it('is the first word as the dump shows it, in lower case', () => {
+    expect(textLabel(mem, 0x0949, 0x0960, false)).toBe('mimir');
+    expect(name('HELLO, WORLD')).toBe('hello');
+    // clear screen and return before it
+    expect(name([0x93, 0x0d, ...[...'PRESS FIRE'].map(c => c.charCodeAt(0))])).toBe('press');
+    expect(name('LEVEL1 DONE')).toBe('level1');
+    // screen codes, and the inverse ones
+    expect(name([0x08, 0x05, 0x0c, 0x8c, 0x8f, 0x20, 0x06], { screen: true })).toBe('hello');
+    // mixed case: $c8 is an H in the lower case set, a graphics character in the other
+    expect(name([0xc8, 0x45, 0x4c, 0x4c, 0x4f], { lower: true })).toBe('hello');
+    expect(name([0xc8, 0x45, 0x4c, 0x4c, 0x4f])).toBe('ello');
+  });
+
+  it(`is at most ${TEXT_LABEL_MAX} characters`, () => {
+    expect(name('ABCDEFGHIJKLMNOPQRSTUVWXYZ')).toBe('abcdefghijklmnop');
+  });
+
+  it('gets txt_ before a word Kick Assembler does not take as a label', () => {
+    expect(name('1985 PRESENTS')).toBe('txt_1985');
+    expect(name('AND THEN')).toBe('txt_and');
+    for (const w of ['TRUE', 'FALSE', 'NULL', 'VAR', 'CONST']) expect(name(w)).toBe(`txt_${w.toLowerCase()}`);
+    expect(name('ABCDEFGHIJKLMNOP')).toBe('abcdefghijklmnop');
+    expect(name('123456789012345678')).toBe('txt_123456789012');
+  });
+
+  it('gets _2, _3 … after a name that is taken, within the length', () => {
+    const taken = new Set(['press', 'press_2', 'abcdefghijklmnop']);
+    expect(name('PRESS FIRE', { taken: n => taken.has(n) })).toBe('press_3');
+    expect(name('ABCDEFGHIJKLMNOPQRSTUVWXYZ', { taken: n => taken.has(n) })).toBe('abcdefghijklmn_2');
+  });
+
+  it('is null for a text without a letter or a digit', () => {
+    expect(name('--- !!! ---')).toBeNull();
+    expect(name([0x93, 0x0d, 0x00])).toBeNull();
   });
 });
 

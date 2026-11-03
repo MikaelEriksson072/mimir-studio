@@ -5,6 +5,7 @@
  * or a graphics character. */
 import type { Addr } from '../types';
 import { h2, h4 } from '../util/hex';
+import { validLabel } from '../render/kick';
 
 export type MonitorMode = 'm' | 'i' | 'ii';
 /** a range of memory, `end` exclusive */
@@ -125,6 +126,30 @@ export function nextZero(mem: ArrayLike<number>, ranges: readonly MonitorRange[]
   if (!r) return null;
   for (let a = from; a < r.end; a++) if (mem[a] === 0) return a;
   return null;
+}
+
+/** the longest name `textLabel` gives */
+export const TEXT_LABEL_MAX = 16;
+
+/**
+ * The label of a text the Memory tab marks (Enter on a selection): its first word as the dump shows it (`screen`:
+ * screen codes; `lower`: the lower case set), letters and digits, in lower case and at most TEXT_LABEL_MAX characters.
+ * A word Kick Assembler does not take as a label (it starts with a digit, it is a mnemonic or a keyword) gets `txt_`
+ * before it; a name `taken` has gets `_2`, `_3` … after it. null: the text has no letter or digit.
+ */
+export function textLabel(mem: ArrayLike<number>, start: Addr, end: Addr, screen: boolean, lower = false, taken: (name: string) => boolean = () => false): string | null {
+  let word = '';
+  for (let a = start; a < end; a++) {
+    const ch = monitorChar(mem[a], screen, lower)?.ch ?? '';
+    if (/^[A-Za-z0-9]$/.test(ch)) word += ch.toLowerCase();
+    else if (word) break;
+  }
+  if (!word) return null;
+  const fit = (w: string, tail = '') => w.slice(0, TEXT_LABEL_MAX - tail.length) + tail;
+  if (!validLabel(fit(word))) word = `txt_${word}`;
+  let name = fit(word);
+  for (let n = 2; taken(name); n++) name = fit(word, `_${n}`);
+  return name;
 }
 
 /** A search hit: its bytes, and how they matched (text as PETSCII, as screen codes or as both, or bytes). */

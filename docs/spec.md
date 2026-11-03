@@ -2433,7 +2433,16 @@ Statusen säger vilken träff det är och hur den matchade (*1 of 2 matches · P
   så att ett `0` till tar med nästa text också (en tabell med nollavslutade texter, en i taget). Sökningen stannar där det
   laddade området slutar, och finns ingen 0 före det säger en rad i rött det (*No 0 byte from $37fe on before the loaded
   bytes end.*) och markeringen står kvar (`nextZero` i `monitor.ts`).
-- En markering kan markeras som text, text i skärmkoder, bytes eller kod härifrån.
+- En markering kan markeras som text, text i skärmkoder, bytes eller kod härifrån. Med *Lower case* blir texten blandad
+  (`petscii_mixed`, `screencode_mixed`), som dumpen visar den.
+- `Enter` markerar markeringen som den text vyn visar: skärmkoder i `ii`, annars PETSCII (knappen som är framhävd).
+  Texten, med Enter eller med en av textknapparna, får sitt första ord som etikett (`textLabel` i `monitor.ts`): de första
+  bokstäverna och siffrorna som dumpen visar dem, med gemener och högst 16 tecken (*PRESS FIRE* → `press`). Ett ord som
+  Kick Assembler inte tar som etikett, för att det börjar med en siffra, är en mnemonic eller ett av `true`, `false`,
+  `null`, `var` och `const` (uppmätt med KickAss.jar), får `txt_` först (`txt_1985`, `txt_and`). Har en annan adress eller
+  en nollsidevariabel redan namnet får det `_2`, `_3` … sist, inom de 16 tecknen. En etikett som du själv har gett
+  adressen står kvar, och en text utan bokstäver och siffror behåller `txt_<adress>`. Markeringen och etiketten är ett
+  ångrasteg.
 
 **Kopiera:** *Copy selection* / *Copy all* lägger raderna på urklipp som VICE skriver dem (`monitorText`), med raderna från
 markeringens början. Raden under vyn beskriver byten under musen eller vid markören: värdet i hex, decimalt och binärt,
@@ -2442,7 +2451,8 @@ tecknet som PETSCII och som skärmkod, och blocket. *Block colours* färgar byte
 **Test:** `packages/core/test/monitor.test.ts` kör riktiga x64sc 3.10 (`-console`, egen konfigurationsfil, `logname`/`log on`
 i monitorn), som laddar demon och skriver `m 0801 08ff`, `i` och `ii`. Radadresserna och hexkolumnen ska vara exakt de VICE
 skriver, och textkolumnen bytena själva. E2e-testet går igenom `m`, `i` och `ii`, markören, piltangenterna, ett kommando,
-*Copy selection*, *Mark as Bytes* och dubbelklicket till listningen.
+*Copy selection*, *Mark as Bytes*, `Enter` som markerar en text med sitt första ord som etikett och dubbelklicket till
+listningen.
 
 ### 14.6b Flikarna följer varandra i minnet
 

@@ -662,5 +662,8 @@ describe('project helpers', () => {
     expect(validLabel('lda')).toBe(false);
     expect(validLabel('9lives')).toBe(false);
     expect(validLabel('a-b')).toBe(false);
+    // Kick Assembler's keywords, in this case only (measured with KickAss.jar)
+    for (const k of ['true', 'false', 'null', 'var', 'const']) expect(validLabel(k), k).toBe(false);
+    expect(validLabel('TRUE')).toBe(true);
   });
 });
