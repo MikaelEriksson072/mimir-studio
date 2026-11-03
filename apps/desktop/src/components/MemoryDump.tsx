@@ -6,7 +6,8 @@
  * `0` selects from the cursor to the 0 byte that ends its text, and again takes in the next text too; Enter marks the
  * selection as the text the dump shows (screen codes in `ii`), named by its first word (`textLabel`). A cartridge's bank
  * is picked in the head: the cursor goes along, to the same address when the bank has it; *All banks* shows every
- * bank after the other, each under a line with its number, at bank addresses (`1:$8000`). The tab opens where the
+ * bank after the other, each under a line with its number, at bank addresses (`1:$8000`). Each row has its bank number
+ * before `>C:`. The tab opens where the
  * editor was in memory (the listing's or Graphics' top, spec 14.6b), and says where it was scrolled to for the tab opened next. */
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
@@ -72,6 +73,13 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   const [origin, setOrigin] = useState<Addr | null>(null);
   /** the bank of an address in every bank's memory */
   const bankOf = (a: Addr) => spaces?.find(x => x.space === Math.floor(a / 0x10000))?.bank ?? 0;
+  /** a cartridge's bank before a row's `>C:` (the bank shown, or with every bank the row's own), as wide as the
+   *  highest bank number; on screen only, Copy writes the rows as VICE does */
+  const bankWidth = bank ? String(Math.max(0, ...bank.banks.map(b => b.bank))).length : 0;
+  const bankTag = (a: Addr) => {
+    const n = spaces ? bankOf(a) : typeof bank?.value === 'number' ? bank.value : null;
+    return n == null ? null : <span className="mon-bnk" title={`Cartridge bank ${n}`}>{`${n}`.padStart(bankWidth)} </span>;
+  };
   // the rows of each loaded range, with a line for the memory between them; with every bank, a line over each bank
   const items = useMemo(() => {
     const out: Item[] = [];
@@ -307,7 +315,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     const text = Array.from({ length: n }, (_, k) => { const x = a + k, c = monitorChar(A.mem[x], mode === 'ii', lower); return <span key={k} data-a={x} className={cx('mon-c', cls(x), !c && 'dot', c?.inv && 'inv')} style={col(x)}>{c ? c.ch : '.'}</span>; });
     rows.push(
       <div key={i} className="mon-row" style={{ top: i * ROW }}>
-        <span className="mon-adr" data-a={a}>{monitorPrefix(mode, a)}</span>
+        <span className="mon-adr" data-a={a}>{bankTag(a)}{monitorPrefix(mode, a)}</span>
         {mode === 'm' ? <>
           <span className="mon-hex">{Array.from({ length: perRow }, (_, k) => (
             <Fragment key={k}>{k > 0 && (k % 4 === 0 ? '  ' : ' ')}{k < n ? <span data-a={a + k} className={cx('mon-b', cls(a + k))} style={col(a + k)}>{h2(A.mem[a + k])}</span> : '  '}</Fragment>))}</span>

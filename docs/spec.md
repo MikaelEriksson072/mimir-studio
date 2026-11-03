@@ -2056,7 +2056,9 @@ I Graphics och Memory väljs banken i lägesraden (*Bank*, bredvid *Go*): listan
 adresserna (*3 · $8000 · start*), och pilarna bredvid eller mushjulet över den stegar från bank till bank. Markören följer
 med, till samma adress när banken har den (annars dit banken startar), och markeringen med den när banken har alla dess
 byte. Bilden och raderna står kvar där de är, så samma adresser kan jämföras bank för bank. Banker som inte är med i
-projektet står i listan men går inte att välja förrän + i Explorer lägger till dem.
+projektet står i listan men går inte att välja förrän + i Explorer lägger till dem. I Memory står bankens nummer först på
+varje rad, före `>C:` (`1 >C:8000  …`), i alla tre lägena och med All banks radens egen bank. Numret är lika brett som
+det högsta banknumret, så att raderna står i linje. Det syns bara på skärmen: *Copy* skriver raderna som VICE gör.
 
 **All banks**, först i listan (när mer än en bank är med i projektet), visar alla banker på en gång, som listningen: Memory
 med varje banks rader efter varandra under en rad med bankens nummer (*bank 1 · $8000–$bfff*), Graphics med bankernas

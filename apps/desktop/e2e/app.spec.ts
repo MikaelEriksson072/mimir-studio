@@ -1111,9 +1111,12 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     await expect(pick.locator('option')).toHaveText(['All banks', '0 · $8000 · start', '1 · $8000']);
     // bank 0's cartridge vectors and CBM80, then bank 1's text at the same address
     await expect(row).toContainText('09 80 34 80  c3 c2 cd 38');
+    // the bank before the row's >C:
+    await expect(row.locator('.mon-adr')).toHaveText(/^0 >C:8000/);
     await pick.selectOption('1');
     await expect(statusBar(page)).toContainText('bank 1 · $8009');
     await expect(row).toContainText('0d 09 0d 09  12 20 13 14');
+    await expect(row.locator('.mon-adr')).toHaveText(/^1 >C:8000/);
     await expect(page.locator('.monv .gfxv-info')).toContainText('$8009 = $04');
     await expect(page.getByRole('button', { name: 'Next bank' })).toBeDisabled();
     // Graphics shows the cursor's bank too, and the arrow steps back to bank 0
@@ -1172,6 +1175,11 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     await command('m 1:8000');
     await expect(statusBar(page)).toContainText('bank 1 · $8000');
     await expect(page.locator('.monv .gfxv-info')).toContainText('1:$8000 = $0d');
+    // each row has its own bank before its >C:
+    await expect(dump.locator('.mon-row', { has: page.locator('.mon-adr', { hasText: /^1 >C:8000/ }) })).toContainText('0d 09 0d 09');
+    await command('ii 0:8000');
+    await expect(dump.locator('.mon-adr', { hasText: /^0 \*C:8000/ })).toBeVisible();
+    await command('m 1:8000');
     // Graphics lays both banks out, one after the other
     await page.getByRole('tab', { name: 'Graphics' }).click();
     await expect(pick).toHaveValue('all');

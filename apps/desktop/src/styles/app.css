@@ -911,6 +911,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .monv-inner { position: relative; min-width: max-content; padding-right: 16px; }
 .mon-row { position: absolute; left: 0; height: 20px; line-height: 20px; padding-left: 12px; white-space: pre; font: 13px/20px var(--font-code); color: var(--fg); }
 .mon-adr { color: var(--syn-label); }
+/* a cartridge's bank before the row's >C: */
+.mon-bnk { color: var(--fg-2); font-weight: 600; }
 .mon-gap { color: var(--fg-3); font-style: italic; }
 /* every bank at once: the line over a bank's rows */
 .mon-gap.mon-bank { color: var(--fg-2); font-style: normal; font-weight: 600; border-top: 1px solid var(--line-2); }
