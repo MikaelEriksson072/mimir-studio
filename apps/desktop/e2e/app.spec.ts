@@ -1131,6 +1131,10 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     await expect(pick).toHaveValue('0');
     await page.getByRole('button', { name: 'Add bank 1 to this project' }).click();
     await expect(pick.locator('option').nth(1)).toBeEnabled();
+    // the listing has bank 1 again once its analysis is in (the option is enabled as + adds it, before that): bank 0
+    // alone is analysed without banks, and the status bar then shows the cursor without its bank. Scrolled before
+    // that, the listing ends in bank 0, and Memory rightly opens there
+    await expect(statusBar(page)).toContainText('bank 0 · $8009');
     await page.getByRole('tab', { name: 'Listing' }).click();
     // the listing scrolled into bank 1 (the cursor stays in bank 0, off screen): Memory opens in bank 1, there
     const top = await listing(page).evaluate(async el => {
