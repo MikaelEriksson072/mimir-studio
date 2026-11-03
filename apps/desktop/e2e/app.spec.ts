@@ -917,8 +917,11 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     const o = all[all.length - 1];
     return { title: o?.title, filters: o?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: o?.properties };
   });
-  /** another view in the side panel, every Explorer section closed: the File menu's choice brings them back */
+  /** another view in the side panel, every Explorer section closed: the File menu's choice brings them back. What was
+   *  opened before is analysed first: on a busy machine, a file opened while that analysis still ran was left at the
+   *  start of the one before */
   const elsewhere = async () => {
+    await expect(statusBar(page)).not.toContainText('analysing');
     for (const t of await page.locator('.side-sec .sec-toggle[aria-expanded="true"]').all()) await t.click();
     await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Blocks' }).click();
     await expect(explorer).toHaveAttribute('aria-pressed', 'false');
