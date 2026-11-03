@@ -3,8 +3,9 @@ import { PET_CTRL, type Ctx } from './context';
 import type { Addr, Block, BlockProps, EntryKind, GfxCandidate, MemConfigInfo, MusicInfo, TextEncoding, TypeId, XRef } from '../types';
 import { T, TYPE_BY_KEY, typeInfo } from '../model';
 import { OPC } from '../cpu/opcodes';
-import { reachesForName } from '../c64/memconfig';
+import { banksOf, ioVisible, reachesForName } from '../c64/memconfig';
 import { $2, $4, word } from '../util/hex';
+import { d018Case, printCase, stringLen, stringSwitch, type CaseSwitch, type PrintCase, type StringEv } from './strings';
 
 export interface Classification {
   tm: Uint8Array;
@@ -31,7 +32,7 @@ type NewBlock = Omit<Block, 'id' | 'user' | 'entropy'> & Partial<Pick<Block, 'id
 
 export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg: MemConfigInfo | null = null): Classification {
   const { S, mem, owner, insLen, codeOwner, basics, ov, ovProps, xrefs, entryKind, ijumps, lohiTabs, loaded, L } = ctx;
-  const { ptrTargets, textPtrs, wordPtrs, dataEv } = ctx.ev;
+  const { ptrTargets, textPtrs, strings, wordPtrs, dataEv } = ctx.ev;
 
   // ---- 5.10 classification map ----
   const tm = new Uint8Array(0x10000);
@@ -103,6 +104,20 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
     while (s + n < e) { const b = mem[s + n]; if (b === 0) { n++; break; } if (!validChar(b, enc)) break; n++; }
     return n;
   };
+  // a string handed to a print routine: as long as its parameters or its loop say, when that many bytes read as text
+  // (a loop that writes a file through CHROUT can write anything); any PETSCII character counts, graphics too
+  const printable = (b: number) => (b >= 0x20 && b < 0x80) || b >= 0xa0 || PET_CTRL.has(b);
+  const handedLen = (s: Addr, e: Addr, str: StringEv): number | null => {
+    const n = stringLen(mem, s, e - s, str);
+    // an empty string, only the byte that ends it, is no text
+    if (n == null || (str.end && n < 2 && str.end.includes(mem[s]))) return null;
+    let ok = 0; for (let i = 0; i < n; i++) if (printable(mem[s + i]) || str.end?.includes(mem[s + i])) ok++;
+    return ok >= n * 0.8 ? n : null;
+  };
+  // such a string goes on over the object starts in it (a byte the code changes): the rest of it, where one cuts it
+  const carry = new Map<Addr, { left: number; from: Addr; cs: ReturnType<PrintCase> | null }>();
+  /** where the data the walk splits at object starts ends, from `e` on */
+  const dataEnd = (s: Addr, e: Addr) => { while (e < 0x10000 && tm[e] === T.DATA && ov[e] !== T.DATA && owner[e] === owner[s]) e++; return e; };
   const smooth = (s: Addr, n: number) => {
     if (n < 16) return false;
     let min = 255, max = 0, sum = 0, ch = 0, psg = 0, maxd = 0;
@@ -131,10 +146,19 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
       const n = Math.min(lt.len, e - s);
       if (n > 0) { pushBlock(s, s + n, T.LOHI, { part: lt.part, partner: lt.partner, ptr: lt.ptr, code: lt.code }, 0.95, `indexed loads stored to ${$4(lt.dest)}/${$4(lt.dest + 1)}`); classifySpan(s + n, e, false); return; }
     }
-    const enc: TextEncoding | null = textPtrs.get(s) || (ev.has('petscii') ? 'petscii' : ev.has('screen') ? 'screen' : null);
+    const str = isObj ? strings.get(s) : undefined, cont = isObj && !str ? carry.get(s) : undefined;
+    const enc: TextEncoding | null = textPtrs.get(s) || (ev.has('petscii') ? 'petscii' : ev.has('screen') ? 'screen' : null) || (cont ? 'petscii' : null);
     if (isObj && enc && S.detectText) {
-      const n = textLen(s, e, enc);
-      if (n >= 2) { pushBlock(s, s + n, T.TEXT, { enc }, 0.9, enc === 'petscii' ? 'printed through KERNAL/BASIC output' : 'copied to screen memory'); classifySpan(s + n, e, false); return; }
+      const far = str ? dataEnd(s, e) : e, sn = str ? handedLen(s, far, str) : cont ? cont.left : null;
+      const full = sn ?? textLen(s, far, enc), n = Math.min(full, e - s);
+      if (full >= (sn != null ? 1 : 2)) {
+        // printed text is in the case the program prints in (5.5c), the rest of a string in the case of the string
+        const cs = enc !== 'petscii' ? null : cont ? cont.cs : caseOf(mem.subarray(s, s + full));
+        if ((str || cont) && full > n) carry.set(e, { left: full - n, from: cont ? cont.from : s, cs });
+        const why = cont ? `the rest of the string at ${$4(cont.from)}` : (str ? str.by + (str.len != null && sn != null ? `, ${sn} byte${sn === 1 ? '' : 's'}` : '')
+          : enc === 'petscii' ? 'printed through KERNAL/BASIC output' : 'copied to screen memory') + (cs ? cs.why : '');
+        pushBlock(s, s + n, T.TEXT, { enc: cs ? cs.enc : enc }, 0.9, why); classifySpan(s + n, e, false); return;
+      }
     }
     // fill runs
     const first = mem[s];
@@ -164,6 +188,17 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
     const isVar = isObj && written(s) && n <= 4;
     pushBlock(s, e, T.DATA, { var: isVar, indexed: isObj && indexedRef(s) }, isObj ? 0.75 : 0.3, isVar ? 'read and written by code' : isObj ? 'referenced by code' : 'not referenced by any traced code');
   };
+
+  // 5.5c the case the program prints in: the switches the code makes, sent to CHROUT or stored to $d018 (where I/O is
+  // seen; in a bank where the VIC sees the ROM's characters, or not), and a $0e or $8e in a string handed to a print routine
+  const romChars = (pc: Addr) => !mcfg || banksOf(mcfg.vic[pc] || 1).some(b => b === 0 || b === 2);
+  const switches: CaseSwitch[] = [...ctx.ev.cases];
+  for (const w of ctx.ev.writes) {
+    if (w.dest !== 0xd018 || w.indexed || (mcfg && ioVisible(mcfg.port[w.pc]) === 'none')) continue;
+    const c = d018Case(mem, insLen, w.pc, w.v, romChars(w.pc)); if (c) switches.push(c);
+  }
+  for (const [s, str] of strings) { const n = handedLen(s, dataEnd(s, s), str); const c = n ? stringSwitch(mem.subarray(s, s + n), s) : null; if (c) switches.push(c); }
+  const caseOf = printCase(switches.sort((x, y) => x.at - y.at), L);
 
   // walk the map
   const routineKinds = new Set<EntryKind | undefined>(['entry', 'irq', 'nmi', 'brk', 'user', 'sub', 'ptr', 'guess']);

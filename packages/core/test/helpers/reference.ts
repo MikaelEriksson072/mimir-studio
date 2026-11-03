@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { detectMusic } from '../../src/analyze/music';
+import { CHAR_OUT, d018Case, handedText, printCase, printers, printLoop, sentCase, stringLen, stringSwitch } from '../../src/analyze/strings';
 
 export interface Edit { find: string; replace: string }
 export interface Deviation { why: string; edits: Edit[] }
@@ -185,6 +186,73 @@ export const DEVIATIONS: Deviation[] = [
       { find: "              return tk.length > 1 ? [{ t: 'p', s: (lt.part === 'lo' ? '<' : '>') + '(' }, ...tk, { t: 'p', s: ')' }] : [{ t: 'p', s: lt.part === 'lo' ? '<' : '>' }, ...tk];", replace: "              return tk.length > 1 || /[+-]/.test(tk[0].s) ? [{ t: 'p', s: (lt.part === 'lo' ? '<' : '>') + '(' }, ...tk, { t: 'p', s: ')' }] : [{ t: 'p', s: lt.part === 'lo' ? '<' : '>' }, ...tk];" },
     ],
   },
+  {
+    why: 'Strings handed to print routines (spec 5.5b): the evidence pass only knew `lda #<t / ldy #>t / jsr $ab1e` and SETNAM, read the string to the first byte that is no character and left the program\'s own print routines alone, so their messages stayed data. Now the parameters at a call (registers, or a pointer and a length the caller stores) say where the string is, and the routine (STROUT, SETNAM, or the program\'s own: found by production code, `strs`) how long it is; a table printed through CHROUT ends at its loop\'s count or end byte. A store of an unknown value forgets the value stored before (a pointer pair made of it was stale), the string goes on over object starts in it, and the routines are named print_xxxx',
+    edits: [
+      { find: '  let writes, hints, ptrTargets, lohi, dataEv, wordPtrs, textPtrs, smc;\n', replace: '  let writes, hints, ptrTargets, lohi, dataEv, wordPtrs, textPtrs, smc, strings, printersFound = new Map();\n' },
+      { find: 'textPtrs = new Map(); smc = new Map();\n    const starts = [];', replace: 'textPtrs = new Map(); smc = new Map(); strings = new Map(); printersFound = new Map();\n    const starts = [];' },
+      { find: '    let A = null, X = null, Y = null, recent = new Map(), idxStores = [];\n', replace: '    let A = null, X = null, Y = null, recent = new Map(), idxStores = [];\n    let inAt = -1, inX = null, inY = null;\n' },
+      { find: '          clearWritten(pc, Math.max(...flowIn.map(x => x.from)));', replace: '          inAt = pc; inX = X; inY = Y;\n          clearWritten(pc, Math.max(...flowIn.map(x => x.from)));' },
+      {
+        find: '      else if (loaded(value)) ptrTargets.set(value, dest);\n    };\n    for (const pc of starts) {',
+        replace: "      else if (loaded(value)) ptrTargets.set(value, dest);\n    };\n    const printer = strs.printers({ mem, insLen, skip, L }, printersFound);\n    const addString = (s, str) => { if (!loaded(s)) return; textPtrs.set(s, 'petscii'); ptrTargets.delete(s); const old = strings.get(s); if (!old || (old.len == null && str.len != null)) strings.set(s, str); };\n    const lenOf = (count, from) => (count != null && count > from ? count - from : undefined);\n    for (const pc of starts) {",
+      },
+      {
+        find: '      const info = OPC[mem[pc]], d = decode(mem, pc), mn = info.mn, mode = info.mode;\n',
+        replace: '      const info = OPC[mem[pc]], d = decode(mem, pc), mn = info.mn, mode = info.mode;\n      if (info.access === \'rmw\' && d.target != null) recent.delete(d.target);\n',
+      },
+      {
+        find: "      const idxOf = () => (mode === 'abx' || mode === 'aby') && loaded(d.v) && !insLen[d.v] && codeOwner[d.v] < 0 ? { t: d.v, r: mode === 'abx' ? 'x' : 'y', pc } : null;\n",
+        replace: "      const index = (r) => ((r === 'x' ? X : Y) ?? (inAt === pc ? (r === 'x' ? inX : inY) : null))?.v ?? null;\n      const idxOf = () => (mode === 'abx' || mode === 'aby') && loaded(d.v) && !insLen[d.v] && codeOwner[d.v] < 0 ? { t: d.v, r: mode === 'abx' ? 'x' : 'y', pc, from: index(mode === 'abx' ? 'x' : 'y') } : null;\n      const handOver = (t) => {\n        const P = printer(t);\n        if (!P) return;\n        const val = (p) => (p === 'a' ? A : p === 'x' ? X : p === 'y' ? Y : recent.get(p) ?? null);\n        const lo = val(P.ptr[0]), hi = val(P.ptr[1]);\n        if (lo?.v == null || hi?.v == null) return;\n        if (typeof P.ptr[0] === 'string' && typeof P.ptr[1] === 'string') { if (lo.src == null || hi.src == null) return; pair(-1, lo, hi); }\n        addString(((lo.v | (hi.v << 8)) + P.offset) & 0xffff, { len: lenOf(P.lenAt != null ? val(P.lenAt)?.v : P.len, P.offset), end: P.end, by: strs.handedText(P, pc) });\n      };\n",
+      },
+      {
+        find: "        case 'LDA': A = mode === 'imm' ? { v: d.v, src: pc } : (idxOf() ? { v: null, idx: idxOf() } : null); break;\n",
+        replace: "        case 'LDA': {\n          A = mode === 'imm' ? { v: d.v, src: pc } : (idxOf() ? { v: null, idx: idxOf() } : null);\n          const lo = mode === 'izy' ? recent.get(d.v) : undefined, hi = mode === 'izy' ? recent.get((d.v + 1) & 0xff) : undefined, from = index('y');\n          const loop = lo?.v != null && hi?.v != null && from != null ? strs.printLoop({ mem, insLen, skip }, pc) : null;\n          if (loop) addString(((lo.v | (hi.v << 8)) + from) & 0xffff, { len: lenOf(loop.len ?? (loop.lenAt != null ? recent.get(loop.lenAt)?.v : null), from), end: loop.end, by: `printed through ${strs.CHAR_OUT.get(mem[loop.out + 1] | (mem[loop.out + 2] << 8))} from ${$4(loop.out)}` });\n          break;\n        }\n",
+      },
+      { find: '              if (hi && hi.src !== R.src) pair(dest, R, hi);\n            }\n', replace: '              if (hi && hi.src !== R.src) pair(dest, R, hi);\n            } else recent.delete(dest);\n' },
+      {
+        find: "          const t = d.target;\n          if (t === 0xffd2 && A && A.idx) evTag(A.idx.t, 'petscii');\n          if (t === 0xab1e && A && A.v != null && A.src != null && Y && Y.v != null && Y.src != null) {\n            pair(-1, A, Y); const v = A.v | (Y.v << 8); if (loaded(v)) { textPtrs.set(v, 'petscii'); ptrTargets.delete(v); }\n          }\n          if (t === 0xffbd && X && X.v != null && X.src != null && Y && Y.v != null && Y.src != null) {\n            pair(-1, X, Y); const v = X.v | (Y.v << 8); if (loaded(v)) { textPtrs.set(v, 'petscii'); ptrTargets.delete(v); }\n          }\n          A = X = Y = null; break;\n        }\n",
+        replace: "          const t = d.target;\n          if (strs.CHAR_OUT.has(t) && A && A.idx) {\n            const { t: tab, pc: at, from } = A.idx;\n            evTag(tab, 'petscii');\n            const loop = strs.printLoop({ mem, insLen, skip }, at);\n            const len = from != null ? lenOf(loop?.len ?? (loop?.lenAt != null ? recent.get(loop.lenAt)?.v : null), from) : undefined;\n            if (loop && (len != null || loop.end)) addString((tab + (from ?? 0)) & 0xffff, { len, end: loop.end, by: `printed through ${strs.CHAR_OUT.get(t)} from ${$4(pc)}` });\n          }\n          handOver(t);\n          A = X = Y = null; break;\n        }\n        case 'JMP': if (mode === 'abs') handOver(d.target); break;\n",
+      },
+      {
+        find: '  const smooth = (s, n) => {\n',
+        replace: "  const printable = (b) => (b >= 0x20 && b < 0x80) || b >= 0xa0 || PET_CTRL.has(b);\n  const handedLen = (s, e, str) => {\n    const n = strs.stringLen(mem, s, e - s, str);\n    if (n == null || (str.end && n < 2 && str.end.includes(mem[s]))) return null;\n    let ok = 0; for (let i = 0; i < n; i++) if (printable(mem[s + i]) || str.end?.includes(mem[s + i])) ok++;\n    return ok >= n * 0.8 ? n : null;\n  };\n  const carry = new Map();\n  const dataEnd = (s, e) => { while (e < 0x10000 && tm[e] === T.DATA && ov[e] !== T.DATA && owner[e] === owner[s]) e++; return e; };\n  const smooth = (s, n) => {\n",
+      },
+      {
+        find: "    const enc = textPtrs.get(s) || (ev.has('petscii') ? 'petscii' : ev.has('screen') ? 'screen' : null);\n    if (isObj && enc && S.detectText) {\n      const n = textLen(s, e, enc);\n      if (n >= 2) { pushBlock(s, s + n, T.TEXT, { enc }, 0.9, enc === 'petscii' ? 'printed through KERNAL/BASIC output' : 'copied to screen memory'); classifySpan(s + n, e, false); return; }\n    }\n",
+        replace: "    const str = isObj ? strings.get(s) : undefined, cont = isObj && !str ? carry.get(s) : undefined;\n    const enc = textPtrs.get(s) || (ev.has('petscii') ? 'petscii' : ev.has('screen') ? 'screen' : null) || (cont ? 'petscii' : null);\n    if (isObj && enc && S.detectText) {\n      const far = str ? dataEnd(s, e) : e, sn = str ? handedLen(s, far, str) : cont ? cont.left : null;\n      const full = sn ?? textLen(s, far, enc), n = Math.min(full, e - s);\n      if (full >= (sn != null ? 1 : 2)) {\n        if ((str || cont) && full > n) carry.set(e, { left: full - n, from: cont ? cont.from : s });\n        const why = cont ? `the rest of the string at ${$4(cont.from)}` : str ? str.by + (str.len != null && sn != null ? `, ${sn} byte${sn === 1 ? '' : 's'}` : '') : enc === 'petscii' ? 'printed through KERNAL/BASIC output' : 'copied to screen memory';\n        pushBlock(s, s + n, T.TEXT, { enc }, 0.9, why); classifySpan(s + n, e, false); return;\n      }\n    }\n",
+      },
+      {
+        find: "  const kindPrefix = { entry: 'entry', irq: 'irq', nmi: 'nmi', brk: 'brk', user: 'code', sub: 'sub', ptr: 'fx' };\n",
+        replace: "  const kindPrefix = { entry: 'entry', irq: 'irq', nmi: 'nmi', brk: 'brk', user: 'code', sub: 'sub', ptr: 'fx' };\n  for (const [a, P] of printersFound) { const k = entryKind.get(a); if (insLen[a] && k === 'sub' && a !== entry) setLabel(a, `${P.kind === 'name' ? 'setnam' : 'print'}_${h4(a)}`, k); }\n",
+      },
+    ],
+  },
+  {
+    why: 'The case printed text is in (spec 5.5c): a string handed to a print routine or printed through CHROUT was always `petscii_upper`, so in a program that switches to the lower case characters "Abyss" ($c1 $42 $59 ...) came out as `.byte $c1` and "BYSS". Now a string is `petscii_mixed` when it shows it (a $0e in it, or a word that starts with a capital: a shifted letter and two plain ones), `petscii_upper` when it has a $8e, and otherwise in the case the program prints in: mixed when it switches to the lower case characters ($0e sent to CHROUT, $0e in a printed string, $d018 = $x6/$x7, `ora #$02` into $d018) and never away from them ($8e, $d018 = $x4/$x5, a $d018 value with characters of its own); the log says so (production code, `strs`). The prototype\'s text rows know only petscii_upper and screencode_upper: mixed case rows as c64/text.ts writes them',
+    edits: [
+      { find: 'smc, strings, printersFound = new Map();\n', replace: 'smc, strings, printersFound = new Map(), cases = [];\n' },
+      { find: 'strings = new Map(); printersFound = new Map();\n    const starts = [];', replace: 'strings = new Map(); printersFound = new Map(); cases = [];\n    const starts = [];' },
+      { find: '      const handOver = (t) => {\n        const P = printer(t);\n', replace: '      const handOver = (t) => {\n        const sw = strs.sentCase(A?.v, t, pc);\n        if (sw) cases.push(sw);\n        const P = printer(t);\n' },
+      {
+        find: "        if ((str || cont) && full > n) carry.set(e, { left: full - n, from: cont ? cont.from : s });\n        const why = cont ? `the rest of the string at ${$4(cont.from)}` : str ? str.by + (str.len != null && sn != null ? `, ${sn} byte${sn === 1 ? '' : 's'}` : '') : enc === 'petscii' ? 'printed through KERNAL/BASIC output' : 'copied to screen memory';\n        pushBlock(s, s + n, T.TEXT, { enc }, 0.9, why);",
+        replace: "        const cs = enc !== 'petscii' ? null : cont ? cont.cs : caseOf(mem.subarray(s, s + full));\n        if ((str || cont) && full > n) carry.set(e, { left: full - n, from: cont ? cont.from : s, cs });\n        const why = cont ? `the rest of the string at ${$4(cont.from)}` : (str ? str.by + (str.len != null && sn != null ? `, ${sn} byte${sn === 1 ? '' : 's'}` : '') : enc === 'petscii' ? 'printed through KERNAL/BASIC output' : 'copied to screen memory') + (cs ? cs.why : '');\n        pushBlock(s, s + n, T.TEXT, { enc: cs ? cs.enc : enc }, 0.9, why);",
+      },
+      {
+        find: "  // walk the map\n  const routineKinds = new Set(['entry', 'irq', 'nmi', 'brk', 'user', 'sub', 'ptr']);\n",
+        replace: "  const switches = [...cases];\n  for (const w of writes) { if (w.dest !== 0xd018 || w.indexed) continue; const c = strs.d018Case(mem, insLen, w.pc, w.v, true); if (c) switches.push(c); }\n  for (const [s, str] of strings) { const n = handedLen(s, dataEnd(s, s), str); const c = n ? strs.stringSwitch(mem.subarray(s, s + n), s) : null; if (c) switches.push(c); }\n  const caseOf = strs.printCase(switches.sort((x, y) => x.at - y.at), L);\n  // walk the map\n  const routineKinds = new Set(['entry', 'irq', 'nmi', 'brk', 'user', 'sub', 'ptr']);\n",
+      },
+      {
+        find: "    const ok = enc === 'petscii' ? (b => b >= 0x20 && b <= 0x5d && b !== 0x22 && b !== 0x5c) : (b => (b >= 0x01 && b <= 0x1a) || b === 0x1b || b === 0x1d || (b >= 0x20 && b <= 0x3f && b !== 0x22));\n    const ch = enc === 'petscii' ? (b => String.fromCharCode(b)) : (b => b <= 0x1d ? String.fromCharCode(b + 0x40) : String.fromCharCode(b));\n    out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: enc === 'petscii' ? '\"petscii_upper\"' : '\"screencode_upper\"' }] });\n",
+        replace: "    const mixed = enc === 'petscii-mixed', mixedCh = b => b >= 0x41 && b <= 0x5a ? String.fromCharCode(b + 0x20) : b >= 0xc1 && b <= 0xda ? String.fromCharCode(b - 0x80) : String.fromCharCode(b);\n    const ok = mixed ? (b => (b >= 0x20 && b <= 0x5d && b !== 0x22 && b !== 0x5c) || (b >= 0xc1 && b <= 0xda)) : enc === 'petscii' ? (b => b >= 0x20 && b <= 0x5d && b !== 0x22 && b !== 0x5c) : (b => (b >= 0x01 && b <= 0x1a) || b === 0x1b || b === 0x1d || (b >= 0x20 && b <= 0x3f && b !== 0x22));\n    const ch = mixed ? mixedCh : enc === 'petscii' ? (b => String.fromCharCode(b)) : (b => b <= 0x1d ? String.fromCharCode(b + 0x40) : String.fromCharCode(b));\n    out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: mixed ? '\"petscii_mixed\"' : enc === 'petscii' ? '\"petscii_upper\"' : '\"screencode_upper\"' }] });\n",
+      },
+      {
+        find: "        const c = enc === 'petscii' ? [...mem.subarray(p, q)].map(b => names[b])",
+        replace: "        const c = enc === 'petscii' || mixed ? [...mem.subarray(p, q)].map(b => names[b])",
+      },
+      { find: "t += p.enc === 'screen' ? ' (screen codes)' : ' (PETSCII)';", replace: "t += p.enc === 'screen' ? ' (screen codes)' : p.enc === 'petscii-mixed' ? ' (PETSCII, mixed case)' : ' (PETSCII)';" },
+    ],
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -201,9 +269,9 @@ export function loadReference(): ReferenceKR {
     src = src.replace(e.find, () => e.replace);
   }
   // The prototype is an IIFE that installs itself on `window` or `globalThis`: hand it a private root
-  // (same realm, so typed arrays and Maps compare normally), and the production music detection.
+  // (same realm, so typed arrays and Maps compare normally), the production music detection and print routines.
   const root: { KR?: ReferenceKR } = {};
-  new Function('window', 'globalThis', 'detectMusic', src)(undefined, root, detectMusic);
+  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase });
   cached = root.KR;
   return cached;
 }

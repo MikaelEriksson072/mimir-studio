@@ -35,6 +35,8 @@ export function makeLabels(ctx: Ctx, cls: Classification, vic: VicEvidence): { l
   for (const b of ctx.cartStart?.blocks ?? []) if (findBlock(blocks, b.start)?.start === b.start) setLabel(b.start, b.label, 'data');
   for (const e of ctx.cartStart?.entries ?? []) if (e.name && insLen[e.a]) setLabel(e.a, e.name, e.kind);
   const kindPrefix: Partial<Record<EntryKind, string>> = { entry: 'entry', irq: 'irq', nmi: 'nmi', brk: 'brk', user: 'code', sub: 'sub', ptr: 'fx', guess: 'code' };
+  // the program's own print routines (5.5b)
+  for (const [a, P] of ctx.ev.printers) { const k = entryKind.get(a); if (insLen[a] && k === 'sub' && a !== entry) setLabel(a, `${P.kind === 'name' ? 'setnam' : 'print'}_${h4(a)}`, k); }
   for (const [addr, kind] of [...entryKind].sort((x, y) => PRI[y[1]] - PRI[x[1]])) {
     if (!insLen[addr] || tm[addr] === T.MUSIC) continue;
     if (kind === 'branch' || kind === 'jmp') continue;

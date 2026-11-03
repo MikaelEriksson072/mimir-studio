@@ -5,8 +5,10 @@ import { decode } from '../cpu/decode';
 import { SYM, isIO } from '../c64/symbols';
 import type { Addr } from '../types';
 import { $4 } from '../util/hex';
+import { CHAR_OUT, handedText, printers, printLoop, sentCase, type Place, type StringEv } from './strings';
 
-interface IndexedLoad { t: Addr; r: 'x' | 'y'; pc: Addr }
+/** An indexed table read; `from`: the index it starts with, when known (a loop's first value) */
+interface IndexedLoad { t: Addr; r: 'x' | 'y'; pc: Addr; from?: number | null }
 /** Known register content: an immediate value and where it was loaded, or an indexed table read. */
 interface Reg { v: number | null; src?: Addr | null; idx?: IndexedLoad | null }
 interface IdxStore { dest: Addr; t: Addr; r: 'x' | 'y' }
@@ -18,11 +20,13 @@ const evTag = (ctx: Ctx, a: Addr, tag: string) => {
 
 export function evidence(ctx: Ctx): void {
   ctx.ev = emptyEvidence();
-  const { writes, hints, ptrTargets, lohi, wordPtrs, textPtrs, smc } = ctx.ev;
+  const { writes, hints, ptrTargets, lohi, wordPtrs, textPtrs, strings, cases, smc } = ctx.ev;
   const { mem, insLen, codeOwner, xrefs, entryKind, inlineCalls, skip, loaded, addX, enqueue, L } = ctx;
   const starts: Addr[] = [];
   for (let a = 0; a < 0x10000; a++) if (insLen[a]) starts.push(a);
   let A: Reg | null = null, X: Reg | null = null, Y: Reg | null = null, recent = new Map<Addr, Reg>(), idxStores: IdxStore[] = [];
+  // X and Y as they go into the tight loop at `inAt` (its first index)
+  let inAt = -1, inX: Reg | null = null, inY: Reg | null = null;
   const reset = () => { A = X = Y = null; recent = new Map(); idxStores = []; };
   const clearWritten = (from: Addr, to: Addr) => {
     for (let a = from; a <= to; a++) {
@@ -53,6 +57,15 @@ export function evidence(ctx: Ctx): void {
     }
     else if (loaded(value)) ptrTargets.set(value, dest);
   };
+  // 5.5b strings handed to print routines
+  const printer = printers(ctx, ctx.ev.printers);
+  const addString = (s: Addr, str: StringEv) => {
+    if (!loaded(s)) return;
+    textPtrs.set(s, 'petscii'); ptrTargets.delete(s);
+    const old = strings.get(s);
+    if (!old || (old.len == null && str.len != null)) strings.set(s, str);
+  };
+  const lenOf = (count: number | null | undefined, from: number) => (count != null && count > from ? count - from : undefined);
   for (const pc of starts) {
     const xs = xrefs.get(pc);
     const isTarget = entryKind.has(pc) || (xs && xs.some(x => x.kind === 'branch' || x.kind === 'jump' || x.kind === 'call'));
@@ -61,10 +74,12 @@ export function evidence(ctx: Ctx): void {
       const flowIn = xs ? xs.filter(x => x.kind === 'branch' || x.kind === 'jump' || x.kind === 'call') : [];
       const tight = !entryKind.has(pc) || entryKind.get(pc) === 'branch';
       if (tight && flowIn.length && flowIn.every(x => x.kind === 'branch' && x.from > pc && x.from - pc <= 24)) {
+        inAt = pc; inX = X as Reg | null; inY = Y as Reg | null;
         clearWritten(pc, Math.max(...flowIn.map(x => x.from)));
       } else reset();
     }
     const info = OPC[mem[pc]], d = decode(mem, pc), mn = info.mn, mode = info.mode;
+    if (info.access === 'rmw' && d.target != null) recent.delete(d.target);
     prevEnd = (pc + insLen[pc]) & 0xffff;
     prevBreak = info.flow === 'jmp' || info.flow === 'jmpi' || info.flow === 'ret' || info.flow === 'brk' || inlineCalls.has(pc);
     if (skip.has(pc)) { reset(); continue; }
@@ -85,11 +100,34 @@ export function evidence(ctx: Ctx): void {
         L('info', `Self-modifying code: ${$4(pc)} writes into the instruction at ${$4(s)}`, pc, 'code');
       }
     }
-    const idxOf = (): IndexedLoad | null => (mode === 'abx' || mode === 'aby') && loaded(d.v!) && !insLen[d.v!] && codeOwner[d.v!] < 0 ? { t: d.v!, r: mode === 'abx' ? 'x' : 'y', pc } : null;
     // TypeScript narrows the `let` registers to null inside this loop body; read them through these accessors
     const a = (): Reg | null => A, x = (): Reg | null => X, y = (): Reg | null => Y;
+    /** the index register's value here, or as it goes into the tight loop that starts here */
+    const index = (r: 'x' | 'y'): number | null => ((r === 'x' ? x() : y()) ?? (inAt === pc ? (r === 'x' ? inX : inY) : null))?.v ?? null;
+    const idxOf = (): IndexedLoad | null => (mode === 'abx' || mode === 'aby') && loaded(d.v!) && !insLen[d.v!] && codeOwner[d.v!] < 0 ? { t: d.v!, r: mode === 'abx' ? 'x' : 'y', pc, from: index(mode === 'abx' ? 'x' : 'y') } : null;
+    /** a call or jump to a routine that takes a string: the string is where its parameters say; or to a character
+     *  output routine with $0e or $8e in A, which switches the case (5.5c) */
+    const handOver = (t: Addr) => {
+      const sw = sentCase(a()?.v, t, pc);
+      if (sw) cases.push(sw);
+      const P = printer(t);
+      if (!P) return;
+      const val = (p: Place): Reg | null => (p === 'a' ? a() : p === 'x' ? x() : p === 'y' ? y() : recent.get(p) ?? null);
+      const lo = val(P.ptr[0]), hi = val(P.ptr[1]);
+      if (lo?.v == null || hi?.v == null) return;
+      // the registers' loads become #<text / #>text (stores to a pointer got theirs)
+      if (typeof P.ptr[0] === 'string' && typeof P.ptr[1] === 'string') { if (lo.src == null || hi.src == null) return; pair(-1, lo, hi); }
+      addString(((lo.v | (hi.v << 8)) + P.offset) & 0xffff, { len: lenOf(P.lenAt != null ? val(P.lenAt)?.v : P.len, P.offset), end: P.end, by: handedText(P, pc) });
+    };
     switch (mn) {
-      case 'LDA': A = mode === 'imm' ? { v: d.v, src: pc } : (idxOf() ? { v: null, idx: idxOf() } : null); break;
+      case 'LDA': {
+        A = mode === 'imm' ? { v: d.v, src: pc } : (idxOf() ? { v: null, idx: idxOf() } : null);
+        // `lda (zp),y` printed through CHROUT, with the pointer set in this run: the string is where it points
+        const lo = mode === 'izy' ? recent.get(d.v!) : undefined, hi = mode === 'izy' ? recent.get((d.v! + 1) & 0xff) : undefined, from = index('y');
+        const loop = lo?.v != null && hi?.v != null && from != null ? printLoop(ctx, pc) : null;
+        if (loop) addString(((lo!.v! | (hi!.v! << 8)) + from!) & 0xffff, { len: lenOf(loop.len ?? (loop.lenAt != null ? recent.get(loop.lenAt as Addr)?.v : null), from!), end: loop.end, by: `printed through ${CHAR_OUT.get(mem[loop.out + 1] | (mem[loop.out + 2] << 8))} from ${$4(loop.out)}` });
+        break;
+      }
       case 'LDX': X = mode === 'imm' ? { v: d.v, src: pc } : null; break;
       case 'LDY': Y = mode === 'imm' ? { v: d.v, src: pc } : null; break;
       case 'TAX': { const r = a(); X = r && r.v != null ? { v: r.v, src: null } : null; break; }
@@ -109,7 +147,7 @@ export function evidence(ctx: Ctx): void {
             const lo = recent.get((dest - 1) & 0xffff), hi = recent.get((dest + 1) & 0xffff);
             if (lo && lo.src !== R.src) pair((dest - 1) & 0xffff, lo, R);
             if (hi && hi.src !== R.src) pair(dest, R, hi);
-          }
+          } else recent.delete(dest);
           if (R && R.idx) {
             for (const s of idxStores) {
               if (s.r !== R.idx.r || s.t === R.idx.t) continue;
@@ -133,17 +171,19 @@ export function evidence(ctx: Ctx): void {
         break;
       }
       case 'JSR': {
-        const t = d.target;
-        const ra = a(), rx = x(), ry = y();
-        if (t === 0xffd2 && ra && ra.idx) evTag(ctx, ra.idx.t, 'petscii');
-        if (t === 0xab1e && ra && ra.v != null && ra.src != null && ry && ry.v != null && ry.src != null) {
-          pair(-1, ra, ry); const v = ra.v | (ry.v << 8); if (loaded(v)) { textPtrs.set(v, 'petscii'); ptrTargets.delete(v); }
+        const t = d.target!, ra = a();
+        if (CHAR_OUT.has(t) && ra && ra.idx) {
+          const { t: tab, pc: at, from } = ra.idx;
+          evTag(ctx, tab, 'petscii');
+          // a loop that prints the table: its count or end byte says how long the string is
+          const loop = printLoop(ctx, at);
+          const len = from != null ? lenOf(loop?.len ?? (loop?.lenAt != null ? recent.get(loop.lenAt as Addr)?.v : null), from) : undefined;
+          if (loop && (len != null || loop.end)) addString((tab + (from ?? 0)) & 0xffff, { len, end: loop.end, by: `printed through ${CHAR_OUT.get(t)} from ${$4(pc)}` });
         }
-        if (t === 0xffbd && rx && rx.v != null && rx.src != null && ry && ry.v != null && ry.src != null) {
-          pair(-1, rx, ry); const v = rx.v | (ry.v << 8); if (loaded(v)) { textPtrs.set(v, 'petscii'); ptrTargets.delete(v); }
-        }
+        handOver(t);
         A = X = Y = null; break;
       }
+      case 'JMP': if (mode === 'abs') handOver(d.target!); break;
       default:
         if (CLOBBER_A.has(mn) || (SHIFT_MN.has(mn) && mode === 'acc')) A = null;
         if (mn === 'TSX' || mn === 'AXS' || mn === 'LAS' || mn === 'LAX') X = null;

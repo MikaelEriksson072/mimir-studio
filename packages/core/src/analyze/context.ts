@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS, T } from '../model';
 import type { CartMode } from '../c64/memconfig';
 import { projectCartMode } from '../c64/crt';
 import type { CartStart } from './cartridge';
+import type { CaseSwitch, Printer, StringEv } from './strings';
 
 /** Entry-point priority: a stronger kind replaces a weaker one at the same address. */
 export const PRI: Record<EntryKind, number> = { entry: 9, irq: 8, nmi: 8, brk: 7, user: 7, sub: 6, ptr: 5, guess: 4, jmp: 3, branch: 2 };
@@ -28,6 +29,11 @@ export interface Evidence {
   dataEv: Map<Addr, Set<string>>;
   wordPtrs: Set<Addr>;
   textPtrs: Map<Addr, TextEncoding>;
+  /** 5.5b the strings handed to print routines (they are in textPtrs too), and the program's own print routines */
+  strings: Map<Addr, StringEv>;
+  printers: Map<Addr, Printer>;
+  /** 5.5c a $0e or $8e the code sends to a character output routine */
+  cases: CaseSwitch[];
   smc: Map<Addr, Addr>;
   /** interrupt handler -> the vector addresses it was installed through */
   vectors: Map<Addr, Set<Addr>>;
@@ -115,7 +121,7 @@ export const WEAK: ReadonlySet<EntryKind> = new Set<EntryKind>(['guess', 'ptr', 
 export const cutKey = (from: Addr, to: Addr): number => from * 0x10000 + (to & 0xffff);
 
 export const emptyEvidence = (): Evidence => ({
-  writes: [], hints: new Map(), ptrTargets: new Map(), lohi: [], dataEv: new Map(), wordPtrs: new Set(), textPtrs: new Map(), smc: new Map(), vectors: new Map(),
+  writes: [], hints: new Map(), ptrTargets: new Map(), lohi: [], dataEv: new Map(), wordPtrs: new Set(), textPtrs: new Map(), strings: new Map(), printers: new Map(), cases: [], smc: new Map(), vectors: new Map(),
 });
 
 export function createContext(project: ProjectInput, deep: Deep | null = null): Ctx {

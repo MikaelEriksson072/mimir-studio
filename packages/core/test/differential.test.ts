@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, makeDemo, OPC, parsePrg, render, verify, type AnalysisResult, type ProjectInput, type RenderResult } from '../src';
 import { DEVIATIONS, loadReference } from './helpers/reference';
-import { allOpcodesProgram, describeProject, rng, seededProject, SETTING_VARIANTS, zeroPageProgram } from './helpers/programs';
+import { allOpcodesProgram, describeProject, fromSource, rng, seededProject, SETTING_VARIANTS, zeroPageProgram } from './helpers/programs';
 
 const KR = loadReference();
 
@@ -69,7 +69,7 @@ const demo = (): ProjectInput => { const d = makeDemo(); return { name: 'raster-
 
 describe('differential: TypeScript engine == prototype engine', () => {
   it('documents its deliberate deviations', () => {
-    expect(DEVIATIONS.length).toBe(20);
+    expect(DEVIATIONS.length).toBe(22);
   });
 
   it('has a comparison that notices differences', () => {
@@ -96,6 +96,17 @@ describe('differential: TypeScript engine == prototype engine', () => {
   it('matches on synthetic opcode and zero-page programs', () => {
     expect(compare({ name: 'opcodes', files: [allOpcodesProgram(OPC)] })).toBe(true);
     expect(compare({ name: 'zp', files: [zeroPageProgram()] })).toBe(true);
+  });
+
+  it('matches on programs that print in lower case, or switch both ways (spec 5.5c)', () => {
+    const strout = (l: string) => ` lda #<${l}\n ldy #>${l}\n jsr $ab1e\n`;
+    const texts = 'lower: lda #$0e\n jmp $ffd2\n.encoding "petscii_mixed"\ntitle: .text "Abyss the game"\n .byte 0\nfire: .text "press fire"\n .byte 0\nup: .byte $8e\n .text "MENU"\n .byte 0';
+    const heads = [' lda #$0e\n jsr $ffd2\n', ' lda #$17\n sta $d018\n', ' jsr lower\n', ' lda #$16\n sta $d018\n lda #$15\n sta $d018\n', ''];
+    for (const [i, head] of heads.entries()) {
+      for (const tail of [strout('title') + strout('fire'), strout('fire') + strout('up')]) {
+        expect(compare({ name: `case-${i}`, files: [fromSource('case.prg', `.pc = $c000\n${head}${tail} rts\n${texts}`)] })).toBe(true);
+      }
+    }
   });
 
   it('matches on 150 seeded random programs (prototype fuzz recipe)', () => {
