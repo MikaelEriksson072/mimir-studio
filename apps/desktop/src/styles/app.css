@@ -722,7 +722,9 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .pal-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: none; border-radius: 6px; cursor: pointer; text-align: left; color: var(--fg); }
 .pal-row.on { background: var(--sel); }
 .ctx { position: fixed; z-index: 60; min-width: 220px; padding: 4px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
-.ctx.sub { position: absolute; left: 100%; top: -5px; margin-left: 2px; }
+/* a submenu is fixed beside its item (ContextMenu places it), so a menu that scrolls does not clip it */
+.ctx.sub { position: fixed; z-index: 61; }
+.ctx-item.has-sub.open { background: var(--sel); }
 .ctx-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; padding: 5px 10px; border: 0; background: none; border-radius: 5px; color: var(--fg); cursor: pointer; text-align: left; font-size: 12.5px; position: relative; }
 .ctx-item:hover { background: var(--sel); }
 .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }

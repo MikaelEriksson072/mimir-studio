@@ -3249,7 +3249,7 @@ test('a byte in the wrong block is dragged by its address into the block next to
   });
 });
 
-test('a block is split, re-typed and joined from any byte of a line, and given a size of its own', async ({ page }) => {
+test('a block is split, re-typed and joined from any byte of a line, and given a size of its own', async ({ app, page }) => {
   await waitForListing(page);
   await page.keyboard.press('Control+j');
   await expect(page.locator('section.bottom')).toHaveClass(/collapsed/);
@@ -3316,6 +3316,24 @@ test('a block is split, re-typed and joined from any byte of a line, and given a
     await page.keyboard.press('s');
     await expect(toast(page, 'Split the Table block in two: $0939–$0940 and $0941–$0948')).toBeVisible();
     await undo('$0939-$0948 (16 bytes)');
+  });
+
+  await test.step('in a low window the menu on a byte scrolls, and Mark … as still opens its submenu beside it', async () => {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1366, 600));
+    await expect.poll(() => page.evaluate(() => window.innerHeight)).toBeLessThan(600);
+    await cell('093c').click({ button: 'right' });
+    const menu = page.locator('.ctx:not(.sub)');
+    await expect(menu).toHaveCSS('overflow-y', 'auto');
+    await menu.getByText('Mark $093c as').hover();
+    // the mouse where the submenu is drawn, as a hand would (a click on the locator would scroll a clipped one into view)
+    const words = (await page.getByRole('menuitem', { name: 'Words (.word)' }).boundingBox())!;
+    await page.mouse.move(words.x + words.width / 2, words.y + words.height / 2, { steps: 4 });
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(toast(page, '$093c–$093d marked as Words (.word)')).toBeVisible();
+    await undo('$0939-$0948 (16 bytes)');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1480, 920));
+    await expect.poll(() => page.evaluate(() => window.innerHeight)).toBeGreaterThan(800);
   });
 
   await test.step('L sets where the block ends: the bytes it gives up join the next block, or stay a block of their own', async () => {
