@@ -2,6 +2,7 @@
 import { create } from 'zustand';
 import { DEFAULT_PACK, type BlockKind, type MonitorMode, type PackPrefs } from '@mimir/core';
 import { store } from '../lib/util';
+import { bitmapRowsOf } from '../lib/gfxview';
 
 export type Theme = 'dark' | 'light';
 export type EditorTab = 'listing' | 'source' | 'spec' | 'gfx' | 'mem';
@@ -24,15 +25,18 @@ export interface GfxPrefs {
   /** a font per row: where the 40 screen codes are, the first row's font (the next rows' follow 2 KB apart), how many rows,
    *  and whether memory where no font can be is passed over */
   rowCodes: number; rowFonts: number; rowCount: number; rowSkip: boolean;
+  /** bitmaps: how many character rows of each are drawn and selected, 1-25 (fewer for a picture smaller than the screen) */
+  bitmapRows: number;
   /** the version of these settings (2: 40 characters a row is the default) */
   v?: number;
 }
-const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true };
+const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25 };
 /** The saved Graphics settings over the defaults. 40 characters a row (a screen's width) became the default: the old
- *  default 32 moves to it once (`v` 2), a count picked before stays. */
+ *  default 32 moves to it once (`v` 2), a count picked before stays. A bitmap height that is not 1-25 rows is 25. */
 export function gfxPrefs(saved: Partial<GfxPrefs>): GfxPrefs {
   const p = { ...GFX_DEFAULTS, ...saved, v: 2 };
   if ((saved.v ?? 1) < 2 && saved.charCols === 32) p.charCols = 40;
+  p.bitmapRows = bitmapRowsOf(p.bitmapRows);
   return p;
 }
 /** the Memory tab: VICE's m (hex and text, 16 or 8 bytes a row), i (PETSCII) or ii (screen codes), which character set, block colours */

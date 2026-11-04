@@ -34,16 +34,23 @@ export interface GfxLayout {
 
 /** bytes a bitmap frame shows: 40 x 25 cells of 8 bytes */
 export const BITMAP_BYTES = 8000;
+/** character rows in a whole bitmap; a bitmap row is 40 cells of 8 bytes (320 bytes, 8 pixel lines) */
+export const BITMAP_ROWS = 25;
+export const BITMAP_ROW_BYTES = 320;
+/** a bitmap height as a whole number of character rows, 1 to 25 (anything else is a whole bitmap) */
+export const bitmapRowsOf = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= BITMAP_ROWS ? n : BITMAP_ROWS);
 /** bytes a screen shows: 40 x 25 screen codes */
 export const SCREEN_BYTES = 1000;
 
 /** `parts`: only these ranges, one after the other (every bank of a cartridge: its loaded memory at bank addresses,
- *  each starting on 8 KB so the cells stay where the VIC has them); the grid's offset moves each part's first cell */
-export function gfxLayout(kind: GfxKind, cols: number, offset = 0, parts?: readonly { start: Addr; end: Addr }[]): GfxLayout {
+ *  each starting on 8 KB so the cells stay where the VIC has them); the grid's offset moves each part's first cell.
+ *  `bitmapRows`: a bitmap's first 1-25 character rows are drawn (a picture smaller than the screen, a logo), still one
+ *  per 8 KB, and a bitmap cell is those rows' bytes (320 each) */
+export function gfxLayout(kind: GfxKind, cols: number, offset = 0, parts?: readonly { start: Addr; end: Addr }[], bitmapRows = BITMAP_ROWS): GfxLayout {
   const g = kind === 'chars' ? { unit: 8, cellW: 8, cellH: 8, gapX: 0, gapY: 0, cols }
     : kind === 'sprites' ? { unit: 64, cellW: 24, cellH: 21, gapX: 2, gapY: 2, cols }
       : kind === 'screens' ? { unit: 0x400, cellW: 320, cellH: 200, gapX: 8, gapY: 8, cols }
-        : { unit: 0x2000, cellW: 320, cellH: 200, gapX: 0, gapY: 8, cols: 1 };
+        : { unit: 0x2000, cellW: 320, cellH: bitmapRowsOf(bitmapRows) * 8, gapX: 0, gapY: 8, cols: 1 };
   const off = ((offset % g.unit) + g.unit) % g.unit;
   const width = g.cols * (g.cellW + g.gapX);
   if (!parts) {
@@ -152,8 +159,9 @@ export function byteAt(L: GfxLayout, x: number, y: number): Addr | null {
   return a < L.size ? a : null;
 }
 
-/** the bytes a cell stands for (a bitmap frame: 8000, not the 8 KB step; a screen: 1000, not the 1 KB step) */
-export const cellBytes = (L: GfxLayout) => (L.kind === 'bitmap' ? BITMAP_BYTES : L.kind === 'screens' ? SCREEN_BYTES : L.unit);
+/** the bytes a cell stands for (a bitmap frame: 8000 or its rows drawn, not the 8 KB step; a screen: 1000, not the 1 KB
+ *  step) */
+export const cellBytes = (L: GfxLayout) => (L.kind === 'bitmap' ? (L.cellH >> 3) * BITMAP_ROW_BYTES : L.kind === 'screens' ? SCREEN_BYTES : L.unit);
 
 /** whole cells from the cell holding `a` to the one holding `b` (either order), as [start, end) */
 export function cellRange(L: GfxLayout, a: Addr, b: Addr): { start: Addr; end: Addr } | null {
@@ -230,21 +238,22 @@ export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array,
       const p = loaded(base + i) ? pal : dimmed, g = mem[base + i] * 8, x = ox + (i % 40) * 8, y0 = oy + Math.floor(i / 40) * 8;
       for (let y = 0; y < 8; y++) bits(f[g + y], p, x, y0 + y);
     }
-    else for (let cy = 0; cy < 25; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);
+    else for (let cy = 0; cy < L.cellH >> 3; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);
   }
 }
 
 /**
  * The selection as an image at 1x, drawn as the tab draws it but without the gaps: characters 16 to a row, sprites 8, a
- * bitmap or a screen as 320 x 200 (multicolour pixels two wide; screens drawn with `font`, one per 1 KB), the fonts of a
- * font-per-row picture as its rows (each 320 x 8, with the 40 `codes`). Cells past the end of the selection stay
- * transparent.
+ * bitmap as 320 x 200 or its `bitmapRows` (one per 8 KB, under each other), a screen as 320 x 200 (multicolour pixels two
+ * wide; screens drawn with `font`, one per 1 KB), the fonts of a font-per-row picture as its rows (each 320 x 8, with the
+ * 40 `codes`). Cells past the end of the selection stay transparent.
  */
-export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[] } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
+export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[]; bitmapRows?: number } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
   const pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => hexRgb(C64[i & 15]));
+  const bmRows = bitmapRowsOf(opts.bitmapRows ?? BITMAP_ROWS);
   const g = kind === 'chars' ? { unit: 8, w: 8, h: 8, per: 16 } : kind === 'sprites' ? { unit: 64, w: 24, h: 21, per: 8 }
     : kind === 'screens' ? { unit: 0x400, w: 320, h: 200, per: 1 } : kind === 'fontrows' ? { unit: 0x800, w: 320, h: 8, per: 1 }
-      : { unit: BITMAP_BYTES, w: 320, h: 200, per: 1 };
+      : { unit: 0x2000, w: 320, h: bmRows * 8, per: 1 };
   // a font per row: the rows whose font lies in the selection (memory the picture skips is no row)
   const bases = kind === 'fontrows' && opts.rows ? opts.rows.filter(a => a >= start && a < end) : null;
   const n = bases ? Math.max(1, bases.length) : Math.max(1, Math.ceil((end - start) / g.unit)), cols = Math.min(g.per, n), rows = Math.ceil(n / cols);
@@ -265,7 +274,7 @@ export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr,
       const code = mem[base + j];
       for (let y = 0; y < 8; y++) bits(f[code * 8 + y], ox + (j % 40) * 8, oy + Math.floor(j / 40) * 8 + y);
     }
-    else for (let cy = 0; cy < 25; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);
+    else for (let cy = 0; cy < bmRows; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);
   }
   return { width, height, rgba };
 }

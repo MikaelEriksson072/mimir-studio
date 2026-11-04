@@ -2528,6 +2528,76 @@ test('the Graphics tab shows memory as characters, sprites or bitmaps, and marks
   });
 });
 
+test('the Graphics tab draws bitmaps of fewer rows: a click selects those rows, Whole bitmap draws it whole again', async ({ workDir: work, app, page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Graphics' }).click();
+  const view = page.getByLabel('Memory as graphics');
+  const go = async (to: string) => { await view.getByLabel('Go to address, label or range').fill(to); await view.getByLabel('Go to address, label or range').press('Enter'); };
+  const sel = view.getByRole('status'), canvas = view.locator('.gfxv-canvas'), height = view.getByLabel('Bitmap height in character rows');
+  const whole = view.getByRole('button', { name: 'Whole bitmap (8000 bytes)' }), mode = view.getByRole('button', { name: 'Bitmaps' });
+  /** a point of the picture (pixels at zoom 2), where it is now */
+  const point = async (x: number, y: number) => { const b = (await canvas.boundingBox())!; return [b.x + x * 2, b.y + y * 2] as const; };
+
+  await test.step('a whole bitmap: a click already selects all of it, so there is no Whole bitmap', async () => {
+    await mode.click();
+    await expect(height).toHaveValue('25');
+    await expect(mode).toContainText('320×200');
+    await go('$2000');
+    await expect(sel).toContainText('$2000–$3f3f (8000 bytes)');
+    await expect(whole).toBeHidden();
+  });
+
+  await test.step('10 rows: each 8 KB is drawn 80 pixels high, and a click selects its 3200 bytes', async () => {
+    await height.selectOption('10');
+    await expect(view.locator('.view-now')).toContainText('3200 bytes each');
+    await expect(view.locator('.view-now')).toContainText('10 rows');
+    await expect(mode).toContainText('320×80');
+    // 8 frames of 80 rows and a gap of 8, at zoom 2
+    await expect(canvas).toHaveCSS('height', `${8 * 88 * 2}px`);
+    // the whole bitmap selected before is more than is drawn: Whole bitmap draws it
+    await expect(whole).toBeVisible();
+    await go('$2000');
+    await expect(sel).toContainText('$2000–$2c7f (3200 bytes)');
+    await expect(canvas.locator('.gfxv-selrect')).toHaveCSS('height', `${80 * 2}px`);
+    // the frame at $2000 is the second: 88 pixels down
+    await page.mouse.click(...await point(10, 88 + 5));
+    await expect(sel).toContainText('$2000–$2c7f (3200 bytes)');
+    await page.keyboard.down('Shift');
+    await page.mouse.click(...await point(10, 2 * 88 + 5));
+    await page.keyboard.up('Shift');
+    await expect(sel).toContainText('$2000–$4c7f (11392 bytes)');
+    await expect(canvas.locator('.gfxv-selrect')).toHaveCount(2);
+    await page.mouse.click(...await point(10, 88 + 5));
+  });
+
+  await test.step('hovering names the row and column; below the rows is no bitmap', async () => {
+    await page.mouse.move(...await point(8 * 3 + 1, 88 + 8 * 9 + 5));
+    await expect(view.locator('.gfxv-info')).toContainText(`$${(0x2000 + (9 * 40 + 3) * 8 + 5).toString(16)} = $`);
+    await expect(view.locator('.gfxv-info')).toContainText('row 9, column 3 of the bitmap at $2000');
+    await page.mouse.move(...await point(8 * 3 + 1, 88 + 80 + 4));
+    await expect(view.locator('.gfxv-info')).not.toContainText('of the bitmap');
+  });
+
+  await test.step('saved as an image of those rows, and the height is kept with the other settings', async () => {
+    await stubDialogs(app, { save: join(work, 'logo.png') });
+    await view.getByRole('button', { name: 'Save…' }).click();
+    await view.getByRole('menu', { name: 'Save the selection as' }).getByRole('menuitem', { name: /\.png/ }).click();
+    await expect(toast(page, `Saved ${join(work, 'logo.png')}`)).toBeVisible();
+    const png = readFileSync(join(work, 'logo.png'));
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([320, 80]);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kr.gfx') ?? '{}').bitmapRows)).toBe(10);
+  });
+
+  await test.step('Whole bitmap selects all 8000 bytes and draws all 25 rows again, that bitmap at the top', async () => {
+    await whole.click();
+    await expect(sel).toContainText('$2000–$3f3f (8000 bytes)');
+    await expect(height).toHaveValue('25');
+    await expect(canvas.locator('.gfxv-selrect')).toHaveCSS('height', `${200 * 2}px`);
+    await expect.poll(() => view.locator('.gfxv-scroll').evaluate(el => el.scrollTop)).toBe(208 * 2);
+    await expect(whole).toBeHidden();
+  });
+});
+
 test('edit build.bat in the source view: the export writes it, Restore generated takes it back', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await page.getByRole('tab', { name: 'raster-demo.asm' }).click();

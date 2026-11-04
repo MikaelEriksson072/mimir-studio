@@ -2351,7 +2351,7 @@ att man ska hitta grafik med ögonen, som i ICU64. Geometri och ritning ligger i
 `test/gfxview.test.ts`. **Lägesraden** överst (`ViewModes`, gemensam med Memory) har en knapp per läge med ikon och cellens storlek (*8×8*,
 *24×21*, *320×200*, *40×25*). Det valda läget är ifyllt med accentfärgen, och bredvid står lägets namn med vad vyn
 visar (*Sprites · 64 bytes each · 8 a row · hires · 2×*). Där står också *Go*-fältet. Under den ligger inställningarna i
-grupper med rubrik: *Fonts* (Font per row), *Layout* (per rad, zoom, förskjutning), *Characters* (Screens) och
+grupper med rubrik: *Fonts* (Font per row), *Layout* (per rad eller höjd, zoom, förskjutning), *Characters* (Screens) och
 *Colours*. I en smal editor döljs först storlekarna och sedan knapparnas namn (ikonerna och raden bredvid står kvar).
 
 **Samma adresser i alla lägen:** adressen överst i bilden, dit man scrollat eller gått med *Go*, står kvar överst när
@@ -2365,7 +2365,15 @@ Det finns fem lägen:
   vilket antal som helst från 1 till 128 in. `Enter` eller att lämna fältet tar det, och piltangenterna stegar det. Ett
   sparat 32, den tidigare standarden, blir 40 en gång (`GfxPrefs.v` 2). Ett annat valt antal behålls.
 - **Sprites:** 64 byte per sprite, 24 × 21 pixlar, 4, 8 eller 16 per rad.
-- **Bitmaps:** en ram på 320 × 200 (8000 byte) per 8 KB.
+- **Bitmaps:** en ram på 320 × 200 (8000 byte) per 8 KB. *Height* (1–25 teckenrader, standard 25) ritar bara varje
+  bitmapps första rader, för en bild som är mindre än skärmen (en logga, till exempel). En teckenrad är 8 pixelrader och
+  320 byte, så med 10 rader är varje ram 320 × 80 och en cell 3200 byte. Ramarna ligger kvar en per 8 KB, och det som
+  ligger under raderna ritas inte. Ett klick väljer då bara radernas byte, och `Shift`+klick eller dragning väljer från
+  den första ramens början till slutet av den sista ramens rader. Lägesknappen visar cellens storlek (*320×80*),
+  raden bredvid hur många byte och rader (*3200 bytes each · 10 rows*), och under vyn står teckenrad och kolumn i
+  bitmappen (`row 9, column 3 of the bitmap at $2000`), så att man ser hur många rader bilden har. Adressen överst står
+  kvar när höjden byts. En PNG blir 320 × (8 × rader) per ram. Höjden sparas med de andra valen (`GfxPrefs.bitmapRows`),
+  och ett sparat värde utanför 1–25 blir 25 (`bitmapRowsOf`).
 - **Screens:** en skärmmatris per 1 KB, som VIC placerar dem: 40 × 25 skärmkoder (1000 byte), 1, 2 eller 3 per rad. Varje
   skärmkod ritas med en teckenuppsättning som väljs i *Charset*:
   - **C64 ROM, upper case / lower case:** VICE:s tecken-ROM (4 KB). Den läses från den VICE som står i inställningarna
@@ -2411,14 +2419,18 @@ Det finns fem lägen:
 flyttar rutnätet byte för byte, för data som inte börjar på en cellgräns. Byte som inte är laddade ritas i en egen
 blågrå ton. Vänsterkanten visar adressen för varje rad och, med blockgruppens färg, vad som redan är klassat där.
 Under vyn står byten under pekaren, med teckennummer i sitt 2 KB-teckensnitt, spritepekare och VIC-bank, eller
-bitmappens 8 KB, samt blocket den ligger i. Valen sparas per användare.
+rad och kolumn i bitmappen, samt blocket den ligger i. Valen sparas per användare.
 
 **Markering:**
 - Ett klick väljer en cell, och `Shift`+klick eller dragning väljer flera.
 - *Go* tar en adress, en etikett eller ett intervall.
 - Markeringen är listningens markering, så inspektorn och statusraden följer med.
-- *Whole charset (2 KB)* och *Whole bitmap (8000 bytes)* utvidgar markeringen till VIC:s gränser. *With the sprite pointers
-  (1 KB)* tar med de 24 byte efter en skärm (16 oanvända och de 8 spritepekarna).
+- *Whole charset (2 KB)* utvidgar markeringen till VIC:s 2 KB. *Whole bitmap (8000 bytes)* tar de 8000 byte från början
+  av rutnätets ram där markeringen börjar (med *Offset* följer den rutnätet). Har bitmapparna färre rader ritas de hela
+  igen (*Height* blir 25) med den bitmappen överst, så att markeringen syns. *With the sprite pointers (1 KB)* tar med de
+  24 byte efter en skärm (16 oanvända och de 8 spritepekarna), och *All N rows* alla fonterna i Font per row.
+- Knapparna visas bara när de ändrar något. Ett klick på en hel bitmapp väljer redan alla 8000 byte, så då finns ingen
+  *Whole bitmap*.
 - *Mark as Charset / Sprite data / Bitmap / Screen matrix* sätter blocktypen (en override som `C`/`D`/…, ångras med `Ctrl+Z`). Vyns egen
   typ ligger först.
 - *Show in listing* och dubbelklick går till platsen i listningen. `Esc` tar bort markeringen.
@@ -2432,7 +2444,7 @@ bitmappens 8 KB, samt blocket den ligger i. Valen sparas per användare.
   - Art Studio: `$2000`, bitmappen, skärmmatrisen (satta bitar hög nibble), ramfärgen och 6 byte utfyllnad, 9009 byte.
   - Färgerna är vyns: en uppsättning för hela bilden. En kortare markering fylls ut med nollor.
 - **Image as shown here (.png):** markeringen ritad som i vyn men utan mellanrum (`gfxImage`). Tecken ligger 16 per rad och
-  sprites 8 per rad, en bitmapp blir 320 × 200, en skärm också (ritad med vyns teckenuppsättning, en per 1 KB, under
+  sprites 8 per rad, en bitmapp blir 320 × 200 (eller vyns *Height*, en ram per 8 KB under varandra), en skärm också (ritad med vyns teckenuppsättning, en per 1 KB, under
   varandra), de valda raderna av en font-per-rad-bild som 320 × 8 per rad, och multicolour-pixlar är två breda. Celler efter markeringens slut är
   genomskinliga.
 - **Kick Assembler source (.asm):** en kommentar, en etikett och `.byte`-rader formade efter grafiken (`gfxSource`):
@@ -2451,7 +2463,10 @@ källkoden till samma bytes, med den inbyggda assemblern och med riktiga KickAss
 teckenuppsättning). E2e-testet sparar en teckenuppsättning (.bin, .64c, .asm), en sprite (.png, 24 × 21) och en bitmapp
 (.kla med vyns färger). Ett annat e2e-test går till texten vid `$0985` i läget Screens och sparar den som .bin, .prg,
 .png (320 × 200) och .asm (25 rader). Ett tredje ritar *Font per row* med koderna i `txt_0985` och fonterna från `$3000`,
-väljer en rad och alla rader och sparar en rad som .png (320 × 8).
+väljer en rad och alla rader och sparar en rad som .png (320 × 8). Ett fjärde visar Bitmaps med *Height* 10: utan
+*Whole bitmap* för en hel bitmapp, ramar på 320 × 80 och klick som väljer 3200 byte, rad och kolumn under pekaren och
+ingen byte under raderna, en .png på 320 × 80 och höjden sparad, och *Whole bitmap* som väljer 8000 byte och ritar 25
+rader igen med den bitmappen överst. `test/gfxview.test.ts` prövar höjdens geometri, ritning och bild.
 
 ### 14.6 Minnesvyn (Memory)
 

@@ -13,7 +13,7 @@ import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture,
 import { Icon } from '../lib/icons';
 import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
 import { parseGoto } from '../lib/goto';
-import { bitmapAround, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, NO_FONT, gfxLayout, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout } from '../lib/gfxview';
+import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, NO_FONT, gfxLayout, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
 import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -27,9 +27,9 @@ const GFX_MODES: ViewMode<GfxKind>[] = [
   { key: 'screens', label: 'Screens', icon: 'screen', sub: '40×25', title: 'Memory as screens: 1000 screen codes, 40 × 25 characters each' },
   { key: 'fontrows', label: 'Font per row', icon: 'rows', title: 'A picture whose character rows each have their own font' },
 ];
-/** what the view shows, beside the mode switch (whose buttons say the size) */
-const SHOWS: Record<GfxKind, string> = {
-  chars: '8 bytes each', sprites: '64 bytes each', bitmap: '8000 bytes each', screens: '1000 screen codes each', fontrows: 'a font for each row',
+/** what the view shows, beside the mode switch (whose buttons say the size); bitmaps say their bytes */
+const SHOWS: Record<Exclude<GfxKind, 'bitmap'>, string> = {
+  chars: '8 bytes each', sprites: '64 bytes each', screens: '1000 screen codes each', fontrows: 'a font for each row',
 };
 const COLS: Record<GfxKind, number[]> = { chars: [16, 32, 40, 64], sprites: [4, 8, 16], bitmap: [1], screens: [1, 2, 3], fontrows: [1] };
 /** characters per row can also be typed in, up to this many */
@@ -93,7 +93,9 @@ const plainAddr = (a: Addr) => `$${h4(a)}`;
 export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   const set = (p: Partial<GfxPrefs>) => setUi({ gfx: { ...useUi.getState().gfx, ...p } });
-  const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip } = prefs;
+  const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows } = prefs;
+  // bitmaps of fewer rows than a screen: the mode's button says the size of a cell
+  const modes = useMemo(() => GFX_MODES.map(m => (m.key === 'bitmap' && bitmapRows !== BITMAP_ROWS ? { ...m, sub: `320×${bitmapRows * 8}`, title: `Memory as bitmaps: the first ${bitmapRows} character rows (${bitmapRows * BITMAP_ROW_BYTES} bytes, 320 × ${bitmapRows * 8} pixels) of each 8 KB` } : m)), [bitmapRows]);
   const cols = kind === 'chars' ? prefs.charCols : kind === 'sprites' ? prefs.spriteCols : kind === 'screens' ? prefs.screenCols : 1;
   // a font per row: the 40 screen codes every row shows; 0-39 when they are not loaded (a screen filled at run time)
   const codesLoaded = Array.from({ length: 40 }, (_, i) => rowCodes + i).every(a => a <= 0xffff && A.owner[a] >= 0);
@@ -110,7 +112,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   /** a wheel step at most every 60 ms, so a touchpad does not race through the list */
   const lastWheel = useRef(0);
   const fontRows = useMemo(() => fontRowStarts(rowFonts, rowCount, rowSkip), [rowFonts, rowCount, rowSkip]);
-  const L = useMemo(() => (kind === 'fontrows' ? fontRowsLayout(fontRows.starts, codes) : gfxLayout(kind, cols, offset, parts ?? undefined)), [kind, cols, offset, fontRows, codes, parts]);
+  const L = useMemo(() => (kind === 'fontrows' ? fontRowsLayout(fontRows.starts, codes) : gfxLayout(kind, cols, offset, parts ?? undefined, bitmapRows)), [kind, cols, offset, fontRows, codes, parts, bitmapRows]);
   const canvas = useRef<HTMLCanvasElement>(null), scroller = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Addr | null>(null);
   /** a font per row: the row and column under the pointer */
@@ -196,7 +198,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     el.scrollTop = c.y * zoom;
     // the scroll event this sets off is not yours
     requestAnimationFrame(() => requestAnimationFrame(() => { restoring.current = false; }));
-  }, [kind, cols, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [kind, cols, zoom, bitmapRows]); // eslint-disable-line react-hooks/exhaustive-deps
   // another layout, or the scrolling that came with it: the rows drawn are the ones on screen
   useLayoutEffect(() => { fitBand(); }, [L, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
   // another bank keeps the picture where it is, unless the cursor went off screen in it (the bank does not have its address)
@@ -254,7 +256,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     kind === 'chars' ? `char $${h2((hover & 0x7ff) >> 3)} of the 2 KB at ${fmt(charsetAround(hover).start)}` : kind === 'sprites' ? (p => `sprite pointer $${h2(p.pointer)} in VIC bank ${p.bank}`)(spritePointer(hover))
       : kind === 'screens' ? (c => { const i = hover - c, p = screenPointer(c); return `row ${Math.floor(i / 40)}, column ${i % 40} of the screen at ${fmt(c)}${p ? ` ($d018 = $${p.d018.toString(16)}x in VIC bank ${p.bank})` : ''}`; })(cellOf(L, hover)?.start ?? hover)
         : kind === 'fontrows' ? (hoverAt ? `row ${hoverAt.row}, column ${hoverAt.col}: char $${h2(codes[hoverAt.col])} of the font at $${h4(rowAddr(L, hoverAt.row))}` : '')
-          : `bitmap at ${fmt(bitmapAround(hover).start)}`,
+          : (c => { const i = hover - c; return `row ${Math.floor(i / BITMAP_ROW_BYTES)}, column ${(i % BITMAP_ROW_BYTES) >> 3} of the bitmap at ${fmt(c)}`; })(cellOf(L, hover)?.start ?? bitmapAround(hover).start),
     blockText(hover),
   ].join(' · ');
   const marks = MARKS[kind];
@@ -288,26 +290,42 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
       kind === 'chars' ? { id: '64c', label: 'Charset with its load address (.64c)', ext: '64c', make: () => makePrg(range.start & 0xffff, data()) }
         : { id: 'prg', label: 'With its load address (.prg)', ext: 'prg', make: () => makePrg(range.start & 0xffff, data()) },
       ...(kind === 'bitmap' ? (mc ? pictures : [...pictures].reverse()) : []),
-      { id: 'png', label: 'Image as shown here (.png)', ext: 'png', make: () => pngOf(gfxImage(kind, A.mem, range.start, range.end, mc, colors, { font: kind === 'screens' ? font : undefined, codes, rows: L.rowStarts })) },
+      { id: 'png', label: 'Image as shown here (.png)', ext: 'png', make: () => pngOf(gfxImage(kind, A.mem, range.start, range.end, mc, colors, { font: kind === 'screens' ? font : undefined, codes, rows: L.rowStarts, bitmapRows })) },
       // the fonts of a font-per-row picture are characters
       { id: 'asm', label: 'Kick Assembler source, .byte rows (.asm)', ext: 'asm', make: () => new TextEncoder().encode(gfxSource(kind === 'fontrows' ? 'chars' : kind, saveName(range), range.start & 0xffff, data())) },
     ];
   })();
   const save = async (s: SaveAs) => { setSaveOpen(false); if (range) onSave(`${saveName(range)}.${s.ext}`, await s.make()); };
-  const whole = kind === 'chars' ? { label: 'Whole charset (2 KB)', of: charsetAround } : kind === 'bitmap' ? { label: 'Whole bitmap (8000 bytes)', of: bitmapAround }
-    : kind === 'screens' ? { label: 'With the sprite pointers (1 KB)', of: (a: Addr) => ({ start: a, end: a + 0x400 }) }
-      : kind === 'fontrows' ? { label: `All ${L.rows} rows`, of: () => ({ start: L.offset, end: rowAddr(L, L.rows) }) } : null;
+  // the selection made whole: shown only when that is more (or other) than it is. A bitmap is the 8000 bytes from the
+  // start of the grid's frame, and a bitmap of fewer rows is drawn whole again, so the selection can be seen
+  const whole = kind === 'chars' ? { label: 'Whole charset (2 KB)', title: 'The 2 KB charset the selection starts in, as the VIC sees it', of: charsetAround }
+    : kind === 'bitmap' ? {
+      label: 'Whole bitmap (8000 bytes)', title: bitmapRows < BITMAP_ROWS ? `All 25 rows of the bitmap, drawn whole again (Height ${bitmapRows} rows now)` : 'All 25 rows of the bitmap the selection starts in',
+      of: (a: Addr) => { const s = cellOf(L, a)?.start ?? bitmapAround(a).start; return { start: s, end: s + BITMAP_BYTES }; },
+    }
+      : kind === 'screens' ? { label: 'With the sprite pointers (1 KB)', title: 'The screen and the 24 bytes after it: 16 unused and the 8 sprite pointers', of: (a: Addr) => ({ start: a, end: a + 0x400 }) }
+        : kind === 'fontrows' ? { label: `All ${L.rows} rows`, title: 'The fonts of every row, from the first to the last', of: () => ({ start: L.offset, end: rowAddr(L, L.rows) }) } : null;
+  const wholeOf = whole && range ? (r => ({ start: r.start, end: Math.min(L.size, r.end) }))(whole.of(range.start)) : null;
+  const takeWhole = () => {
+    if (!wholeOf) return;
+    if (kind === 'bitmap' && bitmapRows < BITMAP_ROWS) {
+      // drawn whole: the bitmap at the top of the picture
+      topAt.current = wholeOf.start;
+      set({ bitmapRows: BITMAP_ROWS });
+    }
+    anchor.current = wholeOf.start; onSelect(wholeOf.start, wholeOf.end);
+  };
 
   const now = <>
     <b>{GFX_MODES.find(m => m.key === kind)!.label}</b>
-    <span>{SHOWS[kind]}</span>
-    {kind === 'chars' || kind === 'sprites' || kind === 'screens' ? <span>{cols} a row</span> : kind === 'fontrows' ? <span>{rowCount} rows</span> : null}
+    <span>{kind === 'bitmap' ? `${bitmapRows * BITMAP_ROW_BYTES} bytes each` : SHOWS[kind]}</span>
+    {kind === 'chars' || kind === 'sprites' || kind === 'screens' ? <span>{cols} a row</span> : kind === 'fontrows' ? <span>{rowCount} rows</span> : <span>{bitmapRows} {bitmapRows === 1 ? 'row' : 'rows'}</span>}
     <span>{mc ? 'multicolour' : 'hires'}</span>
     <span>{zoom}×</span>
   </>;
   return (
     <div className="gfxv" tabIndex={-1} onKeyDown={key} aria-label="Memory as graphics">
-      <ViewModes label="Show memory as" modes={GFX_MODES} value={kind} onChange={k => set({ kind: k })} now={now}
+      <ViewModes label="Show memory as" modes={modes} value={kind} onChange={k => set({ kind: k })} now={now}
         aside={(bank || kind !== 'fontrows') && <>{bank && <BankPick {...bank} />}{kind !== 'fontrows' && <form className="gfxv-go" onSubmit={e => { e.preventDefault(); go(); }}>
           <input aria-label="Go to address, label or range" className={cx('mono', gotoErr && 'bad')} value={goto} title={gotoErr ?? 'Go to an address, a label or a range ($2000-$27ff)'} placeholder="$3000, label, range" spellCheck={false} onChange={e => { setGoto(e.target.value); setGotoErr(null); }} />
           <button className="btn small" type="submit"><Icon name="target" size={13} />Go</button>
@@ -338,6 +356,10 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
         <OptGroup title="Layout">
           {kind === 'chars' && <CountField value={cols} presets={COLS.chars} max={MAX_CHAR_COLS} aria="Characters per row" onSet={n => set({ charCols: n })} />}
           {kind !== 'bitmap' && kind !== 'fontrows' && kind !== 'chars' && <label className="gfxv-field">Per row<select aria-label="Cells per row" value={cols} onChange={e => set(kind === 'sprites' ? { spriteCols: +e.target.value } : { screenCols: +e.target.value })}>{COLS[kind].map(n => <option key={n} value={n}>{n}</option>)}</select></label>}
+          {kind === 'bitmap' && <label className="gfxv-field" title="How many character rows (8 pixel lines, 320 bytes each) of every bitmap are drawn, from its top: fewer for a picture smaller than the screen, a logo say. A click then selects only those rows">Height
+            <select aria-label="Bitmap height in character rows" value={bitmapRows} onChange={e => set({ bitmapRows: +e.target.value })}>
+              {Array.from({ length: BITMAP_ROWS }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'} ({n * 8} px)</option>)}
+            </select></label>}
           <label className="gfxv-field">Zoom<select aria-label="Zoom" value={zoom} onChange={e => set({ zoom: +e.target.value })}>{[1, 2, 3, 4].map(z => <option key={z} value={z}>{z}×</option>)}</select></label>
           {kind !== 'fontrows' && <span className="gfxv-field" title="Move the grid by bytes, for data that does not start on a cell boundary">Offset
             <button className="icon-btn" aria-label="Offset back one byte" onClick={() => set({ offset: offset - 1 })}><Icon name="left" size={13} /></button>
@@ -367,7 +389,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
         {range ? <>
           <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           <span className="grow" />
-          {whole && <button className="btn small" onClick={() => { const r = whole.of(range.start); anchor.current = r.start; onSelect(r.start, Math.min(L.size, r.end)); }}>{whole.label}</button>}
+          {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && bitmapRows < BITMAP_ROWS)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
           {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}
           <span className="gfxv-save" ref={saveRef}>
             <button className="btn small" aria-haspopup="menu" aria-expanded={saveOpen} onClick={() => setSaveOpen(o => !o)} title="Save the selection as a file"><Icon name="download" size={13} />Save…</button>
