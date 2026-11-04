@@ -70,4 +70,55 @@ describe('the peek (Ctrl over a line)', () => {
     expect(code.as === 'code' && code.lines.length).toBe(PEEK_ROWS);
     expect(code.rest).toBe(b.end - 0x1000 - PEEK_ROWS);
   });
+
+  describe('the mouse wheel scrolls it up and down the block', () => {
+    // 400 nops at $1000: as code a line is a byte
+    const big: ProjectInput = { files: [parsePrg('b.prg', assemble({ 'b.asm': `.pc = $1000\n.fill 400, $ea` }, 'b.asm').prg!)] };
+    const B = analyze(big), S = render(B, big), b = findBlock(B.blocks, 0x1000)!;
+
+    it('as bytes: rows stay eight from the pointer\'s byte, the block\'s first bytes the top row', () => {
+      // the pointer at $1013: three rows above it, the first of them $1000-$1002
+      const k = peekOf(B, S, b, 0x1013, 0, false, -10);
+      if (k.as !== 'bytes') throw new Error('as bytes');
+      expect(k.off).toBe(-3);
+      expect(k.min).toBe(-3);
+      expect(k.rows.slice(0, 3)).toEqual([{ a: 0x1000, n: 3 }, { a: 0x1003, n: 8 }, { a: 0x100b, n: 8 }]);
+      expect(k.rows[3]).toEqual({ a: 0x1013, n: 8 });
+      expect(k.before).toBe(0);
+      expect(k.rest).toBe(b.end - k.rows.at(-1)!.a - 8);
+      // down: one row is eight bytes on
+      const d = peekOf(B, S, b, 0x1013, 0, false, 2);
+      expect(d.as === 'bytes' && d.rows[0].a).toBe(0x1023);
+      expect(d.before).toBe(0x23);
+      // no further down than the block's last byte in the bottom row
+      const end = peekOf(B, S, b, 0x1013, 0, false, 1000);
+      if (end.as !== 'bytes') throw new Error('as bytes');
+      expect(end.off).toBe(end.max);
+      expect(end.rows).toHaveLength(PEEK_ROWS);
+      expect(end.rest).toBe(0);
+      expect(end.rows.at(-1)!.a + end.rows.at(-1)!.n).toBe(b.end);
+    });
+
+    it('as code: a row is an instruction, swept from the block\'s start', () => {
+      const k = peekOf(B, S, b, 0x1010, 0, true, -4);
+      if (k.as !== 'code') throw new Error('as code');
+      expect(k.off).toBe(-4);
+      expect(k.lines[0].a).toBe(0x100c);
+      expect(k.before).toBe(0x0c);
+      expect(peekOf(B, S, b, 0x1010, 0, true, -100).lines[0]?.a ?? -1).toBe(0x1000);
+      const end = peekOf(B, S, b, 0x1010, 0, true, 1000);
+      if (end.as !== 'code') throw new Error('as code');
+      expect(end.lines).toHaveLength(PEEK_ROWS);
+      expect(end.lines.at(-1)!.a + end.lines.at(-1)!.n).toBe(b.end);
+      expect(end.rest).toBe(0);
+    });
+
+    it('near the end it starts at the pointer\'s line, and only scrolls up', () => {
+      const bytes = peekOf(B, S, b, b.end - 3, 0, false, 5), code = peekOf(B, S, b, b.end - 3, 0, true, 5);
+      expect([bytes.off, bytes.max, code.off, code.max]).toEqual([0, 0, 0, 0]);
+      expect(bytes.as === 'bytes' && bytes.rows).toEqual([{ a: b.end - 3, n: 3 }]);
+      const up = peekOf(B, S, b, b.end - 3, 0, false, -1);
+      expect(up.as === 'bytes' && up.rows.map(r => r.a)).toEqual([b.end - 11, b.end - 3]);
+    });
+  });
 });

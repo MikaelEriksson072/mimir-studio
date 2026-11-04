@@ -2983,6 +2983,52 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await expect(peek).toBeHidden();
   });
 
+  await test.step('with Ctrl held the mouse wheel scrolls the box up and down the block, and neither the listing nor the window', async () => {
+    const before = peek.locator('.peek-more.before');
+    const view = async () => page.evaluate(() => ({ top: document.querySelector('.listing')!.scrollTop, zoom: window.devicePixelRatio }));
+    // code as bytes: from $0921, three bytes of the block above it
+    await hover(row('0921'));
+    await page.keyboard.down('Control');
+    await expect(peek.locator('.p-hex').nth(1)).toHaveText('29 0f 8d e7 db 60');
+    await expect(before).toHaveText('… 3 bytes before, from $091e');
+    const was = await view();
+    // up: the block's first bytes, a row of their own, and no further
+    await page.mouse.wheel(0, -100);
+    await expect(peek.locator('.p-hex').nth(1)).toHaveText('ad 1b d4');
+    await expect(peek.locator('.p-hex').nth(2)).toHaveText('29 0f 8d e7 db 60');
+    await expect(before).toBeHidden();
+    await page.mouse.wheel(0, -100);
+    await expect(peek.locator('.p-hex').nth(1)).toHaveText('ad 1b d4');
+    expect(await view()).toEqual(was);
+    // down again: no further than the line, the block ends in the box
+    await page.mouse.wheel(0, 300);
+    await expect(peek.locator('.p-hex').nth(1)).toHaveText('29 0f 8d e7 db 60');
+    await page.keyboard.up('Control');
+    await expect(peek).toBeHidden();
+
+    // data as code: an instruction a row; shown again, the box starts at the line again
+    await goTo(page, '$0985');
+    await hover(row('0985'));
+    await page.keyboard.down('Control');
+    await expect(peek).toContainText('as code');
+    const first = peek.locator('.peek-row .p-adr').first();
+    await expect(first).toHaveText('0985');
+    await page.mouse.wheel(0, 100);
+    await expect(first).not.toHaveText('0985');
+    await expect(before).toContainText('before, from $0985');
+    await page.mouse.wheel(0, -300);
+    await expect(first).toHaveText('0985');
+    await page.mouse.wheel(0, 100);
+    await expect(first).not.toHaveText('0985');
+    await page.mouse.move(10, 10);
+    await expect(peek).toBeHidden();
+    await hover(row('0985'));
+    await expect(first).toHaveText('0985');
+    await page.keyboard.up('Control');
+    await expect(peek).toBeHidden();
+    await goTo(page, 'fx_091e');
+  });
+
   await test.step('in the box a click picks a byte (or a character) in the listing, and Shift+click picks up to another', async () => {
     await hover(row('091e'));
     await page.keyboard.down('Control');

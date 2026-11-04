@@ -332,6 +332,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .peek .p-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .peek .ind { display: none; }
 .peek-more { padding: 3px 10px 0; font: 11px/16px var(--font-ui); color: var(--fg-3); }
+.peek-more.before { padding: 0 10px 3px; }
 /* a block whose type just changed: framed in the accent colour with what it became; the fill fades first, then the
    frame (--since: how long ago the change was, negative, so a listing shown again goes on where it was) */
 .changed { position: absolute; left: 0; right: 0; z-index: 2; pointer-events: none; border-radius: 3px; box-shadow: inset 0 0 0 2px var(--accent); animation: changed-out 4s ease-in var(--since, 0ms) forwards; }
