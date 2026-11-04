@@ -97,6 +97,9 @@ const bytesText = (m: ByteMove) => (m.end - m.start > 1 ? `$${h4(m.start)}-$${h4
 const intoText = (m: ByteMove, dir: 'prev' | 'next') => `the ${kindInfo(m.into.type).label} block ${dir === 'prev' ? 'above' : 'below'}`;
 const moveTip = (mv: Moves) => ['Drag the address or the bytes into the block next to it:', mv.prev && `↑ ${bytesText(mv.prev)} into ${intoText(mv.prev, 'prev')}`, mv.next && `↓ ${bytesText(mv.next)} into ${intoText(mv.next, 'next')}`].filter(Boolean).join('\n');
 
+/** how long the pointer rests on a line before the peek stays put when the pointer goes into it (ms) */
+const PIN_MS = 300;
+
 /** find (Ctrl+F): the lines with a match and the one shown; in the rows in view the matches are marked in the text */
 export interface ListingFind { re: RegExp; hits: ReadonlySet<ListingLine>; cur: ListingLine | null }
 const HL = 'mimir-find', HL_CUR = 'mimir-find-cur';
@@ -159,9 +162,12 @@ interface ListingProps {
   /** the listing scrolled: where it is now, and the address whose bank Graphics and Memory show (the cursor's while it
    *  is on screen) */
   onView?: (v: ViewAt, shows: Addr) => void;
+  /** a byte (or an instruction's first byte) was clicked in the peek: it is picked in the listing; `extend` (Shift):
+   *  the selection runs to it */
+  onPeekPick?: (a: Addr, extend: boolean) => void;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView, onPeekPick }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -254,27 +260,38 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     startDrag(i, e.clientX, e.clientY, handle ? movesOf(A, l) : null, !e.shiftKey ? cell : null);
   };
 
-  // The peek: Ctrl held over a line shows its block the other way than the listing does (lib/peek.ts), beside the
-  // pointer. Ctrl pressed shows it after a moment, so Ctrl+C and the other keys with Ctrl show none; a key pressed with
-  // Ctrl closes it until Ctrl is let go. `x`: where the pointer came onto the row; `top`: the row's top on screen.
+  // The peek: Ctrl held over a line shows its block the other way than the listing does (lib/peek.ts), right under the
+  // line. Ctrl pressed shows it after a moment, so Ctrl+C and the other keys with Ctrl show none; a key pressed with
+  // Ctrl closes it until Ctrl is let go. `x`: where the pointer came onto the row; `top`: the row's top on screen;
+  // `since`: when it came onto the row. Once the pointer has rested on the row a moment (PIN_MS), the box stays when
+  // the pointer goes into it, and a click there picks that byte in the listing; before that it follows the pointer
+  // down the lines under it.
   const lower = useUi(s => s.mon.lower);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const peekKeys = useRef({ quiet: false, timer: 0 });
-  const [peekRow, setPeekRow] = useState<{ i: number; x: number; top: number } | null>(null);
+  const [peekRow, setPeekRow] = useState<{ i: number; x: number; top: number; since: number } | null>(null);
   /** the peek at the line under the pointer (none over the edit popover, or when the pointer is not on the listing) */
   const peekNow = () => {
     const p = pointer.current, el = box.current;
     const over = p && el && !peekKeys.current.quiet ? document.elementFromPoint(p.x, p.y) : null;
-    if (!p || !el || !over || !el.contains(over) || over.closest('.edit-pop')) { setPeekRow(null); return; }
+    const onPeek = !!over?.closest('.peek');
+    if (!p || !el || !over || (!onPeek && (!el.contains(over) || over.closest('.edit-pop')))) { setPeekRow(null); return; }
     const r = el.getBoundingClientRect(), i = Math.floor((p.y - r.top + el.scrollTop) / ROW);
-    const top = r.top + i * ROW - el.scrollTop;
-    setPeekRow(q => (i < 0 || i >= latest.current.lines.length ? null : q && q.i === i && q.top === top ? q : { i, x: q?.i === i ? q.x : p.x, top }));
+    const top = r.top + i * ROW - el.scrollTop, now = Date.now();
+    setPeekRow(q => {
+      if (onPeek && q && now - q.since >= PIN_MS) return q;
+      if (p.y < r.top || p.y >= r.bottom || i < 0 || i >= latest.current.lines.length) return onPeek ? q : null;
+      return q && q.i === i && q.top === top ? q : { i, x: q?.i === i ? q.x : p.x, top, since: q?.i === i ? q.since : now };
+    });
   };
   useEffect(() => {
     const k = peekKeys.current;
     const off = () => { clearTimeout(k.timer); setPeekRow(null); };
     const keyDown = (e: KeyboardEvent) => {
       if (e.key === 'Control' || e.key === 'Meta') { if (!e.repeat) { k.quiet = false; clearTimeout(k.timer); k.timer = window.setTimeout(peekNow, 150); } return; }
+      // Shift with the pointer in the box is for Shift+click there
+      const p = pointer.current;
+      if (e.key === 'Shift' && p && document.elementFromPoint(p.x, p.y)?.closest('.peek')) return;
       k.quiet = e.ctrlKey || e.metaKey; off();
     };
     const keyUp = (e: KeyboardEvent) => { if (e.key === 'Control' || e.key === 'Meta') { k.quiet = false; off(); } };
@@ -284,7 +301,9 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const peekMove = (e: ReactMouseEvent) => {
     pointer.current = { x: e.clientX, y: e.clientY };
-    if ((e.ctrlKey || e.metaKey) && !e.buttons && !peekKeys.current.quiet) { clearTimeout(peekKeys.current.timer); peekNow(); } else if (peekRow) setPeekRow(null);
+    // a button held in the listing is a drag (no peek); in the box it is a click on a byte
+    const inPeek = !!(e.target as HTMLElement).closest?.('.peek');
+    if ((e.ctrlKey || e.metaKey) && (!e.buttons || inPeek) && !peekKeys.current.quiet) { clearTimeout(peekKeys.current.timer); peekNow(); } else if (peekRow) setPeekRow(null);
   };
   const peek = useMemo((): Peek | null => {
     const l = peekRow ? lines[peekRow.i] : null;
@@ -501,31 +520,41 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   useLayoutEffect(() => { if (box.current) boxTop.current = box.current.getBoundingClientRect().top; });
   return (
     <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => { setTop(e.currentTarget.scrollTop); if (peekRow) peekNow(); report(); }} aria-label="Disassembly listing"
-      onMouseMove={peekMove} onMouseLeave={() => { pointer.current = null; clearTimeout(peekKeys.current.timer); setPeekRow(null); }}>
+      onMouseMove={peekMove} onMouseLeave={e => { if (e.relatedTarget instanceof Element && e.relatedTarget.closest('.peek')) return; pointer.current = null; clearTimeout(peekKeys.current.timer); setPeekRow(null); }}>
       <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{chip}</div>
-      {peek && peekRow && <PeekBox peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} />}
+      {peek && peekRow && <PeekBox peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} sel={sel?.bytes ? sel : null} onPick={(a, extend) => onPeekPick?.(a, extend)} />}
     </div>
   );
 }
 
-/** The peek beside the pointer: below the row it is on, or above it where the window ends (it takes no clicks) */
-function PeekBox({ peek, A, names, lower, x, top }: { peek: Peek; A: AnalysisResult; names: PeekNames; lower: boolean; x: number; top: number }) {
+/** The peek right under the row it is on, the pointer inside it from side to side, so the pointer goes straight into
+ *  it (above the row where the window ends). A click on a byte, a character or an instruction picks that address in
+ *  the listing (`onPick`); the bytes picked byte by byte (`sel`) are framed. */
+function PeekBox({ peek, A, names, lower, x, top, sel, onPick }: { peek: Peek; A: AnalysisResult; names: PeekNames; lower: boolean; x: number; top: number; sel: { start: Addr; end: Addr } | null; onPick: (a: Addr, extend: boolean) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = ref.current; if (!el) return;
     const w = el.offsetWidth, h = el.offsetHeight;
-    el.style.left = `${Math.max(8, Math.min(x + 14, window.innerWidth - w - 8))}px`;
-    el.style.top = `${top + ROW + 4 + h <= window.innerHeight - 8 ? top + ROW + 4 : Math.max(8, top - 4 - h)}px`;
+    el.style.left = `${Math.max(8, Math.min(x - 12, window.innerWidth - w - 8))}px`;
+    el.style.top = `${top + ROW + h <= window.innerHeight - 8 ? top + ROW : Math.max(8, top - h)}px`;
     el.style.visibility = 'visible';
   });
   const b = peek.block, name = names.labels.get(b.start)?.name;
   const marked = (a: Addr) => !!peek.mark && a >= peek.mark.start && a < peek.mark.end;
+  const picked = (a: Addr) => !!sel && a >= sel.start && a < sel.end;
   const text = (a: Addr, n: number, screen: boolean) => Array.from({ length: n }, (_, k) => {
     const c = monitorChar(A.mem[a + k], screen, lower);
-    return <span key={k} className={cx(!c && 'dot', c?.inv && 'inv', marked(a + k) && 'on')}>{c ? c.ch : '.'}</span>;
+    return <span key={k} data-a={a + k} className={cx(!c && 'dot', c?.inv && 'inv', marked(a + k) && 'on', picked(a + k) && 'picked')}>{c ? c.ch : '.'}</span>;
   });
+  const pick = (e: ReactMouseEvent) => {
+    if (e.button !== 0) return;
+    // no text selection, and the listing keeps the keyboard
+    e.preventDefault(); e.stopPropagation();
+    const at = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
+    if (at) onPick(Number(at.dataset.a), e.shiftKey);
+  };
   return createPortal(
-    <div ref={ref} className={cx('peek', peek.as)} role="tooltip" aria-label={`${kindInfo(b.type).label} block ${peek.as === 'bytes' ? 'as bytes and text' : 'as code'}`}>
+    <div ref={ref} className={cx('peek', peek.as)} role="dialog" aria-label={`${kindInfo(b.type).label} block ${peek.as === 'bytes' ? 'as bytes and text' : 'as code'}: click to pick a byte in the listing`} onMouseDown={pick}>
       <div className="peek-head">
         <span className="hdr-chip" style={{ '--c': `var(--g-${groupOfKind(b.type)})` } as React.CSSProperties}>{kindInfo(b.type).label}</span>
         <span className="mono">{name ? `${name} · ` : ''}${h4(b.start)}–${h4(b.end - 1)}</span>
@@ -536,12 +565,12 @@ function PeekBox({ peek, A, names, lower, x, top }: { peek: Peek; A: AnalysisRes
         {peek.rows.map(r => (
           <div key={r.a} className="peek-row">
             <span className="p-adr">{h4(r.a)}</span>
-            <span className="p-hex">{Array.from({ length: r.n }, (_, k) => <span key={k} className={cx(marked(r.a + k) && 'on')}>{k ? ' ' : ''}{h2(A.mem[r.a + k])}</span>)}</span>
+            <span className="p-hex">{Array.from({ length: r.n }, (_, k) => <span key={k} data-a={r.a + k} className={cx(marked(r.a + k) && 'on', picked(r.a + k) && 'picked')}>{k ? ' ' : ''}{h2(A.mem[r.a + k])}</span>)}</span>
             <span className="p-txt">{text(r.a, r.n, false)}</span>
             <span className="p-txt">{text(r.a, r.n, true)}</span>
           </div>))}
       </> : peek.lines.map(l => (
-        <div key={l.a} className={cx('peek-row', peek.mark && l.a < peek.mark.end && l.a + l.n > peek.mark.start && 'on')}>
+        <div key={l.a} data-a={l.a} className={cx('peek-row', peek.mark && l.a < peek.mark.end && l.a + l.n > peek.mark.start && 'on', picked(l.a) && 'picked')}>
           <span className="p-adr">{h4(l.a)}</span>
           <span className="p-hex">{[...A.mem.subarray(l.a, l.a + l.n)].map(h2).join(' ')}</span>
           <span className="p-src"><LineBody l={l} onToken={() => { }} mem={A.mem} /></span>

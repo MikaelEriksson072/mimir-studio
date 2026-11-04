@@ -170,6 +170,7 @@ packed file.
    instructions, operands, comments), `Ctrl+↓` / `Ctrl+↑` go to the next or previous block and `X` lists who
    references the line. Pointing at an undocumented opcode says what it does and which flags it changes. Hold `Ctrl`
    over a line to see its block the other way: code as bytes with their PETSCII and screen-code text, data as code.
+   Click a byte, a character or an instruction in that box to pick it in the listing.
 3. **Fix what the heuristics got wrong.** `N` renames, `;` comments, and `C`, `D`, `W` and `T` mark the selection as
    code, bytes, words or text. A click on a byte in a data line picks just that byte (`←` / `→` step byte by byte,
    `Shift` selects): `S` splits the block there, `J` joins the bytes from it to the end of the block with the next

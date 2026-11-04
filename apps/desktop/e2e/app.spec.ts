@@ -2860,11 +2860,53 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await expect(peek.locator('.p-hex .on')).toHaveText(['ad', ' 1b', ' d4']);
     const box = (await peek.boundingBox())!;
     expect(box.y >= at.y + at.height || box.y + box.height <= at.y).toBe(true);
-    // with Ctrl held it follows the pointer
-    await hover(row('0921'));
+    // with Ctrl held it follows the pointer onto the lines beside the box (straight down the pointer goes into it)
+    const adr = (await row('0921').locator('.adr').boundingBox())!;
+    await page.mouse.move(adr.x + adr.width / 2, adr.y + adr.height / 2);
     await expect(peek.locator('.p-hex').nth(1)).toHaveText('29 0f 8d e7 db 60');
     await page.keyboard.up('Control');
     await expect(peek).toBeHidden();
+  });
+
+  await test.step('in the box a click picks a byte (or a character) in the listing, and Shift+click picks up to another', async () => {
+    await hover(row('091e'));
+    await page.keyboard.down('Control');
+    await expect(peek).toBeVisible();
+    // the pointer rests on the line a moment: then the box stays when it goes into it
+    await page.waitForTimeout(400);
+    const press = async (target: Locator) => { const b = (await target.boundingBox())!; await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 }); await page.mouse.down(); await page.mouse.up(); };
+    const sta = peek.locator('.p-hex [data-a="2339"]'); // $0923, the 8d of sta
+    await press(sta);
+    await expect(statusBar(page)).toContainText('sel $0923–$0923 (1 B)');
+    await expect(statusBar(page)).toContainText('$0923');
+    await expect(sta).toHaveClass(/\bpicked\b/);
+    await expect(peek.locator('.peek-head')).toContainText('fx_091e');
+    await page.keyboard.down('Shift');
+    await press(peek.locator('.p-txt [data-a="2342"]').first()); // $0926, the rts, in the PETSCII column
+    await page.keyboard.up('Shift');
+    await expect(statusBar(page)).toContainText('sel $0923–$0926 (4 B)');
+    await expect(peek).toBeVisible();
+    await page.keyboard.up('Control');
+    await expect(peek).toBeHidden();
+  });
+
+  await test.step('data shown as code in the box: a click on an instruction picks its first byte, and C makes code from there', async () => {
+    await goTo(page, '$0985');
+    await hover(row('0985'));
+    await page.keyboard.down('Control');
+    await expect(peek).toContainText('as code');
+    await page.waitForTimeout(400);
+    const ora = peek.locator('.peek-row[data-a="2438"]'); // $0986: ora $0c
+    const b = (await ora.boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 });
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(statusBar(page)).toContainText('sel $0986–$0986 (1 B)');
+    await page.keyboard.up('Control');
+    await page.keyboard.press('c');
+    await expect(toast(page, '$0986–$09b4 marked as Code')).toBeVisible();
+    await page.keyboard.press('Control+z');
+    await expect(listing(page).locator('.row.hdr', { hasText: '$0985-$09b4 (48 bytes)' })).toHaveCount(1);
   });
 
   await test.step('data: as code, from the block\'s start', async () => {
