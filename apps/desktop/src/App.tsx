@@ -6,6 +6,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
+  keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
@@ -18,6 +19,7 @@ import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
+import { cellAt, cellsOf, type Cell } from './lib/cells';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
@@ -35,6 +37,7 @@ import { BitfirePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPa
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
+import { BlockSizeModal } from './components/BlockSize';
 import { RelocateModal, type RelocDraft } from './components/Relocate';
 import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
@@ -128,7 +131,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'patch' | 'project' | 'reloc' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | null>(null);
+  /** the block the Block size dialog changes (its start when the dialog opened) */
+  const [sizeAt, setSizeAt] = useState<Addr | null>(null);
   /** the patch dialog's range and code */
   const [patchDraft, setPatchDraft] = useState<PatchDraft | null>(null);
   /** the Relocate dialog's block: a range, a relocated block, or a copy loop's (spec 8.1b) */
@@ -764,6 +769,37 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     setSel(s => extendSel(s, from, r));
     return true;
   };
+  /** a byte (or word) picked in a data line: the cursor goes to it, and it is the selection; `extend` (Shift): the
+   *  selection runs from what was picked first to it, byte by byte */
+  const pickCell = (c: Cell, extend = false) => {
+    navigate(c.a, { noHistory: true, keepSel: true });
+    const r = { start: c.a, end: c.a + c.n };
+    if (!extend) { setSel({ ...r, multi: true, anchor: r.start, anchorEnd: r.end, bytes: true }); return; }
+    // from what the selection picked first, else from the byte or line at the cursor
+    const anchor = sel?.anchor != null ? { start: sel.anchor, end: sel.anchorEnd ?? sel.anchor + 1 } : cursorItem();
+    setSel({ ...extendSel(null, anchor, r), bytes: true });
+  };
+  /** a drag from byte `from`: to byte `to` of its line, or (`to` null) onto line `l`, which selects whole lines */
+  const dragCells = (from: Cell, to: Cell | null, l: ListingLine) => {
+    if (to) {
+      const s = Math.min(from.a, to.a), e = Math.max(from.a + from.n, to.a + to.n);
+      setSel({ start: s, end: e, multi: true, anchor: from.a, anchorEnd: from.a + from.n, bytes: true });
+      setCursor(to.a);
+      return;
+    }
+    const at = view.lines[lineOf[from.a]], r0 = at ? lineRange(at) : null, r = lineRange(l);
+    if (!r0 || !r) return;
+    setSel(extendSel(null, r0, r));
+    setCursor(l.a);
+  };
+  /** the byte (or word) at the cursor when the selection is of bytes, else the cursor's line: what S, J and Shift+J
+   *  start from */
+  const cursorItem = (): Range | null => {
+    if (cursor == null) return null;
+    const c = sel?.bytes ? cellAt(curLine, cursor) : null;
+    if (c) return { start: c.a, end: c.a + c.n };
+    return curLine ? lineRange(curLine) : { start: cursor, end: cursor + 1 };
+  };
   /* a block whose type changed: the cursor goes to its start, and once the listing has the new lines it shows that
      start where it was on screen (else a third of the way down) and frames the block a moment */
   const [changed, setChanged] = useState<Changed | null>(null);
@@ -792,9 +828,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const b = findBlock(A.blocks, cursor); if (!b) return null;
     return { start: curLine && curLine.a != null ? curLine.a : cursor, end: b.end };
   };
-  /** `name`: a text is named by its first word (the Memory tab), unless its start has a name you gave it */
-  const mark = (id: string, range?: { start: Addr; end: Addr }, opts?: { name?: boolean }) => {
-    const r = range || targetRange(); if (!r) return;
+  /** `name`: a text is named by its first word (the Memory tab), unless its start has a name you gave it; `bytes`:
+   *  the selection the range is, when it was picked byte by byte (by default the selection's, without a range) */
+  const mark = (id: string, range?: { start: Addr; end: Addr }, opts?: { name?: boolean; bytes?: Sel | null }) => {
+    const s = opts?.bytes !== undefined ? opts.bytes : !range && sel?.bytes ? sel : null;
+    const r0 = range || targetRange(); if (!r0) return;
+    // bytes picked in a line: one byte as Code starts the code there, to the end of its block, and as Words is a word
+    // with the byte after it; the parts of the blocks around them keep their types
+    const one = !!s?.bytes && s.anchor === r0.start && s.anchorEnd === r0.end, b0 = findBlock(A.blocks, r0.start);
+    const r = one && id === 'code' && b0 ? { start: r0.start, end: Math.max(r0.end, b0.end) }
+      : one && id === 'words' && r0.end - r0.start === 1 && A.owner[r0.start + 1] === A.owner[r0.start] ? { start: r0.start, end: r0.start + 2 } : r0;
+    const keep = s?.bytes ? keepCutTypes(A, r.start, r.end) : [];
     const rl = A.relocs.find(x => x.start < r.end && r.start < x.end);
     if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside .pseudopc`, 'warn'); return; }
     const m = MARK_AS.find(x => x.id === id), enc = m?.props?.enc;
@@ -802,7 +846,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // the analysis merges every block (and earlier override) inside the range into the new one; code stays split per routine
     const merged = id === 'code' ? 0 : A.blocks.filter(b => b.start < r.end && b.end > r.start).length;
     update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${m ? m.label : id}${name ? ` named ${name}` : ''}`, d => {
-      d.overrides.push({ start: r.start, end: r.end, type: MARK_TYPE[id], ...(m?.props ? { props: { ...m.props } } : {}) });
+      d.overrides.push(...keep, { start: r.start, end: r.end, type: MARK_TYPE[id], ...(m?.props ? { props: { ...m.props } } : {}) });
       if (name) d.labels[r.start] = name;
     });
     toast(`$${h4(r.start)}–$${h4(r.end - 1)} marked as ${m ? m.label : id}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
@@ -838,6 +882,38 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     setSel(null);
     showChanged(m.start, m.end, `Moved into the ${into} block`);
     toast(`${what.replace('-', '–')} moved into the ${into} block, now $${h4(start)}–$${h4(end - 1)}`, 'ok');
+  };
+  /** S: split the block at `at` (default: the byte or line at the cursor) in two blocks of its type */
+  const splitAt = (at?: Addr) => {
+    const a = at ?? cursorItem()?.start; if (a == null) return;
+    const s = splitBlock(A, a);
+    if ('error' in s) { toast(`Cannot split here: ${s.error}`, 'warn'); return; }
+    const b = s.block, what = kindInfo(b.type).label;
+    update(`Split $${h4(b.start)}-$${h4(b.end - 1)} at $${h4(a)}`, d => { d.overrides.push(...s.overrides); });
+    toast(`Split the ${what} block in two: $${h4(b.start)}–$${h4(a - 1)} and $${h4(a)}–$${h4(b.end - 1)}`, 'ok');
+    showChanged(a, b.end, 'Split here');
+  };
+  /** J / Shift+J: the bytes from `item` (default: the bytes selected one by one, else the byte or line at the cursor)
+   *  to the end of its block ('next'), or from its block's start to the end of it ('prev'), join the block next to them */
+  const joinFrom = (dir: 'prev' | 'next', item?: Range | null) => {
+    const it = item ?? (sel?.bytes ? { start: sel.start, end: sel.end } : cursorItem()); if (!it) return;
+    const m = moveFrom(A, it.start, dir, it.end);
+    if ('error' in m) { toast(`Cannot join the ${dir === 'prev' ? 'previous' : 'next'} block: ${m.error}`, 'warn'); return; }
+    moveInto(m);
+  };
+  /** L: the Block size dialog for the block at `at` (default: the cursor) */
+  const openBlockSize = (at?: Addr) => {
+    const a = at ?? cursor; const b = a != null ? findBlock(A.blocks, a) : null;
+    if (!b) { toast('Put the cursor in a block first', 'info'); return; }
+    setSizeAt(b.start); setModal('size');
+  };
+  /** the Block size dialog was applied: the block has its new range, and the blocks next to it give or take the bytes */
+  const resizeInto = (r: BlockResize) => {
+    const b = r.block, what = kindInfo(b.type).label;
+    update(`$${h4(b.start)}-$${h4(b.end - 1)} becomes $${h4(r.start)}-$${h4(r.end - 1)}`, d => { d.overrides.push(...r.overrides); for (const k of r.rekeys) moveBlockKeys(d, k.from, k.to); });
+    setModal(null); setSizeAt(null); setSel(null);
+    showChanged(r.start, r.end, `${r.end - r.start} bytes`);
+    toast(`The ${what} block is $${h4(r.start)}–$${h4(r.end - 1)} (${r.end - r.start} bytes)`, 'ok');
   };
   /** the Merge range dialog was confirmed: one block of the chosen type replaces every block in the range */
   const mergeRangeInto = (o: Override, label: string, replaced: number) => {
@@ -1580,6 +1656,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'merge-prev', label: 'Merge the block at the cursor with the previous block', run: () => mergeBlock('prev') },
     { id: 'merge-next', label: 'Merge the block at the cursor with the next block', run: () => mergeBlock('next') },
     { id: 'merge-range', label: 'Merge range into one block… (start, end, block type)', key: 'M', run: () => setModal('merge') },
+    { id: 'split', label: 'Split the block at the cursor (the byte or line) in two blocks of its type', key: 'S', run: () => splitAt() },
+    { id: 'join-next', label: 'Join the bytes from the cursor to the end of the block with the next block', key: 'J', run: () => joinFrom('next') },
+    { id: 'join-prev', label: 'Join the bytes from the start of the block to the cursor with the previous block', key: 'Shift+J', run: () => joinFrom('prev') },
+    { id: 'block-size', label: 'Block size… (set where the block at the cursor starts and ends)', key: 'L', run: () => openBlockSize() },
     { id: 'relocate', label: 'Relocate the selection (or the block at the cursor): the program copies it elsewhere to run there… (on a relocated block: where it runs)', key: 'R', run: () => startRelocate() },
     { id: 'patch', label: 'Patch the selection (or the cursor line) with new code… (a patch on it: edit it)', key: 'P', run: () => startPatch() },
     ...project.patches.flatMap(p => [
@@ -1627,8 +1707,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   ];
   // the dialogs of "The work is not saved" hold the keys too
   const dialog = modal ?? (unsavedAsk || saveFirst ? 'project' : null);
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, findOpen, closeFind, drawer, closeInspector });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, findOpen, closeFind, drawer, closeInspector };
+  /** ← / →: the byte before or after the cursor's, on to the line before or after; from a line picked whole, its first
+   *  (→) or last (←) byte. A line without bytes of its own as cells (an instruction) is picked whole. */
+  const stepCell = (dirn: 1 | -1, extend: boolean) => {
+    if (cursor == null || lineOf[cursor] < 0) return;
+    const lines = view.lines, ci = lineOf[cursor], cs = cellsOf(lines[ci]);
+    const cur = sel?.bytes ? cellAt(lines[ci], cursor) : null;
+    let next: Cell | null = cs ? (cur ? cs[cs.findIndex(c => c.a === cur.a) + dirn] ?? null : dirn > 0 ? cs[0] : cs[cs.length - 1]) : null;
+    if (!next) {
+      const stop = (l: ListingLine) => ('n' in l && l.n > 0) || (l.k === 'hdr' && folded.has(l.a));
+      let i = ci + dirn; while (i >= 0 && i < lines.length && !stop(lines[i])) i += dirn;
+      if (i < 0 || i >= lines.length) return;
+      const l = lines[i], lc = l.k === 'hdr' ? null : cellsOf(l);
+      if (!lc) { if (extend) { extendTo(l); navigate(l.a, { keepSel: true, noHistory: true }); } else navigate(l.a, { noHistory: true }); return; }
+      next = dirn > 0 ? lc[0] : lc[lc.length - 1];
+    }
+    pickCell(next, extend);
+  };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -1681,6 +1778,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         case 'PageUp': e.preventDefault(); moveTo(Math.max(0, ci - page), -1, e.shiftKey); return;
         case 'Home': e.preventDefault(); moveTo(0, 1, e.shiftKey); return;
         case 'End': e.preventDefault(); moveTo(lines.length - 1, -1, e.shiftKey); return;
+        // byte by byte through the data lines (Shift selects)
+        case 'ArrowRight': case 'ArrowLeft': e.preventDefault(); k.stepCell(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); return;
         case 'Enter': { const l = k.curLine; const tk = l && 'tok' in l ? l.tok.find(x => x.to != null && (x.t === 'lbl' || x.t === 'kw')) : undefined; if (tk) { e.preventDefault(); navigate(tk.to!); } return; }
         // with the find widget open, Esc closes only it
         case 'Escape': e.preventDefault(); if (k.findOpen) k.closeFind(); else goBack(); return;
@@ -1688,14 +1787,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text' };
+      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text', S: 'split', J: e.shiftKey ? 'join-prev' : 'join-next', L: 'block-size' };
       if (single[key]) run(single[key]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [navigate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onClickLine = (l: ListingLine, i: number, e: ReactMouseEvent, dbl?: boolean) => {
+  const onClickLine = (l: ListingLine, i: number, e: ReactMouseEvent, dbl?: boolean, cell?: Cell | null) => {
+    // a byte of a data line is picked by itself; Shift+click on one selects byte by byte up to it
+    if (cell && !dbl) { setPickedDef(null); pickCell(cell, e.shiftKey && cursor != null); listRef.current?.focus(); return; }
     // Shift+click extends the selection; on a block header it takes in the whole block
     if (e.shiftKey && cursor != null) { if (extendTo(l)) setCursor(l.a); return; }
     const def = labelDefAt(l), zl = zpDefOf(l, i);
@@ -1721,14 +1822,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     listRef.current?.focus();
   };
   const onToken = (t: Token) => { if (t.to != null && A.owner[t.to] >= 0) navigate(t.to, { center: true }); else if (t.sym) toast(`${t.sym.name}: ${t.sym.desc}`, 'info'); };
-  const onContext = (e: ReactMouseEvent, l: ListingLine) => {
+  const onContext = (e: ReactMouseEvent, l: ListingLine, cell?: Cell | null) => {
     e.preventDefault();
-    const inSel = !!(sel && sel.multi && l.a >= sel.start && l.a < sel.end);
+    // a byte of a data line outside the selection is picked first, and the items act on it
+    const picked: Sel | null = cell && !(sel && sel.multi && cell.a >= sel.start && cell.a + cell.n <= sel.end)
+      ? { start: cell.a, end: cell.a + cell.n, multi: true, anchor: cell.a, anchorEnd: cell.a + cell.n, bytes: true } : null;
+    if (picked && cell) pickCell(cell);
+    const cs = picked ?? sel, at = cell?.a ?? l.a;
+    const inSel = !!(cs && cs.multi && at >= cs.start && at < cs.end);
     if (l.a != null && !inSel) navigate(l.a, { noHistory: true });
     // the items act on this line (or the selection around it): the cursor only moves here after this render
     const b = findBlock(A.blocks, l.a), zl = zpDefOf(l, view.lines.indexOf(l));
     if (zl) setPickedDef({ ...zl, at: l.a });
-    const range = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: l.a, end: b.end } : null;
+    const range = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: l.a, end: b.end } : null;
+    /** the byte (or word) or the line the split and join items start from */
+    const item: Range | null = cell ? { start: cell.a, end: cell.a + cell.n } : 'n' in l && l.n > 0 ? lineRange(l) : null;
+    const span = (s: Addr, e: Addr) => `$${h4(s)}${e - s > 1 ? `-$${h4(e - 1)}` : ''}`;
+    const oneByte = !!(cs?.bytes && inSel && cs.anchor === cs.start && cs.anchorEnd === cs.end);
     setMenu({
       x: e.clientX, y: e.clientY, items: [
         (() => { const def = labelDefAt(l) ?? (zl ? { addr: zl.addr, zp: true } : null); return def
@@ -1752,15 +1862,29 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             { label: `Save patch "${p.name}" as PRG…`, run: () => void savePatchPrg(p) },
             { label: `Remove patch "${p.name}"${p.off ? '' : ' (the original bytes come back)'}`, run: () => removePatch(p) },
           ];
-          const r = inSel && sel ? { start: sel.start, end: sel.end } : ('n' in l && l.n > 0) || l.k === 'hdr' ? lineRange(l) : null;
+          const r = inSel && cs ? { start: cs.start, end: cs.end } : ('n' in l && l.n > 0) || l.k === 'hdr' ? lineRange(l) : null;
           return r ? [{ label: inSel ? 'Patch selection with new code…' : l.k === 'hdr' ? 'Patch block with new code…' : 'Patch line with new code…', key: 'P', run: () => startPatch(r) }] : [];
         })(),
-        { label: inSel ? 'Mark selection as' : 'Mark from here as', children: MARK_AS.map(m => ({ label: m.label, key: m.key, run: () => { if (range) mark(m.id, range); } })) },
+        { label: oneByte && cs ? `Mark ${span(cs.start, cs.end)} as` : inSel ? 'Mark selection as' : 'Mark from here as', children: MARK_AS.map(m => ({ label: m.label, key: m.key, run: () => { if (range) mark(m.id, range, { bytes: inSel && cs?.bytes ? cs : null }); } })) },
         { label: 'Clear override', key: 'U', run: () => { if (range) clearOverride(range); } },
         ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]) => { const m = mergeOverride(A, l.a, dir); return m ? [{ label: `Merge with ${word} block (${kindInfo(m.other.type).label}) → ${kindInfo(m.into).label}`, run: () => mergeBlock(dir, l.a) }] : []; }),
         // a line at a block's edge: the same as dragging it into the neighbouring block
         ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]) => { const m = lineMove(A, l, dir); return m ? [{ label: `Move $${h4(m.start)}${m.end - m.start > 1 ? `-$${h4(m.end - 1)}` : ''} into the ${word} block (${kindInfo(m.into.type).label})`, run: () => moveInto(m) }] : []; }),
         { label: 'Merge range into one block…', key: 'M', run: () => { if (!inSel) setCursor(l.a); setModal('merge'); } },
+        ...((): MenuItem[] => {
+          // from the byte or the line: split the block there, or join the rest of it (or its start) with the block next to it
+          if (!item || l.k === 'hdr') return [];
+          const out: MenuItem[] = [];
+          if (!('error' in splitBlock(A, item.start))) out.push({ label: `Split block at $${h4(item.start)}`, key: 'S', run: () => splitAt(item.start) });
+          for (const [dir, word, key] of [['next', 'next', 'J'], ['prev', 'previous', 'Shift+J']] as const) {
+            const m = moveFrom(A, item.start, dir, item.end), edge = lineMove(A, l, dir);
+            // the line at the block's edge already moves these bytes (the Move item above)
+            if ('error' in m || (edge && edge.start === m.start && edge.end === m.end)) continue;
+            out.push({ label: `Join ${span(m.start, m.end)} with the ${word} block (${kindInfo(m.into.type).label})`, key, run: () => moveInto(m) });
+          }
+          return out;
+        })(),
+        ...(b ? [{ label: 'Block size… (start and end)', key: 'L', run: () => openBlockSize(l.a) }] : []),
         ...((): MenuItem[] => {
           // on a relocated block (where it is loaded or runs): where it runs, or not; else relocate the selection or the block
           const rl = l.a != null ? (relocLoadedAt(A, l.a) ?? (inSel ? undefined : relocAt(A, l.a))) : undefined;
@@ -1768,7 +1892,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             { label: `Change where $${h4(rl.start)}–$${h4(rl.end - 1)} runs ($${h4(rl.to)})…`, key: 'R', run: () => startRelocate({ start: rl.start, end: rl.end }) },
             { label: `Stop relocating $${h4(rl.start)}–$${h4(rl.end - 1)} (read it where it is loaded)`, run: () => unrelocate(rl.start) },
           ];
-          const r = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          const r = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
           return r ? [{ label: `Relocate ${inSel ? 'selection' : 'block'}… (the program copies it elsewhere to run)`, key: 'R', run: () => startRelocate(r) }] : [];
         })(),
         { label: 'Add entry point here', key: 'E', run: () => addEntry(l.a) },
@@ -1778,7 +1902,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         ...(() => {
           // the Pack view: the selection, else the whole block, where its bytes are in the built PRG (a relocated block's
           // where it is loaded, 8.1b)
-          const r0 = inSel && sel ? { start: sel.start, end: sel.end } : b ? { start: b.start, end: b.end } : null;
+          const r0 = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
           const r = r0 && loadRange(A, r0.start, r0.end);
           if (!r) return [];
           const cover = project.pack?.ranges ? rangeCover(project.pack.ranges, r.start, r.end) : 0, what = inSel ? 'selection' : 'block';
@@ -2000,7 +2124,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 <button className="btn small" onClick={() => setUi({ dataAsCode: false })}>Show as classified</button>
               </div>}
               <div className="listing-wrap">
-              <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onMove={moveInto} onToken={onToken} onContext={onContext}
+              <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onDragCells={dragCells} onMove={moveInto} onToken={onToken} onContext={onContext}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
                 patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}
@@ -2059,7 +2183,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
@@ -2076,6 +2200,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
+      {modal === 'size' && sizeAt != null && <BlockSizeModal A={A} R={R} at={sizeAt} onResize={resizeInto} onClose={() => { setModal(null); setSizeAt(null); }} />}
       {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {unsavedAsk && <UnsavedWorkModal name={(unsavedAsk.kept ?? project).name} what={unsavedAsk.what} left={unsavedAsk.kept && home ? home.name : null}

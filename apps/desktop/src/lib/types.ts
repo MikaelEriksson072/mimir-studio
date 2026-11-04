@@ -6,8 +6,10 @@ import type { Addr, BitfireDisk, D64Image, KickProblem, ListingLine, LogLevel, S
 export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null }
 
 /** Selection in the listing/heatmap; `multi` = an explicit range (shift-click, drag, block header, Go to range).
- * `anchor`..`anchorEnd` is the line or block picked first; extending the selection always keeps it whole. */
-export interface Sel { start: Addr; end: Addr; multi: boolean; anchor?: Addr; anchorEnd?: Addr }
+ * `anchor`..`anchorEnd` is the line or block picked first; extending the selection always keeps it whole.
+ * `bytes`: picked byte by byte in the data lines (a click on a byte, a drag over the bytes of one line, Shift+click
+ * on a byte, ← and →), so it can start and end inside a line, and the cursor is on a byte. */
+export interface Sel { start: Addr; end: Addr; multi: boolean; anchor?: Addr; anchorEnd?: Addr; bytes?: boolean }
 /** `y`: keep the line at this height in the listing (px from its top), where it was before its block changed type;
  *  `line`: show this line (a find hit) rather than the address's; `top`: put the line at the top of the listing, with
  *  the line above it (a block header, Ctrl+↓ / Ctrl+↑) */

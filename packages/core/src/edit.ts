@@ -118,6 +118,153 @@ export function lineMove(A: AnalysisResult, l: ListingLine, dir: 'prev' | 'next'
   return 'error' in m ? null : m;
 }
 
+/** `$xxxx` or `$xxxx-$yyyy` for the bytes `start`..`end` (end excluded) */
+const spanText = (start: Addr, end: Addr) => (end - start > 1 ? `$${h4(start)}-$${h4(end - 1)}` : `$${h4(start)}`);
+
+/** Null when a code block can be cut at `a`; else why not (it is inside an instruction). */
+function insideInstruction(A: AnalysisResult, b: Block, a: Addr): string | null {
+  if (b.type !== 'code' || a <= b.start || a >= b.end) return null;
+  const at = A.codeOwner[a];
+  return at >= 0 && at !== a ? `$${h4(a)} is inside the instruction at $${h4(at)}` : null;
+}
+
+/** Why the block `b` cannot be cut or resized, or null. */
+function fixedBlock(b: Block): string | null {
+  if (b.type === 'basic') return 'the BASIC stub is read from its lines';
+  if (b.type === 'reloc') return `$${h4(b.start)}-$${h4(b.end - 1)} is where a relocated block is loaded: change its blocks where they run, on the lines inside .pseudopc`;
+  return null;
+}
+
+/**
+ * Overrides that keep the type of the blocks `start`..`end` (end excluded) cuts, for their parts outside it, where
+ * detection could read the shorter part differently (KEEP_TYPE; a block the user typed keeps its own override). Code
+ * is left to the trace. Put them before the override over the range.
+ */
+export function keepCutTypes(A: AnalysisResult, start: Addr, end: Addr): Override[] {
+  const out: Override[] = [];
+  for (const b of A.blocks) {
+    if (b.end <= start || b.start >= end || b.user || !KEEP_TYPE.includes(b.type)) continue;
+    if (b.start < start) out.push(overrideLike(b, b.start, start));
+    if (b.end > end) out.push(overrideLike(b, end, b.end));
+  }
+  return out;
+}
+
+export interface BlockSplit {
+  /** append them to `project.overrides` */
+  overrides: Override[];
+  /** the block that is split, and where the second part starts */
+  block: Block; at: Addr;
+}
+
+/**
+ * Split the block at `at` in two there: both parts keep its type and settings (a lo/hi table and BASIC become data).
+ * Code is split by starting a routine at `at` (an override from there), which must be the start of an instruction.
+ */
+export function splitBlock(A: AnalysisResult, at: Addr): BlockSplit | { error: string } {
+  const b = findBlock(A.blocks, at);
+  if (!b || at < b.start || at >= b.end) return { error: `$${h4(at)} is not part of any block` };
+  const fixed = fixedBlock(b); if (fixed) return { error: fixed };
+  if (at === b.start) return { error: `$${h4(at)} is the start of its block already` };
+  const inside = insideInstruction(A, b, at); if (inside) return { error: inside };
+  const overrides = b.type === 'code' ? [{ start: at, end: b.end, type: 'code' as const }] : [overrideLike(b, b.start, at), overrideLike(b, at, b.end)];
+  return { overrides, block: b, at };
+}
+
+/**
+ * The bytes of the block at `at` from `at` to its end ('next'), or from its start to `to` (end excluded: the end of
+ * the byte or word at `at`) ('prev'), into the neighbouring block on that side, as `moveBytes` moves them. In code
+ * the whole instruction at `at` goes along.
+ */
+export function moveFrom(A: AnalysisResult, at: Addr, dir: 'prev' | 'next', to: Addr = at + 1): ByteMove | { error: string } {
+  const b = findBlock(A.blocks, at);
+  if (!b || at < b.start || at >= b.end) return { error: `$${h4(at)} is not part of any block` };
+  const ins = b.type === 'code' && A.codeOwner[at] >= b.start ? A.codeOwner[at] : at;
+  if (dir === 'next') return moveBytes(A, ins, b.end, 'next');
+  const end = Math.min(b.end, b.type === 'code' && A.insLen[ins] ? Math.max(to, ins + A.insLen[ins]) : to);
+  return moveBytes(A, b.start, end, 'prev');
+}
+
+export interface BlockResize {
+  /** append them to `project.overrides` */
+  overrides: Override[];
+  /** the block and its new range (end excluded) */
+  block: Block; start: Addr; end: Addr;
+  /** blocks it now covers whole: they become part of it */
+  replaced: Block[];
+  /** blocks it takes bytes from (the part it takes); the rest of each keeps its type */
+  took: { from: Block; start: Addr; end: Addr }[];
+  /** bytes it gives up: to the neighbouring block on that side, or (`to` null) a block of their own of its type */
+  gave: { to: Block | null; start: Addr; end: Addr }[];
+  /** block starts that move (comment, build exclusion, binary file: `moveBlockKeys`), in order */
+  rekeys: { from: Addr; to: Addr }[];
+}
+
+/**
+ * Give the block at `at` the range `start`..`end` (end excluded), keeping its type and settings. Growing, it takes
+ * in the blocks it now covers and cuts the one its new edge lands in, whose rest keeps its type. Shrinking, the bytes
+ * it gives up join the neighbouring block on that side (`freed` 'join', when there is one it can join) or stay a
+ * block of their own of its type ('own'). The range must lie in the block's file; code is cut only between
+ * instructions, and the BASIC stub and where a relocated block is loaded keep their range.
+ */
+export function resizeBlock(A: AnalysisResult, at: Addr, start: Addr, end: Addr, freed: 'join' | 'own' = 'join'): BlockResize | { error: string } {
+  const b = findBlock(A.blocks, at);
+  if (!b || at < b.start || at >= b.end) return { error: `$${h4(at)} is not part of any block` };
+  const fixed = fixedBlock(b); if (fixed) return { error: fixed };
+  if (!(start < end)) return { error: 'the end must come after the start' };
+  if (start >= b.end || end <= b.start) return { error: `${spanText(start, end)} does not overlap the block $${h4(b.start)}-$${h4(b.end - 1)}` };
+  if (start === b.start && end === b.end) return { error: `the block is $${h4(b.start)}-$${h4(b.end - 1)} already` };
+  for (let a = start; a < end; a++) if (A.owner[a] !== b.file) return { error: `${spanText(start, end)} ${A.owner[a] < 0 ? `runs past the end of the file at $${h4(a)}` : `crosses into another file at $${h4(a)}`}` };
+  const overrides: Override[] = [], replaced: Block[] = [], took: BlockResize['took'] = [], gave: BlockResize['gave'] = [], rekeys: BlockResize['rekeys'] = [];
+  const blocked = (c: Block) => fixedBlock(c);
+  /** the bytes `s`..`e` the block gives up, on the side of neighbour `n` */
+  const give = (s: Addr, e: Addr, dir: 'prev' | 'next') => {
+    const n = neighbour(A, b, dir);
+    if (freed === 'join' && n && !blocked(n) && !(n.type === 'code' && b.type === 'code')) {
+      overrides.push(overrideLike(n, Math.min(n.start, s), Math.max(n.end, e)));
+      gave.push({ to: n, start: s, end: e });
+      if (dir === 'next') rekeys.push({ from: n.start, to: s });
+    } else {
+      overrides.push(overrideLike(b, s, e));
+      gave.push({ to: null, start: s, end: e });
+    }
+  };
+  // the start
+  if (start < b.start) {
+    for (const c of A.blocks) {
+      if (c.end <= start || c.start >= b.start || c.file !== b.file) continue;
+      const why = blocked(c); if (why) return { error: why };
+      if (c.start >= start) { replaced.push(c); continue; }
+      const inside = insideInstruction(A, c, start); if (inside) return { error: inside };
+      if (!c.user && KEEP_TYPE.includes(c.type)) overrides.push(overrideLike(c, c.start, start));
+      took.push({ from: c, start, end: c.end });
+    }
+  } else if (start > b.start) {
+    const inside = insideInstruction(A, b, start); if (inside) return { error: inside };
+    give(b.start, start, 'prev');
+  }
+  if (start !== b.start) rekeys.unshift({ from: b.start, to: start });
+  // the end
+  if (end > b.end) {
+    for (const c of A.blocks) {
+      if (c.start >= end || c.end <= b.end || c.file !== b.file) continue;
+      const why = blocked(c); if (why) return { error: why };
+      if (c.end <= end) { replaced.push(c); continue; }
+      const inside = insideInstruction(A, c, end); if (inside) return { error: inside };
+      // the rest of a code block is no longer reached from its start: it starts a routine of its own
+      if (c.type === 'code') overrides.push({ start: end, end: c.end, type: 'code' });
+      else if (!c.user && KEEP_TYPE.includes(c.type)) overrides.push(overrideLike(c, end, c.end));
+      took.push({ from: c, start: c.start, end });
+      rekeys.push({ from: c.start, to: end });
+    }
+  } else if (end < b.end) {
+    const inside = insideInstruction(A, b, end); if (inside) return { error: inside };
+    give(end, b.end, 'next');
+  }
+  overrides.push(overrideLike(b, start, end));
+  return { overrides, block: b, start, end, replaced, took, gave, rekeys };
+}
+
 /** What is kept by a block's start (its comment, build exclusion and binary file) follows the start to `to`.
  *  Works on an Immer draft too. */
 export function moveBlockKeys(p: Pick<Project, 'blockComments' | 'excluded' | 'binary'>, from: Addr, to: Addr): void {

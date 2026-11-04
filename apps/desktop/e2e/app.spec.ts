@@ -3249,6 +3249,99 @@ test('a byte in the wrong block is dragged by its address into the block next to
   });
 });
 
+test('a block is split, re-typed and joined from any byte of a line, and given a size of its own', async ({ page }) => {
+  await waitForListing(page);
+  await page.keyboard.press('Control+j');
+  await expect(page.locator('section.bottom')).toHaveClass(/collapsed/);
+  await goTo(page, '$0939');
+  /** the byte (cell) at `adr` in a data line */
+  const cell = (adr: string) => listing(page).locator(`.cell[data-a="${parseInt(adr, 16)}"]`);
+  const hdr = (text: string) => listing(page).locator('.row.hdr', { hasText: text });
+  const undo = async (back: string) => { await page.keyboard.press('Control+z'); await expect(hdr(back)).toHaveCount(1); };
+
+  await test.step('a click picks one byte of a line; Shift, the arrows and a drag over the line pick more', async () => {
+    await cell('093c').click();
+    await expect(statusBar(page)).toContainText('sel $093c–$093c (1 B)');
+    await expect(cell('093c')).toHaveClass(/\bcur\b/);
+    await page.keyboard.press('Shift+ArrowRight');
+    await expect(statusBar(page)).toContainText('sel $093c–$093d (2 B)');
+    await expect(cell('093d')).toHaveClass(/\bon\b/);
+    await cell('093a').click({ modifiers: ['Shift'] });
+    await expect(statusBar(page)).toContainText('sel $093a–$093c (3 B)');
+    // on from the last byte of a line to the first of the next
+    await cell('0940').click();
+    await page.keyboard.press('ArrowRight');
+    await expect(statusBar(page)).toContainText('sel $0941–$0941 (1 B)');
+    await expect(cell('0941')).toHaveClass(/\bcur\b/);
+    const a = (await cell('0939').boundingBox())!, b = (await cell('093d').boundingBox())!;
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect(statusBar(page)).toContainText('sel $0939–$093d (5 B)');
+  });
+
+  await test.step('W on one byte makes it a word with the byte after it; the bytes around it stay a color table', async () => {
+    await cell('093c').click();
+    await page.keyboard.press('w');
+    await expect(toast(page, '$093c–$093d marked as Words (.word)')).toBeVisible();
+    await expect(hdr('$0939-$093b (3 bytes)')).toContainText('Color table');
+    await expect(hdr('$093c-$093d (2 bytes)')).toContainText('Word table');
+    await expect(hdr('$093e-$0948 (11 bytes)')).toContainText('Color table');
+    await undo('$0939-$0948 (16 bytes)');
+  });
+
+  await test.step('J joins the bytes from the one clicked to the end of the block with the next block, Shift+J its start with the one before', async () => {
+    await cell('093c').click();
+    await page.keyboard.press('j');
+    await expect(toast(page, '$093c–$0948 moved into the Text block, now $093c–$095f')).toBeVisible();
+    await expect(hdr('$0939-$093b (3 bytes)')).toContainText('Color table');
+    await undo('$0939-$0948 (16 bytes)');
+    await cell('094c').click();
+    await page.keyboard.press('Shift+J');
+    await expect(toast(page, '$0949–$094c moved into the Table block, now $0939–$094c')).toBeVisible();
+    await expect(hdr('$094d-$095f (19 bytes)')).toContainText('Text');
+    await undo('$0949-$095f (23 bytes)');
+  });
+
+  await test.step('the context menu on a byte splits the block there, and S splits it at the cursor line', async () => {
+    await cell('0950').click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Join $0950-$095f with the next block (Text)' })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Split block at $0950' }).click();
+    await expect(toast(page, 'Split the Text block in two: $0949–$094f and $0950–$095f')).toBeVisible();
+    await expect(hdr('$0949-$094f (7 bytes)')).toHaveCount(1);
+    await expect(hdr('$0950-$095f (16 bytes)')).toHaveCount(1);
+    await undo('$0949-$095f (23 bytes)');
+    await listing(page).locator('.row.k-dat', { has: page.locator('.adr', { hasText: /^0941$/ }) }).locator('.src').click({ position: { x: 4, y: 8 } });
+    await page.keyboard.press('s');
+    await expect(toast(page, 'Split the Table block in two: $0939–$0940 and $0941–$0948')).toBeVisible();
+    await undo('$0939-$0948 (16 bytes)');
+  });
+
+  await test.step('L sets where the block ends: the bytes it gives up join the next block, or stay a block of their own', async () => {
+    await cell('0939').click();
+    await page.keyboard.press('l');
+    const dialog = page.getByRole('dialog', { name: 'Block size' });
+    await expect(dialog).toContainText('The Table block colors_0939 is $0939–$0948 (16 bytes).');
+    await dialog.getByLabel('Size (bytes)').fill('12');
+    await expect(dialog.getByLabel('End (included)')).toHaveValue('$0944');
+    await expect(dialog).toContainText('$0945–$0948 join the Text block after it.');
+    await dialog.getByLabel('stay a Table block of their own').check();
+    await expect(dialog).toContainText('$0945–$0948 stay a Table block of their own.');
+    await dialog.getByLabel('End (included)').fill('$4000');
+    await expect(dialog).toContainText('$0939-$4000 runs past the end of the file at $3800.');
+    await expect(dialog.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    await dialog.getByLabel('End (included)').fill('$0944');
+    await dialog.getByLabel('join the block next to them').check();
+    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(toast(page, 'The Table block is $0939–$0944 (12 bytes)')).toBeVisible();
+    await expect(hdr('$0945-$095f (27 bytes)')).toContainText('Text');
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  });
+});
+
 test('the Graphics tab finds screens: drawn with a charset, the grid starting where it goes to, and saved like the other graphics', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await page.keyboard.press('Control+j');

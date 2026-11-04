@@ -288,6 +288,12 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .row.drop-into, .row.hdr.drop-into { background: color-mix(in srgb, var(--accent) 16%, var(--editor)); }
 .row.drop-into .gut { box-shadow: 0 0 0 1px var(--accent-hi); }
 .row.moving-src { outline: 1px dashed var(--accent-hi); outline-offset: -1px; }
+/* the bytes of a data line, each a cell to click: the selected ones where the selection takes in part of the line,
+   and the one at the cursor when the selection is of bytes */
+.listing .cell { border-radius: 2px; }
+.listing:not(.moving) .cell:hover { box-shadow: inset 0 -1px 0 var(--accent-hi); }
+.listing .cell.on { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.listing .cell.cur { outline: 1px solid var(--accent-hi); outline-offset: 0; }
 .move-chip { position: absolute; left: 76px; z-index: 6; padding: 1px 8px; border-radius: 6px; font: 12px/18px var(--font-ui); color: var(--fg-2); background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); pointer-events: none; white-space: nowrap; }
 .move-chip.ok { color: var(--fg); border-color: var(--accent); }
 /* the peek (Ctrl over a line): its block the other way than the listing shows it, beside the pointer; placed (and
@@ -361,6 +367,10 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .merge-list { margin: 0 0 8px; padding: 6px 8px 6px 22px; max-height: 180px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--editor); font-size: 12px; color: var(--fg-2); }
 .merge-list li { margin: 1px 0; }
 .merge-list.cut { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+/* the Block size dialog: start, end and size side by side, and where the bytes it gives up go */
+.block-size .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0 12px; }
+.size-freed { border: 0; padding: 0; margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 2px 16px; }
+.size-freed legend { padding: 0; margin-bottom: 2px; color: var(--fg-2); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 /* data shown as code (listing preview) */
 .btn.on { background: var(--sel); color: var(--fg); border-color: var(--accent); }

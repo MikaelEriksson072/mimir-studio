@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent 
 import { createPortal } from 'react-dom';
 import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, SPACE, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
+import { cellParts, type Cell } from '../lib/cells';
 import { Icon } from '../lib/icons';
 import { peekOf, type Peek, type PeekNames } from '../lib/peek';
 import type { Changed, Editing, ScrollReq, Sel, ViewAt } from '../lib/types';
@@ -59,15 +60,27 @@ function undocumentedTip(l: ListingLine, mem?: Uint8Array): string | undefined {
   return undefined;
 }
 
-/** A line's text. `mem`: the memory it is in, to name an undocumented opcode exactly in its tooltip. */
-export function LineBody({ l, onToken, mem }: { l: ListingLine; onToken: (t: Token) => void; mem?: Uint8Array }) {
+/** the bytes of a data line one by one (lib/cells.ts): `sel`, the selected bytes where the selection takes in only
+ *  part of the line; `cur`, the byte at the cursor when the selection is of bytes */
+export interface CellMarks { sel: { start: Addr; end: Addr } | null; cur: Addr | null }
+
+/** A line's text. `mem`: the memory it is in, to name an undocumented opcode exactly in its tooltip; `cells`: write
+ *  each byte of a data line as a cell of its own (a click on it picks that byte). */
+export function LineBody({ l, onToken, mem, cells }: { l: ListingLine; onToken: (t: Token) => void; mem?: Uint8Array; cells?: CellMarks | null }) {
   const ind = <span className="ind" />;
   const ill = undocumentedTip(l, mem);
   const cmt = 'cmt' in l && l.cmt ? <span className={cx('syn-comment', 'cmt', 'userCmt' in l && l.userCmt && 'user', ill && l.k === 'dat' && 'ill-tip')} title={l.k === 'dat' ? ill : undefined}>// {l.cmt}</span> : null;
   switch (l.k) {
     case 'lbl': return <span className="syn-label def">{l.name}<span className="syn-p">:</span></span>;
     case 'ins': return <><span className="cp">{ind}<span className={cx(l.ill ? 'syn-ill' : 'syn-mn', ill && 'ill-tip')} title={ill}>{kickMnemonic(l.mn)}{l.ext}</span>{l.tok.length ? ' ' : ''}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>;
-    case 'dat': return <><span className="cp">{ind}<span className={cx('syn-dir', ill && 'ill-tip')} title={ill}>{l.dir}</span> <Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>;
+    case 'dat': {
+      const parts = cells ? cellParts(l) : null;
+      const on = (c: Cell) => !!cells?.sel && c.a >= cells.sel.start && c.a + c.n <= cells.sel.end;
+      const op = parts && cells ? parts.map((p, i) => (p.cell
+        ? <span key={i} className={cx('cell', on(p.cell) && 'on', cells.cur != null && cells.cur >= p.cell.a && cells.cur < p.cell.a + p.cell.n && 'cur')} data-a={p.cell.a} data-n={p.cell.n}><Toks tok={p.tok} onToken={onToken} /></span>
+        : <Toks key={i} tok={p.tok} onToken={onToken} />)) : <Toks tok={l.tok} onToken={onToken} />;
+      return <><span className="cp">{ind}<span className={cx('syn-dir', ill && 'ill-tip')} title={ill}>{l.dir}</span> {op}</span>{cmt}</>;
+    }
     case 'dir': { const top = !!l.tok[0] && TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s); return <><span className="cp">{!top && ind}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>; }
     case 'cmt': return <span className={cx('syn-comment', l.note && 'note', l.mark && 'mark')} title={l.note ? 'Double-click to edit' : l.mark ? 'Marked by the analysis: a part of a loader (Explorer → Loaders)' : undefined}>{l.raw ? l.text : l.text ? `// ${l.text}` : '//'}</span>;
     default: return null;
@@ -111,12 +124,16 @@ interface ListingProps {
   A: AnalysisResult; lineOf: Int32Array; cursor: Addr | null; sel: Sel | null;
   /** the `.label` line in the file head clicked last: marked instead of the cursor's line (they all share one address) */
   picked?: number | null;
-  onClickLine: (l: ListingLine, i: number, e: ReactMouseEvent, dbl?: boolean) => void;
+  /** `cell`: the byte (or word) of a data line the click was on */
+  onClickLine: (l: ListingLine, i: number, e: ReactMouseEvent, dbl?: boolean, cell?: Cell | null) => void;
   /** the pointer was dragged (left button held) onto line `l` */
   onDragTo: (l: ListingLine) => void;
+  /** a drag that started on byte `from`: over the bytes of its own line, onto byte `to`; onto another line (`to`
+   *  null), onto line `l` */
+  onDragCells: (from: Cell, to: Cell | null, l: ListingLine) => void;
   /** a line at a block's edge was dragged by its address or bytes and dropped in the block next to it */
   onMove: (m: ByteMove) => void;
-  onToken: (t: Token) => void; onContext: (e: ReactMouseEvent, l: ListingLine) => void;
+  onToken: (t: Token) => void; onContext: (e: ReactMouseEvent, l: ListingLine, cell?: Cell | null) => void;
   scrollReq: ScrollReq | null; editing: Editing | null; onCommitEdit: (v: string) => void; onCancelEdit: () => void;
   labelError: string | null; setLabelError: (e: string | null) => void; listRef: MutableRefObject<HTMLDivElement | null>;
   /** left column: memory address (default) or line number in the .asm file */
@@ -144,7 +161,7 @@ interface ListingProps {
   onView?: (v: ViewAt, shows: Addr) => void;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -159,14 +176,28 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   // (the list is virtualized). Above or below the listing it scrolls, faster the further out the pointer is.
   // A line at a block's edge dragged by its address or bytes moves instead: dropped in the block next to it, its
   // bytes join that block (`moving` shows where they go).
-  const latest = useRef({ lines, onDragTo, onMove, A });
-  latest.current = { lines, onDragTo, onMove, A };
-  const drag = useRef<{ i: number; y: number; move?: { from: number; moves: Moves; m: ByteMove | null } } | null>(null);
+  // A drag that starts on a byte of a data line selects bytes while it stays on that line, and whole lines (that one
+  // too) once it goes onto another.
+  const latest = useRef({ lines, onDragTo, onDragCells, onMove, A });
+  latest.current = { lines, onDragTo, onDragCells, onMove, A };
+  const drag = useRef<{ i: number; x: number; y: number; move?: { from: number; moves: Moves; m: ByteMove | null }; cell?: { from: Cell; line: number; to: Addr | null } } | null>(null);
   const [moving, setMoving] = useState<{ from: number; over: number; moves: Moves; m: ByteMove | null } | null>(null);
-  const dragTo = (y: number) => {
+  const dragTo = (x: number, y: number) => {
     const d = drag.current, el = box.current; if (!d || !el) return;
-    const { lines: ls, onDragTo: cb, A: an } = latest.current;
+    const { lines: ls, onDragTo: cb, onDragCells: cells, A: an } = latest.current;
     const i = Math.max(0, Math.min(ls.length - 1, Math.floor((y - el.getBoundingClientRect().top + el.scrollTop) / ROW)));
+    if (d.cell) {
+      const c = d.cell;
+      if (i === c.line) {
+        const over = document.elementFromPoint(x, y)?.closest<HTMLElement>('.cell');
+        const to = over && el.contains(over) ? { a: Number(over.dataset.a), n: Number(over.dataset.n) } : c.from;
+        if (to.a !== c.to) { c.to = to.a; d.i = i; cells(c.from, to, ls[i]); }
+        return;
+      }
+      if ((i === d.i && c.to == null) || ls[i].k === 'blank' || ls[i].k === 'file') return;
+      c.to = null; d.i = i; cells(c.from, null, ls[i]);
+      return;
+    }
     if (i === d.i) return;
     if (d.move) {
       // the bytes go into the block under the pointer when it is the one before or after theirs
@@ -179,15 +210,15 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     if (ls[i].k === 'blank' || ls[i].k === 'file') return;
     d.i = i; cb(ls[i]);
   };
-  const startDrag = (i: number, y: number, moves: Moves | null) => {
-    const d = { i, y, ...(moves ? { move: { from: i, moves, m: null } } : {}) };
+  const startDrag = (i: number, x: number, y: number, moves: Moves | null, cell: Cell | null) => {
+    const d = { i, x, y, ...(moves ? { move: { from: i, moves, m: null } } : cell ? { cell: { from: cell, line: i, to: cell.a } } : {}) };
     drag.current = d;
     const tick = () => {
       const el = box.current;
       if (drag.current !== d || !el) return;
       const r = el.getBoundingClientRect();
       const over = d.y < r.top + ROW ? d.y - r.top - ROW : d.y > r.bottom - ROW ? d.y - r.bottom + ROW : 0;
-      if (over) { el.scrollTop += Math.sign(over) * Math.min(ROW * 8, 2 + Math.ceil(Math.abs(over) / 3)); dragTo(d.y); }
+      if (over) { el.scrollTop += Math.sign(over) * Math.min(ROW * 8, 2 + Math.ceil(Math.abs(over) / 3)); dragTo(d.x, d.y); }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -200,20 +231,27 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       setMoving(null);
       if (drop && d.move.m) latest.current.onMove(d.move.m);
     };
-    const move = (e: MouseEvent) => { const d = drag.current; if (!d) return; if (!(e.buttons & 1)) { end(false); return; } d.y = e.clientY; dragTo(e.clientY); };
+    const move = (e: MouseEvent) => { const d = drag.current; if (!d) return; if (!(e.buttons & 1)) { end(false); return; } d.x = e.clientX; d.y = e.clientY; dragTo(e.clientX, e.clientY); };
     const up = () => end(true), blur = () => end(false);
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && drag.current?.move) { e.preventDefault(); e.stopPropagation(); end(false); } };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); window.addEventListener('blur', blur); window.addEventListener('keydown', key, true);
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); window.removeEventListener('blur', blur); window.removeEventListener('keydown', key, true); drag.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /** the byte (or word) of a data line under the pointer */
+  const cellOf = (e: ReactMouseEvent): Cell | null => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('.cell');
+    return el ? { a: Number(el.dataset.a), n: Number(el.dataset.n) } : null;
+  };
   const down = (l: ListingLine, i: number, e: ReactMouseEvent) => {
     if (e.button !== 0) return;
     // no native text selection while dragging a range; keep the keyboard on the listing
     e.preventDefault(); box.current?.focus();
-    onClickLine(l, i, e);
-    // by its address or bytes, a line at a block's edge moves into the block next to it; elsewhere a drag selects
+    const cell = cellOf(e);
+    onClickLine(l, i, e, false, cell);
+    // by its address or bytes, a line at a block's edge moves into the block next to it; from a byte a drag selects
+    // bytes; elsewhere it selects lines
     const handle = !e.shiftKey && l.k !== 'hdr' && (e.target as HTMLElement).closest('.adr, .hex');
-    startDrag(i, e.clientY, handle ? movesOf(A, l) : null);
+    startDrag(i, e.clientX, e.clientY, handle ? movesOf(A, l) : null, !e.shiftKey ? cell : null);
   };
 
   // The peek: Ctrl held over a line shows its block the other way than the listing does (lib/peek.ts), beside the
@@ -380,7 +418,11 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const n = 'n' in l ? l.n : 0;
     const blk = l.a != null ? findBlock(A.blocks, l.a) : null;
     const g = blk ? groupOfKind(blk.type) : null;
-    const isSel = sel && n > 0 && l.a >= sel.start && l.a < sel.end;
+    // a line whose bytes are cells is selected when the selection takes in all of them, else the cells it takes in are
+    const cells = n > 0 && l.k === 'dat' && !!cellParts(l);
+    const full = !!sel && n > 0 && l.a >= sel.start && l.a + n <= sel.end;
+    const isSel = cells ? full : sel && n > 0 && l.a >= sel.start && l.a < sel.end;
+    const cellMarks: CellMarks | null = cells ? { sel: sel && !full && l.a < sel.end && l.a + n > sel.start ? sel : null, cur: sel?.bytes && i === curLine ? cursor : null } : null;
     const bytes = n > 0 ? [...A.mem.subarray(l.a, l.a + Math.min(n, 3))].map(h2).join(' ') + (n > 3 ? ' …' : '') : '';
     const drop = !!(moving?.m && blk && blk.start === moving.m.into.start);
     // where a relocated block runs (8.1b): a stripe beside the gutter, and where the bytes are loaded in the tooltip
@@ -412,12 +454,12 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const ptTip = pt && `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`;
     rows.push(
       <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, ...tint(i) }}
-        onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l)}>
+        onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{mark(i)}
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno')} title={tip ?? runTip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
         <span className="hex" title={pt ? [ptTip, tip].filter(Boolean).join('\n\n') : tip}>{bytes}</span>
         {cycles && <CycleCell l={l} A={A} step={steps.get(l.a)} taken={cycles.taken} onToggle={cycles.onToggle} />}
-        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>patch {pt.name}</span>}</span>
+        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>patch {pt.name}</span>}</span>
       </div>);
   }
   let pop = null;

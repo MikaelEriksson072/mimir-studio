@@ -21,6 +21,8 @@ interface InspectorProps {
   onMerge: (dir: 'prev' | 'next', at: Addr) => void;
   /** open the Merge range dialog (start and type from this block) */
   onMergeRange: () => void;
+  /** open the Block size dialog for the block at `at` (where it starts and ends) */
+  onBlockSize: (at: Addr) => void;
   /** open the Relocate dialog for these bytes (on a relocated block: where it runs), or stop relocating the block loaded
    *  at `start` (spec 8.1b) */
   onRelocate: (range: { start: Addr; end: Addr }) => void; onUnrelocate: (start: Addr) => void;
@@ -42,7 +44,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -104,6 +106,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
               <button key={dir} className="btn small" disabled={!m} onClick={() => onMerge(dir, blk.start)}
                 title={m ? `One ${kindInfo(m.into).label} block $${h4(m.override.start)}–$${h4(m.override.end - 1)} (with the ${kindInfo(m.other.type).label} block ${dir === 'prev' ? 'before' : 'after'} it)` : `No ${dir === 'prev' ? 'previous' : 'next'} block in this file`}>{label}</button>); })}
             <button className="btn small merge-range-btn" onClick={onMergeRange} title="Merge from this block to an end address into one block (M)">Merge range…</button>
+            {blk.type !== 'basic' && !loadedRl && <button className="btn small merge-range-btn" onClick={() => onBlockSize(blk.start)} title="Set where this block starts and ends: the blocks next to it give or take the bytes (L)">Size…</button>}
             {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onRelocate({ start: blk.start, end: blk.end })} title="The program copies these bytes to another address and runs them there: read them where they run, written inside .pseudopc (R)">Relocate…</button>}
           </div>
           {blk.type === 'code' && A.mcfg && <MemoryFields A={A} blk={blk} cart={B.A.mcfg?.cart} onBankZone={onBankZone} />}

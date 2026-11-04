@@ -52,7 +52,7 @@ export type { DemoProgram } from './demo';
 export { makeShowcase, showcaseProject, type ShowcaseProgram } from './showcase';
 // bytes the program copies elsewhere to run there (8.1b)
 export { addReloc, codeWhereLoaded, loadAddress, loadRange, moveKeys, moveReloc, relocAt, relocLoadedAt, relocProblem, removeReloc, type RelocKeys } from './relocs';
-export { FORMATTABLE, formatOverride, lineMove, markIdOf, mergeOverride, mergeRange, moveBlockKeys, moveBytes, type BlockMerge, type ByteMove, type RangeMerge } from './edit';
+export { FORMATTABLE, formatOverride, keepCutTypes, lineMove, markIdOf, mergeOverride, mergeRange, moveBlockKeys, moveBytes, moveFrom, resizeBlock, splitBlock, type BlockMerge, type BlockResize, type BlockSplit, type ByteMove, type RangeMerge } from './edit';
 export { createProject, demoProject, serializeProject, deserializeProject, projectNameFor, withId, newId, b64enc, b64dec } from './project';
 export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles, expectedCartridge, readme, projectScripts, projectTextFiles, exportFiles, type CartBuild } from './export';
 export { applyPatch, assemblePatch, patchAt, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, projectUnpatched, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';

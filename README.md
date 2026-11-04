@@ -82,6 +82,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   - mark ranges as code, bytes, words or text, and write data, tables and words in hex, decimal or binary, as many
     a row as you like;
   - merge blocks, or drag a byte into the block next to it;
+  - pick any byte of a `.byte`, `.word` or `.text` line with a click, and split the block there, re-type just that
+    byte (`W` makes it a word; the bytes around it keep their type) or join the rest of the block with the next one;
+  - set where a block starts and ends, or how many bytes it has: the blocks next to it give or take the bytes;
   - set the memory configuration for a range, keep bookmarks and fold blocks;
   - leave blocks out of the build, or save them as binary files.
 - **Relocated code.** A block the program copies to another address before it runs there (a transfer routine in the
@@ -168,8 +171,10 @@ packed file.
    references the line. Pointing at an undocumented opcode says what it does and which flags it changes. Hold `Ctrl`
    over a line to see its block the other way: code as bytes with their PETSCII and screen-code text, data as code.
 3. **Fix what the heuristics got wrong.** `N` renames, `;` comments, and `C`, `D`, `W` and `T` mark the selection as
-   code, bytes, words or text. Right-click for everything else. `Ctrl+Z` undoes, and `Ctrl+C` copies the selected
-   lines as source.
+   code, bytes, words or text. A click on a byte in a data line picks just that byte (`←` / `→` step byte by byte,
+   `Shift` selects): `S` splits the block there, `J` joins the bytes from it to the end of the block with the next
+   block (`Shift+J`: the block's start up to it with the block before), and `L` sets the block's start, end or size.
+   Right-click for everything else. `Ctrl+Z` undoes, and `Ctrl+C` copies the selected lines as source.
 4. **Verify** with `F7`. The status bar says whether the source assembles back to the original bytes.
 5. **Export** the Kick Assembler project with its build scripts (`Ctrl+E`, into the project's `source` folder), or
    **Build & Run** it in VICE (`F5`).
