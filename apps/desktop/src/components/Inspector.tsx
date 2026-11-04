@@ -18,6 +18,8 @@ interface InspectorProps {
   onNavigate: (a: Addr) => void; onSelect: (s: Addr, e: Addr) => void;
   onMark: (id: string, range: { start: Addr; end: Addr }) => void; onRename: (a: Addr, name: string) => void;
   onBlockComment: (a: Addr, text: string) => void; onClearOverride: (b: Block) => void;
+  /** play the music block that starts at `start` in VICE */
+  onPlayMusic?: (start: Addr) => void;
   onBankZone: (range: { start: Addr; end: Addr }, part: 'port' | 'vicBank', v: number | null) => void;
   onMerge: (dir: 'prev' | 'next', at: Addr) => void;
   /** open the Merge range dialog (start and type from this block) */
@@ -48,7 +50,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, bank, onPlayMusic }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -141,11 +143,15 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
               </div> : <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>}
             </>
           ) : music ? (
-            <dl className="kv">
-              <dt>Init</dt><dd className="mono">${h4(music.init)}</dd><dt>Play</dt><dd className="mono">${h4(music.play)}</dd>
-              <dt>SID regs</dt><dd>{music.sidRegs} written</dd><dt>Evidence</dt><dd>{music.why.join(', ')}</dd>
-              <dt>Export</dt><dd className="mono small">music/music_{h4(music.start)}.sid (PSID v2) via LoadSid</dd>
-            </dl>
+            <>
+              <dl className="kv">
+                <dt>Init</dt><dd className="mono">${h4(music.init)}</dd><dt>Play</dt><dd className="mono">${h4(music.play)}</dd>
+                <dt>SID regs</dt><dd>{music.sidRegs} written</dd><dt>Evidence</dt><dd>{music.why.join(', ')}</dd>
+                <dt>Export</dt><dd className="mono small">music/music_{h4(music.start)}.sid (PSID v2) via LoadSid</dd>
+              </dl>
+              {onPlayMusic && <div className="merge-row"><button className="btn small" onClick={() => onPlayMusic(blk.start)}
+                title="VICE plays the block's bytes (those the .sid holds): init with song $00, then play each frame from a raster interrupt. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before">Play in VICE</button></div>}
+            </>
           ) : textPreview ? <pre className="text-prev">{textPreview}</pre>
             : blk.type === 'code' ? <CodeSummary A={A} blk={blk} />
               : <p className="muted small">Pick Sprite, Chars or Bitmap to view these bytes as graphics. Useful for finding unreferenced graphics.</p>}

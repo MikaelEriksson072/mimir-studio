@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -1156,6 +1156,26 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (r) toast(`Patch "${p.name}" saved to ${r.path} (loads at $${h4(p.start)})`, 'ok');
     } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
+  /** The music block at `at` in VICE: a PRG of its bytes (those the export's .sid holds) with a driver that puts them
+   *  where they run, calls init with the song in A and play each frame from a raster interrupt (c64/sidplayer.ts) */
+  const playMusic = async (at: Addr | null | undefined) => {
+    if (!kr) return needDesktop();
+    const b = at != null ? findBlock(A.blocks, at) : null;
+    if (!b || b.type !== 'music') { toast('Put the cursor on a music block to play it', 'warn'); return; }
+    const m = A.music.find(x => x.start === b.start);
+    const load = spaceAddr(b.start), init = spaceAddr(m?.init ?? b.props.init ?? b.start), play = spaceAddr(m?.play ?? b.props.play ?? b.start + 3);
+    const name = R.labels.get(b.start)?.name ?? `music_${h4(load)}`, span = `$${h4(load)}-$${h4(load + b.end - b.start - 1)}`;
+    try {
+      const file0 = project.files[A.owner[b.start]]?.name;
+      const p = sidPlayer({ data: A.mem.slice(b.start, b.end), load, init, play, title: file0 ? `${name} IN ${file0}` : name });
+      const file = `${name}.prg`;
+      const w = await kr.writeExport({ target: 'temp', name: 'play', files: { [file]: p.prg } });
+      if (!w) return;
+      await kr.run({ prgPath: `${w.dir}/${file}` });
+      toast(`VICE plays ${name} (${span}): init $${h4(init)} with song $00, then play $${h4(play)} each frame. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before`, 'ok');
+      for (const x of p.warnings) toast(x, 'warn');
+    } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }
+  };
   const goPatch = (p: Patch) => { navigate(p.start, { center: true, listing: true }); setSel({ start: p.start, end: patchEnd(p), multi: true, anchor: p.start, anchorEnd: patchEnd(p) }); setTimeout(() => listRef.current?.focus(), 0); };
   /* ---- cycle counting: the branches the user marks as taken (view state, not in the project) ---- */
   const [taken, setTaken] = useState<ReadonlySet<Addr>>(() => new Set());
@@ -1701,6 +1721,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       { id: `patch-switch-${p.id}`, label: `Switch ${p.off ? 'on' : 'off'} patch "${p.name}" (${patchSpan(p)})`, run: () => switchOnePatch(p, !!p.off) },
       { id: `patch-save-${p.id}`, label: `Save patch "${p.name}" (${patchSpan(p)}) as PRG…`, run: () => void savePatchPrg(p) },
     ]),
+    ...A.blocks.filter(b => b.type === 'music').map(b => {
+      const name = R.labels.get(b.start)?.name;
+      return { id: `play-music-${b.start}`, label: `Play music ${name ? `${name} ` : ''}($${h4(spaceAddr(b.start))}-$${h4(spaceAddr(b.end - 1))}) in VICE`, run: () => void playMusic(b.start) };
+    }),
     { id: 'entry', label: 'Add entry point at cursor', key: 'E', run: addEntry },
     { id: 'start', label: 'Set the program start to the cursor line', run: () => { const a = lineAddr(); if (a != null) setStart(a); } },
     ...(project.entryPoint != null ? [{ id: 'start-clear', label: `Clear the program start $${h4(project.entryPoint)} (Build & Run starts the program with RUN)`, run: () => setStart(null) }] : []),
@@ -1890,6 +1914,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           ...(has ? [{ label: 'Remove bookmark', run: () => deleteBookmark(at!) }] : []),
         ]; })(),
         { sep: true },
+        ...(b?.type === 'music' ? [{ label: `Play music in VICE (${R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`})`, run: () => void playMusic(b.start) }] : []),
         ...(() => {
           // a patched line: its patch; otherwise new code over the selection, the line or the block of a header
           const p = l.a != null ? patchAt(project.patches, l.a) : undefined;
@@ -2230,7 +2255,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>

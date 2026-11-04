@@ -2,7 +2,8 @@
  * bytes (D), verify (F7), undo/redo, selecting large ranges (G with a range, Shift+click on headers,
  * dragging) that merge the blocks inside, and open/save/export with Electron's file dialogs stubbed.
  * Build & Run (F5) is not covered: it starts VICE. */
-import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, repoDir, test } from './fixtures';
@@ -3335,6 +3336,58 @@ test('the Demo button opens the showcase: every block type and a guided tour in 
     await openSection(page, 'Files');
     await expect(page.locator('.file-name')).toHaveText(['mimir-showcase.prg']);
   });
+});
+
+test('a music block plays in VICE: from its right-click menu, the inspector and the command palette', async ({ page }) => {
+  // VICE itself is not started: a Windows program that ends at once stands in for it (the player's PRG playing in the
+  // real VICE is tested in packages/core/test/sidplayer.test.ts)
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  test.skip(!existsSync(standIn), 'needs where.exe');
+  await waitForListing(page);
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, 'Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop')).toBeVisible();
+  await waitForListing(page);
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  await listing(page).click();
+  // (no label at $1800: the source calls it as music.init, through LoadSid; the export's file is music_1800.sid)
+  const played = /^VICE plays music_1800 \(\$1800-\$19cc\): init \$1800 with song \$00, then play \$1803 each frame\. Keys 1-9 and 0 start songs \$00-\$09/;
+  const newest = () => {
+    const dirs = readdirSync(tmpdir()).filter(d => d.startsWith('mimir-play-')).map(d => join(tmpdir(), d)).filter(d => existsSync(join(d, 'music_1800.prg')));
+    return dirs.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+  };
+  const seen: string[] = [];
+
+  await test.step('the music block\'s right-click menu plays it', async () => {
+    await goTo(page, '1800');
+    await expect(statusBar(page)).toContainText('$1800 · Music (SID)');
+    await expect(headerRow(page, '1800')).toBeVisible();
+    await headerRow(page, '1800').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Play music in VICE ($1800)' }).click();
+    await expect(toast(page, played)).toBeVisible();
+    // the PRG VICE was given: RUN starts it at $0801, and the block's bytes (JMP init) are in it from $0c00
+    const dir = newest();
+    seen.push(dir);
+    const prg = readFileSync(join(dir, 'music_1800.prg'));
+    expect(prg[0] | (prg[1] << 8)).toBe(0x0801);
+    const at = 2 + 0x0c00 - 0x0801, table = prg.subarray(at, at + 6);
+    expect([table[0], table[2], table[3], table[5]]).toEqual([0x4c, 0x18, 0x4c, 0x18]);
+    expect(prg.length).toBe(at + 0x19cd - 0x1800);
+  });
+
+  await test.step('so does the inspector\'s Play in VICE, and the command palette', async () => {
+    // the cursor is still on the block
+    await expect(statusBar(page)).toContainText('$1800 · Music (SID)');
+    await page.locator('aside.insp-col').getByRole('button', { name: 'Play in VICE' }).click();
+    await expect(toast(page, played)).toHaveCount(2);
+    seen.push(newest());
+    await page.keyboard.press('Control+Shift+P');
+    const q = page.getByRole('textbox', { name: 'Command' });
+    await q.fill('Play music ($1800-$19cc) in VICE');
+    await q.press('Enter');
+    await expect(toast(page, played)).toHaveCount(3);
+    seen.push(newest());
+  });
+  for (const d of new Set(seen)) rmSync(d, { recursive: true, force: true });
 });
 
 test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctrl+Z goes back; the newest are kept, named, saved and made favourites', async ({ workDir: work, app, page }) => {
