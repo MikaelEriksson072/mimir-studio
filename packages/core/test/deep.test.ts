@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, findBlock, openC64File, render, verify, type FileInput, type ProjectInput } from '../src';
 import { fromSource, snapshotOf } from './helpers/programs';
+import { faultCount, isFault } from '../src/analyze/deep';
 
 const BASIC = '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n';
 const problems = (A: ReturnType<typeof analyze>) => A.log.filter(l => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint');
@@ -127,11 +128,20 @@ describe('deep analysis', () => {
     expect(v.deep.mcfg!.port[0x081e]).toBe(1 << 7 | 1 << 0);
   });
 
-  it('never ends with more problems than the normal analysis', () => {
+  it('never ends with more faults than the normal analysis', () => {
     for (const src of [`${BASIC} rts\n`, `.pc = $c000\n .byte $00,$00,$a9,$01,$8d,$20,$d0,$60\n`, `${BASIC} jmp ($1234)\n`]) {
       const { normal, deep } = both(fromSource('p.prg', src));
-      expect(problems(deep).length).toBeLessThanOrEqual(problems(normal).length);
+      expect(faultCount(deep.log)).toBeLessThanOrEqual(faultCount(normal.log));
       expect(deep.deep!.after).toBe(problems(deep).length);
     }
+  });
+
+  it('counts as faults the warnings and errors that say code is read wrongly, not what the code read finds', () => {
+    const at = (lvl: 'warn' | 'err' | 'hint', msg: string) => isFault({ lvl, msg, addr: null, cat: 'code' });
+    expect(at('err', 'JAM opcode $02 reached at $0814; the path probably runs into data')).toBe(true);
+    expect(at('warn', 'BRK at $0815 ends the code path')).toBe(true);
+    expect(at('warn', 'Instruction at $9934 would overlap other code or leave the file; tracing stopped')).toBe(true);
+    expect(at('warn', 'Indirect JMP ($0334) at $880d: target unknown at analysis time')).toBe(false);
+    expect(at('hint', 'The loop at $85cf copies $85db-$8600 to $0400-$0425, and the jmp at $85d8 goes there')).toBe(false);
   });
 });

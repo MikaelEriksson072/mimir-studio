@@ -7,8 +7,9 @@
  * JMP into ROM is not followed into the RAM below), the bytes code writes (a JSR or JMP whose operand is written
  * has its target set at run time, and a path stops quietly at an instruction code writes that is BRK or JAM now) and
  * the routines that never return (the bytes after a JSR to one are not code). A JSR or JMP to a BRK or JAM is not
- * followed either: the routine is put there at run time. The rounds end when the next one would decide the same; the result is the deep one unless the normal
- * analysis has fewer problems.
+ * followed either: the routine is put there at run time. The rounds end when the next one would decide the same. The
+ * result is the deep one unless it has more faults than the normal analysis: warnings and errors that say code is read
+ * wrongly. An indirect jump whose target is not known and a tip are no faults; more code read finds more of them.
  * ===================================================================== */
 import type { Addr, AnalysisResult, EntryKind, LogEntry } from '../types';
 import { cutKey, type Ctx, type CutWhy, type Deep } from './context';
@@ -21,6 +22,10 @@ import { textUnderCode } from './strings';
 /** What the Problems tab lists from the log. */
 export const isProblem = (l: LogEntry): boolean => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint';
 export const problemCount = (log: LogEntry[]): number => log.filter(isProblem).length;
+/** A problem that says code is read wrongly (a JAM, a BRK, an overlap, a jump into an instruction): not a tip, nor an
+ *  indirect jump whose target is not known, which come with the code read. */
+export const isFault = (l: LogEntry): boolean => (l.lvl === 'warn' || l.lvl === 'err') && !/^Indirect JMP \(.+\) at .+: target unknown/.test(l.msg);
+export const faultCount = (log: LogEntry[]): number => log.filter(isFault).length;
 
 /**
  * Why the JSR or JMP at `pc` to `t` is not followed, by what the round before learned; null: it is. `guess`: the code

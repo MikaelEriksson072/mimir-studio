@@ -925,7 +925,7 @@ noggrannhet. Den slås på med kryssrutan **Deep analysis** överst i fliken Pro
 analysis (slower)*, och gäller projektet. Målet är så få problem som möjligt i Problems (loggens varningar, fel och
 tips), utan att något döljs: varje beslut står i loggen (kategori `deep`).
 
-Först görs en vanlig analys, som ger antalet problem att jämföra med. Sedan görs hela analysen om i **varv**:
+Först görs en vanlig analys, som ger antalet problem och fel att jämföra med. Sedan görs hela analysen om i **varv**:
 - **Gissningar spåras på prov.** En kodö (8.11), ett mål i en pekartabell, en IRQ-, NMI- eller BRK-rutin som koden
   installerar och laddadressen utan BASIC-rad spåras först i en kopia av spårningsläget (`trial()` i `trace.ts`). Den
   behålls bara om spårningen inte går in i något problem: JAM, BRK, ett hopp in i en instruktion, överlapp, data som
@@ -961,8 +961,14 @@ Det ett varv lär sig använder nästa varv redan när det spårar:
   inte byten efter en `JSR` dit.
 
 Varven slutar när nästa varv skulle besluta likadant (samma snitt i varvets kod, samma huvudkonfiguration), efter högst
-6. Resultatet är djupanalysens, utom när den vanliga analysen har färre problem: då är det den vanliga, med en rad om
-det. `AnalysisResult.deep` (`DeepReport`) har varv, problem före och efter, gissningar som lämnats, snitt, grenar och
+6. Resultatet är djupanalysens, utom när den vanliga analysen har färre **fel**: då är det den vanliga, med en rad om
+det. Fel är varningar och fel som säger att kod läses fel (JAM, BRK, överlapp, ett hopp in i en instruktion …), inte
+tips och inte indirekta hopp vars mål inte är känt: de kommer med koden som läses, och en djupanalys som hittar mer kod
+hittar fler av dem. I Fairlights cartridge (bank 0) har djupanalysen 11 problem, alla indirekta hopp via RAM-vektorer och
+tips, och den vanliga 9, varav en kodö som överlappar annan kod; den vanliga hittar 2 300 byte mindre kod (`isFault()`).
+På 2 360 program ur arkivet får 131 program mer kod så (200 157 byte, 157 fler textblock), och problemen i Problems blir
+2 631 i stället för 1 134, alla tips och indirekta hopp: felen blir aldrig fler. Att räkna de indirekta hoppen också tar
+bort en tredjedel av koden men bara 91 av problemen: de flesta är tips. `AnalysisResult.deep` (`DeepReport`) har varv, problem före och efter, gissningar som lämnats, snitt, grenar och
 tid; Problems visar *150 → 0 problems in 3 rounds, 1.5 s · the Log tells what it left out*. Det differentiella testet
 kör utan djupanalys, och den vanliga analysen är oförändrad.
 

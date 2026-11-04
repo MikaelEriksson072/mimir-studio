@@ -19,7 +19,7 @@ import { makeLabels } from './labels';
 import { codeIslands, diagnostics, ioLabelNotice, statistics, type CodeIsland } from './diagnostics';
 import { findLoaders } from './loaders';
 import { rasterIrqs } from './raster';
-import { deepLog, learn, problemCount } from './deep';
+import { deepLog, faultCount, learn, problemCount } from './deep';
 import { findDelays } from './delay';
 import { findSpindle } from './spindle';
 import { findCopies } from './copies';
@@ -32,10 +32,10 @@ const DEEP_ROUNDS = 6;
 
 export function analyze(project: ProjectInput): AnalysisResult {
   if (!project.settings?.deepAnalysis) return analyzeNormal(project)[0];
-  // 5.17: the normal analysis tells how many problems the deep one starts from
+  // 5.17: the normal analysis tells how many problems the deep one starts from, and how many of them are faults
   const t0 = now();
   const [normal, text] = analyzeNormal({ ...project, settings: { ...DEFAULT_SETTINGS, ...project.settings, deepAnalysis: false } });
-  const before = problemCount(normal.log);
+  const before = problemCount(normal.log), faults = faultCount(normal.log);
   const deep: Deep = { port: null, main: 0, written: null, noReturn: new Set(), text };
   let A: AnalysisResult, ctx: Ctx, rounds = 0;
   do [A, ctx] = analyzeOnce(project, deep, deep.text);
@@ -43,8 +43,9 @@ export function analyze(project: ProjectInput): AnalysisResult {
   deepLog(A, ctx, before, rounds);
   const report = A.deep!;
   report.ms = now() - t0;
-  if (report.after <= before) return A;
-  normal.log.push({ lvl: 'info', msg: `Deep analysis: no reading with fewer problems than the normal analysis (${before}) was found, so this is the normal one`, addr: null, cat: 'deep' });
+  // the deep one, unless it reads code more wrongly: more code read finds more indirect jumps and tips
+  if (faultCount(A.log) <= faults) return A;
+  normal.log.push({ lvl: 'info', msg: `Deep analysis: no reading with as few warnings and errors as the normal analysis (${faults}, not counting indirect jumps whose target is not known) was found, so this is the normal one`, addr: null, cat: 'deep' });
   return { ...normal, S: A.S, deep: { ...report, after: before } };
 }
 
