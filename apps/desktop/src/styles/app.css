@@ -333,6 +333,10 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .peek .ind { display: none; }
 .peek-more { padding: 3px 10px 0; font: 11px/16px var(--font-ui); color: var(--fg-3); }
 .peek-more.before { padding: 0 10px 3px; }
+/* where another block starts in the peek: its type, name and addresses; a click goes to its first byte */
+.peek-blk { display: flex; align-items: center; gap: 8px; height: 18px; margin-top: 2px; padding: 0 10px; border-top: 1px dashed var(--line-2); font: 11px/17px var(--font-ui); color: var(--fg-2); white-space: nowrap; }
+.peek-blk .mono { font-family: var(--font-code); }
+.peek .peek-blk:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 /* a block whose type just changed: framed in the accent colour with what it became; the fill fades first, then the
    frame (--since: how long ago the change was, negative, so a listing shown again goes on where it was) */
 .changed { position: absolute; left: 0; right: 0; z-index: 2; pointer-events: none; border-radius: 3px; box-shadow: inset 0 0 0 2px var(--accent); animation: changed-out 4s ease-in var(--since, 0ms) forwards; }

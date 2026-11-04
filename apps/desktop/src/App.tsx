@@ -780,8 +780,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   /** a byte (or word) picked in a data line: the cursor goes to it, and it is the selection; `extend` (Shift): the
    *  selection runs from what was picked first to it, byte by byte */
-  const pickCell = (c: Cell, extend = false) => {
-    navigate(c.a, { noHistory: true, keepSel: true });
+  const pickCell = (c: Cell, extend = false, history = false) => {
+    navigate(c.a, { noHistory: !history, keepSel: true });
     const r = { start: c.a, end: c.a + c.n };
     if (!extend) { setSel({ ...r, multi: true, anchor: r.start, anchorEnd: r.end, bytes: true }); return; }
     // from what the selection picked first, else from the byte or line at the cursor
@@ -2166,7 +2166,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
               </div>}
               <div className="listing-wrap">
               <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onDragCells={dragCells} onMove={moveInto} onToken={onToken} onContext={onContext}
-                onPeekPick={(a, extend) => { pickCell({ a, n: 1 }, extend); listRef.current?.focus(); }}
+                onPeekPick={(a, extend) => {
+                  // into another block: a folded one is unfolded, and the jump goes in the history (Esc goes back)
+                  const b = findBlock(A.blocks, a), far = !extend && cursor != null && b !== findBlock(A.blocks, cursor);
+                  unfold([...(b && a !== b.start ? [b.start] : []), ...relocsAround(a)]);
+                  pickCell({ a, n: 1 }, extend, far); listRef.current?.focus();
+                }}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
                 patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}

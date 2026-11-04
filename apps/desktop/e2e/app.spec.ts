@@ -2983,30 +2983,48 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await expect(peek).toBeHidden();
   });
 
-  await test.step('with Ctrl held the mouse wheel scrolls the box up and down the block, and neither the listing nor the window', async () => {
-    const before = peek.locator('.peek-more.before');
+  await test.step('with Ctrl held the mouse wheel scrolls the box through the file, block after block, and neither the listing nor the window', async () => {
+    const before = peek.locator('.peek-more.before'), head = peek.locator('.peek-head');
+    const divider = (text: string) => peek.locator('.peek-blk', { hasText: text });
+    const bytesAt = (adr: string) => peek.locator('.peek-row', { has: page.locator('.p-adr', { hasText: new RegExp(`^${adr}$`) }) }).locator('.p-hex');
     const view = async () => page.evaluate(() => ({ top: document.querySelector('.listing')!.scrollTop, zoom: window.devicePixelRatio }));
-    // code as bytes: from $0921, three bytes of the block above it
+    // code as bytes: from $0921, three bytes of the block above it; under the block's end the next block
     await hover(row('0921'));
     await page.keyboard.down('Control');
     await expect(peek.locator('.p-hex').nth(1)).toHaveText('29 0f 8d e7 db 60');
     await expect(before).toHaveText('… 3 bytes before, from $091e');
+    await expect(peek.locator('.peek-blk').first()).toContainText('$0927–');
     const was = await view();
-    // up: the block's first bytes, a row of their own, and no further
+    // up: the block's first bytes, a row of their own, and above them the block before it
     await page.mouse.wheel(0, -100);
-    await expect(peek.locator('.p-hex').nth(1)).toHaveText('ad 1b d4');
-    await expect(peek.locator('.p-hex').nth(2)).toHaveText('29 0f 8d e7 db 60');
-    await expect(before).toBeHidden();
-    await page.mouse.wheel(0, -100);
-    await expect(peek.locator('.p-hex').nth(1)).toHaveText('ad 1b d4');
+    await expect(bytesAt('091e')).toHaveText('ad 1b d4');
+    await expect(divider('fx_091e · $091e–$0926')).toBeVisible();
+    await expect(head).not.toContainText('fx_091e');
     expect(await view()).toEqual(was);
-    // down again: no further than the line, the block ends in the box
-    await page.mouse.wheel(0, 300);
-    await expect(peek.locator('.p-hex').nth(1)).toHaveText('29 0f 8d e7 db 60');
+    // down: past the block's end, the head names the block at the top
+    await page.mouse.wheel(0, 200);
+    await page.mouse.wheel(0, 100);
+    await expect(head).not.toContainText('fx_091e');
+    await expect(bytesAt('0921')).toHaveCount(0);
+    expect(await view()).toEqual(was);
+
+    // a click in the box goes there in the listing; Alt+Left comes back
+    await page.waitForTimeout(400);
+    const far = peek.locator('.peek-row .p-hex [data-a]').first();
+    const a = Number(await far.getAttribute('data-a')), at = `$${a.toString(16).padStart(4, '0')}`;
+    expect(a).toBeGreaterThan(0x0926);
+    const b = (await far.boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 });
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(statusBar(page)).toContainText(`sel ${at}–${at} (1 B)`);
+    await expect(peek).toBeVisible();
     await page.keyboard.up('Control');
     await expect(peek).toBeHidden();
+    await page.keyboard.press('Alt+ArrowLeft');
+    await expect(statusBar(page)).toContainText('$091e');
 
-    // data as code: an instruction a row; shown again, the box starts at the line again
+    // data as code: an instruction a row; up into the block before it; shown again, the box starts at the line again
     await goTo(page, '$0985');
     await hover(row('0985'));
     await page.keyboard.down('Control');
@@ -3017,13 +3035,32 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await expect(first).not.toHaveText('0985');
     await expect(before).toContainText('before, from $0985');
     await page.mouse.wheel(0, -300);
-    await expect(first).toHaveText('0985');
-    await page.mouse.wheel(0, 100);
-    await expect(first).not.toHaveText('0985');
+    await expect(divider('$0985–$09b4')).toBeVisible();
+    await expect(head).not.toContainText('$0985–$09b4');
     await page.mouse.move(10, 10);
     await expect(peek).toBeHidden();
     await hover(row('0985'));
     await expect(first).toHaveText('0985');
+    await page.keyboard.up('Control');
+    await expect(peek).toBeHidden();
+  });
+
+  await test.step('a click in the box into a folded block unfolds it', async () => {
+    await goTo(page, '$0985');
+    await page.keyboard.press('f');
+    await expect(listing(page).locator('.row:not(.hdr)', { has: page.locator('.adr', { hasText: /^0985$/ }) })).toHaveCount(0);
+    const h = (await headerRow(page, '0985').boundingBox())!;
+    await page.mouse.move(h.x + 200, h.y + h.height / 2);
+    await page.keyboard.down('Control');
+    await expect(peek).toContainText('as code');
+    await page.waitForTimeout(400);
+    const ora = peek.locator('.peek-row[data-a="2438"]'); // $0986: ora $0c
+    const b = (await ora.boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 });
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(statusBar(page)).toContainText('sel $0986–$0986 (1 B)');
+    await expect(listing(page).locator('.row:not(.hdr)', { has: page.locator('.adr', { hasText: /^0985$/ }) })).not.toHaveCount(0);
     await page.keyboard.up('Control');
     await expect(peek).toBeHidden();
     await goTo(page, 'fx_091e');

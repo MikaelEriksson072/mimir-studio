@@ -1,10 +1,11 @@
 /* The peek (spec 10, "Titta åt andra hållet"): with Ctrl held, the block under the pointer shown the other way than the
  * listing shows it, in a small box. Code is shown as its bytes with their text (PETSCII and screen codes), every other
  * block as code: swept from the block's start as Data as code does, so the instructions stay put while the pointer goes
- * down the block. The mouse wheel scrolls the box up and down the block. */
+ * down the block. The mouse wheel scrolls the box up and down the whole .asm file, block after block in the order the
+ * listing has them, shown the same way; where a block starts a divider names it. */
 import { decode, h2, h4, hwSymbol, isIO, OPC, type Addr, type AnalysisResult, type Block, type ListingLine, type RenderResult, type Token } from '@mimir/core';
 
-/** at most this many rows in the box */
+/** at most this many rows in the box (a divider is a row) */
 export const PEEK_ROWS = 12;
 /** bytes a row shown as bytes */
 export const PEEK_ROW = 8;
@@ -12,49 +13,104 @@ export const PEEK_ROW = 8;
 /** the names the instructions use: the render's labels and zero-page variables */
 export type PeekNames = Pick<RenderResult, 'labels' | 'zp'>;
 
-/** What the box shows. `from`: the address the pointer is at; `mark`: the bytes of its line (none on a header or a
- *  label); `before` / `rest`: the bytes of the block before and after the rows shown. `off`: how many rows the box is
- *  scrolled from the pointer's line (up is less than 0), and how far it goes each way: `min` has the block's first
- *  byte in the top row, `max` its last byte in the bottom row (never less than 0: unscrolled, the box starts at the
- *  pointer's line however near the end it is). */
-export type Peek = { block: Block; from: Addr; mark: { start: Addr; end: Addr } | null; before: number; rest: number; off: number; min: number; max: number } & (
-  | { as: 'bytes'; rows: { a: Addr; n: number }[] }
-  | { as: 'code'; lines: Extract<ListingLine, { k: 'ins' | 'dat' }>[] });
+/** a row of bytes */
+export type PeekBytes = { k: 'row'; a: Addr; n: number };
+/** an instruction, or a byte that is none */
+export type PeekLine = Extract<ListingLine, { k: 'ins' | 'dat' }>;
+/** what a row of the box is: bytes or an instruction, or a divider before the rows of the block that starts there */
+export type PeekItem = { k: 'blk'; b: Block } | PeekBytes | PeekLine;
 
-/** the peek at `from` in block `b`; `asCode`: the block is shown as bytes in the listing, so the box shows it as code.
- *  `n`: how many bytes the line at `from` has (they are marked); `off`: the rows it is scrolled (kept within the block) */
-export function peekOf(A: AnalysisResult, names: PeekNames, b: Block, from: Addr, n: number, asCode: boolean, off = 0): Peek {
+/** What the box shows. `from`: the address the pointer is at; `mark`: the bytes of its line (none on a header or a
+ *  label). `head`: the block of the top row (the box's head names it); `before`: its bytes above that row; `tail`: the
+ *  block of the bottom row; `rest`: its bytes below it. `off`: how many rows the box is scrolled from the pointer's
+ *  line (up is less than 0, dividers not counted), and how far it goes each way: `min` has the file's first byte in the
+ *  top row, `max` its last byte in the bottom row (never less than 0: unscrolled, the box starts at the pointer's line
+ *  however near the end it is). */
+export type Peek = {
+  as: 'bytes' | 'code'; from: Addr; mark: { start: Addr; end: Addr } | null;
+  head: Block; before: number; tail: Block; rest: number; off: number; min: number; max: number; items: PeekItem[];
+};
+
+/** The blocks in the order the listing (the .asm file) has them, from its headers. A relocated block's own header is
+ *  left out: the blocks where its bytes run come after it. */
+export function peekOrder(A: AnalysisResult, lines: readonly ListingLine[]): Block[] {
+  const byId = new Map(A.blocks.map(b => [b.id, b])), seen = new Set<number>(), out: Block[] = [];
+  for (const l of lines) {
+    if (l.k !== 'hdr' || seen.has(l.blk)) continue;
+    const b = byId.get(l.blk);
+    if (b && b.type !== 'reloc' && b.end > b.start) { seen.add(b.id); out.push(b); }
+  }
+  return out;
+}
+
+/** where each instruction of a block starts, swept from its start (a jam opcode, or an instruction that would run past
+ *  the block, is a byte); kept per analysis */
+const sweeps = new WeakMap<AnalysisResult, Map<Block, Int32Array>>();
+function sweep(A: AnalysisResult, b: Block): Int32Array {
+  let m = sweeps.get(A);
+  if (!m) sweeps.set(A, m = new Map());
+  let s = m.get(b);
+  if (!s) {
+    const out: number[] = [];
+    for (let p = b.start; p < b.end;) { const o = OPC[A.mem[p]]; out.push(p); p += !o.jam && p + o.len <= b.end ? o.len : 1; }
+    m.set(b, s = Int32Array.from(out));
+  }
+  return s;
+}
+
+/** the peek at `from` in block `b` of the blocks `order` (peekOrder; `b` is put in it if it is missing); `asCode`: the
+ *  block is shown as bytes in the listing, so the box shows the file as code. `n`: how many bytes the line at `from`
+ *  has (they are marked); `off`: the rows it is scrolled (kept within the file) */
+export function peekOf(A: AnalysisResult, names: PeekNames, order: readonly Block[], b: Block, from: Addr, n: number, asCode: boolean, off = 0): Peek {
   const mark = n > 0 ? { start: from, end: Math.min(b.end, from + n) } : null;
-  if (!asCode) {
-    // rows of eight from the pointer's byte; above it the first row is the block's first bytes, as many as are left
-    const min = -Math.ceil((from - b.start) / PEEK_ROW), last = Math.ceil((b.end - from) / PEEK_ROW) - 1;
-    const max = Math.max(0, last - PEEK_ROWS + 1), top = Math.max(min, Math.min(max, off));
-    const rows: { a: Addr; n: number }[] = [];
-    for (let j = top; j <= last && rows.length < PEEK_ROWS; j++) {
-      const a = Math.max(b.start, from + j * PEEK_ROW);
-      rows.push({ a, n: Math.min(b.end, from + (j + 1) * PEEK_ROW) - a });
+  const blocks = order.includes(b) ? order : [b];
+  // each block's rows: as bytes eight a row from its start, the pointer's block from the pointer's byte (above it the
+  // first row is the block's first bytes, as many as are left); as code an instruction a row
+  const parts = blocks.map(k => {
+    if (asCode) { const s = sweep(A, k); return { b: k, head: 0, at: k.start, starts: s, count: s.length }; }
+    const at = k === b ? from : k.start, head = Math.ceil((at - k.start) / PEEK_ROW);
+    return { b: k, head, at, starts: null, count: head + Math.ceil((k.end - at) / PEEK_ROW) };
+  });
+  const first: number[] = [];
+  let total = 0;
+  for (const p of parts) { first.push(total); total += p.count; }
+  /** the block and its row of the file's row `g` */
+  const locate = (g: number) => {
+    let lo = 0, hi = parts.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (first[m] <= g) lo = m; else hi = m - 1; }
+    return { p: parts[lo], j: g - first[lo] };
+  };
+  const row = (g: number): PeekBytes | PeekLine => {
+    const { p, j } = locate(g);
+    if (!p.starts) {
+      const k = j - p.head, a = Math.max(p.b.start, p.at + k * PEEK_ROW);
+      return { k: 'row', a, n: Math.min(p.b.end, p.at + (k + 1) * PEEK_ROW) - a };
     }
-    const end = rows.length ? rows[rows.length - 1].a + rows[rows.length - 1].n : from;
-    return { as: 'bytes', block: b, from, mark, before: (rows[0]?.a ?? from) - b.start, rest: b.end - end, off: top, min, max, rows };
+    const a = p.starts[j], len = (j + 1 < p.starts.length ? p.starts[j + 1] : p.b.end) - a, o = OPC[A.mem[a]];
+    return len === o.len && !o.jam ? { k: 'ins', a, n: len, mn: o.mn, ext: '', tok: operand(A, names, a), cmt: '', ill: o.ill }
+      : { k: 'dat', a, n: 1, dir: '.byte', tok: [{ t: 'num', s: hex(A, A.mem[a], 2) }], cmt: o.jam ? `${o.mn.toLowerCase()} (halts the CPU)` : '' };
+  };
+  /** a block starts at row `g`: a divider above it, unless it is the top row */
+  const starts = (g: number) => locate(g).j === 0;
+
+  // the pointer's row: the row of its byte, or the instruction its byte is in
+  const ab = blocks.indexOf(b), pb = parts[ab];
+  let jf = pb.head;
+  if (pb.starts) { let lo = 0, hi = pb.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (pb.starts[m] <= from) lo = m; else hi = m - 1; } jf = lo; }
+  const at = first[ab] + jf;
+  // the top row that has the file's last byte in the bottom row, the dividers counted
+  let last = total - 1;
+  for (let rows = 1; last > 0;) { const more = 1 + (starts(last) ? 1 : 0); if (rows + more > PEEK_ROWS) break; rows += more; last--; }
+  const min = -at, max = Math.max(0, last - at), top = at + Math.max(min, Math.min(max, off));
+
+  const items: PeekItem[] = [];
+  let g = top;
+  for (; g < total && items.length < PEEK_ROWS; g++) {
+    if (g > top && starts(g)) { if (items.length + 2 > PEEK_ROWS) break; items.push({ k: 'blk', b: locate(g).p.b }); }
+    items.push(row(g));
   }
-  // every instruction from the block's start: the one the pointer's byte is in comes first, unscrolled
-  const starts: Addr[] = [], lens: number[] = [];
-  let p = b.start, at = -1;
-  while (p < b.end) {
-    const o = OPC[A.mem[p]], len = !o.jam && p + o.len <= b.end ? o.len : 1;
-    if (at < 0 && p + len > from) at = starts.length;
-    starts.push(p); lens.push(len); p += len;
-  }
-  if (at < 0) at = Math.max(0, starts.length - 1);
-  const min = -at, max = Math.max(0, starts.length - PEEK_ROWS - at), top = at + Math.max(min, Math.min(max, off));
-  const lines: Extract<ListingLine, { k: 'ins' | 'dat' }>[] = [];
-  for (let i = top; i < starts.length && lines.length < PEEK_ROWS; i++) {
-    const q = starts[i], o = OPC[A.mem[q]];
-    lines.push(lens[i] === o.len && !o.jam ? { k: 'ins', a: q, n: lens[i], mn: o.mn, ext: '', tok: operand(A, names, q), cmt: '', ill: o.ill }
-      : { k: 'dat', a: q, n: 1, dir: '.byte', tok: [{ t: 'num', s: hex(A, A.mem[q], 2) }], cmt: o.jam ? `${o.mn.toLowerCase()} (halts the CPU)` : '' });
-  }
-  const end = lines.length ? lines[lines.length - 1].a + lines[lines.length - 1].n : from;
-  return { as: 'code', block: b, from, mark, before: (lines[0]?.a ?? from) - b.start, rest: b.end - end, off: top - at, min, max, lines };
+  const t0 = row(top), t1 = row(g - 1), head = locate(top).p.b, tail = locate(g - 1).p.b;
+  return { as: asCode ? 'code' : 'bytes', from, mark, head, before: t0.a - head.start, tail, rest: tail.end - (t1.a + t1.n), off: top - at, min, max, items };
 }
 
 const hex = (A: AnalysisResult, v: number, w: 2 | 4) => { const s = w === 2 ? h2(v & 0xff) : h4(v & 0xffff); return '$' + (A.S.hexCase === 'upper' ? s.toUpperCase() : s); };
