@@ -1,7 +1,7 @@
 /* Listing — virtualized, interactive view of the shared line model (spec 6, "one line model, two views"). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, SPACE, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
+import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, SPACE, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Block, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { cellParts, type Cell } from '../lib/cells';
 import { Icon } from '../lib/icons';
@@ -10,6 +10,8 @@ import type { Changed, Editing, ScrollReq, Sel, ViewAt } from '../lib/types';
 import { useUi, type Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
 import { bookmarkCss, bookmarkSpan } from './Bookmarks';
+import { GfxStrip } from './GfxStrip';
+import { gfxHead, gfxItemAt, gfxSize } from '../lib/gfxlines';
 
 const TOKEN_CLASS: Record<Token['t'], string> = { lbl: 'syn-label', hw: 'syn-hw', kw: 'syn-kw', num: 'syn-num', str: 'syn-str', dir: 'syn-dir', def: 'syn-label', p: 'syn-p' };
 
@@ -165,6 +167,10 @@ interface ListingProps {
   /** a byte (or an instruction's first byte) was clicked in the peek: it is picked in the listing; `extend` (Shift):
    *  the selection runs to it */
   onPeekPick?: (a: Addr, extend: boolean) => void;
+  /** a sprite block's header: give it `n` sprites (its size in 64-byte steps from its start) */
+  onSprites?: (b: Block, n: number) => void;
+  /** the listing's width changed (how many characters and sprites its pictures put on a row follows it) */
+  onWidth?: (w: number) => void;
 }
 
 /** the line of the last loaded byte of `start`..`end` (a bookmark's area), -1 when it has none */
@@ -174,14 +180,16 @@ const lastLine = (lineOf: Int32Array, start: Addr, end: Addr): number => {
   return e >= start ? lineOf[e] : -1;
 };
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView, onPeekPick }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
+  const widthTo = useRef(onWidth);
+  widthTo.current = onWidth;
   useLayoutEffect(() => {
     const el = box.current; if (!el) return;
-    const ro = new ResizeObserver(() => setHeight(el.clientHeight));
-    ro.observe(el); setHeight(el.clientHeight);
+    const ro = new ResizeObserver(() => { setHeight(el.clientHeight); widthTo.current?.(el.clientWidth); });
+    ro.observe(el); setHeight(el.clientHeight); widthTo.current?.(el.clientWidth);
     return () => ro.disconnect();
   }, []);
 
@@ -198,12 +206,13 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   const dragTo = (x: number, y: number) => {
     const d = drag.current, el = box.current; if (!d || !el) return;
     const { lines: ls, onDragTo: cb, onDragCells: cells, A: an } = latest.current;
-    const i = Math.max(0, Math.min(ls.length - 1, Math.floor((y - el.getBoundingClientRect().top + el.scrollTop) / ROW)));
+    // a picture's room is the picture
+    const i = gfxHead(ls, Math.max(0, Math.min(ls.length - 1, Math.floor((y - el.getBoundingClientRect().top + el.scrollTop) / ROW))));
     if (d.cell) {
       const c = d.cell;
       if (i === c.line) {
-        const over = document.elementFromPoint(x, y)?.closest<HTMLElement>('.cell');
-        const to = over && el.contains(over) ? { a: Number(over.dataset.a), n: Number(over.dataset.n) } : c.from;
+        const over = document.elementFromPoint(x, y);
+        const to = (over && el.contains(over) ? cellUnder(over, x, y) : null) ?? c.from;
         if (to.a !== c.to) { c.to = to.a; d.i = i; cells(c.from, to, ls[i]); }
         return;
       }
@@ -250,11 +259,18 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); window.addEventListener('blur', blur); window.addEventListener('keydown', key, true);
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); window.removeEventListener('blur', blur); window.removeEventListener('keydown', key, true); drag.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  /** the byte (or word) of a data line under the pointer */
-  const cellOf = (e: ReactMouseEvent): Cell | null => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('.cell');
-    return el ? { a: Number(el.dataset.a), n: Number(el.dataset.n) } : null;
+  /** the byte (or word) of a data line under the pointer, or the item of a picture (a character, a sprite, a bitmap
+   *  cell) at the point */
+  const cellUnder = (t: Element, x: number, y: number): Cell | null => {
+    const el = t.closest<HTMLElement>('.cell');
+    if (el) return { a: Number(el.dataset.a), n: Number(el.dataset.n) };
+    const g = t.closest<HTMLElement>('.gfx-strip'), l = g ? latest.current.lines[Number(g.dataset.i)] : null;
+    if (!g || l?.k !== 'gfx') return null;
+    const r = g.getBoundingClientRect(), { height, scale } = gfxSize(l);
+    // under a sprite: its address, which is the sprite's too
+    return gfxItemAt(l, (x - r.left) / scale, Math.min(height - 1, (y - r.top) / scale));
   };
+  const cellOf = (e: ReactMouseEvent): Cell | null => cellUnder(e.target as Element, e.clientX, e.clientY);
   const down = (l: ListingLine, i: number, e: ReactMouseEvent) => {
     if (e.button !== 0) return;
     // no native text selection while dragging a range; keep the keyboard on the listing
@@ -263,7 +279,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     onClickLine(l, i, e, false, cell);
     // by its address or bytes, a line at a block's edge moves into the block next to it; from a byte a drag selects
     // bytes; elsewhere it selects lines
-    const handle = !e.shiftKey && l.k !== 'hdr' && (e.target as HTMLElement).closest('.adr, .hex');
+    const handle = !e.shiftKey && l.k !== 'hdr' && l.k !== 'gfx' && (e.target as HTMLElement).closest('.adr, .hex');
     startDrag(i, e.clientX, e.clientY, handle ? movesOf(A, l) : null, !e.shiftKey ? cell : null);
   };
 
@@ -274,6 +290,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   // the pointer goes into it, and a click there picks that byte in the listing; before that it follows the pointer
   // down the lines under it.
   const lower = useUi(s => s.mon.lower);
+  const gfxColors = useUi(s => s.gfx.colors);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const peekKeys = useRef({ quiet: false, timer: 0 });
   const [peekRow, setPeekRow] = useState<{ i: number; x: number; top: number; since: number } | null>(null);
@@ -283,7 +300,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const over = p && el && !peekKeys.current.quiet ? document.elementFromPoint(p.x, p.y) : null;
     const onPeek = !!over?.closest('.peek');
     if (!p || !el || !over || (!onPeek && (!el.contains(over) || over.closest('.edit-pop')))) { setPeekRow(null); return; }
-    const r = el.getBoundingClientRect(), i = Math.floor((p.y - r.top + el.scrollTop) / ROW);
+    const r = el.getBoundingClientRect(), i = gfxHead(latest.current.lines, Math.floor((p.y - r.top + el.scrollTop) / ROW));
     const top = r.top + i * ROW - el.scrollTop, now = Date.now();
     setPeekRow(q => {
       if (onPeek && q && now - q.since >= PIN_MS) return q;
@@ -428,8 +445,10 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   const frame = useMemo(() => {
     if (!changed) return null;
     let i0 = lineOf[changed.start];
-    const i1 = lineOf[changed.end - 1];
+    let i1 = lineOf[changed.end - 1];
     if (i0 < 0 || i1 < i0) return null;
+    // a picture's room too
+    while (i1 + 1 < lines.length && lines[i1 + 1].k === 'gfx' && (lines[i1 + 1] as { pad?: boolean }).pad) i1++;
     while (i0 > 0 && lines[i0 - 1].a === changed.start && lines[i0 - 1].k !== 'blank' && lines[i0 - 1].k !== 'file') i0--;
     return { top: i0 * ROW, height: (i1 - i0 + 1) * ROW };
   }, [changed, lines, lineOf]);
@@ -448,15 +467,16 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   /** a bookmarked line is tinted in the colour of its (first) bookmark, which its mark has too */
   const tint = (i: number) => { const at = marks.get(i); return at ? { '--bm': bookmarkCss(bookmarks[at[0]].color) } as React.CSSProperties : undefined; };
   /** a line in a bookmark's area: the stripe in the left margin, which hangs from the mark and ends at its last line */
-  const stripe = (i: number) => {
-    const r = areas.find(x => i >= x.i0 && i <= x.i1); if (!r) return null;
-    return <span className={cx('bm-area', i === r.i0 && 'first', i === r.i1 && 'last')} style={{ background: r.css }} aria-hidden="true" />;
+  const stripe = (i: number, to = i) => {
+    const r = areas.find(x => to >= x.i0 && i <= x.i1); if (!r) return null;
+    return <span className={cx('bm-area', i === r.i0 && 'first', r.i1 >= i && r.i1 <= to && 'last')} style={{ background: r.css }} aria-hidden="true" />;
   };
   /** a line with a find match, and the one shown */
   const hit = (l: ListingLine) => (find?.hits.has(l) ? (find.cur === l ? 'hit hit-cur' : 'hit') : undefined);
   // with data shown as code the listing no longer matches the .asm file line for line: addresses then
   const byLine = gutter === 'line' && !lines.some(l => 'preview' in l && l.preview);
-  const first = Math.max(0, Math.floor(top / ROW) - 10), last = Math.min(lines.length, Math.ceil((top + height) / ROW) + 10);
+  // a picture above the rows in view whose room reaches into them is drawn too
+  const first = gfxHead(lines, Math.max(0, Math.floor(top / ROW) - 10)), last = Math.min(lines.length, Math.ceil((top + height) / ROW) + 10);
   const rows = [];
   for (let i = first; i < last; i++) {
     const l = lines[i];
@@ -484,12 +504,29 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleFold(l.a); }}><Icon name={folded.has(l.a) ? 'chevron' : 'down'} size={12} /></button>
         <span className="hdr-chip" style={{ '--c': `var(--g-${hg})` } as React.CSSProperties}>{typeInfo(l.type).label}</span>
         <span className="hdr-text">{l.text}</span>{l.excluded && <span className="hdr-excluded" title="Left out of the build: the block stays in the source under #if, its labels in #else">not built</span>}{l.binary && <span className="hdr-binary" title={`Saved as ${l.binary} and loaded with .import binary`}>binary</span>}{l.preview && <span className="hdr-preview" title="Shown as code; the export still writes this block as it is classified">as code</span>}{blk && blk.user && <span className="hdr-user" title="Type set by you"><Icon name="pencil" size={12} /></span>}{lparts.length > 0 && <span className="hdr-loader" title={lparts.map(({ f, p }) => `${f.name}: ${p.what}`).join('\n')}>{[...new Set(lparts.map(({ f }) => f.name.replace(/ \(.*$/, '')))].join(', ')}</span>}
+        {blk && blk.type === 'sprite' && blk.start === l.a && onSprites && <SpriteCount b={blk} onSprites={onSprites} />}
         {hidden.has(i) && <span className="hdr-folded">{hidden.get(i)} line{hidden.get(i) === 1 ? '' : 's'} folded</span>}
         {blk && !blk.user && blk.conf < 0.7 && <span className="hdr-conf" title={`Low confidence: ${blk.reason}`}>?</span>}
       </div>);
       continue;
     }
     if (l.k === 'file') { rows.push(<div key={i} className={cx('row filebar', hit(l))} style={{ top: i * ROW }}><Icon name="doc" size={13} /> {l.text}</div>); continue; }
+    // a picture (lib/gfxlines): one row as tall as the picture; the lines of its room are drawn by it
+    if (l.k === 'gfx') {
+      if (l.pad) continue;
+      const end = l.a + l.n, full = !!sel && l.a >= sel.start && end <= sel.end;
+      const over = sel && sel.start < end && sel.end > l.a ? sel : null;
+      rows.push(
+        <div key={i} className={cx('row', 'k-gfx', full && 'sel', i === curLine && 'cur', blk && excluded.has(blk.start) && 'excluded', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, height: l.rows * ROW, ...tint(i) }}
+          onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
+          <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i, i + l.rows - 1)}{mark(i)}
+          {offCell(l.a)}<span className={cx('adr', byLine && 'lno')} title={runTip}>{byLine ? lineNo[i] || '' : h4(l.a)}</span>
+          <span className="hex" title={`$${h4(l.a)}–$${h4(end - 1)} (${l.n} byte${l.n === 1 ? '' : 's'})`}>–{h4(end - 1)}</span>
+          {cycles && <span className="cyc" />}
+          <span className="src gfx-src"><GfxStrip l={l} i={i} A={A} colors={gfxColors} sel={over} cur={i === curLine ? cursor : null} />{l.cmt && <span className="syn-comment cmt user">// {l.cmt}</span>}</span>
+        </div>);
+      continue;
+    }
     // blank lines are rows of their own only when the line numbers would otherwise skip them, or a bookmark's area's
     // stripe goes on through them
     if (l.k === 'blank') {
@@ -521,7 +558,9 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       // a comment line or block goes above the labels: open the editor at its first line
       // (a zero-page variable's comment lines carry its address in `zp`)
       if (editing.kind === 'note') while (j > 0 && (editing.zp ? (lines[j - 1] as { zp?: Addr }).zp : lines[j - 1].a) === editing.addr && lines[j - 1].k === 'cmt' && (lines[j - 1] as { note?: boolean }).note) j--;
-      pop = <EditPopover key={editing.kind + editing.addr + (editing.block ? 'b' : '')} top={(editing.kind === 'comment' ? i : j) * ROW + ROW + 2} editing={editing} onCommit={onCommitEdit} onCancel={onCancelEdit} error={labelError} setError={setLabelError} />;
+      // under a picture, not over it
+      const at = editing.kind === 'comment' ? i : j, under = lines[at]?.k === 'gfx' ? (lines[at] as { rows: number }).rows : 1;
+      pop = <EditPopover key={editing.kind + editing.addr + (editing.block ? 'b' : '')} top={at * ROW + under * ROW + 2} editing={editing} onCommit={onCommitEdit} onCancel={onCancelEdit} error={labelError} setError={setLabelError} />;
     }
   }
   let chip = null;
@@ -553,7 +592,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => { setTop(e.currentTarget.scrollTop); if (peekRow) peekNow(); report(); }} aria-label="Disassembly listing"
       onMouseMove={peekMove} onMouseLeave={e => { if (e.relatedTarget instanceof Element && e.relatedTarget.closest('.peek')) return; pointer.current = null; clearTimeout(peekKeys.current.timer); setPeekRow(null); }}>
       <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{chip}</div>
-      {peek && peekRow && <PeekBox peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} sel={sel?.bytes ? sel : null} onPick={(a, extend) => onPeekPick?.(a, extend)} />}
+      {peek && peekRow && <PeekBox peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} rowH={(lines[peekRow.i]?.k === 'gfx' ? (lines[peekRow.i] as { rows: number }).rows : 1) * ROW} sel={sel?.bytes ? sel : null} onPick={(a, extend) => onPeekPick?.(a, extend)} />}
     </div>
   );
 }
@@ -561,13 +600,13 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
 /** The peek right under the row it is on, the pointer inside it from side to side, so the pointer goes straight into
  *  it (above the row where the window ends). A click on a byte, a character or an instruction picks that address in
  *  the listing (`onPick`); the bytes picked byte by byte (`sel`) are framed. */
-function PeekBox({ peek, A, names, lower, x, top, sel, onPick }: { peek: Peek; A: AnalysisResult; names: PeekNames; lower: boolean; x: number; top: number; sel: { start: Addr; end: Addr } | null; onPick: (a: Addr, extend: boolean) => void }) {
+function PeekBox({ peek, A, names, lower, x, top, rowH = ROW, sel, onPick }: { peek: Peek; A: AnalysisResult; names: PeekNames; lower: boolean; x: number; top: number; rowH?: number; sel: { start: Addr; end: Addr } | null; onPick: (a: Addr, extend: boolean) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = ref.current; if (!el) return;
     const w = el.offsetWidth, h = el.offsetHeight;
     el.style.left = `${Math.max(8, Math.min(x - 12, window.innerWidth - w - 8))}px`;
-    el.style.top = `${top + ROW + h <= window.innerHeight - 8 ? top + ROW : Math.max(8, top - h)}px`;
+    el.style.top = `${top + rowH + h <= window.innerHeight - 8 ? top + rowH : Math.max(8, top - h)}px`;
     el.style.visibility = 'visible';
   });
   const b = peek.block, name = names.labels.get(b.start)?.name;
@@ -608,6 +647,20 @@ function PeekBox({ peek, A, names, lower, x, top, sel, onPick }: { peek: Peek; A
         </div>))}
       {peek.rest > 0 && <div className="peek-more">… {peek.rest} more byte{peek.rest === 1 ? '' : 's'} to ${h4(b.end - 1)}</div>}
     </div>, document.body);
+}
+
+/** A sprite block's header: how many sprites it has, and - and + to give it one less or one more (its size in 64-byte
+ *  steps from its start; a sprite pointer often shows only the first of the sprites that follow one another). */
+function SpriteCount({ b, onSprites }: { b: Block; onSprites: (b: Block, n: number) => void }) {
+  const len = b.end - b.start, whole = Math.floor(len / 64), rest = len % 64;
+  const less = rest ? whole : whole - 1;
+  return (
+    <span className="hdr-sprites" onMouseDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
+      <button aria-label="One sprite less" title={less >= 1 ? `${less} sprite${less === 1 ? '' : 's'}: $${h4(b.start)}–$${h4(b.start + less * 64 - 1)}` : 'A sprite block has one sprite at least'} disabled={less < 1} onClick={() => onSprites(b, less)}>−</button>
+      <span title="Sprites one after the other from the start of the block, 64 bytes each">{whole} sprite{whole === 1 ? '' : 's'}{rest ? ` + ${rest} byte${rest === 1 ? '' : 's'}` : ''}</span>
+      <button aria-label="One sprite more" title={`${whole + 1} sprites: $${h4(b.start)}–$${h4(b.start + (whole + 1) * 64 - 1)}`} onClick={() => onSprites(b, whole + 1)}>+</button>
+    </span>
+  );
 }
 
 function EditPopover({ top, editing, onCommit, onCancel, error, setError }: { top: number; editing: Editing; onCommit: (v: string) => void; onCancel: () => void; error: string | null; setError: (e: string | null) => void }) {

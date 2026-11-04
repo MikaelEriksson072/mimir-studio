@@ -28,12 +28,13 @@ export const FORMATTABLE: readonly BlockKind[] = ['data', 'table', 'words'];
  * are the project's: the last one over exactly the block gives the settings, so a second change made before the
  * analysis has caught up with the first keeps the first.
  */
-export function formatOverride(b: Block, change: { fmt?: NumberFormat | null; row?: number | null }, overrides: readonly Override[] = []): Override {
+export function formatOverride(b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }, overrides: readonly Override[] = []): Override {
   const o = overrideLike(b, b.start, b.end);
   const last = [...overrides].reverse().find(x => x.start === o.start && x.end === o.end);
   const props: OverrideProps = { ...(last && last.type === o.type ? last.props : o.props) };
   if (change.fmt !== undefined) { if (change.fmt && !(change.fmt === 'hex' && b.type !== 'words')) props.fmt = change.fmt; else delete props.fmt; }
   if (change.row !== undefined) { if (change.row) props.row = change.row; else delete props.row; }
+  if (change.mc !== undefined) { if (change.mc != null) props.mc = change.mc; else delete props.mc; }
   return { start: o.start, end: o.end, type: o.type, ...(Object.keys(props).length ? { props } : {}) };
 }
 
@@ -44,6 +45,7 @@ function overrideLike(b: Block, start: Addr, end: Addr): Override {
   if (type === 'table' && p.sub) props.sub = p.sub;
   if (type === 'data' || type === 'table' || type === 'words') { if (p.fmt) props.fmt = p.fmt; if (p.row) props.row = p.row; }
   if (type === 'music') { if (p.init != null) props.init = p.init; if (p.play != null) props.play = p.play; }
+  if ((type === 'sprite' || type === 'charset' || type === 'bitmap') && p.mc != null) props.mc = p.mc;
   return { start, end, type, ...(Object.keys(props).length ? { props } : {}) };
 }
 

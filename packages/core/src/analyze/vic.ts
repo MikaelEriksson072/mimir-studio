@@ -46,6 +46,7 @@ export function vicEvidence(ctx: Ctx, mcfg: MemConfigInfo | null = null): { vic:
     }
     if (w.dest === 0xd011 && (w.v & 0x20)) vic.bitmap = true;
     if (w.dest === 0xd016 && (w.v & 0x10)) vic.multicolor = true;
+    if (w.dest === 0xd01c) vic.spriteMc = (vic.spriteMc ?? 0) | w.v;
   }
   if (mcfg) for (const c of mcfg.changes.values()) if (c.vic != null) for (const b of banksOf(c.vic)) vic.banks.add(b);
   if (!vic.banks.size) {

@@ -190,6 +190,7 @@ function mergeAnalyses(project: ProjectInput, parts: Split[], results: AnalysisR
     for (const b of A.vic.banks) out.vic.banks.add(b);
     for (const d of A.vic.d018) out.vic.d018.add(d);
     out.vic.bitmap ||= A.vic.bitmap; out.vic.multicolor ||= A.vic.multicolor;
+    if (A.vic.spriteMc != null) out.vic.spriteMc = (out.vic.spriteMc ?? 0) | A.vic.spriteMc;
     out.vic.sprites.push(...A.vic.sprites.map(x => ({ ...x, addr: g(x.addr) })));
     out.gfx.push(...A.gfx.map(x => ({ ...x, start: at(x.start) })));
     out.blocks.push(...A.blocks.map((b): Block => ({
@@ -322,7 +323,7 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
   // the listing's lines of each file, after its file bar
   const chunks = new Map<number, { bar: FileLine; lines: Line[] }>();
   let cur: Line[] | null = null;
-  for (const l of R.lines) { if (l.k === 'file') { cur = []; chunks.set(l.fi, { bar: l, lines: cur }); } else cur?.push(l); }
+  for (const l of R.lines) { if (l.k === 'file') { cur = []; chunks.set(l.fi, { bar: l, lines: cur }); } else if (l.k !== 'gfx') cur?.push(l); }
   const isChip = (i: number) => { const c = project.files[i]?.chip; return c != null && !!crt.chips[c] && chunks.has(i); };
   const order = [...chunks.keys()].filter(isChip);
   if (!order.length) return R;

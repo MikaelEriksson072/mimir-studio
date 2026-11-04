@@ -58,6 +58,9 @@ export interface OverrideProps {
   init?: Addr;
   play?: Addr;
   sub?: string;
+  /** sprites, a charset or a bitmap: drawn multicolour (true) or hires (false) in the listing's pictures; missing:
+   *  as the VIC evidence says ($d01c for sprites, $d016 for the others) */
+  mc?: boolean;
 }
 
 export interface Override {
@@ -372,6 +375,8 @@ export interface BlockProps {
   fmt?: NumberFormat;
   /** a relocated block: where its bytes run */
   to?: Addr;
+  /** graphics drawn multicolour or hires (OverrideProps.mc) */
+  mc?: boolean;
 }
 
 export interface Block {
@@ -508,6 +513,8 @@ export interface VicEvidence {
   d018: Set<number>;
   bitmap: boolean;
   multicolor: boolean;
+  /** the bits of every constant written to $d01c (sprite multicolour), by sprite number */
+  spriteMc?: number;
   sprites: SpriteRef[];
 }
 
@@ -700,7 +707,15 @@ export type HeadPart = 'title' | 'mark' | 'gap' | 'import' | 'hw' | 'zp' | 'ext'
 
 /** Listing-only separator between the files of a multi-file project. */
 export interface FileLine { k: 'file'; a: Addr; text: string; fi: number }
-export type ListingLine = Line | FileLine;
+/**
+ * Listing only: graphics drawn as they look, in place of their .byte rows. Its `n` bytes from `a` are items of `unit`
+ * bytes (a character or a bitmap cell 8, a sprite 64), laid out `cols` to a row from column `col`, of the block that
+ * starts at `blk`; `mc`: drawn multicolour. The picture takes `rows` rows of the listing: the lines after it with
+ * `pad` (and no bytes) are its room. `cmt`: the comments of the .byte rows it stands for; `names`: the labels of its
+ * sprites, written under them instead of on lines of their own.
+ */
+export interface GfxLine { k: 'gfx'; a: Addr; n: number; kind: 'sprite' | 'chars' | 'bitmap'; unit: number; col: number; cols: number; rows: number; blk: Addr; mc: boolean; cmt?: string; names?: { a: Addr; name: string }[]; pad?: boolean }
+export type ListingLine = Line | FileLine | GfxLine;
 
 export interface RenderLabel { name: string; kind: string; user: boolean }
 export interface RenderProblem { lvl: 'err'; msg: string; addr: Addr | undefined }

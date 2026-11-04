@@ -15,8 +15,10 @@ export interface AppPrefs {
   startScreen: boolean;
   /** the inspector always open, or folded in until it is needed */
   inspector: InspectorMode;
+  /** sprites, charsets and bitmaps drawn as they look in the listing, instead of their .byte rows */
+  gfxPictures: boolean;
 }
-const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open' };
+const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true };
 
 /** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them) */
 export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
@@ -87,6 +89,8 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
               <option value="auto">Folded in: opens when you need it, folds in when you click outside it</option>
             </select>
             <small className="muted">Folded in, the inspector is a strip at the right edge and the listing gets its room. A click on the strip, or on the start of a block (its header in the listing), opens the inspector over the editor; a click outside it or Esc folds it in again. The button at the top of the inspector switches between the two.</small></label>
+          <label className="check"><input id="set-gfxPictures" type="checkbox" checked={prefs.gfxPictures} onChange={e => setPrefs(p => ({ ...p, gfxPictures: e.target.checked }))} />
+            <span>Show graphics as pictures in the listing<small className="muted"> — sprites, charsets and bitmaps are drawn as they look (in the colours of the Graphics tab, multicolour as the VIC registers say or as set for the block) instead of as .byte rows. Click a character, a sprite or a bitmap cell to select its bytes. The source and the export still write .byte</small></span></label>
           <p className="muted small">{desktop ? 'Kept by the app (not in the project).' : 'Running outside the desktop app: there is no start screen.'}</p>
         </>}
       </div>

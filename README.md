@@ -74,6 +74,12 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
 - **A Graphics tab.** It shows all 64 KB as characters, sprites, bitmaps, screens or a font per character row. You
   select what you find, mark it and save it as raw bytes, a `.prg`, a Koala or Art Studio picture, a PNG or `.byte`
   source.
+- **Graphics as pictures in the listing.** Sprites, charsets and bitmaps are drawn as they look instead of as `.byte`
+  rows: a charset as rows of characters by screen code, sprites side by side with their labels under them, a bitmap
+  as its picture. Multicolour follows `$d01c` and `$d016`, or what you set for the block. A click picks a character,
+  a sprite or a bitmap cell. A sprite pointer often shows only the first frame of an animation, so the header of a
+  sprite block (and the inspector) sets how many sprites follow one another. Settings → General turns it off; the
+  source and the export always write `.byte`.
 - **A Memory tab.** It prints memory the way the VICE monitor does (`m`, `i`, `ii`). You can search it for text, as
   PETSCII and as screen codes at once, or for bytes (`a9 00 8d`, `??` for any byte), and step through the hits. `0`
   selects from the start of a text to the 0 byte that ends it, ready to mark as text.

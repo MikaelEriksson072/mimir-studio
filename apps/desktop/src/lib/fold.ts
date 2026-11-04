@@ -16,9 +16,10 @@ export interface ListingView {
 }
 
 /** `size`: how many addresses there are (64 KB, or a cartridge's banks as spaces of their own, spec 13.9b);
- *  `relocs`: the relocated blocks, whose folded header stands for where they run too */
-export function foldLines(all: readonly ListingLine[], blocks: readonly Block[], folded: ReadonlySet<Addr>, size = 0x10000, relocs: readonly Reloc[] = []): ListingView {
-  const nums = fileLineNumbers(all);
+ *  `relocs`: the relocated blocks, whose folded header stands for where they run too; `numbers`: each line's number in
+ *  its .asm file, when the lines are not the file's one for one (pictures in the listing, lib/gfxlines) */
+export function foldLines(all: readonly ListingLine[], blocks: readonly Block[], folded: ReadonlySet<Addr>, size = 0x10000, relocs: readonly Reloc[] = [], numbers?: Int32Array | null): ListingView {
+  const nums = numbers ?? fileLineNumbers(all);
   const lines: ListingLine[] = [], no: number[] = [], hidden = new Map<number, number>(), foldedAt = new Map<number, Block>();
   let fold = -1; // view index of the folded header whose lines are being skipped
   let nest = 0; // in a folded relocated block: how many .pseudopc are open, its own too

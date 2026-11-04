@@ -388,12 +388,18 @@ test('the listing shows memory addresses or line numbers', async ({ page }) => {
   await expect(gutter.getByRole('button', { name: 'Address' })).toHaveAttribute('aria-pressed', 'true');
   expect(startRow(await listingRows(page)).adr).toBe('0810');
 
-  const numbered = async () => {
+  /** numbered like the .asm file: 1, 2, 3 … in order (blank lines too). A picture of graphics stands for the .byte
+   *  rows it draws, so the numbers go on after them; with the pictures off there is no gap, and only the file bar has
+   *  no number */
+  const numbered = async (pictures = true) => {
     const rows = await listingRows(page);
-    // numbered like the .asm file: 1, 2, 3 … without gaps (blank lines too); only the file bar has none
     const nums = rows.filter(r => r.adr !== '').map(r => Number(r.adr));
-    expect(nums).toEqual(nums.map((_n, i) => i + 1));
-    expect(rows.filter(r => r.adr === '').length).toBe(1);
+    expect(nums[0]).toBe(1);
+    expect(nums.filter((n, i) => i && n <= nums[i - 1])).toEqual([]);
+    if (!pictures) {
+      expect(nums).toEqual(nums.map((_n, i) => i + 1));
+      expect(rows.filter(r => r.adr === '').length).toBe(1);
+    }
     expect(Number(startRow(rows).adr)).toBeGreaterThan(1);
   };
   await gutter.getByRole('button', { name: 'Line' }).click();
@@ -405,6 +411,14 @@ test('the listing shows memory addresses or line numbers', async ({ page }) => {
   await waitForListing(page);
   await expect(page.getByRole('group', { name: 'Left column' }).getByRole('button', { name: 'Line' })).toHaveAttribute('aria-pressed', 'true');
   await numbered();
+
+  // the graphics as .byte rows (Settings → General): every line of the .asm file has its row
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General' }).click();
+  await page.getByLabel(/Show graphics as pictures in the listing/).uncheck();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(listing(page).locator('.gfx-strip')).toHaveCount(0);
+  await numbered(false);
 
   await page.getByRole('group', { name: 'Left column' }).getByRole('button', { name: 'Address' }).click();
   expect(startRow(await listingRows(page)).adr).toBe('0810');
@@ -4458,4 +4472,40 @@ test('patch with the cycle count kept, where the original has a branch: the code
   await expect(dialog.getByRole('button', { name: 'Apply patch' })).toBeDisabled();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(dialog).toBeHidden();
+});
+
+test('graphics as pictures in the listing: characters to click, how many sprites follow one another, and off in Settings', async ({ page }) => {
+  await waitForListing(page);
+
+  await test.step('a charset is rows of characters by screen code; a click picks one, → the next', async () => {
+    await goTo(page, 'charset_3000');
+    const strip = listing(page).locator('.gfx-strip.gfx-chars').first();
+    await expect(strip).toBeVisible();
+    // drawn twice as big: 16 px a character, so "D" (screen code 4) is the fifth
+    await strip.click({ position: { x: 4 * 16 + 8, y: 8 } });
+    await expect(statusBar(page)).toContainText('sel $3020–$3027 (8 B)');
+    await page.keyboard.press('ArrowRight');
+    await expect(statusBar(page)).toContainText('sel $3028–$302f (8 B)');
+  });
+
+  await test.step('the header of a sprite block gives it one sprite more, with its label under the first', async () => {
+    await goTo(page, 'spr_2000');
+    const hdr = headerRow(page, '2000');
+    await expect(hdr.locator('.hdr-sprites')).toHaveText(/1 sprite\b/);
+    await hdr.getByRole('button', { name: 'One sprite more' }).click();
+    await expect(hdr).toContainText('$2000-$207f (128 bytes)');
+    await expect(hdr.locator('.hdr-sprites')).toContainText('2 sprites');
+    await expect(listing(page).locator('.gfx-sprite .gfx-cap')).toHaveText(['spr_2000', '2040']);
+    await page.keyboard.press('Control+z');
+    await expect(hdr).toContainText('$2000-$203f (64 bytes)');
+  });
+
+  await test.step('Settings → General turns the pictures off: the .byte rows are back', async () => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('tab', { name: 'General' }).click();
+    await page.getByLabel(/Show graphics as pictures in the listing/).uncheck();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(listing(page).locator('.gfx-strip')).toHaveCount(0);
+    await expect(listing(page).locator('.row .src', { hasText: /^\s*\.byte %[01]{8}, %[01]{8}, %[01]{8}/ }).first()).toBeVisible();
+  });
 });

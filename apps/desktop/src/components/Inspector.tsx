@@ -9,6 +9,7 @@ import type { Sel } from '../lib/types';
 import { useUi } from '../store/ui';
 import { Heatmap, type CanvasColors, type HeatMode } from './Heatmap';
 import { GfxPreview, type GfxMode } from './GfxPreview';
+import { blockMc } from '../lib/gfxlines';
 import { CyclesSection } from './Cycles';
 
 interface InspectorProps {
@@ -29,8 +30,11 @@ interface InspectorProps {
   onToggleExcluded: (at: Addr) => void;
   /** save the block as data/<label>.bin (loaded with .import binary), or write it in the source again */
   onToggleBinary: (at: Addr) => void;
-  /** the number format of a data, table or word block (null: the default) and how many items a row (null: the default) */
-  onFormat: (b: Block, change: { fmt?: NumberFormat | null; row?: number | null }) => void;
+  /** the number format of a data, table or word block (null: the default) and how many items a row (null: the default);
+   *  graphics drawn multicolour or hires (null: as the VIC registers say) */
+  onFormat: (b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }) => void;
+  /** a sprite block gets `n` sprites (its size in 64-byte steps from its start) */
+  onSprites: (b: Block, n: number) => void;
   /** cycle counting on: the counted range and how to mark a branch as taken */
   cycles?: { path: CyclePath; onToggle: (pc: Addr) => void } | null;
   /** the zero-page variable whose `.label` line in the file head was clicked (it has no block of its own) */
@@ -44,7 +48,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, bank }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -54,6 +58,9 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   const range = sel && sel.multi ? sel : blk ? { start: blk.start, end: blk.end } : null;
   const autoMode: GfxMode | null = blk ? (blk.type === 'sprite' ? 'sprite' : blk.type === 'charset' ? 'chars' : blk.type === 'bitmap' ? 'bitmap' : null) : null;
   const mode = view === 'auto' ? autoMode : view;
+  // a graphics block shown as what it is: multicolour as set for it (the listing's pictures draw it so too)
+  const blockMcOn = !!blk && view === 'auto' && autoMode != null && (sel == null || !sel.multi || (sel.start === blk.start && sel.end === blk.end));
+  const mcShown = blockMcOn && blk ? blockMc(A, blk) : mc;
   const groups = useMemo(() => { const g: Partial<Record<TypeGroup, number>> = {}; for (const [t, n] of Object.entries(A.stats.bytesByType)) { const k = groupOfType(+t); g[k] = (g[k] || 0) + n; } return g; }, [A]);
   const lb = blk ? R.labels.get(blk.start) : undefined;
   const [nameV, setNameV] = useState(''); const [cmtV, setCmtV] = useState('');
@@ -99,6 +106,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
               {blk.user && <option value="auto">Automatic (clear override)</option>}
             </select></label>}
           {FORMATTABLE.includes(blk.type) && <FormatFields blk={blk} defaultRow={blk.type === 'words' ? 1 : A.S.bytesPerRow} onFormat={onFormat} />}
+          {blk.type === 'sprite' && <SpriteFields key={`${blk.start}-${blk.end}`} blk={blk} onSprites={onSprites} />}
           <label className="check" title={runRl ? 'Written inside the .pseudopc of the relocated block: leave out the whole relocated block instead' : undefined}><input type="checkbox" aria-label="Include in the build" disabled={!!runRl} checked={!project.excluded.includes(blk.start)} onChange={() => onToggleExcluded(blk.start)} /><span>Include in the build<small className="muted"> — when off, the block stays in the source under #if and its bytes are left out</small></span></label>
           <label className="check"><input type="checkbox" aria-label="Save as a binary file" checked={project.binary.includes(blk.start)} onChange={() => onToggleBinary(blk.start)} /><span>Save as a binary file<small className="muted"> — the export writes <span className="mono">data/{lb ? lb.name : `block_${h4(blk.start)}`}.bin</span> and the source loads it with .import binary</small></span></label>
           <div className="merge-row">
@@ -125,8 +133,12 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
           </div>
           {mode && range ? (
             <>
-              <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={Math.max(range.end, range.start + (mode === 'bitmap' ? 8000 : mode === 'chars' ? 8 : 64)) - B.base} mode={mode} mc={mc} /></div>
-              <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>
+              <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={Math.max(range.end, range.start + (mode === 'bitmap' ? 8000 : mode === 'chars' ? 8 : 64)) - B.base} mode={mode} mc={mcShown} /></div>
+              {blockMcOn && blk ? <div className="mc-row">
+                <label className="check" title="Saved with the block: the listing's pictures draw it so too"><input type="checkbox" checked={mcShown} onChange={e => onFormat(blk, { mc: e.target.checked })} /> Multicolor</label>
+                {blk.props.mc != null ? <button className="linkish small" onClick={() => onFormat(blk, { mc: null })} title="Draw it as the VIC registers say ($d01c for sprites, $d016 for a charset or bitmap)">as the VIC registers say</button>
+                  : <span className="muted small">as the VIC registers say</span>}
+              </div> : <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>}
             </>
           ) : music ? (
             <dl className="kv">
@@ -161,6 +173,26 @@ function RelocNotice({ R, r, inside, onRelocate, onUnrelocate }: { R: RenderResu
           <button className="btn small" onClick={() => onUnrelocate(r.start)} title="Read the bytes where they are loaded again; names and comments go back with them">Stop relocating</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** How many sprites a sprite block has, one after the other from its start (64 bytes each): a sprite pointer often shows
+ *  only the first of them, so the rest are given here. The blocks after it give or take the bytes. */
+function SpriteFields({ blk, onSprites }: { blk: Block; onSprites: InspectorProps['onSprites'] }) {
+  const len = blk.end - blk.start, whole = Math.floor(len / 64), rest = len % 64;
+  const [v, setV] = useState(String(whole));
+  const n = /^\d+$/.test(v.trim()) ? parseInt(v, 10) : NaN;
+  const ok = Number.isFinite(n) && n >= 1 && n <= 1024 && n * 64 !== len;
+  const apply = () => { if (ok) onSprites(blk, n); };
+  return (
+    <div className="field sprite-count"><label htmlFor="insp-sprites">Sprites one after the other</label>
+      <div className="field-row">
+        <button type="button" className="btn small" aria-label="One sprite less" disabled={(rest ? whole : whole - 1) < 1} onClick={() => onSprites(blk, rest ? whole : whole - 1)}>−</button>
+        <input id="insp-sprites" className="mono" value={v} inputMode="numeric" spellCheck={false} onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') apply(); }} onBlur={apply} />
+        <button type="button" className="btn small" aria-label="One sprite more" onClick={() => onSprites(blk, whole + 1)}>+</button>
+      </div>
+      <small className="muted">{whole} sprite{whole === 1 ? '' : 's'} of 64 bytes from ${h4(blk.start)}{rest ? `, and ${rest} byte${rest === 1 ? '' : 's'} more` : ''}. A sprite pointer often shows only the first sprite of an animation: give the number here (Enter), and the blocks after it give the bytes.</small>
     </div>
   );
 }

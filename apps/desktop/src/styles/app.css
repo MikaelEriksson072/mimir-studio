@@ -362,6 +362,26 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .hdr-excluded { font: 600 10px/16px var(--font-ui); text-transform: uppercase; letter-spacing: 0.05em; padding: 0 6px; border-radius: 4px; color: var(--warn); box-shadow: inset 0 0 0 1px currentColor; }
 .hdr-binary { font: 600 10px/16px var(--font-ui); text-transform: uppercase; letter-spacing: 0.05em; padding: 0 6px; border-radius: 4px; color: var(--accent-hi); box-shadow: inset 0 0 0 1px currentColor; margin-left: 6px; }
 .row.excluded .src, .row.excluded .hex { opacity: 0.5; }
+/* a sprite block's header: how many sprites it has, one less or one more */
+.hdr-sprites { display: inline-flex; align-items: center; gap: 2px; font: 11px/16px var(--font-ui); color: var(--fg-2); padding: 0 2px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line); background: var(--bg); }
+.hdr-sprites > span { padding: 0 4px; white-space: nowrap; }
+.hdr-sprites button { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 3px; background: none; color: var(--fg-2); font: 600 13px/16px var(--font-ui); cursor: pointer; }
+.hdr-sprites button:hover:not(:disabled) { background: var(--row-hover); color: var(--fg); }
+.hdr-sprites button:disabled { opacity: 0.35; cursor: default; }
+/* pictures in the listing (lib/gfxlines): the row is as tall as its picture, which sits in the middle of it */
+.row.k-gfx { align-items: flex-start; }
+.row.k-gfx > .adr, .row.k-gfx > .hex, .row.k-gfx > .off, .row.k-gfx > .cyc { line-height: 20px; }
+.row.k-gfx .bm-mark { bottom: auto; height: 20px; }
+.gfx-src { align-self: stretch; display: flex; align-items: center; gap: 14px; }
+.gfx-strip { position: relative; flex: none; display: block; cursor: pointer; }
+.gfx-strip canvas { display: block; image-rendering: pixelated; }
+.gfx-sel, .gfx-cur, .gfx-hover { position: absolute; pointer-events: none; }
+.gfx-sel { background: color-mix(in srgb, var(--accent) 34%, transparent); }
+.gfx-cur { outline: 2px solid var(--accent-hi); outline-offset: 0; }
+.gfx-hover { outline: 1px solid color-mix(in srgb, var(--fg) 70%, transparent); outline-offset: 0; }
+.gfx-cap { position: absolute; font: 10px/13px var(--font-code); color: var(--fg-3); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.gfx-cap.named { color: var(--syn-label); }
+.listing.moving .gfx-strip { cursor: grabbing; }
 .merge-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
 .merge-row .btn { flex: 1; justify-content: center; }
 .merge-row .merge-range-btn { flex-basis: 100%; }
@@ -705,6 +725,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .check input { margin-top: 2px; accent-color: var(--accent); }
 .gfx-box { display: grid; place-items: center; padding: 10px; border-radius: 6px; background: #161434; border: 1px solid var(--line); }
 .gfx { image-rendering: pixelated; display: block; max-width: 100%; height: auto; }
+/* the inspector: multicolour as set for the block, or back to what the VIC registers say */
+.mc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .text-prev { margin: 0; padding: 8px 10px; border-radius: 6px; background: #352879; color: #a59cff; font: 12px/1.5 var(--font-code); white-space: pre-wrap; word-break: break-all; }
 
 /* ---------- status bar ---------- */

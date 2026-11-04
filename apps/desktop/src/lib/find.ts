@@ -19,6 +19,8 @@ export function findText(l: ListingLine): string {
     case 'cmt': return l.raw ? l.text : l.text ? `// ${l.text}` : '//';
     case 'hdr': return `${typeInfo(l.type).label}\n${l.text}`;
     case 'file': return l.text;
+    // a picture: the labels written under its sprites, and the comments of the rows it stands for
+    case 'gfx': return [...(l.names ?? []).map(x => `${x.name}:`), ...cmt(l.cmt)].join('\n');
     default: return '';
   }
 }

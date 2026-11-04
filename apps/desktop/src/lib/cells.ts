@@ -2,6 +2,7 @@
  * character of a `.text` line one. The listing makes each a cell to click, so a block can be split, re-typed or
  * moved from any byte, not only from the start of a line. */
 import type { Addr, ListingLine, Token } from '@mimir/core';
+import { gfxCells } from './gfxlines';
 
 /** an item of a data line: where its bytes start and how many there are */
 export interface Cell { a: Addr; n: number }
@@ -36,8 +37,9 @@ function partsOf(l: ListingLine): CellPart[] | null {
   return out;
 }
 
-/** the cells of a line (null: it has none) */
+/** the cells of a line (null: it has none); a picture's are its characters, sprites or bitmap cells */
 export function cellsOf(l: ListingLine): Cell[] | null {
+  if (l.k === 'gfx') { const c = gfxCells(l); return c.length ? c : null; }
   const p = cellParts(l);
   return p ? p.flatMap(x => (x.cell ? [x.cell] : [])) : null;
 }

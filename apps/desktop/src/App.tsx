@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys,
+  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog,
@@ -19,6 +19,7 @@ import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
+import { gfxColsFor, gfxListing } from './lib/gfxlines';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
@@ -123,7 +124,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     tick();
   });
   const ui = useUi();
-  const { theme, tab, bottom, activity, sidePanel, panelOpen, inspector, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave } = ui;
+  const { theme, tab, bottom, activity, sidePanel, panelOpen, inspector, welcome, sizes, gutter, dataAsCode, cycles, offsets, followQuicksave, gfxPictures } = ui;
   const setUi = ui.set;
 
   const [srcPath, setSrcPath] = useState<string | null>(null);
@@ -171,7 +172,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   // folded blocks (by start address) show only their header; the view maps addresses to the visible lines
   const [folded, setFolded] = useState<ReadonlySet<Addr>>(() => new Set());
-  const view = useMemo(() => foldLines(R.lines, A.blocks, folded, A.mem.length, A.relocs), [R, A, folded]);
+  // the listing's lines: the source's, with sprites, charsets and bitmaps as pictures when that is on (lib/gfxlines),
+  // as many characters and sprites a row as the listing has room for (left of the picture: the gutter, the address,
+  // the bytes, and the offset and cycles columns when they are on)
+  const [listW, setListW] = useState(0);
+  const cols = gfxColsFor(listW ? listW - (3 + 57 + 96 + 30 + (offsets ? 66 : 0) + (cycles ? 76 : 0)) : 1e9);
+  const shown = useMemo(() => (gfxPictures ? gfxListing(R.lines, A, { chars: cols.chars, sprite: cols.sprite }) : null), [R, A, gfxPictures, cols.chars, cols.sprite]);
+  const listLines = shown?.lines ?? R.lines;
+  const view = useMemo(() => foldLines(listLines, A.blocks, folded, A.mem.length, A.relocs, shown?.nums), [listLines, shown, A, folded]);
   const excludedSet = useMemo(() => new Set(project.excluded), [project.excluded]);
   const lineOf = view.lineOf;
   /* ---- where in memory the editor is (14.6b): the listing, Graphics and Memory each say where they were scrolled to,
@@ -319,28 +327,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const [findOpen, setFindOpen] = useState(false);
   const [findQ, setFindQ] = useState('');
   const [findOpts, setFindOpts] = useState<FindOptions>({ matchCase: false, word: false });
-  /** the hit shown: its index in R.lines (folded blocks too) */
+  /** the hit shown: its index in the listing's lines (folded blocks too) */
   const [findCur, setFindCur] = useState<number | null>(null);
   const [findFocus, setFindFocus] = useState(0);
   /** Ctrl+F in the source tab: Monaco's own find */
   const [srcFind, setSrcFind] = useState(0);
-  const findTexts = useMemo(() => (findOpen ? R.lines.map(findText) : null), [R, findOpen]);
+  const findTexts = useMemo(() => (findOpen ? listLines.map(findText) : null), [listLines, findOpen]);
   const findRe = useMemo(() => (findOpen ? findRegExp(findQ, findOpts) : null), [findOpen, findQ, findOpts]);
   const findHits = useMemo(() => (findTexts ? findLines(findTexts, findRe) : []), [findTexts, findRe]);
   /** the hit shown, as an index into the hits (-1: none) */
   const findAt = useMemo(() => { if (findCur == null) return -1; const k = nextHit(findHits, findCur, 1, true); return findHits[k] === findCur ? k : -1; }, [findHits, findCur]);
-  const listingFind = useMemo((): ListingFind | null => (findRe && findHits.length ? { re: findRe, hits: new Set(findHits.map(i => R.lines[i])), cur: findAt >= 0 ? R.lines[findHits[findAt]] : null } : null), [findRe, findHits, findAt, R]);
+  const listingFind = useMemo((): ListingFind | null => (findRe && findHits.length ? { re: findRe, hits: new Set(findHits.map(i => listLines[i])), cur: findAt >= 0 ? listLines[findHits[findAt]] : null } : null), [findRe, findHits, findAt, listLines]);
   /** where find put the cursor last: once it is moved elsewhere (a click), the next step goes from the cursor */
   const findAddr = useRef<Addr | null>(null);
   /** the cursor before the first step goes into the navigation history once a find (Esc then goes back to it) */
   const findBack = useRef(false);
-  /** the cursor's line, as an index into R.lines */
-  const cursorLineIdx = () => { const v = cursor != null ? lineOf[cursor] : -1; return v >= 0 ? Math.max(0, R.lines.indexOf(view.lines[v])) : 0; };
+  /** the cursor's line, as an index into the listing's lines */
+  const cursorLineIdx = () => { const v = cursor != null ? lineOf[cursor] : -1; return v >= 0 ? Math.max(0, listLines.indexOf(view.lines[v])) : 0; };
   const showHit = (i: number) => {
-    const l = R.lines[i]; if (!l) return;
+    const l = listLines[i]; if (!l) return;
     // a hit inside a folded block unfolds it, and the relocated blocks it runs in
     if (l.k !== 'hdr') for (let j = i - 1; j >= 0; j--) {
-      const h = R.lines[j];
+      const h = listLines[j];
       if (h.k === 'file') break;
       if (h.k === 'hdr') { const b = A.blocks[h.blk]; if (b && folded.has(b.start)) setFolded(f => { const n = new Set(f); n.delete(b.start); return n; }); break; }
     }
@@ -376,14 +384,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
   /* ---- Ctrl+↓ / Ctrl+↑: the next block, or the start of the cursor's block and then the one before; the block's
      header goes to the top of the listing. Folded blocks stay folded: the cursor stops on their header ---- */
-  /** the block headers, as indices into R.lines */
-  const hdrLines = useMemo(() => R.lines.flatMap((l, i) => (l.k === 'hdr' ? [i] : [])), [R]);
+  /** the block headers, as indices into the listing's lines */
+  const hdrLines = useMemo(() => listLines.flatMap((l, i) => (l.k === 'hdr' ? [i] : [])), [listLines]);
   /** where the last jump put the cursor: a run of jumps goes into the navigation history once (Esc goes back) */
   const blockAddr = useRef<Addr | null>(null);
   const jumpBlock = (dir: 1 | -1) => {
     if (useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
     const from = cursor != null ? cursorLineIdx() : -1;
-    const l = R.lines[blockStep(hdrLines, from, dir, cursor != null && findBlock(A.blocks, cursor)?.start === cursor)];
+    const l = listLines[blockStep(hdrLines, from, dir, cursor != null && findBlock(A.blocks, cursor)?.start === cursor)];
     if (!l) return;
     if (cursor != null && cursor !== l.a && cursor !== blockAddr.current) { navHist.current.back.push(cursor); navHist.current.fwd = []; }
     blockAddr.current = l.a;
@@ -854,8 +862,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     showChanged(r.start, r.end, `Marked as ${m ? m.label : id}`);
   };
   /** a data, table or word block's number format and items a row (an override like the block, with them) */
-  const setFormat = (b: Block, change: { fmt?: NumberFormat | null; row?: number | null }) => {
-    const what = change.fmt !== undefined ? `${change.fmt === 'bin' ? 'binary' : change.fmt === 'dec' ? 'decimal' : change.fmt === 'hex' ? 'hex' : 'addresses'} numbers` : `${change.row ?? 'default'} a row`;
+  const setFormat = (b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }) => {
+    const what = change.mc !== undefined ? (change.mc == null ? 'colours as the VIC registers say' : change.mc ? 'multicolour' : 'hires') : change.fmt !== undefined ? `${change.fmt === 'bin' ? 'binary' : change.fmt === 'dec' ? 'decimal' : change.fmt === 'hex' ? 'hex' : 'addresses'} numbers` : `${change.row ?? 'default'} a row`;
     update(`$${h4(b.start)}-$${h4(b.end - 1)}: ${what}`, d => { d.overrides.push(formatOverride(b, change, d.overrides)); });
     showChanged(b.start, b.end, what[0].toUpperCase() + what.slice(1));
   };
@@ -915,6 +923,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     setModal(null); setSizeAt(null); setSel(null);
     showChanged(r.start, r.end, `${r.end - r.start} bytes`);
     toast(`The ${what} block is $${h4(r.start)}–$${h4(r.end - 1)} (${r.end - r.start} bytes)`, 'ok');
+  };
+  /** a sprite block gets `n` sprites: its size in 64-byte steps from its start (a sprite pointer often shows only the
+   *  first of the sprites that follow one another); the blocks after it give or take the bytes, as with Block size */
+  const setSprites = (b: Block, n: number) => {
+    if (n < 1 || b.start + n * 64 === b.end) return;
+    const r = resizeBlock(A, b.start, b.start, b.start + n * 64, 'join');
+    if ('error' in r) { toast(`${n} sprites from $${h4(b.start)} do not fit: ${r.error}`, 'warn'); return; }
+    update(`$${h4(b.start)}: ${n} sprite${n === 1 ? '' : 's'}`, d => { d.overrides.push(...r.overrides); for (const k of r.rekeys) moveBlockKeys(d, k.from, k.to); });
+    showChanged(r.start, r.end, `${n} sprite${n === 1 ? '' : 's'}`);
   };
   /** the Merge range dialog was confirmed: one block of the chosen type replaces every block in the range */
   const mergeRangeInto = (o: Override, label: string, replaced: number) => {
@@ -1005,7 +1022,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     update(text ? `Comment ${block ? 'block' : 'line'} above $${h4(addr)}` : `Remove comment above $${h4(addr)}`, d => { if (text) d.notes[addr] = block ? { text, block } : { text }; else delete d.notes[addr]; });
   };
   // `at`: the line the context menu was opened on (its closures were made before the cursor moved there)
-  const lineAddr = (at?: Addr) => at ?? (curLine && curLine.a != null ? curLine.a : cursor);
+  // a picture's line: the character, sprite or cell at the cursor
+  const lineAddr = (at?: Addr) => at ?? (curLine && curLine.a != null && curLine.k !== 'gfx' ? curLine.a : cursor);
   /** the program starts at `a`; null clears it: the analysis uses the detected start (BASIC SYS or the load
    * address) again and Build & Run autostarts the program with RUN */
   const setStart = (a: Addr | null) => {
@@ -1714,6 +1732,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'redo', label: 'Redo', key: 'Ctrl+Y', run: redo },
     { id: 'tab-listing', label: 'Show listing', run: () => setUi({ tab: 'listing' }) },
     { id: 'cycles', label: cycles ? 'Listing: hide cycle counts' : 'Listing: show cycle counts (6510 cycles per instruction; select a range or block to count it)', run: () => setUi({ cycles: !cycles, tab: 'listing' }) },
+    { id: 'gfx-pictures', label: gfxPictures ? 'Listing: show sprites, charsets and bitmaps as .byte rows' : 'Listing: show sprites, charsets and bitmaps as pictures', run: () => setUi({ gfxPictures: !gfxPictures, tab: 'listing' }) },
     { id: 'data-as-code', label: dataAsCode ? 'Listing: show data as classified' : 'Listing: show data as code (find code that is marked as data)', run: () => setUi({ dataAsCode: !dataAsCode, tab: 'listing' }) },
     { id: 'offsets', label: offsets ? 'Listing: hide the offset in the file' : 'Listing: show the offset in the file (as SourceGen)', run: () => setUi({ offsets: !offsets }) },
     { id: 'gutter', label: gutter === 'line' ? 'Listing: show memory addresses' : 'Listing: show line numbers (as in the .asm file)', run: () => setUi({ gutter: gutter === 'line' ? 'addr' : 'line' }) },
@@ -2150,7 +2169,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 onPeekPick={(a, extend) => { pickCell({ a, n: 1 }, extend); listRef.current?.focus(); }}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
-                patches={patchesOn(project.patches)} keepView={dataAsCode} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}
+                patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}
                 startAt={viewAt.current} onView={seeAt} />
               {findOpen && <FindBar q={findQ} opts={findOpts} onQuery={setFindQ} onOpts={setFindOpts} count={findHits.length} at={findAt >= 0 ? findAt + 1 : null} onStep={stepFind} onClose={closeFind} focusKey={findFocus} />}
               </div>
@@ -2206,7 +2225,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
@@ -2219,7 +2238,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
       {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, or a .d64 to mount it</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}

@@ -58,6 +58,8 @@ interface UiState {
   cycles: boolean;
   /** listing: the offset column, where each byte is in the file it was opened from (as in SourceGen) */
   offsets: boolean;
+  /** listing: sprites, charsets and bitmaps drawn as they look instead of their .byte rows (Settings → General) */
+  gfxPictures: boolean;
   /** a new VICE quicksave (Alt+F11 in VICE) is opened when it is written */
   followQuicksave: boolean;
   /** the start screen is shown when the app starts; off: it goes on with what was worked on last */
@@ -80,7 +82,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'followQuicksave', 'startScreen', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'gfxPictures', 'followQuicksave', 'startScreen', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -96,6 +98,7 @@ export const useUi = create<UiState>((set) => ({
   dataAsCode: false,
   cycles: store.get('kr.cycles', false),
   offsets: store.get('kr.offsets', true),
+  gfxPictures: store.get('kr.gfxPictures', true),
   followQuicksave: store.get('kr.followQuicksave', true),
   startScreen: store.get('kr.startScreen', true),
   quickPack: { ...DEFAULT_PACK, ...store.get<Partial<PackPrefs>>('kr.quickPack', {}) },
