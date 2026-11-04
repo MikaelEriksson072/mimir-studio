@@ -1,6 +1,6 @@
 /* Per-user UI preferences, persisted in localStorage. */
 import { create } from 'zustand';
-import { DEFAULT_PACK, type MonitorMode, type PackPrefs } from '@mimir/core';
+import { DEFAULT_PACK, type BlockKind, type MonitorMode, type PackPrefs } from '@mimir/core';
 import { store } from '../lib/util';
 
 export type Theme = 'dark' | 'light';
@@ -68,6 +68,8 @@ interface UiState {
   quickPack: PackPrefs;
   /** the side panel's sections opened in this run (by id); not persisted: every section is closed when the app starts */
   sideOpen: string[];
+  /** the Blocks view's folders (a block type each) opened in this run; not persisted: every folder is closed when the app starts */
+  blkOpen: BlockKind[];
   /** the user's own bookmark colours, for every project: eight places, each #rrggbb or empty */
   bmColors: string[];
   gfx: GfxPrefs;
@@ -103,6 +105,7 @@ export const useUi = create<UiState>((set) => ({
   startScreen: store.get('kr.startScreen', true),
   quickPack: { ...DEFAULT_PACK, ...store.get<Partial<PackPrefs>>('kr.quickPack', {}) },
   sideOpen: [],
+  blkOpen: [],
   bmColors: bmColorsOf(store.get<unknown>('kr.bmColors', [])),
   gfx: gfxPrefs(store.get<Partial<GfxPrefs>>('kr.gfx', {})),
   mon: { ...MON_DEFAULTS, ...store.get<Partial<MonPrefs>>('kr.mon', {}) },

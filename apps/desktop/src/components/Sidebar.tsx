@@ -1,14 +1,15 @@
-/* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, program start, memory map), Blocks (filterable), Symbols (labels, hardware registers), Bookmarks, Pack.
+/* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, program start, memory map), Blocks (a folder per type, with how many; filterable), Symbols (labels, hardware registers), Bookmarks, Pack.
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type Crt, type D64File, type LoaderPart, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type BlockKind, type Crt, type D64File, type LoaderPart, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef } from '@mimir/core';
+import { blockFolders } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
 import { cx, fmtBytes, groupOfKind } from '../lib/util';
 import type { MountedDisk } from '../lib/types';
 import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
-import type { Activity } from '../store/ui';
+import { useUi, type Activity } from '../store/ui';
 import { BookmarksView, type BookmarkEditing } from './Bookmarks';
 import { MemoryStrip, type CanvasColors } from './Heatmap';
 import { PackView, type PackViewProps } from './Pack';
@@ -127,24 +128,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
   }
   if (view === 'bookmarks') return <BookmarksView A={A} editing={bmEditing} bookmarks={project.bookmarks} R={R} cursor={cursor} selected={bmSel} onSelect={onBmSelect} onGo={onBmGo} onAdd={onBmAdd} onEdit={onBmEdit} onDelete={onBmDelete} />;
   if (view === 'pack') return <PackView {...pack} />;
-  if (view === 'blocks') {
-    const ql = q.toLowerCase();
-    const list = A.blocks.filter(b => { const l = R.labels.get(b.start); return !ql || (l && l.name.toLowerCase().includes(ql)) || kindInfo(b.type).label.toLowerCase().includes(ql) || h4(b.start).includes(ql); });
-    return (
-      <div className="side-inner">
-        <div className="side-title">Blocks <span className="muted">{A.blocks.length}</span></div>
-        <div className="side-search"><Icon name="search" size={14} /><label htmlFor="blk-q" className="sr-only">Filter blocks</label><input id="blk-q" value={q} onChange={e => setQ(e.target.value)} placeholder="Filter by name, type or address" /></div>
-        <div className="blk-list">
-          {list.map(b => { const l = R.labels.get(b.start); const on = cursor != null && cursor >= b.start && cursor < b.end; return (
-            <button key={b.id} className={cx('blk-row', on && 'on')} onClick={() => onNavigate(b.start)}>
-              <i style={{ background: `var(--g-${groupOfKind(b.type)})` }} />
-              <span className="blk-main"><span className="blk-name">{l ? l.name : kindInfo(b.type).label}</span><span className="muted mono small">{bankAdr(A, b.start)} · {b.end - b.start} B</span></span>
-              <span className="blk-type">{kindInfo(b.type).label}{b.user && <Icon name="pencil" size={11} />}</span>
-            </button>); })}
-        </div>
-      </div>
-    );
-  }
+  if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} />;
   // symbols
   const ql = q.toLowerCase();
   const labels = [...R.labels.entries()].filter(([, l]) => !ql || l.name.toLowerCase().includes(ql)).sort((x, y) => x[0] - y[0]);
@@ -164,6 +148,73 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
           <div key={e.sym.name} className="sym-row static" title={e.sym.desc}>
             <span className="mono sym-name syn-hw">{e.sym.name}</span><span className="muted small">{e.sym.cat}</span><span className="sym-refs">{e.n}</span>
           </div>))}
+      </div>
+    </div>
+  );
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * The Blocks view: a folder for each type of block, with how many blocks of it there are. A click on a folder opens it
+ * or folds it up (closed when the app starts, the user's choice kept for the run), on a block goes to it; the folder
+ * with the block at the cursor is marked while it is closed. While the filter has text, only the folders with blocks it
+ * keeps are there, open (one folded up stays so until the text changes), with how many of their blocks it keeps.
+ */
+function BlocksView({ A, R, cursor, q, setQ, onNavigate }: Pick<SidebarProps, 'A' | 'R' | 'cursor' | 'onNavigate'> & { q: string; setQ: (q: string) => void }) {
+  const opened = useUi(s => s.blkOpen), setUi = useUi(s => s.set);
+  const ql = q.trim().toLowerCase();
+  // the folders folded up while the filter has this text
+  const [shut, setShut] = useState<{ q: string; kinds: BlockKind[] }>({ q: '', kinds: [] });
+  const folders = useMemo(() => blockFolders(A.blocks, b => {
+    if (!ql) return true;
+    const l = R.labels.get(b.start);
+    return !!l?.name.toLowerCase().includes(ql) || kindInfo(b.type).label.toLowerCase().includes(ql) || h4(b.start).includes(ql);
+  }), [A.blocks, R.labels, ql]);
+  const shown = ql ? folders.filter(f => f.blocks.length) : folders;
+  const shutNow = shut.q === ql ? shut.kinds : [];
+  const isOpen = (k: BlockKind) => (ql ? !shutNow.includes(k) : opened.includes(k));
+  const toggle = (k: BlockKind) => {
+    if (ql) { setShut({ q: ql, kinds: isOpen(k) ? [...shutNow, k] : shutNow.filter(x => x !== k) }); return; }
+    const now = useUi.getState().blkOpen;
+    setUi({ blkOpen: now.includes(k) ? now.filter(x => x !== k) : [...now, k] });
+  };
+  const allOpen = shown.length > 0 && shown.every(f => isOpen(f.kind));
+  const setAll = (open: boolean) => {
+    if (ql) setShut({ q: ql, kinds: open ? [] : shown.map(f => f.kind) });
+    else setUi({ blkOpen: open ? shown.map(f => f.kind) : [] });
+  };
+  const at = cursor == null ? undefined : A.blocks.find(b => cursor >= b.start && cursor < b.end);
+  return (
+    <div className="side-inner">
+      <div className="side-title">Blocks <span className="muted">{A.blocks.length}</span><span className="grow" />
+        {shown.length > 1 && <button className="icon-btn" title={allOpen ? 'Fold every folder up' : 'Open every folder'} aria-label={allOpen ? 'Fold every block folder up' : 'Open every block folder'} onClick={() => setAll(!allOpen)}>
+          <Icon name={allOpen ? 'up' : 'down'} size={14} /></button>}
+      </div>
+      <div className="side-search"><Icon name="search" size={14} /><label htmlFor="blk-q" className="sr-only">Filter blocks</label><input id="blk-q" value={q} onChange={e => setQ(e.target.value)} placeholder="Filter by name, type or address" /></div>
+      <div className="blk-list" role="list" aria-label="Block types">
+        {shown.map(f => {
+          const open = isOpen(f.kind), here = at?.type === f.kind;
+          const count = ql ? `${f.blocks.length} of ${plural(f.total, `${f.label} block`)} match the filter` : plural(f.total, `${f.label} block`);
+          return (
+            <div key={f.kind} role="listitem" className={cx('blk-folder', open && 'open')}>
+              <button className={cx('blk-folder-head', here && !open && 'here')} aria-expanded={open} title={`${open ? 'Fold up' : 'Open'} ${f.label}: ${count}${here ? '\nThe block at the cursor is in it' : ''}`} onClick={() => toggle(f.kind)}>
+                <Icon name="down" size={12} className="blk-folder-arrow" />
+                <span className="blk-folder-icon" style={{ color: `var(--g-${f.group})` }}><Icon name="folder" size={15} /></span>
+                <span className="blk-folder-name">{f.label}</span>
+                <span className="blk-folder-n">{ql ? `${f.blocks.length}/${f.total}` : f.total}</span>
+              </button>
+              {open && <div className="blk-folder-body" role="group" aria-label={`${f.label} blocks`}>
+                {f.blocks.map(b => { const l = R.labels.get(b.start); return (
+                  <button key={b.id} className={cx('blk-row', at === b && 'on')} onClick={() => onNavigate(b.start)}>
+                    <span className="blk-main"><span className="blk-name">{l ? l.name : f.label}</span><span className="muted mono small">{bankAdr(A, b.start)} · {b.end - b.start} B</span></span>
+                    {b.user && <span className="blk-type" title="Its type is set by you"><Icon name="pencil" size={11} /></span>}
+                  </button>); })}
+              </div>}
+            </div>
+          );
+        })}
+        {!shown.length && <p className="side-hint">{ql ? `No block matches "${q.trim()}".` : 'No blocks.'}</p>}
       </div>
     </div>
   );

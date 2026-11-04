@@ -211,6 +211,17 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .blk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .blk-name { color: var(--fg); font-family: var(--font-code); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .blk-type { font-size: 11px; color: var(--fg-3); display: inline-flex; gap: 3px; align-items: center; white-space: nowrap; }
+/* the Blocks view's folders, a block type each, with how many blocks of it there are */
+.blk-folder { display: flex; flex-direction: column; gap: 1px; }
+.blk-folder-head { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 6px 0 4px; border: 0; border-radius: 5px; background: none; color: var(--fg-2); text-align: left; cursor: pointer; min-width: 0; }
+.blk-folder-head:hover { background: var(--row-hover); color: var(--fg); }
+.blk-folder-head.here { background: var(--sel); color: var(--fg); }
+.blk-folder-arrow { flex: none; color: var(--fg-3); transition: transform 0.15s; transform: rotate(-90deg); }
+.blk-folder.open .blk-folder-arrow { transform: none; }
+.blk-folder-icon { display: inline-flex; flex: none; }
+.blk-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; }
+.blk-folder-n { flex: none; min-width: 22px; padding: 1px 6px; border-radius: 9px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); color: var(--fg-2); font: 11px/16px var(--font-code); text-align: center; }
+.blk-folder-body { display: flex; flex-direction: column; gap: 1px; margin: 0 0 4px 17px; padding-left: 6px; border-left: 1px solid var(--line); }
 .sym-row { padding: 4px 6px; }
 .sym-row.static { cursor: default; }
 .sym-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-size: 12px; }

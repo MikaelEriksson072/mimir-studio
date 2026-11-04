@@ -3152,11 +3152,21 @@ test('the Demo button opens the showcase: every block type and a guided tour in 
     await expect(toast(page, /^Bookmark \$[0-9a-f]{4}: /)).toBeVisible();
   });
 
-  await test.step('the Blocks view has one block of every type', async () => {
+  await test.step('the Blocks view has a folder for every type, with how many blocks of it there are', async () => {
     await page.locator('nav.activity').getByRole('button', { name: 'Blocks' }).click();
-    const types = await page.locator('.blk-list .blk-type').allTextContents();
+    const folders = page.getByRole('list', { name: 'Block types' }).locator('.blk-folder-head');
+    const types = (await folders.locator('.blk-folder-name').allTextContents()).map(x => x.trim());
     for (const t of ['BASIC', 'Code', 'Text', 'Data', 'Word table', 'Table', 'Lo/Hi table', 'Sprites', 'Charset', 'Bitmap', 'Screen matrix', 'Music (SID)', 'Fill'])
-      expect(types.map(x => x.trim()), t).toContain(t);
+      expect(types, t).toContain(t);
+    // the counts add up to every block, the folders are closed until one is clicked
+    const counts = (await folders.locator('.blk-folder-n').allTextContents()).map(Number);
+    expect(counts.every(n => n > 0)).toBe(true);
+    await expect(page.locator('.side-title')).toContainText(`Blocks ${counts.reduce((a, b) => a + b, 0)}`);
+    await expect(page.locator('.blk-folder-body')).toHaveCount(0);
+    const music = folders.filter({ hasText: 'Music (SID)' });
+    await music.click();
+    await expect(music).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('group', { name: 'Music (SID) blocks' }).locator('.blk-row')).toHaveCount(Number(await music.locator('.blk-folder-n').textContent()));
   });
 
   await test.step('it verifies byte for byte', async () => {
