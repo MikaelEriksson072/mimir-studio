@@ -666,7 +666,7 @@ function PeekBox({ peek, A, names, lower, x, top, rowH = ROW, sel, onPick }: { p
         <span className="peek-as">{peek.as === 'bytes' ? 'as bytes and text' : 'as code'}</span>
       </div>
       {peek.before > 0 && <div className="peek-more before">… {peek.before} byte{peek.before === 1 ? '' : 's'} before, from ${h4(head.start)}</div>}
-      {peek.as === 'bytes' && <div className="peek-row cols"><span className="p-adr" /><span className="p-hex"><b>bytes</b></span><span className="p-txt"><b>PETSCII</b></span><span className="p-txt"><b>screen</b></span></div>}
+      <div className="peek-row cols"><span className="p-adr" /><span className="p-hex"><b>bytes</b></span><span className="p-txt"><b>PETSCII</b></span><span className="p-txt"><b>screen</b></span>{peek.as === 'code' && <span className="p-src"><b>code</b></span>}</div>
       {peek.items.map((it, i) => it.k === 'blk' ? (
         <div key={i} className="peek-blk" data-a={it.b.start}>{named(it.b)}</div>
       ) : it.k === 'row' ? (
@@ -680,6 +680,8 @@ function PeekBox({ peek, A, names, lower, x, top, rowH = ROW, sel, onPick }: { p
         <div key={i} data-a={it.a} className={cx('peek-row', peek.mark && it.a < peek.mark.end && it.a + it.n > peek.mark.start && 'on', picked(it.a) && 'picked')}>
           <span className="p-adr">{h4(it.a)}</span>
           <span className="p-hex">{[...A.mem.subarray(it.a, it.a + it.n)].map(h2).join(' ')}</span>
+          <span className="p-txt">{text(it.a, it.n, false)}</span>
+          <span className="p-txt">{text(it.a, it.n, true)}</span>
           <span className="p-src"><LineBody l={it} onToken={() => { }} mem={A.mem} /></span>
         </div>
       ))}

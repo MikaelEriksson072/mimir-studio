@@ -326,6 +326,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .peek .p-hex { width: 23ch; flex: none; color: var(--fg-2); }
 .peek.code .p-hex { width: 8ch; }
 .peek .p-txt { width: 8ch; flex: none; }
+/* as code an instruction is three bytes at most: as wide as the column's name */
+.peek.code .p-txt { width: 6ch; }
 .peek .p-txt .dot { color: var(--fg-3); }
 .peek .p-txt .inv { background: var(--fg); color: var(--panel-2); }
 .peek .p-hex .on, .peek .p-txt .on { color: var(--fg); background: color-mix(in srgb, var(--accent) 32%, transparent); border-radius: 2px; }

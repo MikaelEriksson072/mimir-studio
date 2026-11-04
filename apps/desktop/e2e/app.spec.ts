@@ -3029,7 +3029,7 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await hover(row('0985'));
     await page.keyboard.down('Control');
     await expect(peek).toContainText('as code');
-    const first = peek.locator('.peek-row .p-adr').first();
+    const first = peek.locator('.peek-row[data-a] .p-adr').first();
     await expect(first).toHaveText('0985');
     await page.mouse.wheel(0, 100);
     await expect(first).not.toHaveText('0985');
@@ -3107,16 +3107,21 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await expect(listing(page).locator('.row.hdr', { hasText: '$0985-$09b4 (48 bytes)' })).toHaveCount(1);
   });
 
-  await test.step('data: as code, from the block\'s start', async () => {
+  await test.step('data: as code, from the block\'s start, with each instruction\'s bytes as PETSCII and as screen codes', async () => {
     // "HELLO FROM THE MIMIR STUDIO DEMO!" in screen codes: H ($08) is php, E L ($05 $0c) ora $0c
     await goTo(page, '$0985');
     await hover(row('0985'));
     await page.keyboard.down('Control');
     await expect(peek).toContainText('as code');
-    const first = peek.locator('.peek-row').first();
+    await expect(peek.locator('.peek-row.cols')).toHaveText(/bytes\s*PETSCII\s*screen\s*code/);
+    const first = peek.locator('.peek-row[data-a]').first(), second = peek.locator('.peek-row[data-a]').nth(1);
     await expect(first.locator('.p-adr')).toHaveText('0985');
     await expect(first.locator('.p-src')).toHaveText('php');
-    await expect(peek.locator('.peek-row').nth(1).locator('.p-src')).toHaveText('ora $0c');
+    await expect(second.locator('.p-src')).toHaveText('ora $0c');
+    // the text the bytes are: as screen codes the H and the EL, as PETSCII control codes
+    await expect(first.locator('.p-txt').nth(1)).toHaveText('H');
+    await expect(second.locator('.p-txt').nth(1)).toHaveText('EL');
+    await expect(second.locator('.p-txt').nth(0)).toHaveText('..');
     await expect(first).toHaveClass(/\bon\b/);
     await page.keyboard.up('Control');
     await expect(peek).toBeHidden();
