@@ -535,6 +535,9 @@ test('Data as code keeps the line in view where it is on screen, both ways', asy
     await expect(cur.locator('.adr')).toHaveText(/^(2f[0-9a-f]{2}|3000)$/);
     await page.getByRole('button', { name: 'Show as classified' }).click();
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    // the lines as classified come from the analysis a moment after the button: until then the listing still shows the
+    // code (with the cursor's line kept where it was), and puts the cursor's line there again when they come
+    await expect(listing(page).locator('.row.preview')).toHaveCount(0);
     await expect.poll(() => y(cur)).toBe(y0);
   });
 
@@ -546,13 +549,16 @@ test('Data as code keeps the line in view where it is on screen, both ways', asy
       const box = el.getBoundingClientRect();
       const rows = [...el.querySelectorAll<HTMLElement>('.row:not(.hdr)')].filter(r => r.getBoundingClientRect().y >= box.y && r.getBoundingClientRect().bottom <= box.bottom && /^[0-9a-f]{4}$/.test(r.querySelector('.adr')?.textContent ?? '') && r.querySelector('.hex')?.textContent)
         .sort((p, q) => parseFloat(p.style.top) - parseFloat(q.style.top));
-      return { adr: parseInt(rows[0].querySelector('.adr')!.textContent!, 16), y: Math.round(rows[0].getBoundingClientRect().y) };
+      const cur = el.querySelector('.row.cur')?.getBoundingClientRect();
+      return { adr: parseInt(rows[0].querySelector('.adr')!.textContent!, 16), y: Math.round(rows[0].getBoundingClientRect().y), curInView: !!cur && cur.bottom > box.y && cur.y < box.bottom };
     });
+    expect(top.curInView, 'the cursor\'s line is out of view').toBe(false);
     await toggle.click();
     await expect(listing(page).locator('.row.preview').first()).toBeVisible();
     await expect.poll(async () => (await rowOf(top.adr))?.y).toBe(top.y);
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(listing(page).locator('.row.preview')).toHaveCount(0);
     await expect.poll(async () => (await rowOf(top.adr))?.y).toBe(top.y);
   });
 });
