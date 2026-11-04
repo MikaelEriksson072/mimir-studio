@@ -10,7 +10,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { analyze, builtCartridge, makeD64, makePrg, openCartridge, overwritesSystemArea, parseVsf, patchSnapshot, render, verify } from '../src';
-import { findVice, prepareVice, viceArgv, viceMonitorScript } from '../src/node';
+import { DRIVE_INIT, findVice, prepareVice, viceArgv, viceMonitorScript } from '../src/node';
 import { fromSource } from './helpers/programs';
 import { readPng } from './helpers/png';
 
@@ -35,7 +35,11 @@ describe('VICE command line', () => {
   });
 
   it('puts a disk in drive 8, with the inject PRG mode (the disk image mode would replace it), and has the drive read it first', () => {
-    const init = 'open15,8,15,"i":close15:';
+    // no string literal: BASIC would copy it into string space, which a program up to $a000 or beyond leaves none of
+    const init = 'open15,8,15:poke781,15:sys65481:poke780,73:sys65490:sys65484:close15:';
+    expect(DRIVE_INIT).toBe(init);
+    expect(init).not.toContain('"');
+    expect(`${init}sys65535`.length).toBeLessThanOrEqual(80); // BASIC's line
     expect(viceArgv({ prgPath: 'p.prg', disk: 'd.d64' })).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-autoload', 'p.prg', '-keybuf', `${init}run\\n`]);
     expect(viceArgv({ args: ['-autostartprgmode', '1'], prgPath: 'p.prg', labelsPath: 'p.vs', start: 0x0801, disk: 'd.d64' }))
       .toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-moncommands', 'p.vs', '-autoload', 'p.prg', '-keybuf', `${init}sys2049\\n`]);
@@ -131,6 +135,25 @@ describe.skipIf(!vice)(`real VICE (${vice ?? 'not found'})`, () => {
       expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status).toBe(0x4d);
       // only put into memory and RUN, the drive has read nothing
       expect(spawnSync(vice!, [...headless(dir), '-8', disk, '-autostart', prgPath], { timeout: 90_000, windowsHide: true }).status).not.toBe(0x4d);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('starts a program that loads up to $f344 with a disk: no string space is left for BASIC', async () => {
+    // an unpacked program (Reflexball: $0801-$f344, start $0840) sets BASIC's end past $a000, so a string typed at
+    // READY stops with ?OUT OF MEMORY. The drive reads the disk all the same: M-R of its $0012, the ID's "M"
+    const f = fromSource('big.prg', '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n lda #6\n ldx #<cmd\n ldy #>cmd\n jsr $ffbd\n lda #15\n ldx #8\n ldy #15\n jsr $ffba\n jsr $ffc0\n ldx #15\n jsr $ffc6\n jsr $ffcf\n sta $d7ff\n jmp *\ncmd: .byte $4d,$2d,$52,$12,$00,$01\n.pc = $f343\n.byte $00');
+    expect(f.load + f.bytes.length).toBe(0xf344);
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      const prgPath = join(dir, 'big.prg'), disk = join(dir, 'disk.d64');
+      await writeFile(prgPath, prgOf(f));
+      await writeFile(disk, makeD64({ name: 'parts', id: 'mi', files: [] }));
+      for (const start of [undefined, 0x080d]) {
+        const { argv } = await prepareVice({ args: headless(dir), prgPath, disk, start });
+        expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status).toBe(0x4d);
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

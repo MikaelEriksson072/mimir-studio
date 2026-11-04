@@ -1,4 +1,4 @@
-export { splitArgs, safeJoin, writeVfs, runKickAssembler, launchVice, prepareVice, viceArgv, viceMonitorScript } from './toolchain';
+export { splitArgs, safeJoin, writeVfs, runKickAssembler, launchVice, prepareVice, viceArgv, viceMonitorScript, DRIVE_INIT } from './toolchain';
 export type { KickRunOptions, KickRunResult, ViceLaunch, ViceStart } from './toolchain';
 export { findC64Roms, findExomizer, findKickAssJar, findUnp64, findVice, viceRomFolders } from './detect';
 export { launchTerminal, terminalCommand, windowsStartLine } from './terminal';

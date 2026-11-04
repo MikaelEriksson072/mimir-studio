@@ -1492,11 +1492,16 @@ kräver PRG-läget inject (diskavbildsläget lägger en egen disk i drive 8), s�
 inställningarna säger något annat. Ett program som läggs rakt i minnet lämnar drivenheten som vid påslag, utan att
 ha läst disken; på en C64 laddades det från disken (`LOAD"*",8,1`), och snabbladdare räknar med det (Sparkle i *We
 Are The Anomaly* hänger med drivens lampa blinkande). Med en disk laddas därför PRG:n utan RUN (`-autoload`) och
-VICE skriver `open15,8,15,"i":close15:` (initiera: driven läser disken) före `run` eller `sys <start>`. En snapshot
+VICE skriver diskkommandot `I` (initiera: driven läser disken) före `run` eller `sys <start>`. Kommandot skrivs utan
+sträng: `open15,8,15:poke781,15:sys65481:poke780,73:sys65490:sys65484:close15:` (kanalen öppnas utan namn, och
+KERNAL:ns CHKOUT, CHROUT och CLRCHN skickar `I`). En sträng som skrivs vid READY kopierar BASIC till strängutrymmet,
+och ett program som laddar upp till `$a000` eller längre (ett uppackat, `$0801-$f344` till exempel) lämnar inget
+kvar: `open15,8,15,"i"` stannade där med ?OUT OF MEMORY innan programmet startade. En snapshot
 har med sin drive som den var; start från monitorn (13.2, ett program över BASIC:s arbetsområde) initierar inte.
 `test/d64.test.ts` läser diskar som VICE:s `c1541` skrivit och låter `c1541` läsa och validera diskar som `makeD64`
 skrivit; `test/vice.integration.test.ts` kör i riktiga VICE ett program som laddar sin andra del från disken, och ett
-som läser diskens id ur driven (`M-R` av `$0012`): det finns där bara efter initieringen.
+som läser diskens id ur driven (`M-R` av `$0012`): det finns där bara efter initieringen, också för ett program som
+laddar upp till `$f344`.
 
 ### 13.5b Spindle 3-diskar (Spins laddskript)
 
