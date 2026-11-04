@@ -97,6 +97,12 @@ export async function stubDialogs(app: ElectronApplication, answers: { open?: st
   }, answers);
 }
 
+/** A choice of the title bar's File menu ("Open PRG files…", "Mount D64 disk image…"…); stub its dialog first. */
+export async function fromFileMenu(page: Page, item: string): Promise<void> {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menu').getByRole('menuitem', { name: item }).click();
+}
+
 /** the title and start folder of every stubbed dialog so far */
 export const dialogOptions = (app: ElectronApplication): Promise<{ title?: string; defaultPath?: string }[]> =>
   app.evaluate(() => ((globalThis as unknown as { dialogOptions?: { title?: string; defaultPath?: string }[] }).dialogOptions ?? []).map(o => ({ title: o.title, defaultPath: o.defaultPath })));

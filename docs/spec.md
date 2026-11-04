@@ -1473,9 +1473,9 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 
 ### 13.5 Diskavbilder (.d64)
 
-**Mount D64…** (Explorer, kommandopaletten, eller dra och släpp en `.d64`) läser en 1541-avbild med 35, 40 eller 42 spår,
+**Mount D64 disk image…** (titelradens File-meny, kommandopaletten, eller dra och släpp en `.d64`) läser en 1541-avbild med 35, 40 eller 42 spår,
 med eller utan felbyte per sektor (`packages/core/src/c64/d64.ts`). Explorer visar katalogen, i sektionen *Disk* direkt
-under *Files* (där knappen står), som 1541:an listar den:
+under *Files*, som 1541:an listar den:
 diskens namn och id, en rad per fil med block, `"NAMN"` och typ (`*PRG` för en fil som aldrig stängdes, `PRG<` för en
 låst), och "blocks free" (spår 1–35 utom katalogspåret). Tomma och raderade poster visas inte.
 
@@ -2194,7 +2194,7 @@ projektfilen) öppnas i projektets mapp. Varje ändring sparas i projektfilen en
 projektet lämnas eller fönstret stängs); **Save** (Ctrl+S) sparar direkt. Ett projekt skrivs aldrig över av ett annat
 program: en PRG, en snapshot, en cartridge eller en fil från en disk som öppnas i ett projekt som har filer blir arbete
 utan projekt, och projektet ligger kvar som det sparades (titelraden säger *No project*, Save gör ett projekt av det).
-Ett nytt, tomt projekt tar emot det som öppnas, som ett steg Ctrl+Z ångrar. Filer som läggs till (Add PRG, Shift när
+Ett nytt, tomt projekt tar emot det som öppnas, som ett steg Ctrl+Z ångrar. Filer som läggs till (Add PRG file…, Shift när
 filer släpps, en bank till) och en fil som packas upp stannar i projektet. Showcase-demon och en projektfil som
 släpps på fönstret lämnar projektet (som är sparat) och blir arbete utan projekt. En projektfil öppnad med **Open
 project** gör sin mapp till projektets, också för filer sparade före projekten.
@@ -2257,9 +2257,9 @@ blir för lång.
 
 | Region | Innehåll |
 |---|---|
-| Titelrad | Öppna, Spara, Ångra/Gör om, kommandosök, Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
+| Titelrad | File-menyn (öppna PRG-filer, en cartridge eller en VICE-snapshot, montera en D64; spara), Ångra/Gör om, kommandosök, Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
 | Aktivitetsrad | Explorer, Blocks, Symbols, Bookmarks (med antal), Pack (med antal intervall), specifikation, kommandopalett. Knappen för vyn som visas fäller ihop sidopanelen; är den ihopfälld är ingen knapp vald, och en vys knapp visar panelen igen med den vyn |
-| Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till en PRG) står i Files rubrik; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
+| Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
 | Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Statistics, Build output |

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFile
 import { dirname, join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, repoDir, test } from './fixtures';
-import { dialogOptions, goTo, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
+import { dialogOptions, fromFileMenu, goTo, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
 
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
@@ -987,17 +987,17 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   await waitForListing(page);
   const files = page.getByRole('list', { name: 'Files on mimir-demo.d64' });
 
-  await test.step('Mount D64… lists the directory', async () => {
+  await test.step('File → Mount D64 disk image… lists the directory', async () => {
     await openSection(page, 'Files');
     await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64')] });
-    await page.getByRole('button', { name: 'Mount D64…' }).click();
+    await fromFileMenu(page, 'Mount D64 disk image…');
     await expect(toast(page, 'Mounted mimir-demo.d64: "MIMIR DEMO", 3 files')).toBeVisible();
     await openSection(page, 'Disk');
     await expect(page.locator('.disk-head')).toContainText('"MIMIR DEMO"');
     await expect(files.getByRole('listitem')).toHaveText([/49\s*"RASTER DEMO"\s*PRG/, /1\s*"SPRITE"\s*PRG/, /1\s*"NOTES"\s*SEQ/]);
     await expect(files.getByRole('listitem').nth(2)).toHaveClass(/off/);
     await expect(page.locator('.side-inner')).toContainText('613 blocks free');
-    // the disk comes right under Files, next to the button that mounted it, and the VICE quicksave under the disk
+    // the disk comes right under Files, and the VICE quicksave under the disk
     await expect.poll(() => page.locator('.side-sec').evaluateAll(s => s.map(e => e.getAttribute('aria-label'))))
       .toEqual(['Files', 'Disk', 'VICE quicksave', 'Loaders', 'Program start', 'Memory map']);
   });
@@ -1022,6 +1022,25 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   });
 });
 
+test('Add PRG file… in the Explorer adds PRGs beside the open ones; the File menu opens and mounts', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await fromFileMenu(page, 'Open PRG files…');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  const section = await openSection(page, 'Files');
+  await expect(section.getByRole('button', { name: 'Open PRG…' })).toHaveCount(0);
+  await expect(section.getByRole('button', { name: 'Mount D64…' })).toHaveCount(0);
+
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/spindle-demo.prg')] });
+  await section.getByRole('button', { name: 'Add PRG file…' }).click();
+  await expect(toast(page, 'Loaded spindle-demo.prg at $0400')).toBeVisible();
+  await expect(page.locator('.file-name')).toHaveText(['raster-demo.prg', 'spindle-demo.prg']);
+  expect((await dialogOptions(app)).at(-1)?.title).toBe('Add PRG files to the project');
+  // Ctrl+Z takes the added file out again
+  await page.keyboard.press('Control+z');
+  await expect(page.locator('.file-name')).toHaveText(['raster-demo.prg']);
+});
+
 test('open a cartridge: every bank is in the listing, one after the other, and the .crt is rebuilt', async ({ workDir: work, app, page }) => {
   // fixtures/crt/mimir-demo.crt (packages/core/test/crt.test.ts): a Magic Desk of 2 banks; bank 0 starts it (CBM80)
   // and shows bank 1's text. Each bank is a space of its own (spec 13.9b): bank 1's $8000 is $18000
@@ -1029,10 +1048,10 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
   await waitForListing(page);
   const banks = page.getByRole('list', { name: 'Banks of mimir-demo.crt' });
 
-  await test.step('Open PRG… takes a .crt: every chip opens, and the Explorer lists the banks', async () => {
+  await test.step('File → Open a cartridge (.crt)…: every chip opens, and the Explorer lists the banks', async () => {
     await openSection(page, 'Files');
     await stubDialogs(app, { open: [crtPath] });
-    await page.getByRole('button', { name: 'Open PRG…' }).click();
+    await fromFileMenu(page, 'Open a cartridge (.crt)…');
     await expect(toast(page, 'Opened the cartridge mimir-demo.crt: Magic Desk (Domark, HES Australia), 2 banks of 8 KB (16 KB), 8K mode; bank00_8000.prg at $8000, bank01_8000.prg at $8000')).toBeVisible();
     await openSection(page, 'Cartridge');
     await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
@@ -1241,7 +1260,7 @@ test('a cartridge with every bank in one .asm: the listing, the source, verify a
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [crtPath] });
-  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await fromFileMenu(page, 'Open a cartridge (.crt)…');
   await expect(toast(page, /^Opened the cartridge mimir-demo\.crt/)).toBeVisible();
   await openSection(page, 'Cartridge');
   const one = page.getByRole('checkbox', { name: 'All banks in one .asm' });
@@ -1458,7 +1477,7 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/kernal-load.d64')] });
-  await page.getByRole('button', { name: 'Mount D64…' }).click();
+  await fromFileMenu(page, 'Mount D64 disk image…');
   await openSection(page, 'Disk');
   await page.getByRole('list', { name: 'Files on kernal-load.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
   const bar = page.locator('.pack-bar');
@@ -1483,13 +1502,13 @@ test('file dialogs open in the folder they were last used in', async ({ app, pag
   await expect(toast(page, 'Loaded packed-demo.prg at $0801')).toBeVisible();
   // the disk dialog has no folder of its own yet: it starts where the PRG came from
   await stubDialogs(app, { open: [join(diskDir, 'mimir-demo.d64')] });
-  await page.getByRole('button', { name: 'Mount D64…' }).click();
+  await fromFileMenu(page, 'Mount D64 disk image…');
   await expect(toast(page, 'Mounted mimir-demo.d64')).toBeVisible();
   await stubDialogs(app, { open: [join(prgDir, 'raster-demo.prg')] });
   await page.keyboard.press('Control+o');
   await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
   await stubDialogs(app, { open: [join(diskDir, 'mimir-demo.d64')] });
-  await page.getByRole('button', { name: 'Mount D64…' }).click();
+  await fromFileMenu(page, 'Mount D64 disk image…');
   await expect(toast(page, 'Mounted mimir-demo.d64')).toHaveCount(2);
 
   expect(await dialogOptions(app)).toEqual([
@@ -2176,7 +2195,7 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
-  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
   await expect(toast(page, 'Loaded raster-demo.prg at $0200 from a VICE 3.10 snapshot of a C64SC, PC $08c7, $01 = $37; traced from $08c7, $08b7; program start $0810')).toBeVisible();
   await expect(page.locator('.file-row', { hasText: 'raster-demo.prg' })).toContainText('$0200–$ffff');
   // the BASIC stub inside the RAM is the program start the analysis traces from; Build & Run restarts the snapshot
@@ -2197,7 +2216,7 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await expect(settings).toBeHidden();
     await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
-    await page.getByRole('button', { name: 'Open PRG…' }).click();
+    await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
     await expect(toast(page, 'Loaded raster-demo.prg at $0002 from a VICE 3.10 snapshot')).toBeVisible();
     await expect(page.locator('.file-row', { hasText: 'raster-demo.prg' })).toContainText('$0002–$ffff');
     await page.keyboard.press('F7');
@@ -2210,7 +2229,7 @@ test('deep analysis from the Problems tab: a snapshot\'s ROM calls are not trace
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
-  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
   await expect(toast(page, 'Loaded raster-demo.prg at $0200')).toBeVisible();
   const tab = page.getByRole('tab', { name: /Problems/ });
   await tab.click();
@@ -2243,7 +2262,7 @@ test('the listing, Graphics and Memory open where the one before was in memory, 
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
-  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
   await expect(toast(page, /^Loaded raster-demo\.prg at \$0200/)).toBeVisible();
   // the snapshot's analysis is in (a new project starts the place over)
   await expect(statusBar(page)).toContainText(/1 file · 6\d KB/);
@@ -3576,7 +3595,7 @@ test('Build & Run restarts a VICE snapshot as it was taken, with the built progr
   await expect(build).toHaveAttribute('title', 'Build with KickAss.jar and run in VICE (F5)');
   await stubDialogs(app, { open: [vsf] });
   await openSection(page, 'Files');
-  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
   await expect(toast(page, 'Loaded raster-demo.prg at $0200 from a VICE 3.10 snapshot')).toBeVisible();
   await expect(build).toHaveAttribute('title', /restart the snapshot in VICE as it was taken/);
   await page.keyboard.press('F5');
@@ -3817,7 +3836,7 @@ test('loaders: the Explorer names the loader and lists its parts, which the list
   // fixtures/prg/loader-demo.prg (packages/core/test/loaders.test.ts): an installer that sends drive code with M-W and
   // starts it with M-E, the drive code, and a Spindle 3 resident page at $0c00 that the program calls
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/loader-demo.prg')] });
-  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await fromFileMenu(page, 'Open PRG files…');
   await expect(toast(page, 'Loaded loader-demo.prg at $0801')).toBeVisible();
   const spindle = section.getByLabel('Spindle (lft)');
   await expect(spindle).toContainText('2-bit + ATN, synchronous; one resident page that the program calls with jsr, the VIC bank set through $dd02');
@@ -3849,7 +3868,7 @@ test('the Spindle script: a tab when Pefchain drivers are in memory, a row per s
   // fixtures/prg/spindle-demo.prg (packages/core/test/spindle.test.ts): the drivers pefchain 3.1 built for five small
   // parts, `space`, `f0 = 05`, `| f0 = 20`, `-`, `@` and its blank part that stays
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/spindle-demo.prg')] });
-  await page.getByRole('button', { name: 'Open PRG…' }).click();
+  await fromFileMenu(page, 'Open PRG files…');
   await expect(toast(page, 'Loaded spindle-demo.prg at $0400')).toBeVisible();
   await page.getByRole('tab', { name: /Spindle script/ }).click();
   await expect(page.getByRole('tab', { name: /Spindle script/ })).toContainText('6');
@@ -3892,7 +3911,7 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/spindle-demo.d64')] });
-  await page.getByRole('button', { name: 'Mount D64…' }).click();
+  await fromFileMenu(page, 'Mount D64 disk image…');
   await expect(toast(page, 'Mounted spindle-demo.d64: "SPINDLE DEMO", 1 file, a Spindle 3 disk with 4 jobs')).toBeVisible();
   await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('Spindle 3 disk: 4 jobs the loader reads, not files');
@@ -3935,7 +3954,7 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/bitfire-demo.d64')] });
-  await page.getByRole('button', { name: 'Mount D64…' }).click();
+  await fromFileMenu(page, 'Mount D64 disk image…');
   await expect(toast(page, 'Mounted bitfire-demo.d64: "BITFIRE DEMO", 2 files, a Bitfire disk with 3 files of its own')).toBeVisible();
   await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('Bitfire disk: 3 files the loader reads, not in the directory');

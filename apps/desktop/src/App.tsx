@@ -431,7 +431,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (note) { toast(note, 'ok'); return; }
     toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}${leftNote}`, 'ok');
   };
-  /** `kind`: the File menu's choice, what the dialog asks for; what it opens is shown in the Explorer */
+  /** `kind`: the File menu's choice (or the Explorer's Add PRG file…), what the dialog asks for; what it opens is shown
+   *  in the Explorer */
   const openPrgs = async (add: boolean, kind?: PrgOpenKind) => {
     if (!kr) return needDesktop();
     try { addFiles(await kr.openPrg({ zeroPage: !!project.settings.snapshotZeroPage, ...(kind ? { kind } : {}) }), add, { show: !!kind }); } catch (e) { toast(errorText(e), 'err'); }
@@ -1618,7 +1619,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const undoLabel = past.length ? past[past.length - 1].label : null;
   const commands: Command[] = [
     { id: 'open', label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false) },
-    { id: 'add', label: 'Add PRG to project…', run: () => void openPrgs(true) },
+    { id: 'add', label: 'Add PRG files to the project…', run: () => void openPrgs(project.files.length > 0, 'add') },
     { id: 'open-crt', label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
     { id: 'open-vsf', label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
     { id: 'mount', label: 'Mount D64 disk image…', run: () => void mountDisk() },
@@ -2023,7 +2024,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
 
       <aside className="sidebar"><ErrorBoundary>
         <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }}
-          onOpen={() => void openPrgs(false)} onAdd={() => void openPrgs(true)} onDemo={() => loadDemo()}
+          onAdd={() => void openPrgs(project.files.length > 0, 'add')} onDemo={() => loadDemo()}
           quicksave={{ info: qsInfo, follow: followQuicksave, onOpen: () => void openQuicksave(), onFollow: v => setUi({ followQuicksave: v }),
             kept: qsList, onOpenKept: q => void openKeptQuicksave(q), onRenameKept: (q, name) => void renameKeptQuicksave(q, name), onSaveKept: q => void saveKeptQuicksave(q),
             onFavouriteKept: (q, on) => void favouriteKeptQuicksave(q, on) }}
@@ -2035,7 +2036,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
-          disk={disk} packing={packing} onMount={() => void mountDisk()} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
+          disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? { addr: bmEdit, cursorAt: lineAddr() ?? null, onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); }, onPreview: a => navigate(a, { center: true, listing: true, noHistory: true }) } : null}
           pack={{ A, R, project, cursor, sel, prefs: packPrefs, exomizer: toolchain.exomizerPath, desktop: !!kr, busy: buildBusy, packing: packRun, result: packRes, current: packKey,

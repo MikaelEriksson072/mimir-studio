@@ -614,7 +614,7 @@ describe('project files', () => {
     expect(zp.bytes.length).toBe(0xfffe);
     expect(prgOpenSchema.parse({ zeroPage: true })).toEqual({ zeroPage: true });
     // the File menu's choices: what the dialog asks for
-    for (const kind of ['prg', 'crt', 'vsf'] as const) expect(prgOpenSchema.parse({ kind })).toEqual({ kind });
+    for (const kind of ['prg', 'crt', 'vsf', 'add'] as const) expect(prgOpenSchema.parse({ kind })).toEqual({ kind });
     expect(() => prgOpenSchema.parse({ kind: 'd64' })).toThrow();
   });
 

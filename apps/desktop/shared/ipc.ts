@@ -85,7 +85,8 @@ export interface ProjectSaveResult { path: string }
 /** `paths` given: read them (they must lie in folders the user picked); otherwise a file dialog. */
 /** `zeroPage`: VICE snapshots open from $0002 (zero page and stack included) instead of $0200 */
 /** `kind`: what the dialog asks for (the File menu's choices): PRGs, a cartridge or a VICE snapshot; omitted, any of them */
-export type PrgOpenKind = 'prg' | 'crt' | 'vsf';
+/** what the dialog asks for: PRGs, a cartridge, a snapshot, or PRGs to add to the project */
+export type PrgOpenKind = 'prg' | 'crt' | 'vsf' | 'add';
 export interface PrgOpenRequest { paths?: string[]; zeroPage?: boolean; kind?: PrgOpenKind }
 /** an opened PRG; a VICE snapshot also gives the entry points it holds, its program start and what it is; a chip of a
  *  cartridge (`chip`) the image it is from (the same object for every chip of it); `path`: the file it was read from */

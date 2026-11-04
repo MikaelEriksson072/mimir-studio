@@ -16,10 +16,13 @@ import { SideSection } from './SideSection';
 
 interface SidebarProps {
   view: Activity; A: AnalysisResult; R: RenderResult; project: Project; colors: CanvasColors; cursor: Addr | null;
-  onNavigate: (a: Addr) => void; onOpen: () => void; onAdd: () => void; onDemo: () => void; onRemoveFile: (i: number) => void;
+  onNavigate: (a: Addr) => void; onDemo: () => void; onRemoveFile: (i: number) => void;
+  /** add PRG files to the project (the File menu opens new ones) */
+  onAdd: () => void;
   /** set the program start (null: back to the detected one) */
   onSetStart: (a: Addr | null) => void;
-  disk: MountedDisk | null; onMount: () => void; onEject: () => void;
+  /** the mounted disk (the File menu mounts one) */
+  disk: MountedDisk | null; onEject: () => void;
   /** the project's cartridge, read (spec 13.9): a bank in the project is gone to with a click, one out of it added
    *  (`leave`: taken out) */
   cart: Crt | null; onOpenBank: (bank: number, leave?: boolean) => void;
@@ -70,7 +73,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpen, onAdd, onDemo, onRemoveFile, onSetStart, disk, onMount, onEject, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -97,11 +100,10 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onOpe
             <Icon name="chip" size={14} />
             <div className="file-meta"><div className="file-name">{chips} chips of {project.cart?.name}</div><div className="muted small">every bank in the listing, one after the other: the Cartridge section lists them</div></div>
           </div>}
-          <div className="side-actions two">
-            <button className="btn small" onClick={onOpen} title="Open a .prg, a VICE snapshot (.vsf) or a cartridge (.crt) as a new project"><Icon name="upload" size={13} />Open PRG…</button>
-            <button className="btn small ghost" onClick={onMount} title="Mount a .d64 disk image and open its files"><Icon name="disk" size={13} />Mount D64…</button>
+          <div className="side-actions">
+            <button className="btn small" onClick={onAdd} title="Add one or more .prg files to this project, beside the ones in it"><Icon name="plus" size={13} />Add PRG file…</button>
           </div>
-          <p className="side-hint">Or drop .prg, .vsf, .crt or .d64 files on the window; with Shift they are added.</p>
+          <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot or a D64. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
         {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} />}

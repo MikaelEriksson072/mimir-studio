@@ -56,6 +56,7 @@ const OPEN_KINDS: Record<'any' | PrgOpenKind, { title: string; name: string; ext
   prg: { title: 'Open PRG files', name: 'C64 programs', extensions: ['prg', 'PRG'], many: true },
   crt: { title: 'Open a cartridge', name: 'C64 cartridges', extensions: ['crt', 'CRT'], many: false },
   vsf: { title: 'Open a VICE snapshot', name: 'VICE snapshots', extensions: ['vsf', 'VSF'], many: false },
+  add: { title: 'Add PRG files to the project', name: 'C64 programs', extensions: ['prg', 'PRG'], many: true },
 };
 
 async function pickPaths(e: IpcMainInvokeEvent, options: OpenDialogOptions): Promise<string[]> {
