@@ -287,6 +287,13 @@ export const DEVIATIONS: Deviation[] = [
       { find: 'if (b) for (let p = a - 1; p >= b.start && a - p < 256; p--) {', replace: 'if (b) for (let p = a - 1; p >= b.start && (a - p < 256 || b.type === T.BITMAP); p--) {' },
     ],
   },
+  {
+    why: 'Graphics the user marked ran on over the bytes after the marking that the VIC evidence gave the same type: 16 rows of a bitmap the VIC shows whole (the Graphics tab\'s Height) became 8000 bytes again. Such a block ends where the marking does, and the rest is a block of its own',
+    edits: [{
+      find: 'while (e < 0x10000 && tm[e] === t && owner[e] === fileA && !(ovProps.has(e) && e !== a)) e++;',
+      replace: "while (e < 0x10000 && tm[e] === t && owner[e] === fileA && !(ovProps.has(e) && e !== a) && !(TYPE_INFO[t].group === 'gfx' && ov[e] !== ov[a])) e++;",
+    }],
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

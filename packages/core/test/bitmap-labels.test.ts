@@ -52,6 +52,20 @@ describe('addresses inside a bitmap', () => {
     expect(verify(A, R).ok).toBe(true);
   });
 
+  it('a bitmap marked with fewer rows than the VIC shows ends where the marking does', () => {
+    // 16 character rows (the Graphics tab's Height): 5120 bytes, the rest a bitmap of its own as the VIC says
+    const p = project({ overrides: [{ start: 0x2000, end: 0x3400, type: 'bitmap' }] });
+    const A = analyze(p), R = render(A, p);
+    const bm = A.blocks.filter(b => b.type === 'bitmap').map(b => [b.start, b.end, b.user, b.reason]);
+    expect(bm).toEqual([[0x2000, 0x3400, true, 'user override'], [0x3400, 0x3f40, false, '$d011 bitmap mode + $d018=$18']]);
+    // each is a picture of its own, its code counting from it
+    expect(R.lines.filter(l => l.k === 'lbl' && l.a >= 0x2000 && l.a < 0x3f40).map(l => l.k === 'lbl' && l.name)).toEqual(['bitmap_2000', 'bitmap_3400']);
+    expect(operands(R)).toEqual(expect.arrayContaining(['bitmap_2000+3200,x', 'bitmap_3400+2879']));
+    expect(verify(A, R).ok).toBe(true);
+    // the whole bitmap marked again is one block
+    expect(analyze(project({ overrides: [...p.overrides!, { start: 0x2000, end: 0x3f40, type: 'bitmap' }] })).blocks.filter(b => b.type === 'bitmap').map(b => [b.start, b.end])).toEqual([[0x2000, 0x3f40]]);
+  });
+
   it('elsewhere a data block still gets a label where code reads it', () => {
     const p = project({ overrides: [{ start: 0x2000, end: 0x3f40, type: 'data' }] });
     const A = analyze(p);

@@ -217,7 +217,10 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
       cuts.push(e);
       for (let i = 0; i < cuts.length - 1; i++) classifySpan(cuts[i], cuts[i + 1], objStarts.has(cuts[i]));
     } else {
-      while (e < 0x10000 && tm[e] === t && owner[e] === fileA && !(ovProps.has(e) && e !== a) && !known.has(e)) e++;
+      // graphics the user marked end where the marking does: 16 rows of a bitmap the VIC shows whole are no 8000 bytes
+      // (the rest is a block of its own, as the VIC evidence says)
+      const gfxEnd = typeInfo(t).group === 'gfx';
+      while (e < 0x10000 && tm[e] === t && owner[e] === fileA && !(ovProps.has(e) && e !== a) && !known.has(e) && !(gfxEnd && ov[e] !== ov[a])) e++;
       const o = ovProps.get(a), k = !o ? known.get(a) : undefined;
       const p: BlockProps = Object.assign({}, o ? o.props : k ? k.props : {});
       if (t === T.TEXT && !p.enc) p.enc = 'petscii';

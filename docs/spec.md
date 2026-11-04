@@ -2383,7 +2383,12 @@ Det finns fem lägen:
   raden bredvid hur många byte och rader (*3200 bytes each · 10 rows*), och under vyn står teckenrad och kolumn i
   bitmappen (`row 9, column 3 of the bitmap at $2000`), så att man ser hur många rader bilden har. Adressen överst står
   kvar när höjden byts. En PNG blir 320 × (8 × rader) per ram. Höjden sparas med de andra valen (`GfxPrefs.bitmapRows`),
-  och ett sparat värde utanför 1–25 blir 25 (`bitmapRowsOf`).
+  och ett sparat värde utanför 1–25 blir 25 (`bitmapRowsOf`). *Mark as Bitmap* på färre rader ger ett block av just de
+  raderna, även där VIC visar en hel bitmapp. Resten av den blir ett eget bitmappsblock (`$4c80-$5f3f`), som
+  VIC-evidensen säger. Förut gick användarens markering vidare över de byte efter den som VIC-evidensen gett samma typ,
+  så 10 rader blev 8000 byte igen. Det gäller all grafik användaren markerar (sprites, teckenuppsättningar, bitmappar,
+  skärmar): blocket slutar där markeringen slutar (`classify`, referensens avvikelselista). Test:
+  `packages/core/test/bitmap-labels.test.ts` och e2e-testet *a bitmap of fewer rows marked where the VIC shows a whole one*.
 - **Screens:** en skärmmatris per 1 KB, som VIC placerar dem: 40 × 25 skärmkoder (1000 byte), 1, 2 eller 3 per rad. Varje
   skärmkod ritas med en teckenuppsättning som väljs i *Charset*:
   - **C64 ROM, upper case / lower case:** VICE:s tecken-ROM (4 KB). Den läses från den VICE som står i inställningarna

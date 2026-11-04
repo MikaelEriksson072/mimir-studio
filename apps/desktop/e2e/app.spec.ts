@@ -2605,6 +2605,34 @@ test('the Graphics tab draws bitmaps of fewer rows: a click selects those rows, 
   });
 });
 
+test('a bitmap of fewer rows marked where the VIC shows a whole one is a block of those rows, the rest one of its own', async ({ page }) => {
+  await waitForListing(page);
+  // the showcase: a bitmap at $4000 the VIC shows ($d011, $d018), 8000 bytes
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, /^Showcase loaded/)).toBeVisible();
+  await waitForListing(page);
+  await expect(listing(page)).toContainText('LoadSid("music/music_1800.sid")');
+  await goTo(page, '$4000');
+  await expect(headerRow(page, '4000')).toContainText('$4000-$5f3f (8000 bytes)');
+  await page.getByRole('tab', { name: 'Graphics' }).click();
+  const view = page.getByLabel('Memory as graphics');
+  await view.getByRole('button', { name: 'Bitmaps' }).click();
+  await view.getByLabel('Bitmap height in character rows').selectOption('10');
+  await view.getByLabel('Go to address, label or range').fill('$4000');
+  await view.getByLabel('Go to address, label or range').press('Enter');
+  await expect(view.getByRole('status')).toContainText('$4000–$4c7f (3200 bytes)');
+  await view.getByRole('button', { name: 'Mark as Bitmap' }).click();
+  await expect(toast(page, '$4000–$4c7f marked as Bitmap')).toBeVisible();
+  await view.getByRole('button', { name: 'Show in listing' }).click();
+  await expect(page.getByRole('tab', { name: 'Listing' })).toHaveAttribute('aria-selected', 'true');
+  // the marked rows, and after them the rest of what the VIC shows
+  await expect(headerRow(page, '4000')).toContainText('$4000-$4c7f (3200 bytes)');
+  await expect(headerRow(page, '4000').locator('.hdr-user')).toBeVisible();
+  await expect(headerRow(page, '4c80')).toContainText('$4c80-$5f3f (4800 bytes)');
+  // drawn 80 pixels high: 10 rows
+  await expect(listing(page).locator('.gfx-strip.gfx-bitmap').first()).toHaveCSS('height', '80px');
+});
+
 test('edit build.bat in the source view: the export writes it, Restore generated takes it back', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await page.getByRole('tab', { name: 'raster-demo.asm' }).click();
