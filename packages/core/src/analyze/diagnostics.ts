@@ -7,7 +7,7 @@ import { decode } from '../cpu/decode';
 import { hwSymbol, isIO } from '../c64/symbols';
 import { $4, now } from '../util/hex';
 import { trial } from './trace';
-import { inlineString, popsReturn } from './strings';
+import { inlineAfter, printsAfter } from './strings';
 
 /**
  * Without bank tracking an access to I/O inside the loaded bytes (a memory dump over $d000-$dfff) names the RAM byte
@@ -60,13 +60,19 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
       if ((o.mode === 'abs' && via(t)) || (mem[p] === 0x50 && mem[p + 1] === 0xfe)) drive++;
       if (o.mode === 'abs' && ((t === 0xd019 && o.access !== 'read') || ((t === 0xdc0d || t === 0xdd0d) && o.access !== 'write'))) ack = true;
       n++; p += o.len;
-      if (o.flow === 'ret' || o.flow === 'jmp' || o.flow === 'jmpi') { last = o; break; }
-      // a routine that prints the string after the JSR goes on after it (5.5b); other data there is not known. Such a
-      // string counts as four instructions: `jsr print / "WRONG FILETYPE", 0 / jmp error` is a routine
-      if (o.flow === 'jsr' && loaded(t!) && popsReturn(mem, t!)) {
-        const str = inlineString(ctx, p - 3, t!);
-        if (!str || str.s + str.n > e) return null;
-        p = str.s + str.n; strings++;
+      if (o.flow === 'ret' || o.flow === 'jmp' || o.flow === 'jmpi') {
+        // a jump on to a routine that prints the string after the JSR (after `jsr setcursor`) counts as one does
+        if (o.flow === 'jmp' && loaded(t!) && printsAfter(ctx, t!)) strings++;
+        last = o; break;
+      }
+      // the code goes on after what a routine reads after the JSR (5.5b), a string it prints or bytes it goes on after;
+      // other data there is not known. A printed string counts as four instructions: `jsr print / "WRONG FILETYPE", 0 /
+      // jmp error` is a routine
+      const after = o.flow === 'jsr' && loaded(t!) ? inlineAfter(ctx, p - 3, t!) : null;
+      if (after) {
+        if (after === 'unknown' || after.s + after.n > e) return null;
+        p = after.s + after.n;
+        if (after.string) strings++;
       }
     }
     // an interrupt handler acknowledges its interrupt; $40 (RTI) ends many a table
@@ -82,7 +88,8 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
     const sure: CodeIsland[] = [];
     for (let a = s; a + 3 <= b.end; a++) {
       if (mem[a] !== 0x20 || left?.(a) || (sure.length && a < sure[sure.length - 1].end)) continue;
-      const t = mem[a + 1] | (mem[a + 2] << 8), r = loaded(t) && popsReturn(mem, t) ? routine(a, b.end) : null;
+      const t = mem[a + 1] | (mem[a + 2] << 8), after = loaded(t) ? inlineAfter(ctx, a, t) : null;
+      const r = after && after !== 'unknown' && after.string ? routine(a, b.end) : null;
       if (r) sure.push(r);
     }
     out.push(...sure);

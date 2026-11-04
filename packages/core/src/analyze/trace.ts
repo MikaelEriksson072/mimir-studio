@@ -6,7 +6,7 @@ import { OPC, type OpcodeInfo } from '../cpu/opcodes';
 import { T } from '../model';
 import { decode } from '../cpu/decode';
 import { $4, h2 } from '../util/hex';
-import { inlineString, popsReturn } from './strings';
+import { inlineAfter } from './strings';
 
 /** The program start set by the user, BASIC SYS targets, the first file's load address, user entries and code overrides. */
 export function seedEntries(ctx: Ctx): void {
@@ -127,14 +127,16 @@ export function trace(ctx: Ctx): void {
         if (follow(pc, d.target!)) enqueue(d.target!, 'sub');
         if (deep?.noReturn.has(pc)) { cuts.set(cutKey(pc, next), 'noreturn'); break; } // the routine never returns
         const t = d.target!;
-        if (loaded(t) && popsReturn(mem, t)) {
+        // a routine that reads what follows the JSR: a string it prints or bytes it goes on after (5.5b)
+        const after = loaded(t) ? inlineAfter(ctx, pc, t) : null;
+        if (after) {
           inlineCalls.add(pc);
-          // a routine that prints the string after the JSR goes on after it (5.5b)
-          const str = inlineString(ctx, pc, t);
-          if (str) {
-            L('ok', `JSR ${$4(t)} prints the string after it (${$4(str.s)}-${$4(str.s + str.n - 1)}); the code goes on at ${$4(str.s + str.n)}`, pc, 'code');
-            enqueue(str.s + str.n, 'jmp');
-          } else L('warn', `JSR ${$4(t)} pops its return address; inline data follows ${$4(next)}`, pc, 'code');
+          if (after === 'unknown') L('warn', `JSR ${$4(t)} pops its return address; inline data follows ${$4(next)}`, pc, 'code');
+          else {
+            const on = after.s + after.n, range = `${$4(after.s)}${after.n > 1 ? `-${$4(on - 1)}` : ''}`;
+            L('ok', `JSR ${$4(t)} ${after.string ? 'prints the string' : `reads the ${after.n} byte${after.n === 1 ? '' : 's'}`} after it (${range}); the code goes on at ${$4(on)}`, pc, 'code');
+            enqueue(on, 'jmp');
+          }
           break;
         }
         flags = {}; pc = next; continue;

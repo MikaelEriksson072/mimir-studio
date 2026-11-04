@@ -294,6 +294,101 @@ ${INLINE}`, { deepAnalysis });
       expect(findBlock(A.blocks, 0xc018)).toMatchObject({ type: 'code' });
     }
   });
+
+  it('a routine that counts the pointer up before it reads the next character finds the string after the JSR', () => {
+    const { A, text } = run(`
+ jsr print
+ .text "LOADING..."
+ .byte 0
+ lda #1
+ sta $d020
+ rts
+print: pla
+ sta $fb
+ pla
+ sta $fc
+next: inc $fb
+ bne same
+ inc $fc
+same: ldy #0
+ lda ($fb),y
+ beq done
+ jsr $ffd2
+ jmp next
+done: lda $fc
+ pha
+ lda $fb
+ pha
+ rts`);
+    expect(text(0xc003)).toEqual({ end: 0xc00e, reason: 'printed by the routine at $c014 from $c000' });
+    expect(findBlock(A.blocks, 0xc00e)).toMatchObject({ start: 0xc00e, type: 'code' });
+    expect(A.log.some(l => l.lvl === 'warn' || l.lvl === 'err')).toBe(false);
+  });
+
+  it('a routine that hands on to one that prints the string after the JSR prints it too', () => {
+    const { A, text } = run(`
+ jsr say
+ .text "HI"
+ .byte 0
+ rts
+say: jsr $e566
+ jmp print
+${INLINE}`);
+    expect(text(0xc003)).toEqual({ end: 0xc006, reason: 'printed by the routine at $c007 from $c000' });
+    expect(findBlock(A.blocks, 0xc006)).toMatchObject({ start: 0xc006, type: 'code' });
+  });
+
+  it('a routine that puts its return address back further on reads the bytes in between, and the code goes on after them', () => {
+    // as the Fairlight cartridge's call into another bank: `jsr $8eca / .word $801e`
+    const { A } = run(`
+ jsr far
+ .word $1234
+ lda #1
+ sta $d020
+ rts
+far: nop
+ sta $a5
+ php
+ pla
+ sta $a8
+ pla
+ sta $a9
+ clc
+ adc #2
+ tax
+ pla
+ sta $aa
+ adc #0
+ pha
+ txa
+ pha
+ ldy #2
+ lda ($a9),y
+ sta $d021
+ rts`);
+    expect(A.log).toContainEqual(expect.objectContaining({ lvl: 'ok', msg: 'JSR $c00b reads the 2 bytes after it ($c003-$c004); the code goes on at $c005', addr: 0xc000 }));
+    expect(findBlock(A.blocks, 0xc003)).toMatchObject({ start: 0xc003, end: 0xc005, type: 'data' });
+    expect(findBlock(A.blocks, 0xc005)).toMatchObject({ start: 0xc005, type: 'code' });
+    expect(A.log.some(l => l.lvl === 'warn' || l.lvl === 'err')).toBe(false);
+  });
+
+  it('a routine that pulls its return address and puts it back as it was returns as routines do', () => {
+    const { A } = run(`
+ jsr keep
+ lda #1
+ sta $d020
+ rts
+keep: pla
+ tax
+ pla
+ tay
+ pha
+ txa
+ pha
+ rts`);
+    expect(A.inlineCalls.size).toBe(0);
+    expect(findBlock(A.blocks, 0xc003)).toMatchObject({ type: 'code' });
+  });
 });
 
 /** 5.5c: printed text is in the case the program prints in. */

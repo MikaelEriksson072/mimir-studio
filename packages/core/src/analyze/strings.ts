@@ -165,6 +165,8 @@ function ownPrinter(ctx: Code, t: Addr, printer: (a: Addr) => Printer | null): P
   const stores = new Map<Addr, Sym>();
   // what is on the stack: pushed here (unknown), or below them the return address, pulled low byte first
   let pushed = 0, pulled = 0, lost = false;
+  // the return address' low byte counted up or down where it is kept (`inc $fb` before `lda ($fb),y`)
+  let moved = 0;
   /** a place of a routine handed on, as this routine's caller sets it (undefined: the caller does not) */
   const handOn = (p: Place): Place | undefined => {
     const s = typeof p === 'string' ? R[p] : stores.has(p) ? stores.get(p)! : p;
@@ -194,10 +196,12 @@ function ownPrinter(ctx: Code, t: Addr, printer: (a: Addr) => Printer | null): P
       const after = lo === 'ret0' && hi === 'ret1', loLoc = handOn(d.v!), hiLoc = handOn((d.v! + 1) & 0xff);
       const loop = after || (loLoc !== undefined && hiLoc !== undefined) ? printLoop(ctx, pc) : null;
       if (!loop) return null;
-      return { kind: 'print', name, ptr: after ? 'after' : [loLoc!, hiLoc!], offset: y, end: loop.end, len: loop.len, lenAt: loop.lenAt != null && !after ? handOn(loop.lenAt) : undefined };
+      return { kind: 'print', name, ptr: after ? 'after' : [loLoc!, hiLoc!], offset: y + (after ? moved : 0), end: loop.end, len: loop.len, lenAt: loop.lenAt != null && !after ? handOn(loop.lenAt) : undefined };
     }
     const r = mn === 'STA' ? R.a : mn === 'STX' ? R.x : mn === 'STY' ? R.y : undefined;
-    if ((mode === 'zp' || mode === 'abs') && (d.info.access === 'write' || d.info.access === 'rmw')) stores.set(d.target!, r ?? null);
+    const kept = mode === 'zp' || mode === 'abs' ? stores.get(d.target!) : undefined;
+    if ((mn === 'INC' || mn === 'DEC') && (kept === 'ret0' || kept === 'ret1')) { if (kept === 'ret0') moved += mn === 'INC' ? 1 : -1; }
+    else if ((mode === 'zp' || mode === 'abs') && (d.info.access === 'write' || d.info.access === 'rmw')) stores.set(d.target!, r ?? null);
     const step = (v: Sym, k: number): Sym => (typeof v === 'number' ? (v + k) & 0xff : null);
     const pull = (): Sym => (pushed ? (pushed--, null) : lost || pulled > 1 ? null : pulled++ ? 'ret1' : 'ret0');
     switch (mn) {
@@ -400,17 +404,142 @@ export function popsReturn(mem: Uint8Array, t: Addr): boolean {
  * its bytes, which may not be traced yet; it goes on after the string. Null: it prints none, or its end is not found.
  */
 export function inlineString(ctx: Pick<Ctx, 'mem' | 'insLen' | 'skip' | 'owner'>, pc: Addr, t: Addr): { s: Addr; n: number } | null {
-  const { mem, owner } = ctx, insLen = ctx.insLen.slice();
-  for (let p = t, k = 0; k < 64 && owner[p] === owner[t]; k++) {
-    const o = OPC[mem[p]];
-    if (o.jam || o.unstable) break;
-    if (!insLen[p]) insLen[p] = o.len;
-    p = (p + o.len) & 0xffff;
-  }
-  const P = ownPrinter({ mem, insLen, skip: ctx.skip }, t, () => null);
+  const { mem, owner } = ctx, P = rawPrinter(ctx, t);
   if (!P || P.ptr !== 'after') return null;
   const s = (pc + 2 + P.offset) & 0xffff;
   let max = 0; while (max < 256 && s + max < 0x10000 && owner[s + max] === owner[pc]) max++;
   const n = handedLen(mem, s, max, { len: P.len != null && P.len > P.offset ? P.len - P.offset : undefined, end: P.end });
   return n && s + n < 0x10000 && owner[s + n] === owner[pc] ? { s, n } : null;
+}
+
+/** Does the routine at `t` print the string after the JSR to it (decoded from its bytes, which may not be traced yet)?
+ *  Only a routine that pulls its return address is looked at. */
+export function printsAfter(ctx: Pick<Ctx, 'mem' | 'insLen' | 'skip' | 'owner'>, t: Addr): boolean {
+  return ctx.owner[t] >= 0 && (popsReturn(ctx.mem, t) || returnUse(ctx.mem, ctx.owner, t).pulls) && rawPrinter(ctx, t)?.ptr === 'after';
+}
+
+/** The printer at `t`, decoded from its bytes over what is not traced yet: it and the routines it hands on to. */
+function rawPrinter(ctx: Pick<Ctx, 'mem' | 'insLen' | 'skip' | 'owner'>, t: Addr): Printer | null {
+  const { mem, owner } = ctx, insLen = ctx.insLen.slice(), view = { mem, insLen, skip: ctx.skip };
+  // the routines decoded from their starts, over what is not traced yet: this one and the ones it hands on to
+  const memo = new Map<Addr, Printer | null>();
+  const printer = (a: Addr): Printer | null => {
+    const rom = ROM_PRINTERS.get(a);
+    if (rom || owner[a] < 0) return rom ?? null;
+    if (memo.has(a)) return memo.get(a)!;
+    memo.set(a, null);
+    for (let p = a, k = 0; k < 64 && owner[p] === owner[a]; k++) {
+      const o = OPC[mem[p]];
+      if (o.jam || o.unstable) break;
+      if (!insLen[p]) insLen[p] = o.len;
+      p = (p + o.len) & 0xffff;
+    }
+    const P = ownPrinter(view, a, printer);
+    memo.set(a, P);
+    return P;
+  };
+  return printer(t);
+}
+
+/** A byte of the return address a JSR pushed (`r`: 0 the low, 1 the high one), plus `k`; null: anything else. */
+type RetByte = { r: 0 | 1; k: number } | null;
+/** What a routine does with its return address: pulls it (`early`: before any branch or call), and goes on `on` bytes
+ *  after it. */
+interface ReturnUse { pulls: boolean; early: boolean; on: number | null }
+const returnUses = new WeakMap<Uint8Array, Map<Addr, ReturnUse>>();
+
+/**
+ * What the routine at `t` does with its return address, decoded from its bytes (it may not be traced yet): whether it
+ * pulls it off the stack before any branch or call, and how far past the address the JSR pushed (its last byte) the
+ * code goes on. It puts it back plus k (`pla / clc / adc #2 / tax / pla / adc #0 / pha / txa / pha`: an RTS goes on
+ * k + 1 bytes after it), or jumps through it (`jmp (zp)`, k bytes after it). `on` is null when not found.
+ */
+function returnUse(mem: Uint8Array, owner: Int16Array, t: Addr): ReturnUse {
+  let memo = returnUses.get(mem);
+  if (!memo) returnUses.set(mem, memo = new Map());
+  const known = memo.get(t);
+  if (known) return known;
+  const R: { a: RetByte; x: RetByte; y: RetByte } = { a: null, x: null, y: null };
+  const stores = new Map<Addr, RetByte>(), stack: RetByte[] = [];
+  let pulled = 0, early = false, branched = false, carry: number | null = null, on: number | null = null;
+  // once through each instruction: not round a loop again (a loop that reads the bytes after the JSR one by one goes
+  // on where it ends), but on into a routine it jumps to
+  const seen = new Set<Addr>();
+  const add = (v: RetByte, k: number): RetByte => (v && (v.r === 1 ? v : { r: 0, k: v.k + k }));
+  for (let pc = t, n = 0; n < 48 && owner[pc] === owner[t] && on == null && !seen.has(pc); n++) {
+    seen.add(pc);
+    const o = OPC[mem[pc]], d = decode(mem, pc), next = (pc + o.len) & 0xffff, { mn, mode } = o;
+    if (o.jam || o.unstable || o.flow === 'brk' || o.flow === 'ret') break;
+    if (o.flow === 'jmpi') {
+      const lo = stores.get(d.v!), hi = stores.get((d.v! + 1) & 0xffff);
+      if (lo?.r === 0 && hi?.r === 1) on = lo.k;
+      break;
+    }
+    if (o.flow === 'jmp') { pc = d.target!; continue; }
+    if (o.flow === 'jsr' || o.flow === 'br') {
+      if (!pulled) branched = true;
+      if (o.flow === 'jsr') { R.a = R.x = R.y = null; carry = null; }
+      pc = next; continue;
+    }
+    const at = mode === 'zp' || mode === 'abs' ? d.target! : null;
+    switch (mn) {
+      case 'PHA': stack.push(R.a); break;
+      case 'PHP': stack.push(null); break;
+      case 'PLA':
+        if (stack.length) R.a = stack.pop()!;
+        else { R.a = pulled < 2 ? { r: pulled as 0 | 1, k: 0 } : null; pulled++; if (!branched) early = true; }
+        break;
+      case 'PLP': if (stack.length) stack.pop(); else pulled++; carry = null; break;
+      case 'TXS': n = 48; break;
+      case 'CLC': carry = 0; break;
+      case 'SEC': carry = 1; break;
+      case 'ADC': case 'SBC': {
+        const a = R.a;
+        R.a = a?.r === 1 ? a : a && mode === 'imm' && carry != null ? add(a, mn === 'ADC' ? d.v! + carry : -d.v! - 1 + carry) : null;
+        carry = null;
+        break;
+      }
+      case 'STA': case 'STX': case 'STY': if (at != null) stores.set(at, mn === 'STA' ? R.a : mn === 'STX' ? R.x : R.y); break;
+      case 'LDA': R.a = at != null ? stores.get(at) ?? null : null; break;
+      case 'LDX': R.x = at != null ? stores.get(at) ?? null : null; break;
+      case 'LDY': R.y = at != null ? stores.get(at) ?? null : null; break;
+      case 'TAX': R.x = R.a; break; case 'TAY': R.y = R.a; break;
+      case 'TXA': R.a = R.x; break; case 'TYA': R.a = R.y; break;
+      case 'INC': case 'DEC': if (at != null) stores.set(at, add(stores.get(at) ?? null, mn === 'INC' ? 1 : -1)); break;
+      case 'INX': case 'DEX': R.x = add(R.x, mn === 'INX' ? 1 : -1); break;
+      case 'INY': case 'DEY': R.y = add(R.y, mn === 'INY' ? 1 : -1); break;
+      default:
+        if (writesA(mn, mode)) R.a = null;
+        if (mn === 'TSX' || mn === 'LAX') R.x = null;
+        if (o.access === 'write' || o.access === 'rmw') { if (at != null) stores.set(at, null); }
+        if (mn === 'CMP' || mn === 'CPX' || mn === 'CPY' || SHIFT_MN.has(mn) || CLOBBER_A.has(mn)) carry = null;
+    }
+    // the return address back on the stack, plus k: an RTS goes on k + 1 bytes after it
+    if (pulled === 2 && stack.length >= 2 && stack[0]?.r === 1 && stack[1]?.r === 0) on = stack[1].k + 1;
+    pc = next;
+  }
+  const use = { pulls: pulled > 0, early, on };
+  memo.set(t, use);
+  return use;
+}
+
+/**
+ * What follows the JSR at `pc` to `t`, when the routine reads it (5.5b): a string it prints, or `n` bytes it goes on
+ * after (the address of a call into another bank, say); the code goes on after either. 'unknown': it pulls its return
+ * address (`popsReturn`), but where it goes on is not found. Null: it returns as a routine does.
+ */
+export function inlineAfter(ctx: Pick<Ctx, 'mem' | 'insLen' | 'skip' | 'owner'>, pc: Addr, t: Addr): { s: Addr; n: number; string: boolean } | 'unknown' | null {
+  const { mem, owner } = ctx;
+  if (owner[t] < 0) return null;
+  const pops = popsReturn(mem, t), use = returnUse(mem, owner, t);
+  if (!pops && !use.pulls) return null;
+  // also a routine that hands on to one that prints it (`jsr setcursor / jmp print`)
+  const str = inlineString(ctx, pc, t);
+  if (str) return { ...str, string: true };
+  if (!pops && !use.early) return null;
+  if (use.on == null) return pops ? 'unknown' : null;
+  // back where it was called from: a routine that keeps its return address as it is
+  if (use.on <= 1) return pops ? 'unknown' : null;
+  const s = (pc + 3) & 0xffff, n = use.on - 1;
+  return s + n < 0x10000 && owner[s + n] === owner[pc] ? { s, n, string: false } : 'unknown';
 }

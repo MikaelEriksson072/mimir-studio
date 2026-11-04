@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { detectMusic } from '../../src/analyze/music';
-import { CHAR_OUT, d018Case, handedText, inlineString, popsReturn, printCase, printers, printLoop, sentCase, stringLen, stringSwitch } from '../../src/analyze/strings';
+import { CHAR_OUT, d018Case, handedText, inlineAfter, inlineString, popsReturn, printCase, printers, printLoop, sentCase, stringLen, stringSwitch } from '../../src/analyze/strings';
 
 export interface Edit { find: string; replace: string }
 export interface Deviation { why: string; edits: Edit[] }
@@ -270,6 +270,13 @@ export const DEVIATIONS: Deviation[] = [
       },
     ],
   },
+  {
+    why: 'A routine that pulls its return address before any branch or call and puts it back further on (`pla / clc / adc #2 / tax / pla / adc #0 / pha / txa / pha`, the Fairlight cartridge\'s call into another bank, `jsr $8eca / .word $801e`) had its bytes after the JSR decoded as code ("Jump into the middle of the instruction at $80de"); it reads the bytes in between, and the code goes on after them (found by production code, `strs`). A routine that hands on to one that prints the string after the JSR (`jsr setcursor / jmp print`) prints it too',
+    edits: [{
+      find: "          if (loaded(t) && strs.popsReturn(mem, t)) {\n            inlineCalls.add(pc);\n            const str = strs.inlineString({ mem, insLen, skip, owner }, pc, t);\n            if (str) { L('ok', `JSR ${$4(t)} prints the string after it (${$4(str.s)}-${$4(str.s + str.n - 1)}); the code goes on at ${$4(str.s + str.n)}`, pc, 'code'); enqueue(str.s + str.n, 'jmp'); }\n            else L('warn', `JSR ${$4(t)} pops its return address; inline data follows ${$4(next)}`, pc, 'code');\n            break;\n          }\n",
+      replace: "          const after = loaded(t) ? strs.inlineAfter({ mem, insLen, skip, owner }, pc, t) : null;\n          if (after) {\n            inlineCalls.add(pc);\n            if (after === 'unknown') L('warn', `JSR ${$4(t)} pops its return address; inline data follows ${$4(next)}`, pc, 'code');\n            else { const on = after.s + after.n, range = `${$4(after.s)}${after.n > 1 ? `-${$4(on - 1)}` : ''}`; L('ok', `JSR ${$4(t)} ${after.string ? 'prints the string' : `reads the ${after.n} byte${after.n === 1 ? '' : 's'}`} after it (${range}); the code goes on at ${$4(on)}`, pc, 'code'); enqueue(on, 'jmp'); }\n            break;\n          }\n",
+    }],
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -288,7 +295,7 @@ export function loadReference(): ReferenceKR {
   // The prototype is an IIFE that installs itself on `window` or `globalThis`: hand it a private root
   // (same realm, so typed arrays and Maps compare normally), the production music detection and print routines.
   const root: { KR?: ReferenceKR } = {};
-  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase, popsReturn, inlineString });
+  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase, popsReturn, inlineString, inlineAfter });
   cached = root.KR;
   return cached;
 }
