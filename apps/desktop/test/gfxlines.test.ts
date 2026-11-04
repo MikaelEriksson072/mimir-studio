@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyze, formatOverride, render, resizeBlock, showcaseProject, type GfxLine, type ListingLine, type ProjectInput } from '@mimir/core';
+import { analyze, assemble, formatOverride, parsePrg, render, resizeBlock, showcaseProject, type GfxLine, type ListingLine, type ProjectInput } from '@mimir/core';
 import { blockMc, drawGfxLine, gfxCells, gfxHead, gfxItemAt, gfxItemBox, gfxListing, gfxRects, gfxSize } from '../src/lib/gfxlines';
 import { cellAt, cellsOf } from '../src/lib/cells';
 import { foldLines } from '../src/lib/fold';
@@ -124,6 +124,41 @@ describe('graphics as pictures in the listing', () => {
     expect(pics(gfxListing(render(B, q).lines, B).lines).filter(l => l.kind === 'chars').every(l => l.mc)).toBe(true);
     const C = render(A, p, { dataAsCode: true });
     expect(pics(gfxListing(C.lines, A).lines)).toEqual([]);
+  });
+});
+
+describe('a bitmap the code draws into (The Lab)', () => {
+  // code that reads and writes all over the bitmap at $6000: inside a cell, at a row's start, at its last byte
+  const src = `.pc = $1000 "Code"
+        lda #$3b
+        sta $d011
+        lda #$78
+        sta $d018
+        lda #$02
+        sta $dd00
+        ldx #0
+loop:   lda $6005,x
+        sta $6143,x
+        sta $6280,x
+        sta $7f3f
+        inx
+        bne loop
+        rts
+.pc = $6000 "Bitmap"
+.fill 8000, (i * 37) & $ff
+`;
+  const r = assemble({ 'lab.asm': src }, 'lab.asm');
+  const q: ProjectInput = { name: 'lab', files: [parsePrg('lab.prg', r.prg!)], overrides: [{ start: 0x6000, end: 0x7f40, type: 'bitmap' }], labels: {}, comments: {}, settings: {} };
+
+  it('is one picture, with no label inside it', () => {
+    for (const gfxBinary of [true, false]) {
+      const s = { ...q, settings: { gfxBinary } }, B = analyze(s), L = gfxListing(render(B, s).lines, B).lines;
+      expect(pics(L).filter(l => l.kind === 'bitmap').map(l => [l.a, l.n])).toEqual([[0x6000, 8000]]);
+      expect(L.filter(l => l.k === 'lbl' && l.a >= 0x6000 && l.a < 0x7f40).map(l => l.k === 'lbl' && l.name)).toEqual(['bitmap_6000']);
+      // the code counts from its label
+      const code = L.filter(l => l.k === 'ins').map(l => l.k === 'ins' && l.tok.map(t => t.s).join(''));
+      expect(code).toEqual(expect.arrayContaining(['bitmap_6000+5,x', 'bitmap_6000+323,x', 'bitmap_6000+640,x', 'bitmap_6000+7999']));
+    }
   });
 });
 

@@ -191,7 +191,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       const b = findBlock(A.blocks, a);
       // where a relocated block is loaded: from its start, however far (a label inside would be in its .pseudopc)
       if (b && b.type === 'reloc' && labelAt(b.start)) { ctx.useLabel && ctx.useLabel(b.start); return [{ t: 'lbl', s: labelAt(b.start)!.name, to: b.start }, { t: 'p', s: '+' }, { t: 'num', s: String(a - b.start) }]; }
-      if (b) for (let p = a - 1; p >= b.start && a - p < 256; p--) {
+      // in a bitmap from the label before it however far: the analysis makes none inside one (5.12)
+      if (b) for (let p = a - 1; p >= b.start && (a - p < 256 || b.type === 'bitmap'); p--) {
         const l = labelAt(p);
         if (l) { ctx.useLabel && ctx.useLabel(p); return [{ t: 'lbl', s: l.name, to: p }, { t: 'p', s: '+' }, { t: 'num', s: String(a - p) }]; }
       }

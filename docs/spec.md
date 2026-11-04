@@ -655,6 +655,16 @@ Kvarvarande data delas vid objektstarter (adresser som refereras av kod, pekarm�
 
 Namnen innehåller adressen och är därför unika. Användarens namn ersätter dem överallt; validering kräver giltig Kick-identifierare, inget mnemonic-namn och ingen dubblett.
 
+**Inuti en bitmapp** får en adress som koden läser eller skriver ingen egen etikett, bara bitmappens start har en. Koden
+räknar i stället från närmaste etikett före adressen, hur långt bort den än är: `sta bitmap_6000+328,x`. Ett annat
+datablock får fortfarande en etikett där koden läser det. Kod som ritar i en bitmapp (The Lab, med bitmappen på `$6000`)
+läser och skriver över hela den, en del med 919 adresser. Varje sådan etikett blev en egen rad som delade bilden i
+listningen. De som låg mitt i en cell hamnade i en lång rad under bilden, och ett klick på en av dem markerade bara den
+cellen. Utan etiketterna är bilden hel igen, och bitmappen kan sparas som en binärfil (`.import binary`), eftersom det
+inte finns något inuti den att definiera. En etikett som användaren själv satt i bitmappen finns kvar, och koden räknar
+från den efter den. Test: `packages/core/test/bitmap-labels.test.ts` (även referensens avvikelselista) och *a bitmap the
+code draws into* i `apps/desktop/test/gfxlines.test.ts`.
+
 ### 8.10 Konfidens och förklaringar
 
 Varje block har `conf` (0–1) och `reason`. Inspektorn visar dem som "high / medium / low confidence" och en "Why"-rad. Block med låg konfidens får en `?`-markör i listningen så att användaren vet var granskning lönar sig.

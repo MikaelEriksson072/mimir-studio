@@ -277,6 +277,16 @@ export const DEVIATIONS: Deviation[] = [
       replace: "          const after = loaded(t) ? strs.inlineAfter({ mem, insLen, skip, owner }, pc, t) : null;\n          if (after) {\n            inlineCalls.add(pc);\n            if (after === 'unknown') L('warn', `JSR ${$4(t)} pops its return address; inline data follows ${$4(next)}`, pc, 'code');\n            else { const on = after.s + after.n, range = `${$4(after.s)}${after.n > 1 ? `-${$4(on - 1)}` : ''}`; L('ok', `JSR ${$4(t)} ${after.string ? 'prints the string' : `reads the ${after.n} byte${after.n === 1 ? '' : 's'}`} after it (${range}); the code goes on at ${$4(on)}`, pc, 'code'); enqueue(on, 'jmp'); }\n            break;\n          }\n",
     }],
   },
+  {
+    why: 'Code that draws into a bitmap (The Lab, at $6000) gave every address it reads or writes there a label of its own (`bitmap_6148`), and each one cut the picture in the listing. Inside a bitmap there are no such labels: the code counts from the label before the address, however far (`bitmap_6000+328`)',
+    edits: [
+      {
+        find: "    if (!loaded(addr) || tm[addr] === T.MUSIC || codeOwner[addr] >= 0) continue;\n    setLabel(addr, dataName(addr), 'data');",
+        replace: "    if (!loaded(addr) || tm[addr] === T.MUSIC || codeOwner[addr] >= 0) continue;\n    const bb = blockAt(addr);\n    if (bb && bb.type === T.BITMAP && addr !== bb.start) continue;\n    setLabel(addr, dataName(addr), 'data');",
+      },
+      { find: 'if (b) for (let p = a - 1; p >= b.start && a - p < 256; p--) {', replace: 'if (b) for (let p = a - 1; p >= b.start && (a - p < 256 || b.type === T.BITMAP); p--) {' },
+    ],
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

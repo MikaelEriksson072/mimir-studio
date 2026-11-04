@@ -76,6 +76,10 @@ export function makeLabels(ctx: Ctx, cls: Classification, vic: VicEvidence): { l
     // inside a relocated block where it is loaded the source counts from its start (`reloc_1000+5`): a label there would
     // be inside its .pseudopc, at the address the bytes run at
     if (!loaded(addr) || tm[addr] === T.MUSIC || codeOwner[addr] >= 0 || (tm[addr] === T.RELOC && !ctx.relocs.some(r => r.start === addr))) continue;
+    // inside a bitmap the code counts from its start (`bitmap_2000+328`): a label there would cut its picture in the
+    // listing, and code that draws into it would give it hundreds
+    const b = findBlock(blocks, addr);
+    if (b && b.type === 'bitmap' && addr !== b.start) continue;
     setLabel(addr, dataName(addr), 'data');
   }
   for (const b of blocks) {
