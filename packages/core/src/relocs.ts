@@ -96,6 +96,13 @@ export function moveKeys(p: RelocKeys, from: Addr, n: number, to: Addr): void {
     for (const k of keys) delete r[k];
     keys.forEach((k, i) => { r[moved(k)] = vals[i]; });
   };
+  // a bookmark's area moves with its first byte, cut where the range ends; one that runs into the range from before
+  // it ends where the range starts
+  for (const [k, b] of Object.entries(p.bookmarks)) {
+    if (b.end == null) continue;
+    if (inside(+k)) b.end = moved(Math.min(b.end, end));
+    else if (+k < from && b.end > from && b.end <= end) b.end = from;
+  }
   rec(p.labels); rec(p.comments); rec(p.blockComments); rec(p.notes); rec(p.bookmarks);
   const list = (xs: Addr[]) => xs.map(a => (inside(a) ? moved(a) : a));
   p.entries = [...new Set(list(p.entries))];

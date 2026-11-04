@@ -8,9 +8,13 @@ const at = z.number().int().min(0).max(4096 * 0x10000);
 const record = z.record(z.string().regex(/^\d+$/), z.string());
 /** comment lines (`//`) and blocks the user inserted above an address */
 const notes = z.record(z.string().regex(/^\d+$/), z.object({ text: z.string().max(20000), block: z.boolean().optional() }));
-/** the user's bookmarks: a title, a note and a colour per address (not written to the source). A colour this version
- * does not know is left out: the bookmark is amber */
-const bookmarks = z.record(z.string().regex(/^\d+$/), z.object({ title: z.string().max(200), text: z.string().max(20000), color: z.string().max(16).refine(isBookmarkColor).optional().catch(undefined) }));
+/** the user's bookmarks: a title, a note and a colour per address, and where the area of one on an area ends (not
+ * written to the source). A colour this version does not know is left out: the bookmark is amber; so is an end that
+ * is no address: the bookmark is on its line */
+const bookmarks = z.record(z.string().regex(/^\d+$/), z.object({
+  title: z.string().max(200), text: z.string().max(20000), color: z.string().max(16).refine(isBookmarkColor).optional().catch(undefined),
+  end: z.number().int().min(1).max(4096 * 0x10000).optional().catch(undefined),
+}));
 /** build.bat / build.sh as the user edited them */
 const scripts = z.object({ 'build.bat': z.string().max(65536), 'build.sh': z.string().max(65536) }).partial().strict();
 /** how the Pack view packs the project, with Brokkr or Exomizer (spec 13.8) */

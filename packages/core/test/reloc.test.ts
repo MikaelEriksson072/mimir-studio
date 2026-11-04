@@ -77,6 +77,20 @@ describe('relocated blocks', () => {
     expect(analyze({ files: [two] }).copies.map(c => c.start)).toEqual([0xc100]);
   });
 
+  it('take a bookmark\'s area along with its first byte, cut where the block ends; one that runs into it ends there', () => {
+    const p: Project = {
+      ...project([]), bookmarks: {
+        0x1003: { title: 'inside', text: '', end: 0x100d }, 0x1009: { title: 'past the end', text: '', end: 0x1020 },
+        0x0ff8: { title: 'into it', text: '', end: 0x1004 }, 0x0ff0: { title: 'over it', text: '', end: 0x1030 }, 0x100f: { title: 'one line', text: '' },
+      },
+    };
+    addReloc(p, RELOC);
+    expect(p.bookmarks).toEqual({
+      0x2003: { title: 'inside', text: '', end: 0x200d }, 0x2009: { title: 'past the end', text: '', end: 0x2011 },
+      0x0ff8: { title: 'into it', text: '', end: 0x1000 }, 0x0ff0: { title: 'over it', text: '', end: 0x1030 }, 0x200f: { title: 'one line', text: '' },
+    });
+  });
+
   it('take the user\'s work on the bytes along, and give it back', () => {
     const p: Project = {
       ...project([]), labels: { 0x1009: 'subroutine', 0x080d: 'main' }, comments: { 0x1003: 'call it' }, blockComments: { 0x1000: 'moved code' },

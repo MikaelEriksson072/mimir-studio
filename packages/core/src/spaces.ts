@@ -72,9 +72,10 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
     if (s !== 0) { const i = at.get(s); return i == null ? [] : [i]; }
     return space0 != null && has[space0][a] ? [space0] : parts.map((_, i) => i);
   };
-  const rec = <T>(r: Record<Addr, T> | undefined): Record<Addr, T>[] => {
+  /** `f`: the value in the space (a bookmark's area ends there too) */
+  const rec = <T>(r: Record<Addr, T> | undefined, f: (v: T, k: Addr) => T = v => v): Record<Addr, T>[] => {
     const out = parts.map(() => ({} as Record<Addr, T>));
-    for (const [k, v] of Object.entries(r || {})) for (const i of route(+k)) out[i][spaceAddr(+k)] = v;
+    for (const [k, v] of Object.entries(r || {})) for (const i of route(+k)) out[i][spaceAddr(+k)] = f(v, +k);
     return out;
   };
   const list = (xs: Addr[] | undefined): Addr[][] => { const out = parts.map((): Addr[] => []); for (const k of xs || []) for (const i of route(k)) out[i].push(spaceAddr(k)); return out; };
@@ -84,7 +85,7 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
     return out;
   };
   const labels = rec(project.labels), comments = rec(project.comments), blockComments = rec(project.blockComments), notes = rec<Note>(project.notes);
-  const bookmarks = rec<Bookmark>(project.bookmarks);
+  const bookmarks = rec<Bookmark>(project.bookmarks, (b, k) => (b.end != null ? { ...b, end: b.end - k + spaceAddr(k) } : b));
   const entries = list(project.entries), excluded = list(project.excluded), binary = list(project.binary);
   // a music block's init and play are in its bank too
   const overrides = ranged<Override>(project.overrides).map(os => os.map(o => (o.props?.init != null || o.props?.play != null

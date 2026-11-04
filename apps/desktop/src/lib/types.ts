@@ -12,8 +12,9 @@ export interface MountedDisk { name: string; path: string | null; bytes: Uint8Ar
 export interface Sel { start: Addr; end: Addr; multi: boolean; anchor?: Addr; anchorEnd?: Addr; bytes?: boolean }
 /** `y`: keep the line at this height in the listing (px from its top), where it was before its block changed type;
  *  `line`: show this line (a find hit) rather than the address's; `top`: put the line at the top of the listing, with
- *  the line above it (a block header, Ctrl+↓ / Ctrl+↑) */
-export interface ScrollReq { addr: Addr; center: boolean; n: number; y?: number; line?: ListingLine; top?: boolean }
+ *  the line above it (a block header, Ctrl+↓ / Ctrl+↑); `end`: the line starts an area that ends there (exclusive, a
+ *  bookmark's): as much of it as fits is shown, from its first line */
+export interface ScrollReq { addr: Addr; center: boolean; n: number; y?: number; line?: ListingLine; top?: boolean; end?: Addr }
 /** Where in memory the editor is (spec 14.6b): the address at the top of the listing, of Graphics or of Memory, as it
  *  was scrolled last; the one of these tabs opened next starts there, unless a jump (a ScrollReq) is newer. `end`: the
  *  address at the bottom; `top` and `lines`: the listing's own scroll position and the lines it was in, so the listing
@@ -25,7 +26,8 @@ export interface Changed { start: Addr; end: Addr; label: string; at: number }
 /** `zp`: the label is a zero-page variable; `line`: open the editor under this listing line (a `.label` line in the
  *  file head, which has no address of the label itself) */
 export interface Editing { kind: 'label' | 'comment' | 'note'; addr: Addr; value: string; block?: boolean; zp?: boolean; line?: number }
-export interface NavOptions { center?: boolean; listing?: boolean; noHistory?: boolean; keepSel?: boolean; fromSource?: boolean }
+/** `end`: the address starts an area that ends there (a bookmark's), which the listing shows from its first line */
+export interface NavOptions { center?: boolean; listing?: boolean; noHistory?: boolean; keepSel?: boolean; fromSource?: boolean; end?: Addr }
 export type ToastKind = 'info' | 'ok' | 'warn' | 'err';
 export interface Toast { id: string; msg: string; kind: ToastKind }
 

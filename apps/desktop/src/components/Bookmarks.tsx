@@ -1,9 +1,11 @@
 /* Bookmarks: the user's notes on addresses. The list sits in the sidebar (Ctrl+B): a click shows the whole note, a
  * double-click goes there in the code. B opens the editor for the bookmark on the cursor line at the top of the list,
  * so the code stays in view beside it. They are kept in the project file, never in the generated source. Each has a
- * colour, a preset or one of the user's own, which its mark and its line in the listing and its entry in the list show. */
+ * colour, a preset or one of the user's own, which its mark and its line in the listing and its entry in the list show.
+ * A bookmark can be on an area, to an end address (B on a selection makes one): the listing draws a stripe in its
+ * colour down the left margin beside the area's lines, and a jump goes to its first line. */
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
-import { BOOKMARK_COLORS, h4, isBookmarkColor, type Addr, type AnalysisResult, type Bookmark, type BookmarkPreset, type RenderResult } from '@mimir/core';
+import { BOOKMARK_COLORS, h4, isBookmarkColor, SPACE, spaceOf, type Addr, type AnalysisResult, type Bookmark, type BookmarkPreset, type RenderResult } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
 import { cx } from '../lib/util';
@@ -24,16 +26,25 @@ const bmVar = (c?: string) => ({ '--bm': bookmarkCss(c) }) as CSSProperties;
 const PRESET_NAMES: Record<BookmarkPreset, string> = { amber: 'Amber', orange: 'Orange', red: 'Red', pink: 'Pink', violet: 'Violet', blue: 'Blue', teal: 'Teal', green: 'Green' };
 const HEX = /^#?([0-9a-f]{6})$/i;
 
+/** a bookmark's address, or the first and last of its area */
+export const bookmarkSpan = (a: Addr, b?: Pick<Bookmark, 'end'>) => `$${h4(a)}${b?.end != null && b.end - 1 > a ? `–$${h4(b.end - 1)}` : ''}`;
+
 /** the bookmark being added or edited, and what the editor does */
 export interface BookmarkEditing {
   /** the address the editor opened on; an existing bookmark there is edited */
   addr: Addr;
-  /** the cursor line's address: the editor can take it as the bookmark's place */
-  cursorAt: Addr | null;
+  /** where the area of a new bookmark ends (exclusive): the selection it is made from */
+  end: Addr | null;
+  /** the cursor line's address and where its bytes end: the editor can take them as the bookmark's place or its end */
+  cursorAt: Addr | null; cursorEnd: Addr | null;
+  /** the listing's selection when it takes in more than one line: the editor can take it as the area */
+  selection: { start: Addr; end: Addr } | null;
   onSave: (from: Addr, to: Addr, b: Bookmark) => void;
   onCancel: () => void;
-  /** a valid address was typed: show it in the listing */
-  onPreview: (a: Addr) => void;
+  /** a valid address was typed: show it in the listing (and the area, `end` exclusive) */
+  onPreview: (a: Addr, end: Addr | null) => void;
+  /** only the area's end changed: select the area in the listing */
+  onArea: (a: Addr, end: Addr | null) => void;
 }
 
 interface BookmarksViewProps {
@@ -58,16 +69,17 @@ export function BookmarksView({ A, bookmarks, R, cursor, selected, onSelect, onG
     <div className="side-inner">
       <div className="side-title">Bookmarks <span className="muted">{all.length}</span><span className="grow" />
         <button className="icon-btn" title={`Add a bookmark at the cursor${cursor != null ? ` ($${h4(cursor)})` : ''} (B)`} aria-label="Add bookmark" onClick={onAdd}><Icon name="plus" size={14} /></button></div>
-      {editing && <BookmarkEditor key={editing.addr} A={A} R={R} bookmarks={bookmarks} editing={editing} onDelete={onDelete} />}
+      {editing && <BookmarkEditor key={`${editing.addr}-${editing.end}`} A={A} R={R} bookmarks={bookmarks} editing={editing} onDelete={onDelete} />}
       {all.length > 0 && <div className="side-search"><Icon name="search" size={14} /><label htmlFor="bm-q" className="sr-only">Filter bookmarks</label><input id="bm-q" value={q} onChange={e => setQ(e.target.value)} placeholder="Filter by title, note or address" /></div>}
       <div className="blk-list bm-list" role="list" aria-label="Bookmarks">
         {list.map(([a, b]) => { const on = selected === a, l = R.labels.get(a); return (
           <div key={a} role="listitem" className={cx('bm-item', on && 'open', editing?.addr === a && 'editing')} ref={on ? open : undefined} style={bmVar(b.color)}>
-            <button className={cx('bm-row', cursor === a && 'here')} aria-expanded={on} title="Click to show the note · double-click to go there in the code"
+            <button className={cx('bm-row', cursor === a && 'here')} aria-expanded={on} title={`${b.end != null ? `On ${bookmarkSpan(a, b)} · ` : ''}Click to show the note · double-click to go there in the code`}
               onClick={e => click(a, e)} onDoubleClick={() => { onSelect(a); onGo(a); }}>
-              <Icon name="bookmark" size={13} className="bm-ic" /><span className="mono bm-adr">${h4(a)}</span><span className="bm-title">{b.title || `$${h4(a)}`}</span>
+              <Icon name="bookmark" size={13} className="bm-ic" /><span className="mono bm-adr">${h4(a)}{b.end != null && b.end - 1 > a && <span className="bm-end">–{h4(b.end - 1)}</span>}</span><span className="bm-title">{b.title || `$${h4(a)}`}</span>
             </button>
             {on && <div className="bm-body">
+              {b.end != null && b.end - 1 > a && <div className="mono small muted bm-area-text">{bookmarkSpan(a, b)} · {b.end - a} bytes</div>}
               {l && l.name !== b.title && <div className="mono small muted">{l.name}</div>}
               {b.text ? <div className="bm-text">{b.text}</div> : <div className="muted small">No note. Edit adds one.</div>}
               <div className="bm-actions">
@@ -85,25 +97,47 @@ export function BookmarksView({ A, bookmarks, R, cursor, selected, onSelect, onG
   );
 }
 
-/** Adds or edits a bookmark in the sidebar: the listing beside it shows the code at the address. */
+/** Adds or edits a bookmark in the sidebar: the listing beside it shows the code at the address, and selects the area
+ *  of a bookmark with an end address. */
 function BookmarkEditor({ A, R, bookmarks, editing, onDelete }: { A: AnalysisResult; R: RenderResult; bookmarks: Record<Addr, Bookmark>; editing: BookmarkEditing; onDelete: (a: Addr) => void }) {
-  const { addr, cursorAt, onSave, onCancel, onPreview } = editing;
+  const { addr, cursorAt, cursorEnd, selection, onSave, onCancel, onPreview, onArea } = editing;
   const old = bookmarks[addr];
   const [at, setAt] = useState(`$${h4(addr)}`);
+  /** the area's last address as typed (empty: the bookmark is on its line) */
+  const firstEnd = old ? old.end : editing.end;
+  const [last, setLast] = useState(firstEnd != null ? `$${h4(firstEnd - 1)}` : '');
   const [title, setTitle] = useState(old?.title ?? bookmarkTitle(R, addr));
   const [text, setText] = useState(old?.text ?? '');
   const [color, setColor] = useState(old?.color && isBookmarkColor(old.color) ? old.color.toLowerCase() : 'amber');
   const labelAt = (name: string) => { for (const [a, l] of R.labels) if (l.name === name) return a; return undefined; };
-  const t = parseGoto(at, labelAt);
+  // an address in the bank of the bookmark (a cartridge's, 13.9b)
+  const t = parseGoto(at, labelAt, a => spaceOf(addr) * SPACE + a);
   const to = 'addr' in t ? t.addr : null;
   const error = to == null ? 'Enter one hex address like $0810, or a label.'
     : A.owner[to] < 0 ? `No loaded byte at $${h4(to)}: a bookmark marks a place in the code.`
       : to !== addr && bookmarks[to] ? `There is already a bookmark at $${h4(to)}.` : null;
-  // another valid address: the listing shows its code
-  const shown = useRef(addr);
-  useEffect(() => { if (to != null && !error && to !== shown.current) { shown.current = to; onPreview(to); } }, [to, error]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the end: an address in the bank the bookmark is in (a label is where it is)
+  const typedEnd = last.trim() ? parseGoto(last, labelAt, a => spaceOf(to ?? addr) * SPACE + a) : null;
+  const lastAt = typedEnd && 'addr' in typedEnd ? typedEnd.addr : null;
+  // an end at the address itself is no area
+  const end = lastAt != null && to != null && lastAt > to ? lastAt + 1 : null;
+  const endError = !typedEnd || to == null || error ? null : lastAt == null ? 'Enter the area’s last address like $081f, or a label; leave it empty for the line only.'
+    : spaceOf(lastAt) !== spaceOf(to) ? 'The area ends in another bank.'
+      : lastAt < to ? `The area ends before it starts at $${h4(to)}.`
+        : A.owner[lastAt] < 0 ? `No loaded byte at $${h4(lastAt)}: the area ends in the code.` : null;
+  // another valid address: the listing shows its code; another end: the listing selects the area
+  const shown = useRef({ to: addr, end: firstEnd ?? null });
+  useEffect(() => {
+    if (to == null || error || endError) return;
+    const s = shown.current; shown.current = { to, end };
+    if (to !== s.to) onPreview(to, end); else if (end !== s.end) onArea(to, end);
+  }, [to, end, error, endError]); // eslint-disable-line react-hooks/exhaustive-deps
   // amber, the colour of a bookmark without one, is not written to the project
-  const save = () => { if (!error && to != null) onSave(addr, to, { title: title.trim() || bookmarkTitle(R, to), text: text.replace(/^(\s*\n)+/, '').trimEnd(), ...(color !== 'amber' ? { color } : {}) }); };
+  const save = () => {
+    if (error || endError || to == null) return;
+    onSave(addr, to, { title: title.trim() || bookmarkTitle(R, to), text: text.replace(/^(\s*\n)+/, '').trimEnd(), ...(color !== 'amber' ? { color } : {}), ...(end != null ? { end } : {}) });
+  };
+  const useSelection = selection && (selection.start !== to || selection.end !== end);
   const enter = (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); save(); } };
   const heading = old ? 'Edit bookmark' : 'Add bookmark';
   return (
@@ -113,15 +147,20 @@ function BookmarkEditor({ A, R, bookmarks, editing, onDelete }: { A: AnalysisRes
       <div className="field"><label htmlFor="bm-addr">Address</label>
         <div className="bm-addr-row"><input id="bm-addr" className="mono" value={at} spellCheck={false} onChange={e => setAt(e.target.value)} onKeyDown={enter} />
           {cursorAt != null && cursorAt !== to && <button type="button" className="btn small" title="Use the line the cursor is on in the listing" onClick={() => setAt(`$${h4(cursorAt)}`)}>Cursor line</button>}</div></div>
+      <div className="field"><label htmlFor="bm-end">End address</label>
+        <div className="bm-addr-row"><input id="bm-end" className="mono" value={last} spellCheck={false} placeholder="The line only" onChange={e => setLast(e.target.value)} onKeyDown={enter} />
+          {cursorAt != null && cursorEnd != null && to != null && cursorAt > to && cursorEnd !== end && <button type="button" className="btn small" title="End the area with the line the cursor is on in the listing" aria-label="Cursor line as the end" onClick={() => setLast(`$${h4(cursorEnd - 1)}`)}>Cursor line</button>}
+          {useSelection && <button type="button" className="btn small" title={`Put the bookmark on the selection in the listing, $${h4(selection.start)}–$${h4(selection.end - 1)}`} onClick={() => { setAt(`$${h4(selection.start)}`); setLast(`$${h4(selection.end - 1)}`); }}>Selection</button>}</div></div>
       <div className="field"><label htmlFor="bm-title">Title</label><input id="bm-title" value={title} maxLength={200} onChange={e => setTitle(e.target.value)} onKeyDown={enter} autoFocus onFocus={e => e.currentTarget.select()} /></div>
       {/* labels by id: a label around the textarea would take the note into its name */}
       <div className="field"><label htmlFor="bm-text">Note</label>
         <textarea id="bm-text" value={text} maxLength={20000} rows={7} placeholder="What happens here, what to look at later…" onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } }} /></div>
       <ColorPicker value={color} onChange={setColor} />
-      {error ? <div className="err-text small">{error}</div> : <p className="muted small">The listing shows the code at {to != null ? `$${h4(to)}` : 'the address'}. Enter in a field or Ctrl+Enter in the note saves, Esc cancels.</p>}
+      {error || endError ? <div className="err-text small">{error || endError}</div>
+        : <p className="muted small">The listing shows {end != null && to != null ? `the area ${bookmarkSpan(to, { end })}` : `the code at ${to != null ? `$${h4(to)}` : 'the address'}`}. Enter in a field or Ctrl+Enter in the note saves, Esc cancels.</p>}
       <div className="bm-actions">
-        <button type="submit" className="btn small primary" disabled={!!error}>Save</button>
+        <button type="submit" className="btn small primary" disabled={!!(error || endError)}>Save</button>
         <button type="button" className="btn small" onClick={onCancel}>Cancel</button>
         <span className="grow" />
         {old && <button type="button" className="btn small ghost" onClick={() => onDelete(addr)}><Icon name="trash" size={13} />Delete</button>}

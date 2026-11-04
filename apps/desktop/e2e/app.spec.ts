@@ -1750,7 +1750,7 @@ test('bookmarks: notes on addresses, listed by address, a click shows the note a
     expect(box!.x + box!.width).toBeLessThanOrEqual(line!.x);
     // a click in the listing and Cursor line take another place; Esc closes the editor without saving
     await listing(page).locator('.row', { hasText: 'jsr sub_0866' }).click();
-    await dialog.getByRole('button', { name: 'Cursor line' }).click();
+    await dialog.getByRole('button', { name: 'Cursor line', exact: true }).click();
     await expect(dialog.getByLabel('Address', { exact: true })).toHaveValue('$0813');
     await dialog.getByLabel('Title', { exact: true }).press('Escape');
     await expect(dialog).toBeHidden();
@@ -1884,6 +1884,88 @@ test('bookmarks: notes on addresses, listed by address, a click shows the note a
     await page.keyboard.press('Control+z');
     await expect(icon('sine_09b5')).toHaveCSS('color', rgb(await token('--bm-amber')));
     await expect(icon('Set up')).toHaveCSS('color', teal);
+  });
+});
+
+test('a bookmark on an area: B on a selection keeps its end, the area has a stripe in its colour and a jump goes to its first line', async ({ page }) => {
+  await waitForListing(page);
+  await page.keyboard.press('Control+j');
+  // the instruction's line (the block header and the label above it have its address too)
+  const at = (adr: string) => listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: new RegExp(`^${adr}$`) }) });
+  const stripe = (adr: string) => at(adr).locator('.bm-area');
+  const list = page.getByRole('list', { name: 'Bookmarks' });
+  const rgb = (hex: string) => `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+  const token = (name: string) => page.evaluate(n => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+
+  await test.step('B on a selection of three lines: the editor has its first address and its last', async () => {
+    await goTo(page, 'start');
+    await at('0810').click();
+    await at('0816').click({ modifiers: ['Shift'] });
+    await page.keyboard.press('b');
+    const dialog = page.locator('aside.sidebar').getByRole('form', { name: 'Add bookmark' });
+    await expect(dialog.getByLabel('Address', { exact: true })).toHaveValue('$0810');
+    await expect(dialog.getByLabel('End address', { exact: true })).toHaveValue('$0816');
+    await expect(dialog.getByText('The listing shows the area $0810–$0816.')).toBeVisible();
+    // the listing selects the area while the editor is open
+    await expect(at('0813')).toHaveClass(/\bsel\b/);
+    await dialog.getByLabel('Title', { exact: true }).fill('Set up');
+    await dialog.getByLabel('Title', { exact: true }).press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('.toasts .toast', { hasText: 'Bookmark added at $0810–$0816' })).toBeVisible();
+  });
+
+  await test.step('the area has a stripe in the bookmark\'s colour in the left margin, from its mark to its last line', async () => {
+    await expect(at('0810').locator('.bm-mark')).toHaveCount(1);
+    for (const adr of ['0810', '0813', '0816']) await expect(stripe(adr)).toHaveCSS('background-color', rgb(await token('--bm-amber')));
+    await expect(stripe('0810')).toHaveClass(/\bfirst\b/);
+    await expect(stripe('0816')).toHaveClass(/\blast\b/);
+    await expect(stripe('0817')).toHaveCount(0);
+    await expect(list.locator('.bm-row')).toHaveText(['$0810–0816Set up']);
+    // in the bookmark's colour when it gets another
+    await goTo(page, 'start');
+    await page.keyboard.press('b');
+    const dialog = page.getByRole('form', { name: 'Edit bookmark' });
+    await expect(dialog.getByLabel('End address', { exact: true })).toHaveValue('$0816');
+    await dialog.getByRole('group', { name: 'Preset colours' }).getByRole('button', { name: 'Violet' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(stripe('0813')).toHaveCSS('background-color', rgb(await token('--bm-violet')));
+  });
+
+  await test.step('a jump to it goes to its first line', async () => {
+    await goTo(page, 'sine_09b5');
+    await page.keyboard.press('F2');
+    await expect(statusBar(page)).toContainText('$0810 · start');
+    await expect(at('0810')).toBeInViewport();
+    await goTo(page, 'sine_09b5');
+    await list.locator('.bm-row', { hasText: 'Set up' }).dblclick();
+    await expect(statusBar(page)).toContainText('$0810 · start');
+  });
+
+  await test.step('the end: before the address it is refused; Cursor line ends it there; empty, it is one line again', async () => {
+    await goTo(page, 'start');
+    await page.keyboard.press('b');
+    const dialog = page.getByRole('form', { name: 'Edit bookmark' }), end = dialog.getByLabel('End address', { exact: true });
+    await end.fill('$0800');
+    await expect(dialog.getByText('The area ends before it starts at $0810.')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await at('0819').click();
+    await dialog.getByRole('button', { name: 'Cursor line as the end' }).click();
+    // the last byte of the line: the instruction at $0819 is three bytes
+    await expect(end).toHaveValue('$081b');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(stripe('0819')).toHaveClass(/\blast\b/);
+    await expect(stripe('0816')).not.toHaveClass(/\blast\b/);
+    await goTo(page, 'start');
+    await page.keyboard.press('b');
+    await end.fill('');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(listing(page).locator('.bm-area')).toHaveCount(0);
+    await expect(at('0810').locator('.bm-mark')).toHaveCount(1);
+    // Ctrl+Z brings the area back
+    await listing(page).focus();
+    await page.keyboard.press('Control+z');
+    await expect(stripe('0819')).toHaveClass(/\blast\b/);
   });
 });
 

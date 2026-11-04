@@ -43,7 +43,7 @@ import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
 import { MemoryDump } from './components/MemoryDump';
 import type { BankChoice } from './components/ViewModes';
-import { bookmarkList } from './components/Bookmarks';
+import { bookmarkList, bookmarkSpan } from './components/Bookmarks';
 import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
 import { Splitter } from './components/Splitter';
@@ -301,7 +301,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // a jump takes Graphics and Memory to its bank
     setViewSpace(spaceOf(addr));
     if (!opts.keepSel) setSel(null);
-    if (!opts.fromSource) setScrollReq({ addr, center: !!opts.center, n: Date.now() });
+    if (!opts.fromSource) setScrollReq({ addr, center: !!opts.center, n: Date.now(), ...(opts.end != null ? { end: opts.end } : {}) });
     if (opts.listing && useUi.getState().tab !== 'listing') setUi({ tab: 'listing' });
   }, [A, cursor, toast, setUi, folded]);
   const goBack = () => { const b = navHist.current.back.pop(); if (b != null && cursor != null) { navHist.current.fwd.push(cursor); navigate(b, { noHistory: true }); } };
@@ -1015,9 +1015,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     if (a != null) navigate(a, { center: true, listing: true });
   };
   /* ---- bookmarks: a title and a note per address, in the project file only ---- */
-  /** the bookmark whose note the Bookmarks list shows, and the address the bookmark editor is open on */
+  /** the bookmark whose note the Bookmarks list shows, and the address the bookmark editor is open on (`end`: the
+   *  area a new bookmark gets, the selection it was made from) */
   const [bmSel, setBmSel] = useState<Addr | null>(null);
-  const [bmEdit, setBmEdit] = useState<Addr | null>(null);
+  const [bmEdit, setBmEdit] = useState<{ at: Addr; end?: Addr } | null>(null);
   const showBookmarks = (a?: Addr) => {
     setUi({ activity: 'bookmarks', sidePanel: true });
     if (a !== undefined) setBmSel(a);
@@ -1029,30 +1030,45 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     for (const k of Object.keys(project.bookmarks)) if (lineOf[Number(k)] === lineOf[a]) return Number(k);
     return a;
   };
-  /** the editor opens in the Bookmarks view, and the listing beside it shows the code at the address */
-  const openBookmarkEditor = (a: Addr) => { setBmEdit(a); showBookmarks(); navigate(a, { center: true, listing: true, noHistory: true }); };
-  const startBookmark = (at?: Addr) => {
-    const a = lineAddr(at);
+  /** the selection, when it takes in more than one line: a bookmark made from it is on that area */
+  const selArea = (s: Sel | null = sel): Range | null => (s && s.multi && s.end > s.start && lineOf[s.start] >= 0 && lineOf[s.start] !== lineOf[s.end - 1] ? { start: s.start, end: s.end } : null);
+  /** while the editor is open the listing selects the bookmark's area */
+  const showBmArea = (start: Addr, end: Addr | null) => { if (end != null) setSel({ start, end, multi: true, anchor: start, anchorEnd: end }); else setSel(null); };
+  /** the editor opens in the Bookmarks view, and the listing beside it shows the code at the address (and the area) */
+  const openBookmarkEditor = (a: Addr, end?: Addr) => {
+    const area = project.bookmarks[a] ? project.bookmarks[a].end : end;
+    setBmEdit({ at: a, ...(project.bookmarks[a] || end == null ? {} : { end }) }); showBookmarks();
+    navigate(a, { center: true, listing: true, noHistory: true, ...(area != null ? { end: area } : {}) });
+    showBmArea(a, area ?? null);
+  };
+  /** a new bookmark made from a selection that takes in more than one line is on that area, from its first line */
+  const startBookmark = (at?: Addr, area: Range | null = at == null ? selArea() : null) => {
+    const a = area ? area.start : lineAddr(at);
     if (a == null) { toast('Put the cursor on a line in the listing first', 'warn'); return; }
-    openBookmarkEditor(bookmarkOnLine(a));
+    const on = bookmarkOnLine(a);
+    openBookmarkEditor(on, area && on === area.start ? area.end : undefined);
   };
   const saveBookmark = (from: Addr, to: Addr, b: Bookmark) => {
     const old = project.bookmarks[from];
     setBmEdit(null); setBmSel(to);
+    // the area is in its colour now: the selection that showed it goes
+    if (b.end != null && sel && sel.start === to && sel.end === b.end) setSel(null);
     setTimeout(() => listRef.current?.focus(), 0);
-    if (old && from === to && old.title === b.title && old.text === b.text && old.color === b.color) return;
-    update(old ? `Bookmark $${h4(to)}` : `Add bookmark $${h4(to)}`, d => { delete d.bookmarks[from]; d.bookmarks[to] = b; });
-    toast(old ? `Bookmark $${h4(to)} saved` : `Bookmark added at $${h4(to)}: Ctrl+B shows the list`, 'ok');
+    if (old && from === to && old.title === b.title && old.text === b.text && old.color === b.color && old.end === b.end) return;
+    update(old ? `Bookmark ${bookmarkSpan(to, b)}` : `Add bookmark ${bookmarkSpan(to, b)}`, d => { delete d.bookmarks[from]; d.bookmarks[to] = b; });
+    toast(old ? `Bookmark ${bookmarkSpan(to, b)} saved` : `Bookmark added at ${bookmarkSpan(to, b)}: Ctrl+B shows the list`, 'ok');
   };
   const deleteBookmark = (a: Addr) => {
     if (!project.bookmarks[a]) return;
     update(`Remove bookmark $${h4(a)}`, d => { delete d.bookmarks[a]; });
-    if (bmEdit === a) setBmEdit(null);
+    if (bmEdit?.at === a) setBmEdit(null);
     toast(`Bookmark $${h4(a)} removed (Ctrl+Z brings it back)`, 'ok');
   };
+  /** a jump to a bookmark goes to its first line; the listing shows as much of its area as fits */
+  const bmNav = (a: Addr): NavOptions => { const end = project.bookmarks[a]?.end; return { center: true, listing: true, ...(end != null ? { end } : {}) }; };
   const goBookmark = (a: Addr) => {
     if (A.owner[a] < 0) { toast(`$${h4(a)} is not loaded: the file with this bookmark is not in the project`, 'warn'); return; }
-    navigate(a, { center: true, listing: true });
+    navigate(a, bmNav(a));
     setDrawer(null);
     setTimeout(() => listRef.current?.focus(), 0);
   };
@@ -1063,7 +1079,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const c = cursor ?? -1, here = c >= 0 ? lineOf[c] : -1;
     const other = (a: Addr) => here < 0 || lineOf[a] !== here;
     const a = dir > 0 ? (all.find(x => x > c && other(x)) ?? all[0]) : ([...all].reverse().find(x => x < c && other(x)) ?? all[all.length - 1]);
-    navigate(a, { center: true, listing: true });
+    navigate(a, bmNav(a));
     setBmSel(a);
     toast(`Bookmark $${h4(a)}: ${project.bookmarks[a].title}`, 'info');
   };
@@ -1849,8 +1865,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         { label: zl ? 'Comment at the end of the .label line…' : 'Comment at the end of the line…', key: ';', run: () => (zl ? startComment(undefined, zl) : startComment(l.a)) },
         { label: zl ? 'Insert comment line above the .label line…' : 'Insert comment line above…', key: '/', run: () => (zl ? startNote(false, undefined, zl) : startNote(false, l.a)) },
         { label: zl ? 'Insert comment block above the .label line…' : 'Insert comment block above…', key: '*', run: () => (zl ? startNote(true, undefined, zl) : startNote(true, l.a)) },
-        ...(() => { const at = l.a != null ? bookmarkOnLine(l.a) : null, has = at != null && !!project.bookmarks[at]; return [
-          { label: has ? 'Edit bookmark…' : 'Add bookmark…', key: 'B', run: () => startBookmark(l.a) },
+        // in a selection of more than one line: the bookmark on its first line, a new one on its area
+        ...(() => { const area = inSel ? selArea(cs) : null, at = area ? bookmarkOnLine(area.start) : l.a != null ? bookmarkOnLine(l.a) : null, has = at != null && !!project.bookmarks[at]; return [
+          { label: has ? 'Edit bookmark…' : 'Add bookmark…', key: 'B', run: () => startBookmark(l.a, area) },
           ...(has ? [{ label: 'Remove bookmark', run: () => deleteBookmark(at!) }] : []),
         ]; })(),
         { sep: true },
@@ -2038,7 +2055,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
           disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
-          bmEditing={bmEdit != null ? { addr: bmEdit, cursorAt: lineAddr() ?? null, onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); }, onPreview: a => navigate(a, { center: true, listing: true, noHistory: true }) } : null}
+          bmEditing={bmEdit != null ? {
+            addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),
+            onSave: saveBookmark, onCancel: () => { setBmEdit(null); listRef.current?.focus(); },
+            onPreview: (a, end) => { navigate(a, { center: true, listing: true, noHistory: true, ...(end != null ? { end } : {}) }); showBmArea(a, end); }, onArea: showBmArea,
+          } : null}
           pack={{ A, R, project, cursor, sel, prefs: packPrefs, exomizer: toolchain.exomizerPath, desktop: !!kr, busy: buildBusy, packing: packRun, result: packRes, current: packKey,
             onChange: setPack, onPack: () => void runPack(), onPickDir: () => void pickPackDir(), onRun: () => void runPacked(), onSave: () => void savePacked(), onSaveFile: f => void savePacked(f), onSettings: () => setModal('settings'),
             onLog: () => setUi({ bottom: 'build', panelOpen: true }), onNavigate: a => { nav(a); setDrawer(null); } }} />

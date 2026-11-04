@@ -16,6 +16,8 @@ type NotesProject = Pick<Project, 'name' | 'files'> & Partial<Pick<Project, 'boo
 
 /** where an address is in the exported source: the file, the index of its line in R.fileLines and the line number */
 interface Loc { file: string; idx: number; line: number }
+/** the most lines of a bookmark's area a document shows */
+const AREA_ROWS = 40;
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -67,7 +69,8 @@ interface Row { no: number; adr: string; bytes: string; line: Line; cur: boolean
 interface Place { a: Addr; loc: Loc | null; name: string | null; block: string | null }
 interface Notes {
   files: string[];
-  bookmarks: (Place & { title: string; text: string; color?: string; rows: Row[] })[];
+  /** `end`: the last byte of a bookmark's area; `more`: the lines of the area the excerpt leaves out */
+  bookmarks: (Place & { title: string; text: string; color?: string; end: Addr | null; rows: Row[]; more: number })[];
   comments: (Place & { kind: string; text: string; row: Row })[];
 }
 
@@ -110,22 +113,31 @@ function collect(project: NotesProject, R: RenderResult, S: Settings): Notes | n
     }
     return { name: name ?? R.labels.get(a)?.name ?? R.zp.get(a)?.name ?? null, block };
   };
-  const row = (loc: Loc, i: number): Row => {
+  const row = (loc: Loc, i: number, cur = i === loc.idx): Row => {
     const l = R.fileLines[loc.file][i];
-    return { no: nos[loc.file][i], adr: ('n' in l && l.n > 0) || l.k === 'lbl' ? h4(l.a) : '', bytes: bytes(l), line: l, cur: i === loc.idx };
+    return { no: nos[loc.file][i], adr: ('n' in l && l.n > 0) || l.k === 'lbl' ? h4(l.a) : '', bytes: bytes(l), line: l, cur };
   };
-  /** a few lines around the address: its label and comment lines above it, then up to six lines of its block */
-  const excerpt = (loc: Loc) => {
+  /** a few lines around the address: its label and comment lines above it, then up to six lines of its block, or the
+   *  lines of its area to `last` (the line of the area's last byte; at most AREA_ROWS, `more` counts the rest) */
+  const excerpt = (loc: Loc, last = loc.idx) => {
     const lines = R.fileLines[loc.file];
     let s = loc.idx; while (s > 0 && loc.idx - s < 6 && (lines[s - 1].k === 'lbl' || lines[s - 1].k === 'cmt')) s--;
-    let e = loc.idx + 1; while (e < lines.length && e - loc.idx < 7 && lines[e].k !== 'hdr' && lines[e].k !== 'blank') e++;
-    const rows: Row[] = []; for (let i = s; i < e; i++) rows.push(row(loc, i));
-    return rows;
+    let e = loc.idx + 1;
+    if (last > loc.idx) e = Math.min(last + 1, loc.idx + AREA_ROWS);
+    else while (e < lines.length && e - loc.idx < 7 && lines[e].k !== 'hdr' && lines[e].k !== 'blank') e++;
+    const rows: Row[] = []; for (let i = s; i < e; i++) rows.push(row(loc, i, i >= loc.idx && i <= last));
+    return { rows, more: Math.max(0, last + 1 - e) };
   };
   const place = (a: Addr): Place => { const loc = at(a); return { a, loc, ...(loc ? context(loc, a) : { name: R.labels.get(a)?.name ?? null, block: null }) }; };
   return {
     files,
-    bookmarks: bookmarks.map(([a, b]) => { const p = place(a); return { ...p, title: b.title || `$${h4(a)}`, text: b.text.trim(), color: b.color, rows: p.loc ? excerpt(p.loc) : [] }; }),
+    bookmarks: bookmarks.map(([a, b]) => {
+      const p = place(a), end = b.end != null && b.end - 1 > a ? b.end - 1 : null;
+      // the area's lines in the source: to the line of its last byte when that is further down in the same file
+      const last = end != null && p.loc ? at(end) : null;
+      const x = p.loc ? excerpt(p.loc, last && last.file === p.loc.file && last.idx > p.loc.idx ? last.idx : p.loc.idx) : { rows: [], more: 0 };
+      return { ...p, title: b.title || `$${h4(a)}`, text: b.text.trim(), color: b.color, end, ...x };
+    }),
     comments: comments.map(c => { const p = place(c.a); return { ...p, kind: c.kind, text: c.text, row: { ...row(p.loc!, p.loc!.idx), cur: false } }; }),
   };
 }
@@ -146,11 +158,14 @@ export function notesDocument(project: NotesProject, R: RenderResult, S: Setting
   /** a bookmark's colour other than amber: the colour of its card and of its address in the contents */
   const tint = (c?: string) => (c && c !== 'amber' && isBookmarkColor(c) ? ` style="--mark: ${c.startsWith('#') ? c : `var(--bm-${c})`}"` : '');
 
+  /** a bookmark's address, or its area's first and last */
+  const span = (b: { a: Addr; end: Addr | null }) => `$${h4(b.a)}${b.end != null ? `–$${h4(b.end)}` : ''}`;
+  const more = (n: number) => (n ? `<div class="r more"><span class="ln"></span><span class="ad"></span><span class="by"></span><span class="sc">… ${count(n, 'more line', 'more lines')} of the area</span></div>` : '');
   const cards = bookmarks.map(b => `<article class="bm" id="${anchor(b.a)}"${tint(b.color)}>
-<header><span class="adr">$${h4(b.a)}</span><h3>${esc(b.title)}</h3></header>
+<header><span class="adr">${span(b)}</span><h3>${esc(b.title)}</h3></header>
 <div class="meta">${b.name ? `<span class="mono">${esc(b.name)}</span>` : ''}${b.block ? `<span>${esc(b.block)}</span>` : ''}${where(b.loc)}</div>
 ${b.text ? `<div class="note">${esc(b.text)}</div>` : '<div class="note empty">No note.</div>'}
-${b.loc ? `<div class="code" role="figure" aria-label="${esc(b.loc.file)}, line ${b.loc.line}">${b.rows.map(row).join('')}</div>` : ''}
+${b.loc ? `<div class="code" role="figure" aria-label="${esc(b.loc.file)}, line ${b.loc.line}">${b.rows.map(row).join('')}${more(b.more)}</div>` : ''}
 </article>`).join('\n');
   const marks = new Set(bookmarks.map(b => b.a));
   const items = comments.map(c => `<li class="cm-item">
@@ -164,7 +179,7 @@ ${b.loc ? `<div class="code" role="figure" aria-label="${esc(b.loc.file)}, line 
     ['Source', files.map(f => `<span class="mono">${esc(f)}</span>`).join(', ')],
     ...(generated ? [['Exported', stamp(generated)]] : []),
   ];
-  const toc = bookmarks.length > 1 ? `<nav class="toc" aria-label="Bookmarks"><ol>${bookmarks.map(b => `<li${tint(b.color)}><a href="#${anchor(b.a)}"><span class="adr">$${h4(b.a)}</span>${esc(b.title)}</a></li>`).join('')}</ol></nav>` : '';
+  const toc = bookmarks.length > 1 ? `<nav class="toc" aria-label="Bookmarks"><ol>${bookmarks.map(b => `<li${tint(b.color)}><a href="#${anchor(b.a)}"><span class="adr">${span(b)}</span>${esc(b.title)}</a></li>`).join('')}</ol></nav>` : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -211,6 +226,7 @@ h2 + .sub { margin: 0 0 18px; color: var(--fg-2); font-size: 14px; }
 .code .r.cur { background: var(--cur); box-shadow: inset 3px 0 0 var(--mark); }
 .code .ln { color: var(--fg-3); text-align: right; opacity: 0.7; } .code .ad, .code .by { color: var(--fg-3); }
 .code.one { padding: 4px 0; margin: 0; }
+.code .r.more .sc { color: var(--fg-3); font-style: italic; }
 .cm-list { list-style: none; margin: 0; padding: 0; }
 .cm-item { padding: 14px 18px; } .cm-item .meta { margin-top: 0; } .cm-item .note { margin-bottom: 10px; }
 .cm-item .meta .adr { color: var(--fg); font-weight: 600; }
@@ -263,17 +279,18 @@ export function notesText(project: NotesProject, R: RenderResult, S: Settings, g
   out.push('', `${count(bookmarks.length, 'bookmark', 'bookmarks')} and ${count(comments.length, 'comment', 'comments')} in the re-assembled source.`);
   const indent = (s: string) => s.split('\n').map(l => (l.trim() ? '  ' + l : '')).join('\n');
   const width = Math.max(4, ...bookmarks.flatMap(b => b.rows.map(r => String(r.no).length)), ...comments.map(c => String(c.row.no).length));
-  // ">" marks the bookmarked line, as the highlighted line does in NOTES.html
+  // ">" marks the bookmarked line (the lines of its area), as the highlighted lines do in NOTES.html
   const row = (r: Row) => `  ${r.cur ? '>' : ' '} ${String(r.no).padStart(width)}  ${r.adr.padEnd(4)}  ${r.bytes.padEnd(10)}  ${lineText(r.line, S)}`.trimEnd();
+  const span = (b: { a: Addr; end: Addr | null }) => `$${h4(b.a)}${b.end != null ? `-$${h4(b.end)}` : ''}`;
   // a comment names its kind instead of the block, as in NOTES.html
   const meta = (p: Place, kind?: string) => '  ' + [p.name, kind ?? p.block, p.loc ? `${p.loc.file}, line ${p.loc.line}` : 'not in the exported source'].filter(Boolean).join(' · ');
   const heading = (t: string) => out.push('', '', t, '-'.repeat(t.length));
   if (bookmarks.length) {
     heading(`BOOKMARKS (${bookmarks.length})`);
-    if (bookmarks.length > 1) out.push('', ...bookmarks.map(b => `  $${h4(b.a)}  ${b.title}`));
+    if (bookmarks.length > 1) out.push('', ...bookmarks.map(b => `  ${span(b)}  ${b.title}`));
     for (const b of bookmarks) {
-      out.push('', '', `$${h4(b.a)}  ${b.title}`, meta(b), '', b.text ? indent(b.text) : '  (no note)');
-      if (b.rows.length) out.push('', ...b.rows.map(row));
+      out.push('', '', `${span(b)}  ${b.title}`, meta(b), '', b.text ? indent(b.text) : '  (no note)');
+      if (b.rows.length) out.push('', ...b.rows.map(row), ...(b.more ? [`    … ${count(b.more, 'more line', 'more lines')} of the area`] : []));
     }
   }
   if (comments.length) {

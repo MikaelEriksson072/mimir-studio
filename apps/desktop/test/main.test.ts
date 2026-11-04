@@ -333,6 +333,15 @@ describe('schemas', () => {
     expect(projectSchema.parse({ ...p, bookmarks: { 0x0810: { title: 'a', text: '', color: '#12345' } } }).bookmarks).toEqual({ 2064: { title: 'a', text: '' } });
   });
 
+  it('reads where the area of a bookmark ends, and leaves out an end that is no address', () => {
+    const p = { ...demoProject(), bookmarks: { 0x0810: { title: 'a', text: '', end: 0x0820 }, 0x0900: { title: 'b', text: '', color: 'teal', end: 2 * 0x10000 + 0x8010 } } };
+    const json = JSON.parse(JSON.stringify(serializeProject(p)));
+    expect(serializedProjectSchema.parse(json).bookmarks).toEqual(p.bookmarks);
+    json.bookmarks[0x0810].end = 'later';
+    json.bookmarks[0x0900].end = 1.5;
+    expect(serializedProjectSchema.parse(json).bookmarks).toEqual({ 2064: { title: 'a', text: '' }, 2304: { title: 'b', text: '', color: 'teal' } });
+  });
+
   it('reads edited build scripts, and older files without them', () => {
     const p = { ...demoProject(), scripts: { 'build.sh': '#!/bin/sh\necho mine\n' } };
     const json = JSON.parse(JSON.stringify(serializeProject(p)));

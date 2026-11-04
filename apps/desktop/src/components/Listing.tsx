@@ -9,7 +9,7 @@ import { peekOf, type Peek, type PeekNames } from '../lib/peek';
 import type { Changed, Editing, ScrollReq, Sel, ViewAt } from '../lib/types';
 import { useUi, type Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
-import { bookmarkCss } from './Bookmarks';
+import { bookmarkCss, bookmarkSpan } from './Bookmarks';
 
 const TOKEN_CLASS: Record<Token['t'], string> = { lbl: 'syn-label', hw: 'syn-hw', kw: 'syn-kw', num: 'syn-num', str: 'syn-str', dir: 'syn-dir', def: 'syn-label', p: 'syn-p' };
 
@@ -166,6 +166,13 @@ interface ListingProps {
    *  the selection runs to it */
   onPeekPick?: (a: Addr, extend: boolean) => void;
 }
+
+/** the line of the last loaded byte of `start`..`end` (a bookmark's area), -1 when it has none */
+const lastLine = (lineOf: Int32Array, start: Addr, end: Addr): number => {
+  let e = Math.min(end, lineOf.length) - 1;
+  while (e > start && lineOf[e] < 0) e--;
+  return e >= start ? lineOf[e] : -1;
+};
 
 export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView, onPeekPick }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
@@ -358,7 +365,10 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const y = j * ROW;
     // a block whose type changed: its first line stays where it was on screen, with its header in view
     const kept = scrollReq.y != null ? Math.max(0, Math.min(i * ROW - scrollReq.y, y)) : null;
+    // a bookmark's area: from its first line (with the labels above it), as much of it as fits under it
+    const i1 = scrollReq.end != null ? lastLine(lineOf, scrollReq.addr, scrollReq.end) : -1;
     if (scrollReq.top) el.scrollTop = Math.max(0, (i - 1) * ROW);
+    else if (scrollReq.center && i1 > i && (i1 + 1) * ROW > y - Math.floor(vis / 3) + vis) el.scrollTop = Math.max(0, Math.min(y - ROW, (i1 + 1) * ROW - vis));
     else if (kept != null && (i + 1) * ROW <= kept + vis) el.scrollTop = kept;
     else if (scrollReq.center || y < el.scrollTop || (i + 1) * ROW > el.scrollTop + vis) el.scrollTop = Math.max(0, y - Math.floor(vis / 3));
     // the rows at the new place render now, not after the scroll event
@@ -403,6 +413,17 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     for (const k of Object.keys(bookmarks)) { const a = Number(k), i = lineOf[a]; if (i >= 0) m.set(i, [...(m.get(i) || []), a].sort((x, y) => x - y)); }
     return m;
   }, [bookmarks, lineOf]);
+  // the areas of the bookmarks on one: from the bookmark's line to the line of the area's last byte, the innermost
+  // first (the one that starts last, then the shortest), whose colour a line in more than one shows
+  const areas = useMemo(() => {
+    const out: { i0: number; i1: number; css: string }[] = [];
+    for (const [k, b] of Object.entries(bookmarks)) {
+      if (b.end == null) continue;
+      const a = Number(k), i0 = lineOf[a], i1 = lastLine(lineOf, a, b.end);
+      if (i0 >= 0 && i1 > i0) out.push({ i0, i1, css: bookmarkCss(b.color) });
+    }
+    return out.sort((x, y) => y.i0 - x.i0 || x.i1 - y.i1);
+  }, [bookmarks, lineOf]);
   // a block whose type just changed: its lines, from its header (and the lines above its first byte) to its last byte
   const frame = useMemo(() => {
     if (!changed) return null;
@@ -422,10 +443,15 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const at = marks.get(i); if (!at) return null;
     const b = bookmarks[at[0]];
     const note = at.length === 1 && b.text ? `\n\n${b.text.length > 300 ? b.text.slice(0, 300) + '…' : b.text}` : '';
-    const tip = at.map(a => `Bookmark $${h4(a)}: ${bookmarks[a].title}`).join('\n') + note + '\n\nClick to open the note';
+    const tip = at.map(a => `Bookmark ${bookmarkSpan(a, bookmarks[a])}: ${bookmarks[a].title}`).join('\n') + note + '\n\nClick to open the note';
     return <button className="bm-mark" aria-label={`Bookmark $${h4(at[0])}: ${b.title}`} title={tip} onMouseDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onBookmark(at[0]); }}><svg viewBox="0 0 8 11" width="8" height="11" aria-hidden="true"><path d="M0 0h8v11L4 8 0 11z" /></svg></button>; };
   /** a bookmarked line is tinted in the colour of its (first) bookmark, which its mark has too */
   const tint = (i: number) => { const at = marks.get(i); return at ? { '--bm': bookmarkCss(bookmarks[at[0]].color) } as React.CSSProperties : undefined; };
+  /** a line in a bookmark's area: the stripe in the left margin, which hangs from the mark and ends at its last line */
+  const stripe = (i: number) => {
+    const r = areas.find(x => i >= x.i0 && i <= x.i1); if (!r) return null;
+    return <span className={cx('bm-area', i === r.i0 && 'first', i === r.i1 && 'last')} style={{ background: r.css }} aria-hidden="true" />;
+  };
   /** a line with a find match, and the one shown */
   const hit = (l: ListingLine) => (find?.hits.has(l) ? (find.cur === l ? 'hit hit-cur' : 'hit') : undefined);
   // with data shown as code the listing no longer matches the .asm file line for line: addresses then
@@ -453,7 +479,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       // the loaders this block holds a part of
       const lparts = blk ? A.loaders.flatMap(f => f.parts.filter(p => p.start < blk.end && p.end > blk.start).map(p => ({ f, p }))) : [];
       rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, ...tint(i) }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
-        <span className="gut" style={{ background: `var(--g-${hg})` }} />{mark(i)}{offCell(l.a)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : h4(l.a)}</span>
+        <span className="gut" style={{ background: `var(--g-${hg})` }} />{stripe(i)}{mark(i)}{offCell(l.a)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : h4(l.a)}</span>
         <button className="fold" aria-label={folded.has(l.a) ? 'Unfold block' : 'Fold block'} aria-expanded={!folded.has(l.a)} title={folded.has(l.a) ? 'Unfold (F)' : 'Fold (F)'}
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleFold(l.a); }}><Icon name={folded.has(l.a) ? 'chevron' : 'down'} size={12} /></button>
         <span className="hdr-chip" style={{ '--c': `var(--g-${hg})` } as React.CSSProperties}>{typeInfo(l.type).label}</span>
@@ -464,8 +490,13 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       continue;
     }
     if (l.k === 'file') { rows.push(<div key={i} className={cx('row filebar', hit(l))} style={{ top: i * ROW }}><Icon name="doc" size={13} /> {l.text}</div>); continue; }
-    // blank lines are rows of their own only when the line numbers would otherwise skip them
-    if (l.k === 'blank') { if (byLine) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{offCell(null)}<span className="adr lno">{lineNo[i]}</span></div>); continue; }
+    // blank lines are rows of their own only when the line numbers would otherwise skip them, or a bookmark's area's
+    // stripe goes on through them
+    if (l.k === 'blank') {
+      const s = stripe(i);
+      if (byLine || s) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{s}{offCell(null)}{byLine && <span className="adr lno">{lineNo[i]}</span>}</div>);
+      continue;
+    }
     // only a line at a block's edge can move into the block next to it
     const mv = blk && n > 0 && (l.a === blk.start || l.a + n === blk.end) ? movesOf(A, l) : null, tip = mv ? moveTip(mv) : undefined;
     // bytes a patch wrote over (the first of its lines names it)
@@ -474,7 +505,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     rows.push(
       <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
-        <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{mark(i)}
+        <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i)}{mark(i)}
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno')} title={tip ?? runTip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
         <span className="hex" title={pt ? [ptTip, tip].filter(Boolean).join('\n\n') : tip}>{bytes}</span>
         {cycles && <CycleCell l={l} A={A} step={steps.get(l.a)} taken={cycles.taken} onToggle={cycles.onToggle} />}

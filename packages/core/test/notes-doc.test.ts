@@ -85,6 +85,27 @@ describe('NOTES.html', () => {
     expect(doc).toMatch(/--bm-teal: #[0-9a-f]{6};[\s\S]*prefers-color-scheme: dark[\s\S]*--bm-teal: #[0-9a-f]{6};/);
   });
 
+  it('shows a bookmark on an area with its first and last address, and the lines of the area marked', () => {
+    const p = annotated();
+    p.bookmarks[0x0810].end = 0x081c;
+    const { R, S } = build(p), doc = notesDocument(p, R, S)!;
+    const src = R.files['raster-demo.asm'] as string;
+    expect(doc).toContain('<header><span class="adr">$0810–$081b</span><h3>Set up</h3></header>');
+    expect(doc).toContain('<a href="#bm-0810"><span class="adr">$0810–$081b</span>Set up</a>');
+    const card = doc.slice(doc.indexOf('id="bm-0810"'), doc.indexOf('</article>', doc.indexOf('id="bm-0810"')));
+    const cur = [...card.matchAll(/<div class="r cur"><span class="ln">(\d+)<\/span><span class="ad">([0-9a-f]*)<\/span>/g)].map((m): [number, string] => [Number(m[1]), m[2]]);
+    // from the line of its first byte to the line of its last, every line in between
+    expect(cur[0]).toEqual([lineOf(src, 'jsr CLRSCR'), '0810']);
+    expect(cur.map(c => c[0])).toEqual(cur.map((_, i) => cur[0][0] + i));
+    expect(src.split('\n')[cur[cur.length - 1][0] - 1]).toMatch(/^\s+\S/);
+    expect(cur.length).toBeGreaterThan(3);
+    // a long one shows its first lines and how many more there are
+    p.bookmarks[0x0810].end = 0x0a00;
+    const long = notesDocument(p, R, S)!;
+    expect(long).toMatch(/<span class="sc">… \d+ more lines of the area<\/span>/);
+    expect(notesText(p, R, { ...S, notesFormat: 'txt' })).toMatch(/\$0810-\$09ff {2}Set up[\s\S]*… \d+ more lines of the area/);
+  });
+
   it('lists the comments with their kind, place and code line', () => {
     const p = annotated(), { R, S } = build(p);
     const doc = notesDocument(p, R, S)!;

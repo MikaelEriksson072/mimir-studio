@@ -126,8 +126,9 @@ export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePat
 export interface Note { text: string; block?: boolean }
 
 /** A bookmark: the user's own note on an address, listed with its title; kept in the project, never in the source.
- * `color`: one of BOOKMARK_COLORS, or a colour of the user's own as #rrggbb (missing: amber, the first). */
-export interface Bookmark { title: string; text: string; color?: string }
+ * `color`: one of BOOKMARK_COLORS, or a colour of the user's own as #rrggbb (missing: amber, the first).
+ * `end`: a bookmark on an area ends there (exclusive); its address is the area's first byte (missing: one line). */
+export interface Bookmark { title: string; text: string; color?: string; end?: Addr }
 /** the colours a bookmark can have by name; the app and NOTES.html show each in a shade that suits the theme */
 export const BOOKMARK_COLORS = ['amber', 'orange', 'red', 'pink', 'violet', 'blue', 'teal', 'green'] as const;
 export type BookmarkPreset = typeof BOOKMARK_COLORS[number];

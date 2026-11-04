@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   analyze, areaAt, bankFiles, builtCartridge, cartMode, cartridgeFiles, cartridgeSource, chipAddress, compareCrt, createProject, crtBanks, deserializeProject, describeCrt, expectedCartridge, exportFiles,
-  isCrt, lineText, makeCrt, openCartridge, parseCrt, planPatch, portText, reaches, rebuildCrt, render, serializeProject, spaceRender, spaceView, verify, withPatch, DEFAULT_SETTINGS, type FileInput, type ListingLine, type ProjectInput, type SpaceCache,
+  isCrt, lineText, makeCrt, openCartridge, parseCrt, planPatch, portText, reaches, rebuildCrt, render, serializeProject, spaceRender, spaceView, verify, withPatch, DEFAULT_SETTINGS, fileSpaces, splitProject, type FileInput, type ListingLine, type ProjectInput, type SpaceCache,
 } from '../src';
 import { fromSource } from './helpers/programs';
 
@@ -312,6 +312,13 @@ describe('every bank at once, each a space of its own (13.9b)', () => {
     expect(spaceRender(R, A, 0).labels.get(0x8009)?.name).toBe('reset');
     expect(spaceRender(R, A, 1).labels.has(0x8009)).toBe(false);
     expect(spaceRender(R, A, 1).labels.get(0xc000)?.name).toBe('ram_code');
+  });
+
+  it('gives each bank its bookmarks at plain addresses, an area to its end there', () => {
+    const o = openCartridge('demo.crt', demoCartridge());
+    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, bookmarks: { [SPACE + 0x8000]: { title: 'text', text: '', end: SPACE + 0x802a }, [0x8009]: { title: 'reset', text: '' } } };
+    const parts = splitProject(p, fileSpaces(p)!);
+    expect(parts.map(x => x.input.bookmarks)).toEqual([{ 0x8009: { title: 'reset', text: '' } }, { 0x8000: { title: 'text', text: '', end: 0x802a } }]);
   });
 
   it('traces what one bank calls in another, and names it there (the nearest bank that has the address)', () => {
