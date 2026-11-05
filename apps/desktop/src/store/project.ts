@@ -63,15 +63,29 @@ export const useProject = create<ProjectState>((set) => ({
 // work without a project is saved to the renderer's storage so a restart continues where the user left off (a
 // project's work goes to its project file: the workspace saves it)
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+/** the work without a project as it was last changed, until the window keeps it */
+let waiting: ProjectState | null = null;
 useProject.subscribe((s, prev) => {
   if (s.present === prev.present || s.home) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { store.set(SAVED_KEY, serializeProject(s.present)); store.set(CHANGED_KEY, workChanged(s)); }, 600);
+  waiting = s;
+  saveTimer = setTimeout(keepUnsavedWork, 600);
 });
+
+/** the work without a project the window is about to keep, kept now: the start screen and the next start see its last
+ *  change (the window closed, or reloaded, a moment after it) */
+export function keepUnsavedWork(): void {
+  clearTimeout(saveTimer);
+  const s = waiting;
+  waiting = null;
+  if (s) { store.set(SAVED_KEY, serializeProject(s.present)); store.set(CHANGED_KEY, workChanged(s)); }
+}
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', keepUnsavedWork);
 
 /** the work without a project is in a project now: the window keeps none (not even an edit about to be saved) */
 export function forgetUnsavedWork(): void {
   clearTimeout(saveTimer);
+  waiting = null;
   store.set(SAVED_KEY, null);
   store.set(CHANGED_KEY, null);
 }

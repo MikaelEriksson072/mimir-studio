@@ -1,11 +1,11 @@
 /* The start screen: go on with what was worked on last, start a new project, open one, work without a project as
- * before, or pack a file with Brokkr or Exomizer as it is (QuickPack). A project is a folder of its own: its project file and what Mimir writes for it (the Kick Assembler source,
+ * before, start empty (Quick work), or pack a file with Brokkr or Exomizer as it is (QuickPack). A project is a folder of its own: its project file and what Mimir writes for it (the Kick Assembler source,
  * the build, the packed file) go there. The New project form is the one "Create a project from this work" shows too. */
 import { useEffect, useState, type FormEvent } from 'react';
-import { createProject, demoProject } from '@mimir/core';
+import { createProject, demoProject, type Project } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
-import { unsavedWork, unsavedWorkChanged, useProject } from '../store/project';
+import { forgetUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from '../store/project';
 import { useUi } from '../store/ui';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
 import type { ProjectStartInfo, RecentProject } from '../../shared/ipc';
@@ -14,6 +14,9 @@ import { Modal } from './Modal';
 import { QuickPack } from './QuickPack';
 
 const kr = window.kr;
+
+/** what Quick work's empty work is called, until a file opened names it */
+const QUICK_WORK = 'untitled';
 
 /** when a project was opened, in a few words */
 function when(ms: number): string {
@@ -134,6 +137,9 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
   const settings = () => useProject.getState().present.settings;
   const [unsaved] = useState(unsavedWork);
   const showAtStart = useUi(s => s.startScreen);
+  /** Quick work waits: the work without a project it takes the place of has changes in no project ("The work is not
+   *  saved"), and `saving`: "Save as a project…" was the answer */
+  const [quickAsk, setQuickAsk] = useState<{ kept: Project; saving: boolean } | null>(null);
 
   const run = async (fn: () => Promise<void>) => {
     if (busy) return;
@@ -153,6 +159,31 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
     enter(kept ?? demoProject(settings()), null, !!kept && unsavedWorkChanged());
     await kr?.workUnsaved();
     onStarted();
+  };
+  /** Quick work: an empty Mimir without a project (no files, no project folder, neither the work the window kept nor
+   *  the demo). The window keeps one work without a project, so it is that from now on, as a file opened in its place
+   *  would be */
+  const quickWork = async (note?: string) => {
+    enter(createProject({ name: QUICK_WORK, files: [], settings: settings() }), null);
+    await kr?.workUnsaved();
+    onStarted(note);
+  };
+  /** Quick work, asking first when the work without a project it takes the place of has changes that are in no project:
+   *  the work open (a reloaded window, or back from it), else the one the window keeps (back from a project) */
+  const startQuickWork = () => {
+    if (busy) return;
+    const s = useProject.getState();
+    const kept = s.home ? unsavedWork() : s.present;
+    if (kept && (s.home ? unsavedWorkChanged() : workChanged(s))) setQuickAsk({ kept, saving: false });
+    else void run(() => quickWork());
+  };
+  /** "Save as a project…": the work without a project made a project in a folder of its own, then Quick work */
+  const saveThenQuickWork = async (name: string, parent: string) => {
+    if (!kr || !quickAsk) return;
+    const r = await kr.createProject({ name, parent, project: quickAsk.kept });
+    forgetUnsavedWork();
+    setQuickAsk(null);
+    await quickWork(`Created the project ${r.home.name} in ${r.home.dir}: the work without a project is saved there. Quick work: open a PRG, a snapshot or a cartridge to start`);
   };
   const create = async (name: string, parent: string) => {
     if (!kr) return;
@@ -223,6 +254,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
               <button className={cx('btn', !lastProject && !unsaved && 'primary')} disabled={busy} onClick={() => setCreating(true)}><Icon name="plus" size={14} />New project…</button>
               <button className="btn" disabled={busy} onClick={() => void run(() => openProject())}><Icon name="upload" size={14} />Open project…</button>
               {!unsaved && <button className="btn ghost" disabled={busy} onClick={() => void run(withoutProject)} title="Work as before: open PRG files right away, and create a project from the work when you want to keep it">Without a project</button>}
+              <button className="btn ghost" disabled={busy} onClick={startQuickWork} title="An empty Mimir without a project: no files, no project folder, neither the demo nor the work kept from last time. It is the work without a project Mimir keeps from then on"><Icon name="play" size={14} />Quick work</button>
               <button className="btn ghost" disabled={busy} onClick={() => setPacking(true)} title="Pack PRG files or a Kick Assembler source with Brokkr or Exomizer as they are: no project, no analysis"><Icon name="pack" size={14} />Pack a file…</button>
             </div>}
           {recent.length > 0 && <section className="start-recent" aria-label="Recent projects">
@@ -236,7 +268,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
               </li>)}
             </ul>
           </section>}
-          <p className="start-hint">Without a project you work as before, and Mimir keeps the work for the next start. <b>Save</b> (Ctrl+S) then creates a project and moves the work into its folder.</p>
+          <p className="start-hint">Without a project you work as before (<b>Quick work</b> starts it empty), and Mimir keeps the work for the next start. <b>Save</b> (Ctrl+S) then creates a project and moves the work into its folder.</p>
           <label className="check start-toggle">
             <input type="checkbox" checked={showAtStart} onChange={e => useUi.getState().set({ startScreen: e.target.checked })} />
             <span>Show this window when Mimir starts{!showAtStart && <small className="muted"> — Mimir goes on with what you worked on last; Settings → General turns it on again</small>}</span>
@@ -244,6 +276,10 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
         </>}
         {error && <div className="np-error" role="alert">{error}</div>}
       </div>
+      {quickAsk && !quickAsk.saving && <UnsavedWorkModal name={quickAsk.kept.name} what="Quick work" left={null}
+        onSave={() => setQuickAsk({ ...quickAsk, saving: true })} onDiscard={() => { setQuickAsk(null); void run(() => quickWork()); }} onClose={() => setQuickAsk(null)} />}
+      {quickAsk?.saving && <CreateProjectModal title="Create a project from the work without a project" name={quickAsk.kept.name}
+        moving={['the work without a project (its files, labels, comments, bookmarks and patches)']} submit="Create project, then open Quick work" onCreate={saveThenQuickWork} onClose={() => setQuickAsk(null)} />}
     </div>
   );
 }

@@ -14,7 +14,7 @@ import {
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
-import { forgetUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
+import { forgetUnsavedWork, keepUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
@@ -261,7 +261,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     void kr?.workUnsaved();
     return home;
   };
-  const toStartScreen = async () => { await saveNow(); onStartScreen(); };
+  /** the project's work saved, and the work without a project kept: the start screen offers it as it is now */
+  const toStartScreen = async () => { await saveNow(); keepUnsavedWork(); onStartScreen(); };
 
   /* ---- work without a project, with changes that are in no project, asks before something takes its place: Save makes
      a project of it first ---- */

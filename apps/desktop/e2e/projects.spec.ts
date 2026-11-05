@@ -187,6 +187,99 @@ test.describe('the start screen', () => {
       await again.close();
     }
   });
+
+  test('Quick work: an empty Mimir without a project in place of the work the window keeps; with changes in no project it asks first', async ({ workDir: work, userData, app, page }) => {
+    const dir = join(work, 'kept'), file = join(dir, 'kept.mimir.json');
+    const quick = page.getByRole('button', { name: 'Quick work' });
+    const empty = page.locator('.empty-project');
+    const ask = page.getByRole('dialog', { name: 'The work is not saved' });
+    const projects = () => page.evaluate(() => (window as unknown as { kr: { projectStart(): Promise<{ recent: unknown[] }> } }).kr.projectStart());
+    /** the work open: empty, without a project */
+    const isEmpty = async () => {
+      await expect(page.getByRole('button', { name: 'No project', exact: true })).toBeVisible();
+      await expect(empty).toContainText('No files yet');
+      await expect(page.locator('.cmd-search')).toContainText('untitled');
+      await expect(listing(page)).toHaveCount(0);
+    };
+    const toStartScreen = async () => {
+      await page.getByRole('button', { name: /^No project/ }).click();
+      await page.getByRole('menuitem', { name: 'Start screen' }).click();
+      await expect(quick).toBeVisible();
+    };
+    /** a PRG opened in the empty work; `change`: and a change made that is in no project */
+    const openPrg = async (change: boolean) => {
+      await stubDialogs(app, { open: [prg] });
+      await empty.getByRole('button', { name: 'Open PRG…' }).click();
+      await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+      await waitForListing(page);
+      if (change) {
+        await rename(page, OLD, NEW);
+        await expect(page.getByRole('button', { name: 'No project, changes not saved' })).toBeVisible();
+      }
+    };
+
+    await test.step('the first start: no files, no project and no folder made, not the demo', async () => {
+      await quick.click();
+      await isEmpty();
+      expect((await projects()).recent).toEqual([]);
+    });
+
+    await test.step('work without a project with only a file opened in it: Quick work takes its place without asking', async () => {
+      await openPrg(false);
+      await toStartScreen();
+      await quick.click();
+      await expect(ask).toHaveCount(0);
+      await isEmpty();
+    });
+
+    await test.step('with changes in no project, Quick work asks first; Cancel stays on the start screen', async () => {
+      // the start screen at once: its card has the last change, which the window keeps a moment after it was made
+      await openPrg(true);
+      await toStartScreen();
+      await quick.click();
+      await expect(ask).toContainText('raster-demo is work without a project, and its changes are in no project. Opening Quick work takes its place: the changes would be gone.');
+      await ask.getByRole('button', { name: 'Cancel' }).click();
+      await expect(ask).toBeHidden();
+      await expect(quick).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Continue with the work without a project' })).toContainText('raster-demo');
+    });
+
+    await test.step('Save as a project: the work is made a project, then Quick work opens', async () => {
+      await quick.click();
+      await ask.getByRole('button', { name: 'Save as a project…' }).click();
+      await expect(ask).toBeHidden();
+      const create = page.getByRole('dialog', { name: 'Create a project from the work without a project' });
+      await create.getByLabel('Name').fill('kept');
+      await stubDialogs(app, { open: [work] });
+      await create.getByRole('button', { name: 'Change…' }).click();
+      await create.getByRole('button', { name: 'Create project, then open Quick work' }).click();
+      await expect(toast(page, `Created the project kept in ${dir}: the work without a project is saved there`)).toBeVisible();
+      await isEmpty();
+      expect(readFileSync(file, 'utf8')).toContain(NEW);
+    });
+
+    await test.step('Do not save: the changes are gone, and the next start goes on with the empty work', async () => {
+      await openPrg(true);
+      await toStartScreen();
+      await quick.click();
+      await ask.getByRole('button', { name: 'Do not save' }).click();
+      await expect(ask).toBeHidden();
+      await isEmpty();
+      // closed at once: the window keeps it as it closes
+      await app.close();
+
+      const again = await launchApp(userData);
+      try {
+        const page2 = await again.firstWindow();
+        const go = page2.getByRole('button', { name: 'Continue with the work without a project' });
+        await expect(go).toContainText('untitled');
+        await expect(go).toContainText('no files');
+        await expect(page2.getByRole('listitem').filter({ hasText: 'kept' })).toBeVisible();
+      } finally {
+        await again.close();
+      }
+    });
+  });
 });
 
 test('another program opened in a project is work without a project: the project stays as it was', async ({ workDir: work, app, page }) => {
