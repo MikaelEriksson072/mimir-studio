@@ -416,7 +416,41 @@ export interface XRef { from: Addr; kind: XRefKind }
 export type EntryKind = 'entry' | 'irq' | 'nmi' | 'brk' | 'sub' | 'ptr' | 'user' | 'guess' | 'jmp' | 'branch';
 
 export type LogLevel = 'info' | 'ok' | 'warn' | 'err' | 'hint';
-export interface LogEntry { lvl: LogLevel; msg: string; addr: Addr | null; cat: string }
+/** The levels of the log the Problems tab lists: warnings, errors and tips. Each has a `ProblemCode`. */
+export type ProblemLevel = 'warn' | 'err' | 'hint';
+
+/**
+ * What kind of problem a warning, error or tip in the log is (8.11g). The code is what the deep analysis, the tests
+ * and the app go by, not the message's wording, which can change.
+ */
+export const PROBLEM_CODES = {
+  // the code is read wrongly: the trace runs into something code does not do
+  'jam': 'a code path reaches a JAM opcode',
+  'brk': 'a code path reaches a BRK',
+  'mid-instruction': 'a jump or branch goes into the middle of an instruction',
+  'overlap': 'an instruction would overlap other code or leave the loaded bytes',
+  'into-user-data': 'a code path runs into bytes the user marked as data',
+  'undocumented-off': 'a code path reaches an undocumented opcode while those are turned off',
+  // the code is read, but where it goes or what follows is not known
+  'ijmp-unknown': 'an indirect JMP goes through a pointer nothing known sets',
+  'inline-data': 'a JSR goes to a routine that pops its return address, so inline data of unknown length follows',
+  'into-relocated': 'a code path runs into a block that is relocated to run somewhere else',
+  // tips: something the user can do or set
+  'unreached': 'data that decodes as a routine nothing reaches',
+  'port-unknown': '$01 is written with a value the analysis cannot follow',
+  'io-as-labels': 'bank tracking is off, so I/O inside the loaded bytes is written as labels',
+  'copy-loop': 'a loop copies code elsewhere and jumps there, and the block is not relocated to run there',
+  'high-entropy': 'the data looks crunched',
+  // the project's files and settings
+  'file-truncated': 'a file runs past $ffff',
+  'file-overlap': 'a file overlaps an earlier one',
+  'entry-not-loaded': 'the program start set is not in a loaded file',
+  'reloc-unplaced': 'a relocated block cannot be placed where it runs',
+} as const;
+export type ProblemCode = keyof typeof PROBLEM_CODES;
+
+/** A line of the analysis log; a warning, error or tip (`ProblemLevel`) has a `code`. */
+export interface LogEntry { lvl: LogLevel; msg: string; addr: Addr | null; cat: string; code?: ProblemCode }
 
 export interface BasicLine { addr: Addr; num: number; toks: number[]; text: string }
 export interface BasicInfo {
@@ -491,6 +525,9 @@ export interface DeepReport {
   cuts: number;
   /** conditional branches whose flags the instruction before sets, so one side is never taken */
   branches: number;
+  /** sides of branches (and the bytes after JSRs) left out because they ran into a problem when a strong guess (an
+   *  interrupt handler code installs, the load address) was traced on trial: the guess is kept without them */
+  blamed: number;
   ms: number;
 }
 

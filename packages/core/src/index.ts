@@ -36,6 +36,7 @@ export { artStudioPicture, ART_STUDIO_LOAD, BITMAP_SIZE, gfxSource, koalaPicture
 export type { PsidInfo } from './c64/psid';
 
 export { findBlock } from './analyze';
+export { isFault, isProblem } from './analyze/deep';
 // a cartridge's banks analysed, rendered and verified as spaces of their own (13.9b); one space goes to the engine as it is
 export { analyze, bankAddr, fileSpaces, type SpaceCache, render, SPACE, spaceAddr, spaceFiles, spaceLines, spaceOf, spaceRender, spaceView, splitProject, verify } from './spaces';
 export { spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript } from './analyze/spindle';
@@ -61,6 +62,7 @@ export { applyPatch, assemblePatch, patchAt, patchEnd, patchesOn, patchFileName,
 export { NOTES_FILE, NOTES_TEXT_FILE, notesDocument, notesExport, notesFile, notesFor, notesText, lineHtml } from './notes-doc';
 export { detectPacking, packerSignature, type PackingInfo } from './packing';
 export { conclusive, depackers, depackerText, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun } from './sindri';
+export { addRunChecks, checkRun, type RunCheck } from './runcheck';
 export { brokkrArgs, brokkrCommands, brokkrCommandText, brokkrPlan, crunchHere, packDecruncher, packNeeds, packWithBrokkr, type BrokkrCrunch, type BrokkrPack, type BrokkrPlan, type PackedFile } from './brokkr';
 export {
   checkDecrunched, DEFAULT_PACK, editRanges, extraProblem, keepText, MEMORY_PLACES, mergeRanges, placeSpan, ZP_PLACES, type PackPlace, packArgs, packEffective, packFileName, packImage, packInputs, packOptions, packOutName, packParts, packProblem, parseKeep,

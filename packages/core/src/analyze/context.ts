@@ -2,7 +2,7 @@
  * and writes this object; the order of the stages is fixed in analyze/index. */
 import type {
   Addr, BasicInfo, DelaySled, EntryKind, FileInput, ImmediateHint, IndirectJump, LogEntry, LogLevel,
-  LohiTable, Override, ProjectInput, RelocInfo, Settings, SpindleDriver, TextEncoding, XRef, XRefKind,
+  LohiTable, Override, ProblemCode, ProblemLevel, ProjectInput, RelocInfo, Settings, SpindleDriver, TextEncoding, XRef, XRefKind,
 } from '../types';
 import { DEFAULT_SETTINGS, T } from '../model';
 import type { CartMode } from '../c64/memconfig';
@@ -39,6 +39,12 @@ export interface Evidence {
   vectors: Map<Addr, Set<Addr>>;
 }
 
+/** Logs a line once: a warning, error or tip (what the Problems tab lists) with the code of its kind of problem. */
+export interface LogFn {
+  (lvl: 'info' | 'ok', msg: string, addr?: Addr | null, cat?: string): void;
+  (lvl: ProblemLevel, msg: string, addr: Addr | null, cat: string, code: ProblemCode): void;
+}
+
 export interface Ctx {
   project: ProjectInput;
   S: Settings;
@@ -48,7 +54,7 @@ export interface Ctx {
   log: LogEntry[];
   /** the messages logged so far (each is logged once) */
   logged: Set<string>;
-  L: (lvl: LogLevel, msg: string, addr?: Addr | null, cat?: string) => void;
+  L: LogFn;
   loaded: (a: number) => boolean;
   /** the relocated blocks placed where they run (8.1b): the copy of block k is owned by `files.length + k`, so an
    *  instruction or a block never runs from it into other bytes; the result gives those bytes the file they are of */
@@ -95,8 +101,18 @@ export interface Ctx {
   cuts: Map<number, CutWhy>;
   /** conditional branches whose flags the instruction before (`by`) sets: the side not followed */
   flagCut: Map<Addr, { side: Addr; by: Addr }>;
+  /** branches (and JSRs, for the bytes after them) whose side ran into a problem when a strong guess was traced on
+   *  trial: the side not followed, the guess and the problem */
+  blameCut: Map<Addr, { side: Addr; guess: Addr; kind: EntryKind; why: LogEntry }>;
+  /** the last decision on the way to an address the trace queued (a branch's side, the bytes after a JSR) */
+  decOf: Map<Addr, Decision | null>;
+  /** the last decision on the way to each problem the trace ran into (by the problem's address) */
+  blame: Map<Addr, Decision | null>;
   /** a copy that traces a guess on trial: a BRK or JAM where code is not there yet counts against it */
   onTrial: boolean;
+  /** the $01 configurations new code runs with on trial (an interrupt handler: those its vectors need); 0: the main
+   *  code's */
+  trialPort: number;
 }
 
 /**
@@ -117,6 +133,9 @@ export interface Deep {
   /** the bytes of strings handed to print routines that code islands keep out of (5.5b) */
   text: Set<Addr>;
 }
+
+/** A point where a trace chose one way: the side of a branch it went on with, or the bytes after a JSR. */
+export interface Decision { at: Addr; side: Addr }
 
 /** The entry points a deep analysis traces on trial before it keeps them. */
 export const WEAK: ReadonlySet<EntryKind> = new Set<EntryKind>(['guess', 'ptr', 'irq', 'nmi', 'brk']);
@@ -141,7 +160,8 @@ export function createContext(project: ProjectInput, deep: Deep | null = null): 
     ijumps: [], inlineCalls: new Set(), entry: null,
     ev: emptyEvidence(), lohiTabs: new Map(), wordTables: new Map(), delays: new Map(), delayIns: new Set(), spindle: [],
     deep: S.deepAnalysis ? deep ?? { port: null, main: 0, written: null, noReturn: new Set(), text: new Set() } : null,
-    pending: [], rejected: new Map(), cuts: new Map(), flagCut: new Map(), onTrial: false,
+    pending: [], rejected: new Map(), cuts: new Map(), flagCut: new Map(), onTrial: false, trialPort: 0,
+    blameCut: new Map(), decOf: new Map(), blame: new Map(),
   } as unknown as Ctx;
   return bind(ctx);
 }
@@ -149,10 +169,10 @@ export function createContext(project: ProjectInput, deep: Deep | null = null): 
 /** The log, cross-reference and entry-point functions of `ctx`, over its own state. */
 function bind(ctx: Ctx): Ctx {
   const { log, logged, xrefs, entryKind, queue, insLen, loaded, pending } = ctx;
-  ctx.L = (lvl: LogLevel, msg: string, addr: Addr | null = null, cat = 'analysis') => {
+  ctx.L = ((lvl: LogLevel, msg: string, addr: Addr | null = null, cat = 'analysis', code?: ProblemCode) => {
     const key = lvl + msg; if (logged.has(key)) return; logged.add(key);
-    log.push({ lvl, msg, addr, cat });
-  };
+    log.push(code ? { lvl, msg, addr, cat, code } : { lvl, msg, addr, cat });
+  }) as LogFn;
   ctx.addX = (to, from, kind) => {
     to &= 0xffff; let l = xrefs.get(to);
     if (!l) xrefs.set(to, l = []);
@@ -176,5 +196,6 @@ export function forkTrace(ctx: Ctx): Ctx {
     ...ctx, insLen: ctx.insLen.slice(), codeOwner: ctx.codeOwner.slice(), skip: new Set(ctx.skip), xrefs: new Map(),
     entryKind: new Map(ctx.entryKind), queue: [], ijumps: [], inlineCalls: new Set(ctx.inlineCalls),
     log: [], logged: new Set(ctx.logged), pending: [], cuts: new Map(), flagCut: new Map(ctx.flagCut), onTrial: true,
+    blameCut: new Map(ctx.blameCut), decOf: new Map(), blame: new Map(),
   });
 }

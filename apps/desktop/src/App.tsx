@@ -2176,10 +2176,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ...kickProblems.map(p => ({ lvl: p.severity === 'error' ? 'err' as const : 'warn' as const, msg: `${p.file ? `${p.file}:${p.line}:${p.column} ` : ''}${p.message}`, addr: p.file ? (R.fileLines[p.file]?.[p.line - 1]?.a ?? null) : null, cat: 'kickass' })),
     ...R.problems.map(p => ({ ...p, cat: 'render' })),
     // without bank tracking I/O inside the loaded bytes is written as labels: the row turns it on
-    ...A.log.filter(l => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint').map(l => (l.cat === 'banks' ? { ...l, action: { label: 'Turn on', run: () => {
+    ...A.log.filter(l => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint').map(l => (l.code === 'io-as-labels' ? { ...l, action: { label: 'Turn on', run: () => {
       update('Follow the memory configuration ($01) and VIC bank', d => { d.settings.bankTracking = true; });
       toast('Following the memory configuration ($01) and VIC bank: I/O accesses are written as registers', 'ok');
-    } } } : l.cat === 'reloc' && l.lvl === 'hint' && l.addr != null && A.copies.some(c => c.at === l.addr) ? { ...l, action: { label: 'Relocate…', run: () => startRelocate(null, l.addr!) } } : l)),
+    } } } : l.code === 'copy-loop' && l.addr != null && A.copies.some(c => c.at === l.addr) ? { ...l, action: { label: 'Relocate…', run: () => startRelocate(null, l.addr!) } } : l)),
     ...packing.flatMap((p, i) => (p ? [{ lvl: 'warn' as const, msg: `${A.files[i].name} ${p.verdict === 'packed' ? 'is packed' : 'may be packed'}${p.signature ? ` (${p.signature})` : ''}: ${p.reasons.join('; ')}. Unpack it (${unpackLabel}) to see the program.`, addr: p.decruncher, cat: 'packing' }] : [])),
   ], [A, R, kickProblems, packing, unpackLabel]);
   // the Spindle script tab is there when the analysis found Spindle's drivers

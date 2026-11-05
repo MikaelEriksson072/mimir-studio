@@ -172,7 +172,7 @@ mimir-studio/
 │  ├─ src/render/{lines.ts, kick.ts, include.ts}
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
-├─ packages/cli/                  mimir analyse|export|verify|unpack (Node, för CI och batch)
+├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
 ├─ fixtures/{prg/, golden/}       testkorpus + förväntade .asm
 └─ docs/
@@ -943,11 +943,25 @@ Först görs en vanlig analys, som ger antalet problem och fel att jämföra med
 - **Gissningar spåras på prov.** En kodö (8.11), ett mål i en pekartabell, en IRQ-, NMI- eller BRK-rutin som koden
   installerar och laddadressen utan BASIC-rad spåras först i en kopia av spårningsläget (`trial()` i `trace.ts`). Den
   behålls bara om spårningen inte går in i något problem: JAM, BRK, ett hopp in i en instruktion, överlapp, data som
-  användaren markerat, eller ett indirekt hopp via en pekare som ingen kod skriver. Annars blir den kvar som data, och
+  användaren markerat, eller ett indirekt hopp via en pekare som ingen kod skriver (varken koden hittills eller den som
+  spåras på prov). Annars blir den kvar som data, och
   loggen säger varför (*The routine-like bytes at $5001 (and 37 more starts up to $5152) stay data: traced on trial,
   they run into a problem (BRK at $6a68 ends the code path)*). Kodöar söks i hela datablocket, inte bara i början, och
   deras grenar får gå ut ur blocket, eftersom provet ändå fäller det som leder fel. Ett tips *Possible unreached code*
   ges inte för byte som spårats på prov och gått in i ett problem.
+- **Skulden läggs där problemet uppstår, för starka gissningar.** En avbrottsrutin som koden installerar och
+  laddadressen är starka bevis. En sådan gissning fälls inte för ett problem bakom ett beslut. Det sista beslutet på
+  vägen till problemet lämnas bort, och gissningen spåras på prov igen, högst 8 gånger. Beslutet är sidan av en gren som
+  flaggorna inte avgör, eller byten efter en `JSR`, där rutinen då inte återvänder. Loggen säger det (*The IRQ handler
+  at $081a is kept without the side of the BMI at $081d that goes to $081f: traced on trial, that runs into a problem
+  (BRK at $081f ends the code path)*). Gissningen fälls när problemet ligger på dess egen raka väg. Ett indirekt hopp
+  vars mål inte är känt fäller den inte, eftersom det inte är något fel. Den spåras på prov som koden hittills: en `JSR`
+  eller `JMP` till BRK eller JAM går till en rutin som läggs dit vid körning, och en väg stannar tyst vid en instruktion
+  som koden skriver. En avbrottsrutin spåras med de konfigurationer dess vektorer kräver, KERNAL inkopplad för
+  `$0314`–`$0319` och bortkopplad för `$fffa`–`$ffff`, så att dess `JMP $ea31` går till ROM:en och inte till det som
+  ligger under. Kodöar och mål i pekartabeller fälls som förut
+  vid första problemet: deras byte ser ofta ut som kod några instruktioner innan de går in i ett problem, och mätt mot
+  körningar (8.11h) gör samma regel för dem långt mer bara läst data till kod. `DeepReport.blamed` räknar sidorna.
 - **Indirekta hopp via konstanter.** Skriver koden en konstant adress till pekaren som en `JMP (ind)` går genom, är
   adressen ett mål (spårat på prov), och hoppet varnas inte för som okänt.
 - **Grenar med kända flaggor.** `CLC`, `SEC` och `CLV` sätter C och V, `LDA`/`LDX`/`LDY` med en konstant sätter Z och N,
@@ -979,7 +993,8 @@ Varven slutar när nästa varv skulle besluta likadant (samma snitt i varvets ko
 det. Fel är varningar och fel som säger att kod läses fel (JAM, BRK, överlapp, ett hopp in i en instruktion …), inte
 tips och inte indirekta hopp vars mål inte är känt: de kommer med koden som läses, och en djupanalys som hittar mer kod
 hittar fler av dem. I Fairlights cartridge (bank 0) har djupanalysen 11 problem, alla indirekta hopp via RAM-vektorer och
-tips, och den vanliga 9, varav en kodö som överlappar annan kod; den vanliga hittar 2 300 byte mindre kod (`isFault()`).
+tips, och den vanliga 9, varav en kodö som överlappar annan kod; den vanliga hittar 2 300 byte mindre kod (`isFault()`,
+som går efter problemens koder, 8.11g).
 På 2 360 program ur arkivet får 131 program mer kod så (200 157 byte, 157 fler textblock), och problemen i Problems blir
 2 631 i stället för 1 134, alla tips och indirekta hopp: felen blir aldrig fler. Att räkna de indirekta hoppen också tar
 bort en tredjedel av koden men bara 91 av problemen: de flesta är tips. `AnalysisResult.deep` (`DeepReport`) har varv, problem före och efter, gissningar som lämnats, snitt, grenar och
@@ -1065,6 +1080,112 @@ Pefchain läser det, med drivern och rutinerna efter `#`.
 - kod som installerar ett avbrott som en driver gör men inte är en.
 
 `fixtures/prg/spindle-demo.prg` är minnet från det första skriptet.
+
+### 8.11g Problemkoder
+
+Varje varning, fel och tips i loggen, alltså det fliken Problems listar, har en **kod** för sin sorts problem
+(`LogEntry.code`, listan `PROBLEM_CODES` i `types.ts`). Djupanalysen, testerna och appen går efter koden, inte efter
+meddelandets ordalydelse, som kan ändras:
+- djupanalysens **fel** (`isFault()`, 8.11e) är varningar och fel utom `ijmp-unknown`;
+- en gissning på prov (`trial()`) fälls av varningar och fel utom `inline-data`;
+- knappen *Turn on* i Problems sitter på `io-as-labels` och *Relocate…* på `copy-loop`, och fliken Relocated tar skälet
+  till att ett block inte placerats från `reloc-unplaced`.
+
+| Kod | Problemet |
+|---|---|
+| `jam`, `brk` | en kodväg når en JAM-opkod eller en BRK |
+| `mid-instruction` | ett hopp eller en gren går in mitt i en instruktion |
+| `overlap` | en instruktion skulle överlappa annan kod eller gå utanför de laddade byten |
+| `into-user-data` | en kodväg går in i byte som användaren markerat som data |
+| `undocumented-off` | en kodväg når en odokumenterad opkod när de är avslagna |
+| `ijmp-unknown` | en indirekt `JMP` går via en pekare som ingen känd kod sätter |
+| `inline-data` | en `JSR` till en rutin som plockar sin återhoppsadress: data av okänd längd följer |
+| `into-relocated` | en kodväg går in i ett block som flyttats för att köras någon annanstans |
+| `unreached` | tipset *Possible unreached code*: data som avkodas som en rutin som inget når |
+| `port-unknown` | `$01` skrivs med ett värde analysen inte kan följa |
+| `io-as-labels` | bankspårningen är av, så I/O inne i de laddade byten skrivs som etiketter |
+| `copy-loop` | en slinga kopierar kod och hoppar dit, och blocket är inte flyttat dit |
+| `high-entropy` | datan ser packad ut |
+| `file-truncated`, `file-overlap` | en fil går förbi `$ffff`, eller överlappar en tidigare fil |
+| `entry-not-loaded` | programstarten som satts ligger inte i en laddad fil |
+| `reloc-unplaced` | ett flyttat block kan inte placeras där det körs |
+
+Typen tvingar fram koden: loggfunktionen (`L()`) tar en kod för nivåerna `warn`, `err` och `hint`, så ett nytt problem
+utan kod kompilerar inte. `mimir analyse` skriver koden efter raden (`[jam]`) och har den i `log` med `--json`; i
+Problems står koden och vad den betyder i verktygstipset på kategorin.
+
+**Test:** `test/deep.test.ts` (fel och problem efter kod, oavsett meddelandet) och fuzz-testet, som kontrollerar att
+varje varning, fel och tips har en känd kod och att inget annat har någon.
+
+### 8.11h Analysen mot en körning
+
+Problemantalet säger inte hur mycket av analysen som är rätt: det sjunker både när analysen hittar koden och när den
+bara bestämmer sig (en gissning som fälls blir data och har inga problem), och rundturen bevisar bara att byten
+assembleras tillbaka, inte att indelningen i kod och data stämmer. En körning ger ett facit för en del av byten.
+
+**Sindri bokför vad programmet gör med de laddade byten.** Från det att filen laddats noterar den emulerade C64:an
+första gången varje byte körs som opkod, körs som operand, läses som data och skrivs. Det som hände före första
+skrivningen gjordes med byten så som den laddades. `UnpackResult.fileUse` har per adress `FILE_RAN`, `FILE_ARG`,
+`FILE_READ` och `FILE_WRITTEN` (byten skrevs senare; det som kom efter gäller inte den laddade byten). Kod som
+packas upp, kopieras eller skrivs över sin egen plats räknas alltså inte, eftersom den inte är det som laddades.
+
+**`checkRun(A, fileUse)`** (`runcheck.ts`) ställer det mot analysen, för de byte filen laddar:
+- *instruktionsstarter som kördes*: hittade (analysen börjar en instruktion där), *ur takt* (inne i en instruktion
+  analysen läst från en annan start) eller *som data*;
+- *byte som bara lästes* (aldrig kördes): hur många analysen gjort kod av, och av dem hur många som ligger i källan till
+  en kopieringsslinga analysen hittat (kod som körs där den kopieras). En operand som koden läser och skriver, som en
+  räknare, räknas inte när dess instruktion kördes;
+- kodbyte som körningen inte rörde.
+
+Körningen täcker bara de vägar som kördes, så en byte den inte rörde säger ingenting. Det som kördes är kod, och det som
+bara lästes är troligen data.
+
+**`mimir measure <mapp>`** kör varje PRG och projekt i mappen i Sindri och skriver per program och totalt hur många
+instruktioner som kördes och hur många analysen hittade, och problemen per kod (`--json` för skript). Ett projekt
+startas vid sin programstart, så som appen sätter den för ett program Sindri packat upp utan BASIC-rad. Med och utan
+en inställning (`--deep`, `--set codeIslands=false`) visar det vad inställningen gör med träffsäkerheten och inte bara
+med problemantalet.
+
+**Mätt** på 1 000 program ur referensarkivet (första PRG:n på en disk per release: 350 intron, 350 demos och 300 spel).
+897 var packade och packades upp med Sindri, 819 av dem till ett projekt med programstart. 920 körde kod.
+
+| | Vanlig analys | Djupanalys före | Djupanalys nu |
+|---|---|---|---|
+| problem | 7 509 | 1 470 | 1 532 |
+| program utan problem | 155 | 394 | 383 |
+| körda instruktionsstarter hittade (av 551 908) | 92,3 % | 86,7 % | 91,8 % |
+| körda instruktionsstarter som data | 42 220 | 72 815 | 44 837 |
+| ur takt | 407 | 389 | 341 |
+| byte som bara lästes, som kod | 155 780 | 401 578 | 406 707 |
+
+*Före* tog djupanalysen bort fyra femtedelar av problemen men hittade mindre av koden som körs. I 257 program tappade den
+51 392 körda instruktioner, och i 103 hittade den 20 815 fler. Av de 682 program där problemen blev färre tappade 229
+kod som kördes. I de 257 programmen fälldes gissningar vars start kördes så här:
+- 137 av 223 IRQ-rutiner som koden installerar;
+- 29 av 30 laddadresser;
+- 281 av omkring 4 700 kodöar.
+
+Alla 12 IRQ-rutiner som fälldes för ett indirekt hopp kördes. Provet frågade om pekaren i huvudkontexten, och där fanns
+inte rutinens egen kod som skriver den. Ändringarna i provet (8.11e) mättes en i taget:
+
+| Ändring | hittade | som data | bara läst, som kod | problem |
+|---|---|---|---|---|
+| pekare som gissningen själv skriver räknas som kända | 87,0 % | 71 284 | 396 122 | 1 515 |
+| starkaste gissningen först (inte kvar: ingen skillnad) | 87,0 % | 71 284 | 396 122 | 1 515 |
+| skulden på sista beslutet, för starka gissningar | 91,3 % | 47 397 | 398 978 | 1 534 |
+| stark gissning spåras som koden hittills | 91,5 % | 46 826 | 399 381 | 1 533 |
+| avbrottsrutin med vektorernas konfiguration | 91,8 % | 44 837 | 399 748 | 1 532 |
+| (skulden för alla gissningar, inte kvar) | 92,5 % | 40 878 | 581 233 | 1 837 |
+
+Skulden även för kodöar och pekartabellmål hittar lite mer kod men gör 182 000 fler bara lästa byte till kod. Nu tappar
+djupanalysen körda instruktioner i 172 program (21 666) och hittar fler i 122 (19 115); av de 682 program där problemen
+blir färre tappar 150 kod som kördes. Siffran för byte som bara lästes är för hög: kod som kopieras av en slinga
+analysen inte hittat räknas också. Djupanalysen tar i snitt 528 ms mot 565 ms före och 90 ms för den vanliga, som mest
+13,8 s (ett spel med över tusen gissningar som fälls; 12,8 s före). En mätning tar några minuter.
+
+**Test:** `test/runcheck.test.ts` (varje sorts utfall på en konstruerad körning, och en riktig körning där analysen
+hittar varje instruktion), Sindris `test/unpack.test.ts` (byte som körs, läses, skrivs före körning och aldrig rörs) och
+CLI:ns test av `measure`.
 
 ## 9. Symboldatabas
 

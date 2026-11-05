@@ -433,7 +433,7 @@ describe('blocks saved as binary files', () => {
     expect(off.V.ok, JSON.stringify(failure(off.V))).toBe(true);
     expect(off.R.files['big.asm']).toContain('sta charset_d020');
     const warn = off.A.log.filter(l => l.cat === 'banks');
-    expect(warn).toEqual([{ lvl: 'warn', cat: 'banks', addr: 0xd011, msg: expect.stringContaining('Bank tracking is off, so the code\'s accesses to 3 I/O addresses inside the loaded bytes are written as labels ($d011 charset_d011, $d020 charset_d020, $d021 charset_d021). Turn on Settings → Analysis → Follow the memory configuration') }]);
+    expect(warn).toEqual([{ lvl: 'warn', cat: 'banks', code: 'io-as-labels', addr: 0xd011, msg: expect.stringContaining('Bank tracking is off, so the code\'s accesses to 3 I/O addresses inside the loaded bytes are written as labels ($d011 charset_d011, $d020 charset_d020, $d021 charset_d021). Turn on Settings → Analysis → Follow the memory configuration') }]);
     // with it on the registers are named, and there is nothing to report; nor is there for code that only reaches RAM
     const on = roundTrip(p(true));
     expect(on.R.files['big.asm']).toContain('sta VIC_BORDER_COLOR');

@@ -14,10 +14,11 @@ export type UnpackRun = Omit<UnpackResult, 'save'>;
 
 /**
  * Unpack a PRG (load address first); without ROMs Sindri runs with its stand-ins for the KERNAL and BASIC. With
- * the D64 it came from (and the 1541 DOS ROM in `roms`), the drive reads the disk for the program's loader.
+ * the D64 it came from (and the 1541 DOS ROM in `roms`), the drive reads the disk for the program's loader. `entry`:
+ * start it there (SYS) instead of with RUN, as a program without a BASIC line needs.
  */
-export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null): UnpackRun {
-  const { save: _save, ...run } = unpack(prg, { roms, disk });
+export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null): UnpackRun {
+  const { save: _save, ...run } = unpack(prg, { roms, disk, ...(entry != null ? { entry } : {}) });
   return run;
 }
 

@@ -226,7 +226,13 @@ unpack(prg, { roms: findRoms(), disk: d64 });  // with the disk it came from in 
 if (result.saved) save(result.saved.prg);   // load address first; result.saved.entry is the start
 result.layers;                              // the report per layer
 result.save(2);                             // another layer's PRG
+result.fileUse[a] & FILE_RAN;               // what the run did with the loaded byte at a
 ```
+
+`fileUse` tells, for every address, what the run did with the loaded file's byte there while it still held what was
+loaded: `FILE_RAN` (executed as an opcode), `FILE_ARG` (as an operand), `FILE_READ` (read as data), and `FILE_WRITTEN`
+once it was written (nothing after that is of the loaded byte). A disassembler can check itself against it: what ran is
+code, what was only read is most likely data. A run covers the paths it took, so an untouched byte proves nothing.
 
 `src/index.ts` has no file-system access; `src/node.ts` finds and reads the ROM files, and `src/d64.ts` lists a D64's
 directory and reads its files.

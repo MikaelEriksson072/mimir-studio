@@ -24,18 +24,20 @@ export const isProblem = (l: LogEntry): boolean => l.lvl === 'warn' || l.lvl ===
 export const problemCount = (log: LogEntry[]): number => log.filter(isProblem).length;
 /** A problem that says code is read wrongly (a JAM, a BRK, an overlap, a jump into an instruction): not a tip, nor an
  *  indirect jump whose target is not known, which come with the code read. */
-export const isFault = (l: LogEntry): boolean => (l.lvl === 'warn' || l.lvl === 'err') && !/^Indirect JMP \(.+\) at .+: target unknown/.test(l.msg);
+export const isFault = (l: LogEntry): boolean => (l.lvl === 'warn' || l.lvl === 'err') && l.code !== 'ijmp-unknown';
 export const faultCount = (log: LogEntry[]): number => log.filter(isFault).length;
 
 /**
  * Why the JSR or JMP at `pc` to `t` is not followed, by what the round before learned; null: it is. `guess`: the code
- * is a guess traced on trial, which a routine that is not there yet does not excuse.
+ * is a guess traced on trial, which a routine that is not there yet does not excuse. `newPort`: the configurations new
+ * code runs with (an interrupt handler on trial: those its vectors need), else the main code's.
  */
-export function cutFor(deep: Deep, loaded: (a: Addr) => boolean, mem: Uint8Array, pc: Addr, t: Addr, guess = false, cart: CartMode = 'none'): CutWhy | null {
+export function cutFor(deep: Deep, loaded: (a: Addr) => boolean, mem: Uint8Array, pc: Addr, t: Addr, guess = false, cart: CartMode = 'none', newPort = 0): CutWhy | null {
   if (deep.written && (deep.written[(pc + 1) & 0xffff] || deep.written[(pc + 2) & 0xffff])) return 'smc';
   // ROM (or I/O) in every configuration the instruction can run with; new code runs with the main code's. A
   // cartridge's ROM is the program's own bytes
-  if (deep.main && loaded(t) && banked(t, cart) && reaches(t, deep.port?.[pc] || deep.main, false, cart) === 'hw') return 'rom';
+  const port = deep.port?.[pc] || newPort || deep.main;
+  if (port && loaded(t) && banked(t, cart) && reaches(t, port, false, cart) === 'hw') return 'rom';
   // no routine starts with BRK or JAM: the code there is put in place at run time (unpacked or copied)
   if (!guess && loaded(t) && (mem[t] === 0x00 || OPC[mem[t]].jam)) return 'empty';
   return null;
@@ -139,8 +141,14 @@ export function deepLog(A: AnalysisResult, ctx: Ctx, before: number, rounds: num
         : `The ${KIND[kind]} at ${$4(a)} stays data`;
     L('info', `${what}: traced on trial, ${kind === 'guess' ? 'they run' : 'it runs'} into a problem (${why.msg.replace(/[.;].*$/, '')})`, a);
   }
-  const after = problemCount(A.log), cuts = ctx.cuts.size, branches = ctx.flagCut.size;
-  A.deep = { rounds, before, after, rejected, cuts, branches, ms: 0 };
+  // a strong guess kept without the sides that ran into a problem on trial
+  for (const [at, { side, guess, kind, why }] of [...ctx.blameCut].sort((x, y) => x[0] - y[0])) {
+    const o = OPC[mem[at]], who = kind === 'entry' ? `The load address ${$4(guess)}` : `The ${KIND[kind]} at ${$4(guess)}`;
+    const part = o.flow === 'jsr' ? `the bytes after the JSR at ${$4(at)}` : `the side of the ${o.mn} at ${$4(at)} that goes to ${$4(side)}`;
+    L('info', `${who} is kept without ${part}: traced on trial, that runs into a problem (${why.msg.replace(/[.;].*$/, '')})`, at);
+  }
+  const after = problemCount(A.log), cuts = ctx.cuts.size, branches = ctx.flagCut.size, blamed = ctx.blameCut.size;
+  A.deep = { rounds, before, after, rejected, cuts, branches, blamed, ms: 0 };
   const s = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
-  L('ok', `Deep analysis: ${before} → ${s(after, 'problem')} in ${s(rounds, 'round')}: ${s(rejected, 'guess', 'guesses')} left out, ${s(cuts, 'call or jump', 'calls and jumps')} not followed, ${s(branches, 'branch', 'branches')} decided by the flags before ${branches === 1 ? 'it' : 'them'}`, null);
+  L('ok', `Deep analysis: ${before} → ${s(after, 'problem')} in ${s(rounds, 'round')}: ${s(rejected, 'guess', 'guesses')} left out, ${s(cuts, 'call or jump', 'calls and jumps')} not followed, ${s(branches, 'branch', 'branches')} decided by the flags before ${branches === 1 ? 'it' : 'them'}${blamed ? `, ${s(blamed, 'side')} left out where a strong guess ran into a problem` : ''}`, null);
 }

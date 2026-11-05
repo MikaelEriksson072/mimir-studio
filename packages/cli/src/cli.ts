@@ -1,12 +1,12 @@
-/* mimir analyse | export | verify | unpack | demo — batch and CI front end for @mimir/core. */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+/* mimir analyse | export | verify | unpack | measure | demo — batch and CI front end for @mimir/core. */
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
-  analyze, bankFiles, builtCartridge, cartridgeFiles, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge, exportFiles, h4, isCrt,
-  kindInfo, makeDemo, openCartridge, parseCrt, parseD64, parsePrg, projectNameFor, readD64File, render, unpackLog, unpackPrg, verify, type Cartridge, type FileInput, type Project,
-  type SerializedProject, type Settings,
+  addRunChecks, analyze, bankFiles, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
+  exportFiles, h4, isCrt, isProblem, kindInfo, makeDemo, makePrg, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, render, unpackLog, unpackPrg, verify,
+  type Cartridge, type FileInput, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings,
 } from '@mimir/core';
 import { findC64Roms, findKickAssJar, findVice, runKickAssembler, splitArgs, writeVfs } from '@mimir/core/node';
 
@@ -19,6 +19,10 @@ Usage:
   mimir verify  <file.prg | cartridge.crt | project.mimir.json>... [--kickass [KickAss.jar]] [--java <java>]
   mimir export  <file.prg | cartridge.crt | project.mimir.json>... -o <folder> [--name <name>] [--force]
   mimir unpack  <file.prg | disk.d64> [--file <name>] [--disk <disk.d64>] [-o <unpacked.prg>] [--no-roms]
+  mimir measure <file.prg | project.mimir.json | folder>... [--json] [--no-roms]
+                runs each PRG (a folder: every PRG and project in it and below; a project: its first file,
+                from its program start) in Sindri and sets what the analysis made of each byte against what
+                the program did with it (the code it ran, the data it read), and counts the problems by kind
   mimir demo    [-o raster-demo.prg]
 
 Options:
@@ -102,7 +106,7 @@ function analyseCmd(p: Project, io: Io, json: boolean) {
     }, null, 2));
     return 0;
   }
-  for (const l of A.log) io.out(`[${l.lvl.padEnd(4)}] ${l.msg}`);
+  for (const l of A.log) io.out(`[${l.lvl.padEnd(4)}] ${l.msg}${l.code ? `  [${l.code}]` : ''}`);
   for (const [i, k] of packing.entries()) if (k) io.out(`[pack] ${A.files[i].name} ${k.verdict === 'packed' ? 'is packed' : 'may be packed'}${k.signature ? ` (${k.signature})` : ''}: ${k.reasons.join('; ')}. Unpack it (mimir unpack ${A.files[i].name}) and analyse the result.`);
   io.out('');
   io.out('Blocks:');
@@ -167,6 +171,74 @@ function builtinVerify(p: Project, io: Io) {
     if (!good) return { A, R, V: { ...V, ok: false } };
   }
   return { A, R, V };
+}
+
+/** Every PRG in `paths` (a folder: in it and below, sorted), each with its name: its path in the folder, or its own. */
+function prgsIn(paths: string[], io: Io): { path: string; name: string }[] {
+  const out: { path: string; name: string }[] = [];
+  const walk = (p: string, top: string) => {
+    if (statSync(p).isDirectory()) for (const e of readdirSync(p).sort()) walk(join(p, e), top);
+    else if (/\.prg$|\.mimir\.json$/i.test(p)) out.push({ path: p, name: relative(top, p) || basename(p) });
+  };
+  for (const p of paths) {
+    const path = resolve(io.cwd, p);
+    if (!existsSync(path)) throw new Error(`no file or folder ${path}`);
+    walk(path, statSync(path).isDirectory() ? path : dirname(path));
+  }
+  return out;
+}
+
+const pct = (n: number, of: number) => (of ? `${(100 * n / of).toFixed(1)} %` : '-');
+
+/** What the analysis made of the bytes against what the program did with them (8.11h), and the problems by kind. */
+function measureLines(c: RunCheck, codes: Map<ProblemCode, number>): string[] {
+  const byCode = [...codes].sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(', ');
+  const problems = [...codes.values()].reduce((s, n) => s + n, 0);
+  return [
+    `  ran ${c.ran} instruction starts: ${pct(c.found, c.ran)} found, ${c.outOfStep} out of step, ${c.missed} as data`,
+    `  read ${c.read} bytes as data only: ${c.readAsCode} as code (${c.readAsCodeCopied} of them copied to run elsewhere)`,
+    `  ${c.codeBytes} bytes of code: ${pct(c.codeUntouched, c.codeBytes)} not touched by the run`,
+    `  ${problems} problem${problems === 1 ? '' : 's'}${byCode ? `: ${byCode}` : ''}`,
+  ];
+}
+
+function measureCmd(inputs: string[], io: Io, sets: [string, string][], flags: Map<string, string | true>): number {
+  const files = prgsIn(inputs, io);
+  if (!files.length) { io.err('no PRG files given'); return 2; }
+  const settings: Partial<Settings> = {};
+  for (const [k, v] of sets) (settings as Record<string, unknown>)[k] = coerce(k, v);
+  const roms = flags.has('no-roms') ? null : findC64Roms(findVice() ?? '');
+  const json = flags.has('json'), checks: RunCheck[] = [], total = new Map<ProblemCode, number>(), rows: unknown[] = [];
+  for (const { path, name } of files) {
+    // a project: its first file, started at the project's program start (as the app sets it for a program Sindri
+    // unpacked without a BASIC line)
+    let p: Project;
+    if (/\.json$/i.test(path)) {
+      const o = deserializeProject(JSON.parse(readFileSync(path, 'utf8')) as SerializedProject);
+      p = { ...o, settings: { ...o.settings, ...settings } };
+    } else p = createProject({ files: [parsePrg(basename(path), new Uint8Array(readFileSync(path)))], settings });
+    const f = p.files[0];
+    if (!f || f.chip != null || f.vsf || !f.bytes.length) continue;
+    const start = p.entryPoint != null && p.entryPoint >= f.load && p.entryPoint < f.load + f.bytes.length ? p.entryPoint : null;
+    const run = unpackPrg(makePrg(f.load, f.bytes), roms, null, start);
+    const A = analyze(p);
+    const c = checkRun(A, run.fileUse), codes = new Map<ProblemCode, number>();
+    for (const l of A.log) if (isProblem(l) && l.code) { codes.set(l.code, (codes.get(l.code) ?? 0) + 1); total.set(l.code, (total.get(l.code) ?? 0) + 1); }
+    checks.push(c);
+    const seconds = +(run.cycles / 985248).toFixed(1);
+    if (json) { rows.push({ file: name, stop: run.stop.reason, seconds, ...c, problems: Object.fromEntries(codes) }); continue; }
+    io.out(`${name} (the run: ${run.stop.reason} after ${seconds} s)`);
+    for (const l of measureLines(c, codes)) io.out(l);
+    for (const [k, label] of [['missed', 'ran, as data'], ['outOfStep', 'ran, out of step'], ['readAsCode', 'read, as code']] as const) {
+      if (c.where[k].length) io.out(`    ${label}: ${c.where[k].map(a => `$${h4(a)}`).join(' ')}`);
+    }
+  }
+  const sum = addRunChecks(checks);
+  if (json) { io.out(JSON.stringify({ files: rows, total: { ...sum, where: undefined, problems: Object.fromEntries(total) }, codes: PROBLEM_CODES }, null, 2)); return 0; }
+  io.out('');
+  io.out(`${checks.length} program${checks.length === 1 ? '' : 's'}`);
+  for (const l of measureLines(sum, total)) io.out(l);
+  return 0;
 }
 
 /** --bank <n>: a whole number, else an error */
@@ -235,6 +307,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
         io.out(`Wrote ${target} (${run.saved.prg.length} bytes, start $${h4(run.saved.entry)})`);
         return 0;
       }
+      case 'measure':
+        return measureCmd(inputs, io, sets, flags);
       case 'demo': {
         const d = makeDemo();
         const target = resolve(io.cwd, typeof flags.get('out') === 'string' ? flags.get('out') as string : d.name);

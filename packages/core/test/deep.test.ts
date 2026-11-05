@@ -1,6 +1,6 @@
 /* 5.17 deep analysis: every rule on a small program that the normal analysis reports problems for. */
 import { describe, expect, it } from 'vitest';
-import { analyze, findBlock, openC64File, render, verify, type FileInput, type ProjectInput } from '../src';
+import { analyze, findBlock, openC64File, render, verify, type FileInput, type ProblemCode, type ProjectInput } from '../src';
 import { fromSource, snapshotOf } from './helpers/programs';
 import { faultCount, isFault } from '../src/analyze/deep';
 
@@ -81,6 +81,51 @@ describe('deep analysis', () => {
     expect(problems(deep)).toEqual([]);
   });
 
+  // the IRQ handler the code installs at $081a, with what it does
+  const installs = (handler: string) => fromSource('p.prg', `${BASIC} sei\n lda #<irq\n sta $0314\n lda #>irq\n sta $0315\n cli\n rts\nirq: ${handler}`);
+
+  it('keeps an IRQ handler whose JMP (ind) goes through a pointer the handler itself sets', () => {
+    const { deep } = both(installs(` lda #<fx\n sta $fb\n lda #>fx\n sta $fc\n jsr call\n jmp $ea31\ncall: jmp ($00fb)\nfx: inc $d020\n rts\n`));
+    expect(deep.entryKind.get(0x081a)).toBe('irq');
+    expect(findBlock(deep.blocks, 0x081a)?.type).toBe('code');
+    expect(deepLines(deep).filter(l => l.includes('stays data'))).toEqual([]);
+  });
+
+  it('keeps an IRQ handler without the side of a branch that runs into a problem, and says so', () => {
+    // BMI: the flag comes from $d019, which the analysis cannot know; the other side is a BRK
+    const { normal, deep } = both(installs(` lda $d019\n bmi raster\n .byte $00\nraster: sta $d019\n inc $d020\n jmp $ea31\n`));
+    expect(problems(normal).map(l => l.code)).toEqual(['brk']);
+    expect(findBlock(deep.blocks, 0x081a)?.type).toBe('code');
+    expect(deep.insLen[0x0820]).toBe(3); // sta $d019 after the BRK
+    expect(deep.insLen[0x081f]).toBe(0);
+    expect(problems(deep)).toEqual([]);
+    expect(deep.deep!.blamed).toBe(1);
+    expect(deepLines(deep)).toContain('The IRQ handler at $081a is kept without the side of the BMI at $081d that goes to $081f: traced on trial, that runs into a problem (BRK at $081f ends the code path)');
+  });
+
+  it('keeps an IRQ handler that calls a routine put in place at run time, as the code so far would', () => {
+    const { deep } = both(installs(` jsr $0900\n jmp $ea31\n.pc = $0900\n .byte $00,$00,$00\n`));
+    expect(findBlock(deep.blocks, 0x081a)?.type).toBe('code');
+    expect(deep.insLen[0x0900]).toBe(0);
+    expect(deepLines(deep)).toContain('The JSR at $081a goes to $0900, which holds $00: the routine is put there at run time (unpacked or copied), so it is not traced');
+  });
+
+  it('traces an IRQ handler installed in $0314 with the KERNAL in, where the main code also runs without it', () => {
+    // the main code switches the KERNAL out and in; the handler's JMP $ea81 goes to the KERNAL, not the data below it
+    const { file, extra } = snapshot(`.pc = $c000\n sei\n lda #$35\n sta $01\n lda #$37\n sta $01\n lda #<irq\n sta $0314\n lda #>irq\n sta $0315\n cli\nwait: jmp wait\nirq: inc $d020\n jmp $ea81\n.pc = $ea81\n .byte $ea,$ea,$02\n`, 0xc000);
+    const { deep } = both(file, extra);
+    expect(deep.entryKind.get(0xc017)).toBe('irq');
+    expect(findBlock(deep.blocks, 0xc017)?.type).toBe('code');
+    expect(deep.insLen[0xea81]).toBe(0);
+    expect(deepLines(deep)).toContain('The JMP at $c01a to $ea81 reaches the KERNAL ROM there, so the RAM below it is not traced');
+  });
+
+  it('leaves out an IRQ handler whose own straight way runs into a problem', () => {
+    const { deep } = both(installs(` inc $d020\n .byte $02\n`));
+    expect(findBlock(deep.blocks, 0x081a)?.type).not.toBe('code');
+    expect(deepLines(deep)).toContain('The IRQ handler at $081a stays data: traced on trial, it runs into a problem (JAM opcode $02 reached at $081d)');
+  });
+
   it('does not follow a JMP whose address the code writes', () => {
     const src = `${BASIC} lda #<target\n sta jump+1\n lda #>target\n sta jump+2\njump: jmp $0830\ntarget: rts\n.pc = $0830\n .byte $02,$02\n`;
     const { normal, deep } = both(fromSource('p.prg', src));
@@ -137,11 +182,23 @@ describe('deep analysis', () => {
   });
 
   it('counts as faults the warnings and errors that say code is read wrongly, not what the code read finds', () => {
-    const at = (lvl: 'warn' | 'err' | 'hint', msg: string) => isFault({ lvl, msg, addr: null, cat: 'code' });
-    expect(at('err', 'JAM opcode $02 reached at $0814; the path probably runs into data')).toBe(true);
-    expect(at('warn', 'BRK at $0815 ends the code path')).toBe(true);
-    expect(at('warn', 'Instruction at $9934 would overlap other code or leave the file; tracing stopped')).toBe(true);
-    expect(at('warn', 'Indirect JMP ($0334) at $880d: target unknown at analysis time')).toBe(false);
-    expect(at('hint', 'The loop at $85cf copies $85db-$8600 to $0400-$0425, and the jmp at $85d8 goes there')).toBe(false);
+    // by the code, whatever the message says
+    const at = (lvl: 'warn' | 'err' | 'hint', code: ProblemCode) => isFault({ lvl, msg: 'reworded', addr: null, cat: 'code', code });
+    expect(at('err', 'jam')).toBe(true);
+    expect(at('warn', 'brk')).toBe(true);
+    expect(at('warn', 'overlap')).toBe(true);
+    expect(at('warn', 'ijmp-unknown')).toBe(false);
+    expect(at('hint', 'copy-loop')).toBe(false);
+  });
+
+  it('gives every problem the code of its kind, and nothing else a code', () => {
+    const { normal } = both(fromSource('p.prg', `${BASIC} lda #1
+ sta $d020
+ bne go
+ .byte $02,$00
+go: jmp ($1234)
+`));
+    expect(problems(normal).map(l => l.code)).toEqual(['jam', 'ijmp-unknown']);
+    expect(normal.log.filter(l => l.code && !problems(normal).includes(l))).toEqual([]);
   });
 });

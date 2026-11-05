@@ -31,7 +31,8 @@ function compare(p: ProjectInput) {
   const refInput = clone();
   const RA = KR.analyze(refInput);
 
-  same(A.log.filter(l => !isTiming(l.msg)), RA.log.filter((l: { msg: string }) => !isTiming(l.msg)), `log: ${where}`);
+  // (the prototype's log has no problem codes, 8.11g)
+  same(A.log.filter(l => !isTiming(l.msg)).map(({ code: _, ...l }) => l), RA.log.filter((l: { msg: string }) => !isTiming(l.msg)), `log: ${where}`);
   same(A.blocks.map(b => blockView(b, b.type)), RA.blocks.map((b: Omit<AnalysisResult['blocks'][number], 'type'> & { type: number }) => blockView(b, KR.TYPE_INFO[b.type].key)), `blocks: ${where}`);
   same(A.tm, RA.tm, `type map: ${where}`);
   same(A.insLen, RA.insLen, 'insLen');

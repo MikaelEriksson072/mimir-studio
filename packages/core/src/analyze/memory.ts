@@ -12,8 +12,8 @@ export function loadMemory(ctx: Ctx): void {
     let overlap = 0;
     for (let a = f.load; a < end; a++) { if (owner[a] >= 0) overlap++; mem[a] = f.bytes[a - f.load]; owner[a] = i; }
     L('info', `Loaded ${f.name}: ${$4(f.load)}-${$4(end - 1)}, ${end - f.load} bytes`, f.load, 'load');
-    if (f.load + f.bytes.length > 0x10000) L('warn', `${f.name} runs past $ffff and was truncated`, f.load, 'load');
-    if (overlap) L('warn', `${f.name} overlaps ${overlap} bytes of an earlier file; the later file wins`, f.load, 'load');
+    if (f.load + f.bytes.length > 0x10000) L('warn', `${f.name} runs past $ffff and was truncated`, f.load, 'load', 'file-truncated');
+    if (overlap) L('warn', `${f.name} overlaps ${overlap} bytes of an earlier file; the later file wins`, f.load, 'load', 'file-overlap');
   });
   placeRelocs(ctx);
 }
@@ -65,7 +65,7 @@ function placeRelocs(ctx: Ctx): void {
       return false;
     });
   }
-  for (const r of left) L('warn', `The block ${span(r.start, r.end)} relocated to ${$4(r.to)} is not placed: ${why(r)}`, r.start < 0x10000 ? r.start : null, 'reloc');
+  for (const r of left) L('warn', `The block ${span(r.start, r.end)} relocated to ${$4(r.to)} is not placed: ${why(r)}`, r.start < 0x10000 ? r.start : null, 'reloc', 'reloc-unplaced');
 }
 
 /** 8.1b: the result's owners, where a relocated block's copy is owned by the file whose bytes it holds; the blocks

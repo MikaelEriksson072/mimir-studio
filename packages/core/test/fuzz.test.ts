@@ -2,7 +2,7 @@
  * the generated Kick Assembler source re-assembles byte-identical. */
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { analyze, h4, render, verify, type NumberFormat, type Override, type ProjectInput, type Settings, type TextEncoding } from '../src';
+import { analyze, h4, PROBLEM_CODES, render, verify, type NumberFormat, type Override, type ProjectInput, type Settings, type TextEncoding } from '../src';
 import { describeProject, loadFor, OVERRIDE_TYPES, randomPrg } from './helpers/programs';
 
 const RUNS = Number(process.env.FUZZ_RUNS) || 300;
@@ -86,6 +86,9 @@ function check(p: ProjectInput, renameEvery?: number, exclude?: [number, number]
   if (exclude) p = { ...p, excluded: A.blocks.filter((_b, i) => (i + exclude[1]) % exclude[0] === 0).map(b => b.start) };
   // so does saving blocks as binary files (some of them excluded as well)
   if (binary) p = { ...p, binary: A.blocks.filter((_b, i) => (i + binary[1]) % binary[0] === 0).map(b => b.start) };
+  // every warning, error and tip says what kind of problem it is (8.11g)
+  const uncoded = A.log.find(l => (l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint') !== (l.code != null && l.code in PROBLEM_CODES));
+  if (uncoded) throw new Error(`a log line without the right code for ${describeProject(p)}: ${JSON.stringify(uncoded)}`);
   const R = render(A, p);
   const V = verify(A, R);
   if (!V.ok) {

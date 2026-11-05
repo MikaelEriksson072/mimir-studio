@@ -4,7 +4,8 @@
  * the serial bus (drive.ts); without one nothing answers there.
  *
  * It also records, for every RAM address, which layer wrote it last and when, and when it was last read as data.
- * Sindri finds the layers of a packed program from that. */
+ * Sindri finds the layers of a packed program from that. And from the moment the file is loaded, when each byte was
+ * first run, read and written: what the program did with the loaded bytes (`UnpackResult.fileUse`). */
 import { Cpu, type Bus } from './cpu.ts';
 import { DRIVE_RATIO, type Drive } from './drive.ts';
 import { CYCLES } from './opcodes.ts';
@@ -239,6 +240,12 @@ export class C64 implements Bus {
   readonly etime = new Uint32Array(0x10000);
   /** the opcode it held when it was last executed as one (code that is overwritten later keeps its fingerprint) */
   readonly eop = new Uint8Array(0x10000);
+  /** since the file was loaded (instruction counts, 0 = not yet): when each byte was first executed as an opcode, as an
+   *  operand, read as data and written. What happened up to the first write was done with the byte as it was loaded */
+  readonly firstOp = new Uint32Array(0x10000);
+  readonly firstArg = new Uint32Array(0x10000);
+  readonly firstRead = new Uint32Array(0x10000);
+  readonly firstWrite = new Uint32Array(0x10000);
   /** the tag new writes get */
   tag = BOOT;
   /** the CPU runs ROM code (or C64 set-up code in RAM): its writes below $0400 are the system's (keyboard buffer,
@@ -344,12 +351,12 @@ export class C64 implements Bus {
     switch (this.map[a >> 8]) {
       case RAM:
         // (the system reading its own variables below $0400, as the KERNAL's interrupt does, is not the program's)
-        if (!this.inRom || a >= 0x400) this.rtime[a] = this.icount;
+        if (!this.inRom || a >= 0x400) { this.rtime[a] = this.icount; if (!this.firstRead[a]) this.firstRead[a] = this.icount; }
         return this.ram[a];
       case ZP:
         if (a === 0) return this.ddr;
         if (a === 1) return this.readPort();
-        if (!this.inRom) this.rtime[a] = this.icount;
+        if (!this.inRom) { this.rtime[a] = this.icount; if (!this.firstRead[a]) this.firstRead[a] = this.icount; }
         return this.ram[a];
       case BASIC: return this.basic[a - 0xa000];
       case KERNAL: return this.kernal[a - 0xe000];
@@ -377,6 +384,7 @@ export class C64 implements Bus {
     }
     this.wid[a] = this.inRom && a < 0x400 ? BOOT : this.tag;
     this.wtime[a] = this.icount;
+    if (!this.firstWrite[a]) this.firstWrite[a] = this.icount;
     this.ram[a] = v;
   }
 

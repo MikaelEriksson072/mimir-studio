@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { unpack, type UnpackResult } from '../src/index.ts';
+import { FILE_ARG, FILE_RAN, FILE_READ, FILE_WRITTEN, unpack, type UnpackResult } from '../src/index.ts';
 import { findRoms } from '../src/node.ts';
 import { asm, basic, byteLines, SYS_LINE } from './asm.ts';
 import { coded, pack, PROGRAM } from './packers.ts';
@@ -95,6 +95,35 @@ for (const mode of roms ? ['stand-ins', 'ROMs'] as const : ['stand-ins'] as cons
       expectProgram(r);
       expect(r.layers.map(l => [l.entry, l.kind])).toEqual([[0x080d, 'mover'], [0x0100, 'decruncher'], [0x1000, 'program']]);
       expect(r.stop.reason).toBe('settled');
+    });
+
+    it('tells what the run did with each loaded byte while it held what was loaded', () => {
+      const p = asm(`${SYS_LINE}
+       ldx #0
+       lda table,x
+       sta $0400
+       lda #$60
+       sta later
+       jsr later
+loop:  inc count
+       jmp loop
+later: nop
+       rts
+table: .byte 1,2,3
+count: .byte 0
+never: .byte $ea,$ea
+`);
+      const { fileUse } = go(p.prg), L = p.labels;
+      expect(fileUse[0x080d]).toBe(FILE_RAN);
+      expect(fileUse[0x0810]).toBe(FILE_ARG); // lda table,x
+      expect(fileUse[L.table]).toBe(FILE_READ);
+      expect(fileUse[L.table + 1]).toBe(0);
+      // written with an RTS before it ran: what ran was not the loaded NOP, and the loaded RTS after it never ran
+      expect(fileUse[L.later]).toBe(FILE_WRITTEN);
+      expect(fileUse[L.later + 1]).toBe(0);
+      // INC reads, then writes
+      expect(fileUse[L.count]).toBe(FILE_READ | FILE_WRITTEN);
+      expect(fileUse[L.never]).toBe(0);
     });
 
     it('finds a decruncher that never goes below $0800', () => {

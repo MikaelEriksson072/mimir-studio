@@ -202,7 +202,10 @@ pnpm mimir analyse game.prg
 `analyse`, `verify [--kickass]`, `export -o <folder>` and `demo` take `.prg` files, a cartridge (`.crt`: every bank, or
 `--bank <n>` for one of them) or saved projects (`.mimir.json`).
 `--deep` runs the deep analysis. `unpack game.prg [-o unpacked.prg]` unpacks a packed program and prints its layers; `unpack demo.d64` takes the disk's
-first PRG (or `--file NAME`) with the disk in the drive.
+first PRG (or `--file NAME`) with the disk in the drive. `measure <folder>` runs every program in it in Sindri and sets
+what the analysis made of each byte against what the program did with it (the code it ran, the data it read), and
+counts the problems by kind: run it with and without a setting (`--deep`, `--set codeIslands=false`) to see what the
+setting does.
 
 ## Project layout
 

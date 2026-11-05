@@ -134,7 +134,7 @@ export function findCopies(ctx: Ctx): RelocCopy[] {
     // relocated to run somewhere else
     const other = ctx.relocs.find(r => r.start === c.start);
     L('hint', other ? `${goes}, but it is relocated to run at ${$4(other.to)}. Let it run at ${$4(c.to)} (the Relocated tab, or right-click it → Change where it runs…).`
-      : `${goes}: that code runs at ${$4(c.to)}. Relocate ${what} to run there (the Relocated tab, or right-click → Relocate…), and it is traced and named where it runs.`, c.at, 'reloc');
+      : `${goes}: that code runs at ${$4(c.to)}. Relocate ${what} to run there (the Relocated tab, or right-click → Relocate…), and it is traced and named where it runs.`, c.at, 'reloc', 'copy-loop');
   }
   return out;
 }

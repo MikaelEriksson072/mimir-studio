@@ -21,7 +21,7 @@ import { parseVsf, snapshotConfig, snapshotVicBank, type Snapshot } from '../c64
 const N = 0x10000;
 const UNKNOWN = ALL_PORTS;
 /** configurations with HIRAM = 0 (the CPU reads $fffa-$ffff from RAM) and with HIRAM = 1 */
-const KERNAL_OUT = 0x33, KERNAL_IN = 0xcc;
+export const KERNAL_OUT = 0x33, KERNAL_IN = 0xcc;
 /** configurations with LORAM and HIRAM ($33, $37): a cartridge's ROML at $8000 */
 const ROML_IN = 0x88;
 /** configurations with I/O at $d000-$dfff ($35, $36, $37) */
@@ -262,7 +262,7 @@ export function memConfig(ctx: Ctx): MemConfigInfo {
 
   for (const [pc, c] of [...changes].sort((u, v) => u[0] - v[0])) {
     if (c.port != null) {
-      if (c.port === ALL_PORTS) L('hint', `$01 is written at ${$4(pc)} with a value the analysis cannot follow. Select the code that runs afterwards and set its memory configuration (right-click → Memory configuration).`, pc, 'memory');
+      if (c.port === ALL_PORTS) L('hint', `$01 is written at ${$4(pc)} with a value the analysis cannot follow. Select the code that runs afterwards and set its memory configuration (right-click → Memory configuration).`, pc, 'memory', 'port-unknown');
       else L('info', portsOf(c.port).length === 1 ? `$01 = ${describePorts(c.port)} from ${$4(pc)}` : `$01 is ${describePorts(c.port)} after ${$4(pc)}`, pc, 'memory');
     } else if (c.vic != null && c.vic !== ALL_BANKS) {
       const bs = banksOf(c.vic);

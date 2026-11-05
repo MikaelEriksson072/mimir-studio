@@ -20,7 +20,7 @@ export function ioLabelNotice(ctx: Ctx, labels: Map<Addr, LabelInfo>): void {
     && (xrefs.get(a) || []).some(x => insLen[x.from] && x.kind !== 'call' && x.kind !== 'jump' && x.kind !== 'branch')).sort((x, y) => x - y);
   if (!io.length) return;
   const shown = io.slice(0, 4).map(a => `${$4(a)} ${labels.get(a)!.name}`).join(', ') + (io.length > 4 ? ', …' : '');
-  L('warn', `Bank tracking is off, so the code's accesses to ${io.length} I/O address${io.length === 1 ? '' : 'es'} inside the loaded bytes are written as labels (${shown}). Turn on Settings → Analysis → Follow the memory configuration ($01) and VIC bank to write them as registers.`, io[0], 'banks');
+  L('warn', `Bank tracking is off, so the code's accesses to ${io.length} I/O address${io.length === 1 ? '' : 'es'} inside the loaded bytes are written as labels (${shown}). Turn on Settings → Analysis → Follow the memory configuration ($01) and VIC bank to write them as registers.`, io[0], 'banks', 'io-as-labels');
 }
 
 /** A routine in a data block that nothing traced reaches: where it starts and ends, its instructions and the last one. */
@@ -120,7 +120,7 @@ export function diagnostics(ctx: Ctx, blocks: Block[]): void {
   const data = (b: Block) => {
     if (!deep) return false;
     for (const a of rejected.keys()) if (a >= b.start && a < b.end && a < b.start + 16) return true;
-    const why = trial(ctx, b.start, 'guess');
+    const { why } = trial(ctx, b.start, 'guess');
     if (why) rejected.set(b.start, { kind: 'guess', why });
     return !!why;
   };
@@ -133,13 +133,13 @@ export function diagnostics(ctx: Ctx, blocks: Block[]): void {
       n++; p += o.len;
       if (o.flow === 'ret' || o.flow === 'jmp') { end = true; break; }
     }
-    if (end && n >= 6 && !data(b)) { b.hint = 'code'; L('hint', `Possible unreached code at ${$4(b.start)} (${n} valid instructions ending in ${OPC[mem[p - OPC[mem[p - 1]].len]]?.mn || 'RTS'}). Select it and press C to disassemble.`, b.start, 'data'); }
+    if (end && n >= 6 && !data(b)) { b.hint = 'code'; L('hint', `Possible unreached code at ${$4(b.start)} (${n} valid instructions ending in ${OPC[mem[p - OPC[mem[p - 1]].len]]?.mn || 'RTS'}). Select it and press C to disassemble.`, b.start, 'data', 'unreached'); }
   }
   const entropy = (s: Addr, e: Addr) => { const c = new Uint32Array(256); for (let i = s; i < e; i++) c[mem[i]]++; let H = 0; const n = e - s; for (const k of c) if (k) { const p = k / n; H -= p * Math.log2(p); } return H; };
   for (const b of blocks) b.entropy = entropy(b.start, b.end);
   let dataBytes = 0, dataH = 0;
   for (const b of blocks) if (b.type === 'data' && b.end - b.start >= 256) { dataBytes += b.end - b.start; dataH += b.entropy * (b.end - b.start); }
-  if (dataBytes >= 2048 && dataH / dataBytes > 7.2) L('warn', `Unclassified data has very high entropy (${(dataH / dataBytes).toFixed(2)} bits/byte). The program is probably crunched; unpack it (Unpack in the app, or mimir unpack) and load the result.`, null, 'data');
+  if (dataBytes >= 2048 && dataH / dataBytes > 7.2) L('warn', `Unclassified data has very high entropy (${(dataH / dataBytes).toFixed(2)} bits/byte). The program is probably crunched; unpack it (Unpack in the app, or mimir unpack) and load the result.`, null, 'data', 'high-entropy');
 }
 
 export function statistics(ctx: Ctx, tm: Uint8Array, blocks: Block[], labels: Map<Addr, LabelInfo>, t0: number): Stats {

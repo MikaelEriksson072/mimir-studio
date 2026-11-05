@@ -126,6 +126,24 @@ export interface UnpackResult {
   /** emulated cycles from the program's start */
   cycles: number;
   ms: number;
+  /** per address, what the run did with the loaded file's byte while it still held what was loaded: `FILE_RAN`,
+   *  `FILE_ARG`, `FILE_READ`, and `FILE_WRITTEN` when it was written later (what came after is not of that byte) */
+  fileUse: Uint8Array;
+}
+
+/** `UnpackResult.fileUse`: executed as an opcode, executed as an operand, read as data, written after the load */
+export const FILE_RAN = 1, FILE_ARG = 2, FILE_READ = 4, FILE_WRITTEN = 8;
+
+/** What the run did with each byte as it was loaded: what it did before the byte's first write. */
+function fileUse(m: C64): Uint8Array {
+  const out = new Uint8Array(0x10000);
+  for (let a = 0; a < 0x10000; a++) {
+    const w = m.firstWrite[a] || 0xffffffff;
+    // (an instruction that writes a byte it ran or read did so first: the same count is before)
+    out[a] = (m.firstOp[a] && m.firstOp[a] <= w ? FILE_RAN : 0) | (m.firstArg[a] && m.firstArg[a] <= w ? FILE_ARG : 0)
+      | (m.firstRead[a] && m.firstRead[a] <= w ? FILE_READ : 0) | (m.firstWrite[a] ? FILE_WRITTEN : 0);
+  }
+  return out;
 }
 
 interface Snapshot { ram: Uint8Array; port: number; a: number; x: number; y: number; s: number; p: number }
@@ -368,6 +386,8 @@ class Session {
       m.wid[a] = LOADED;
       m.wtime[a] = m.icount;
     }
+    // from here on: what the run does with the loaded bytes
+    for (const t of [m.firstOp, m.firstArg, m.firstRead, m.firstWrite]) t.fill(0);
     const end = this.loadAt + this.data.length;
     m.ram[0xae] = end & 0xff; m.ram[0xaf] = (end >> 8) & 0xff;
     m.ram[0x90] = 0x40;
@@ -398,6 +418,7 @@ class Session {
 
   private loop(): void {
     const m = this.m, cpu = m.cpu, map = m.map, ram = m.ram, etime = m.etime, eop = m.eop, wid = m.wid, eid = this.eid, special = this.special;
+    const firstOp = m.firstOp, firstArg = m.firstArg;
     let next = m.icount + CHECK;
     while (!this.stopped) {
       if (cpu.s > this.frameSp) this.unwind();
@@ -416,8 +437,13 @@ class Session {
         }
         const ic = m.icount, op = ram[pc];
         etime[pc] = ic; eop[pc] = op;
+        if (!firstOp[pc]) firstOp[pc] = ic;
         const len = LEN[op];
-        if (len > 1) { etime[(pc + 1) & 0xffff] = ic; if (len > 2) etime[(pc + 2) & 0xffff] = ic; }
+        if (len > 1) {
+          const p1 = (pc + 1) & 0xffff;
+          etime[p1] = ic; if (!firstArg[p1]) firstArg[p1] = ic;
+          if (len > 2) { const p2 = (pc + 2) & 0xffff; etime[p2] = ic; if (!firstArg[p2]) firstArg[p2] = ic; }
+        }
         this.lastRam = true;
         m.inRom = false;
       } else { this.lastRam = false; m.inRom = true; }
@@ -914,6 +940,7 @@ class Session {
       drive: this.drive ? `${this.driveNote}, ${this.drive.bytesRead} bytes read${this.drive.bytesWritten ? `, ${this.drive.bytesWritten} written` : ''}` : this.driveNote,
       cycles: this.started ? m.cycles - this.startCycle : 0,
       ms,
+      fileUse: fileUse(m),
     };
   }
 

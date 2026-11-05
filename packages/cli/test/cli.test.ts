@@ -100,6 +100,27 @@ describe('mimir CLI', () => {
     expect(c.lines).toEqual(['ERR no PRG named "nothing" on mimir-demo.d64']);
   });
 
+  it('measures the analysis against what the program did when it ran, and counts the problems by kind', async () => {
+    let c = capture(dir);
+    expect(await main(['measure', 'demo.prg', '--no-roms'], c.io)).toBe(0);
+    expect(c.lines.slice(0, 5).join('\n')).toMatch(new RegExp([
+      String.raw`^demo\.prg \(the run: settled after [\d.]+ s\)`,
+      String.raw`  ran (\d+) instruction starts: 100\.0 % found, 0 out of step, 0 as data`,
+      String.raw`  read \d+ bytes as data only: 0 as code \(0 of them copied to run elsewhere\)`,
+      String.raw`  \d+ bytes of code: [\d.]+ % not touched by the run`,
+      '  0 problems$',
+    ].join('\n')));
+    expect(c.lines.slice(-5, -4)).toEqual(['1 program']);
+    c = capture(dir);
+    expect(await main(['measure', 'demo.prg', '--no-roms', '--json'], c.io)).toBe(0);
+    const j = JSON.parse(c.lines.join('\n'));
+    expect(j.files[0]).toMatchObject({ file: 'demo.prg', stop: 'settled', missed: 0, outOfStep: 0, problems: {} });
+    expect(j.total.ran).toBe(j.files[0].found);
+    expect(j.codes.jam).toBe('a code path reaches a JAM opcode');
+    c = capture(dir);
+    expect(await main(['measure', 'nothing-here'], c.io)).toBe(2);
+  });
+
   it('rejects unknown settings and commands', async () => {
     let c = capture(dir);
     expect(await main(['verify', 'demo.prg', '--set', 'nope=1'], c.io)).toBe(2);

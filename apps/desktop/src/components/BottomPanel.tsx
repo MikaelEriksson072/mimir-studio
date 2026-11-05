@@ -1,7 +1,7 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
  * disk's files, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, d64writeScript, decode, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, d64writeScript, decode, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   type Addr, type AnalysisResult, type BitfireFile, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -17,7 +17,7 @@ export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNa
       {items.map((l, i) => (
         <div key={i} className={cx('logrow', `lvl-${l.lvl}`)}>
           <Icon name={LVL_ICON[l.lvl] || 'info'} size={14} className="lvl-icon" />
-          <span className="log-cat">{l.cat}</span>
+          <span className="log-cat" title={l.code ? `${l.code}: ${PROBLEM_CODES[l.code]}` : undefined}>{l.cat}</span>
           <span className="log-msg">{l.msg}</span>
           {l.action && <button className="btn small primary log-action" onClick={l.action.run}>{l.action.label}</button>}
           {l.addr != null && <button className="addr-link" onClick={() => onNavigate(l.addr!)}>${h4(l.addr)}</button>}
@@ -114,7 +114,7 @@ export function RelocPanel({ A, R, relocs, onNavigate, onRelocate, onUnrelocate 
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
   // those in the project the analysis did not place: the log says why
   const left = relocs.filter(r => !A.relocs.some(x => x.start === r.start));
-  const why = (r: Reloc) => A.log.find(l => l.cat === 'reloc' && l.lvl === 'warn' && l.addr === r.start)?.msg.replace(/^.*? is not placed: /, '') ?? 'it is not placed';
+  const why = (r: Reloc) => A.log.find(l => l.code === 'reloc-unplaced' && l.addr === r.start)?.msg.replace(/^.*? is not placed: /, '') ?? 'it is not placed';
   const n = A.relocs.length + left.length;
   return (
     <div className="xref relocs">

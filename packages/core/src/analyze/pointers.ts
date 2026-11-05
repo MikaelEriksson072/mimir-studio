@@ -59,6 +59,6 @@ export function warnUnresolvedJumps(ctx: Ctx): void {
   if (ctx.deep) for (const [v, dest] of ctx.ev.ptrTargets) if (ctx.insLen[v]) set.add(dest);
   for (const j of ijumps) {
     if (![...lohiTabs.values()].some(t => t.dest === j.ptr && t.code) && ![...ctx.wordTables.values()].some(t => t.dest === j.ptr) && !VECTORS[j.ptr] && !set.has(j.ptr))
-      L('warn', `Indirect JMP (${$4(j.ptr)}) at ${$4(j.pc)}: target unknown at analysis time`, j.pc, 'code');
+      L('warn', `Indirect JMP (${$4(j.ptr)}) at ${$4(j.pc)}: target unknown at analysis time`, j.pc, 'code', 'ijmp-unknown');
   }
 }

@@ -1,4 +1,4 @@
-import type { Addr, BitfireDisk, D64Image, KickProblem, ListingLine, LogLevel, SpindleDisk, VerifyResult } from '@mimir/core';
+import type { Addr, BitfireDisk, D64Image, KickProblem, ListingLine, LogLevel, ProblemCode, SpindleDisk, VerifyResult } from '@mimir/core';
 import type { IconName } from './icon-paths';
 
 /** The mounted .d64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build & Run;
@@ -36,6 +36,8 @@ export interface Toast { id: string; msg: string; kind: ToastKind }
 /** One row in the log / problems lists. */
 export interface UiProblem {
   lvl: LogLevel; msg: string; addr: Addr | null | undefined; cat: string;
+  /** the analysis's kind of problem (8.11g); none for Kick Assembler's, the listing's and the packing check's */
+  code?: ProblemCode;
   /** a button on the row that fixes it (turns a setting on, say) */
   action?: { label: string; run: () => void };
 }
