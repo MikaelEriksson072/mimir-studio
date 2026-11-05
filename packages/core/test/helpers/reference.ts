@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { detectMusic } from '../../src/analyze/music';
 import { CHAR_OUT, d018Case, handedText, inlineAfter, inlineString, popsReturn, printCase, printers, printLoop, sentCase, stringLen, stringSwitch } from '../../src/analyze/strings';
+import { petsciiControl, petsciiDefinitions, textTokens } from '../../src/c64/text';
 
 export interface Edit { find: string; replace: string }
 export interface Deviation { why: string; edits: Edit[] }
@@ -294,6 +295,24 @@ export const DEVIATIONS: Deviation[] = [
       replace: "while (e < 0x10000 && tm[e] === t && owner[e] === fileA && !(ovProps.has(e) && e !== a) && !(TYPE_INFO[t].group === 'gfx' && ov[e] !== ov[a])) e++;",
     }],
   },
+  {
+    why: 'The control codes in a PETSCII text were written as `.byte $93, $05` with their names in a comment (and only eight of them named), which cut the text in pieces. Each one the C64 has (the Programmer\'s Reference Guide\'s CHR$ codes) is now written by name in the `.text` line, `.text PET_CLR + PET_WHITE + "HELLO" + PET_RETURN`, and the file head defines those its texts use as strings with the byte in them, `.const PET_CLR = @"\\$93"`, at column 0 (production code, `textTokens`, `petsciiDefinitions`)',
+    edits: [
+      { find: '  function textRows(out, s, e, enc) {\n', replace: '  function textRows(out, s, e, enc, ctx) {\n' },
+      { find: '    const ok = mixed ? (b =>', replace: '    const okc = mixed ? (b =>' },
+      { find: "    out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: mixed ?", replace: "    const pet = enc === 'petscii' || mixed, ok = b => okc(b) || (pet && !!strs.petsciiControl(b));\n    out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: mixed ?" },
+      { find: "tok: [{ t: 'str', s: '\"' + [...mem.subarray(p, q)].map(ch).join('') + '\"' }], cmt: '' });", replace: 'tok: strs.textTokens(mem.subarray(p, q), ch, pet, ctx.usePet), cmt: \'\' });' },
+      { find: "case T.TEXT: label(b.start); textRows(out, b.start, b.end, b.props.enc || 'petscii'); break;", replace: "case T.TEXT: label(b.start); textRows(out, b.start, b.end, b.props.enc || 'petscii', ctx); break;" },
+      { find: '    const usedZp = new Set(), usedExt = new Set(), usedHw = new Set();\n    const ctx = {\n', replace: '    const usedZp = new Set(), usedExt = new Set(), usedHw = new Set(), usedPet = new Set();\n    const ctx = {\n      usePet: b => usedPet.add(b),\n' },
+      { find: "    if (usedZp.size) {\n      head.push({ k: 'blank', a: f.load });\n      head.push({ k: 'cmt', a: f.load, text: 'zero page' });", replace: "    head.push(...strs.petsciiDefinitions(usedPet, f.load, S.hexCase === 'upper'));\n    if (usedZp.size) {\n      head.push({ k: 'blank', a: f.load });\n      head.push({ k: 'cmt', a: f.load, text: 'zero page' });" },
+      { find: "l.tok[0].s === '.label' || l.tok[0].s === '.var'", replace: "l.tok[0].s === '.label' || l.tok[0].s === '.const' || l.tok[0].s === '.var'" },
+      // the subset assembler reads the strings with the byte in them
+      {
+        find: "      if (c === '\"') { const j = s.indexOf('\"', i + 1); if (j < 0) throw new Error('unterminated string'); out.push({ t: 's', v: s.slice(i + 1, j) }); i = j + 1; continue; }\n",
+        replace: "      if (c === '\"') { const j = s.indexOf('\"', i + 1); if (j < 0) throw new Error('unterminated string'); out.push({ t: 's', v: s.slice(i + 1, j) }); i = j + 1; continue; }\n      if (c === '@' && s[i + 1] === '\"') { const j = s.indexOf('\"', i + 2); out.push({ t: 's', v: s.slice(i + 2, j).replace(/\\\\\\$([0-9a-fA-F]{2})/g, (_m, x) => String.fromCharCode(parseInt(x, 16))) }); i = j + 1; continue; }\n",
+      },
+    ],
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -312,7 +331,7 @@ export function loadReference(): ReferenceKR {
   // The prototype is an IIFE that installs itself on `window` or `globalThis`: hand it a private root
   // (same realm, so typed arrays and Maps compare normally), the production music detection and print routines.
   const root: { KR?: ReferenceKR } = {};
-  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase, popsReturn, inlineString, inlineAfter });
+  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase, popsReturn, inlineString, inlineAfter, petsciiControl, petsciiDefinitions, textTokens });
   cached = root.KR;
   return cached;
 }

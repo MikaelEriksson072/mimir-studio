@@ -186,9 +186,43 @@ msg: .text "HELLO"
     ] });
     expect(V.ok).toBe(true);
     expect(src).toMatch(/\.encoding "screencode_mixed"\n\s+\.text "Hello @you"\n\s+\.byte \$00 +\/\/ end\n/);
-    expect(src).toMatch(/\.encoding "petscii_mixed"\n\s+\.text "Hi there"\n\s+\.byte \$0d +\/\/ RETURN\n/);
+    expect(src).toMatch(/\.encoding "petscii_mixed"\n\s+\.text "Hi there" \+ PET_RETURN\n/);
     expect(src).toMatch(/\.encoding "screencode_upper"\n\s+\.text "HI@A"\n\s+\.byte \$80, \$00\n/);
     expect(src).toContain('// ---- Text (screen codes, mixed case)');
+  });
+
+  it('writes the control codes of a PETSCII text by name in its .text lines, and defines them in the file head', () => {
+    const hex = (bs: number[]) => bs.map(b => '$' + b.toString(16).padStart(2, '0')).join(',');
+    // CLR, white, "HELLO", RETURN, $0a (no name), cursor down and right, "WORLD", $00
+    const pet = [0x93, 0x05, 0x48, 0x45, 0x4c, 0x4c, 0x4f, 0x0d, 0x0a, 0x11, 0x1d, 0x57, 0x4f, 0x52, 0x4c, 0x44, 0x00];
+    const scr = [0x05, 0x0d, 0x93, 0x00]; // screen codes: "EM", an inverse S, $00: no control codes
+    const file = fromSource('t.prg', `.pc = $c000\n rts\n.pc = $c010\n.byte ${hex(pet)}\n.pc = $c030\n.byte ${hex(scr)}`);
+    const overrides = [
+      { start: 0xc010, end: 0xc010 + pet.length, type: 'text', props: { enc: 'petscii' } },
+      { start: 0xc030, end: 0xc030 + scr.length, type: 'text', props: { enc: 'screen' } },
+    ];
+    const { src, V, R } = run(file, { overrides });
+    expect(V.ok).toBe(true);
+    expect(src).toMatch(/\.encoding "petscii_upper"\n\s+\.text PET_CLR \+ PET_WHITE \+ "HELLO" \+ PET_RETURN\n\s+\.byte \$0a\n\s+\.text PET_CRSR_DOWN \+ PET_CRSR_RIGHT \+ "WORLD"\n\s+\.byte \$00 +\/\/ end\n/);
+    expect(src).toMatch(/\.encoding "screencode_upper"\n\s+\.text "EM"\n\s+\.byte \$93, \$00\n/);
+    // the head: the codes used, in the order of their bytes, at column 0 with what they do
+    expect(src).toMatch(/\n\/\/ PETSCII control codes, written by name in the texts\n\.const PET_WHITE = @"\\\$05" +\/\/ text color white\n\.const PET_RETURN = @"\\\$0d" +\/\/ return: the start of the next line\n\.const PET_CRSR_DOWN = @"\\\$11" +\/\/ cursor down\n\.const PET_CRSR_RIGHT = @"\\\$1d" +\/\/ cursor right\n\.const PET_CLR = @"\\\$93" +\/\/ clear the screen\n/);
+    // each name is a byte of the line: a cell of its own in the listing, with its tooltip
+    const line = R.lines.find(l => l.k === 'dat' && l.a === 0xc010);
+    expect(line).toMatchObject({ dir: '.text', n: 8 });
+    expect(line && 'tok' in line && line.tok[0]).toMatchObject({ t: 'hw', s: 'PET_CLR', sym: { desc: 'clear the screen ($93)' } });
+    // the hex case of the settings, in the mixed case encoding too
+    const up = run(file, { overrides: overrides.map((o, i) => (i ? o : { ...o, props: { enc: 'petscii-mixed' } })), settings: { hexCase: 'upper' } });
+    expect(up.V.ok).toBe(true);
+    expect(up.src).toContain('.const PET_CRSR_RIGHT = @"\\$1D"');
+    expect(up.src).toContain('.text PET_CRSR_DOWN + PET_CRSR_RIGHT + "world"');
+  });
+
+  it('a text with no named control code defines none', () => {
+    const file = fromSource('t.prg', '.pc = $c000\n rts\n.pc = $c010\n.text "HELLO"\n.byte 0');
+    const { src } = run(file, { overrides: [{ start: 0xc010, end: 0xc016, type: 'text', props: { enc: 'petscii' } }] });
+    expect(src).toContain('.text "HELLO"');
+    expect(src).not.toContain('PET_');
   });
 
   it('finds color tables stored to VIC color registers', () => {

@@ -1287,9 +1287,17 @@ Ett textblock skrivs med Kick Assemblers `.encoding` och `.text` (`src/c64/text.
 | Text (screen codes) | `screencode_upper` | `@` (`$00`), `A–Z`, `[`, `]`, `$20–$3f` utom `"` |
 | Text (screen codes, mixed case) | `screencode_mixed` | `@`, `a–z` (`$01–$1a`), `A–Z` (`$41–$5a`), `[`, `]`, `$20–$3f` utom `"` |
 
-Allt annat — inverterade tecken (`$80–$ff`), grafiktecken, `"`, `£`, `↑`, `←`, styrkoder — har inget tecken som visar
-samma sak och skrivs som `.byte`, så att bygget blir byte-exakt. En screen code `$00` skrivs som `@` inne i en text men
-som `.byte $00 // end` sist (ett slutmärke). Mixed case väljs för text gjord för teckenuppsättningen med gemener: med
+Allt annat — inverterade tecken (`$80–$ff`), grafiktecken, `"`, `£`, `↑`, `←` — har inget tecken som visar samma sak
+och skrivs som `.byte`, så att bygget blir byte-exakt. En screen code `$00` skrivs som `@` inne i en text men som
+`.byte $00 // end` sist (ett slutmärke).
+
+Styrkoderna i en PETSCII-text skrivs med namn i samma `.text`-rad: `.text PET_CLR + PET_WHITE + "HELLO" + PET_RETURN`.
+Namnen är de som C64:ans Programmer's Reference Guide ger CHR$-koderna (bilaga C; färgerna med C64:ans namn,
+`PET_LIGHT_BLUE`), med prefixet `PET_` så att de inte krockar med KERNAL-namn som `HOME` (`PETSCII_CONTROLS` i
+`src/c64/text.ts`). Filhuvudet definierar dem texterna använder, i bytens ordning, som strängar med byten i:
+`.const PET_CLR = @"\$93" // clear the screen` (KickAss 5.25 skriver `\$93` oförändrad i båda PETSCII-tabellerna,
+uppmätt). En kod utan namn (`$0a`, `$80` …) och `$00` blir `.byte`. Med alla banker i en källa (13.9c) står
+definitionerna en gång överst. I listningen är varje namn en byte att klicka på, med vad koden gör som tooltip. Mixed case väljs för text gjord för teckenuppsättningen med gemener: med
 `*_upper` skulle varje versal där bli en `.byte`. Utskriven text får det av analysen när programmet skriver ut med gemener (8.5). Det inbyggda assemblerets tabeller är desamma som KickAss.jar:s, även för
 tecken som skickas igenom oförändrade.
 
@@ -1305,7 +1313,7 @@ tecken som skickas igenom oförändrade.
 | BASIC-stub som matchar makrot | `BasicUpstart2(start)`, annars rå `.byte` med BASIC-raden som kommentar |
 | Musik | `LoadSid` + `.fill music.size, music.getData(i)` |
 | Teckensnitt / bitmap | `.import binary "gfx/charset_3000.bin"` (eller inline) |
-| Text | `.encoding "petscii_upper"` / `"screencode_upper"` + `.text`; styrkoder och tecken som inte kan citeras som `.byte` med namn (`RETURN`, `CLR`) |
+| Text | `.encoding "petscii_upper"` / `"screencode_upper"` + `.text`; PETSCII-styrkoder med namn i `.text`-raden (`PET_CLR + "HELLO" + PET_RETURN`, 11.2), tecken som inte kan citeras som `.byte` |
 | Pekartabeller | `.byte <fx_0919, <fx_091a` / `.byte >fx_0919, >fx_091a` |
 | Pekare i data / SMC | `label+1`, `smc_08ef+1` |
 | Flera filer | En `.asm` per PRG; etiketter från andra filer deklareras som `.label` i sektionen "labels defined in other files" |

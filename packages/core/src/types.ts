@@ -710,7 +710,7 @@ export type Line =
 /** What a line of a file's head is (render): its title, a loader's or the excluded blocks' notes (`mark`), the
  *  hardware include, the hardware, zero-page and other files' names, other banks' names and the music. All banks in one
  *  source (13.9c) keep the marks, the other banks' names and the music in each bank and define the rest once. */
-export type HeadPart = 'title' | 'mark' | 'gap' | 'import' | 'hw' | 'zp' | 'ext' | 'foreign' | 'music';
+export type HeadPart = 'title' | 'mark' | 'gap' | 'import' | 'hw' | 'pet' | 'zp' | 'ext' | 'foreign' | 'music';
 
 /** Listing-only separator between the files of a multi-file project. */
 export interface FileLine { k: 'file'; a: Addr; text: string; fi: number }

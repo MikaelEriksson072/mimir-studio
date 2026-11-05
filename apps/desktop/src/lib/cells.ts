@@ -23,10 +23,18 @@ export function cellParts(l: ListingLine): CellPart[] | null {
 function partsOf(l: ListingLine): CellPart[] | null {
   if (l.k !== 'dat' || l.n < 1) return null;
   if (l.dir === '.text') {
-    const t = l.tok[0];
-    if (l.tok.length !== 1 || t.t !== 'str' || t.s.length !== l.n + 2 || t.s[0] !== '"' || t.s[t.s.length - 1] !== '"') return null;
+    // strings, and in a PETSCII text the control codes by name between them (`PET_CLR + "HELLO"`): a byte each
+    const out: CellPart[] = [];
     const q: CellPart = { cell: null, tok: [{ t: 'str', s: '"' }] };
-    return [q, ...t.s.slice(1, -1).split('').map((s, i) => ({ cell: { a: l.a + i, n: 1 }, tok: [{ t: 'str' as const, s }] })), q];
+    let a = l.a;
+    for (const t of l.tok) {
+      if (t.t === 'str') {
+        if (t.s.length < 2 || t.s[0] !== '"' || t.s[t.s.length - 1] !== '"') return null;
+        out.push(q, ...t.s.slice(1, -1).split('').map(s => ({ cell: { a: a++, n: 1 }, tok: [{ t: 'str' as const, s }] })), q);
+      } else if (t.t === 'hw') out.push({ cell: { a: a++, n: 1 }, tok: [t] });
+      else out.push({ cell: null, tok: [t] });
+    }
+    return a - l.a === l.n ? out : null;
   }
   const size = l.dir === '.word' ? 2 : 1;
   const items: Token[][] = [[]];

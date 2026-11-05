@@ -53,6 +53,12 @@ function cases(): Case[] {
     { start: 0xc000, end: 0xc080, type: 'text', props: { enc: 'screen-mixed' } }, { start: 0xc080, end: 0xc100, type: 'text', props: { enc: 'petscii-mixed' } },
     { start: 0xc100, end: 0xc180, type: 'text', props: { enc: 'screen' } }, { start: 0xc180, end: 0xc200, type: 'text', props: { enc: 'petscii' } },
   ] } });
+  {
+    // every byte as PETSCII text: the control codes by name (`.text PET_CLR + "..."`), in both cases and hex cases
+    const all = makePrg(0xc000, Uint8Array.from({ length: 512 }, (_, i) => i & 0xff));
+    const overrides = [{ start: 0xc000, end: 0xc100, type: 'text' as const, props: { enc: 'petscii' as const } }, { start: 0xc100, end: 0xc200, type: 'text' as const, props: { enc: 'petscii-mixed' as const } }];
+    for (const hexCase of ['lower', 'upper'] as const) out.push({ name: `PETSCII control codes by name (hex ${hexCase} case)`, project: { name: 'controls', files: [parsePrg('controls.prg', all)], overrides, settings: { hexCase } } });
+  }
   out.push({ name: 'demo/blocks excluded from the build (BASIC stub, sine table, music)', project: { ...demo(), excluded: [0x0801, 0x09b5, 0x1000] } });
   out.push({ name: 'demo/program start set by the user', project: { ...demo(), entryPoint: 0x0866 } });
   out.push({ name: 'demo/comment lines and blocks', project: { ...demo(), notes: { 0x0810: { text: 'set up the raster IRQ' }, 0x09c1: { text: 'block with "quotes"\nand */ inside', block: true } }, blockComments: { 0x0939: 'two\nlines' } } });

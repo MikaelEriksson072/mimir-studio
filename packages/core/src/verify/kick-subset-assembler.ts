@@ -1,6 +1,6 @@
 /* =====================================================================
  * Assembles exactly the Kick Assembler subset that the generator emits
- * (#import, #define/#if/#else/#endif, .pc/*=, .pseudopc { }, .label/.const/.var, .byte/.word/.text/.encoding,
+ * (#import, #define/#if/#else/#endif, .pc/*=, .pseudopc { }, .label/.const/.var, .byte/.word/.text/.encoding, `@"\$93"` strings,
  * .fill with expressions, .import binary, LoadSid, BasicUpstart2, every
  * addressing mode, .abs/.zp, multi-pass resolution). The desktop app and
  * the CLI can additionally run the real KickAss.jar.
@@ -33,6 +33,8 @@ const ENCODINGS: Record<string, (c: string) => number> = {
 };
 
 const IMPLIED_ACC = new Set(['ASL', 'LSR', 'ROL', 'ROR']);
+/** the escapes of an `@"..."` string besides `\$xx` (the byte xx); `\"` is not taken, as no generated line has it */
+const ESCAPES: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', '\\': '\\' };
 
 export function assemble(vfs: Vfs, entryPath: string): AssembleResult {
   const errors: AsmError[] = [];
@@ -108,6 +110,15 @@ export function assemble(vfs: Vfs, entryPath: string): AssembleResult {
       if (/[0-9]/.test(c)) { const m = s.slice(i).match(/^[0-9]+/)!; out.push({ t: 'n', v: parseInt(m[0], 10) }); i += m[0].length; continue; }
       if (/[A-Za-z_]/.test(c)) { const m = s.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/)!; out.push({ t: 'id', v: m[0] }); i += m[0].length; continue; }
       if (c === '"') { const j = s.indexOf('"', i + 1); if (j < 0) throw new Error('unterminated string'); out.push({ t: 's', v: s.slice(i + 1, j) }); i = j + 1; continue; }
+      // a string with escapes, `@"\$93"` (a PETSCII control code by name, `.const PET_CLR = @"\$93"`)
+      if (c === '@' && s[i + 1] === '"') {
+        const j = s.indexOf('"', i + 2); if (j < 0) throw new Error('unterminated string');
+        const v = s.slice(i + 2, j).replace(/\\(\$[0-9a-fA-F]{2}|.)/g, (_m, x: string) => {
+          if (x[0] === '$' && x.length === 3) return String.fromCharCode(parseInt(x.slice(1), 16));
+          const k = ESCAPES[x]; if (k == null) throw new Error(`unknown escape "\\${x}" in "${s}"`); return k;
+        });
+        out.push({ t: 's', v }); i = j + 1; continue;
+      }
       if (s.startsWith('<<', i) || s.startsWith('>>', i)) { out.push({ t: 'op', v: s.slice(i, i + 2) }); i += 2; continue; }
       if ('+-*/&|^<>(),.'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue; }
       throw new Error(`unexpected "${c}" in expression "${s}"`);

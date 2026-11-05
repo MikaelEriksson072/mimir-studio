@@ -397,6 +397,22 @@ describe('every bank in one source (13.9c)', () => {
     expect(out['README.md']).not.toContain('`bank00_8000.asm`');
   });
 
+  it('defines the PETSCII control codes the banks write by name once, at the top', () => {
+    const msg = [0x93, 0x48, 0x49, 0x0d, 0x00]; // CLR, "HI", RETURN, $00
+    const b0 = pad(fromSource('bank0.prg', DEMO_BANK0)), b1 = new Uint8Array(0x2000).fill(0xff);
+    b0.set(msg, 0x100); b1.set([0x05, ...msg], 0x100);
+    const o = openCartridge('pet.crt', makeCrt({ name: 'PET', hw: 19, exrom: 0, game: 1, chips: [{ bank: 0, load: 0x8000, bytes: b0 }, { bank: 1, load: 0x8000, bytes: b1 }] }));
+    // the texts at $8100 in both banks (bank 1's addresses are $10000 on)
+    const text = { type: 'text' as const, props: { enc: 'petscii' as const } };
+    const p: ProjectInput = { ...createProject({ files: o.files, cart: o.cart, settings: { cartOneSource: true } }), overrides: [{ start: 0x8100, end: 0x8105, ...text }, { start: 0x18100, end: 0x18106, ...text }] };
+    const A = analyze(p), R = render(A, p), src = R.files['pet.crt.asm'] as string;
+    expect(src.match(/\.const PET_CLR = /g)).toHaveLength(1);
+    expect(src).toMatch(/\n\/\/ PETSCII control codes, written by name in the texts\n\.const PET_WHITE = @"\\\$05" +\/\/ text color white\n\.const PET_RETURN = @"\\\$0d" +\/\/ [^\n]*\n\.const PET_CLR = @"\\\$93" +\/\/ clear the screen\n/);
+    expect(src.indexOf('.const PET_CLR')).toBeLessThan(src.indexOf('.namespace bank00'));
+    expect(src).toMatch(/\.namespace bank01 \{[^}]*\.text PET_WHITE \+ PET_CLR \+ "HI" \+ PET_RETURN\n/);
+    expect(verify(A, R).ok).toBe(true);
+  });
+
   it('works for a cartridge of one bank too, and takes a chip left out of the project from banks/', () => {
     const o = openCartridge('demo.crt', demoCartridge());
     const p = createProject({ files: [o.files[0]], cart: o.cart, settings: { cartOneSource: true } }), A = analyze(p), R = render(A, p);

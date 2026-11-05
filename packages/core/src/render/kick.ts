@@ -9,7 +9,7 @@ import { kindInfo, TYPE_BY_KEY } from '../model';
 import { ENC, MODE_LEN, OPC } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
 import { SYM, hwSymbol, isIO } from '../c64/symbols';
-import { textEncoding } from '../c64/text';
+import { petsciiControl, petsciiDefinitions, textEncoding, textTokens } from '../c64/text';
 import { ALL_BANKS, ALL_PORTS, areaAt, bankRange, banked, banksOf, describePorts, portsOf, reaches, reachesForName } from '../c64/memconfig';
 import { makePsid } from '../c64/psid';
 import { findBlock } from '../analyze/classify';
@@ -35,6 +35,8 @@ interface RenderCtx {
   useForeign?: (a: Addr) => void;
   useZp?: (a: Addr) => void;
   useHw?: (a: Addr) => void;
+  /** a PETSCII control code written by name in a text: the file head defines it */
+  usePet?: (b: number) => void;
   isCall?: boolean;
   zpWidth?: boolean;
   /** the instruction whose operand this is, and how it uses the address (bank tracking names by what it reaches) */
@@ -316,22 +318,23 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     }
   }
 
-  function textRows(out: Line[], s: Addr, e: Addr, enc: TextEncoding) {
+  function textRows(out: Line[], s: Addr, e: Addr, enc: TextEncoding, ctx: RenderCtx) {
     const te = textEncoding(enc), pet = enc === 'petscii' || enc === 'petscii-mixed';
-    // a screen code $00 is '@' inside a text; at its end it stays `.byte $00 // end` (a terminator)
-    const ok = (a: Addr) => te.char(mem[a]) != null && (mem[a] !== 0 || (a + 1 < e && mem[a + 1] !== 0 && te.char(mem[a + 1]) != null));
+    // a screen code $00 is '@' inside a text; at its end it stays `.byte $00 // end` (a terminator). In a PETSCII text
+    // the control codes are in the `.text` line by name (`PET_CLR + "HELLO"`)
+    const ok = (a: Addr) => (te.char(mem[a]) != null && (mem[a] !== 0 || (a + 1 < e && mem[a + 1] !== 0 && te.char(mem[a + 1]) != null))) || (pet && !!petsciiControl(mem[a]));
     out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: `"${te.kick}"` }] });
     let p = s;
     while (p < e) {
       if (p !== s && labelAt(p)) out.push({ k: 'lbl', a: p, name: labelAt(p)!.name });
       if (ok(p)) {
         let q = p; while (q < e && ok(q) && q - p < 48 && !(q !== p && (labelAt(q) || breakAt(q)))) q++;
-        out.push({ k: 'dat', a: p, n: q - p, dir: '.text', tok: [{ t: 'str', s: '"' + [...mem.subarray(p, q)].map(b => te.char(b)).join('') + '"' }], cmt: '' });
+        out.push({ k: 'dat', a: p, n: q - p, dir: '.text', tok: textTokens(mem.subarray(p, q), te.char, pet, ctx.usePet), cmt: '' });
         p = q;
       } else {
         let q = p; while (q < e && !ok(q) && q - p < S.bytesPerRow && !(q !== p && (labelAt(q) || breakAt(q)))) q++;
-        const names: Record<number, string> = { 0x0d: 'RETURN', 0x00: 'end', 0x93: 'CLR', 0x13: 'HOME', 0x11: 'DOWN', 0x05: 'WHITE', 0x0e: 'lower case', 0x8e: 'upper case' };
-        const c = pet ? [...mem.subarray(p, q)].map(b => names[b]).filter(Boolean).join(', ') : (mem[p] === 0 && q - p === 1 ? 'end' : '');
+        // the control codes with a name are in the .text lines: of the rest, a $00 ends the string
+        const c = pet ? [...mem.subarray(p, q)].filter(b => b === 0).map(() => 'end').join(', ') : (mem[p] === 0 && q - p === 1 ? 'end' : '');
         out.push({ k: 'dat', a: p, n: q - p, dir: '.byte', tok: joinList([...mem.subarray(p, q)].map(b => numTok(b))), cmt: c });
         p = q;
       }
@@ -433,7 +436,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
         }
         break;
       }
-      case 'text': label(b.start); textRows(out, b.start, b.end, b.props.enc || 'petscii'); break;
+      case 'text': label(b.start); textRows(out, b.start, b.end, b.props.enc || 'petscii', ctx); break;
       case 'lohi': {
         label(b.start);
         const lt = A.lohiTabs.get(b.start);
@@ -593,11 +596,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
 
   A.files.forEach((f, fi) => {
     const body: Line[] = [];
-    const usedZp = new Set<Addr>(), usedExt = new Set<Addr>(), usedHw = new Set<Addr>(), usedHere = new Set<Addr>(), usedForeign = new Set<Addr>();
+    const usedZp = new Set<Addr>(), usedExt = new Set<Addr>(), usedHw = new Set<Addr>(), usedHere = new Set<Addr>(), usedForeign = new Set<Addr>(), usedPet = new Set<number>();
     const ctx: RenderCtx & { usedMusic: Set<MusicInfo> } = {
       fileIdx: fi, usedMusic: new Set(), prevType: null, needSeg: true,
       useLabel: a => { if (fileOf(a) !== fi) usedExt.add(a); else usedHere.add(a); },
-      useZp: a => usedZp.add(a), useHw: a => usedHw.add(a), useForeign: a => usedForeign.add(a),
+      useZp: a => usedZp.add(a), useHw: a => usedHw.add(a), useForeign: a => usedForeign.add(a), usePet: b => usedPet.add(b),
     };
     // the blocks where a relocated block runs are written inside it (8.1b)
     const fb = blocksSorted.filter(b => b.file === fi && !runOf(b.start));
@@ -689,6 +692,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       }
       part(at, 'hw'); at = head.length;
     }
+    // the PETSCII control codes the texts write by name
+    if (usedPet.size) { head.push(...petsciiDefinitions(usedPet, f.load, up)); part(at, 'pet'); at = head.length; }
     if (usedZp.size) {
       head.push({ k: 'blank', a: f.load });
       head.push({ k: 'cmt', a: f.load, text: 'zero page' });

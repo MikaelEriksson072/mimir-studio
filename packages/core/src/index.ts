@@ -15,7 +15,7 @@ export { branchTarget, cyclePath, cycleText, instructionCycles, type CycleBranch
 
 export { SYM, hwSymbol, isIO } from './c64/symbols';
 export * from './c64/memconfig';
-export { TEXT_ENCODINGS, textEncoding, type TextEncodingInfo } from './c64/text';
+export { PETSCII_CONTROLS, petsciiControl, TEXT_ENCODINGS, textEncoding, type PetsciiControl, type TextEncodingInfo } from './c64/text';
 export { parseBasic, BASIC_TOKENS } from './c64/basic';
 export { parsePrg, makePrg, overwritesSystemArea, SYSTEM_AREA } from './c64/prg';
 export {

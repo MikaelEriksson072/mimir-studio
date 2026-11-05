@@ -69,7 +69,7 @@ const demo = (): ProjectInput => { const d = makeDemo(); return { name: 'raster-
 
 describe('differential: TypeScript engine == prototype engine', () => {
   it('documents its deliberate deviations', () => {
-    expect(DEVIATIONS.length).toBe(26);
+    expect(DEVIATIONS.length).toBe(27);
   });
 
   it('has a comparison that notices differences', () => {

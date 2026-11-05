@@ -21,7 +21,8 @@ function Tok({ t, onToken }: { t: Token; onToken: (t: Token) => void }) {
   if ((t.t === 'lbl' || t.t === 'hw' || t.t === 'kw' || (t.t === 'num' && t.sym)) && t.to != null) {
     return <span className={cx(cls, 'link')} title={t.sym ? `${t.sym.name} — ${t.sym.desc}` : `Go to $${h4(t.to)}`} onClick={e => { e.stopPropagation(); onToken(t); }}>{t.s}</span>;
   }
-  return <span className={cls}>{t.s}</span>;
+  // a PETSCII control code by name in a text (PET_CLR): what it does and its byte
+  return <span className={cls} title={t.sym ? `${t.sym.name} — ${t.sym.desc}` : undefined}>{t.s}</span>;
 }
 
 /** an offset written after a label (`table+1`, `music.location+$0020`): its value, or null when it is not a number */

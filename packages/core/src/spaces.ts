@@ -300,7 +300,10 @@ function mergeRenders(project: ProjectInput, parts: Split[], renders: RenderResu
 /* ---------- all banks in one source (13.9c) ---------- */
 
 /** the parts of a file's head that one source defines once at its top, or leaves out (the file's title) */
-const HOISTED: ReadonlySet<HeadPart> = new Set(['title', 'gap', 'import', 'hw', 'zp', 'ext']);
+const HOISTED: ReadonlySet<HeadPart> = new Set(['title', 'gap', 'import', 'hw', 'pet', 'zp', 'ext']);
+
+/** a PETSCII control code's definition by its byte (`@"\$93"`), to keep them in order */
+const petValue = (l: Line) => (l.k === 'dir' ? l.tok[l.tok.length - 1]?.s ?? '' : '');
 
 /** an operand written as tokens: strings, numbers and the rest */
 const argTokens = (s: string): Token[] => s.split(/("[^"]*"|\$[0-9a-fA-F]+|\b\d+\b)/).filter(Boolean)
@@ -338,15 +341,17 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
   const blank = (a: Addr): Line => ({ k: 'blank', a });
   const text = (i: number) => R.fileLines[`${R.fileNames[i]}.asm`] ?? [];
 
-  // what every chip's head defined, once: the include, the hardware names, the zero-page variables (with their notes)
+  // what every chip's head defined, once: the include, the hardware names, the PETSCII control codes, the zero-page
+  // variables (with their notes)
   let include: Line | null = null;
-  const hw: Line[] = [], zp: Line[] = [], seen = new Set<string>();
+  const hw: Line[] = [], pet: Line[] = [], zp: Line[] = [], seen = new Set<string>();
   for (const i of order) {
     let notes: Line[] = [];
     for (const l of text(i)) {
       if (l.k === 'blank' || !('head' in l)) continue;
       if (l.head === 'import' && !include) include = l;
       else if (l.head === 'hw' && l.k === 'dir') { const t = lineText(l, S); if (!seen.has(t)) { seen.add(t); hw.push(l); } }
+      else if (l.head === 'pet' && l.k === 'dir') { const t = lineText(l, S); if (!seen.has(t)) { seen.add(t); pet.push(l); } }
       else if (l.head === 'zp' && l.k === 'cmt' && l.zp != null) notes.push(l);
       else if (l.head === 'zp' && l.k === 'dir') {
         const key = `zp ${l.zp} ${lineText(l, S)}`;
@@ -367,6 +372,7 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
     blank(at0),
     ...(include ? [include] : []),
     ...(hw.length ? [cmt(at0, 'hardware and KERNAL symbols'), ...hw] : []),
+    ...(pet.length ? [blank(at0), cmt(at0, 'PETSCII control codes, written by name in the texts'), ...pet.sort((x, y) => petValue(x).localeCompare(petValue(y)))] : []),
     ...(zp.length ? [blank(at0), cmt(at0, 'zero page (every bank)'), ...zp] : []),
     blank(at0),
   ];
