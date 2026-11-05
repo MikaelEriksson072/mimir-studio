@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys, resizeBlock,
+  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, decode, zpPairable,
@@ -1057,6 +1057,32 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   // `at`: the line the context menu was opened on (its closures were made before the cursor moved there)
   // a picture's line: the character, sprite or cell at the cursor
   const lineAddr = (at?: Addr) => at ?? (curLine && curLine.a != null && curLine.k !== 'gfx' ? curLine.a : cursor);
+  /** `n` empty lines above `addr` (Project.blanks), above its comment lines and labels; 0 removes them */
+  const setBlanks = (addr: Addr, n: number) => {
+    const old = project.blanks?.[addr] ?? 0, k = Math.max(0, Math.min(MAX_BLANKS, n));
+    if (k === old) return;
+    update(k > old ? `Empty line above $${h4(addr)}` : `Remove ${old - k > 1 ? `${old - k} empty lines` : 'empty line'} above $${h4(addr)}`, d => {
+      const b = d.blanks ?? (d.blanks = {});
+      if (k) b[addr] = k; else delete b[addr];
+      if (!Object.keys(b).length) delete d.blanks;
+    });
+  };
+  /** the line the empty line keys act on: the cursor line, not a zero-page variable's .label line in the file head */
+  const blankLine = (at?: Addr): Addr | null => {
+    if (at == null && pickedZp()) { toast('Empty lines go between the lines of the code and data, not among the zero-page variables', 'info'); return null; }
+    return lineAddr(at) ?? null;
+  };
+  /** Shift+Enter: an empty line above the cursor line */
+  const addBlank = (at?: Addr) => { const a = blankLine(at); if (a != null) setBlanks(a, (project.blanks?.[a] ?? 0) + 1); };
+  /** Shift+Backspace: one empty line less above the cursor line (one inserted above a byte inside it too) */
+  const removeBlank = (at?: Addr) => {
+    const a = blankLine(at); if (a == null) return;
+    const l = at == null ? curLine : null, n = l && l.k !== 'gfx' && 'n' in l ? Math.max(1, l.n) : 1;
+    let p = a; while (p < a + n - 1 && !project.blanks?.[p]) p++;
+    const have = project.blanks?.[p] ?? 0;
+    if (!have) { toast('There is no empty line above this line', 'info'); return; }
+    setBlanks(p, have - 1);
+  };
   /** the program starts at `a`; null clears it: the analysis uses the detected start (BASIC SYS or the load
    * address) again and Build & Run autostarts the program with RUN */
   const setStart = (a: Addr | null) => {
@@ -1729,6 +1755,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     { id: 'comment', label: 'Comment at the end of the cursor line', key: ';', run: () => startComment() },
     { id: 'note-line', label: 'Insert comment line above the cursor line (//)', key: '/', run: () => startNote(false) },
     { id: 'note-block', label: 'Insert comment block above the cursor line (/* */)', key: '*', run: () => startNote(true) },
+    { id: 'blank-line', label: 'Insert an empty line above the cursor line', key: 'Shift+Enter', run: () => addBlank() },
+    { id: 'blank-remove', label: 'Remove an empty line above the cursor line', key: 'Shift+Backspace', run: () => removeBlank() },
     { id: 'bookmark', label: 'Add or edit the bookmark on the cursor line…', key: 'B', run: () => startBookmark() },
     { id: 'bookmarks', label: 'Show bookmarks (notes on addresses)', key: 'Ctrl+B', run: () => showBookmarks() },
     { id: 'bookmark-next', label: 'Go to the next bookmark', key: 'F2', run: () => jumpBookmark(1) },
@@ -1864,6 +1892,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       };
       const ci = k.cursor != null ? k.lineOf[k.cursor] : 0;
       const page = Math.max(5, Math.floor((listRef.current?.clientHeight || 400) / ROW) - 3);
+      // an empty line above the cursor line, and one less
+      if (e.shiftKey && e.key === 'Enter') return run('blank-line');
+      if (e.shiftKey && e.key === 'Backspace') return run('blank-remove');
       switch (e.key) {
         case 'ArrowDown': e.preventDefault(); moveTo(ci + 1, 1, e.shiftKey); return;
         case 'ArrowUp': e.preventDefault(); moveTo(ci - 1, -1, e.shiftKey); return;
@@ -1904,6 +1935,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       return;
     }
     if (l.a == null) return;
+    // an empty line the user inserted: the cursor goes to the line under it
+    if (l.k === 'blank') { navigate(l.a, { noHistory: true }); listRef.current?.focus(); return; }
     const n = 'n' in l ? l.n : 0;
     navigate(l.a, { noHistory: true });
     if (n > 0) setSel({ start: l.a, end: l.a + n, multi: false, anchor: l.a, anchorEnd: l.a + n });
@@ -1917,6 +1950,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const onToken = (t: Token) => { if (t.to != null && A.owner[t.to] >= 0) navigate(t.to, { center: true }); else if (t.sym) toast(`${t.sym.name}: ${t.sym.desc}`, 'info'); };
   const onContext = (e: ReactMouseEvent, l: ListingLine, cell?: Cell | null) => {
     e.preventDefault();
+    // an empty line the user inserted: remove it, or put in another
+    if (l.k === 'blank') {
+      if (!l.user) return;
+      navigate(l.a, { noHistory: true });
+      const n = project.blanks?.[l.a] ?? 0;
+      setMenu({ x: e.clientX, y: e.clientY, items: [
+        { label: 'Remove empty line', key: 'Shift+Backspace', run: () => setBlanks(l.a, n - 1) },
+        ...(n > 1 ? [{ label: `Remove all ${n} empty lines here`, run: () => setBlanks(l.a, 0) }] : []),
+        { label: 'Insert another empty line', key: 'Shift+Enter', run: () => setBlanks(l.a, n + 1) },
+      ] });
+      return;
+    }
     // a byte of a data line outside the selection is picked first, and the items act on it
     const picked: Sel | null = cell && !(sel && sel.multi && cell.a >= sel.start && cell.a + cell.n <= sel.end)
       ? { start: cell.a, end: cell.a + cell.n, multi: true, anchor: cell.a, anchorEnd: cell.a + cell.n, bytes: true } : null;
@@ -2032,9 +2077,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         { label: '16-bit variable', children: zpPairItems(zl ? zl.addr : zpOperand(l)) },
         // on a zero-page variable's .label line (or its comment lines) these comment the variable
         { label: zl ? 'Comment at the end of the .label line…' : 'Comment at the end of the line…', key: ';', icon: 'comment', run: () => (zl ? startComment(undefined, zl) : startComment(l.a)) },
-        { label: zl ? 'Comment above the .label line' : 'Comment above', children: [
+        { label: zl ? 'Comment above the .label line' : 'Insert above', children: [
           { label: 'Comment line…', key: '/', run: () => (zl ? startNote(false, undefined, zl) : startNote(false, l.a)) },
           { label: 'Comment block…', key: '*', run: () => (zl ? startNote(true, undefined, zl) : startNote(true, l.a)) },
+          // the file's head has no line of its own address: empty lines go in the code and data
+          ...(zl || l.k === 'file' || ('head' in l && l.head) ? [] : ((): MenuItem[] => {
+            const n = project.blanks?.[l.a] ?? 0;
+            return [
+              { sep: true },
+              { label: 'Empty line', key: 'Shift+Enter', run: () => addBlank(l.a) },
+              ...(n ? [{ label: n > 1 ? `Remove an empty line (${n} above)` : 'Remove the empty line', key: 'Shift+Backspace', run: () => setBlanks(l.a, n - 1) }] : []),
+            ];
+          })()),
         ] },
         { label: hasBm ? 'Edit bookmark…' : 'Add bookmark…', key: 'B', icon: 'bookmark', run: () => startBookmark(l.a, area) },
         ...(hasBm ? [{ label: 'Remove bookmark', run: () => deleteBookmark(bmAt!) }] : []),
@@ -2238,7 +2292,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
             {tab === 'listing' && project.files.length > 0 && <>
               {welcome && <div className="welcome">
                 <div><b>{project.cart && A.spaces ? `${project.cart.name} (${A.spaces.length} banks)` : project.files.map(f => f.name).join(', ')}</b> is analysed: {A.blocks.length} blocks, {A.labels.size} labels, {A.music.length ? 'SID music, ' : ''}{A.gfx.length ? `${A.gfx.length} graphics block${A.gfx.length > 1 ? 's' : ''}, ` : ''}{A.stats.illegal} undocumented opcodes.</div>
-                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range <kbd>Ctrl+F</kbd> find <kbd>Ctrl+↓</kbd><kbd>Ctrl+↑</kbd> next/previous block <kbd>Ctrl</kbd> held over a line shows its block as bytes or as code · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
+                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>Shift+Enter</kbd> empty line <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range <kbd>Ctrl+F</kbd> find <kbd>Ctrl+↓</kbd><kbd>Ctrl+↑</kbd> next/previous block <kbd>Ctrl</kbd> held over a line shows its block as bytes or as code · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
                 <button className="icon-btn" aria-label="Dismiss" onClick={() => setUi({ welcome: false })}><Icon name="x" size={14} /></button>
               </div>}
               {packing.map((p, i) => p && !packHidden.has(project.files[i]?.id ?? String(i)) && <div key={`pack-${i}`} className="welcome preview-bar pack-bar" role="status">

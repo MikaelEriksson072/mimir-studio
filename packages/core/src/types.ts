@@ -127,6 +127,8 @@ export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePat
 
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment. */
 export interface Note { text: string; block?: boolean }
+/** the most empty lines the user can insert above one address (Project.blanks) */
+export const MAX_BLANKS = 100;
 
 /** A bookmark: the user's own note on an address, listed with its title; kept in the project, never in the source.
  * `color`: one of BOOKMARK_COLORS, or a colour of the user's own as #rrggbb (missing: amber, the first).
@@ -266,6 +268,8 @@ export interface Project {
   comments: Record<Addr, string>; // line comments
   blockComments: Record<Addr, string>; // comments above blocks
   notes: Record<Addr, Note>; // comment lines and blocks the user inserted above an address
+  /** empty lines the user inserted above an address (above its comment lines and labels), how many. Missing: none */
+  blanks?: Record<Addr, number>;
   bankZones: BankZone[]; // ordered, later wins: memory configuration / VIC bank code runs with
   relocs: Reloc[]; // bytes the program copies elsewhere to run there (.pseudopc)
   excluded: Addr[]; // starts of the blocks left out of the build (kept in the source under #if)
@@ -297,6 +301,8 @@ export interface ProjectInput {
   comments?: Record<Addr, string>;
   blockComments?: Record<Addr, string>;
   notes?: Record<Addr, Note>;
+  /** empty lines above an address (Project.blanks) */
+  blanks?: Record<Addr, number>;
   bankZones?: BankZone[];
   /** bytes the program copies elsewhere to run there: analysed where they run, written inside `.pseudopc` */
   relocs?: Reloc[];
@@ -344,6 +350,8 @@ export interface SerializedProject {
   blockComments: Record<string, string>;
   /** missing in project files from before comment lines and blocks existed */
   notes?: Record<string, Note>;
+  /** missing in project files from before empty lines could be inserted, and in those without one */
+  blanks?: Record<string, number>;
   /** missing in project files from before bank zones existed */
   bankZones?: BankZone[];
   /** missing in project files from before blocks could be relocated */
@@ -705,7 +713,8 @@ export type Line =
    *  `mark`: a mark the analysis made (where a loader part starts or ends); `reloc`: where a relocated block ends when
    *  its .pseudopc was paused for one relocated from inside it, and not opened again */
   | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; mark?: boolean; head?: HeadPart; reloc?: 'close' }
-  | { k: 'blank'; a: Addr; head?: HeadPart };
+  /** `user`: one of the empty lines the user inserted above this address (Project.blanks) */
+  | { k: 'blank'; a: Addr; head?: HeadPart; user?: boolean };
 
 /** What a line of a file's head is (render): its title, a loader's or the excluded blocks' notes (`mark`), the
  *  hardware include, the hardware, zero-page and other files' names, other banks' names and the music. All banks in one

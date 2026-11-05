@@ -253,6 +253,16 @@ describe('schemas', () => {
     expect(projectSchema.safeParse({ ...p, notes: { 0x0810: 'not a note' } }).success).toBe(false);
   });
 
+  it('reads the empty lines the user inserted, and older files without them', () => {
+    const p = { ...demoProject(), blanks: { 0x0810: 2, 0x0900: 1 } };
+    const json = JSON.parse(JSON.stringify(serializeProject(p)));
+    expect(serializedProjectSchema.parse(json).blanks).toEqual({ 2064: 2, 2304: 1 });
+    delete json.blanks;
+    expect(serializedProjectSchema.parse(json).blanks).toBeUndefined();
+    expect(projectSchema.safeParse(p).success).toBe(true);
+    for (const n of [0, -1, 1.5, 101, '2']) expect(projectSchema.safeParse({ ...p, blanks: { 0x0810: n } }).success, String(n)).toBe(false);
+  });
+
   it('keeps the snapshot a file was opened from, saving and reading the project', () => {
     const vsf = Uint8Array.from([0x56, 0x49, 0x43, 0x45, 1, 2, 3]);
     const p = demoProject();

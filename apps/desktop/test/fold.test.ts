@@ -67,6 +67,21 @@ describe('folding the listing', () => {
     v.lines.forEach((l, i) => { if (l.k !== 'file') expect(file[v.lineNo[i] - 1]).toBe(lineText(l, A.S)); });
   });
 
+  it('folds the empty lines the user inserted in a block with it', () => {
+    const sine = findBlock(A.blocks, 0x09b5)!;
+    const q = { ...p, blanks: { [sine.start + 8]: 2, [sine.start + 16]: 1 } };
+    const Q = render(A, q);
+    expect(Q.lines.filter(l => l.k === 'blank' && l.user)).toHaveLength(3);
+    const v = foldLines(Q.lines, A.blocks, new Set([sine.start]));
+    const h = v.lines.findIndex(l => l.k === 'hdr' && l.a === sine.start);
+    expect(v.lines.some(l => l.k === 'blank' && l.user)).toBe(false);
+    expect(v.lines[h + 1]).toMatchObject({ k: 'blank' });
+    expect(v.lines[h + 2]).toMatchObject({ k: 'hdr', a: sine.end });
+    // unfolded, they are lines of the .asm file like the others
+    const file = (Q.files['raster-demo.asm'] as string).split('\n'), w = foldLines(Q.lines, A.blocks, new Set());
+    w.lines.forEach((l, i) => { if (l.k !== 'file') expect(file[w.lineNo[i] - 1]).toBe(lineText(l, A.S)); });
+  });
+
   it('folds several blocks, and addresses outside them still map to their own lines', () => {
     const starts = A.blocks.filter(b => b.type !== 'code').map(b => b.start);
     const v = foldLines(R.lines, A.blocks, new Set(starts));

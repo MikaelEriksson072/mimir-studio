@@ -5,6 +5,7 @@
 import type {
   Addr, AnalysisResult, Block, BlockKind, DelaySled, ForcedMode, HeadPart, Line, ListingLine, MusicInfo, NumberFormat,
   ProjectInput, RenderLabel, RenderProblem, RenderResult, TextEncoding, Token, ZpVar, ExcludedRange, LoaderPart } from '../types';
+import { MAX_BLANKS } from '../types';
 import { kindInfo, TYPE_BY_KEY } from '../model';
 import { ENC, MODE_LEN, OPC } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
@@ -89,6 +90,10 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   // comment lines and blocks the user inserted above an address; data and text rows break there like at labels
   const notes = project.notes || {};
   const noteAt = (a: Addr) => !!notes[a]?.text;
+  // empty lines the user inserted above an address: above its comment lines and labels, and data rows break there too
+  const blanks = project.blanks || {};
+  const blankAt = (a: Addr) => (blanks[a] ?? 0) > 0;
+  const blankLines = (a: Addr): Line[] => Array.from({ length: Math.min(MAX_BLANKS, blanks[a] ?? 0) }, (): Line => ({ k: 'blank', a, user: true }));
   // the loaders the analysis found: a comment line where each part starts, and where a longer one ends
   const loaderStarts = new Map<Addr, string[]>(), loaderEnds = new Map<Addr, string[]>();
   const markAt = (m: Map<Addr, string[]>, a: Addr, text: string) => { if (loaded(a)) m.set(a, [...(m.get(a) ?? []), text]); };
@@ -116,8 +121,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     markAt(loaderEnds, p.start + p.bytes.length, `==== end of patch "${p.name}" ====`);
   }
   const marked = (a: Addr) => loaderStarts.has(a) || loaderEnds.has(a);
-  /** data and text rows break at notes and loader marks like at labels */
-  const breakAt = (a: Addr) => noteAt(a) || marked(a);
+  /** data and text rows break at notes, empty lines and loader marks like at labels */
+  const breakAt = (a: Addr) => noteAt(a) || blankAt(a) || marked(a);
   /** comment text on lines of its own: `//` per line, or one block comment (a `*` `/` pair inside would end it early) */
   const commentLines = (a: Addr, text: string, block = false, note = false): Line[] => {
     const ls = text.replace(/\r\n?/g, '\n').split('\n').map(x => x.trimEnd());
@@ -550,11 +555,15 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     const ctx: RenderCtx = {}; // no use* callbacks: the preview must not change what the files import
     let p = b.start;
     while (p < b.end) {
-      if (noteAt(p)) out.push(...commentLines(p, notes[p].text, !!notes[p].block, true));
+      const o = OPC[mem[p]], ins = !o.jam && p + o.len <= b.end;
+      // the empty lines and comment lines on any byte of the instruction go above it (the sweep may not start one there)
+      for (let q = p; q < p + (ins ? o.len : 1); q++) {
+        if (blankAt(q)) out.push(...blankLines(q));
+        if (noteAt(q)) out.push(...commentLines(q, notes[q].text, !!notes[q].block, true));
+      }
       const lb = labelAt(p);
       if (lb) out.push({ k: 'lbl', a: p, name: lb.name });
-      const o = OPC[mem[p]];
-      if (!o.jam && p + o.len <= b.end) { out.push({ ...insLine(p, ctx, o.len), preview: true } as Line); p += o.len; }
+      if (ins) { out.push({ ...insLine(p, ctx, o.len), preview: true } as Line); p += o.len; }
       else { out.push({ k: 'dat', a: p, n: 1, dir: '.byte', tok: [numTok(mem[p])], cmt: o.jam ? `${mnc(o.mn)} (halts the CPU)` : '', preview: true }); p++; }
     }
     return out;
@@ -570,7 +579,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       if (!b || b.type === 'code' || b.type === 'fill' || b.type === 'reloc') { out.push(l); continue; }
       out.push({ ...l, preview: true } as Line);
       let j = i + 1, body = false;
-      for (; j < src.length && src[j].k !== 'hdr' && src[j].k !== 'blank'; j++) {
+      // the block ends at the next header or the blank line after it (the user's empty lines are in it: the preview has them)
+      for (; j < src.length && src[j].k !== 'hdr' && !(src[j].k === 'blank' && !(src[j] as { user?: boolean }).user); j++) {
         const x = src[j];
         if (x.k === 'lbl' || x.k === 'ins' || x.k === 'dat' || (x.k === 'cmt' && x.note) || (x.k === 'dir' && x.n > 0)) body = true;
         else if (!body && (x.k === 'cmt' || (x.k === 'dir' && x.tok[0]?.s === '.pc'))) out.push(x);
@@ -630,13 +640,15 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     excludedAll.push(...fileExcluded);
     // labels inside binary blocks stay defined only where this file refers to them (other files define their own)
     if (binaryStarts.size) body.splice(0, body.length, ...body.filter(l => !binaryDefs.has(l) || usedHere.has(l.a)));
-    // notes go above the line holding their address, and above its labels; a loader part's marks above them. The lines
-    // come in the order of the bytes as loaded (`lpos`: a relocated block's lines where its bytes are loaded)
-    const noteAddrs = [...new Set([...Object.keys(notes).map(Number).filter(noteAt), ...loaderStarts.keys(), ...loaderEnds.keys()])].filter(a => loaded(a) && fileOf(a) === fi).sort((x, y) => lpos(x) - lpos(y));
+    // notes go above the line holding their address, and above its labels; a loader part's marks above them, and the
+    // user's empty lines above all. The lines come in the order of the bytes as loaded (`lpos`: a relocated block's
+    // lines where its bytes are loaded)
+    const noteAddrs = [...new Set([...Object.keys(notes).map(Number).filter(noteAt), ...Object.keys(blanks).map(Number).filter(blankAt), ...loaderStarts.keys(), ...loaderEnds.keys()])].filter(a => loaded(a) && fileOf(a) === fi).sort((x, y) => lpos(x) - lpos(y));
     if (noteAddrs.length) {
       const withNotes: Line[] = [];
       let k = 0;
       const put = (a: Addr) => {
+        if (blankAt(a)) withNotes.push(...blankLines(a));
         for (const text of [...(loaderEnds.get(a) ?? []), ...(loaderStarts.get(a) ?? [])]) withNotes.push({ k: 'cmt', a, text, mark: true });
         if (noteAt(a)) withNotes.push(...commentLines(a, notes[a].text, !!notes[a].block, true));
       };

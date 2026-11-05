@@ -29,8 +29,9 @@ export function foldLines(all: readonly ListingLine[], blocks: readonly Block[],
     if (nest > 0) { hide(); if (open) nest++; else if (close && --nest === 0) fold = -1; return; }
     // a block where a relocated block runs ends at the `}` too (and where it pauses or goes on)
     if (l.k === 'hdr' || l.k === 'file' || close || (l.k === 'dir' && (l.reloc === 'pause' || l.reloc === 'resume'))) fold = -1;
-    // the blank line after a block stays: it separates the folded header from the next block
-    if (fold >= 0 && l.k !== 'blank') { hide(); if (open && foldedAt.get(fold)?.type === 'reloc') nest = 1; return; }
+    // the blank line after a block stays: it separates the folded header from the next block (the user's empty lines in
+    // the block fold with it)
+    if (fold >= 0 && (l.k !== 'blank' || l.user)) { hide(); if (open && foldedAt.get(fold)?.type === 'reloc') nest = 1; return; }
     if (l.k === 'hdr') { const b = blocks[l.blk]; if (b && folded.has(b.start)) { fold = lines.length; foldedAt.set(fold, b); } }
     lines.push(l); no.push(nums[i]);
   });

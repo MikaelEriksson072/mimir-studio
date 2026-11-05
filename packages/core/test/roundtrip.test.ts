@@ -610,6 +610,69 @@ describe('comment lines and blocks (notes)', () => {
   });
 });
 
+describe('empty lines the user inserted (blanks)', () => {
+  const base = demoInput();
+  const A0 = analyze(base);
+  // an instruction inside the code with no label of its own, and an operand byte of another
+  const ins = [...A0.insLen.keys()].find(a => a > 0x0820 && A0.insLen[a] > 0 && !A0.labels.has(a))!;
+  const operand = [...A0.codeOwner.keys()].find(a => a > ins + 8 && A0.codeOwner[a] >= 0)!;
+  const blanks = { 0x0810: 2, [ins]: 1, [operand]: 1, 0x09c1: 1, 0x0950: 3, 0x9000: 1 };
+  const p = { ...base, blanks, notes: { 0x0810: { text: 'set up the raster IRQ' } } };
+  const { R, V } = roundTrip(p);
+  const src = R.files['raster-demo.asm'] as string;
+  const lines = R.fileLines['raster-demo.asm'];
+  const user = (a: number) => lines.filter(l => l.k === 'blank' && l.user && l.a === a).length;
+  /** the first line after the empty lines at `a` */
+  const after = (a: number) => { let j = lines.findIndex(l => l.k === 'blank' && l.user && l.a === a); while (lines[j].k === 'blank') j++; return lines[j]; };
+
+  it('still re-assembles byte-identical', () => {
+    expect(V.ok, JSON.stringify(failure(V))).toBe(true);
+  });
+
+  it('writes the empty lines above the comment lines and the label of their address', () => {
+    expect(user(0x0810)).toBe(2);
+    expect(src).toMatch(/\S\n\n\n\/\/ set up the raster IRQ\nstart:\n/);
+    expect(after(0x0810)).toMatchObject({ k: 'cmt', note: true, a: 0x0810 });
+  });
+
+  it('puts an empty line between two instructions, and one on an operand byte above the instruction holding it', () => {
+    expect(user(ins)).toBe(1);
+    expect(after(ins)).toMatchObject({ k: 'ins', a: ins });
+    expect(after(operand)).toMatchObject({ k: 'ins', a: A0.codeOwner[operand] });
+  });
+
+  it('breaks a .byte and a .text row at its address', () => {
+    expect(after(0x09c1)).toMatchObject({ k: 'dat', a: 0x09c1 });
+    expect(user(0x0950)).toBe(3);
+    expect(after(0x0950)).toMatchObject({ k: 'dat', a: 0x0950 });
+  });
+
+  it('ignores empty lines outside the loaded files', () => {
+    expect(lines.filter(l => l.k === 'blank' && l.user)).toHaveLength(2 + 1 + 1 + 1 + 3);
+  });
+
+  it('keeps them in a block shown as code, once', () => {
+    const D = render(A0, p, { dataAsCode: true });
+    const blk = findBlock(A0.blocks, 0x09c1)!;
+    expect(blk.type).not.toBe('code');
+    expect(D.lines.filter(l => l.k === 'blank' && l.user && l.a === 0x09c1)).toHaveLength(1);
+    // above the instruction of the sweep that holds its byte, and the block's lines are the preview's only
+    const i = D.lines.findIndex(l => l.k === 'blank' && l.user && l.a === 0x09c1);
+    const next = D.lines.slice(i + 1).find(l => 'n' in l && l.n > 0)!;
+    expect(next.a <= 0x09c1 && next.a + (next as { n: number }).n > 0x09c1).toBe(true);
+    const own = D.lines.filter(l => 'n' in l && l.n > 0 && l.a >= blk.start && l.a < blk.end);
+    expect(own.every(l => 'preview' in l && l.preview)).toBe(true);
+    expect(own.reduce((s, l) => s + (l as { n: number }).n, 0)).toBe(blk.end - blk.start);
+  });
+
+  it('are kept in the project file, and none is written when there are none', () => {
+    const q = { ...demoProject(), blanks: { 0x0810: 2 } };
+    expect(deserializeProject(JSON.parse(JSON.stringify(serializeProject(q)))).blanks).toEqual({ 0x0810: 2 });
+    expect(serializeProject({ ...q, blanks: {} })).not.toHaveProperty('blanks');
+    expect(deserializeProject(serializeProject(demoProject()))).not.toHaveProperty('blanks');
+  });
+});
+
 describe('build scripts edited by the user', () => {
   it('are exported instead of the generated ones, the other one stays generated, and they are kept in the project file', () => {
     const own = '@echo off\r\nrem my own build\r\njava -jar C:\\tools\\KickAss.jar raster-demo.asm\r\n';

@@ -202,8 +202,8 @@ export function gfxListing(all: readonly ListingLine[], A: AnalysisResult, cols:
     // a sprite's own comment line (its address and pointer) is what the picture shows, and its label goes under it
     if (kind === 'sprite' && l.k === 'cmt' && !l.note && !l.mark && !l.raw && l.zp == null && /^sprite \$/i.test(l.text)) return;
     if (kind === 'sprite' && l.k === 'lbl' && l.a < b.end && (l.a - b.start) % 64 === 0 && (!run || run.end === l.a)) { pending.push({ l, num: nums0[i] }); return; }
-    // a label or a comment line inside an item does not cut the picture there: it comes under it
-    if (run && (l.k === 'lbl' || (l.k === 'cmt' && l.note)) && l.a > run.start && (l.a - b.start) % GFX_GEOMETRY[kind].unit !== 0) { run.after.push({ l, num: nums0[i] }); return; }
+    // a label, a comment line or an empty line inside an item does not cut the picture there: it comes under it
+    if (run && (l.k === 'lbl' || (l.k === 'cmt' && l.note) || (l.k === 'blank' && l.user)) && l.a > run.start && (l.a - b.start) % GFX_GEOMETRY[kind].unit !== 0) { run.after.push({ l, num: nums0[i] }); return; }
     flush(); unpend();
     keep(l, nums0[i]);
   });

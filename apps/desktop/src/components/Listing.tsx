@@ -556,10 +556,12 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       continue;
     }
     // blank lines are rows of their own only when the line numbers would otherwise skip them, or a bookmark's area's
-    // stripe goes on through them
+    // stripe goes on through them; an empty line the user inserted always is, so a right-click can remove it
     if (l.k === 'blank') {
       const s = stripe(i);
-      if (byLine || s) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{s}{offCell(null)}{byLine && <span className="adr lno">{lineNo[i]}</span>}</div>);
+      if (l.user) rows.push(<div key={i} className={cx('row k-blank user-blank', hit(l))} style={{ top: i * ROW }} title="An empty line you inserted (Shift+Enter): Shift+Backspace on the line under it, or a right-click here, removes it"
+        onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}><span className="gut" />{s}{offCell(null)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : ''}</span></div>);
+      else if (byLine || s) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{s}{offCell(null)}{byLine && <span className="adr lno">{lineNo[i]}</span>}</div>);
       continue;
     }
     // only a line at a block's edge can move into the block next to it

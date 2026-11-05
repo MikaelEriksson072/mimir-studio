@@ -84,7 +84,7 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   PETSCII and as screen codes at once, or for bytes (`a9 00 8d`, `??` for any byte), and step through the hits. `0`
   selects from the start of a text to the 0 byte that ends it, ready to mark as text.
 - **Every edit still assembles, and every edit can be undone:**
-  - rename labels and comment lines;
+  - rename labels, write comment lines and put in empty lines;
   - mark ranges as code, bytes, words or text, and write data, tables and words in hex, decimal or binary, as many
     a row as you like;
   - merge blocks, or drag a byte into the block next to it;

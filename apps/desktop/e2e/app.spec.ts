@@ -279,11 +279,53 @@ test('insert a comment line and a comment block, edit and remove them', async ({
     const adr = (await row.locator('.adr').textContent())!;
     expect(adr).not.toBe('0810');
     await row.click({ button: 'right' });
-    await fromSubmenu(page, 'Comment above', 'Comment block…');
+    await fromSubmenu(page, 'Insert above', 'Comment block…');
     const area = page.getByLabel(`Comment block above $${adr}`);
     await expect(area).toBeVisible();
     await area.press('Escape');
     await expect(area).toBeHidden();
+  });
+});
+
+test('insert empty lines, remove them and undo', async ({ page }) => {
+  await waitForListing(page);
+  const blanks = listing(page).locator('.row.user-blank');
+  /** the source text of the rows right before the first row with text `before` (and address `adr`) */
+  const above = async (before: string, n: number, adr?: string) => { const rows = await listingRows(page); const i = rows.findIndex(r => r.text === before && (adr == null || r.adr === adr)); return rows.slice(Math.max(0, i - n), i).map(r => r.text); };
+
+  await test.step('Shift+Enter puts an empty line above the cursor line and its label, each press one more', async () => {
+    await goTo(page, 'start');
+    await page.keyboard.press('Shift+Enter');
+    await expect(blanks).toHaveCount(1);
+    await page.keyboard.press('Shift+Enter');
+    await expect(blanks).toHaveCount(2);
+    expect(await above('start:', 2)).toEqual(['', '']);
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+    await page.keyboard.press('Control+j');
+  });
+
+  await test.step('a right-click on an empty line removes it; Shift+Backspace too, and Ctrl+Z brings it back', async () => {
+    await goTo(page, 'start');
+    await blanks.first().click({ button: 'right' });
+    await expect(page.getByRole('menuitem')).toHaveText(['Remove empty lineShift+Backspace', 'Remove all 2 empty lines here', 'Insert another empty lineShift+Enter']);
+    await page.getByRole('menuitem', { name: 'Remove empty line' }).click();
+    await expect(blanks).toHaveCount(1);
+    await page.keyboard.press('Shift+Backspace');
+    await expect(blanks).toHaveCount(0);
+    await page.keyboard.press('Control+z');
+    await expect(blanks).toHaveCount(1);
+  });
+
+  await test.step('right-click → Insert above → Empty line on another line', async () => {
+    const row = listing(page).locator('.row.k-ins').nth(4);
+    const adr = (await row.locator('.adr').textContent())!;
+    const text = (await row.locator('.src').textContent())!;
+    await row.click({ button: 'right' });
+    await fromSubmenu(page, 'Insert above', 'Empty line');
+    await expect(blanks).toHaveCount(2);
+    expect(await above(text, 1, adr)).toEqual(['']);
+    await expect(listing(page).locator('.row.cur .adr')).toHaveText(adr);
   });
 });
 
@@ -310,13 +352,13 @@ test('Escape closes the right-click menu, and only that: the listing does not go
   await page.mouse.move(2, 2);
   const hot = page.locator('.ctx-item.hot');
   for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
-  await expect(hot).toHaveText('Comment above');
+  await expect(hot).toHaveText('Insert above');
   await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('menu', { name: 'Comment above' })).toBeVisible();
-  await expect(hot).toHaveText(['Comment above', 'Comment line…/']);
+  await expect(page.getByRole('menu', { name: 'Insert above' })).toBeVisible();
+  await expect(hot).toHaveText(['Insert above', 'Comment line…/']);
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(1);
-  await expect(hot).toHaveText('Comment above');
+  await expect(hot).toHaveText('Insert above');
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
   await expect(cur.locator('.adr')).toHaveText(at!);

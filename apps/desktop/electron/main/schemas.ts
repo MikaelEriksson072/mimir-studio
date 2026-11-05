@@ -1,6 +1,6 @@
 /* zod schemas for everything that crosses the IPC boundary or is read from disk (spec 4.2). */
 import { z } from 'zod';
-import { extraProblem, isBookmarkColor, LEGACY_PROJECT_FORMAT, type BlockKind } from '@mimir/core';
+import { extraProblem, isBookmarkColor, LEGACY_PROJECT_FORMAT, MAX_BLANKS, type BlockKind } from '@mimir/core';
 
 const addr = z.number().int().min(0).max(0x10000);
 /** an address in the project's work: in a cartridge's bank s, s * $10000 + the address (spec 13.9b) */
@@ -10,6 +10,8 @@ const record = z.record(z.string().regex(/^\d+$/), z.string());
 const zpPairs = z.record(z.string().regex(/^\d{1,3}$/), z.boolean());
 /** comment lines (`//`) and blocks the user inserted above an address */
 const notes = z.record(z.string().regex(/^\d+$/), z.object({ text: z.string().max(20000), block: z.boolean().optional() }));
+/** how many empty lines the user inserted above an address */
+const blanks = z.record(z.string().regex(/^\d+$/), z.number().int().min(1).max(MAX_BLANKS));
 /** the user's bookmarks: a title, a note and a colour per address, and where the area of one on an area ends (not
  * written to the source). A colour this version does not know is left out: the bookmark is amber; so is an end that
  * is no address: the bookmark is on its line */
@@ -125,6 +127,8 @@ export const serializedProjectSchema = z.object({
   blockComments: record.default({}),
   // project files from before comment lines and blocks existed have none
   notes: notes.default({}),
+  // project files from before empty lines could be inserted, and those without one, have none
+  blanks: blanks.optional(),
   // project files from before bookmarks have none
   bookmarks: bookmarks.default({}),
   // project files from before zero-page pairs, and those without one, have none
@@ -160,6 +164,7 @@ export const projectSchema = z.object({
   comments: record,
   blockComments: record,
   notes,
+  blanks: blanks.optional(),
   bookmarks,
   zpPairs: zpPairs.optional(),
   scripts,

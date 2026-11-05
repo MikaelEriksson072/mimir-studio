@@ -80,10 +80,10 @@ export function codeWhereLoaded(A: Pick<AnalysisResult, 'insLen' | 'codeOwner'>,
 }
 
 /** What `moveKeys` moves: the user's work kept by address in the project. */
-export type RelocKeys = Pick<Project, 'labels' | 'comments' | 'blockComments' | 'notes' | 'bookmarks' | 'overrides' | 'bankZones' | 'entries' | 'entryPoint' | 'excluded' | 'binary' | 'patches' | 'relocs'>;
+export type RelocKeys = Pick<Project, 'labels' | 'comments' | 'blockComments' | 'notes' | 'blanks' | 'bookmarks' | 'overrides' | 'bankZones' | 'entries' | 'entryPoint' | 'excluded' | 'binary' | 'patches' | 'relocs'>;
 
 /**
- * The user's work on `from`..`from + n` moves to `to`..`to + n`: names, comments, comment lines, bookmarks, marks
+ * The user's work on `from`..`from + n` moves to `to`..`to + n`: names, comments, comment lines, empty lines, bookmarks, marks
  * (overrides, bank zones; one that reaches past the range is cut there), entry points, the program start, excluded and
  * binary blocks, patches (which keep where their bytes are in the file) and the blocks relocated from there. Works on
  * an Immer draft too.
@@ -104,6 +104,7 @@ export function moveKeys(p: RelocKeys, from: Addr, n: number, to: Addr): void {
     else if (+k < from && b.end > from && b.end <= end) b.end = from;
   }
   rec(p.labels); rec(p.comments); rec(p.blockComments); rec(p.notes); rec(p.bookmarks);
+  if (p.blanks) rec(p.blanks);
   const list = (xs: Addr[]) => xs.map(a => (inside(a) ? moved(a) : a));
   p.entries = [...new Set(list(p.entries))];
   p.excluded = [...new Set(list(p.excluded))];

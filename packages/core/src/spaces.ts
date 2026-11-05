@@ -84,7 +84,7 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
     for (const x of xs || []) for (const i of route(x.start)) out[i].push({ ...x, start: spaceAddr(x.start), end: x.end - x.start + spaceAddr(x.start) });
     return out;
   };
-  const labels = rec(project.labels), comments = rec(project.comments), blockComments = rec(project.blockComments), notes = rec<Note>(project.notes);
+  const labels = rec(project.labels), comments = rec(project.comments), blockComments = rec(project.blockComments), notes = rec<Note>(project.notes), blanks = rec<number>(project.blanks);
   const bookmarks = rec<Bookmark>(project.bookmarks, (b, k) => (b.end != null ? { ...b, end: b.end - k + spaceAddr(k) } : b));
   const entries = list(project.entries), excluded = list(project.excluded), binary = list(project.binary);
   // a music block's init and play are in its bank too
@@ -98,7 +98,7 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
   const ep = project.entryPoint;
   parts.forEach((p, i) => {
     p.input = {
-      ...project, files: p.files.map(fi => project.files[fi]), labels: labels[i], comments: comments[i], blockComments: blockComments[i], notes: notes[i], bookmarks: bookmarks[i],
+      ...project, files: p.files.map(fi => project.files[fi]), labels: labels[i], comments: comments[i], blockComments: blockComments[i], notes: notes[i], blanks: blanks[i], bookmarks: bookmarks[i],
       entries: entries[i], excluded: excluded[i], binary: binary[i], overrides: overrides[i], bankZones: bankZones[i], relocs: relocs[i], patches: patches[i],
       entryPoint: ep != null && spaceOf(ep) === p.space ? spaceAddr(ep) : null,
       ...(p.space ? { bank: p.bank } : {}),

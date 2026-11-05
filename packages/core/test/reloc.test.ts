@@ -94,7 +94,7 @@ describe('relocated blocks', () => {
   it('take the user\'s work on the bytes along, and give it back', () => {
     const p: Project = {
       ...project([]), labels: { 0x1009: 'subroutine', 0x080d: 'main' }, comments: { 0x1003: 'call it' }, blockComments: { 0x1000: 'moved code' },
-      notes: { 0x1006: { text: 'again' } }, bookmarks: { 0x100d: { title: 'table', text: '' } }, entries: [0x1009],
+      notes: { 0x1006: { text: 'again' } }, blanks: { 0x1006: 2, 0x080d: 1 }, bookmarks: { 0x100d: { title: 'table', text: '' } }, entries: [0x1009],
       overrides: [{ start: 0x0ff0, end: 0x100d, type: 'code' }, { start: 0x100d, end: 0x1011, type: 'data', props: { fmt: 'dec' } }],
     };
     addReloc(p, RELOC);
@@ -102,6 +102,7 @@ describe('relocated blocks', () => {
     expect(p.comments).toEqual({ 0x2003: 'call it' });
     expect(p.blockComments).toEqual({ 0x2000: 'moved code' });
     expect(Object.keys(p.notes).map(Number)).toEqual([0x2006]);
+    expect(p.blanks).toEqual({ 0x2006: 2, 0x080d: 1 });
     expect(Object.keys(p.bookmarks).map(Number)).toEqual([0x200d]);
     expect(p.entries).toEqual([0x2009]);
     // a mark that starts before the block keeps its part outside it
@@ -110,7 +111,7 @@ describe('relocated blocks', () => {
     expect(V.ok).toBe(true);
     // marked as code by the user, where it runs now: code_2000
     expect(src).toMatch(/\/\/ moved code\ncode_2000:\n/);
-    expect(src).toMatch(/\/\/ again\n\s+jmp code_2000/);
+    expect(src).toMatch(/\S\n\n\n\/\/ again\n\s+jmp code_2000/);
     expect(src).toMatch(/^subroutine:$/m);
     expect(src).toMatch(/jsr subroutine\s+\/\/ call it/);
     expect(src).toMatch(/\.byte 1, 2, 3, 4/);
@@ -122,6 +123,7 @@ describe('relocated blocks', () => {
     removeReloc(p, 0x1000);
     expect(p.relocs).toEqual([]);
     expect(p.labels).toEqual({ 0x1009: 'subroutine', 0x080d: 'main' });
+    expect(p.blanks).toEqual({ 0x1006: 2, 0x080d: 1 });
     expect(p.comments).toEqual({ 0x1003: 'call it' });
   });
 
