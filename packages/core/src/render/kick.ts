@@ -17,6 +17,7 @@ import { spindleCondition, spindleName, spindleScript } from '../analyze/spindle
 import { h4 } from '../util/hex';
 import { kickMnemonic, lineText } from './lines';
 import { hardwareInclude } from './include';
+import { applyZpPairs } from '../zp-pairs';
 
 const ID_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** the words Kick Assembler 5.25 does not take as a label (measured with KickAss.jar; in this case only, `TRUE` is one) */
@@ -78,6 +79,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   for (const [k, name] of Object.entries(project.labels || {})) { const a = +k; if (name) labels.set(a, { name, kind: (labels.get(a) || { kind: 'user' }).kind || 'user', user: true }); else labels.delete(a); }
   const zp = new Map<Addr, ZpVar>(A.zp);
   for (const [a, l] of labels) if (a < 0x100 && !loaded(a) && l.user) { zp.set(a, { name: l.name, user: true }); labels.delete(a); }
+  // the pairs the user set: `name` and `name+1`, or two variables where the analysis made a pointer
+  applyZpPairs(zp, project.zpPairs, a => !loaded(a));
   // a pointer's high byte is written `<name>+1`: it follows the name of its low byte when that is renamed
   for (const [a, z] of zp) if (z.off) { const base = zp.get(a - z.off); if (base && base.name !== z.name) zp.set(a, { ...z, name: base.name }); }
   const labelAt = (a: Addr) => labels.get(a);

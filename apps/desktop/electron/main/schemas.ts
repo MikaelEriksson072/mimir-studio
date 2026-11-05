@@ -6,6 +6,8 @@ const addr = z.number().int().min(0).max(0x10000);
 /** an address in the project's work: in a cartridge's bank s, s * $10000 + the address (spec 13.9b) */
 const at = z.number().int().min(0).max(4096 * 0x10000);
 const record = z.record(z.string().regex(/^\d+$/), z.string());
+/** zero-page bytes joined into a 16-bit variable (true) or split from one (false), by the low byte's address */
+const zpPairs = z.record(z.string().regex(/^\d{1,3}$/), z.boolean());
 /** comment lines (`//`) and blocks the user inserted above an address */
 const notes = z.record(z.string().regex(/^\d+$/), z.object({ text: z.string().max(20000), block: z.boolean().optional() }));
 /** the user's bookmarks: a title, a note and a colour per address, and where the area of one on an area ends (not
@@ -125,6 +127,8 @@ export const serializedProjectSchema = z.object({
   notes: notes.default({}),
   // project files from before bookmarks have none
   bookmarks: bookmarks.default({}),
+  // project files from before zero-page pairs, and those without one, have none
+  zpPairs: zpPairs.optional(),
   // project files from before the build scripts could be edited have none
   scripts: scripts.default({}),
   // project files from before packing with Exomizer have none
@@ -157,6 +161,7 @@ export const projectSchema = z.object({
   blockComments: record,
   notes,
   bookmarks,
+  zpPairs: zpPairs.optional(),
   scripts,
   pack: packPrefsSchema.nullable().optional(),
   patches: z.array(patch).max(4096),

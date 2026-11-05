@@ -271,6 +271,9 @@ export interface Project {
   excluded: Addr[]; // starts of the blocks left out of the build (kept in the source under #if)
   binary: Addr[]; // starts of the blocks written to their own file and loaded with .import binary
   bookmarks: Record<Addr, Bookmark>; // the user's notes on addresses (the Bookmarks list); not written to the source
+  /** zero-page bytes the user joined into a 16-bit variable, by the low byte's address: true, `$a` low and `$a+1` high
+   *  (written `name` and `name+1`); false, two variables even where the analysis made a pointer. Missing: none */
+  zpPairs?: Record<Addr, boolean>;
   /** build.bat / build.sh as the user edited them: the export writes these instead of the generated scripts */
   scripts: Partial<Record<BuildScript, string>>;
   /** how the Pack view packs the project with Exomizer (missing or null: not set up yet) */
@@ -303,6 +306,8 @@ export interface ProjectInput {
   binary?: Addr[];
   /** the user's notes on addresses; they change nothing in the analysis or the output */
   bookmarks?: Record<Addr, Bookmark>;
+  /** zero-page bytes joined into (true) or split from (false) a 16-bit variable, by the low byte (Project.zpPairs) */
+  zpPairs?: Record<Addr, boolean>;
   scripts?: Partial<Record<BuildScript, string>>;
   /** the patches (those that are on are in `files`): the source marks where each one that is on is */
   patches?: Pick<Patch, 'name' | 'start' | 'bytes' | 'off'>[];
@@ -349,6 +354,8 @@ export interface SerializedProject {
   binary?: Addr[];
   /** missing in project files from before bookmarks */
   bookmarks?: Record<Addr, Bookmark>;
+  /** missing in project files from before zero-page pairs, and in those without one */
+  zpPairs?: Record<string, boolean>;
   scripts?: Partial<Record<BuildScript, string>>;
   /** missing in project files from before packing with Exomizer */
   pack?: PackPrefs | null;

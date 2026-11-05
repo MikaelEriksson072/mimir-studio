@@ -1,7 +1,7 @@
 /* Inspector (right column): memory map, block evidence/type/label/comment (or the zero-page variable whose .label line
  * was clicked: its name and comments), graphics/music/text preview. */
 import { useEffect, useMemo, useState } from 'react';
-import { textEncoding, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, relocAt, relocLoadedAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
+import { textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, relocAt, relocLoadedAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
 import type { TypeGroup } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -43,6 +43,8 @@ interface InspectorProps {
   zpVar?: Addr | null;
   /** its comment lines above the `.label` line (Project.notes) and the comment at the end of it (Project.comments) */
   onZpNote?: (a: Addr, text: string) => void; onZpComment?: (a: Addr, text: string) => void;
+  /** `$a` the low byte and `$a+1` the high byte of one 16-bit variable (true), or two variables (Project.zpPairs) */
+  onZpPair?: (a: Addr, on: boolean) => void;
   /** the cursor's bank of a cartridge as 64 KB (spec 13.9b), for the heatmap and the graphics preview: its analysis,
    *  where it starts among the bank addresses, the cursor and selection in it, and the bank's number (null: no banks) */
   bank?: { A: AnalysisResult; base: Addr; cursor: Addr | null; sel: Sel | null; number: number | null };
@@ -50,7 +52,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, bank, onPlayMusic }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -88,7 +90,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
         <label className="check small"><input id="heat-fit" type="checkbox" checked={fit} onChange={e => setUi({ heatFit: e.target.checked })} /> Zoom to the loaded pages (off shows all 64 KB)</label>
         <p className="muted small">Click to jump, drag to select a range. Each row is one 256-byte page.</p>
       </section>
-      {zpVar != null ? <ZpSection a={zpVar} A={A} R={R} project={project} onRename={onRename} onNote={onZpNote} onComment={onZpComment} onNavigate={onNavigate} /> : blk ? (
+      {zpVar != null ? <ZpSection a={zpVar} A={A} R={R} project={project} onRename={onRename} onNote={onZpNote} onComment={onZpComment} onPair={onZpPair} onNavigate={onNavigate} /> : blk ? (
         <section className="insp-sec">
           <div className="sec-head"><span>Block</span>{blk.user ? <span className="pill user">set by you</span> : <span className={cx('pill', blk.conf >= 0.85 ? 'hi' : blk.conf >= 0.6 ? 'mid' : 'lo')}>{blk.conf >= 0.85 ? 'high' : blk.conf >= 0.6 ? 'medium' : 'low'} confidence</span>}</div>
           <dl className="kv">
@@ -279,9 +281,9 @@ function CodeSummary({ A, blk }: { A: AnalysisResult; blk: Block }) {
 
 /** A zero-page variable (a `.label` line in the file head): its name, the code using it, and its comments, which the
  *  export writes above the `.label` line and at its end, as a block's comment goes above the block. */
-function ZpSection({ a, A, R, project, onRename, onNote, onComment, onNavigate }: {
+function ZpSection({ a, A, R, project, onRename, onNote, onComment, onPair, onNavigate }: {
   a: Addr; A: AnalysisResult; R: RenderResult; project: Project; onRename: (a: Addr, name: string) => void;
-  onNote?: (a: Addr, text: string) => void; onComment?: (a: Addr, text: string) => void; onNavigate: (a: Addr) => void;
+  onNote?: (a: Addr, text: string) => void; onComment?: (a: Addr, text: string) => void; onPair?: (a: Addr, on: boolean) => void; onNavigate: (a: Addr) => void;
 }) {
   const z = R.zp.get(a);
   const note = project.notes[a]?.text ?? '', eol = project.comments[a] ?? '';
@@ -300,6 +302,12 @@ function ZpSection({ a, A, R, project, onRename, onNote, onComment, onNavigate }
       <label className="field"><span>Name</span>
         <input className="mono" aria-label="Zero-page variable name" value={nameV} spellCheck={false} onChange={e => setNameV(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') onRename(a, nameV.trim()); }} onBlur={() => { if ((z?.name ?? '') !== nameV.trim()) onRename(a, nameV.trim()); }} /></label>
+      {onPair && zpPairable(a) && (
+        <label className="check" title={`Off: $${h2(a + 1)} is a variable of its own${project.zpPairs?.[a] != null ? ' · set by you' : ''}`}>
+          <input type="checkbox" aria-label="16-bit variable with the next byte" checked={R.zp.get(a + 1)?.off === 1} onChange={e => onPair(a, e.target.checked)} />
+          <span>16-bit with ${h2(a + 1)}<small className="muted"> — ${h2(a)} is the low byte and ${h2(a + 1)} the high byte, written <span className="mono">{z?.name ?? `zp_${h2(a)}`}+1</span></small></span>
+        </label>
+      )}
       <label className="field"><span>Comment</span>
         <textarea rows={2} aria-label="Comment above the .label line" value={noteV} placeholder="Written above the .label line in the export" onChange={e => setNoteV(e.target.value)} onBlur={() => { if (noteV.trim() !== note.trim()) onNote?.(a, noteV.replace(/^(\s*\n)+/, '').trimEnd()); }} /></label>
       <label className="field"><span>End-of-line comment</span>

@@ -40,6 +40,7 @@ export { findBlock } from './analyze';
 export { analyze, bankAddr, fileSpaces, type SpaceCache, render, SPACE, spaceAddr, spaceFiles, spaceLines, spaceOf, spaceRender, spaceView, splitProject, verify } from './spaces';
 export { spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript } from './analyze/spindle';
 export { validLabel, type RenderOptions } from './render/kick';
+export { applyZpPairs, zpPairable } from './zp-pairs';
 export { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';
 export type { LineTextSettings } from './render/lines';
 export { hardwareInclude } from './render/include';

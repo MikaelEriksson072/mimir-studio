@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -1014,6 +1014,38 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     update(name ? `Rename $${h4(addr)} to ${name}` : `Restore label at $${h4(addr)}`, d => { if (name) d.labels[addr] = name; else delete d.labels[addr]; });
     return true;
   };
+  /** `$a` the low byte and `$a+1` the high byte of one 16-bit zero-page variable (`on`), or two variables
+   *  (Project.zpPairs). As the analysis has them by itself the setting goes (unless a name on the high byte splits them) */
+  const pairZp = (a: Addr, on: boolean) => {
+    if (!zpPairable(a) || (R.zp.get(a + 1)?.off === 1) === on) return;
+    const auto = A.zp.get(a + 1)?.off === 1 && !project.labels[a + 1];
+    const name = R.zp.get(a)?.name ?? `zp_${h2(a)}`;
+    update(on ? `Join $${h2(a)}/$${h2(a + 1)} into ${name}` : `Split ${name} into $${h2(a)} and $${h2(a + 1)}`, d => {
+      const pairs = d.zpPairs ?? (d.zpPairs = {});
+      if (on === auto) delete pairs[a]; else pairs[a] = on;
+      if (!Object.keys(pairs).length) delete d.zpPairs;
+    });
+    toast(on ? `$${h2(a)} is the low byte and $${h2(a + 1)} the high byte of ${name}: the source writes ${name}+1 (Ctrl+Z splits them again)` : `$${h2(a)} and $${h2(a + 1)} are two variables again (Ctrl+Z joins them)`, 'ok');
+  };
+  /** the context menu's items that join or split the zero-page variable at `z` (the byte an instruction uses) */
+  const zpPairItems = (z: Addr | null): MenuItem[] => {
+    const zv = z != null ? R.zp.get(z) : undefined;
+    if (z == null || !zv) return [];
+    const lo = zv.off ? z - zv.off : z;
+    if (R.zp.get(lo + 1)?.off === 1) return [{ label: `Split ${R.zp.get(lo)?.name ?? `$${h2(lo)}`} into two variables ($${h2(lo)} and $${h2(lo + 1)})`, run: () => pairZp(lo, false) }];
+    const join = (a: Addr): MenuItem => ({ label: `Join $${h2(a)} (low byte) and $${h2(a + 1)} (high byte) into one 16-bit variable`, run: () => pairZp(a, true) });
+    // `z` the high byte of the one before, or the low byte with the next one: neighbours the code uses that are in no
+    // pair (the next byte also when neither is, as for a pointer the code only reads through)
+    const back = zpPairable(z - 1) && R.zp.has(z - 1) && !R.zp.get(z - 1)!.off;
+    const fwd = zpPairable(z) && (R.zp.has(z + 1) ? R.zp.get(z + 2)?.off !== 1 : !back);
+    return [...(back ? [join(z - 1)] : []), ...(fwd ? [join(z)] : [])];
+  };
+  /** the zero-page byte an instruction line's operand is (null: none) */
+  const zpOperand = (l: ListingLine): Addr | null => {
+    if (l.k !== 'ins' || !(A.owner[l.a] >= 0)) return null;
+    const d = decode(A.mem, l.a), m = d.info.mode;
+    return d.v != null && d.v < 0x100 && m !== 'imm' && m !== 'rel' ? d.v : null;
+  };
   const setComment = (addr: Addr, text: string) => update(`Comment at $${h4(addr)}`, d => { if (text) d.comments[addr] = text; else delete d.comments[addr]; });
   const setBlockComment = (addr: Addr, text: string) => { if ((project.blockComments[addr] || '') === text) return; update(`Block comment at $${h4(addr)}`, d => { if (text) d.blockComments[addr] = text; else delete d.blockComments[addr]; }); };
   const setNote = (addr: Addr, text: string, block: boolean) => {
@@ -1908,6 +1940,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         { label: zl ? 'Comment at the end of the .label line…' : 'Comment at the end of the line…', key: ';', run: () => (zl ? startComment(undefined, zl) : startComment(l.a)) },
         { label: zl ? 'Insert comment line above the .label line…' : 'Insert comment line above…', key: '/', run: () => (zl ? startNote(false, undefined, zl) : startNote(false, l.a)) },
         { label: zl ? 'Insert comment block above the .label line…' : 'Insert comment block above…', key: '*', run: () => (zl ? startNote(true, undefined, zl) : startNote(true, l.a)) },
+        // a zero-page variable's .label line, or an instruction that uses one: join it with a neighbour into 16 bits, or split it
+        ...zpPairItems(zl ? zl.addr : zpOperand(l)),
         // in a selection of more than one line: the bookmark on its first line, a new one on its area
         ...(() => { const area = inSel ? selArea(cs) : null, at = area ? bookmarkOnLine(area.start) : l.a != null ? bookmarkOnLine(l.a) : null, has = at != null && !!project.bookmarks[at]; return [
           { label: has ? 'Edit bookmark…' : 'Add bookmark…', key: 'B', run: () => startBookmark(l.a, area) },
@@ -2256,7 +2290,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
           onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)}
-          zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
+          zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpPair={pairZp} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
       {inspector === 'auto' && <button className={cx('insp-rail', drawer === 'insp' && 'on')} onClick={() => (drawer === 'insp' ? closeInspector() : setDrawer('insp'))} aria-label="Inspector" aria-expanded={drawer === 'insp'}
