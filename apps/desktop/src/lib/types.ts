@@ -1,4 +1,5 @@
 import type { Addr, BitfireDisk, D64Image, KickProblem, ListingLine, LogLevel, SpindleDisk, VerifyResult } from '@mimir/core';
+import type { IconName } from './icon-paths';
 
 /** The mounted .d64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build & Run;
  *  `spindle`: its jobs, when it is a Spindle 3 disk (the Spindle script tab lists them); `bitfire`: its files, when it
@@ -39,8 +40,15 @@ export interface UiProblem {
 }
 
 export interface Command { id: string; label: string; key?: string; run: () => void }
-/** `checked`: a setting the item turns on or off (or one choice of several), shown with a check mark */
-export type MenuItem = { sep: true } | { label: string; key?: string; checked?: boolean; run: () => void } | { label: string; children: { label: string; key?: string; run: () => void }[] };
+/** A menu's item: a separator, a heading over the items after it, an action, or a submenu (to any depth). `checked`: a
+ *  setting the item turns on or off (or one choice of several), shown with a check mark; `icon`: in front of the name,
+ *  on the items used most; `key`: the key that does the same outside the menu. Empty submenus, headings with nothing
+ *  under them and extra separators are left out when the menu shows. */
+export type MenuItem =
+  | { sep: true }
+  | { header: string }
+  | { label: string; key?: string; checked?: boolean; icon?: IconName; run: () => void }
+  | { label: string; icon?: IconName; children: MenuItem[] };
 /** `owner`: the button that opened it, which closes it again */
 export interface ContextMenuState { x: number; y: number; items: MenuItem[]; owner?: string }
 

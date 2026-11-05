@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, repoDir, test } from './fixtures';
-import { dialogOptions, fromFileMenu, goTo, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
+import { dialogOptions, fromFileMenu, fromSubmenu, goTo, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
 
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
@@ -279,7 +279,7 @@ test('insert a comment line and a comment block, edit and remove them', async ({
     const adr = (await row.locator('.adr').textContent())!;
     expect(adr).not.toBe('0810');
     await row.click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Insert comment block above…' }).click();
+    await fromSubmenu(page, 'Comment above', 'Comment block…');
     const area = page.getByLabel(`Comment block above $${adr}`);
     await expect(area).toBeVisible();
     await area.press('Escape');
@@ -298,10 +298,25 @@ test('Escape closes the right-click menu, and only that: the listing does not go
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
   await expect(cur.locator('.adr')).toHaveText(at!);
-  // so did its submenu
+  // so did its submenu, opened with the mouse
   await cur.click({ button: 'right' });
-  await page.locator('.ctx-item.has-sub', { hasText: 'Memory configuration ($01)' }).hover();
+  await page.getByRole('menuitem', { name: 'Memory banking', exact: true }).hover();
   await expect(page.getByRole('menuitem', { name: '$34 · RAM · RAM · RAM' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(cur.locator('.adr')).toHaveText(at!);
+  // with the keys: ↓ through the items, → into a submenu, Escape out of it, and Escape again closes the menu
+  await cur.click({ button: 'right' });
+  await page.mouse.move(2, 2);
+  const hot = page.locator('.ctx-item.hot');
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+  await expect(hot).toHaveText('Comment above');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('menu', { name: 'Comment above' })).toBeVisible();
+  await expect(hot).toHaveText(['Comment above', 'Comment line…/']);
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(1);
+  await expect(hot).toHaveText('Comment above');
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
   await expect(cur.locator('.adr')).toHaveText(at!);
@@ -353,10 +368,9 @@ test('set the memory configuration ($01) code runs with', async ({ page }) => {
   await expect(statusBar(page)).toContainText('$01 $37');
   const row = () => listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: new RegExp(`^${start.adr}$`) }) });
 
-  await test.step('right-click → Memory configuration ($01) → $34 makes $d020 plain RAM', async () => {
+  await test.step('right-click → Memory banking → $34 (under Memory configuration ($01)) makes $d020 plain RAM', async () => {
     await row().click({ button: 'right' });
-    await page.locator('.ctx-item.has-sub', { hasText: 'Memory configuration ($01)' }).hover();
-    await page.getByRole('menuitem', { name: '$34 · RAM · RAM · RAM' }).click();
+    await fromSubmenu(page, 'Memory banking', '$34 · RAM · RAM · RAM');
     await expect(toast(page, 'runs with $01 = $34 (RAM · RAM · RAM)')).toBeVisible();
     await expect(row()).toContainText('sta $d020');
     await expect(statusBar(page)).toContainText('$01 $34');
@@ -466,10 +480,10 @@ test('set the program start by hand', async ({ page }) => {
     await goTo(page, 'sub_0866');
     const row = listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: /^0866$/ }) });
     await row.click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Set as program start' }).click();
+    await fromSubmenu(page, 'Program', 'Set as program start');
     await expect(section).toContainText('set by you');
     await row.click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Clear program start ($0866)' }).click();
+    await fromSubmenu(page, 'Program', 'Clear program start ($0866)');
     await expect(section).toContainText('BASIC SYS');
     await page.keyboard.press('Control+z');
     await expect(section).toContainText('set by you');
@@ -612,7 +626,7 @@ test('merge a block with the block before or after it', async ({ page }) => {
 
   await test.step('right-click → Merge with previous block', async () => {
     await headerRow(page, '0960').click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Merge with previous block (Text) → Text' }).click();
+    await fromSubmenu(page, 'Block', 'Merge with previous block (Text) → Text');
     await expect(toast(page, '$0949–$0984 merged into one Text block')).toBeVisible();
     await expect(headerRow(page, '0960')).toHaveCount(0);
     await expect(headerRow(page, '0949')).toContainText('$0949-$0984');
@@ -816,7 +830,7 @@ test('exclude a block from the build', async ({ page }) => {
 
   await test.step('right-click → Exclude block from the build', async () => {
     await headerRow(page, '09b5').click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Exclude block from the build' }).click();
+    await fromSubmenu(page, 'Block', 'Exclude block from the build');
     await expect(toast(page, '$09b5–$0ab4 is left out of the build')).toBeVisible();
     await expect(headerRow(page, '09b5').locator('.hdr-excluded')).toBeVisible();
     const text = (await listingRows(page)).map(r => r.text);
@@ -2183,6 +2197,7 @@ test('relocate code the program copies elsewhere: Problems finds the copy, the l
     // the right-click menu stops relocating it: the name goes back to $1009
     await goTo(page, '$2000');
     await listing(page).locator('.row.cur').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Program', exact: true }).hover();
     await page.getByRole('menuitem', { name: /^Stop relocating \$1000–\$1010/ }).click();
     await expect(toast(page, '$1000–$1010 is read where it is loaded again')).toBeVisible();
     await expect.poll(async () => (await listingRows(page)).find(r => r.text === 'blink:')?.adr).toBe('1009');
@@ -2927,7 +2942,7 @@ test('pack with Exomizer: the whole build or chosen blocks, checked with desfx, 
     await expect(card).toContainText('Out of date');
     // the code block at $0810 from the listing's menu
     await headerRow(page, '0810').click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Pack block with Exomizer' }).click();
+    await fromSubmenu(page, 'Program', 'Pack block with Exomizer');
     await expect(toast(page, /is packed with the chosen blocks/)).toBeVisible();
     await expect(ranges).toHaveText('$0810–$0865');
     // without the BASIC line there is no SYS to start from
@@ -3011,7 +3026,7 @@ test('comment a zero-page variable on its .label line, with the keys, the menu a
 
   await test.step('the menu on the .label line edits the comment block, and the export verifies', async () => {
     await zpRow().click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Insert comment block above the .label line…' }).click();
+    await fromSubmenu(page, 'Comment above the .label line', 'Comment block…');
     await expect(editor.locator('label')).toContainText('Comment block above $fb');
     await expect(editor.locator('textarea')).toHaveValue('set by the raster irq\nread by the scroller');
     await editor.locator('textarea').press('Escape');
@@ -3649,7 +3664,7 @@ test('a byte in the wrong block is dragged by its address into the block next to
 
   await test.step('the context menu does the same, and Ctrl+Z undoes it', async () => {
     await line('0961').click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Move $0961 into the previous block (Text)' }).click();
+    await fromSubmenu(page, 'Block', 'Move $0961 into the previous block (Text)');
     await expect(toast(page, '$0961 moved into the Text block, now $0948–$0961')).toBeVisible();
     await expect(headerRow(page, '0962')).toContainText('$0962-$0984 (35 bytes)');
     for (const head of ['$0948-$0960 (25 bytes)', '$0949-$0960 (24 bytes)', '$0949-$095f (23 bytes)']) {
@@ -3718,6 +3733,7 @@ test('a block is split, re-typed and joined from any byte of a line, and given a
 
   await test.step('the context menu on a byte splits the block there, and S splits it at the cursor line', async () => {
     await cell('0950').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Block', exact: true }).hover();
     await expect(page.getByRole('menuitem', { name: 'Join $0950-$095f with the next block (Text)' })).toBeVisible();
     await page.getByRole('menuitem', { name: 'Split block at $0950' }).click();
     await expect(toast(page, 'Split the Text block in two: $0949–$094f and $0950–$095f')).toBeVisible();
@@ -3730,14 +3746,18 @@ test('a block is split, re-typed and joined from any byte of a line, and given a
     await undo('$0939-$0948 (16 bytes)');
   });
 
-  await test.step('in a low window the menu on a byte scrolls, and Mark … as still opens its submenu beside it', async () => {
+  await test.step('in a low window Mark … as opens its submenu beside it, inside the window, and the mouse gets there across the menu', async () => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1366, 600));
     await expect.poll(() => page.evaluate(() => window.innerHeight)).toBeLessThan(600);
     await cell('093c').click({ button: 'right' });
     const menu = page.locator('.ctx:not(.sub)');
-    await expect(menu).toHaveCSS('overflow-y', 'auto');
     await menu.getByText('Mark $093c as').hover();
-    // the mouse where the submenu is drawn, as a hand would (a click on the locator would scroll a clipped one into view)
+    const sub = page.getByRole('menu', { name: 'Mark $093c as' });
+    const box = (await sub.boundingBox())!, inner = await page.evaluate(() => window.innerHeight);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(inner);
+    // the mouse where the submenu is drawn, as a hand would, crossing the menu's other items on its way: the open
+    // submenu waits for it (a click on the locator would go straight there)
     const words = (await page.getByRole('menuitem', { name: 'Words (.word)' }).boundingBox())!;
     await page.mouse.move(words.x + words.width / 2, words.y + words.height / 2, { steps: 4 });
     await page.mouse.down();

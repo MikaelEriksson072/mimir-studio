@@ -1932,97 +1932,127 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const item: Range | null = cell ? { start: cell.a, end: cell.a + cell.n } : 'n' in l && l.n > 0 ? lineRange(l) : null;
     const span = (s: Addr, e: Addr) => `$${h4(s)}${e - s > 1 ? `-$${h4(e - 1)}` : ''}`;
     const oneByte = !!(cs?.bytes && inSel && cs.anchor === cs.start && cs.anchorEnd === cs.end);
+    const def = labelDefAt(l) ?? (zl ? { addr: zl.addr, zp: true } : null);
+    const p = l.a != null ? patchAt(project.patches, l.a) : undefined;
+    // in a selection of more than one line: the bookmark on its first line, a new one on its area
+    const area = inSel ? selArea(cs) : null, bmAt = area ? bookmarkOnLine(area.start) : l.a != null ? bookmarkOnLine(l.a) : null;
+    const hasBm = bmAt != null && !!project.bookmarks[bmAt];
+    // in the selection: all its lines; the line itself as well
+    const nLines = inSel ? selectedLines().length : 0;
+    /** Block: fold it, change where it starts and ends, and whether it is built */
+    const blockItems: MenuItem[] = [
+      { label: folded.has(b?.start ?? -1) ? 'Unfold block' : 'Fold block', key: 'F', run: () => toggleFold(l.a) },
+      { sep: true },
+      ...((): MenuItem[] => {
+        // from the byte or the line: split the block there, or join the rest of it (or its start) with the block next to it
+        if (!item || l.k === 'hdr') return [];
+        const out: MenuItem[] = [];
+        if (!('error' in splitBlock(A, item.start))) out.push({ label: `Split block at $${h4(item.start)}`, key: 'S', run: () => splitAt(item.start) });
+        for (const [dir, word, key] of [['next', 'next', 'J'], ['prev', 'previous', 'Shift+J']] as const) {
+          const m = moveFrom(A, item.start, dir, item.end), edge = lineMove(A, l, dir);
+          // the line at the block's edge already moves these bytes (the Move item)
+          if ('error' in m || (edge && edge.start === m.start && edge.end === m.end)) continue;
+          out.push({ label: `Join ${span(m.start, m.end)} with the ${word} block (${kindInfo(m.into.type).label})`, key, run: () => moveInto(m) });
+        }
+        return out;
+      })(),
+      // a line at a block's edge: the same as dragging it into the neighbouring block
+      ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]): MenuItem[] => { const m = lineMove(A, l, dir); return m ? [{ label: `Move $${h4(m.start)}${m.end - m.start > 1 ? `-$${h4(m.end - 1)}` : ''} into the ${word} block (${kindInfo(m.into.type).label})`, run: () => moveInto(m) }] : []; }),
+      ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]): MenuItem[] => { const m = mergeOverride(A, l.a, dir); return m ? [{ label: `Merge with ${word} block (${kindInfo(m.other.type).label}) → ${kindInfo(m.into).label}`, run: () => mergeBlock(dir, l.a) }] : []; }),
+      { label: 'Merge range into one block…', key: 'M', run: () => { if (!inSel) setCursor(l.a); setModal('merge'); } },
+      ...(b ? [{ label: 'Block size… (start and end)', key: 'L', run: () => openBlockSize(l.a) }] : []),
+      { sep: true },
+      { label: project.excluded.includes(b?.start ?? -1) ? 'Include block in the build' : 'Exclude block from the build', run: () => toggleExcluded(l.a) },
+      { label: project.binary.includes(b?.start ?? -1) ? 'Write block in the source again' : 'Save block as a binary file (.import binary)', run: () => toggleBinary(l.a) },
+    ];
+    /** Program: where it starts and what the analysis traces, new code, code that runs elsewhere, and the pack */
+    const programItems: MenuItem[] = [
+      { label: 'Add entry point here', key: 'E', run: () => addEntry(l.a) },
+      { label: 'Set as program start', run: () => setStart(l.a) },
+      ...(project.entryPoint != null ? [{ label: `Clear program start ($${h4(project.entryPoint)})`, run: () => setStart(null) }] : []),
+      { sep: true },
+      ...((): MenuItem[] => {
+        // new code over the selection, the line or the block of a header (a patched line has its patch's own submenu)
+        const r = inSel && cs ? { start: cs.start, end: cs.end } : ('n' in l && l.n > 0) || l.k === 'hdr' ? lineRange(l) : null;
+        return r && !p ? [{ label: inSel ? 'Patch selection with new code…' : l.k === 'hdr' ? 'Patch block with new code…' : 'Patch line with new code…', key: 'P', run: () => startPatch(r) }] : [];
+      })(),
+      ...((): MenuItem[] => {
+        // on a relocated block (where it is loaded or runs): where it runs, or not; else relocate the selection or the block
+        const rl = l.a != null ? (relocLoadedAt(A, l.a) ?? (inSel ? undefined : relocAt(A, l.a))) : undefined;
+        if (rl) return [
+          { label: `Change where $${h4(rl.start)}–$${h4(rl.end - 1)} runs ($${h4(rl.to)})…`, key: 'R', run: () => startRelocate({ start: rl.start, end: rl.end }) },
+          { label: `Stop relocating $${h4(rl.start)}–$${h4(rl.end - 1)} (read it where it is loaded)`, run: () => unrelocate(rl.start) },
+        ];
+        const r = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
+        return r ? [{ label: `Relocate ${inSel ? 'selection' : 'block'}… (the program copies it elsewhere to run)`, key: 'R', run: () => startRelocate(r) }] : [];
+      })(),
+      { sep: true },
+      ...((): MenuItem[] => {
+        // the Pack view: the selection, else the whole block, where its bytes are in the built PRG (a relocated block's
+        // where it is loaded, 8.1b)
+        const r0 = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
+        const r = r0 && loadRange(A, r0.start, r0.end);
+        if (!r) return [];
+        const cover = project.pack?.ranges ? rangeCover(project.pack.ranges, r.start, r.end) : 0, what = inSel ? 'selection' : 'block';
+        return [
+          ...(cover < r.end - r.start ? [{ label: `Pack ${what} with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'}`, run: () => packRange(r, true) }] : []),
+          ...(cover > 0 ? [{ label: `Leave ${what} out of the pack`, run: () => packRange(r, false) }] : []),
+        ];
+      })(),
+    ];
+    /** Memory banking: the memory configuration ($01) and the VIC bank the code runs with, where it differs from what was
+     *  detected */
+    const bankItems: MenuItem[] = A.mcfg ? [
+      { header: 'Memory configuration ($01)' },
+      ...[7, 6, 5, 4, 3, 2, 1, 0].map(c => ({ label: `${portName(c)} · ${portText(c, A.mcfg?.cart)}`, run: () => { if (range) setBankZone(range, 'port', 0x30 + c); } })),
+      { label: 'Detected (automatic)', run: () => { if (range) setBankZone(range, 'port', null); } },
+      { sep: true },
+      { header: 'VIC bank' },
+      ...[0, 1, 2, 3].map(vb => ({ label: `Bank ${vb} · ${bankRange(vb)}`, run: () => { if (range) setBankZone(range, 'vicBank', vb); } })),
+      { label: 'Detected (automatic)', run: () => { if (range) setBankZone(range, 'vicBank', null); } },
+    ] : [];
+    // What the line is for comes first (a music block plays, a patched line has its patch), then what is done most:
+    // rename, comment, bookmark and mark as, one click each and with an icon. The rest is grouped in submenus by what it
+    // acts on (the block, the program, the memory banking), and the cross-references and copies come last.
     setMenu({
       x: e.clientX, y: e.clientY, items: [
-        (() => { const def = labelDefAt(l) ?? (zl ? { addr: zl.addr, zp: true } : null); return def
-          ? { label: def.zp ? 'Rename zero-page variable…' : 'Rename label…', key: 'N', run: () => startDefRename(def, zl?.line ?? view.lines.indexOf(l)) }
-          : { label: 'Rename label…', key: 'N', run: () => startRename(l.a) }; })(),
-        // on a zero-page variable's .label line (or its comment lines) these comment the variable
-        { label: zl ? 'Comment at the end of the .label line…' : 'Comment at the end of the line…', key: ';', run: () => (zl ? startComment(undefined, zl) : startComment(l.a)) },
-        { label: zl ? 'Insert comment line above the .label line…' : 'Insert comment line above…', key: '/', run: () => (zl ? startNote(false, undefined, zl) : startNote(false, l.a)) },
-        { label: zl ? 'Insert comment block above the .label line…' : 'Insert comment block above…', key: '*', run: () => (zl ? startNote(true, undefined, zl) : startNote(true, l.a)) },
+        ...(b?.type === 'music' ? [{ label: `Play music in VICE (${R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`})`, icon: 'play', run: () => void playMusic(b.start) }] satisfies MenuItem[] : []),
+        ...(p ? [{ label: `Patch "${p.name}"`, icon: 'code', children: [
+          { label: 'Edit patch…', key: 'P', run: () => editPatch(p) },
+          { label: p.off ? 'Switch on' : 'Switch off (the original bytes come back)', run: () => switchOnePatch(p, !!p.off) },
+          { label: 'Save as PRG…', run: () => void savePatchPrg(p) },
+          { sep: true },
+          { label: `Remove patch${p.off ? '' : ' (the original bytes come back)'}`, run: () => removePatch(p) },
+        ] }] satisfies MenuItem[] : []),
+        { sep: true },
+        def
+          ? { label: def.zp ? 'Rename zero-page variable…' : 'Rename label…', key: 'N', icon: 'pencil', run: () => startDefRename(def, zl?.line ?? view.lines.indexOf(l)) }
+          : { label: 'Rename label…', key: 'N', icon: 'pencil', run: () => startRename(l.a) },
         // a zero-page variable's .label line, or an instruction that uses one: join it with a neighbour into 16 bits, or split it
-        ...zpPairItems(zl ? zl.addr : zpOperand(l)),
-        // in a selection of more than one line: the bookmark on its first line, a new one on its area
-        ...(() => { const area = inSel ? selArea(cs) : null, at = area ? bookmarkOnLine(area.start) : l.a != null ? bookmarkOnLine(l.a) : null, has = at != null && !!project.bookmarks[at]; return [
-          { label: has ? 'Edit bookmark…' : 'Add bookmark…', key: 'B', run: () => startBookmark(l.a, area) },
-          ...(has ? [{ label: 'Remove bookmark', run: () => deleteBookmark(at!) }] : []),
-        ]; })(),
+        { label: '16-bit variable', children: zpPairItems(zl ? zl.addr : zpOperand(l)) },
+        // on a zero-page variable's .label line (or its comment lines) these comment the variable
+        { label: zl ? 'Comment at the end of the .label line…' : 'Comment at the end of the line…', key: ';', icon: 'comment', run: () => (zl ? startComment(undefined, zl) : startComment(l.a)) },
+        { label: zl ? 'Comment above the .label line' : 'Comment above', children: [
+          { label: 'Comment line…', key: '/', run: () => (zl ? startNote(false, undefined, zl) : startNote(false, l.a)) },
+          { label: 'Comment block…', key: '*', run: () => (zl ? startNote(true, undefined, zl) : startNote(true, l.a)) },
+        ] },
+        { label: hasBm ? 'Edit bookmark…' : 'Add bookmark…', key: 'B', icon: 'bookmark', run: () => startBookmark(l.a, area) },
+        ...(hasBm ? [{ label: 'Remove bookmark', run: () => deleteBookmark(bmAt!) }] : []),
         { sep: true },
-        ...(b?.type === 'music' ? [{ label: `Play music in VICE (${R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`})`, run: () => void playMusic(b.start) }] : []),
-        ...(() => {
-          // a patched line: its patch; otherwise new code over the selection, the line or the block of a header
-          const p = l.a != null ? patchAt(project.patches, l.a) : undefined;
-          if (p) return [
-            { label: `Edit patch "${p.name}"…`, key: 'P', run: () => editPatch(p) },
-            { label: p.off ? `Switch patch "${p.name}" on` : `Switch patch "${p.name}" off (the original bytes come back)`, run: () => switchOnePatch(p, !!p.off) },
-            { label: `Save patch "${p.name}" as PRG…`, run: () => void savePatchPrg(p) },
-            { label: `Remove patch "${p.name}"${p.off ? '' : ' (the original bytes come back)'}`, run: () => removePatch(p) },
-          ];
-          const r = inSel && cs ? { start: cs.start, end: cs.end } : ('n' in l && l.n > 0) || l.k === 'hdr' ? lineRange(l) : null;
-          return r ? [{ label: inSel ? 'Patch selection with new code…' : l.k === 'hdr' ? 'Patch block with new code…' : 'Patch line with new code…', key: 'P', run: () => startPatch(r) }] : [];
-        })(),
-        { label: oneByte && cs ? `Mark ${span(cs.start, cs.end)} as` : inSel ? 'Mark selection as' : 'Mark from here as', children: MARK_AS.map(m => ({ label: m.label, key: m.key, run: () => { if (range) mark(m.id, range, { bytes: inSel && cs?.bytes ? cs : null }); } })) },
-        { label: 'Clear override', key: 'U', run: () => { if (range) clearOverride(range); } },
-        ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]) => { const m = mergeOverride(A, l.a, dir); return m ? [{ label: `Merge with ${word} block (${kindInfo(m.other.type).label}) → ${kindInfo(m.into).label}`, run: () => mergeBlock(dir, l.a) }] : []; }),
-        // a line at a block's edge: the same as dragging it into the neighbouring block
-        ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]) => { const m = lineMove(A, l, dir); return m ? [{ label: `Move $${h4(m.start)}${m.end - m.start > 1 ? `-$${h4(m.end - 1)}` : ''} into the ${word} block (${kindInfo(m.into.type).label})`, run: () => moveInto(m) }] : []; }),
-        { label: 'Merge range into one block…', key: 'M', run: () => { if (!inSel) setCursor(l.a); setModal('merge'); } },
-        ...((): MenuItem[] => {
-          // from the byte or the line: split the block there, or join the rest of it (or its start) with the block next to it
-          if (!item || l.k === 'hdr') return [];
-          const out: MenuItem[] = [];
-          if (!('error' in splitBlock(A, item.start))) out.push({ label: `Split block at $${h4(item.start)}`, key: 'S', run: () => splitAt(item.start) });
-          for (const [dir, word, key] of [['next', 'next', 'J'], ['prev', 'previous', 'Shift+J']] as const) {
-            const m = moveFrom(A, item.start, dir, item.end), edge = lineMove(A, l, dir);
-            // the line at the block's edge already moves these bytes (the Move item above)
-            if ('error' in m || (edge && edge.start === m.start && edge.end === m.end)) continue;
-            out.push({ label: `Join ${span(m.start, m.end)} with the ${word} block (${kindInfo(m.into.type).label})`, key, run: () => moveInto(m) });
-          }
-          return out;
-        })(),
-        ...(b ? [{ label: 'Block size… (start and end)', key: 'L', run: () => openBlockSize(l.a) }] : []),
-        ...((): MenuItem[] => {
-          // on a relocated block (where it is loaded or runs): where it runs, or not; else relocate the selection or the block
-          const rl = l.a != null ? (relocLoadedAt(A, l.a) ?? (inSel ? undefined : relocAt(A, l.a))) : undefined;
-          if (rl) return [
-            { label: `Change where $${h4(rl.start)}–$${h4(rl.end - 1)} runs ($${h4(rl.to)})…`, key: 'R', run: () => startRelocate({ start: rl.start, end: rl.end }) },
-            { label: `Stop relocating $${h4(rl.start)}–$${h4(rl.end - 1)} (read it where it is loaded)`, run: () => unrelocate(rl.start) },
-          ];
-          const r = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
-          return r ? [{ label: `Relocate ${inSel ? 'selection' : 'block'}… (the program copies it elsewhere to run)`, key: 'R', run: () => startRelocate(r) }] : [];
-        })(),
-        { label: 'Add entry point here', key: 'E', run: () => addEntry(l.a) },
-        { label: folded.has(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Unfold block' : 'Fold block', key: 'F', run: () => toggleFold(l.a) },
-        { label: project.excluded.includes(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Include block in the build' : 'Exclude block from the build', run: () => toggleExcluded(l.a) },
-        { label: project.binary.includes(findBlock(A.blocks, l.a)?.start ?? -1) ? 'Write block in the source again' : 'Save block as a binary file (.import binary)', run: () => toggleBinary(l.a) },
-        ...(() => {
-          // the Pack view: the selection, else the whole block, where its bytes are in the built PRG (a relocated block's
-          // where it is loaded, 8.1b)
-          const r0 = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
-          const r = r0 && loadRange(A, r0.start, r0.end);
-          if (!r) return [];
-          const cover = project.pack?.ranges ? rangeCover(project.pack.ranges, r.start, r.end) : 0, what = inSel ? 'selection' : 'block';
-          return [
-            ...(cover < r.end - r.start ? [{ label: `Pack ${what} with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'}`, run: () => packRange(r, true) }] : []),
-            ...(cover > 0 ? [{ label: `Leave ${what} out of the pack`, run: () => packRange(r, false) }] : []),
-          ];
-        })(),
-        { label: 'Set as program start', run: () => setStart(l.a) },
-        ...(project.entryPoint != null ? [{ label: `Clear program start ($${h4(project.entryPoint)})`, run: () => setStart(null) }] : []),
-        ...(A.mcfg ? [
-          { label: 'Memory configuration ($01)', children: [...[7, 6, 5, 4, 3, 2, 1, 0].map(c => ({ label: `${portName(c)} · ${portText(c, A.mcfg?.cart)}`, run: () => { if (range) setBankZone(range, 'port', 0x30 + c); } })), { label: 'Detected (automatic)', run: () => { if (range) setBankZone(range, 'port', null); } }] },
-          { label: 'VIC bank', children: [...[0, 1, 2, 3].map(b => ({ label: `Bank ${b} · ${bankRange(b)}`, run: () => { if (range) setBankZone(range, 'vicBank', b); } })), { label: 'Detected (automatic)', run: () => { if (range) setBankZone(range, 'vicBank', null); } }] },
-        ] : []),
+        { label: oneByte && cs ? `Mark ${span(cs.start, cs.end)} as` : inSel ? 'Mark selection as' : 'Mark from here as', icon: 'tag', children: [
+          ...MARK_AS.map(m => ({ label: m.label, key: m.key, run: () => { if (range) mark(m.id, range, { bytes: inSel && cs?.bytes ? cs : null }); } })),
+          { sep: true },
+          { label: 'Clear override (automatic)', key: 'U', run: () => { if (range) clearOverride(range); } },
+        ] },
+        { label: 'Block', children: blockItems },
+        { label: 'Program', children: programItems },
+        { label: 'Memory banking', children: bankItems },
         { sep: true },
-        { label: 'Show cross-references', key: 'X', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
-        { label: 'Copy address', run: () => void copyText('$' + h4(l.a ?? cursor ?? 0)) },
-        ...(() => {
-          // in the selection: all its lines; the line itself as well
-          const n = inSel ? selectedLines().length : 0;
-          return n > 1 ? [{ label: `Copy ${n} selected lines`, key: 'Ctrl+C', run: copyLines }] : [];
-        })(),
-        { label: 'Copy line', run: () => void copyText(lineText(l, S).trim()) },
+        { label: 'Show cross-references', key: 'X', icon: 'target', run: () => setUi({ bottom: 'xrefs', panelOpen: true }) },
+        ...(nLines > 1 ? [{ label: `Copy ${nLines} selected lines`, key: 'Ctrl+C', icon: 'copy', run: copyLines }] satisfies MenuItem[] : []),
+        // Ctrl+C copies the line at the cursor (the line right-clicked) when no more than it is selected
+        nLines > 1 ? { label: 'Copy line', run: () => void copyText(lineText(l, S).trim()) } : { label: 'Copy line', key: 'Ctrl+C', icon: 'copy', run: () => void copyText(lineText(l, S).trim()) },
+        { label: `Copy address $${h4(l.a ?? cursor ?? 0)}`, run: () => void copyText('$' + h4(l.a ?? cursor ?? 0)) },
       ],
     });
   };

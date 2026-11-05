@@ -771,15 +771,27 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .pal-list { max-height: 50vh; overflow: auto; padding: 4px; }
 .pal-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: none; border-radius: 6px; cursor: pointer; text-align: left; color: var(--fg); }
 .pal-row.on { background: var(--sel); }
-.ctx { position: fixed; z-index: 60; min-width: 220px; padding: 4px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
-/* a submenu is fixed beside its item (ContextMenu places it), so a menu that scrolls does not clip it */
+.ctx { position: fixed; z-index: 60; min-width: 220px; padding: 4px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); user-select: none; }
+/* a submenu is fixed beside its item (ContextMenu places it), so a menu that scrolls does not clip it; each one deeper
+   lies over the one it opens from */
 .ctx.sub { position: fixed; z-index: 61; }
-.ctx-item.has-sub.open { background: var(--sel); }
-.ctx-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; padding: 5px 10px; border: 0; background: none; border-radius: 5px; color: var(--fg); cursor: pointer; text-align: left; font-size: 12.5px; position: relative; }
-.ctx-item:hover { background: var(--sel); }
+/* the mouse and the keys move one highlight ("hot"); the item whose submenu is open stays lit */
+.ctx-item { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 100%; padding: 5px 10px; border: 0; background: none; border-radius: 5px; color: var(--fg); cursor: default; text-align: left; font-size: 12.5px; line-height: 16px; position: relative; outline: none; }
+.ctx-item.hot, .ctx-item.has-sub.open { background: var(--sel); }
+.ctx-label { display: inline-flex; align-items: center; min-width: 0; }
+/* icons and ticks in a column of their own, so the names line up */
+.ctx-ico { display: inline-grid; place-items: center; flex: none; width: 16px; margin-right: 9px; color: var(--fg-3); }
+.ctx-item.hot .ctx-ico { color: var(--fg-2); }
+.ctx-item.checkable .ctx-ico { color: var(--accent); }
+/* the key that does the same outside the menu: quiet text at the right, as in a desktop menu */
+.ctx-item kbd { border: 0; background: none; padding: 0; font: 11px/16px var(--font-code); color: var(--fg-3); }
+.ctx-item.hot kbd { color: var(--fg-2); }
+.ctx-more { color: var(--fg-3); margin-right: -3px; }
+.ctx-item.hot .ctx-more, .ctx-item.open .ctx-more { color: var(--fg-2); }
 .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }
-.ctx-item.checkable > span:first-child { display: inline-flex; align-items: center; }
-.ctx-check { display: inline-grid; place-items: center; width: 14px; margin-right: 8px; color: var(--accent); }
+.ctx-head { padding: 6px 10px 3px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-3); }
+.ctx.has-gutter .ctx-head { padding-left: 35px; }
+.ctx-sep + .ctx-head { padding-top: 4px; }
 .toasts { position: fixed; right: 16px; bottom: 36px; z-index: 70; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; pointer-events: none; }
 .toast { display: flex; align-items: center; gap: 8px; max-width: min(440px, calc(100vw - 32px)); padding: 8px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); font-size: 12.5px; }
 .t-ok .icon { color: var(--ok); } .t-err .icon { color: var(--err); } .t-warn .icon { color: var(--warn); } .t-info .icon { color: var(--hint); }

@@ -181,7 +181,9 @@ packed file.
    code, bytes, words or text. A click on a byte in a data line picks just that byte (`←` / `→` step byte by byte,
    `Shift` selects): `S` splits the block there, `J` joins the bytes from it to the end of the block with the next
    block (`Shift+J`: the block's start up to it with the block before), and `L` sets the block's start, end or size.
-   Right-click for everything else. `Ctrl+Z` undoes, and `Ctrl+C` copies the selected lines as source.
+   Right-click for everything else: what you do most is at the top, the rest is grouped under *Block*, *Program* and
+   *Memory banking*, and the arrow keys work in the menu too. `Ctrl+Z` undoes, and `Ctrl+C` copies the selected lines
+   as source.
 4. **Verify** with `F7`. The status bar says whether the source assembles back to the original bytes.
 5. **Export** the Kick Assembler project with its build scripts (`Ctrl+E`, into the project's `source` folder), or
    **Build & Run** it in VICE (`F5`).

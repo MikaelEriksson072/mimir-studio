@@ -103,6 +103,13 @@ export async function fromFileMenu(page: Page, item: string): Promise<void> {
   await page.getByRole('menu').getByRole('menuitem', { name: item }).click();
 }
 
+/** A choice in a submenu of the open menu: each name but the last opens the submenu it names (pointed at, as a hand
+ *  would), and the last is clicked, e.g. `fromSubmenu(page, 'Block', 'Exclude block from the build')`. */
+export async function fromSubmenu(page: Page, ...path: string[]): Promise<void> {
+  for (const name of path.slice(0, -1)) await page.getByRole('menuitem', { name, exact: true }).hover();
+  await page.getByRole('menuitem', { name: path[path.length - 1] }).click();
+}
+
 /** the title and start folder of every stubbed dialog so far */
 export const dialogOptions = (app: ElectronApplication): Promise<{ title?: string; defaultPath?: string }[]> =>
   app.evaluate(() => ((globalThis as unknown as { dialogOptions?: { title?: string; defaultPath?: string }[] }).dialogOptions ?? []).map(o => ({ title: o.title, defaultPath: o.defaultPath })));
