@@ -4240,6 +4240,114 @@ test('the inspector folds into a strip at the right edge (Settings → General):
   });
 });
 
+test('the memory map zooms with the wheel around the pointer, a right-drag moves it and Whole map shows it all again', async ({ page }) => {
+  await waitForListing(page);
+  const insp = page.locator('.inspector');
+  const map = insp.getByRole('img', { name: /^Memory map/ });
+  const tip = insp.locator('.heat-tip b');
+  const whole = insp.getByRole('button', { name: 'Whole map' });
+  const box = (await map.boundingBox())!;
+  // whole pixels, as a mouse has them
+  const at = (fx: number, fy: number) => ({ x: Math.round(box.x + box.width * fx), y: Math.round(box.y + box.height * fy) });
+  /** the zoom and the first and last byte in view, as the map's label says them; null for the whole map */
+  const shown = async () => {
+    const m = /zoomed ×([\d.]+) on \$([0-9a-f]{4})–\$([0-9a-f]{4})$/.exec((await map.getAttribute('aria-label')) ?? '');
+    return m ? { z: +m[1], first: parseInt(m[2], 16), last: parseInt(m[3], 16) } : null;
+  };
+  // the view is a rectangle of pages and columns
+  const inView = (s: Awaited<ReturnType<typeof shown>>, a: number) => !!s && a >> 8 >= s.first >> 8 && a >> 8 <= s.last >> 8 && (a & 255) >= (s.first & 255) && (a & 255) <= (s.last & 255);
+  const axis = () => insp.locator('.heat-axis span').allTextContents();
+  const under = async (p: { x: number; y: number }) => { await page.mouse.move(p.x, p.y); return (await tip.textContent())!; };
+
+  await test.step('at first the whole map, $0800–$37ff with Zoom to the loaded pages, with four addresses down its side', async () => {
+    expect(await shown()).toBeNull();
+    expect(await axis()).toEqual(['$0800', '$1400', '$2000', '$2c00']);
+    await expect(whole).toBeHidden();
+  });
+
+  await test.step('the wheel zooms in around the pointer: the byte under it stays under it, and the inspector does not scroll', async () => {
+    const p = at(0.3, 0.12), a = await under(p);
+    const top = await page.locator('.insp-col').evaluate(e => e.scrollTop);
+    await page.mouse.wheel(0, -200);
+    await expect.poll(async () => (await shown())?.z ?? 1).toBeGreaterThan(1);
+    await expect(tip).toHaveText(a);
+    await expect(whole).toBeVisible();
+    await expect(insp.locator('.heat-zoom')).toContainText('×');
+    expect(await page.locator('.insp-col').evaluate(e => e.scrollTop)).toBe(top);
+    for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -300);
+    await expect.poll(async () => (await shown())?.z).toBe(32);
+    await expect(tip).toHaveText(a);
+    await expect(insp.locator('.heat-zoom')).toContainText('×32');
+    // close up each row has its address beside it, a page apart: the byte at the map's left edge
+    const rows = (await axis()).map(t => parseInt(t.slice(1), 16));
+    expect(rows.length).toBeGreaterThanOrEqual(6);
+    for (let i = 1; i < rows.length; i++) expect(rows[i] - rows[i - 1]).toBe(0x100);
+    expect(rows[0] & 255).toBe((await shown())!.first & 255);
+  });
+
+  await test.step('a right-drag moves the map with the pointer and does not jump', async () => {
+    const before = (await shown())!, p = at(0.5, 0.5), a = await under(p);
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move(p.x - 70, p.y - 40, { steps: 5 });
+    await page.mouse.up({ button: 'right' });
+    // the byte grabbed is under the pointer where it was let go: the map moved two or three bytes left and a row up
+    await expect(tip).toHaveText(a);
+    const after = (await shown())!;
+    expect((after.first & 255) - (before.first & 255)).toBeGreaterThanOrEqual(2);
+    expect((after.first >> 8) - (before.first >> 8)).toBeGreaterThanOrEqual(1);
+    await expect(statusBar(page)).toContainText('$0810 · start');
+    await expect(page.locator('.ctx')).toBeHidden();
+  });
+
+  await test.step('a right-click that does not drag jumps there, as before', async () => {
+    const p = at(0.4, 0.6), a = await under(p);
+    await page.mouse.click(p.x, p.y, { button: 'right' });
+    await expect(statusBar(page)).toContainText(a);
+    await expect(page.locator('.ctx')).toBeHidden();
+  });
+
+  await test.step('the left button still jumps with a click and selects with a drag', async () => {
+    const p = at(0.15, 0.3), q = at(0.7, 0.45), a = await under(p);
+    await page.mouse.click(p.x, p.y);
+    await expect(statusBar(page)).toContainText(a);
+    await page.mouse.down();
+    await page.mouse.move(q.x, q.y, { steps: 4 });
+    const b = (await tip.textContent())!;
+    await page.mouse.up();
+    await expect(statusBar(page)).toContainText(`sel ${a}–${b}`);
+  });
+
+  await test.step('zoomed in, the map follows the cursor when it moves out of view', async () => {
+    await goTo(page, 'charset_3000');
+    await expect.poll(async () => inView(await shown(), 0x3000)).toBe(true);
+    await goTo(page, 'start');
+    await expect.poll(async () => inView(await shown(), 0x0810)).toBe(true);
+    expect((await shown())!.z).toBe(32);
+  });
+
+  await test.step('Zoom to the loaded pages off and on keeps the zoom and what is in view', async () => {
+    const before = await shown(), fit = insp.getByLabel('Zoom to the loaded pages');
+    await fit.uncheck();
+    await expect.poll(shown).toEqual(before);
+    await fit.check();
+    await expect.poll(shown).toEqual(before);
+  });
+
+  await test.step('Whole map shows it all again, and so does the wheel turned back', async () => {
+    await whole.click();
+    await expect(whole).toBeHidden();
+    expect(await shown()).toBeNull();
+    const p = at(0.5, 0.5);
+    await page.mouse.move(p.x, p.y);
+    await page.mouse.wheel(0, -300);
+    await expect(whole).toBeVisible();
+    for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 300);
+    await expect(whole).toBeHidden();
+    expect(await shown()).toBeNull();
+    expect(await axis()).toEqual(['$0800', '$1400', '$2000', '$2c00']);
+  });
+});
+
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');

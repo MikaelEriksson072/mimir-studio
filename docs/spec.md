@@ -2301,7 +2301,7 @@ blir för lång.
 | Aktivitetsrad | Explorer, Blocks, Symbols, Bookmarks (med antal), Pack (med antal intervall), specifikation, kommandopalett. Knappen för vyn som visas fäller ihop sidopanelen; är den ihopfälld är ingen knapp vald, och en vys knapp visar panelen igen med den vyn |
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
-| Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
+| Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
 | Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Statistics, Build output |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, analystid, verifieringsstatus |
 
@@ -2326,6 +2326,17 @@ vara utfälld. Knappen i inspektorns rubrik byter läge direkt: *Fold in the ins
 nålen *Keep the inspector open* när den är utfälld. Kommandopaletten har *Show the inspector* (infälld) och kommandot
 som byter läge. Valet sparas per användare (`inspector` i `apps/desktop/src/store/ui.ts`). I ett smalt fönster är
 inspektorn som förut en låda som titelradens knapp öppnar, i båda lägena.
+
+**Zooma minneskartan:** mushjulet över inspektorns *Memory map* zoomar in och ut kring pekaren, så att byten under den
+står kvar under den, från hela kartan till åtta byte i bredd (×32); inspektorn rullar inte under tiden. Ett drag med
+höger musknapp flyttar den inzoomade kartan, och den följer pekaren. Varje rad är en sida även inzoomad, så raden visar
+färre byte, och de visar mer ju större de blir: linjer mellan byten och en mörkare där ett block börjar, sedan värdet i
+hex, och närmast etiketternas namn och en rad till under värdet: mnemonic där en instruktion börjar (Type), bitarna som
+pixlar (Bytes) och, under antalet referenser, värdet (Refs). Adresserna längs kanten blir en per rad när raderna är
+höga nog och säger adressen vid kartans vänsterkant. Vänsterknappen hoppar med ett klick och markerar med ett drag som
+förut, och ett högerklick utan drag hoppar dit som ett klick. *Zoom to the loaded pages* av eller på behåller zoomen och
+det som var i mitten, kartan följer markören när den flyttas utanför det som syns, och *Whole map* i kartans hörn, eller
+hjulet tillbaka, visar hela kartan igen. Geometrin står i `apps/desktop/src/lib/heatview.ts`.
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:

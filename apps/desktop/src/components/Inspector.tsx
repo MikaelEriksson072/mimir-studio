@@ -85,10 +85,10 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
         <div className="sec-head"><span>Memory map{B.number != null ? ` · bank ${B.number}` : ''}</span>
           <div className="seg" role="group" aria-label="Heatmap mode">{([['type', 'Type'], ['bytes', 'Bytes'], ['refs', 'Refs']] as const).map(([k, l]) => <button key={k} className={cx(heatMode === k && 'on')} aria-pressed={heatMode === k} onClick={() => setHeatMode(k)}>{l}</button>)}</div>
         </div>
-        <Heatmap A={B.A} mode={heatMode} cursor={B.cursor} sel={B.sel} onNavigate={a => onNavigate(B.base + a)} onSelect={(s, e) => onSelect(B.base + s, B.base + e)} colors={colors} fit={fit} />
+        <Heatmap A={B.A} mode={heatMode} cursor={B.cursor} sel={B.sel} onNavigate={a => onNavigate(B.base + a)} onSelect={(s, e) => onSelect(B.base + s, B.base + e)} colors={colors} fit={fit} labels={R.labels} base={B.base} />
         <ul className="legend compact">{GROUP_ORDER.filter(g => groups[g]).map(g => <li key={g}><i style={{ background: `var(--g-${g})` }} />{GROUP_LABEL[g]}</li>)}</ul>
         <label className="check small"><input id="heat-fit" type="checkbox" checked={fit} onChange={e => setUi({ heatFit: e.target.checked })} /> Zoom to the loaded pages (off shows all 64 KB)</label>
-        <p className="muted small">Click to jump, drag to select a range. Each row is one 256-byte page.</p>
+        <p className="muted small">Click to jump, drag to select a range. The wheel zooms in and out, a right-drag moves the map. Each row is one 256-byte page.</p>
       </section>
       {zpVar != null ? <ZpSection a={zpVar} A={A} R={R} project={project} onRename={onRename} onNote={onZpNote} onComment={onZpComment} onPair={onZpPair} onNavigate={onNavigate} /> : blk ? (
         <section className="insp-sec">
