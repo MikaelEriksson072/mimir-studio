@@ -62,6 +62,13 @@ const CHANGED_MS = 4000;
 const pickToolchain = (s: Settings): ToolchainSettings => Object.fromEntries(TOOLCHAIN_KEYS.map(k => [k, s[k]])) as ToolchainSettings;
 /** the source shown first and opened in the external editor: the first file's, or a cartridge's banks in one source */
 const mainSource = (R: RenderResult): string => R.main ?? `${R.fileNames[0] || 'main'}.asm`;
+/** `n` empty lines above `addr` (Project.blanks) in a draft of the project: 0 removes them, and the record once empty */
+function putBlanks(d: Project, addr: Addr, n: number): void {
+  if (!n && !d.blanks?.[addr]) return;
+  const b = d.blanks ?? (d.blanks = {});
+  if (n) b[addr] = n; else delete b[addr];
+  if (!Object.keys(b).length) delete d.blanks;
+}
 
 type Range = { start: Addr; end: Addr };
 /** The selection from its anchor (or `from` when there is none yet) to `r`; anchor and target both stay whole. */
@@ -1049,22 +1056,37 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   };
   const setComment = (addr: Addr, text: string) => update(`Comment at $${h4(addr)}`, d => { if (text) d.comments[addr] = text; else delete d.comments[addr]; });
   const setBlockComment = (addr: Addr, text: string) => { if ((project.blockComments[addr] || '') === text) return; update(`Block comment at $${h4(addr)}`, d => { if (text) d.blockComments[addr] = text; else delete d.blockComments[addr]; }); };
-  const setNote = (addr: Addr, text: string, block: boolean) => {
-    const old = project.notes[addr];
-    if (old ? old.text === text && !!old.block === block : !text) return;
-    update(text ? `Comment ${block ? 'block' : 'line'} above $${h4(addr)}` : `Remove comment above $${h4(addr)}`, d => { if (text) d.notes[addr] = block ? { text, block } : { text }; else delete d.notes[addr]; });
+  /** how many empty lines `addr` has above its comment and labels (Project.blanks), and under its comment (Note.below) */
+  const blanksAt = (addr: Addr) => ({ above: project.blanks?.[addr] ?? 0, under: project.notes[addr]?.below ?? 0 });
+  /** `at`: the comment goes onto the address's empty line number `at` (counted from the top, those above and under the
+   *  comment as one row): the empty lines before it stay above it, that one and the rest come under it. Without `at`
+   *  it stays where it is; removed, its empty lines stay, above the line */
+  const setNote = (addr: Addr, text: string, block: boolean, at?: number) => {
+    const old = project.notes[addr], { above, under } = blanksAt(addr), total = above + under;
+    const k = !text ? total : at == null ? above : Math.max(0, Math.min(total, at));
+    const same = !!old && old.text === text && !!old.block === block;
+    if (old ? same && k === above : !text) return;
+    const what = block ? 'comment block' : 'comment line';
+    update(!text ? `Remove comment above $${h4(addr)}` : same ? `Move ${what} above $${h4(addr)}` : `${block ? 'Comment block' : 'Comment line'} above $${h4(addr)}`, d => {
+      if (text) d.notes[addr] = { text, ...(block ? { block } : {}), ...(total > k ? { below: Math.min(MAX_BLANKS, total - k) } : {}) };
+      else delete d.notes[addr];
+      putBlanks(d, addr, Math.min(MAX_BLANKS, k));
+    });
   };
   // `at`: the line the context menu was opened on (its closures were made before the cursor moved there)
   // a picture's line: the character, sprite or cell at the cursor
   const lineAddr = (at?: Addr) => at ?? (curLine && curLine.a != null && curLine.k !== 'gfx' ? curLine.a : cursor);
-  /** `n` empty lines above `addr` (Project.blanks), above its comment lines and labels; 0 removes them */
-  const setBlanks = (addr: Addr, n: number) => {
-    const old = project.blanks?.[addr] ?? 0, k = Math.max(0, Math.min(MAX_BLANKS, n));
+  /** `n` empty lines above `addr` (Project.blanks), above its comment lines and labels; `under`: under its comment
+   *  (Note.below); 0 removes them */
+  const setBlanks = (addr: Addr, n: number, under = false) => {
+    if (under && !project.notes[addr]) return;
+    const old = blanksAt(addr)[under ? 'under' : 'above'], k = Math.max(0, Math.min(MAX_BLANKS, n));
     if (k === old) return;
-    update(k > old ? `Empty line above $${h4(addr)}` : `Remove ${old - k > 1 ? `${old - k} empty lines` : 'empty line'} above $${h4(addr)}`, d => {
-      const b = d.blanks ?? (d.blanks = {});
-      if (k) b[addr] = k; else delete b[addr];
-      if (!Object.keys(b).length) delete d.blanks;
+    const where = `${under ? 'under the comment ' : ''}above $${h4(addr)}`;
+    update(k > old ? `Empty line ${where}` : `Remove ${old - k > 1 ? `${old - k} empty lines` : 'empty line'} ${where}`, d => {
+      if (!under) putBlanks(d, addr, k);
+      else if (k) d.notes[addr].below = k;
+      else delete d.notes[addr].below;
     });
   };
   /** the line the empty line keys act on: the cursor line, not a zero-page variable's .label line in the file head */
@@ -1073,15 +1095,31 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     return lineAddr(at) ?? null;
   };
   /** Shift+Enter: an empty line above the cursor line */
-  const addBlank = (at?: Addr) => { const a = blankLine(at); if (a != null) setBlanks(a, (project.blanks?.[a] ?? 0) + 1); };
-  /** Shift+Backspace: one empty line less above the cursor line (one inserted above a byte inside it too) */
+  const addBlank = (at?: Addr) => { const a = blankLine(at); if (a != null) setBlanks(a, blanksAt(a).above + 1); };
+  /** Shift+Backspace: one empty line less above the cursor line (one inserted above a byte inside it too): one of those
+   *  above its comment first, where Shift+Enter puts them, then one under it */
   const removeBlank = (at?: Addr) => {
     const a = blankLine(at); if (a == null) return;
     const l = at == null ? curLine : null, n = l && l.k !== 'gfx' && 'n' in l ? Math.max(1, l.n) : 1;
-    let p = a; while (p < a + n - 1 && !project.blanks?.[p]) p++;
-    const have = project.blanks?.[p] ?? 0;
-    if (!have) { toast('There is no empty line above this line', 'info'); return; }
-    setBlanks(p, have - 1);
+    const has = (p: Addr) => blanksAt(p).above + blanksAt(p).under > 0;
+    let p = a; while (p < a + n - 1 && !has(p)) p++;
+    const { above, under } = blanksAt(p);
+    if (above) setBlanks(p, above - 1);
+    else if (under) setBlanks(p, under - 1, true);
+    else toast('There is no empty line above this line', 'info');
+  };
+  /** which of its address's empty lines (counted from the top) the user's empty line at `i` in the listing is */
+  const blankIndex = (l: ListingLine, i: number) => {
+    let n = 0;
+    for (let k = i - 1; k >= 0 && view.lines[k].a === l.a; k--) { const x = view.lines[k]; if (x.k === 'blank' && x.user) n++; }
+    return n;
+  };
+  /** a comment line or block written on one of the user's empty lines (`i` in the listing) goes there, between the
+   *  empty lines before it and the rest; the comment the address has already moves there, to be edited */
+  const startNoteOn = (block: boolean, l: ListingLine, i: number) => {
+    const old = project.notes[l.a]?.text ?? '';
+    setEditing({ kind: 'note', addr: l.a, value: block ? old : old.replace(/\s*\n\s*/g, ' '), block, blank: blankIndex(l, i), line: i });
+    setUi({ tab: 'listing' });
   };
   /** the program starts at `a`; null clears it: the analysis uses the detected start (BASIC SYS or the load
    * address) again and Build & Run autostarts the program with RUN */
@@ -1298,7 +1336,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       const what = editing.zp ? `Zero-page variable $${h2(editing.addr)}` : null;
       if (rename(editing.addr, v.trim())) { setEditing(null); toast(v.trim() ? `${what ? `${what} renamed` : 'Renamed'} to ${v.trim()}; all references updated` : `${what ?? 'Label'}: automatic name restored`, 'ok'); }
     }
-    else if (editing.kind === 'note') { setNote(editing.addr, editing.block ? v.replace(/^(\s*\n)+/, '').trimEnd() : v.trim(), !!editing.block); setEditing(null); }
+    else if (editing.kind === 'note') { setNote(editing.addr, editing.block ? v.replace(/^(\s*\n)+/, '').trimEnd() : v.trim(), !!editing.block, editing.blank); setEditing(null); }
     else { setComment(editing.addr, v.trim()); setEditing(null); }
     setTimeout(() => listRef.current?.focus(), 0);
   };
@@ -1935,8 +1973,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       return;
     }
     if (l.a == null) return;
-    // an empty line the user inserted: the cursor goes to the line under it
-    if (l.k === 'blank') { navigate(l.a, { noHistory: true }); listRef.current?.focus(); return; }
+    // an empty line the user inserted: the cursor goes to the line under it; a double-click writes a comment line on it
+    // (the address's comment moves there)
+    if (l.k === 'blank') {
+      navigate(l.a, { noHistory: true });
+      if (dbl && l.user) startNoteOn(!!project.notes[l.a]?.block, l, i); else listRef.current?.focus();
+      return;
+    }
     const n = 'n' in l ? l.n : 0;
     navigate(l.a, { noHistory: true });
     if (n > 0) setSel({ start: l.a, end: l.a + n, multi: false, anchor: l.a, anchorEnd: l.a + n });
@@ -1950,15 +1993,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const onToken = (t: Token) => { if (t.to != null && A.owner[t.to] >= 0) navigate(t.to, { center: true }); else if (t.sym) toast(`${t.sym.name}: ${t.sym.desc}`, 'info'); };
   const onContext = (e: ReactMouseEvent, l: ListingLine, cell?: Cell | null) => {
     e.preventDefault();
-    // an empty line the user inserted: remove it, or put in another
+    // an empty line the user inserted: write a comment on it (or move the address's comment there), remove it, or put in
+    // another next to it (above the comment or under it, as this one is)
     if (l.k === 'blank') {
       if (!l.user) return;
       navigate(l.a, { noHistory: true });
-      const n = project.blanks?.[l.a] ?? 0;
+      const i = view.lines.indexOf(l), under = !!l.under, n = blanksAt(l.a)[under ? 'under' : 'above'], note = project.notes[l.a];
+      // the comment goes between the empty lines before this one and the rest: it is there already when it is right above
+      const at = blankIndex(l, i), kind = note?.block ? 'block' : 'line', moves = !!note && at !== blanksAt(l.a).above;
       setMenu({ x: e.clientX, y: e.clientY, items: [
-        { label: 'Remove empty line', key: 'Shift+Backspace', run: () => setBlanks(l.a, n - 1) },
-        ...(n > 1 ? [{ label: `Remove all ${n} empty lines here`, run: () => setBlanks(l.a, 0) }] : []),
-        { label: 'Insert another empty line', key: 'Shift+Enter', run: () => setBlanks(l.a, n + 1) },
+        ...(note
+          ? [
+            ...(moves ? [{ label: `Move the comment ${kind} here`, icon: 'comment', run: () => setNote(l.a, note.text, !!note.block, at) }] satisfies MenuItem[] : []),
+            { label: moves ? `Move the comment ${kind} here and edit it…` : `Edit the comment ${kind}…`, ...(moves ? {} : { icon: 'comment' }), run: () => startNoteOn(!!note.block, l, i) },
+          ] satisfies MenuItem[]
+          : [
+            { label: 'Comment line here…', icon: 'comment', run: () => startNoteOn(false, l, i) },
+            { label: 'Comment block here…', run: () => startNoteOn(true, l, i) },
+          ] satisfies MenuItem[]),
+        { sep: true },
+        { label: 'Remove empty line', ...(under ? {} : { key: 'Shift+Backspace' }), run: () => setBlanks(l.a, n - 1, under) },
+        ...(n > 1 ? [{ label: `Remove all ${n} empty lines ${under ? 'under the comment' : 'here'}`, run: () => setBlanks(l.a, 0, under) }] : []),
+        { label: 'Insert another empty line', ...(under ? {} : { key: 'Shift+Enter' }), run: () => setBlanks(l.a, n + 1, under) },
       ] });
       return;
     }
@@ -2082,11 +2138,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           { label: 'Comment block…', key: '*', run: () => (zl ? startNote(true, undefined, zl) : startNote(true, l.a)) },
           // the file's head has no line of its own address: empty lines go in the code and data
           ...(zl || l.k === 'file' || ('head' in l && l.head) ? [] : ((): MenuItem[] => {
-            const n = project.blanks?.[l.a] ?? 0;
+            const { above, under } = blanksAt(l.a), n = above + under;
             return [
               { sep: true },
               { label: 'Empty line', key: 'Shift+Enter', run: () => addBlank(l.a) },
-              ...(n ? [{ label: n > 1 ? `Remove an empty line (${n} above)` : 'Remove the empty line', key: 'Shift+Backspace', run: () => setBlanks(l.a, n - 1) }] : []),
+              ...(n ? [{ label: n > 1 ? `Remove an empty line (${n} above)` : 'Remove the empty line', key: 'Shift+Backspace', run: () => removeBlank(l.a) }] : []),
             ];
           })()),
         ] },

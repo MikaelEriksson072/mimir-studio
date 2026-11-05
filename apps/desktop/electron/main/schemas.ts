@@ -8,10 +8,11 @@ const at = z.number().int().min(0).max(4096 * 0x10000);
 const record = z.record(z.string().regex(/^\d+$/), z.string());
 /** zero-page bytes joined into a 16-bit variable (true) or split from one (false), by the low byte's address */
 const zpPairs = z.record(z.string().regex(/^\d{1,3}$/), z.boolean());
+/** how many empty lines the user inserted above an address (or under its comment line or block: `below`) */
+const blankCount = z.number().int().min(1).max(MAX_BLANKS);
+const blanks = z.record(z.string().regex(/^\d+$/), blankCount);
 /** comment lines (`//`) and blocks the user inserted above an address */
-const notes = z.record(z.string().regex(/^\d+$/), z.object({ text: z.string().max(20000), block: z.boolean().optional() }));
-/** how many empty lines the user inserted above an address */
-const blanks = z.record(z.string().regex(/^\d+$/), z.number().int().min(1).max(MAX_BLANKS));
+const notes = z.record(z.string().regex(/^\d+$/), z.object({ text: z.string().max(20000), block: z.boolean().optional(), below: blankCount.optional() }));
 /** the user's bookmarks: a title, a note and a colour per address, and where the area of one on an area ends (not
  * written to the source). A colour this version does not know is left out: the bookmark is amber; so is an end that
  * is no address: the bookmark is on its line */

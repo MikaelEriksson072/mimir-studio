@@ -25,8 +25,9 @@ export interface ViewAt { addr: Addr; end: Addr; n: number; top?: number; lines?
 export interface Changed { start: Addr; end: Addr; label: string; at: number }
 /** inline edit popover: a label, a line's trailing comment, or a comment line / block (`block`) above a line */
 /** `zp`: the label is a zero-page variable; `line`: open the editor under this listing line (a `.label` line in the
- *  file head, which has no address of the label itself) */
-export interface Editing { kind: 'label' | 'comment' | 'note'; addr: Addr; value: string; block?: boolean; zp?: boolean; line?: number }
+ *  file head, which has no address of the label itself, or one of the user's empty lines); `blank`: a comment written
+ *  on one of the address's empty lines, which one (counted from the top) */
+export interface Editing { kind: 'label' | 'comment' | 'note'; addr: Addr; value: string; block?: boolean; zp?: boolean; line?: number; blank?: number }
 /** `end`: the address starts an area that ends there (a bookmark's), which the listing shows from its first line */
 export interface NavOptions { center?: boolean; listing?: boolean; noHistory?: boolean; keepSel?: boolean; fromSource?: boolean; end?: Addr }
 export type ToastKind = 'info' | 'ok' | 'warn' | 'err';

@@ -665,6 +665,20 @@ describe('empty lines the user inserted (blanks)', () => {
     expect(own.reduce((s, l) => s + (l as { n: number }).n, 0)).toBe(blk.end - blk.start);
   });
 
+  it('puts the empty lines under a comment between it and its line', () => {
+    const q = { ...base, blanks: { 0x0810: 1, 0x09c1: 2 }, notes: { 0x0810: { text: 'set up the raster IRQ', below: 2 }, 0x09c1: { text: 'curve', block: true, below: 1 } } };
+    const { R: Q, V: W } = roundTrip(q);
+    expect(W.ok, JSON.stringify(failure(W))).toBe(true);
+    const text = Q.files['raster-demo.asm'] as string;
+    expect(text).toMatch(/\S\n\n\/\/ set up the raster IRQ\n\n\nstart:\n/);
+    expect(text).toMatch(/\S\n\n\n\/\*\ncurve\n\*\/\n\n\s+\.byte/);
+    const ls = Q.fileLines['raster-demo.asm'].filter(l => l.k === 'blank' && l.user && l.a === 0x0810);
+    expect(ls.map(l => !!(l as { under?: boolean }).under)).toEqual([false, true, true]);
+    // a comment's empty lines are in a block shown as code too
+    const D = render(A0, q, { dataAsCode: true });
+    expect(D.lines.filter(l => l.k === 'blank' && l.user && l.under && l.a === 0x09c1)).toHaveLength(1);
+  });
+
   it('are kept in the project file, and none is written when there are none', () => {
     const q = { ...demoProject(), blanks: { 0x0810: 2 } };
     expect(deserializeProject(JSON.parse(JSON.stringify(serializeProject(q)))).blanks).toEqual({ 0x0810: 2 });

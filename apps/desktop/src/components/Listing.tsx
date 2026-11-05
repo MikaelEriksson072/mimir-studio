@@ -559,8 +559,8 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     // stripe goes on through them; an empty line the user inserted always is, so a right-click can remove it
     if (l.k === 'blank') {
       const s = stripe(i);
-      if (l.user) rows.push(<div key={i} className={cx('row k-blank user-blank', hit(l))} style={{ top: i * ROW }} title="An empty line you inserted (Shift+Enter): Shift+Backspace on the line under it, or a right-click here, removes it"
-        onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}><span className="gut" />{s}{offCell(null)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : ''}</span></div>);
+      if (l.user) rows.push(<div key={i} className={cx('row k-blank user-blank', hit(l))} style={{ top: i * ROW }} title="An empty line you inserted (Shift+Enter): double-click to write a comment line on it; Shift+Backspace on the line under it, or a right-click here, removes it"
+        onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l)}><span className="gut" />{s}{offCell(null)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : ''}</span></div>);
       else if (byLine || s) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{s}{offCell(null)}{byLine && <span className="adr lno">{lineNo[i]}</span>}</div>);
       continue;
     }
@@ -585,12 +585,13 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const i = editing.line ?? lineOf[editing.addr];
     if (i != null && i >= 0) {
       let j = i; while (editing.line == null && j > 0 && lines[j - 1].a === editing.addr && lines[j - 1].k === 'lbl') j--;
-      // a comment line or block goes above the labels: open the editor at its first line
-      // (a zero-page variable's comment lines carry its address in `zp`)
-      if (editing.kind === 'note') while (j > 0 && (editing.zp ? (lines[j - 1] as { zp?: Addr }).zp : lines[j - 1].a) === editing.addr && lines[j - 1].k === 'cmt' && (lines[j - 1] as { note?: boolean }).note) j--;
+      // a comment line or block goes above the labels (and the empty lines under it): open the editor at its first line
+      // (a zero-page variable's comment lines carry its address in `zp`); one written on an empty line opens there
+      const ofNote = (x: ListingLine) => (x.k === 'cmt' && x.note) || (x.k === 'blank' && x.under);
+      if (editing.kind === 'note' && editing.blank == null) while (j > 0 && (editing.zp ? (lines[j - 1] as { zp?: Addr }).zp : lines[j - 1].a) === editing.addr && ofNote(lines[j - 1])) j--;
       // under a picture, not over it
       const at = editing.kind === 'comment' ? i : j, under = lines[at]?.k === 'gfx' ? (lines[at] as { rows: number }).rows : 1;
-      pop = <EditPopover key={editing.kind + editing.addr + (editing.block ? 'b' : '')} top={at * ROW + under * ROW + 2} editing={editing} onCommit={onCommitEdit} onCancel={onCancelEdit} error={labelError} setError={setLabelError} />;
+      pop = <EditPopover key={editing.kind + editing.addr + (editing.block ? 'b' : '') + (editing.blank ?? '')} top={at * ROW + under * ROW + 2} editing={editing} onCommit={onCommitEdit} onCancel={onCancelEdit} error={labelError} setError={setLabelError} />;
     }
   }
   let chip = null;

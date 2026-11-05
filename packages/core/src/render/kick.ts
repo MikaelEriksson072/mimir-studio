@@ -93,7 +93,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   // empty lines the user inserted above an address: above its comment lines and labels, and data rows break there too
   const blanks = project.blanks || {};
   const blankAt = (a: Addr) => (blanks[a] ?? 0) > 0;
-  const blankLines = (a: Addr): Line[] => Array.from({ length: Math.min(MAX_BLANKS, blanks[a] ?? 0) }, (): Line => ({ k: 'blank', a, user: true }));
+  const blankLines = (a: Addr, n = blanks[a] ?? 0, under = false): Line[] => Array.from({ length: Math.min(MAX_BLANKS, n) }, (): Line => ({ k: 'blank', a, user: true, ...(under ? { under } : {}) }));
   // the loaders the analysis found: a comment line where each part starts, and where a longer one ends
   const loaderStarts = new Map<Addr, string[]>(), loaderEnds = new Map<Addr, string[]>();
   const markAt = (m: Map<Addr, string[]>, a: Addr, text: string) => { if (loaded(a)) m.set(a, [...(m.get(a) ?? []), text]); };
@@ -134,6 +134,8 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       { k: 'cmt', a, text: '*/', raw: true, ...tag },
     ];
   };
+  /** the user's comment line or block above an address, with the empty lines under it */
+  const noteLines = (a: Addr): Line[] => [...commentLines(a, notes[a].text, !!notes[a].block, true), ...blankLines(a, notes[a].below ?? 0, true)];
   const fileOf = (a: Addr) => A.owner[a];
   /** blocks the user saves to a file of their own: `data/<label>.bin`, loaded back with .import binary */
   const binaryStarts = new Set(project.binary || []);
@@ -559,7 +561,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       // the empty lines and comment lines on any byte of the instruction go above it (the sweep may not start one there)
       for (let q = p; q < p + (ins ? o.len : 1); q++) {
         if (blankAt(q)) out.push(...blankLines(q));
-        if (noteAt(q)) out.push(...commentLines(q, notes[q].text, !!notes[q].block, true));
+        if (noteAt(q)) out.push(...noteLines(q));
       }
       const lb = labelAt(p);
       if (lb) out.push({ k: 'lbl', a: p, name: lb.name });
@@ -650,7 +652,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       const put = (a: Addr) => {
         if (blankAt(a)) withNotes.push(...blankLines(a));
         for (const text of [...(loaderEnds.get(a) ?? []), ...(loaderStarts.get(a) ?? [])]) withNotes.push({ k: 'cmt', a, text, mark: true });
-        if (noteAt(a)) withNotes.push(...commentLines(a, notes[a].text, !!notes[a].block, true));
+        if (noteAt(a)) withNotes.push(...noteLines(a));
       };
       for (const l of body) {
         // a .pseudopc line holds the block's loaded bytes, but the lines inside it show them

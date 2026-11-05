@@ -308,7 +308,7 @@ test('insert empty lines, remove them and undo', async ({ page }) => {
   await test.step('a right-click on an empty line removes it; Shift+Backspace too, and Ctrl+Z brings it back', async () => {
     await goTo(page, 'start');
     await blanks.first().click({ button: 'right' });
-    await expect(page.getByRole('menuitem')).toHaveText(['Remove empty lineShift+Backspace', 'Remove all 2 empty lines here', 'Insert another empty lineShift+Enter']);
+    await expect(page.getByRole('menuitem')).toHaveText(['Comment line here…', 'Comment block here…', 'Remove empty lineShift+Backspace', 'Remove all 2 empty lines here', 'Insert another empty lineShift+Enter']);
     await page.getByRole('menuitem', { name: 'Remove empty line' }).click();
     await expect(blanks).toHaveCount(1);
     await page.keyboard.press('Shift+Backspace');
@@ -326,6 +326,36 @@ test('insert empty lines, remove them and undo', async ({ page }) => {
     await expect(blanks).toHaveCount(2);
     expect(await above(text, 1, adr)).toEqual(['']);
     await expect(listing(page).locator('.row.cur .adr')).toHaveText(adr);
+  });
+
+  await test.step('a comment line written on an empty line goes between the empty lines, moves, and leaves them when removed', async () => {
+    await goTo(page, 'start');
+    await page.keyboard.press('Shift+Enter');
+    expect(await above('start:', 2)).toEqual(['', '']);
+    // the empty lines above start: come first in the listing
+    await blanks.nth(1).dblclick();
+    const input = page.getByLabel('Comment line above $0810');
+    await input.fill('set up the raster IRQ');
+    await input.press('Enter');
+    await expect(input).toBeHidden();
+    expect(await above('start:', 3)).toEqual(['', '// set up the raster IRQ', '']);
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+    await page.keyboard.press('Control+j');
+    await goTo(page, 'start');
+    // the empty line above it: the comment moves onto it, and that one comes under it
+    await blanks.nth(0).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move the comment line here', exact: true }).click();
+    expect(await above('start:', 3)).toEqual(['// set up the raster IRQ', '', '']);
+    // emptied, the comment goes and its empty lines stay
+    await listing(page).locator('.row.k-cmt', { hasText: '// set up the raster IRQ' }).dblclick();
+    await page.getByLabel('Comment line above $0810').fill('');
+    await page.getByLabel('Comment line above $0810').press('Enter');
+    const left = await above('start:', 3);
+    expect(left.slice(1)).toEqual(['', '']);
+    expect(left[0]).not.toContain('raster IRQ');
+    await page.keyboard.press('Control+z');
+    expect(await above('start:', 3)).toEqual(['// set up the raster IRQ', '', '']);
   });
 });
 

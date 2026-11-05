@@ -125,8 +125,9 @@ export interface Settings {
 
 export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs'>;
 
-/** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment. */
-export interface Note { text: string; block?: boolean }
+/** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment.
+ *  `below`: empty lines between it and the line (the empty lines of Project.blanks go above it). */
+export interface Note { text: string; block?: boolean; below?: number }
 /** the most empty lines the user can insert above one address (Project.blanks) */
 export const MAX_BLANKS = 100;
 
@@ -713,8 +714,9 @@ export type Line =
    *  `mark`: a mark the analysis made (where a loader part starts or ends); `reloc`: where a relocated block ends when
    *  its .pseudopc was paused for one relocated from inside it, and not opened again */
   | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; mark?: boolean; head?: HeadPart; reloc?: 'close' }
-  /** `user`: one of the empty lines the user inserted above this address (Project.blanks) */
-  | { k: 'blank'; a: Addr; head?: HeadPart; user?: boolean };
+  /** `user`: one of the empty lines the user inserted above this address (Project.blanks); `under`: one of those under
+   *  its comment line or block (Note.below) */
+  | { k: 'blank'; a: Addr; head?: HeadPart; user?: boolean; under?: boolean };
 
 /** What a line of a file's head is (render): its title, a loader's or the excluded blocks' notes (`mark`), the
  *  hardware include, the hardware, zero-page and other files' names, other banks' names and the music. All banks in one

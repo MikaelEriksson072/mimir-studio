@@ -261,6 +261,10 @@ describe('schemas', () => {
     expect(serializedProjectSchema.parse(json).blanks).toBeUndefined();
     expect(projectSchema.safeParse(p).success).toBe(true);
     for (const n of [0, -1, 1.5, 101, '2']) expect(projectSchema.safeParse({ ...p, blanks: { 0x0810: n } }).success, String(n)).toBe(false);
+    // the empty lines under a comment line are kept with it
+    const q = { ...p, notes: { 0x0810: { text: 'set up', below: 2 } } };
+    expect(serializedProjectSchema.parse(JSON.parse(JSON.stringify(serializeProject(q)))).notes).toEqual({ 2064: { text: 'set up', below: 2 } });
+    for (const n of [0, 101]) expect(projectSchema.safeParse({ ...p, notes: { 0x0810: { text: 'set up', below: n } } }).success, String(n)).toBe(false);
   });
 
   it('keeps the snapshot a file was opened from, saving and reading the project', () => {
