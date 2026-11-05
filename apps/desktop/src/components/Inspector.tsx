@@ -2,7 +2,7 @@
  * was clicked: its name and comments), graphics/music/text preview. */
 import { useEffect, useMemo, useState } from 'react';
 import { textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, relocAt, relocLoadedAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
-import type { TypeGroup } from '@mimir/core';
+import type { MusicPlayer, TypeGroup } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -18,8 +18,9 @@ interface InspectorProps {
   onNavigate: (a: Addr) => void; onSelect: (s: Addr, e: Addr) => void;
   onMark: (id: string, range: { start: Addr; end: Addr }) => void; onRename: (a: Addr, name: string) => void;
   onBlockComment: (a: Addr, text: string) => void; onClearOverride: (b: Block) => void;
-  /** play the music block that starts at `start` in VICE */
+  /** play the music block that starts at `start`, in VICE or DeepSID as `musicPlayer` says (Settings → Toolchain) */
   onPlayMusic?: (start: Addr) => void;
+  musicPlayer?: MusicPlayer;
   onBankZone: (range: { start: Addr; end: Addr }, part: 'port' | 'vicBank', v: number | null) => void;
   onMerge: (dir: 'prev' | 'next', at: Addr) => void;
   /** open the Merge range dialog (start and type from this block) */
@@ -52,7 +53,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice' }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -152,7 +153,10 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
                 <dt>Export</dt><dd className="mono small">music/music_{h4(music.start)}.sid (PSID v2) via LoadSid</dd>
               </dl>
               {onPlayMusic && <div className="merge-row"><button className="btn small" onClick={() => onPlayMusic(blk.start)}
-                title="VICE plays the block's bytes (those the .sid holds): init with song $00, then play each frame from a raster interrupt. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before">Play in VICE</button></div>}
+                title={musicPlayer === 'deepsid'
+                  ? 'DeepSID, the online SID player, plays the .sid the export writes, in a window of its own: its Load SID sends the file to DeepSID\'s server. Settings → Toolchain picks VICE or DeepSID'
+                  : 'VICE plays the block\'s bytes (those the .sid holds): init with song $00, then play each frame from a raster interrupt. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before. Settings → Toolchain picks VICE or DeepSID'}>
+                Play in {musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE'}</button></div>}
             </>
           ) : textPreview ? <pre className="text-prev">{textPreview}</pre>
             : blk.type === 'code' ? <CodeSummary A={A} blk={blk} />

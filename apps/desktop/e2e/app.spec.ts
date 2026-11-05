@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Locator, Page } from '@playwright/test';
 import { expect, repoDir, test } from './fixtures';
 import { dialogOptions, fromFileMenu, fromSubmenu, goTo, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
@@ -3509,6 +3510,55 @@ test('a music block plays in VICE: from its right-click menu, the inspector and 
     seen.push(newest());
   });
   for (const d of new Set(seen)) rmSync(d, { recursive: true, force: true });
+});
+
+test('with DeepSID chosen in Settings, a music block plays there: its .sid goes to DeepSID\'s Load SID, in a window of its own', async ({ app, page }) => {
+  // a stand-in for DeepSID's page (fixtures/deepsid/index.html): its Load SID input and its list of songs, without the
+  // internet (the real page's input, handler and list are checked by hand; nothing is sent to DeepSID in the tests)
+  const standIn = pathToFileURL(join(repoDir, 'fixtures/deepsid/index.html')).href;
+  await app.evaluate((_e, url) => { process.env.MIMIR_DEEPSID_URL = url; }, standIn);
+  await waitForListing(page);
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, 'Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop')).toBeVisible();
+  await waitForListing(page);
+
+  await test.step('Settings → Toolchain picks DeepSID for music blocks (VICE until then)', async () => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('tab', { name: 'Toolchain' }).click();
+    const player = page.locator('#set-musicPlayer');
+    await expect(player).toHaveValue('vice');
+    await player.selectOption('deepsid');
+    await page.getByRole('button', { name: 'Save settings' }).click();
+  });
+
+  /** what DeepSID's window got: the file Load SID was given, and the row clicked */
+  const deepSid = () => app.evaluate(async ({ BrowserWindow }, url) => {
+    const w = BrowserWindow.getAllWindows().find(x => x.webContents.getURL() === url);
+    return w ? await w.webContents.executeJavaScript('({ received: window.received, played: window.played })') as { received: { name: string; magic: string; load: number; init: number; play: number; songs: number; title: string } | null; played: string | null } : null;
+  }, standIn);
+
+  await test.step('the right-click menu plays the block in DeepSID: the .sid the export writes, under a name of its own', async () => {
+    await listing(page).click();
+    await goTo(page, '1800');
+    await expect(statusBar(page)).toContainText('$1800 · Music (SID)');
+    await expect(headerRow(page, '1800')).toBeVisible();
+    await headerRow(page, '1800').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Play music in DeepSID ($1800)' }).click();
+    await expect(toast(page, /^DeepSID plays music_1800 \(\$1800-\$19cc\): the \.sid with init \$1800 and play \$1803, as music_1800-[0-9a-f]{6}\.sid$/)).toBeVisible({ timeout: 30_000 });
+    const got = await deepSid();
+    expect(got?.received).toMatchObject({ magic: 'PSID', load: 0x1800, init: 0x1800, play: 0x1803, songs: 1, title: 'mimir-showcase 1800' });
+    expect(got?.received?.name).toMatch(/^music_1800-[0-9a-f]{6}\.sid$/);
+    expect(got?.played).toBe(got?.received?.name);
+  });
+
+  await test.step('the inspector\'s button says DeepSID and plays it in the same window', async () => {
+    await page.locator('aside.insp-col').getByRole('button', { name: 'Play in DeepSID' }).click();
+    await expect(toast(page, /^DeepSID plays music_1800/)).toHaveCount(2, { timeout: 30_000 });
+    expect(await app.evaluate(({ BrowserWindow }, url) => BrowserWindow.getAllWindows().filter(w => w.webContents.getURL() === url).length, standIn)).toBe(1);
+  });
+
+  // the .sid files given to DeepSID, kept in build folders of their own
+  for (const d of readdirSync(tmpdir()).filter(x => x.startsWith('mimir-deepsid-'))) rmSync(join(tmpdir(), d), { recursive: true, force: true });
 });
 
 test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctrl+Z goes back; the newest are kept, named, saved and made favourites', async ({ workDir: work, app, page }) => {

@@ -83,6 +83,7 @@ export const toolchainSettingsSchema = z.object({
   viceQuicksave: z.string().max(1024),
   editorPath: z.string().max(1024),
   editorArgs: z.string().max(1024),
+  musicPlayer: z.enum(['vice', 'deepsid']),
 });
 
 export const settingsSchema = toolchainSettingsSchema.partial().extend({
@@ -213,6 +214,12 @@ export const packSchema = z.object({ files: z.array(z.object({ name: fileName, p
 /** the folder for the packed file: `dir` is kept if this session may write there, else a dialog asks (always with `ask`) */
 export const packFolderSchema = z.object({ dir: z.string().min(1).max(1024).optional(), ask: z.boolean().optional() }).strict();
 /** a file to save with a dialog (the packed PRG, graphics, .byte source): its suggested name and bytes */
+/** a music block's .sid for DeepSID: a plain file name (DeepSID keeps it under that name) and a PSID/RSID file */
+export const deepSidPlaySchema = z.object({
+  name: z.string().regex(/^[A-Za-z0-9_.-]{1,60}\.sid$/, 'not a plain .sid file name'),
+  sid: z.instanceof(Uint8Array).refine(b => b.length > 0x7c && b.length <= 0x10000 + 0x7e && (b[0] === 0x50 || b[0] === 0x52) && b[1] === 0x53 && b[2] === 0x49 && b[3] === 0x44, 'not a PSID or RSID file'),
+});
+
 export const fileSaveSchema = z.object({ name: fileName, bytes: z.instanceof(Uint8Array).refine(b => b.length > 0 && b.length <= 4 * 1024 * 1024, 'empty or larger than 4 MB'), title: z.string().max(200).optional() });
 /** VICE's quicksave snapshot: `zeroPage` opens it from $0002 */
 export const quicksaveSchema = z.object({ zeroPage: z.boolean().optional() }).strict().default({});

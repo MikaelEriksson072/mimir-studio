@@ -39,6 +39,7 @@ export const CHANNELS = {
   viceQuicksaveSave: 'vice:quicksave-save',
   viceQuicksaveFavourite: 'vice:quicksave-favourite',
   viceCharRom: 'vice:chargen',
+  deepSidPlay: 'deepsid:play',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   /** main -> renderer */
@@ -220,6 +221,15 @@ export interface PackResponse {
 export interface FileSaveRequest { name: string; bytes: Uint8Array; title?: string }
 export interface FileSaveResult { path: string }
 
+/**
+ * A music block's .sid in DeepSID, the online SID player, in a window of its own: the file goes to DeepSID's Load
+ * SID (its temporary emulator testing, which keeps it on DeepSID's server under `name`) and starts playing. `path`:
+ * the file, also written to a build folder; `played`: DeepSID took it and started it (else `problem` says where it
+ * stopped, and the window stays open for Load SID by hand).
+ */
+export interface DeepSidPlayRequest { name: string; sid: Uint8Array }
+export interface DeepSidPlayResult { played: boolean; path: string; url: string; problem?: string }
+
 /** VICE binary monitor (milestone M3); the channels exist so the contract is complete. */
 export interface ViceAttachRequest { host?: string; port?: number }
 export interface ViceCommandRequest { command: string }
@@ -281,6 +291,8 @@ export interface KrApi {
   /** the folder for the packed file, allowed for this session; null: the dialog was cancelled */
   packFolder(req: PackFolderRequest): Promise<PackFolderResult | null>;
   saveFile(req: FileSaveRequest): Promise<FileSaveResult | null>;
+  /** a music block's .sid playing in DeepSID, in a window of its own */
+  playInDeepSid(req: DeepSidPlayRequest): Promise<DeepSidPlayResult>;
   viceAttach(req?: ViceAttachRequest): Promise<ViceResult>;
   viceCommand(req: ViceCommandRequest): Promise<ViceResult>;
   getSettings(): Promise<ToolchainSettings>;

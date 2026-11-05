@@ -82,6 +82,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // the external editor for the export (empty: the first found of Sublime Text and Visual Studio Code); {dir} the
   // export's folder, {file} its first .asm file
   editorPath: '', editorArgs: '{dir} {file}',
+  // a music block plays in VICE, or in DeepSID (online)
+  musicPlayer: 'vice',
 };
 
-export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs'] as const;
+export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer'] as const;

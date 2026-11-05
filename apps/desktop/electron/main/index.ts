@@ -3,6 +3,7 @@ import { app, BrowserWindow, Menu, session, shell, type MenuItemConstructorOptio
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CHANNELS } from '../../shared/ipc';
+import { closeDeepSid } from './deepsid';
 import { bringOldSettings } from './migrate';
 import { registerIpc } from './ipc';
 import { PathPolicy } from './paths';
@@ -43,6 +44,8 @@ function createWindow(): BrowserWindow {
     win.webContents.on('preload-error', (_e, path, error) => console.log(`[preload error] ${path}: ${error.message}`));
     win.webContents.on('did-finish-load', () => console.log('[renderer] loaded'));
   }
+  // DeepSID's window (deepsid.ts) goes with the app's
+  win.on('closed', () => closeDeepSid());
   if (devUrl) void win.loadURL(devUrl);
   else void win.loadFile(rendererFile);
   return win;
@@ -63,14 +66,16 @@ app.whenReady().then(() => {
   // the app's own page may write to the clipboard ("Copy file", "Copy command"); everything else
   // (camera, notifications, geolocation …) is denied
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => callback(permission === 'clipboard-sanitized-write' && isTrustedUrl(wc.getURL())));
+  // the app's own windows (not DeepSID's)
+  const appWindows = () => BrowserWindow.getAllWindows().filter(w => isTrustedUrl(w.webContents.getURL()));
   const watcher = new ExportWatcher(path => {
-    for (const w of BrowserWindow.getAllWindows()) w.webContents.send(CHANNELS.fsChanged, { path });
+    for (const w of appWindows()) w.webContents.send(CHANNELS.fsChanged, { path });
   });
   // a new quicksave from VICE (Alt+F11) joins the kept ones, then goes to every window, which opens it
   const history = new QuicksaveHistory(join(app.getPath('userData'), 'quicksaves'));
   const quicksave = new QuicksaveWatcher(e => {
     void history.add(e.path, e.saved).catch(() => null).then(() => {
-      for (const w of BrowserWindow.getAllWindows()) w.webContents.send(CHANNELS.viceQuicksaved, e);
+      for (const w of appWindows()) w.webContents.send(CHANNELS.viceQuicksaved, e);
     });
   });
   const projects = new ProjectStore(app.getPath('userData'), app.getPath('documents'));

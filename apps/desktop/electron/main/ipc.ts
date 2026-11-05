@@ -17,11 +17,12 @@ import { buildWithKickAssembler, c64Roms, currentEditor, identifyWithTool, keepP
 import { viceAttach, viceCommand } from './vice-monitor';
 import { quicksaveFileName, quicksaveFiles, quicksaveInfo, readQuicksave, type QuicksaveHistory, type QuicksaveWatcher } from './quicksave';
 import { charRomFiles, readCharRom } from './chargen';
+import { playInDeepSid } from './deepsid';
 import { openC64File } from '@mimir/core';
 import { findEditors } from '@mimir/core/node';
 import { openedPrg } from './project-fs';
 import {
-  buildSchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
+  buildSchema, deepSidPlaySchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
 } from './schemas';
 
@@ -277,6 +278,7 @@ export function registerIpc(deps: IpcDeps): void {
   });
   // the ROM comes from the VICE in the settings, never from a path the renderer gives
   handle(CHANNELS.viceCharRom, z.undefined().or(z.object({}).strict()), () => readCharRom(charRomFiles(settings.get().vicePath)));
+  handle(CHANNELS.deepSidPlay, deepSidPlaySchema, req => playInDeepSid(req));
   handle(CHANNELS.settingsGet, z.undefined().or(z.object({}).strict()), () => settings.get());
   handle(CHANNELS.settingsSet, toolchainSettingsSchema.partial(), req => {
     const next = settings.set(req);

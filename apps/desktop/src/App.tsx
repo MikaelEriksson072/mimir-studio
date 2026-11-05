@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, decode, zpPairable,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -1253,8 +1253,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       if (r) toast(`Patch "${p.name}" saved to ${r.path} (loads at $${h4(p.start)})`, 'ok');
     } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
+  /** where music blocks play (Settings → Toolchain) */
+  const musicPlayerName = toolchain.musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE';
   /** The music block at `at` in VICE: a PRG of its bytes (those the export's .sid holds) with a driver that puts them
-   *  where they run, calls init with the song in A and play each frame from a raster interrupt (c64/sidplayer.ts) */
+   *  where they run, calls init with the song in A and play each frame from a raster interrupt (c64/sidplayer.ts); or
+   *  in DeepSID, the online player, as the .sid the export writes (electron/main/deepsid.ts) */
   const playMusic = async (at: Addr | null | undefined) => {
     if (!kr) return needDesktop();
     const b = at != null ? findBlock(A.blocks, at) : null;
@@ -1262,6 +1265,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const m = A.music.find(x => x.start === b.start);
     const load = spaceAddr(b.start), init = spaceAddr(m?.init ?? b.props.init ?? b.start), play = spaceAddr(m?.play ?? b.props.play ?? b.start + 3);
     const name = R.labels.get(b.start)?.name ?? `music_${h4(load)}`, span = `$${h4(load)}-$${h4(load + b.end - b.start - 1)}`;
+    if (toolchain.musicPlayer === 'deepsid') {
+      try {
+        const sid = makePsid(A.mem.slice(b.start, b.end), load, init, play, `${project.name || 'music'} ${h4(load)}`);
+        // DeepSID keeps the file under its name with everyone's: the bytes' hash keeps it apart from other tunes
+        let hash = 0x811c9dc5;
+        for (const v of sid) hash = Math.imul(hash ^ v, 0x01000193) >>> 0;
+        const file = `${name.slice(0, 40)}-${hash.toString(16).padStart(8, '0').slice(0, 6)}.sid`;
+        toast(`Opening ${name} (${span}) in DeepSID…`, 'info');
+        const r = await kr.playInDeepSid({ name: file, sid });
+        if (r.played) toast(`DeepSID plays ${name} (${span}): the .sid with init $${h4(init)} and play $${h4(play)}, as ${file}`, 'ok');
+        else toast(`DeepSID did not start ${name}: ${r.problem}. Its window ${/did not open/.test(r.problem ?? '') ? 'is' : 'stays'} open: press L there (Load SID) and choose ${r.path}`, 'warn');
+      } catch (e) { toast(`Could not play ${name} in DeepSID: ${errorText(e)}`, 'err'); }
+      return;
+    }
     try {
       const file0 = project.files[A.owner[b.start]]?.name;
       const p = sidPlayer({ data: A.mem.slice(b.start, b.end), load, init, play, title: file0 ? `${name} IN ${file0}` : name });
@@ -1822,7 +1839,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     ]),
     ...A.blocks.filter(b => b.type === 'music').map(b => {
       const name = R.labels.get(b.start)?.name;
-      return { id: `play-music-${b.start}`, label: `Play music ${name ? `${name} ` : ''}($${h4(spaceAddr(b.start))}-$${h4(spaceAddr(b.end - 1))}) in VICE`, run: () => void playMusic(b.start) };
+      return { id: `play-music-${b.start}`, label: `Play music ${name ? `${name} ` : ''}($${h4(spaceAddr(b.start))}-$${h4(spaceAddr(b.end - 1))}) in ${musicPlayerName}`, run: () => void playMusic(b.start) };
     }),
     { id: 'entry', label: 'Add entry point at cursor', key: 'E', run: addEntry },
     { id: 'start', label: 'Set the program start to the cursor line', run: () => { const a = lineAddr(); if (a != null) setStart(a); } },
@@ -2117,7 +2134,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     // acts on (the block, the program, the memory banking), and the cross-references and copies come last.
     setMenu({
       x: e.clientX, y: e.clientY, items: [
-        ...(b?.type === 'music' ? [{ label: `Play music in VICE (${R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`})`, icon: 'play', run: () => void playMusic(b.start) }] satisfies MenuItem[] : []),
+        ...(b?.type === 'music' ? [{ label: `Play music in ${musicPlayerName} (${R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`})`, icon: 'play', run: () => void playMusic(b.start) }] satisfies MenuItem[] : []),
         ...(p ? [{ label: `Patch "${p.name}"`, icon: 'code', children: [
           { label: 'Edit patch…', key: 'P', run: () => editPatch(p) },
           { label: p.off ? 'Switch on' : 'Switch off (the original bytes come back)', run: () => switchOnePatch(p, !!p.off) },
@@ -2430,7 +2447,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpPair={pairZp} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>

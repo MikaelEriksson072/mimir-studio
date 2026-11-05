@@ -34,6 +34,7 @@ const api: KrApi = {
   pack: req => invoke(CHANNELS.toolchainPack, req),
   packFolder: req => invoke(CHANNELS.packFolder, req),
   saveFile: req => invoke(CHANNELS.fileSave, req),
+  playInDeepSid: req => invoke(CHANNELS.deepSidPlay, req),
   viceAttach: req => invoke(CHANNELS.viceAttach, req ?? {}),
   viceCommand: req => invoke(CHANNELS.viceCommand, req),
   openQuicksave: req => invoke(CHANNELS.viceQuicksave, req ?? {}),

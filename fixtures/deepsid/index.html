@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- A stand-in for DeepSID (deepsid.chordian.net) in the e2e tests: its Load SID input (#upload-test) and its list of
+     songs (#songs), as DeepSID has them. A file put in the input is listed a moment later (DeepSID sends it to its
+     server first), as a row whose .entry.file has the file name in data-name; a click on the row plays it. What came
+     and what was played are kept in window.received and window.played. -->
+<html>
+<head><meta charset="utf-8"><title>DeepSID stand-in</title></head>
+<body>
+  <input id="upload-test" type="file" accept=".sid" style="display:none;" multiple required />
+  <div id="songs"><table></table></div>
+  <script>
+    window.received = null;
+    window.played = null;
+    document.getElementById('upload-test').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      const b = new Uint8Array(await file.arrayBuffer());
+      const be = o => (b[o] << 8) | b[o + 1];
+      const off = be(6);
+      window.received = {
+        name: file.name, size: b.length, magic: String.fromCharCode(b[0], b[1], b[2], b[3]),
+        load: be(8) || (b[off] | (b[off + 1] << 8)), init: be(0x0a), play: be(0x0c), songs: be(0x0e),
+        title: String.fromCharCode(...b.subarray(0x16, 0x36)).replace(/\0.*$/, ''),
+      };
+      setTimeout(() => {
+        document.querySelector('#songs table').innerHTML =
+          '<tr><td class="sid temp"><div class="block-wrap"><div class="block"><div class="entry name file" data-name="' +
+          encodeURIComponent(file.name) + '" data-type="PSID">' + file.name + '</div></div></div></td><td></td></tr>';
+      }, 300);
+    });
+    document.getElementById('songs').addEventListener('click', e => {
+      const row = e.target.closest('tr');
+      if (row) window.played = row.querySelector('.entry').getAttribute('data-name');
+    });
+  </script>
+</body>
+</html>

@@ -121,9 +121,14 @@ export interface Settings {
    * argument template: {dir} the export's folder, {file} its first .asm file */
   editorPath: string;
   editorArgs: string;
+  /** where a music block plays: in VICE (a PRG with a driver that calls init and play) or in DeepSID, the online SID
+   *  player (deepsid.chordian.net), as the .sid the export writes */
+  musicPlayer: MusicPlayer;
 }
 
-export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs'>;
+export type MusicPlayer = 'vice' | 'deepsid';
+
+export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer'>;
 
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment.
  *  `below`: empty lines between it and the line (the empty lines of Project.blanks go above it). */

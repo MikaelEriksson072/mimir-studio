@@ -4,14 +4,14 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, createProject, DEFAULT_PACK, demoProject, packWithBrokkr as packWithBrokkrCore, deserializeProject, LEGACY_PROJECT_FORMAT, makeD64, render, serializeProject, type SerializedProject, type ToolchainSettings } from '@mimir/core';
+import { analyze, createProject, DEFAULT_PACK, demoProject, packWithBrokkr as packWithBrokkrCore, deserializeProject, LEGACY_PROJECT_FORMAT, makeD64, makePsid, render, serializeProject, type SerializedProject, type ToolchainSettings } from '@mimir/core';
 import { findKickAssJar, writeVfs } from '@mimir/core/node';
 import { CHANNELS } from '../shared/ipc';
 import { assertEntryName, PathPolicy } from '../electron/main/paths';
 import { bringOldSettings } from '../electron/main/migrate';
 import { RecentFolders } from '../electron/main/recent';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema } from '../electron/main/schemas';
+import { deepSidPlaySchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema } from '../electron/main/schemas';
 import { buildWithKickAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
@@ -20,11 +20,11 @@ import { createProjectFolder, gatherWork, homeOf, isOwnTemp, nearestFolder, Proj
 import { projectNameOf, projectNameProblem } from '../shared/projects';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
-const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', ...patch });
+const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play'].sort());
   });
 });
 
@@ -55,6 +55,17 @@ describe('SettingsStore', () => {
     expect(new SettingsStore(dir, () => toolchain()).get()).toMatchObject({ kickJar: 'C:\\C64\\KickAss.jar', outDir: 'build' });
     expect(() => s.set({ outDir: '../escape' })).toThrow();
     expect(s.get().outDir).toBe('build');
+  });
+
+  it('plays music blocks in VICE, or in DeepSID when that is set; a settings file from before keeps VICE', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ javaPath: 'java', outDir: 'out' }));
+    const s = new SettingsStore(dir, () => toolchain());
+    expect(s.get().musicPlayer).toBe('vice');
+    s.set({ musicPlayer: 'deepsid' });
+    expect(new SettingsStore(dir, () => toolchain()).get().musicPlayer).toBe('deepsid');
+    expect(() => s.set({ musicPlayer: 'sidplay' as never })).toThrow();
+    expect(s.get().musicPlayer).toBe('deepsid');
   });
 
   it('ignores an unreadable settings file', () => {
@@ -413,6 +424,17 @@ describe('schemas', () => {
     expect(packSchema.safeParse({ files: [{ name: 'a.prg', prg: Uint8Array.of(1) }], prefs: DEFAULT_PACK }).success).toBe(false);
     expect(fileSaveSchema.safeParse({ name: 'game-exo.prg', bytes: Uint8Array.of(1, 8, 0) }).success).toBe(true);
     expect(fileSaveSchema.safeParse({ name: 'game-exo.prg', bytes: new Uint8Array(0) }).success).toBe(false);
+  });
+
+  it('sends DeepSID a PSID or RSID file under a plain .sid name', () => {
+    const sid = makePsid(Uint8Array.of(0x4c, 0x00, 0x10, 0x60), 0x1000, 0x1000, 0x1003, 'demo 1000');
+    expect(deepSidPlaySchema.safeParse({ name: 'music_1000-1a2b3c.sid', sid }).success).toBe(true);
+    const rsid = sid.slice(); rsid[0] = 0x52;
+    expect(deepSidPlaySchema.safeParse({ name: 'music_1000-1a2b3c.sid', sid: rsid }).success).toBe(true);
+    for (const name of ['../music.sid', 'music.prg', 'a b.sid', 'C:\\x.sid', `${'x'.repeat(61)}.sid`, '.sid'])
+      expect(deepSidPlaySchema.safeParse({ name, sid }).success, name).toBe(false);
+    // a PRG is not a .sid
+    expect(deepSidPlaySchema.safeParse({ name: 'music.sid', sid: new Uint8Array(0x200).fill(1) }).success).toBe(false);
   });
 
   it('accepts the format of the notes document, and older settings without it', () => {

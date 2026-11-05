@@ -28,7 +28,7 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
   const set = <K extends Key>(k: K, v: Settings[K]) => setS(o => ({ ...o, [k]: v }));
   const txt = (k: Key, label: string, help?: string) => <label className="field"><span>{label}</span><input id={`set-${k}`} className="mono" value={String(s[k])} onChange={e => set(k, e.target.value as never)} spellCheck={false} />{help && <small className="muted">{help}</small>}</label>;
   const chk = (k: Key, label: string, help?: string) => <label className="check"><input id={`set-${k}`} type="checkbox" checked={!!s[k]} onChange={e => set(k, e.target.checked as never)} /><span>{label}{help && <small className="muted"> — {help}</small>}</span></label>;
-  const sel = (k: Key, label: string, opts: [string | number, string][]) => <label className="field"><span>{label}</span><select id={`set-${k}`} value={String(s[k])} onChange={e => set(k, (isNaN(+e.target.value) ? e.target.value : +e.target.value) as never)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>;
+  const sel = (k: Key, label: string, opts: [string | number, string][], help?: string) => <label className="field"><span>{label}</span><select id={`set-${k}`} value={String(s[k])} onChange={e => set(k, (isNaN(+e.target.value) ? e.target.value : +e.target.value) as never)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>{help && <small className="muted">{help}</small>}</label>;
   return (
     <Modal title="Settings" onClose={onClose} wide>
       <div className="seg wide" role="tablist">{([['toolchain', 'Toolchain'], ['analysis', 'Analysis'], ['output', 'Kick Assembler output'], ['general', 'General']] as const).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{l}</button>)}</div>
@@ -39,6 +39,8 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
           {txt('kickArgs', 'Extra Kick Assembler arguments', '-vicesymbols writes a VICE label file next to the PRG.')}
           {txt('vicePath', 'VICE emulator (x64sc)')}
           {txt('viceArgs', 'Extra VICE arguments')}
+          {sel('musicPlayer', 'Play music blocks in', [['vice', 'VICE: a PRG with a player that calls init and play'], ['deepsid', 'DeepSID (deepsid.chordian.net): the .sid file, online']],
+            'Play music (the block\'s right-click menu, the inspector, the command palette) plays the block here. VICE: keys 1-9 and 0 start songs $00-$09, + and - the next and the one before, the border shows the raster time of play. DeepSID: a window of its own opens with DeepSID, and the .sid the export writes goes to its Load SID, which sends the file to DeepSID\'s server (it keeps it there to play it) and plays it with DeepSID\'s emulator; needs the internet.')}
           {txt('viceQuicksave', 'VICE quicksave snapshot', 'Empty: C64SC.vsf (x64sc) or C64.vsf (x64) in VICE\'s settings folder (%APPDATA%\\vice), where Snapshot → Quicksave snapshot (Alt+F11) writes it. F9 opens the newest, and the Explorer can open each new one by itself.')}
           {txt('outDir', 'Output folder')}
           {txt('unpackerPath', 'External unpacker (optional)', 'Empty: Sindri, the built-in unpacker, unpacks packed (crunched) PRGs. It runs the program in an emulated C64, with the ROMs of the VICE above (or of another VICE it finds), and reports each layer it peels off. An external unpacker such as unp64 runs instead, on a copy of the PRG in a folder of its own.')}
