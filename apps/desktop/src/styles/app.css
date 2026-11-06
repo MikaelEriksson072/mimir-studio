@@ -972,6 +972,9 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .pack-result.ok .pack-result-head .icon { color: var(--ok); }
 .pack-result.bad .pack-result-head .icon { color: var(--err); }
 .pack-layout { border-collapse: collapse; color: var(--fg-2); }
+/* format auto: what each format made, the one taken in the text colour */
+.pack-tried { list-style: none; margin: 2px 0; padding: 0; }
+.pack-tried li.on { color: var(--fg); }
 /* the files a pack wrote: crunched data for each part, the decruncher next to it */
 .pack-out { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .pack-out li { min-width: 0; }

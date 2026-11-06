@@ -2271,6 +2271,15 @@ medianprogrammet, 0,4 som bäst). Den blinkar inte med kanten (effekten döljs).
 uppackaren för egen kod skrivs med `brokkr decruncher --format fast`. Ett första försök med bitar i ZX0:s stil blev bara
 1,27 gånger så snabbt och lämnades.
 
+*Auto — the smallest* (`PackFormat` `'auto'`, bara för *Self-extracting*) packar i alla tre formaten och behåller den
+minsta filen; med *At most, seconds to decrunch* (`PackPrefs.maxSeconds`, uppackningstid på en PAL-C64; tomt: vilken
+tid som helst) den minsta av dem som packas upp inom den tiden, och hinner inget det den snabbaste, med en notis. Kommandot
+får `--format auto` och `--max-seconds`, och kortet räknar upp vad varje format gav (storlek och tid) och vilket som togs.
+För *Crunched data* finns inte *Auto*: där packas det i Exomizers format, eftersom uppackaren hör till ett format. En fil
+som tar mer än 10 s att packa upp får en notis. Uppmätt på korpusen (154 program, mest demos och spel på 20–60 KB)
+packas Exomizers format upp på 3,3 s (median; högst 6,9 s), Brokkrs eget på 28 s (upp till två minuter) och det snabba
+på 1,6 s; *Auto* utan tidsgräns blir 3,7 % mindre än Exomizers format, med 10 s ungefär lika stor.
+
 - *Decruncher's memory* (Brokkr, *Self-extracting*; för *Crunched data*, se nedan): var uppackaren arbetar medan den packar upp. *Decruncher at*,
   *Tables at* och *Zero page at* (`PackPrefs.decruncherAt`, `tablesAt`, `zp`) är menyer: *Auto* (där Brokkr hittar
   plats), platser som passar (`MEMORY_PLACES`: stackens sida, bandbufferten, BASIC:s inmatningsbuffert, fritt RAM vid

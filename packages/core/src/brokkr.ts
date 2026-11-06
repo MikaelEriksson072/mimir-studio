@@ -6,7 +6,7 @@
  * line of the standalone Brokkr that makes the same file.
  * ===================================================================== */
 import {
-  BrokkrError, CheckError, checkDecruncher, crunchBrk, crunchData, crunchFast, decruncherFile, decruncherNeeds, memBrkFile, memCrunchOptions, memFastFile, memFile, sfxAsync, T,
+  BrokkrError, CheckError, checkDecruncher, crunchBrk, crunchData, crunchFast, decruncherFile, decruncherNeeds, memBrkFile, memCrunchOptions, memFastFile, memFile, PAL_HZ, sfxAsync, T,
   type CrunchOptions, type Crunched, type DecruncherFile, type DecruncherNeeds, type DecruncherOptions, type SfxPlace, type Start,
 } from '@mimir/brokkr';
 import type { PackPrefs } from './types';
@@ -20,6 +20,9 @@ export const crunchHere: BrokkrCrunch = async (d, o) => crunchData(d, o);
 /** A file a pack writes, with what it is (the Pack view lists them): packed (self-extracting, or crunched data), or the
  * decruncher written next to crunched data, as a PRG or as source. */
 export interface PackedFile { name: string; prg: Uint8Array; kind: 'packed' | 'decruncher' | 'source'; note: string }
+
+/** One format that format auto tried: its file's size and decrunch time, or why it made none; and whether it was taken. */
+export interface PackTried { format: 'exomizer' | 'brokkr' | 'fast'; bytes?: number; seconds?: number; error?: string; taken: boolean }
 
 export interface BrokkrPack {
   ok: boolean;
@@ -38,6 +41,8 @@ export interface BrokkrPack {
   /** when a check in the emulated C64 failed: the file Brokkr made and the emulated memory, for a report (written to
    * the pack folder with the inputs) */
   dump?: { name: string; prg: Uint8Array }[];
+  /** format auto: what each format made (its file's size and decrunch time on a PAL C64, or why none), and the one taken */
+  tried?: PackTried[];
   /** the inputs as the command names them, to write next to the packed file */
   inputs: { name: string; prg: Uint8Array }[];
   packed: { start: number; length: number } | null;
@@ -59,6 +64,7 @@ export function brokkrArgs(prefs: PackPrefs, inputs: readonly string[], out: str
   const p = packEffective(prefs);
   const args = ['brokkr', p.mode];
   if (p.format !== 'exomizer') args.push('--format', p.format);
+  if (p.maxSeconds != null) args.push('--max-seconds', String(p.maxSeconds));
   if (p.mode === 'sfx') {
     args.push('--start', p.start === 'jmp' ? $4(p.jmp ?? 0) : p.start);
     if (p.effect === 'none') args.push('--no-effect');
@@ -94,9 +100,10 @@ export const packNeeds = (prefs: PackPrefs): DecruncherNeeds => {
   return decruncherNeeds({ format: p.format, start: p.start === 'jmp' ? 0x1000 : p.start, effect: p.effect !== 'none', ramExit: p.ramExit ?? undefined, irqExit: p.irqExit ?? undefined });
 };
 
-/** the decruncher of crunched data for these (effective) settings, as Brokkr writes it */
+/** the decruncher of crunched data for these (effective) settings, as Brokkr writes it (auto is not for crunched data:
+ * effective, it is Exomizer's format there) */
 const decruncherOptions = (p: PackPrefs): DecruncherOptions => ({
-  format: p.format, zp: p.zp ?? undefined, at: p.decruncherAt ?? undefined, table: p.tablesAt ?? undefined,
+  format: p.format === 'auto' ? 'exomizer' : p.format, zp: p.zp ?? undefined, at: p.decruncherAt ?? undefined, table: p.tablesAt ?? undefined,
   literalSequences: !(p.format === 'exomizer' && p.compat),
 });
 
@@ -189,12 +196,14 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
       const start: Start = prefs.start === 'jmp' ? prefs.jmp! : prefs.start;
       const r = await sfxAsync(image.bytes, image.start, {
         start, ramExit: prefs.ramExit ?? undefined, irqExit: prefs.irqExit ?? undefined, effect: prefs.effect !== 'none', crunch: crunchOptions,
-        format: prefs.format, place: placeOf(prefs),
+        format: prefs.format, maxSeconds: prefs.maxSeconds ?? undefined, place: placeOf(prefs),
       }, crunch);
       const layout = r.areas.filter(a => a.name !== 'File').map(a => ({ name: a.name, start: a.start, end: a.end, ...(a.note ? { note: a.note } : {}) }));
+      // auto: what each format made, and which it took
+      for (const t of r.tried ?? []) lines.push(`  ${t.format.padEnd(8)} ${t.error ?? `${t.bytes} bytes, ${t.seconds!.toFixed(2)} s to decrunch${t.format === r.format ? ' (taken)' : ''}`}`);
       for (const a of r.areas) lines.push(`  ${a.name.padEnd(16)} ${range(a.start, a.end)}${a.note ? `  ${a.note}` : ''}`);
       lines.push(`  $01 ${$2(r.ramDuring)} while decrunching, ${$2(r.ramExit)} after; interrupts ${r.irqExit ? 'on' : 'off'} after; ${r.basic ? 'RUN' : `jmp ${$4(r.entry)}`}`);
-      lines.push(`  checked in an emulated C64: ${r.cycles} cycles (${(r.cycles / 985248).toFixed(2)} s)`);
+      lines.push(`  checked in an emulated C64: ${r.cycles} cycles (${(r.cycles / PAL_HZ).toFixed(2)} s)`);
       for (const w of r.warnings) lines.push(`  note: ${w}`);
       lines.push(`${out}: ${r.prg.length} bytes (${(100 * r.prg.length / image.bytes.length).toFixed(1)} % of ${image.bytes.length})`);
       const report: ExomizerReport = {
@@ -207,9 +216,10 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
       };
       const check: PackCheck = {
         status: 'same',
-        text: `Decrunched in Brokkr's emulated C64: ${range(image.start, image.start + image.bytes.length)} has the same ${image.bytes.length} bytes, and it ${r.basic ? 'RUNs the BASIC program' : `starts at ${$4(r.entry)}`} after ${(r.cycles / 985248).toFixed(2)} s.`,
+        text: `Decrunched in Brokkr's emulated C64: ${range(image.start, image.start + image.bytes.length)} has the same ${image.bytes.length} bytes, and it ${r.basic ? 'RUNs the BASIC program' : `starts at ${$4(r.entry)}`} after ${(r.cycles / PAL_HZ).toFixed(2)} s.`,
       };
-      return { ok: true, output: lines.join('\n'), ms: performance.now() - t0, name: out, prg: r.prg, files: [{ name: out, prg: r.prg, kind: 'packed', note: 'self-extracting' }], report, check, ...base };
+      const tried = r.tried?.map(t => ({ ...t, taken: t.format === r.format }));
+      return { ok: true, output: lines.join('\n'), ms: performance.now() - t0, name: out, prg: r.prg, files: [{ name: out, prg: r.prg, kind: 'packed', note: 'self-extracting' }], report, check, ...(tried ? { tried } : {}), ...base };
     }
     // crunched data: each file of the plan on its own, then the decruncher for all of them
     const mo = { forward: prefs.forward, load: prefs.memLoad, crunch: crunchOptions };
@@ -268,7 +278,7 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
       const ram = port === 0x34 ? 'RAM under I/O and the ROMs' : port === 0x35 ? 'RAM under the ROMs' : 'RAM under BASIC';
       check = wrong ? { status: 'differs', text: wrong } : {
         status: 'same',
-        text: `Decrunched by ${prg} in Brokkr's emulated C64: ${one ? `${range(one.data.start, one.data.start + one.data.bytes.length)} has the same ${one.data.bytes.length} bytes` : `each of the ${crunched.length} files gives the same bytes`}, in ${(cycles / 985248).toFixed(2)} s${crunched.length > 1 ? ' in all' : ''}.${port !== 0x37 ? ` It needs $01 = ${$2(port)} while it decrunches (${ram}); the decruncher leaves $01 as it is.` : ''}`,
+        text: `Decrunched by ${prg} in Brokkr's emulated C64: ${one ? `${range(one.data.start, one.data.start + one.data.bytes.length)} has the same ${one.data.bytes.length} bytes` : `each of the ${crunched.length} files gives the same bytes`}, in ${(cycles / PAL_HZ).toFixed(2)} s${crunched.length > 1 ? ' in all' : ''}.${port !== 0x37 ? ` It needs $01 = ${$2(port)} while it decrunches (${ram}); the decruncher leaves $01 as it is.` : ''}`,
       };
       lines.push(`  checked in an emulated C64: ${check.text}`);
     } else {

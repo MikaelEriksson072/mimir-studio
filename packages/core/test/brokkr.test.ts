@@ -190,6 +190,20 @@ describe('packing with Brokkr', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it('packs a self-extracting file in the format that makes it smallest within a time (auto), as the command does', async () => {
+    const r = await packWithBrokkr([{ name: 'raster demo.prg', prg: demo.prg }], P({ format: 'auto', maxSeconds: 2 }));
+    expect(r.ok).toBe(true);
+    expect(r.argv).toEqual(['brokkr', 'sfx', '--format', 'auto', '--max-seconds', '2', '--start', 'sys', '-o', 'raster demo-brokkr.prg', 'raster demo.prg']);
+    expect(r.tried?.map(t => t.format)).toEqual(['exomizer', 'brokkr', 'fast']);
+    const taken = r.tried!.filter(t => t.taken);
+    expect(taken).toHaveLength(1);
+    expect(taken[0].seconds).toBeLessThanOrEqual(2);
+    expect(r.prg!.length).toBe(Math.min(...r.tried!.filter(t => t.bytes && t.seconds! <= 2).map(t => t.bytes!)));
+    expect(r.output).toMatch(/^ {2}brokkr {3}\d+ bytes, \d+\.\d\d s to decrunch/m);
+    // crunched data takes one format: Exomizer's then
+    expect(brokkrArgs(P({ format: 'auto', maxSeconds: 2, mode: 'mem' }), ['a.prg'], 'o.prg')).toEqual(['brokkr', 'mem', '-o', 'o.prg', 'a.prg']);
+  });
+
   it('leaves out the settings that take no effect, as the Pack view hides them', async () => {
     const args = (o: Partial<PackPrefs>) => brokkrArgs(P(o), ['a.prg'], 'o.prg');
     // literal sequences in a self-extracting file: its decruncher reads them, and Brokkr tries the stream both ways

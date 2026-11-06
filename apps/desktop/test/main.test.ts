@@ -412,6 +412,11 @@ describe('schemas', () => {
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, zp: 0x100 } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, keep: [{ start: 0xc000, end: 0xc000 }] } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, format: 'zx0' } }).success).toBe(false);
+    // auto with a time to decrunch within; project files from before it have no time: any
+    expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, format: 'auto', maxSeconds: 2.5 } }).success).toBe(true);
+    expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, format: 'auto', maxSeconds: 0 } }).success).toBe(false);
+    const { maxSeconds: _max, ...untimed } = DEFAULT_PACK;
+    expect(packSchema.parse({ files, prefs: untimed }).prefs.maxSeconds).toBeNull();
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, packer: 'zip' } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, effort: 'ultra' } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, extra: '-p 4 -Di_ram_during=$34' } }).success).toBe(true);

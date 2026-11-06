@@ -12,7 +12,7 @@ import { memBrkFile, memCrunchOptions, memFastFile, memFile, rawBrk, rawFast, ra
 import { encodingText, parseEncoding, protocol, type Protocol } from './format.ts';
 import { defaultThreads, Pool } from './node.ts';
 import { crunchSearch } from './search.ts';
-import { sfxAsync, type SfxFormat, type SfxPlace, type SfxResult, type Start } from './sfx.ts';
+import { LONG_SECONDS, PAL_HZ, sfxAsync, type SfxFormat, type SfxPlace, type SfxResult, type Start } from './sfx.ts';
 
 const USAGE = `Brokkr, a C64 cruncher: Exomizer 3 streams, smaller and faster; or its own formats, smaller still or
 faster to decrunch
@@ -36,7 +36,9 @@ options:
   -o <file>              the output (default: <first file>-brokkr.prg, .bin, .d64; brokkr_decrunch.asm)
   --format <f>           exomizer (default): Exomizer 3's format; brokkr: Brokkr's own, about 6.5 %
                          smaller, decrunched about 8 times slower with 0.9-1.9 KB more RAM; fast: Brokkr's
-                         fast one, whole bytes, about 13 % larger and decrunched about 1.8 times as fast
+                         fast one, whole bytes, about 13 % larger and decrunched about 1.8 times as fast;
+                         auto (sfx, d64): each, and the smallest file
+  --max-seconds <s>      with auto: the longest the file may take to decrunch on a PAL C64
   --effort <e>           fast, normal (default) or max (every core, a thorough search)
   --threads <n>          threads for --effort max (default ${defaultThreads()})
   --json                 print the result as JSON
@@ -73,7 +75,7 @@ decruncher:
 interface Args { _: string[]; [k: string]: string | boolean | string[] }
 
 /** the options with a value, the ones without, and those whose value may be left out (with the values they take) */
-const VALUES = new Set(['o', 'dump', 'keep', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
+const VALUES = new Set(['o', 'dump', 'max-seconds', 'keep', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
 const FLAGS = new Set(['json', 'q', 'help', 'h', 'f', 'b', 'r', 'E', 'small', 'effect', 'four', 'no-reuse', 'no-literal-sequences', 'no-effect']);
 const OPTIONAL: Record<string, string[]> = { 'four-tables': ['on', 'off', 'auto'] };
 /** Exomizer's options that Brokkr writes otherwise */
@@ -172,14 +174,27 @@ function placeOf(a: Args): SfxPlace | undefined {
   return Object.values(place).some(v => v != null) ? place : undefined;
 }
 
-function formatOf(a: Args): SfxFormat {
+/** --format: one of the three, or for a self-extracting file `auto` (whose Exomizer stream takes Exomizer's options) */
+function formatOf(a: Args): SfxFormat;
+function formatOf(a: Args, auto: true): SfxFormat | 'auto';
+function formatOf(a: Args, auto = false): SfxFormat | 'auto' {
   const f = String(a.format ?? 'exomizer');
-  if (f !== 'exomizer' && f !== 'brokkr' && f !== 'fast') throw new BrokkrError('BRK-E012', `--format is exomizer, brokkr or fast, not "${f}".`);
-  if (f !== 'exomizer') {
+  if (f === 'auto' && !auto) throw new BrokkrError('BRK-E012', '--format auto is for self-extracting files (sfx, and those d64 makes): crunched data needs the decruncher of one format.');
+  if (f !== 'exomizer' && f !== 'brokkr' && f !== 'fast' && f !== 'auto') throw new BrokkrError('BRK-E012', `--format is exomizer, brokkr, fast or auto, not "${f}".`);
+  if (f === 'brokkr' || f === 'fast') {
     const given = ['P', 'T', 'M', 'm', 'e', 'E', 'four-tables'].find(k => a[k] != null);
     if (given) throw new BrokkrError('BRK-E013', `-${given.length > 1 ? '-' : ''}${given} is an option of Exomizer's format, not of Brokkr's ${f === 'fast' ? 'fast one' : 'own'}.`);
   }
+  if (a['max-seconds'] != null && f !== 'auto') throw new BrokkrError('BRK-E019', '--max-seconds goes with --format auto.');
   return f;
+}
+
+/** --max-seconds: the longest an `auto` file may take to decrunch */
+function maxSeconds(a: Args): number | undefined {
+  if (a['max-seconds'] == null) return undefined;
+  const v = Number(a['max-seconds']);
+  if (!(v > 0)) throw new BrokkrError('BRK-E019', `--max-seconds is a time in seconds above 0, not "${String(a['max-seconds'])}".`);
+  return v;
 }
 
 function crunchOptions(a: Args): CrunchOptions {
@@ -251,7 +266,7 @@ async function main(argv: string[]): Promise<number> {
     if (command === 'sfx' || command === 'mem' || command === 'raw') {
       const { inputs, start, data } = loadInputs(files);
       if (dump) dump.program = Uint8Array.from([start & 0xff, start >> 8, ...data]);
-      const format = formatOf(a);
+      const chosen = command === 'sfx' ? formatOf(a, true) : formatOf(a), format = chosen === 'auto' ? 'exomizer' : chosen;
       const o = crunchOptions(a);
       const inInfo = { files: inputs.map(i => ({ name: i.name, start: i.start, end: i.start + i.bytes.length })), start, end: start + data.length, bytes: data.length };
       say(`${inputs.map(i => basename(i.name)).join(', ')}: ${span(start, start + data.length)}, ${data.length} bytes`);
@@ -262,18 +277,20 @@ async function main(argv: string[]): Promise<number> {
           start: st, ramExit: a['ram-exit'] != null ? number(String(a['ram-exit']), '$01') : undefined,
           irqExit: a.irq != null ? String(a.irq) === 'on' : undefined, effect: !a['no-effect'],
           fourTables: a['four-tables'] === 'auto' ? 'auto' : a['four-tables'] != null && a['four-tables'] !== 'off', place: placeOf(a),
-          format, crunch: o,
+          format: chosen, maxSeconds: maxSeconds(a), crunch: o,
         }, crunch);
         const out = outName(files[0], '.prg', a.o);
         writeFileSync(out, r.prg);
+        // auto: what each format made, and which it took
+        for (const t of r.tried ?? []) say(`  ${t.format.padEnd(8)} ${t.error ?? `${t.bytes} bytes, ${t.seconds!.toFixed(2)} s to decrunch${t.format === r.format ? ' (taken)' : ''}`}`);
         for (const area of r.areas) say(`  ${area.name.padEnd(16)} ${span(area.start, area.end)}${area.note ? `  ${area.note}` : ''}`);
         say(`  $01 ${h2(r.ramDuring)} while decrunching, ${h2(r.ramExit)} after; interrupts ${r.irqExit ? 'on' : 'off'} after; ${r.basic ? 'RUN' : `jmp ${h4(r.entry)}`}`);
-        say(`  checked in an emulated C64: ${r.cycles} cycles (${(r.cycles / 985248).toFixed(2)} s)`);
+        say(`  checked in an emulated C64: ${r.cycles} cycles (${(r.cycles / PAL_HZ).toFixed(2)} s)`);
         for (const w of r.warnings) say(`  note: ${w}`);
         say(`${out}: ${r.prg.length} bytes (${(100 * r.prg.length / data.length).toFixed(1)} % of ${data.length})`);
         result = { input: inInfo, output: { file: out, bytes: r.prg.length }, crunched: r.crunched ? stats(r.crunched) : r.brk ? brkStats(r.brk) : fastStats(r.fast!), protocol: r.protocol,
           areas: r.areas, entry: r.entry, basic: r.basic, ramDuring: r.ramDuring, ramExit: r.ramExit, irqExit: r.irqExit,
-          effect: r.effect, cycles: r.cycles, warnings: r.warnings };
+          effect: r.effect, cycles: r.cycles, warnings: r.warnings, ...(r.tried ? { tried: r.tried } : {}) };
       } else if (command === 'mem') {
         const load: MemOptions['load'] = a.l == null ? 'auto' : a.l === 'none' ? 'none' : number(String(a.l), 'The load address');
         const mo = { forward: !!a.f, load, crunch: o };
@@ -291,7 +308,8 @@ async function main(argv: string[]): Promise<number> {
           { start: r.inPlace.start, bytes: r.at ? r.bytes.subarray(2) : r.bytes }, { start, bytes: data }, basename(out));
         writeFileSync(out, r.bytes);
         say(`  in place it loads at ${span(r.inPlace.start, r.inPlace.end)} (safety ${c.safety})`);
-        say('skipped' in check ? `  not checked in an emulated C64: ${check.skipped}` : `  checked with Brokkr's decruncher in an emulated C64: ${check.cycles} cycles (${(check.cycles / 985248).toFixed(2)} s), $01 ${h2(check.port)}`);
+        say('skipped' in check ? `  not checked in an emulated C64: ${check.skipped}` : `  checked with Brokkr's decruncher in an emulated C64: ${check.cycles} cycles (${(check.cycles / PAL_HZ).toFixed(2)} s), $01 ${h2(check.port)}`);
+        if (!('skipped' in check) && check.cycles / PAL_HZ > LONG_SECONDS) say(`  note: Decrunching takes ${(check.cycles / PAL_HZ).toFixed(1)} s on a PAL C64.`);
         for (const w of r.warnings) say(`  note: ${w}`);
         say(`${out}: ${r.bytes.length} bytes${r.at ? ` at ${span(r.at.start, r.at.end)}` : ''}`);
         result = { input: inInfo, output: { file: out, bytes: r.bytes.length, at: r.at }, inPlace: r.inPlace, crunched: c, check, warnings: r.warnings };
@@ -319,7 +337,8 @@ async function main(argv: string[]): Promise<number> {
         say(`${disk.free} blocks free.`);
         result = { disk: diskName, title: disk.title, free: disk.free, files: list.map(({ entry: _e, raw, ...f }) => ({ ...f, petscii: [...raw] })) };
       } else {
-        const format = formatOf(a);
+        // auto for the self-extracting files; crunched data on the disk in Exomizer's format then
+        const asked = formatOf(a, true), format = asked === 'auto' ? 'exomizer' : asked;
         const o = crunchOptions(a);
         if (a.mode != null && a.mode !== 'sfx' && a.mode !== 'mem') throw new BrokkrError('BRK-E009', `--mode is sfx or mem, not "${String(a.mode)}".`);
         // every name first: one that is not on the disk is a mistake in the command, not in a file
@@ -339,7 +358,7 @@ async function main(argv: string[]): Promise<number> {
           // a file that cannot be packed stays as it is, and the others are packed
           try {
             let bytes: Uint8Array;
-            if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format, crunch: o, place: placeOf(a), start: basic ? 'basic' : 'sys' }, crunch)).prg;
+            if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format: asked, maxSeconds: maxSeconds(a), crunch: o, place: placeOf(a), start: basic ? 'basic' : 'sys' }, crunch)).prg;
             else {
               const r = format === 'brokkr' ? memBrkFile(data, load, crunchBrk(data.slice().reverse(), { effort: o.effort }))
                 : format === 'fast' ? memFastFile(data, load, crunchFast(data.slice().reverse(), { effort: o.effort }))

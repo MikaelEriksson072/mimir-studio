@@ -63,7 +63,7 @@ export { NOTES_FILE, NOTES_TEXT_FILE, notesDocument, notesExport, notesFile, not
 export { detectPacking, packerSignature, type PackingInfo } from './packing';
 export { conclusive, depackers, depackerText, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun } from './sindri';
 export { addDecisionChecks, addRunChecks, checkDecisions, checkRun, type DecisionCheck, type RunCheck } from './runcheck';
-export { brokkrArgs, brokkrCommands, brokkrCommandText, brokkrPlan, crunchHere, packDecruncher, packNeeds, packWithBrokkr, type BrokkrCrunch, type BrokkrPack, type BrokkrPlan, type PackedFile } from './brokkr';
+export { brokkrArgs, brokkrCommands, brokkrCommandText, brokkrPlan, crunchHere, packDecruncher, packNeeds, packWithBrokkr, type BrokkrCrunch, type BrokkrPack, type BrokkrPlan, type PackedFile, type PackTried } from './brokkr';
 export {
   checkDecrunched, DEFAULT_PACK, editRanges, extraProblem, keepText, MEMORY_PLACES, mergeRanges, placeSpan, ZP_PLACES, type PackPlace, packArgs, packEffective, packFileName, packImage, packInputs, packOptions, packOutName, packParts, packProblem, parseKeep,
   parseExomizer, rangeCover, shellWord, type ExomizerArea, type ExomizerReport, type PackCheck, type PackFile, type PackPart,

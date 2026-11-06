@@ -64,6 +64,17 @@ describe('the command line', () => {
     expect(brokkr('mem', '--effort', 'max', '--threads', '0', game).err).toMatch(/BRK-E018: --threads .* at least 1, not 0/);
   });
 
+  it('packs a self-extracting file in the format that makes it smallest, within a time if told', () => {
+    const sys = prg('auto.prg', 0x0801, basicProgram(programLike(6000, 12)));
+    const r = brokkr('sfx', '--format', 'auto', '--max-seconds', '2', sys, '-o', 'auto-sfx.prg');
+    expect(r.out).toMatch(/^ {2}exomizer \d+ bytes, \d+\.\d\d s to decrunch/m);
+    expect(r.out).toMatch(/^ {2}brokkr {3}\d+ bytes, \d+\.\d\d s to decrunch/m);
+    expect(r.out).toMatch(/ \(taken\)$/m);
+    expect(brokkr('mem', '--format', 'auto', sys).err).toMatch(/BRK-E012: --format auto is for self-extracting files/);
+    expect(brokkr('sfx', '--max-seconds', '2', sys).err).toMatch(/BRK-E019: --max-seconds goes with --format auto/);
+    expect(brokkr('sfx', '--format', 'auto', '--max-seconds', '0', sys).err).toMatch(/BRK-E019: --max-seconds is a time in seconds above 0/);
+  });
+
   it('does not start a program by a SYS it cannot read', () => {
     // 10 SYS <text>, the link to the end of the program after it
     const at = (text: string) => prg('expr.prg', 0x0801, Uint8Array.from([0x07 + text.length, 0x08, 10, 0, 0x9e, ...Buffer.from(text, 'latin1'), 0, 0, 0, ...programLike(300, 3)]));

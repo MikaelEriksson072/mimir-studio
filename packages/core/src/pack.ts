@@ -8,18 +8,19 @@ import { h2, h4 } from './util/hex';
 export const DEFAULT_PACK: PackPrefs = {
   packer: 'brokkr', effort: 'normal', format: 'exomizer', mode: 'sfx', ranges: null, start: 'sys', jmp: null, effect: 'default', ramExit: null, irqExit: null,
   memLoad: 'auto', forward: false, compat: false, fast: false, extra: '', out: '', dir: '',
-  zp: null, decruncherAt: null, tablesAt: null, keep: [], split: false, decruncher: true,
+  zp: null, decruncherAt: null, tablesAt: null, keep: [], split: false, decruncher: true, maxSeconds: null,
 };
 
 /** Which settings take effect with this packer, format, kind of file and start: the Pack view shows only these. */
 export function packOptions(p: PackPrefs) {
   const brokkr = p.packer !== 'exomizer', sfx = p.mode === 'sfx';
   // Exomizer's stream: Exomizer's own, or Brokkr's in Exomizer's format
-  const exo = !brokkr || p.format === 'exomizer';
+  // auto is for a self-extracting file: crunched data takes Exomizer's format then
+  const exo = !brokkr || p.format === 'exomizer' || (p.format === 'auto' && !sfx);
   // Brokkr's decruncher of mem files reads backward
   const decruncher = brokkr && !sfx && !(exo && p.forward);
   return {
-    format: brokkr, effort: brokkr, fast: !brokkr, extra: !brokkr,
+    format: brokkr, effort: brokkr, fast: !brokkr, extra: !brokkr, maxSeconds: brokkr && sfx && p.format === 'auto',
     start: sfx, jmp: sfx && p.start === 'jmp',
     // the fast format's decruncher does not flash the border
     effect: sfx && (!brokkr || p.format !== 'fast'),
@@ -43,7 +44,7 @@ export function packOptions(p: PackPrefs) {
 export function packEffective(p: PackPrefs): PackPrefs {
   const on = packOptions(p), d = DEFAULT_PACK;
   return {
-    ...p, format: on.format ? p.format : d.format, effort: on.effort ? p.effort : d.effort, start: on.start ? p.start : d.start,
+    ...p, format: on.format ? (p.format === 'auto' && !(p.mode === 'sfx') ? 'exomizer' : p.format) : d.format, maxSeconds: on.maxSeconds ? p.maxSeconds : null, effort: on.effort ? p.effort : d.effort, start: on.start ? p.start : d.start,
     jmp: on.jmp ? p.jmp : null, effect: on.effect ? p.effect : d.effect, ramExit: on.ramExit ? p.ramExit : null,
     irqExit: on.irqExit ? p.irqExit : null, memLoad: on.memLoad ? p.memLoad : d.memLoad, forward: on.forward && p.forward,
     compat: on.compat && p.compat, fast: on.fast && p.fast, extra: on.extra ? p.extra : '',

@@ -78,6 +78,10 @@ describe('the settings that take effect', () => {
     // Brokkr's own formats are decrunched backward by Brokkr's decruncher; the fast one does not flash the border
     expect(shown(packOptions(P({ packer: 'brokkr', mode: 'mem', format: 'brokkr', forward: true })))).toEqual(['decruncher', 'effort', 'format', 'memLoad', 'place', 'split']);
     expect(shown(packOptions(P({ packer: 'brokkr', format: 'fast' })))).toEqual(['effort', 'format', 'irqExit', 'keep', 'place', 'ramExit', 'start']);
+    // auto, for a self-extracting file, with a time to decrunch within; crunched data takes Exomizer's format then
+    expect(shown(packOptions(P({ packer: 'brokkr', format: 'auto' })))).toEqual(['effect', 'effort', 'format', 'irqExit', 'keep', 'maxSeconds', 'place', 'ramExit', 'start']);
+    expect(packOptions(P({ packer: 'brokkr', format: 'auto', mode: 'mem' }))).toMatchObject({ maxSeconds: false, forward: true, compat: true });
+    expect(packEffective(P({ packer: 'brokkr', format: 'auto', mode: 'mem', maxSeconds: 2 }))).toMatchObject({ format: 'exomizer', maxSeconds: null });
     expect(packOptions(P({ start: 'jmp' })).jmp).toBe(true);
     expect(packOptions(P({ start: 'basic' })).ramExit).toBe(false);
   });

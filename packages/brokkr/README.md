@@ -22,11 +22,16 @@ they are.
 | `--format` | | Crunched data, against Exomizer 3.1.1 | Decrunching | The decruncher |
 |---|---|---|---|---|
 | `exomizer` (the default) | Exomizer 3's stream: every Exomizer decruncher reads it | 0.6 % smaller | as Exomizer's decrunchers do | about 200 bytes and a 156-byte table |
-| `brokkr` | Brokkr's own, every bit coded adaptively as LZMA does | 6.6 % smaller | about 8 times as long as Exomizer's format | about 425 bytes, 512 bytes of probabilities, 1 KB more where there is room |
+| `brokkr` | Brokkr's own, every bit coded adaptively as LZMA does | 6.6 % smaller | about 8 times as long as Exomizer's format: half a minute on a large program | about 425 bytes, 512 bytes of probabilities, 1 KB more where there is room |
 | `fast` | Brokkr's fast one, whole bytes | 13.2 % larger | about half the time of Exomizer's format | 215 bytes, no tables |
 
 Measured on 163 unpacked C64 programs (see [Results](#results)). Take Exomizer's format unless you need the last bytes
-(`brokkr`, for a larger program that may decrunch for a few seconds) or the shortest wait (`fast`). Where a program
+(`brokkr`) or the shortest wait (`fast`). As self-extracting files of those programs (most of them demos and games of
+20 to 60 KB), Exomizer's format decrunches in 3.3 s (the median; at most 6.9 s) on a PAL C64, Brokkr's own in 28 s
+(13 to 42 s on half of them, up to 2 minutes) and the fast one in 1.6 s (at most 3.7 s). `--format auto` (self-extracting
+files) packs in all three and keeps the smallest file, or with `--max-seconds <s>` the smallest that decrunches within
+that time: on those programs 3.7 % smaller than Exomizer's format without a limit (Brokkr's own on 96 of 154), and
+with 10 s about as small as Exomizer's. A file that takes more than 10 s to decrunch gets a note. Where a program
 leaves no room for the decruncher of Brokkr's own formats, a self-extracting file is made in Exomizer's format, with a
 note.
 
@@ -110,6 +115,9 @@ The file loads at `$0801`, decrunches the program and starts it.
 - `--no-effect`: no border flashing while it decrunches (the fast format never flashes).
 - `--four-tables` (Exomizer's format): a table of its own for the offsets of length 3 (`-P+16`); `--four-tables auto`
   tries both, and `off` leaves it out.
+- `--format auto`: a file in each format, and the smallest is kept; `--max-seconds <s>`: the smallest of those that
+  decrunch within that many seconds on a PAL C64 (none within it: the fastest, with a note). The output lists each
+  format's size and time, and `--json` gives them as `tried`.
 
 While it decrunches, Brokkr sets `$01` itself so that everything the decruncher reads and writes is RAM, also under the
 ROMs and I/O. It puts the decruncher in the stack page or at `$0334` where it can, so nothing shows on the screen, and
@@ -250,7 +258,9 @@ what it wrote. `src/node.ts` adds the pool of worker threads that `--effort max`
   finds where taking an offset again pays. It also takes the cheapest offset for each length, not only the nearest:
   the bucket tables Exomizer's optimiser makes are often not ever wider, and then a farther offset costs fewer bits.
   The tables are made for the parse and the parse for the tables until the stream stops shrinking.
-- **Speed.** On one thread it crunches four to eight times as fast as Exomizer. `--effort max` searches further, on
+- **Speed.** On one thread it crunched the 163 programs about 8 times as fast as the Windows build in Exomizer 3.1.1's
+  release (121 s against 954 s). Against an Exomizer compiled with optimisation (gcc -O3) it is about as fast, faster
+  on some programs and slower on most. `--effort max` searches further, on
   every core: from several starting tables, and with each bucket of the best table a bit wider and narrower in turn.
   The `fast` effort takes a quarter of the time of `normal` for streams 1.7 % larger.
 - **Self-extracting programs that are planned and checked.** Brokkr works out where the decruncher, its table, its
@@ -316,7 +326,8 @@ Exomizer's format. It does not flash the border. Before this format Brokkr tried
 
 ## Results
 
-On 163 unpacked C64 programs (demos, games and intros from CSDB, unpacked with Sindri; 7.1 MB), as raw streams:
+On 163 unpacked C64 programs (demos, games and intros from CSDB, unpacked with Sindri; 7.1 MB), as raw streams, against
+the Windows build in Exomizer 3.1.1's release (an Exomizer compiled with gcc -O3 is several times faster than it):
 
 | | Exomizer 3.1.1 | Brokkr normal | Brokkr fast |
 |---|---|---|---|

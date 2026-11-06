@@ -152,9 +152,10 @@ export type BuildScript = 'build.bat' | 'build.sh';
 export type Packer = 'brokkr' | 'exomizer';
 /** how hard Brokkr crunches: fast, normal, or max (every core, a thorough search) */
 export type PackEffort = 'fast' | 'normal' | 'max';
-/** Brokkr's stream format: Exomizer 3's, Brokkr's own (smaller, slower to decrunch, more RAM while it does), or its
- * fast one (whole bytes: larger, faster to decrunch) */
-export type PackFormat = 'exomizer' | 'brokkr' | 'fast';
+/** Brokkr's stream format: Exomizer 3's, Brokkr's own (smaller, slower to decrunch, more RAM while it does), its
+ * fast one (whole bytes: larger, faster to decrunch), or for a self-extracting file auto: each, and the smallest file
+ * (of those that decrunch within `PackPrefs.maxSeconds`); crunched data takes Exomizer's then */
+export type PackFormat = 'exomizer' | 'brokkr' | 'fast' | 'auto';
 /** the packed file (spec 13.8): a self-extracting program (sfx) or crunched data that your own code decrunches (mem) */
 export type PackMode = 'sfx' | 'mem';
 /** sfx: what runs after decrunching: the SYS of the BASIC line, the BASIC program (RUN), or a jmp to `PackPrefs.jmp` */
@@ -214,6 +215,8 @@ export interface PackPrefs {
   /** Brokkr, mem, decrunched backward: Brokkr's decruncher written next to the crunched files, as Kick Assembler source
    * and as a PRG, one for all of them (each file is checked with it in Brokkr's emulated C64) */
   decruncher: boolean;
+  /** Brokkr, sfx, format auto: the longest the file may take to decrunch on a PAL C64, in seconds (null: any) */
+  maxSeconds: number | null;
 }
 
 /**

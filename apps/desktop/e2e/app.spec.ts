@@ -2997,6 +2997,29 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await expect(card).toContainText('$0100–$01d2');
   });
 
+  await test.step('format auto: a file in each format, the smallest of those that decrunch within the time set', async () => {
+    await view.getByLabel('Format').selectOption('auto');
+    await expect(view).toContainText('Packs in all three formats and keeps the smallest file');
+    await expect(cmd).toHaveText('brokkr sfx --format auto --start sys -o raster-demo-brokkr.prg raster-demo.prg');
+    const time = view.getByLabel('At most, seconds to decrunch');
+    await time.fill('0');
+    await expect(view).toContainText('A time in seconds, above 0 and at most 3600.');
+    await time.fill('2');
+    await time.press('Enter');
+    await expect(cmd).toHaveText('brokkr sfx --format auto --max-seconds 2 --start sys -o raster-demo-brokkr.prg raster-demo.prg');
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    const tried = card.getByRole('list', { name: 'What auto tried' });
+    await expect(tried.getByRole('listitem')).toHaveCount(3, { timeout: 120_000 });
+    await expect(tried).toContainText(/Exomizer's format: \d+ bytes, \d+\.\d s to decrunch/);
+    await expect(tried.locator('li.on')).toHaveText(/\(taken\)$/);
+    // crunched data takes one format: Exomizer's, as auto is not one
+    await view.getByRole('tab', { name: 'Crunched data' }).click();
+    await expect(view.getByLabel('Format')).toHaveValue('exomizer');
+    await expect(view.locator('#pack-format option[value="auto"]')).toHaveCount(0);
+    await view.getByRole('tab', { name: 'Self-extracting' }).click();
+    await view.getByLabel('Format').selectOption('fast');
+  });
+
   await test.step('a folder for the packed file: chosen in a dialog, the file goes there each time, and can be cleared', async () => {
     const out = join(work, 'release');
     mkdirSync(out);

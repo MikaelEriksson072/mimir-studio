@@ -32,9 +32,12 @@ export interface SfxOptions {
   effect?: boolean;
   /** the number of the file's BASIC line (default 0) */
   line?: number;
-  /** the stream's format: Exomizer 3's (default), Brokkr's own (smaller, slower to decrunch, more RAM), or its fast one
-   * (a little larger, faster to decrunch) */
-  format?: SfxFormat;
+  /** the stream's format: Exomizer 3's (default), Brokkr's own (smaller, slower to decrunch, more RAM), its fast one
+   * (a little larger, faster to decrunch), or 'auto': each, and the smallest file of those that decrunch within
+   * `maxSeconds` */
+  format?: SfxFormat | 'auto';
+  /** 'auto': the longest the file may take to decrunch on a PAL C64; none decrunching within it, the fastest */
+  maxSeconds?: number;
   /** Brokkr's formats: Exomizer's when the program leaves no room for their decruncher (default), or false: an error */
   fallback?: boolean;
   crunch?: CrunchOptions;
@@ -80,7 +83,14 @@ export interface SfxResult {
   /** what the emulated C64 took from SYS to the program's start */
   cycles: number;
   warnings: string[];
+  /** 'auto': each format tried, its file's size and its decrunch time on a PAL C64 (or why it made no file of its own) */
+  tried?: { format: SfxFormat; bytes?: number; seconds?: number; error?: string }[];
 }
+
+/** a PAL C64's cycles a second */
+export const PAL_HZ = 985248;
+/** decrunching longer than this gets a note (Exomizer's format takes up to about 7 s on the largest programs) */
+export const LONG_SECONDS = 10;
 
 /** The SYS address in the first line of a BASIC program at `start`, or null. */
 export function findSys(peek: (a: number) => number, start = 0x0801): number | null {
@@ -173,6 +183,15 @@ const needsCache = new Map<string, DecruncherNeeds>();
  * anything is crunched: for a form that says where it may go and where it would end.
  */
 export function decruncherNeeds(o: Pick<SfxOptions, 'format' | 'start' | 'effect' | 'ramExit' | 'irqExit' | 'fourTables'> = {}): DecruncherNeeds {
+  if (o.format === 'auto') {
+    // whichever format it takes: the least and the most of them all
+    const all = AUTO_FORMATS.map(format => decruncherNeeds({ ...o, format }));
+    return {
+      resident: { min: Math.min(...all.map(n => n.resident.min)), max: Math.max(...all.map(n => n.resident.max)) },
+      tables: { what: 'decrunch tables', min: Math.min(...all.map(n => n.tables.min)), max: Math.max(...all.map(n => n.tables.max)), align: Math.max(...all.map(n => n.tables.align)) },
+      zp: Math.max(...all.map(n => n.zp)),
+    };
+  }
   const key = JSON.stringify([o.format, o.start, o.effect, o.ramExit, o.irqExit, o.fourTables]);
   const known = needsCache.get(key);
   if (known) return known;
@@ -253,21 +272,70 @@ function crunchHere(r: CrunchRequest): Crunch {
  * load address); with `start: 'sys'` it must hold the BASIC line with the SYS.
  */
 export function sfx(data: Uint8Array, load: number, o: SfxOptions = {}): SfxResult {
-  const steps = sfxSteps(data, load, o);
+  if (o.format === 'auto') {
+    const made = new Map(AUTO_FORMATS.map(f => [f, attempt(() => sfx(data, load, { ...o, format: f }))]));
+    return best(o, made);
+  }
+  const steps = sfxSteps(data, load, { ...o, format: o.format });
   let r = steps.next();
   while (!r.done) r = steps.next(crunchHere(r.value));
   return r.value;
 }
 
+/** the formats 'auto' tries */
+const AUTO_FORMATS = ['exomizer', 'brokkr', 'fast'] as const;
+
+/** a file, or the BrokkrError that says why there is none (a failed check is thrown on) */
+function attempt(make: () => SfxResult): SfxResult | BrokkrError {
+  try { return make(); } catch (e) {
+    if (e instanceof BrokkrError && !(e instanceof CheckError)) return e;
+    throw e;
+  }
+}
+
+/**
+ * 'auto': of the files each format made, the smallest that decrunches within maxSeconds, else the one that decrunches
+ * fastest; with what each gave. Brokkr's own format and the fast one fall back to Exomizer's where they find no room,
+ * so such a file counts once, as Exomizer's.
+ */
+function best(o: SfxOptions, made: Map<SfxFormat, SfxResult | BrokkrError>): SfxResult {
+  const tried: NonNullable<SfxResult['tried']> = [], files: SfxResult[] = [];
+  for (const [f, r] of made) {
+    if (r instanceof BrokkrError) { tried.push({ format: f, error: `${r.code}: ${r.message}` }); continue; }
+    if (r.format !== f) { tried.push({ format: f, error: "no room for its decruncher: the file is in Exomizer's format" }); continue; }
+    tried.push({ format: f, bytes: r.prg.length, seconds: r.cycles / PAL_HZ });
+    files.push(r);
+  }
+  if (!files.length) {
+    const e = made.get('exomizer') as BrokkrError;
+    throw new BrokkrError(e.code, e.message, e.hint);
+  }
+  const within = o.maxSeconds != null ? files.filter(r => r.cycles / PAL_HZ <= o.maxSeconds!) : files;
+  const chosen = within.length ? within.reduce((a, b) => (b.prg.length < a.prg.length ? b : a)) : files.reduce((a, b) => (b.cycles < a.cycles ? b : a));
+  const warnings = [...chosen.warnings];
+  if (!within.length) warnings.push(`No format decrunches within ${o.maxSeconds} s: the fastest, ${chosen.format === 'fast' ? "Brokkr's fast one" : chosen.format === 'brokkr' ? "Brokkr's own" : "Exomizer's"}, takes ${(chosen.cycles / PAL_HZ).toFixed(1)} s.`);
+  return { ...chosen, warnings, tried };
+}
+
 /** The same, with a crunch to Exomizer's format that may run elsewhere (the thorough search on a pool of threads). */
 export async function sfxAsync(data: Uint8Array, load: number, o: SfxOptions, crunch: (d: Uint8Array, o: CrunchOptions) => Promise<Crunched>): Promise<SfxResult> {
-  const steps = sfxSteps(data, load, o);
+  if (o.format === 'auto') {
+    const made = new Map<SfxFormat, SfxResult | BrokkrError>();
+    for (const f of AUTO_FORMATS) {
+      try { made.set(f, await sfxAsync(data, load, { ...o, format: f }, crunch)); } catch (e) {
+        if (!(e instanceof BrokkrError) || e instanceof CheckError) throw e;
+        made.set(f, e);
+      }
+    }
+    return best(o, made);
+  }
+  const steps = sfxSteps(data, load, { ...o, format: o.format });
   let r = steps.next();
   while (!r.done) r = steps.next(r.value.format === 'exomizer' ? await crunch(r.value.data, r.value.options) : crunchHere(r.value));
   return r.value;
 }
 
-function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<CrunchRequest, SfxResult, Crunch> {
+function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions & { format?: SfxFormat }): Generator<CrunchRequest, SfxResult, Crunch> {
   const lo = load, hi = load + data.length;
   if (!data.length) throw new BrokkrError('BRK-E100', 'There is nothing to crunch: the program is empty.');
   if (hi > 0x10000) throw new BrokkrError('BRK-E101', `The program ${span(lo, hi)} goes past $ffff.`);
@@ -638,6 +706,10 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   if (0x0100 + m.lowestS < STACK[0]) fail(`the stack went down to ${h4(0x0100 + m.lowestS)}, below ${h4(STACK[0])}`);
   const wild = m.writtenOutside([U, X, [B[0] - preset.length, B[0] + resident.bytes.length], ...tables, [k.zp, k.zp + k.zpBytes], STACK, [aAt, aAt + startCode.bytes.length], ...(basic ? [[0x2d, 0x2f] as Range] : [])]);
   if (wild.count) fail(`it wrote ${wild.count} byte${wild.count > 1 ? 's' : ''} outside the program, the stream, the decruncher, its tables, its zero page and the stack, from ${wild.first.map(h4).join(', ')}`);
+  const seconds = run.cycles / PAL_HZ;
+  if (seconds > LONG_SECONDS) {
+    warnings.push(`Decrunching takes ${seconds.toFixed(1)} s on a PAL C64${k.format === 'brokkr' ? ": Brokkr's own format is the slowest to decrunch, Exomizer's and the fast one take a fraction of that" : ''}.`);
+  }
 
   const areas: Area[] = [
     { name: 'Crunched data', start: x, end: x + C },

@@ -45,12 +45,13 @@ export interface PackViewProps {
 
 /** what Brokkr's own formats give and cost, measured on the reference corpus against Exomizer 3.1.1 */
 const FORMAT_NOTE: Record<Exclude<PackFormat, 'exomizer'>, string> = {
-  brokkr: "About 6.5 % smaller than Exomizer's format, but decrunching takes about 8 times as long, with more memory.",
+  brokkr: "About 6.5 % smaller than Exomizer's format, but decrunching takes about 8 times as long (half a minute on a large program), with more memory.",
   fast: "About 13 % larger than Exomizer's format, decrunched about twice as fast, without a border flash.",
+  auto: 'Packs in all three formats and keeps the smallest file, or the smallest that decrunches within the time set below.',
 };
 
 /** how crunched data (mem) is decrunched: Brokkr's stream by its format, or Exomizer's own */
-const DECRUNCH: Record<PackFormat | 'exomizer-tool', ReactNode> = {
+const DECRUNCH: Record<Exclude<PackFormat, 'auto'> | 'exomizer-tool', ReactNode> = {
   'exomizer-tool': <>Decrunch it with Exomizer's <span className="mono">exodecrunch.s</span> (in the Exomizer release, exodecrs\).</>,
   exomizer: <>Decrunch it with Exomizer's <span className="mono">exodecrunch.s</span>, or with Brokkr's: <span className="mono">brokkr decruncher</span> writes it as Kick Assembler source.</>,
   brokkr: <>Decrunched backward by <span className="mono">brokkr decruncher --format brokkr</span> (Kick Assembler source), with 0.5 KB of RAM for its probabilities (1.5 KB to run a third faster).</>,
@@ -83,6 +84,22 @@ function HexField({ id, label, value, max = 0xffff, placeholder, onCommit, help 
       <input id={id} className={cx('mono', v === undefined && 'bad')} value={text} placeholder={placeholder} spellCheck={false}
         onChange={e => setText(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }} />
       {v === undefined ? <small className="err-text">A hex number up to ${max > 0xff ? h4(max) : h2(max)}.</small> : help && <small className="muted">{help}</small>}
+    </div>
+  );
+}
+
+/** A time in seconds that commits on Enter or when it loses focus; empty is null. */
+function SecondsField({ id, label, value, help, onCommit }: { id: string; label: string; value: number | null; help?: string; onCommit: (v: number | null) => void }) {
+  const show = (v: number | null) => (v == null ? '' : String(v));
+  const [text, setText] = useState(show(value));
+  useEffect(() => setText(show(value)), [value]);
+  const t = text.trim(), v = t ? Number(t) : null, bad = v != null && !(v > 0 && v <= 3600);
+  const commit = () => { if (!bad && v !== value) onCommit(v); };
+  return (
+    <div className="field"><label htmlFor={id}>{label}</label>
+      <input id={id} className={cx('mono', bad && 'bad')} value={text} placeholder="any time" inputMode="decimal" spellCheck={false}
+        onChange={e => setText(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }} />
+      {bad ? <small className="err-text">A time in seconds, above 0 and at most 3600.</small> : help && <small className="muted">{help}</small>}
     </div>
   );
 }
@@ -273,8 +290,8 @@ export function PackSettings(p: PackSettingsProps) {
   const problem = packProblem(prefs) ?? (prefs.ranges && !cmd.parts.length ? 'None of the chosen ranges holds loaded bytes.' : null);
   const fresh = !!result && result.key === current;
   const brokkr = prefs.packer !== 'exomizer', sfx = prefs.mode === 'sfx';
-  // what is shown: only the settings that take effect
-  const o = packOptions(prefs);
+  // what is shown: only the settings that take effect; the format as it is packed (auto is for a self-extracting file)
+  const o = packOptions(prefs), fmt = packEffective(prefs).format;
   // what the decruncher takes, and whether its tables would lie over it where both are set
   const needs = packNeeds(prefs);
   // the decruncher written next to crunched data: where each part goes on Auto (its own defaults), and what is wrong
@@ -307,12 +324,16 @@ export function PackSettings(p: PackSettingsProps) {
           <button role="tab" aria-selected={!sfx} className={cx(!sfx && 'on')} title={`Crunched data that your own code decrunches (${brokkr ? 'brokkr' : 'exomizer'} mem)`} onClick={() => set({ mode: 'mem' }, 'Pack as crunched data')}>Crunched data</button>
         </div>
         {o.format && <div className="field"><label htmlFor="pack-format">Format</label>
-          <select id="pack-format" value={prefs.format} onChange={e => set({ format: e.target.value as PackFormat }, 'Pack: format')}>
+          <select id="pack-format" value={fmt} onChange={e => set({ format: e.target.value as PackFormat }, 'Pack: format')}>
             <option value="exomizer">Exomizer 3</option>
             <option value="brokkr">Brokkr — smaller</option>
             <option value="fast">Brokkr fast — faster</option>
+            {sfx && <option value="auto">Auto — the smallest</option>}
           </select>
-          {prefs.format !== 'exomizer' && <small className="muted">{FORMAT_NOTE[prefs.format]}{sfx ? " Where the program leaves no room for its decruncher, the file is in Exomizer's format." : ''}</small>}</div>}
+          {fmt !== 'exomizer' && <small className="muted">{FORMAT_NOTE[fmt]}{sfx && fmt !== 'auto' ? " Where the program leaves no room for its decruncher, the file is in Exomizer's format." : ''}</small>}</div>}
+        {o.maxSeconds && <SecondsField id="pack-max-seconds" label="At most, seconds to decrunch" value={prefs.maxSeconds}
+          help="On a PAL C64. Empty: the smallest file, however long it takes to decrunch."
+          onCommit={v => set({ maxSeconds: v }, v == null ? 'Pack: any decrunch time' : 'Pack: decrunch time')} />}
         {o.effort && <div className="field"><label htmlFor="pack-effort">Effort</label>
           <select id="pack-effort" value={prefs.effort} onChange={e => set({ effort: e.target.value as PackPrefs['effort'] }, 'Pack: effort')}>
             <option value="fast">Fast — a little larger</option>
@@ -381,7 +402,7 @@ export function PackSettings(p: PackSettingsProps) {
           <p className="muted small">{written
             ? <>Next to the crunched {prefs.split && parts > 1 ? 'files' : 'file'}, Brokkr writes its decruncher, <span className="mono">{cmd.outs.find(n => n.endsWith('.prg') && n.includes('-decrunch'))}</span> and <span className="mono">.asm</span>, and decrunches each file with it in its emulated C64. For each file, set <span className="mono">stream</span> to the address after its last byte, then <span className="mono">jsr</span> to the decruncher.</>
             : !o.decruncher && brokkr ? <>Brokkr's decruncher reads backward: for data crunched forward, use Exomizer's <span className="mono">exodecrunch.s</span>.</>
-            : DECRUNCH[brokkr ? prefs.format : 'exomizer-tool']}</p>
+            : DECRUNCH[brokkr && fmt !== 'auto' ? fmt : 'exomizer-tool']}</p>
         </SideSection>
       )}
       {o.place && (
@@ -418,7 +439,7 @@ export function PackSettings(p: PackSettingsProps) {
   </>;
 }
 
-const FORMAT_NAME: Record<PackFormat, string> = { exomizer: "Exomizer's format", brokkr: "Brokkr's own format", fast: "Brokkr's fast format" };
+const FORMAT_NAME: Record<PackFormat, string> = { exomizer: "Exomizer's format", brokkr: "Brokkr's own format", fast: "Brokkr's fast format", auto: "each of the three formats, the smallest kept" };
 
 /** What a pack under way is doing, step by step, with the time since it began (ticking each second). */
 function PackingCard({ packing }: { packing: PackProgress }) {
@@ -471,6 +492,9 @@ function PackResultCard({ result: r, fresh, onRun, onSave, onSaveFile, onLog }: 
     <div className={cx('pack-result', r.check?.status === 'differs' ? 'bad' : 'ok', !fresh && 'stale')} role="status" aria-label="Packed file">
       <div className="pack-result-head"><Icon name={r.check?.status === 'differs' ? 'err' : 'ok'} size={14} /><b className="mono" title={r.path}>{packed.length > 1 ? `${packed.length} crunched files` : r.name}</b></div>
       <div className="small">{from ? <>{from} bytes packed to {size} ({Math.round((size / from) * 100)} %)</> : null}{r.packed && packed.length <= 1 ? <span className="muted mono"> · ${h4(r.packed.start)}–${h4(r.packed.start + r.packed.length - 1)}</span> : null}</div>
+      {r.tried && <ul className="pack-tried muted small" aria-label="What auto tried">
+        {r.tried.map(t => <li key={t.format} className={cx(t.taken && 'on')}>{FORMAT_NAME[t.format]}: {t.error ?? `${t.bytes} bytes, ${t.seconds!.toFixed(1)} s to decrunch`}{t.taken ? ' (taken)' : ''}</li>)}
+      </ul>}
       {files && <ul className="pack-out" aria-label="Files written">
         {files.map(f => (
           <li key={f.name}>

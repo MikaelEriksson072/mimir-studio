@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decruncherNeeds, findSys, ramFor, sfx } from '../src/sfx.ts';
+import { decruncherNeeds, findSys, LONG_SECONDS, PAL_HZ, ramFor, sfx } from '../src/sfx.ts';
 import { EXOMIZER, basicProgram, programLike, rng } from './tools.ts';
 
 // sfx() runs every file it makes in an emulated C64 and compares the memory with the program; these tests make
@@ -95,6 +95,30 @@ describe('self-extracting files', () => {
     const overhead = (data: Uint8Array, load: number, o: Parameters<typeof sfx>[2]) => { const r = sfx(data, load, o); return r.prg.length - r.stream.length; };
     expect([overhead(basic, 0x0801, {}), overhead(basic, 0x0801, { format: 'brokkr' }), overhead(basic, 0x0801, { format: 'fast' })]).toEqual([357, 586, 262]);
     expect([overhead(high, 0x1000, { start: 0x1000 }), overhead(high, 0x1000, { start: 0x1000, format: 'brokkr' }), overhead(high, 0x1000, { start: 0x1000, format: 'fast' })]).toEqual([354, 583, 259]);
+  });
+
+  it('take the smallest of the formats, or the smallest that decrunches in time (auto)', () => {
+    const prog = basicProgram(programLike(12000, 2), 2064);
+    const each = Object.fromEntries((['exomizer', 'brokkr', 'fast'] as const).map(format => [format, sfx(prog, 0x0801, { format })]));
+    const auto = sfx(prog, 0x0801, { format: 'auto' });
+    expect(auto.tried?.map(t => t.format)).toEqual(['exomizer', 'brokkr', 'fast']);
+    expect(auto.format).toBe('brokkr');
+    expect(auto.prg).toEqual(each.brokkr.prg);
+    // Brokkr's own format takes longest, and says so when that is more than LONG_SECONDS
+    expect(each.brokkr.cycles).toBeGreaterThan(5 * each.exomizer.cycles);
+    expect(each.exomizer.warnings.join()).not.toMatch(/Decrunching takes/);
+    const big = sfx(basicProgram(programLike(20000, 2), 2064), 0x0801, { format: 'brokkr' });
+    expect(big.cycles / PAL_HZ).toBeGreaterThan(LONG_SECONDS);
+    expect(big.warnings.join()).toMatch(/Decrunching takes \d+\.\d s on a PAL C64: Brokkr's own format is the slowest/);
+    // within 2 s: the smaller of the two that are that quick
+    const quick = sfx(prog, 0x0801, { format: 'auto', maxSeconds: 2 });
+    expect(quick.prg.length).toBe(Math.min(each.exomizer.prg.length, each.fast.prg.length));
+    expect(quick.format).not.toBe('brokkr');
+    const none = sfx(prog, 0x0801, { format: 'auto', maxSeconds: 0.05 });
+    expect(none.format).toBe('fast');
+    expect(none.warnings.join()).toMatch(/No format decrunches within 0\.05 s: the fastest, Brokkr's fast one/);
+    // the decruncher's needs, whichever it takes
+    expect(decruncherNeeds({ format: 'auto' })).toMatchObject({ tables: { min: 0, max: 1536, align: 256 }, zp: 12 });
   });
 
   it('run a BASIC program with RUN', () => {

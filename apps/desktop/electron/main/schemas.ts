@@ -28,7 +28,7 @@ export const packPrefsSchema = z.object({
   // project files from before Brokkr have neither: they pack with Brokkr now
   packer: z.enum(['brokkr', 'exomizer']).default('brokkr'),
   effort: z.enum(['fast', 'normal', 'max']).default('normal'),
-  format: z.enum(['exomizer', 'brokkr', 'fast']).default('exomizer'),
+  format: z.enum(['exomizer', 'brokkr', 'fast', 'auto']).default('exomizer'),
   mode: z.enum(['sfx', 'mem']),
   ranges: z.array(packRange).max(4096).nullable(),
   start: z.enum(['sys', 'basic', 'jmp']),
@@ -52,6 +52,8 @@ export const packPrefsSchema = z.object({
   // project files from before them: crunched data in one file, with the decruncher written next to it
   split: z.boolean().default(false),
   decruncher: z.boolean().default(true),
+  // project files from before it have none: no limit
+  maxSeconds: z.number().positive().max(3600).nullable().default(null),
 }).strict();
 const blockKinds = ['code', 'data', 'words', 'text', 'table', 'lohi', 'sprite', 'charset', 'bitmap', 'screen', 'music', 'fill', 'basic'] as const satisfies readonly BlockKind[];
 

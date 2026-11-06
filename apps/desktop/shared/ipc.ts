@@ -3,7 +3,7 @@
  * process registers exactly these channels and the preload exposes
  * exactly these functions as `window.kr`.
  * ===================================================================== */
-import type { Cartridge, ExomizerReport, KickProblem, LoadedFile, PackCheck, PackPrefs, Project, Roms, ToolchainSettings } from '@mimir/core';
+import type { Cartridge, ExomizerReport, KickProblem, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
 
 export const CHANNELS = {
   projectOpen: 'project:open',
@@ -225,6 +225,8 @@ export interface PackResponse {
   /** Brokkr: every file written, where it is written and what it is (crunched data with `split`: one for each part;
    * next to crunched data, the decruncher's PRG and source) */
   files?: { name: string; path: string; prg: Uint8Array; kind: 'packed' | 'decruncher' | 'source'; note: string }[];
+  /** Brokkr, format auto: what each format made and which was taken */
+  tried?: PackTried[];
   /** the memory that was packed */
   packed: { start: number; length: number } | null;
   report: ExomizerReport;
