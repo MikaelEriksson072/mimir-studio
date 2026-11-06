@@ -5,6 +5,8 @@ import { BrokkrError } from './errors.ts';
 export interface DiskFile {
   /** the name as PETSCII bytes turned into text ($a0 padding dropped) */
   name: string;
+  /** the name's PETSCII bytes as they are on the disk (without the $a0 padding): write() takes them to replace it */
+  raw: Uint8Array;
   type: 'DEL' | 'SEQ' | 'PRG' | 'USR' | 'REL';
   /** closed (not a splat file) and locked */
   closed: boolean;
@@ -114,8 +116,9 @@ export class Disk {
         const t = e[2];
         if ((t & 7) > 4 || (t === 0 && e[3] === 0)) continue;
         if ((t & 0x80) === 0 && (t & 7) === 0) continue;
+        const raw = e.slice(5, 21), pad = raw.indexOf(0xa0);
         out.push({
-          name: petscii(e.subarray(5, 21)), type: TYPES[t & 7], closed: (t & 0x80) !== 0, locked: (t & 0x40) !== 0,
+          name: petscii(raw), raw: pad < 0 ? raw : raw.slice(0, pad), type: TYPES[t & 7], closed: (t & 0x80) !== 0, locked: (t & 0x40) !== 0,
           track: e[3], sector: e[4], blocks: e[30] | (e[31] << 8), entry: { track, sector, index: i },
         });
       }
@@ -124,8 +127,8 @@ export class Disk {
   }
 
   find(name: string): DiskFile | null {
-    const want = name.toLowerCase();
-    return this.files().find(f => f.name.toLowerCase() === want) ?? this.files().find(f => matches(f.name, name)) ?? null;
+    const want = upper(name);
+    return this.files().find(f => upper(f.name) === want) ?? this.files().find(f => matches(f.name, name)) ?? null;
   }
 
   read(f: Pick<DiskFile, 'track' | 'sector' | 'name'>): Uint8Array {
@@ -184,12 +187,14 @@ export class Disk {
     throw new BrokkrError('BRK-E311', 'The directory is full (144 files).', 'Delete a file or write to a new disk image.');
   }
 
-  /** Write a file (PRG unless said), in place of one with the same name when `replace`. */
-  write(name: string, data: Uint8Array, o: { replace?: boolean; type?: DiskFile['type'] } = {}): DiskFile {
+  /** Write a file (PRG unless said), in place of one with the same name when `replace`: the name as text, or as the
+   * PETSCII bytes a DiskFile has (`raw`), which replace that file whatever its name holds. */
+  write(named: string | Uint8Array, data: Uint8Array, o: { replace?: boolean; type?: DiskFile['type'] } = {}): DiskFile {
+    const pet = typeof named === 'string' ? toPetscii(named) : named, name = typeof named === 'string' ? named : petscii(named);
     if (!data.length) throw new BrokkrError('BRK-E312', `"${name}" is empty; a file on a disk has at least one byte.`);
-    const pet = toPetscii(name);
     if (pet.length > 16) throw new BrokkrError('BRK-E313', `"${name}" is longer than 16 characters, the most a file name on a disk has.`);
-    const old = this.files().find(f => f.name === petscii(pet));
+    const same = (raw: Uint8Array) => raw.length === pet.length && raw.every((b, i) => b === pet[i]);
+    const old = this.files().find(f => same(f.raw));
     if (old && !o.replace) throw new BrokkrError('BRK-E314', `There is already a file "${old.name}" on the disk.`, 'Replace it, or give the new file another name.');
     const blocks = Math.ceil(data.length / 254);
     if (blocks > this.free + (old ? old.blocks : 0)) {
@@ -231,8 +236,11 @@ export function petscii(b: Uint8Array): string {
   return s;
 }
 
+/** a–z in upper case, nothing else: the placeholders petscii() gives ($2400 + byte) are bytes, not letters to change */
+const upper = (s: string): string => s.replace(/[a-z]/g, c => c.toUpperCase());
+
 function toPetscii(name: string): Uint8Array {
-  return Uint8Array.from([...name.toUpperCase()].map(ch => {
+  return Uint8Array.from([...upper(name)].map(ch => {
     const c = ch.codePointAt(0)!;
     if (c >= 0x2400 && c <= 0x24ff) return c - 0x2400;
     return c < 0x80 ? c : 0x3f;
@@ -241,7 +249,7 @@ function toPetscii(name: string): Uint8Array {
 
 /** The 1541's wildcards: * ends a name, ? is any one character. */
 function matches(name: string, pattern: string): boolean {
-  const n = name.toUpperCase(), p = pattern.toUpperCase();
+  const n = upper(name), p = upper(pattern);
   for (let i = 0; i < p.length; i++) {
     if (p[i] === '*') return true;
     if (i >= n.length || (p[i] !== '?' && p[i] !== n[i])) return false;

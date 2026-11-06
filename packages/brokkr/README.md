@@ -100,11 +100,14 @@ memory image (where they overlap, a later one wins; gaps between them are zero).
 The file loads at `$0801`, decrunches the program and starts it.
 
 - `--start sys` (the default) starts it with the SYS of the program's first BASIC line, `--start basic` with `RUN` (a
-  BASIC program), `--start <address>` with a jump there (a program that loads elsewhere than `$0801` needs this).
+  BASIC program), `--start <address>` with a jump there (a program that loads elsewhere than `$0801` needs this). The
+  SYS is read as a number (`SYS 2061`, `SYS(2061)`); one with an expression (`SYS 2*1024`) is an error that asks for
+  `--start`, as Brokkr does not work out its value.
 - `--ram-exit <$01>` is `$01` after decrunching (default `$37`, BASIC and KERNAL in); `--irq on|off` the interrupt flag
   after decrunching (default on when the KERNAL is in).
 - `--no-effect`: no border flashing while it decrunches (the fast format never flashes).
-- `--four-tables` (Exomizer's format): a table of its own for the offsets of length 3 (`-P+16`); `auto` tries both.
+- `--four-tables` (Exomizer's format): a table of its own for the offsets of length 3 (`-P+16`); `--four-tables auto`
+  tries both, and `off` leaves it out.
 
 While it decrunches, Brokkr sets `$01` itself so that everything the decruncher reads and writes is RAM, also under the
 ROMs and I/O. It puts the decruncher in the stack page or at `$0334` where it can, so nothing shows on the screen, and
@@ -186,8 +189,12 @@ the decruncher unless `--table` says otherwise.
 
 `brokkr d64 disk.d64` lists the disk as the 1541 does. `brokkr d64 disk.d64 GAME INTRO` packs the files named into a
 copy of the disk, `disk-brokkr.d64` (or `-o`): a file that loads at `$0801` with a SYS line becomes a self-extracting
-file, any other one crunched data at its address. `--mode sfx` or `--mode mem` packs every named file the same way.
-The disk image you give is not changed.
+file started by that SYS, a BASIC program at `$0801` without one a self-extracting file started with RUN, any other one
+crunched data at its address. `--mode sfx` or `--mode mem` packs every named file the same way. A file that cannot be
+packed (a self-extracting file without room for the decruncher, say) stays as it is, and the output says why; the
+others are packed. When none can be, no disk image is written (`BRK-E322`). A name that is not on the disk stops it
+before anything is packed. The disk image you give is not changed, and each file keeps its name byte for byte, PETSCII
+graphics and all.
 
 ### Options for every command
 
@@ -196,13 +203,15 @@ The disk image you give is not changed.
 | `--format exomizer\|brokkr\|fast` | the stream format ([The formats](#the-formats)) |
 | `--at`, `--table`, `--zp`, `--keep` | for `sfx` and `d64`: where the decruncher works ([`sfx`](#sfx-a-self-extracting-program)); for `decruncher`, where it goes (not `--keep`) |
 | `--effort fast\|normal\|max` | how hard it crunches: `fast` takes a quarter of the time for streams about 1.7 % larger, `max` searches further on every core but one |
-| `--threads <n>` | the threads for `--effort max` |
+| `--threads <n>` | the threads for `--effort max` (at least 1) |
 | `-o <file>` | the output (default `<first file>-brokkr.prg`, `.bin`, `.d64` or `.asm`) |
 | `--json` | print the result, or the error, as one JSON object |
 | `-q` | print nothing but errors |
 | `-P`, `-T`, `-M`, `-m`, `-e`, `-E` | Exomizer's stream options, for `mem` and `raw` in Exomizer's format |
 
-`brokkr --help` lists them all.
+`brokkr --help` lists them all. A one-letter option takes its value right after it too, as Exomizer's do: `-P39`,
+`-P+16`, `-m1024`, `-T4`, `-oout.prg`. An option Brokkr does not have is an error (`BRK-E017`), not left out: a stream
+crunched with other settings than its decruncher's reads wrong. For Exomizer's `-n` it says to use `--no-effect`.
 
 ### Errors and JSON
 
@@ -247,7 +256,8 @@ what it wrote. `src/node.ts` adds the pool of worker threads that `--effort max`
   place, sets the load address from it, and warns when a load address you give would make the decruncher write over
   what it has not read.
 - **Disk images.** `brokkr d64` lists a D64 and packs the files you name on it into a new image: self-extracting where a
-  file starts with a SYS line, crunched data where not.
+  file starts with a SYS line or is BASIC (started with RUN), crunched data where not; a file it cannot pack stays as
+  it is.
 - **Tools that read its output.** `--json` prints the result as one JSON object: sizes, the memory layout, `$01`, the
   cycles the decruncher took, warnings. Errors have codes (`BRK-E110`) and say what to do.
 - **Its decruncher as source.** `brokkr decruncher` writes Brokkr's 6502 decruncher as Kick Assembler source, to

@@ -46,7 +46,7 @@ sfx:
   --ram-exit <$01>       $01 after decrunching (default $37)
   --irq <on|off>         interrupts after decrunching (default on with the KERNAL in)
   --no-effect            no border flashing
-  --four-tables          a table of its own for length 3 (-P+16); "auto" tries both
+  --four-tables [auto|off] a table of its own for length 3 (-P+16); auto tries both
   --zp <a>  --at <a>  --table <a>
                          where the decruncher keeps its zero page bytes, its resident part and its
                          tables while it decrunches (default: where Brokkr finds room)
@@ -70,20 +70,45 @@ decruncher:
 
 interface Args { _: string[]; [k: string]: string | boolean | string[] }
 
+/** the options with a value, the ones without, and those whose value may be left out (with the values they take) */
+const VALUES = new Set(['o', 'keep', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
+const FLAGS = new Set(['json', 'q', 'help', 'h', 'f', 'b', 'r', 'E', 'small', 'effect', 'four', 'no-reuse', 'no-literal-sequences', 'no-effect']);
+const OPTIONAL: Record<string, string[]> = { 'four-tables': ['on', 'off', 'auto'] };
+/** Exomizer's options that Brokkr writes otherwise */
+const EXOMIZER: Record<string, string> = { n: '--no-effect', c: '-T 5', C: '--effort fast', x: 'the border flash, on unless --no-effect' };
+
+/**
+ * The arguments: `--name value` or `--name=value`, and as Exomizer takes them a one-letter option's value right after
+ * it (`-P39`, `-P+16`, `-m1024`, `-T4`). An option Brokkr does not have is an error, not a file name or a setting left
+ * at its default: a stream crunched with other settings than the decruncher's reads wrong.
+ */
 function parseArgs(argv: string[]): Args {
   const a: Args = { _: [] };
-  const takes = new Set(['o', 'keep', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'four-tables', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
+  const known = (k: string) => VALUES.has(k) || FLAGS.has(k) || k in OPTIONAL;
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--') { a._.push(...argv.slice(i + 1)); break; }
-    const m = /^--?([\w-]+)(?:=(.*))?$/.exec(t);
-    if (!m || /^-\d/.test(t)) { a._.push(t); continue; }
-    const [, k, v] = m;
-    if (v != null) a[k] = v;
-    else if (takes.has(k)) {
-      if (i + 1 >= argv.length) throw new BrokkrError('BRK-E001', `The option ${t} needs a value.`);
-      a[k] = argv[++i];
-    } else a[k] = true;
+    if (!t.startsWith('-') || t === '-' || /^-\d/.test(t)) { a._.push(t); continue; }
+    const body = t.replace(/^--?/, ''), eq = body.indexOf('=');
+    let k = eq < 0 ? body : body.slice(0, eq), v: string | undefined = eq < 0 ? undefined : body.slice(eq + 1);
+    // -P39: a one-letter option with its value after it
+    if (!t.startsWith('--') && !known(k) && VALUES.has(t[1]) && /^[A-Za-z]$/.test(t[1])) { k = t[1]; v = t.slice(2); }
+    if (FLAGS.has(k)) {
+      if (v != null) throw new BrokkrError('BRK-E017', `The option ${t.slice(0, t.indexOf('='))} takes no value.`);
+      a[k] = true;
+    } else if (k in OPTIONAL) {
+      if (v == null && OPTIONAL[k].includes(argv[i + 1])) v = argv[++i];
+      if (v != null && !OPTIONAL[k].includes(v)) throw new BrokkrError('BRK-E017', `--${k} is ${OPTIONAL[k].join(', ')} or nothing, not "${v}".`);
+      a[k] = v ?? OPTIONAL[k][0];
+    } else if (VALUES.has(k)) {
+      if (v == null) {
+        if (i + 1 >= argv.length) throw new BrokkrError('BRK-E001', `The option ${t} needs a value.`);
+        v = argv[++i];
+      }
+      a[k] = v;
+    } else {
+      throw new BrokkrError('BRK-E017', `Brokkr has no option ${t}.`, EXOMIZER[t[1]] && !t.startsWith('--') ? `Exomizer's -${t[1]} is ${EXOMIZER[t[1]]} in Brokkr.` : 'brokkr --help lists them.');
+    }
   }
   return a;
 }
@@ -182,10 +207,12 @@ function protocolBits(s: string): number {
 
 function makeCrunch(a: Args): { crunch: (d: Uint8Array, o: CrunchOptions) => Promise<Crunched>; close: () => Promise<void> } {
   let pool: Pool | null = null;
+  const threads = a.threads != null ? number(String(a.threads), '--threads') : defaultThreads();
+  if (threads < 1) throw new BrokkrError('BRK-E018', `--threads is how many threads --effort max crunches on: at least 1, not ${threads}.`);
   return {
     crunch: async (d, o) => {
       if (o.effort !== 'max' || o.encoding) return crunchData(d, o);
-      pool ??= new Pool(a.threads != null ? number(String(a.threads), '--threads') : defaultThreads());
+      pool ??= new Pool(threads);
       return crunchSearch(d, o, pool.runner({ data: d, protocol: protocol(o.protocol), profile: { ...PROFILES.max, ...o.profile }, header: o.header !== false }));
     },
     close: async () => { await pool?.close(); },
@@ -203,14 +230,18 @@ const brkStats = (b: BrkCrunched) => ({ format: 'brokkr', bytes: b.stream.length
 const fastStats = (f: FastCrunched) => ({ format: 'fast', bytes: f.stream.length, ms: Math.round(f.ms), safety: f.safety, ...f.stats });
 
 async function main(argv: string[]): Promise<number> {
-  const a = parseArgs(argv);
-  const json = !!a.json, quiet = !!a.q;
-  const say = (s: string) => { if (!json && !quiet) console.log(s); };
-  const [command, ...files] = a._;
+  // before the arguments are read, so that what is wrong with them comes as JSON too
+  const json = argv.includes('--json');
   const t0 = performance.now();
-  if (!command || a.help || a.h || command === 'help') { console.log(USAGE); return command ? 0 : 1; }
-  const { crunch, close } = makeCrunch(a);
+  let command: string | undefined, close = async () => {};
   try {
+    const a = parseArgs(argv), quiet = !!a.q;
+    const say = (s: string) => { if (!json && !quiet) console.log(s); };
+    const [first, ...files] = a._;
+    command = first;
+    if (!command || a.help || a.h || command === 'help') { console.log(USAGE); return command ? 0 : 1; }
+    const made = makeCrunch(a), crunch = made.crunch;
+    close = made.close;
     let result: Record<string, unknown>;
     if (command === 'sfx' || command === 'mem' || command === 'raw') {
       const { inputs, start, data } = loadInputs(files);
@@ -275,27 +306,44 @@ async function main(argv: string[]): Promise<number> {
         say(`0 "${disk.title.name.padEnd(16)}" ${disk.title.id}`);
         for (const f of list) say(`${String(f.blocks).padEnd(5)}"${f.name}"${' '.repeat(Math.max(0, 17 - f.name.length))}${f.closed ? ' ' : '*'}${f.type}${f.locked ? '<' : ''}`);
         say(`${disk.free} blocks free.`);
-        result = { disk: diskName, title: disk.title, free: disk.free, files: list.map(({ entry: _e, ...f }) => f) };
+        result = { disk: diskName, title: disk.title, free: disk.free, files: list.map(({ entry: _e, raw, ...f }) => ({ ...f, petscii: [...raw] })) };
       } else {
         const format = formatOf(a);
         const o = crunchOptions(a);
-        const packed: Record<string, unknown>[] = [];
-        for (const name of names) {
+        if (a.mode != null && a.mode !== 'sfx' && a.mode !== 'mem') throw new BrokkrError('BRK-E009', `--mode is sfx or mem, not "${String(a.mode)}".`);
+        // every name first: one that is not on the disk is a mistake in the command, not in a file
+        const chosen = names.map(name => {
           const f = disk.find(name);
           if (!f) throw new BrokkrError('BRK-E320', `There is no file "${name}" on the disk.`, 'brokkr d64 <disk> lists the files.');
           if (f.type !== 'PRG') throw new BrokkrError('BRK-E321', `"${f.name}" is a ${f.type} file; Brokkr packs PRG files.`);
+          return f;
+        });
+        const packed: Record<string, unknown>[] = [];
+        for (const f of chosen) {
           const prg = disk.read(f);
           const load = prg[0] | (prg[1] << 8), data = prg.subarray(2);
-          const mode = a.mode ?? (load === 0x0801 && findStart(data) ? 'sfx' : 'mem');
-          let bytes: Uint8Array;
-          if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format, crunch: o, place: placeOf(a) }, crunch)).prg;
-          else if (mode === 'mem' && format === 'brokkr') bytes = memBrkFile(data, load, crunchBrk(data.slice().reverse(), { effort: o.effort })).bytes;
-          else if (mode === 'mem' && format === 'fast') bytes = memFastFile(data, load, crunchFast(data.slice().reverse(), { effort: o.effort })).bytes;
-          else if (mode === 'mem') bytes = memFile(data, load, await crunch(data.slice().reverse(), memCrunchOptions({ crunch: o })), { crunch: o }).bytes;
-          else throw new BrokkrError('BRK-E009', `--mode is sfx or mem, not "${String(mode)}".`);
-          const written = disk.write(f.name, bytes, { replace: true });
-          say(`"${f.name}": ${f.blocks} blocks -> ${written.blocks} (${mode})`);
-          packed.push({ name: f.name, mode, before: { bytes: prg.length, blocks: f.blocks }, after: { bytes: bytes.length, blocks: written.blocks } });
+          // a program at $0801 starts by its SYS, or with RUN when it is BASIC without one; any other is crunched data
+          const sys = load === 0x0801 && findStart(data), basic = load === 0x0801 && !sys && isBasic(data);
+          const mode = a.mode ?? (sys || basic ? 'sfx' : 'mem');
+          // a file that cannot be packed stays as it is, and the others are packed
+          try {
+            let bytes: Uint8Array;
+            if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format, crunch: o, place: placeOf(a), start: basic ? 'basic' : 'sys' }, crunch)).prg;
+            else if (format === 'brokkr') bytes = memBrkFile(data, load, crunchBrk(data.slice().reverse(), { effort: o.effort })).bytes;
+            else if (format === 'fast') bytes = memFastFile(data, load, crunchFast(data.slice().reverse(), { effort: o.effort })).bytes;
+            else bytes = memFile(data, load, await crunch(data.slice().reverse(), memCrunchOptions({ crunch: o })), { crunch: o }).bytes;
+            const written = disk.write(f.raw, bytes, { replace: true });
+            say(`"${f.name}": ${f.blocks} blocks -> ${written.blocks} (${mode}${basic && mode === 'sfx' ? ', RUN' : ''})`);
+            packed.push({ name: f.name, mode, ...(basic && mode === 'sfx' ? { start: 'basic' } : {}), before: { bytes: prg.length, blocks: f.blocks }, after: { bytes: bytes.length, blocks: written.blocks } });
+          } catch (e) {
+            if (!(e instanceof BrokkrError)) throw e;
+            say(`"${f.name}": left as it is: ${e.code}: ${e.message}${e.hint ? ` ${e.hint}` : ''}`);
+            packed.push({ name: f.name, mode, error: { code: e.code, message: e.message, hint: e.hint } });
+          }
+        }
+        const failed = packed.find(p => p.error) as { name: string; error: { code: string; message: string } } | undefined;
+        if (failed && packed.every(p => p.error)) {
+          throw new BrokkrError('BRK-E322', `None of the files could be packed, so no disk image was written: "${failed.name}": ${failed.error.code}: ${failed.error.message}`);
         }
         const out = outName(diskName, '.d64', a.o);
         writeFileSync(out, disk.bytes);
@@ -338,6 +386,18 @@ async function main(argv: string[]): Promise<number> {
 /** whether a program at $0801 has a SYS to start it */
 function findStart(data: Uint8Array): boolean {
   for (let i = 4; i < Math.min(data.length, 80); i++) { if (data[i] === 0) return false; if (data[i] === 0x9e) return true; }
+  return false;
+}
+
+/** whether a program at $0801 is BASIC: lines linked up, each ending with a 0, up to the 0 link that ends them */
+function isBasic(data: Uint8Array): boolean {
+  const at = (a: number) => data[a - 0x0801] ?? 0;
+  for (let line = 0x0801, n = 0; n < 2000; n++) {
+    const link = at(line) | (at(line + 1) << 8);
+    if (link === 0) return n > 0;
+    if (link < line + 5 || link > 0x0801 + data.length || at(link - 1) !== 0) return false;
+    line = link;
+  }
   return false;
 }
 

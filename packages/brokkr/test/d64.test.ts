@@ -33,6 +33,17 @@ describe('D64 images', () => {
     expect(d.free).toBe(664 - 3 - 1);
   });
 
+  it('keep the PETSCII bytes of a name, the graphics ones too, and replace a file by them', () => {
+    const d = Disk.format('X');
+    // petscii() shows byte $db as U+24DB; in upper case that would be U+24C1, byte $c1
+    d.write('Aⓛⓡ', programLike(300, 7));
+    expect([...d.files()[0].raw]).toEqual([0x41, 0xdb, 0xe1]);
+    expect(d.find('aⓛⓡ')?.raw).toEqual(d.files()[0].raw);
+    d.write(d.files()[0].raw, programLike(100, 8), { replace: true });
+    expect(d.files()).toHaveLength(1);
+    expect(d.read(d.files()[0])).toEqual(programLike(100, 8));
+  });
+
   it('grow the directory past 8 files, and say when the disk is full', () => {
     const d = Disk.format('MANY');
     for (let i = 0; i < 20; i++) d.write(`FILE${i}`, programLike(300, i));

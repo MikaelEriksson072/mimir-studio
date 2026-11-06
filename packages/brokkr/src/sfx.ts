@@ -84,20 +84,35 @@ export interface SfxResult {
 
 /** The SYS address in the first line of a BASIC program at `start`, or null. */
 export function findSys(peek: (a: number) => number, start = 0x0801): number | null {
+  return readSys(peek, start).address;
+}
+
+/**
+ * The first BASIC line's SYS: its address when it is a number (`SYS 2061`, `SYS(2061)`), and the bytes after the SYS
+ * when they are something else (`SYS 2*1024`, `SYS 4096+16`), whose value Brokkr does not work out.
+ */
+function readSys(peek: (a: number) => number, start: number): { address: number | null; other?: string } {
   const link = peek(start) | (peek(start + 1) << 8);
-  if (!link) return null;
+  if (!link) return { address: null };
   for (let a = start + 4; a < start + 80; a++) {
     const b = peek(a);
-    if (b === 0) return null;
+    if (b === 0) return { address: null };
     if (b !== 0x9e) continue;
-    let k = a + 1, digits = '';
-    while (peek(k) === 0x20 || peek(k) === 0x28) k++;
-    while (peek(k) >= 0x30 && peek(k) <= 0x39 && digits.length < 5) digits += String.fromCharCode(peek(k++));
-    if (!digits) return null;
+    let k = a + 1, digits = '', paren = false;
+    while (peek(k) === 0x20 || peek(k) === 0x28) { paren ||= peek(k) === 0x28; k++; }
+    while (peek(k) >= 0x30 && peek(k) <= 0x39 && digits.length < 6) digits += String.fromCharCode(peek(k++));
+    while (peek(k) === 0x20 || (paren && peek(k) === 0x29)) k++;
+    // the number ends the statement: the line ends, or a : starts the next one
     const v = Number(digits);
-    return v <= 0xffff ? v : null;
+    if (digits && (peek(k) === 0 || peek(k) === 0x3a) && v <= 0xffff) return { address: v };
+    // something else after the SYS, shown as BASIC lists it, when the line is BASIC (it ends with a 0 where its link
+    // points) and reads as text and operators: not bytes that only happen to hold the SYS token
+    let text = '', i = a + 1;
+    for (; peek(i) !== 0 && i < a + 24; i++) text += peek(i) >= 0x20 && peek(i) < 0x7f ? String.fromCharCode(peek(i)) : { 0xaa: '+', 0xab: '-', 0xac: '*', 0xad: '/' }[peek(i)] ?? '\0';
+    const line = peek(i) === 0 && link === i + 1;
+    return line && text.trim() && !text.includes('\0') ? { address: null, other: text.trim() } : { address: null };
   }
-  return null;
+  return { address: null };
 }
 
 type Range = [number, number];
@@ -251,14 +266,16 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   const basic = startKind === 'basic';
   let entry: number;
   if (startKind === 'sys') {
-    const sys = lo === 0x0801 ? findSys(a => (a >= lo && a < hi ? data[a - lo] : 0)) : null;
-    if (sys == null) {
-      throw new BrokkrError('BRK-E110', lo === 0x0801
-        ? 'The program has no SYS in its first BASIC line, so Brokkr does not know where it starts.'
-        : `The program loads at ${h4(lo)}, not at $0801, so it has no BASIC line with a SYS to start it.`,
+    const sys = lo === 0x0801 ? readSys(a => (a >= lo && a < hi ? data[a - lo] : 0), 0x0801) : { address: null };
+    if (sys.address == null) {
+      throw new BrokkrError('BRK-E110', lo !== 0x0801
+        ? `The program loads at ${h4(lo)}, not at $0801, so it has no BASIC line with a SYS to start it.`
+        : sys.other != null
+        ? `The first BASIC line has SYS ${sys.other}, which Brokkr does not read as an address, so it does not know where the program starts.`
+        : 'The program has no SYS in its first BASIC line, so Brokkr does not know where it starts.',
       'Give the start address (start: $xxxx, or --start on the command line), or RUN for a BASIC program.');
     }
-    entry = sys;
+    entry = sys.address;
   } else if (basic) {
     if (lo !== 0x0801) warnings.push(`The program loads at ${h4(lo)}; RUN starts the BASIC program at $0801.`);
     entry = 0xa7ae;
