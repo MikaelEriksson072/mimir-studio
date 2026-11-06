@@ -8,7 +8,7 @@ import { $4, now } from '../util/hex';
 import { createContext, type Ctx, type Deep } from './context';
 import { applyOverrides, fileOwners, findBasicStubs, loadMemory } from './memory';
 import { findCartStart } from './cartridge';
-import { releaseFlags, seedEntries, settle, sweepForcedCode, trace } from './trace';
+import { behind, releaseFlags, seedEntries, settle, sweepForcedCode, trace } from './trace';
 import { evidence } from './evidence';
 import { resolveTables, warnUnresolvedJumps } from './pointers';
 import { detectMusic } from './music';
@@ -40,13 +40,14 @@ export function analyze(project: ProjectInput): AnalysisResult {
   let A: AnalysisResult, ctx: Ctx, rounds = 0;
   do [A, ctx] = analyzeOnce(project, deep, deep.text);
   while (++rounds < DEEP_ROUNDS && learn(A, ctx, deep));
-  deepLog(A, ctx, before, rounds);
+  deepLog(A, ctx, normal, behind(ctx), rounds);
   const report = A.deep!;
   report.ms = now() - t0;
   // the deep one, unless it reads code more wrongly: more code read finds more indirect jumps and tips
   if (faultCount(A.log) <= faults) return A;
   normal.log.push({ lvl: 'info', msg: `Deep analysis: no reading with as few warnings and errors as the normal analysis (${faults}, not counting indirect jumps whose target is not known) was found, so this is the normal one`, addr: null, cat: 'deep' });
-  return { ...normal, S: A.S, deep: { ...report, after: before } };
+  // (the normal one: nothing of it is gone, and no decision of the deep one stands)
+  return { ...normal, S: A.S, deep: { ...report, after: before, gone: {}, added: 0, decisions: { guesses: [], sides: [], runTime: [] } } };
 }
 
 /** A normal analysis, done again when its code islands took bytes of a string handed to a print routine (5.5b): the

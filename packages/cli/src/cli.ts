@@ -4,9 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
-  addRunChecks, analyze, bankFiles, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
-  exportFiles, h4, isCrt, isProblem, kindInfo, makeDemo, makePrg, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, render, unpackLog, unpackPrg, verify,
-  type Cartridge, type FileInput, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings,
+  addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
+  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, makeDemo, makePrg, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, render, unpackLog, unpackPrg, verify,
+  type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings,
 } from '@mimir/core';
 import { findC64Roms, findKickAssJar, findVice, runKickAssembler, splitArgs, writeVfs } from '@mimir/core/node';
 
@@ -191,15 +191,25 @@ function prgsIn(paths: string[], io: Io): { path: string; name: string }[] {
 const pct = (n: number, of: number) => (of ? `${(100 * n / of).toFixed(1)} %` : '-');
 
 /** What the analysis made of the bytes against what the program did with them (8.11h), and the problems by kind. */
-function measureLines(c: RunCheck, codes: Map<ProblemCode, number>): string[] {
+/** A deep analysis: its problems gone (solved, decided on a guess) and new, and its decisions against the run (8.11e). */
+interface DeepMeasure { gone: Partial<Record<GoneWhy, number>>; added: number; decisions: DecisionCheck }
+
+function measureLines(c: RunCheck, codes: Map<ProblemCode, number>, deep: DeepMeasure | null): string[] {
   const byCode = [...codes].sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(', ');
   const problems = [...codes.values()].reduce((s, n) => s + n, 0);
-  return [
+  const lines = [
     `  ran ${c.ran} instruction starts: ${pct(c.found, c.ran)} found, ${c.outOfStep} out of step, ${c.missed} as data`,
     `  read ${c.read} bytes as data only: ${c.readAsCode} as code (${c.readAsCodeCopied} of them copied to run elsewhere)`,
     `  ${c.codeBytes} bytes of code: ${pct(c.codeUntouched, c.codeBytes)} not touched by the run`,
     `  ${problems} problem${problems === 1 ? '' : 's'}${byCode ? `: ${byCode}` : ''}`,
   ];
+  if (deep) {
+    const g = goneCounts(deep), d = deep.decisions;
+    const why = (Object.entries(deep.gone) as [GoneWhy, number][]).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(', ');
+    lines.push(`  deep: ${g.solved + g.decided + g.other} problems gone, ${g.solved} solved and ${g.decided} decided${g.other ? `, ${g.other} other` : ''}${why ? ` (${why})` : ''}; ${deep.added} new`);
+    lines.push(`  deep decisions that ran: ${d.guessesRan} of ${d.guesses} guesses left out, ${d.sidesRan} of ${d.sides} sides left out, ${d.runTimeRan} of ${d.runTime} routines taken to be put in place at run time`);
+  }
+  return lines;
 }
 
 function measureCmd(inputs: string[], io: Io, sets: [string, string][], flags: Map<string, string | true>): number {
@@ -209,6 +219,7 @@ function measureCmd(inputs: string[], io: Io, sets: [string, string][], flags: M
   for (const [k, v] of sets) (settings as Record<string, unknown>)[k] = coerce(k, v);
   const roms = flags.has('no-roms') ? null : findC64Roms(findVice() ?? '');
   const json = flags.has('json'), checks: RunCheck[] = [], total = new Map<ProblemCode, number>(), rows: unknown[] = [];
+  const deeps: DeepMeasure[] = [];
   for (const { path, name } of files) {
     // a project: its first file, started at the project's program start (as the app sets it for a program Sindri
     // unpacked without a BASIC line)
@@ -225,19 +236,27 @@ function measureCmd(inputs: string[], io: Io, sets: [string, string][], flags: M
     const c = checkRun(A, run.fileUse), codes = new Map<ProblemCode, number>();
     for (const l of A.log) if (isProblem(l) && l.code) { codes.set(l.code, (codes.get(l.code) ?? 0) + 1); total.set(l.code, (total.get(l.code) ?? 0) + 1); }
     checks.push(c);
+    const decisions = checkDecisions(A, run.fileUse), deep = A.deep && decisions ? { gone: A.deep.gone, added: A.deep.added, decisions } : null;
+    if (deep) deeps.push(deep);
     const seconds = +(run.cycles / 985248).toFixed(1);
-    if (json) { rows.push({ file: name, stop: run.stop.reason, seconds, ...c, problems: Object.fromEntries(codes) }); continue; }
+    if (json) { rows.push({ file: name, stop: run.stop.reason, seconds, ...c, problems: Object.fromEntries(codes), ...(deep ? { deep } : {}) }); continue; }
     io.out(`${name} (the run: ${run.stop.reason} after ${seconds} s)`);
-    for (const l of measureLines(c, codes)) io.out(l);
+    for (const l of measureLines(c, codes, deep)) io.out(l);
     for (const [k, label] of [['missed', 'ran, as data'], ['outOfStep', 'ran, out of step'], ['readAsCode', 'read, as code']] as const) {
       if (c.where[k].length) io.out(`    ${label}: ${c.where[k].map(a => `$${h4(a)}`).join(' ')}`);
     }
   }
   const sum = addRunChecks(checks);
-  if (json) { io.out(JSON.stringify({ files: rows, total: { ...sum, where: undefined, problems: Object.fromEntries(total) }, codes: PROBLEM_CODES }, null, 2)); return 0; }
+  let deepSum: DeepMeasure | null = null;
+  if (deeps.length) {
+    const gone: Partial<Record<GoneWhy, number>> = {};
+    for (const d of deeps) for (const [k, n] of Object.entries(d.gone) as [GoneWhy, number][]) gone[k] = (gone[k] ?? 0) + n;
+    deepSum = { gone, added: deeps.reduce((s, d) => s + d.added, 0), decisions: addDecisionChecks(deeps.map(d => d.decisions)) };
+  }
+  if (json) { io.out(JSON.stringify({ files: rows, total: { ...sum, where: undefined, problems: Object.fromEntries(total), ...(deepSum ? { deep: deepSum } : {}) }, codes: PROBLEM_CODES }, null, 2)); return 0; }
   io.out('');
   io.out(`${checks.length} program${checks.length === 1 ? '' : 's'}`);
-  for (const l of measureLines(sum, total)) io.out(l);
+  for (const l of measureLines(sum, total, deepSum)) io.out(l);
   return 0;
 }
 

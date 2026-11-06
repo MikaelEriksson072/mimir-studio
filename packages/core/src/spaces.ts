@@ -17,6 +17,7 @@ import type {
 } from './types';
 import { lineText } from './render/lines';
 import { analyze as analyzeOne } from './analyze';
+import { addDeepReports } from './analyze/deep';
 import { render as renderOne, type RenderOptions } from './render/kick';
 import { verify as verifyOne } from './verify/verify';
 import { cartImageLines, chipAddress, chipName, crtBanks, crtBase, crtOutputName, crtSourceName, describeCrt, parseCrt, type CartLine, type Crt } from './c64/crt';
@@ -216,7 +217,7 @@ function mergeAnalyses(project: ProjectInput, parts: Split[], results: AnalysisR
     sum(out.stats.mn, st.mn); sum(out.stats.modes, st.modes); sum(out.stats.bytesByType as Record<string, number>, st.bytesByType as Record<string, number>);
     out.stats.illegal += st.illegal; out.stats.illegalList.push(...st.illegalList.map(at)); out.stats.ins += st.ins; out.stats.codeBytes += st.codeBytes; out.stats.total += st.total;
     out.stats.xrefs += st.xrefs; out.stats.entries += st.entries; out.stats.labels += st.labels; out.stats.ms += st.ms;
-    if (A.deep) out.deep = out.deep ? { ...out.deep, rounds: Math.max(out.deep.rounds, A.deep.rounds), before: out.deep.before + A.deep.before, after: out.deep.after + A.deep.after, rejected: out.deep.rejected + A.deep.rejected, cuts: out.deep.cuts + A.deep.cuts, branches: out.deep.branches + A.deep.branches, ms: out.deep.ms + A.deep.ms } : { ...A.deep };
+    if (A.deep) out.deep = out.deep ? addDeepReports(out.deep, A.deep) : { ...A.deep };
     out.relocs.push(...A.relocs.map(r => ({ start: at(r.start), end: at(r.start) + (r.end - r.start), to: at(r.to), file: file(r.file) })));
     out.copies.push(...A.copies.map(c => ({ ...c, start: at(c.start), end: at(c.start) + (c.end - c.start), to: at(c.to), loop: at(c.loop), at: at(c.at), jump: at(c.jump) })));
     const entry = A.entry == null ? null : at(A.entry);

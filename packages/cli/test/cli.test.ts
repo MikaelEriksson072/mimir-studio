@@ -117,6 +117,11 @@ describe('mimir CLI', () => {
     expect(j.files[0]).toMatchObject({ file: 'demo.prg', stop: 'settled', missed: 0, outOfStep: 0, problems: {} });
     expect(j.total.ran).toBe(j.files[0].found);
     expect(j.codes.jam).toBe('a code path reaches a JAM opcode');
+    // the deep analysis: its problems gone, solved or decided, and its decisions against the run
+    c = capture(dir);
+    expect(await main(['measure', 'demo.prg', '--no-roms', '--deep'], c.io)).toBe(0);
+    expect(c.lines).toContain('  deep: 0 problems gone, 0 solved and 0 decided; 0 new');
+    expect(c.lines).toContain('  deep decisions that ran: 0 of 0 guesses left out, 0 of 0 sides left out, 0 of 0 routines taken to be put in place at run time');
     c = capture(dir);
     expect(await main(['measure', 'nothing-here'], c.io)).toBe(2);
   });

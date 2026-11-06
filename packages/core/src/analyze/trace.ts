@@ -1,6 +1,6 @@
 /* 5.4 entry points and recursive-descent code tracing, 5.7 forced code; 5.17 tracing a guess on trial */
-import type { Addr, EntryKind, LogEntry } from '../types';
-import { cutKey, forkTrace, type Ctx, type Decision } from './context';
+import type { Addr, EntryKind, GoneWhy, LogEntry } from '../types';
+import { cutKey, forkTrace, type Ctx, type CutWhy, type Decision } from './context';
 import { cutFor } from './deep';
 import { KERNAL_IN, KERNAL_OUT } from './banks';
 import { OPC, type OpcodeInfo } from '../cpu/opcodes';
@@ -60,7 +60,7 @@ function flagsAfter(f: Flags, o: OpcodeInfo, v: number, pc: number): Flags {
 
 export function trace(ctx: Ctx): void {
   const { queue, mem, insLen, codeOwner, skip, loaded, forcedData, addX, enqueue, ijumps, inlineCalls, entryKind, flagCut, S, L } = ctx;
-  const { deep, cuts, blameCut, decOf, blame } = ctx;
+  const { deep, cuts, blameCut, decOf, blame, newIns } = ctx;
   // a deep analysis does not follow a JSR or JMP into ROM or through an operand that code writes
   const follow = (from: number, to: number) => {
     const why = deep && !insLen[to] && cutFor(deep, loaded, mem, from, to, ctx.onTrial, ctx.cart, ctx.trialPort);
@@ -116,6 +116,7 @@ export function trace(ctx: Ctx): void {
       if (!ok) { blamed(); L('warn', `Instruction at ${$4(pc)} would overlap other code or leave the file; tracing stopped`, pc, 'code', 'overlap'); break; }
       insLen[pc] = info.len;
       for (let k = 1; k < info.len; k++) codeOwner[(pc + k) & 0xffff] = pc;
+      newIns?.push(pc);
       if (entryKind.has(pc)) flags = {}; // reached some other way too
       const d = decode(mem, pc), next = (pc + info.len) & 0xffff;
       if (info.flow === 'br') {
@@ -229,6 +230,9 @@ export interface Trial {
   why: LogEntry | null;
   /** the sides left out for it (a strong guess): branch or JSR -> the side */
   cuts: Map<Addr, { side: Addr; why: LogEntry }>;
+  /** what the decision on it leaves out (8.11e): where its traces on trial that failed ran into problems, and (left
+   *  out) the instructions they read */
+  seen: Addr[];
 }
 
 /**
@@ -238,7 +242,7 @@ export interface Trial {
  * trial again; it fails when the problem is on its own straight way.
  */
 export function trial(ctx: Ctx, a: number, kind: EntryKind): Trial {
-  const cuts: Trial['cuts'] = new Map(), strong = STRONG.has(kind);
+  const cuts: Trial['cuts'] = new Map(), strong = STRONG.has(kind), seen = new Set<Addr>();
   for (;;) {
     const f = forkTrace(ctx);
     // a strong guess is traced as the code so far is: a JSR or JMP to a BRK or JAM goes to a routine put there at run
@@ -256,15 +260,17 @@ export function trial(ctx: Ctx, a: number, kind: EntryKind): Trial {
     while (releaseFlags(f)) trace(f);
     const bad = f.log.find(fails);
     if (bad) {
+      for (const l of f.log) if (l.code && l.addr != null && l.lvl !== 'hint') seen.add(l.addr);
       const d = strong && bad.addr != null ? f.blame.get(bad.addr) : null;
-      if (!d || cuts.has(d.at) || cuts.size >= MAX_BLAME) return { why: bad, cuts };
+      if (!d || cuts.has(d.at) || cuts.size >= MAX_BLAME) { for (const p of f.newIns!) seen.add(p); return { why: bad, cuts, seen: [...seen] }; }
       cuts.set(d.at, { side: d.side, why: bad });
       continue;
     }
     // an indirect jump whose target is not known is no fault (isFault): a strong guess keeps it
-    if (strong) return { why: null, cuts };
+    if (strong) return { why: null, cuts, seen: [...seen] };
     const j = f.ijumps.find(j => !knownPointer(ctx, j.ptr, f));
-    return { why: j ? { lvl: 'warn', msg: `Indirect JMP (${$4(j.ptr)}) at ${$4(j.pc)}: target unknown at analysis time`, addr: j.pc, cat: 'code', code: 'ijmp-unknown' } : null, cuts };
+    if (j) { seen.add(j.pc); for (const p of f.newIns!) seen.add(p); }
+    return { seen: [...seen], why: j ?{ lvl: 'warn', msg: `Indirect JMP (${$4(j.ptr)}) at ${$4(j.pc)}: target unknown at analysis time`, addr: j.pc, cat: 'code', code: 'ijmp-unknown' } : null, cuts };
   }
 }
 
@@ -280,6 +286,8 @@ export function settle(ctx: Ctx): void {
     if (rejected.has(a)) continue; // the code only grows, so it fails again
     if (!ctx.insLen[a]) {
       const t = trial(ctx, a, kind);
+      // what the decision leaves out: all the guess ran into, or (kept) what was on the sides left out
+      for (const p of t.seen) if (!ctx.trialBehind.has(p)) ctx.trialBehind.set(p, t.why ? 'rejected' : 'blamed');
       if (t.why) { rejected.set(a, { kind, why: t.why }); continue; }
       for (const [at, c] of t.cuts) ctx.blameCut.set(at, { side: c.side, guess: a, kind, why: c.why });
     }
@@ -288,6 +296,37 @@ export function settle(ctx: Ctx): void {
     trace(ctx);
     while (releaseFlags(ctx)) trace(ctx);
   }
+}
+
+/**
+ * Deep analysis (8.11e): what lies behind each kind of decision it took: the problems there and the instructions, by
+ * their address, with the kind. The guesses left out and the problems on the sides left out from what their traces on
+ * trial ran into; the sides left out, the calls, jumps and branch sides not followed traced as the normal analysis would
+ * (without the deep analysis's rules, from the code it has). Those it decided on a guess first, so a problem behind
+ * both kinds counts as decided.
+ */
+export function behind(ctx: Ctx): Map<Addr, GoneWhy> {
+  const out = new Map<Addr, GoneWhy>(ctx.trialBehind);
+  const look = (why: GoneWhy, starts: [Addr, EntryKind][]) => {
+    if (!starts.length) return;
+    const f = forkTrace(ctx);
+    f.deep = null; f.blameCut = new Map();
+    for (const [a, kind] of starts) f.enqueue(a, kind, true);
+    trace(f);
+    const at = (a: Addr) => { if (!out.has(a)) out.set(a, why); };
+    for (const l of f.log) if (l.code && l.addr != null) at(l.addr);
+    for (const j of f.ijumps) at(j.pc);
+    for (const p of f.newIns!) at(p);
+  };
+  const cut = (w: CutWhy): [Addr, EntryKind][] => [...ctx.cuts].filter(([, why]) => why === w).map(([k]) => [k & 0xffff, 'jmp']);
+  look('blamed', [...ctx.blameCut.values()].map(c => [c.side, 'branch']));
+  look('runTime', cut('empty'));
+  look('flags', [...ctx.flagCut.values()].map(c => [c.side, 'branch']));
+  // and the KERNAL's own handlers that $0314-$0319 are set to (the KERNAL calls them with its ROM in)
+  look('rom', [...cut('rom'), ...[...ctx.ev.vectors].filter(([v, ds]) => v >= 0xe000 && !ctx.insLen[v] && [...ds].some(d => d < 0x0400)).map(([v]): [Addr, EntryKind] => [v, 'irq'])]);
+  look('smc', cut('smc'));
+  look('noreturn', cut('noreturn'));
+  return out;
 }
 
 /** User "mark as code": linear sweep over the override range after tracing. */

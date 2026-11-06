@@ -1,7 +1,7 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
  * disk's files, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, d64writeScript, decode, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   type Addr, type AnalysisResult, type BitfireFile, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -30,14 +30,16 @@ export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNa
 /** The Problems tab: the deep analysis (on or off, and what it did) over the list. */
 export function ProblemsPanel({ items, onNavigate, deep, on, busy, onDeep }: { items: UiProblem[]; onNavigate: (a: Addr) => void; deep: DeepReport | null; on: boolean; busy: boolean; onDeep: (on: boolean) => void }) {
   const s = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+  // the problems gone: solved (the code read right) or decided on a guess (8.11e)
+  const gone = (d: DeepReport) => { const c = goneCounts(d); return c.solved + c.decided + c.other ? `: ${c.solved} solved, ${c.decided} decided${c.other ? `, ${c.other} other` : ''}` : ''; };
   return (
     <>
       <div className="problems-head">
         <label className="check" title="Slower: traces every guess on trial and keeps it only when it runs into no problem, does not follow calls into ROM or through operands the code writes, decides branches by the flags before them, and analyses again until the problems are at a minimum">
           <input type="checkbox" checked={on} onChange={e => onDeep(e.target.checked)} aria-label="Deep analysis" /><span>Deep analysis</span>
         </label>
-        <span className="muted small" role="status" aria-label="Deep analysis result">
-          {on && deep ? `${deep.before} → ${s(deep.after, 'problem')} in ${s(deep.rounds, 'round')}, ${(deep.ms / 1000).toFixed(1)} s · the Log tells what it left out`
+        <span className="muted small" role="status" aria-label="Deep analysis result" title={on && deep ? 'Of the problems the normal analysis has and the deep one does not: solved, the code read right (a side of a branch the flags never take, a call into ROM, an indirect jump whose target is found …); decided, on a guess (a guess traced on trial and left out or kept, a side left out for an interrupt handler …)' : undefined}>
+          {on && deep ? `${deep.before} → ${s(deep.after, 'problem')} in ${s(deep.rounds, 'round')}, ${(deep.ms / 1000).toFixed(1)} s${gone(deep)} · the Log tells what it left out`
             : on ? (busy ? 'Analysing…' : '')
               : 'Slower: tests every guess and analyses again until the problems are at a minimum'}
         </span>

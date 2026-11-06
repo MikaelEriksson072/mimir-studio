@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, findBlock, openC64File, render, verify, type FileInput, type ProblemCode, type ProjectInput } from '../src';
 import { fromSource, snapshotOf } from './helpers/programs';
-import { faultCount, isFault } from '../src/analyze/deep';
+import { addDeepReports, faultCount, goneCounts, isFault } from '../src/analyze/deep';
 
 const BASIC = '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n';
 const problems = (A: ReturnType<typeof analyze>) => A.log.filter(l => l.lvl === 'warn' || l.lvl === 'err' || l.lvl === 'hint');
@@ -25,8 +25,12 @@ describe('deep analysis', () => {
     expect(normal.deep).toBeNull();
     expect(problems(normal).map(l => l.msg)).toEqual(['JAM opcode $02 reached at $0814; the path probably runs into data']);
     expect(problems(deep)).toEqual([]);
-    expect(deep.deep).toMatchObject({ before: 1, after: 0, branches: 1 });
-    expect(deepLines(deep).at(-1)).toMatch(/^Deep analysis: 1 → 0 problems in \d rounds?: 0 guesses left out, 0 calls and jumps not followed, 1 branch decided by the flags before it$/);
+    expect(deep.deep).toMatchObject({ before: 1, after: 0, branches: 1, gone: { flags: 1 }, added: 0 });
+    // the JAM was on the side the flags never take: solved
+    expect(deepLines(deep).slice(-2)).toEqual([
+      'Of the 1 problem the normal analysis has and this one does not, 1 is solved, the code read right (1 on sides of branches the flags never take), and 0 decided on a guess',
+      expect.stringMatching(/^Deep analysis: 1 → 0 problems in \d rounds? \(1 solved, 0 decided\): 0 guesses left out, 0 calls and jumps not followed, 1 branch decided by the flags before it$/),
+    ]);
   });
 
   it('follows only the side of a branch the flags before it take, through instructions that keep them', () => {
@@ -55,6 +59,8 @@ describe('deep analysis', () => {
     expect(findBlock(deep.blocks, 0x081c)).toMatchObject({ type: 'code', start: 0x081c });
     expect(problems(deep)).toEqual([]);
     expect(deepLines(deep)).toContain('The routine-like bytes at $080e stay data: traced on trial, they run into a problem (JAM opcode $02 reached at $0828)');
+    // the JAM is gone because the guess is left out: decided, not solved
+    expect(deep.deep).toMatchObject({ gone: { rejected: 1 }, decisions: { guesses: [0x080e], sides: [], runTime: [] } });
   });
 
   it('does not follow a call into the KERNAL ROM of a snapshot, nor its IRQ vector at $ea31', () => {
@@ -69,7 +75,10 @@ describe('deep analysis', () => {
       'The JSR at $c000 to $ffe4 reaches the KERNAL ROM there, so the RAM below it is not traced',
       'IRQ vector $0314 set to $ea31 at $c006: the KERNAL ROM\'s own routine, so the RAM below is not traced',
       'The load address $0200 is not used as the entry point: traced on trial, it runs into a problem (BRK at $0200 ends the code path)',
+      // the BRKs below the KERNAL are solved (the ROM is there), the one at the load address decided
+      'Of the 3 problems the normal analysis has and this one does not, 2 are solved, the code read right (2 behind calls into ROM), and 1 decided on a guess (1 in guesses left out as data)',
     ]));
+    expect(deep.deep!.gone).toEqual({ rom: 2, rejected: 1 });
   });
 
   it('keeps an IRQ handler that ends in JMP $ea31, with the KERNAL ROM there', () => {
@@ -101,6 +110,8 @@ describe('deep analysis', () => {
     expect(problems(deep)).toEqual([]);
     expect(deep.deep!.blamed).toBe(1);
     expect(deepLines(deep)).toContain('The IRQ handler at $081a is kept without the side of the BMI at $081d that goes to $081f: traced on trial, that runs into a problem (BRK at $081f ends the code path)');
+    // the BRK is gone because the side is left out: decided
+    expect(deep.deep).toMatchObject({ gone: { blamed: 1 }, decisions: { sides: [0x081f] } });
   });
 
   it('keeps an IRQ handler that calls a routine put in place at run time, as the code so far would', () => {
@@ -108,6 +119,7 @@ describe('deep analysis', () => {
     expect(findBlock(deep.blocks, 0x081a)?.type).toBe('code');
     expect(deep.insLen[0x0900]).toBe(0);
     expect(deepLines(deep)).toContain('The JSR at $081a goes to $0900, which holds $00: the routine is put there at run time (unpacked or copied), so it is not traced');
+    expect(deep.deep).toMatchObject({ gone: { runTime: 1 }, decisions: { runTime: [0x0900] } });
   });
 
   it('traces an IRQ handler installed in $0314 with the KERNAL in, where the main code also runs without it', () => {
@@ -118,6 +130,13 @@ describe('deep analysis', () => {
     expect(findBlock(deep.blocks, 0xc017)?.type).toBe('code');
     expect(deep.insLen[0xea81]).toBe(0);
     expect(deepLines(deep)).toContain('The JMP at $c01a to $ea81 reaches the KERNAL ROM there, so the RAM below it is not traced');
+  });
+
+  it('adds up the reports of a cartridge\'s banks', () => {
+    const a = both(fromSource('p.prg', `${BASIC} lda #1\n sta $d020\n bne go\n .byte $02,$00\ngo: rts\n`)).deep.deep!;
+    const b = both(installs(` lda $d019\n bmi raster\n .byte $00\nraster: sta $d019\n inc $d020\n jmp $ea31\n`)).deep.deep!;
+    expect(addDeepReports(a, b)).toMatchObject({ before: 2, after: 0, branches: 1, blamed: 1, gone: { flags: 1, blamed: 1 }, added: 0, decisions: { guesses: [], sides: [0x081f], runTime: [] } });
+    expect(goneCounts(addDeepReports(a, b))).toEqual({ solved: 1, decided: 1, other: 0 });
   });
 
   it('leaves out an IRQ handler whose own straight way runs into a problem', () => {

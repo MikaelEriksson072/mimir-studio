@@ -2430,7 +2430,8 @@ test('deep analysis from the Problems tab: a snapshot\'s ROM calls are not trace
   await expect(result).toContainText('analyses again until the problems are at a minimum');
 
   await page.getByRole('checkbox', { name: 'Deep analysis' }).check();
-  await expect(result).toHaveText(/^4 → 0 problems in 3 rounds, \d+\.\d s · the Log tells what it left out$/, { timeout: 30_000 });
+  // the four BRKs in the RAM below the ROM are solved: the calls reach the ROM
+  await expect(result).toHaveText(/^4 → 0 problems in 3 rounds, \d+\.\d s: 4 solved, 0 decided · the Log tells what it left out$/, { timeout: 30_000 });
   await expect(tab.locator('.count')).toHaveText('0');
   await expect(page.locator('.bottom-body')).toContainText('No problems found.');
   await page.getByRole('tab', { name: /Analysis log/ }).click();

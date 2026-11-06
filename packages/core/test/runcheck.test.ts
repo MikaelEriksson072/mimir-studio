@@ -2,7 +2,7 @@
  * made of it. */
 import { describe, expect, it } from 'vitest';
 import { FILE_ARG, FILE_RAN, FILE_READ, FILE_WRITTEN } from '@mimir/sindri';
-import { addRunChecks, analyze, checkRun, makePrg, unpackPrg } from '../src';
+import { addDecisionChecks, addRunChecks, analyze, checkDecisions, checkRun, makePrg, unpackPrg } from '../src';
 import { fromSource } from './helpers/programs';
 
 const BASIC = '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n';
@@ -34,5 +34,18 @@ describe('the analysis against a run', () => {
     expect(c).toMatchObject({ ran: 6, found: 6, outOfStep: 0, missed: 0, readAsCode: 0 });
     // the table nothing touched
     expect([0x081a, 0x081b, 0x081c].map(a => run.fileUse[a])).toEqual([0, 0, 0]);
+  });
+
+  it('counts the deep analysis\'s decisions on a guess that the run contradicts', () => {
+    // an IRQ handler whose BMI side is a BRK: the deep analysis leaves that side out
+    const irq = fromSource('p.prg', `${BASIC} sei\n lda #<irq\n sta $0314\n lda #>irq\n sta $0315\n cli\n rts\nirq: lda $d019\n bmi raster\n .byte $00\nraster: sta $d019\n jmp $ea31\n`);
+    const D = analyze({ name: 't', files: [irq], settings: { deepAnalysis: true } });
+    expect(D.deep!.decisions.sides).toEqual([0x081f]);
+    expect(checkDecisions(A, new Uint8Array(0x10000))).toBeNull(); // no deep analysis
+    const use = new Uint8Array(0x10000);
+    expect(checkDecisions(D, use)).toEqual({ guesses: 0, guessesRan: 0, sides: 1, sidesRan: 0, runTime: 0, runTimeRan: 0 });
+    use[0x081f] = FILE_RAN; // the side left out ran after all
+    expect(checkDecisions(D, use)).toMatchObject({ sides: 1, sidesRan: 1 });
+    expect(addDecisionChecks([checkDecisions(D, use), null, checkDecisions(D, use)])).toMatchObject({ sides: 2, sidesRan: 2 });
   });
 });

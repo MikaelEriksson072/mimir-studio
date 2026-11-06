@@ -2,7 +2,7 @@
  * and writes this object; the order of the stages is fixed in analyze/index. */
 import type {
   Addr, BasicInfo, DelaySled, EntryKind, FileInput, ImmediateHint, IndirectJump, LogEntry, LogLevel,
-  LohiTable, Override, ProblemCode, ProblemLevel, ProjectInput, RelocInfo, Settings, SpindleDriver, TextEncoding, XRef, XRefKind,
+  GoneWhy, LohiTable, Override, ProblemCode, ProblemLevel, ProjectInput, RelocInfo, Settings, SpindleDriver, TextEncoding, XRef, XRefKind,
 } from '../types';
 import { DEFAULT_SETTINGS, T } from '../model';
 import type { CartMode } from '../c64/memconfig';
@@ -108,6 +108,11 @@ export interface Ctx {
   decOf: Map<Addr, Decision | null>;
   /** the last decision on the way to each problem the trace ran into (by the problem's address) */
   blame: Map<Addr, Decision | null>;
+  /** the problems the traces on trial ran into and the code they read, by address: of a guess left out, or on a side
+   *  left out (8.11e) */
+  trialBehind: Map<Addr, GoneWhy>;
+  /** a copy that traces on trial: the instructions it read (null in the analysis itself) */
+  newIns: Addr[] | null;
   /** a copy that traces a guess on trial: a BRK or JAM where code is not there yet counts against it */
   onTrial: boolean;
   /** the $01 configurations new code runs with on trial (an interrupt handler: those its vectors need); 0: the main
@@ -161,7 +166,7 @@ export function createContext(project: ProjectInput, deep: Deep | null = null): 
     ev: emptyEvidence(), lohiTabs: new Map(), wordTables: new Map(), delays: new Map(), delayIns: new Set(), spindle: [],
     deep: S.deepAnalysis ? deep ?? { port: null, main: 0, written: null, noReturn: new Set(), text: new Set() } : null,
     pending: [], rejected: new Map(), cuts: new Map(), flagCut: new Map(), onTrial: false, trialPort: 0,
-    blameCut: new Map(), decOf: new Map(), blame: new Map(),
+    blameCut: new Map(), decOf: new Map(), blame: new Map(), trialBehind: new Map(), newIns: null,
   } as unknown as Ctx;
   return bind(ctx);
 }
@@ -196,6 +201,6 @@ export function forkTrace(ctx: Ctx): Ctx {
     ...ctx, insLen: ctx.insLen.slice(), codeOwner: ctx.codeOwner.slice(), skip: new Set(ctx.skip), xrefs: new Map(),
     entryKind: new Map(ctx.entryKind), queue: [], ijumps: [], inlineCalls: new Set(ctx.inlineCalls),
     log: [], logged: new Set(ctx.logged), pending: [], cuts: new Map(), flagCut: new Map(ctx.flagCut), onTrial: true,
-    blameCut: new Map(ctx.blameCut), decOf: new Map(), blame: new Map(),
+    blameCut: new Map(ctx.blameCut), decOf: new Map(), blame: new Map(), newIns: [],
   });
 }

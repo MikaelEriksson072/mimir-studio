@@ -998,8 +998,35 @@ som går efter problemens koder, 8.11g).
 På 2 360 program ur arkivet får 131 program mer kod så (200 157 byte, 157 fler textblock), och problemen i Problems blir
 2 631 i stället för 1 134, alla tips och indirekta hopp: felen blir aldrig fler. Att räkna de indirekta hoppen också tar
 bort en tredjedel av koden men bara 91 av problemen: de flesta är tips. `AnalysisResult.deep` (`DeepReport`) har varv, problem före och efter, gissningar som lämnats, snitt, grenar och
-tid; Problems visar *150 → 0 problems in 3 rounds, 1.5 s · the Log tells what it left out*. Det differentiella testet
-kör utan djupanalys, och den vanliga analysen är oförändrad.
+tid; Problems visar *150 → 0 problems in 3 rounds, 1.5 s: N solved, M decided · the Log tells what it left out*. Det
+differentiella testet kör utan djupanalys, och den vanliga analysen är oförändrad.
+
+**Lösta och avgjorda problem.** Problemantalet sjunker både när djupanalysen läser koden rätt och när den bara bestämmer
+sig. Därför säger rapporten för varje problem som den vanliga analysen har och djupanalysen inte har varför det är borta
+(`DeepReport.gone`, per `GoneWhy`):
+- **löst**, koden läses rätt: problemet låg på en grensida som flaggorna aldrig tar (`flags`), bakom ett anrop in i ROM
+  eller bakom en KERNAL-vektor som pekar på KERNAL:ens egen rutin (`rom`), bakom ett hopp vars mål koden skriver
+  (`smc`), efter ett anrop till en rutin som aldrig återvänder (`noreturn`), eller vid ett indirekt hopp vars mål nu är
+  känt (`pointer`) eller där `$01` nu följs (`port`);
+- **avgjort** på en gissning: problemet låg i en gissning som lämnats som data (`rejected`) eller i ett tips om byte som
+  nu läses som kod (`kept`), på en sida som lämnats bort för en stark gissning (`blamed`), i en rutin som antas läggas
+  dit vid körning (`runTime`), eller i en krock mellan två läsningar där djupanalysen valt bort den ena (`chosen`);
+- `other` när inget av det förklarar det.
+
+Vad som ligger bakom ett beslut, både problemen och instruktionerna, tas från provspårningen för fällda gissningar (allt
+den läste och gick in i) och för problemen på bortskurna sidor. Bortskurna sidor och snitten i huvudspårningen (flaggor,
+ROM, mål som koden skriver, rutiner som inte återvänder eller läggs dit vid körning) spåras som den vanliga analysen
+skulle, utan djupanalysens regler (`behind()` i `trace.ts`). De avgjorda räknas först, så ett problem som ligger bakom
+både ett avgjort och ett löst beslut räknas som avgjort. Ett problem i kod som djupanalysen har kvar räknas efter vad den
+vet där nu: ett indirekt hopp utan varning har ett känt mål (`pointer`), en `$01`-skrivning utan tips följs (`port`). En
+BRK eller JAM som koden skriver är löst (`smc`). Ett tips om oanvänd kod knyts till en fälld gissning nära blockets
+början, eller till det som tog bort koden före blocket. En krock knyts till det som ligger bakom den andra läsningen. Loggen säger det
+(*Of the 3 problems the normal analysis has and this one does not, 2 are solved, the code read right (2 behind calls
+into ROM), and 1 decided on a guess (1 in guesses left out as data)*), sammanfattningen likaså (*Deep analysis: 3 → 0
+problems in 2 rounds (2 solved, 1 decided): …*), och `DeepReport.added` räknar problemen som djupanalysen har men inte
+den vanliga. `DeepReport.decisions` har var besluten togs, så att `mimir measure` kan pröva dem mot körningen (8.11h):
+hur många av de fällda gissningarnas starter, de bortskurna sidorna och rutinerna som antas läggas dit vid körning som
+faktiskt kördes så som de laddades. När resultatet är den vanliga analysen är inget borta och inget beslut står kvar.
 
 **Mätt** på 1060 riktiga program ur referensarkivet: 4 054 problem blir 620, och 733 program i stället för 341 har
 inga problem alls. 105 av de 620 är *very high entropy* (packade program, som ska packas upp först). 7 % mer blir kod,
@@ -1182,6 +1209,17 @@ djupanalysen körda instruktioner i 172 program (21 666) och hittar fler i 122 (
 blir färre tappar 150 kod som kördes. Siffran för byte som bara lästes är för hög: kod som kopieras av en slinga
 analysen inte hittat räknas också. Djupanalysen tar i snitt 528 ms mot 565 ms före och 90 ms för den vanliga, som mest
 13,8 s (ett spel med över tusen gissningar som fälls; 12,8 s före). En mätning tar några minuter.
+
+**Lösta och avgjorda problem** (8.11e), på samma 1 000 program: av de 6 452 problem som den vanliga analysen har och
+djupanalysen inte har är bara 863 lösta (13 %): 347 bakom anrop in i ROM, 188 indirekta hopp med känt mål, 163 där
+`$01` följs, 89 på grensidor som flaggorna aldrig tar, 73 bakom mål eller instruktioner som koden skriver och 3 efter
+rutiner som aldrig återvänder. 5 284 är avgjorda (82 %): 4 754 i gissningar som lämnats som data, 220 tips om byte som
+nu läses som kod, 155 i rutiner som antas läggas dit vid körning, 108 på sidor som lämnats bort och 47 krockar där en
+läsning valts bort. 305 (5 %) förklaras inte, och djupanalysen har 475 problem som den vanliga inte har. Av de 383
+programmen utan problem kommer 181 dit enbart genom lösta problem. Mot körningen kördes 34 av 148 bortskurna sidor,
+691 av 79 368 starter av fällda gissningar (de flesta är förskjutna starter i samma datablock) och 4 av 1 475 rutiner
+som antogs läggas dit vid körning. Rapporten kostar lite: djupanalysen tar i snitt 448 ms mot 74 ms för den vanliga
+(6,1 gånger, mätt utan något annat igång; tidigare 5,9–6,3 gånger), som mest 11,1 s.
 
 **Test:** `test/runcheck.test.ts` (varje sorts utfall på en konstruerad körning, och en riktig körning där analysen
 hittar varje instruktion), Sindris `test/unpack.test.ts` (byte som körs, läses, skrivs före körning och aldrig rörs) och

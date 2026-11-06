@@ -120,8 +120,8 @@ export function diagnostics(ctx: Ctx, blocks: Block[]): void {
   const data = (b: Block) => {
     if (!deep) return false;
     for (const a of rejected.keys()) if (a >= b.start && a < b.end && a < b.start + 16) return true;
-    const { why } = trial(ctx, b.start, 'guess');
-    if (why) rejected.set(b.start, { kind: 'guess', why });
+    const { why, seen } = trial(ctx, b.start, 'guess');
+    if (why) { rejected.set(b.start, { kind: 'guess', why }); for (const p of seen) if (!ctx.trialBehind.has(p)) ctx.trialBehind.set(p, 'rejected'); }
     return !!why;
   };
   for (const b of blocks) {

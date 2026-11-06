@@ -533,8 +533,28 @@ export interface DeepReport {
   /** sides of branches (and the bytes after JSRs) left out because they ran into a problem when a strong guess (an
    *  interrupt handler code installs, the load address) was traced on trial: the guess is kept without them */
   blamed: number;
+  /** the normal analysis's problems the deep one does not have, by why they are gone (8.11e): `SOLVED` ones because
+   *  the code is read right, the rest because the deep analysis decided something on a guess */
+  gone: Partial<Record<GoneWhy, number>>;
+  /** problems the deep analysis has that the normal one does not (it reads code further) */
+  added: number;
+  /** where it decided: the starts of the guesses it left out, the sides of branches (and bytes after JSRs) it left
+   *  out, and the routines it takes to be put in place at run time (a JSR or JMP to a BRK or JAM) */
+  decisions: { guesses: Addr[]; sides: Addr[]; runTime: Addr[] };
   ms: number;
 }
+
+/**
+ * Why a problem of the normal analysis is gone in the deep one. Solved, the code is read right: `flags` (a side of a
+ * branch the flags before it never take), `rom` (a call into ROM, not the RAM below), `smc` (a target the code
+ * writes, or a BRK or JAM it writes), `noreturn` (the bytes after a call to a routine that never returns), `pointer`
+ * (an indirect jump's target found), `port` ($01 followed through the stack). Decided on a guess: `rejected` (a guess
+ * left out as data), `kept` (the bytes a tip was about, now read as code), `blamed` (a side left out for a strong
+ * guess), `runTime` (a routine taken to be put in place at run time), `chosen` (one of two overlapping readings left
+ * out). `other`: none of these explains it.
+ */
+export type GoneWhy = 'flags' | 'rom' | 'smc' | 'noreturn' | 'pointer' | 'port' | 'rejected' | 'kept' | 'blamed' | 'runTime' | 'chosen' | 'other';
+export const SOLVED: ReadonlySet<GoneWhy> = new Set<GoneWhy>(['flags', 'rom', 'smc', 'noreturn', 'pointer', 'port']);
 
 /** An IRQ handler and the raster line it runs at (5.16). */
 export interface RasterIrq {

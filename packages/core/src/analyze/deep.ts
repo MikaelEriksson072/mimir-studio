@@ -11,7 +11,7 @@
  * result is the deep one unless it has more faults than the normal analysis: warnings and errors that say code is read
  * wrongly. An indirect jump whose target is not known and a tip are no faults; more code read finds more of them.
  * ===================================================================== */
-import type { Addr, AnalysisResult, EntryKind, LogEntry } from '../types';
+import { SOLVED, type Addr, type AnalysisResult, type DeepReport, type EntryKind, type GoneWhy, type LogEntry } from '../types';
 import { cutKey, type Ctx, type CutWhy, type Deep } from './context';
 import { OPC } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
@@ -107,9 +107,97 @@ const AREA = { kernal: 'KERNAL ROM', basic: 'BASIC ROM', io: 'I/O', char: 'chara
 const list = (as: Addr[]) => as.slice(0, 4).map($4).join(', ') + (as.length > 4 ? ', …' : '');
 const KIND: Partial<Record<EntryKind, string>> = { ptr: 'pointer-table target', irq: 'IRQ handler', nmi: 'NMI handler', brk: 'BRK handler' };
 
-/** The log lines of a deep analysis: what it did not follow and left out, and a summary (and `A.deep`). */
-export function deepLog(A: AnalysisResult, ctx: Ctx, before: number, rounds: number): void {
+/** How many of a deep analysis's gone problems are solved (the code read right), decided on a guess, or neither. */
+export function goneCounts(d: Pick<DeepReport, 'gone'>): { solved: number; decided: number; other: number } {
+  const out = { solved: 0, decided: 0, other: 0 };
+  for (const [k, n] of Object.entries(d.gone) as [GoneWhy, number][]) out[SOLVED.has(k) ? 'solved' : k === 'other' ? 'other' : 'decided'] += n;
+  return out;
+}
+
+/** Two deep reports added up (a cartridge's banks, 13.9b). */
+export function addDeepReports(a: DeepReport, b: DeepReport): DeepReport {
+  const gone = { ...a.gone };
+  for (const [k, n] of Object.entries(b.gone) as [GoneWhy, number][]) gone[k] = (gone[k] ?? 0) + n;
+  return {
+    rounds: Math.max(a.rounds, b.rounds), before: a.before + b.before, after: a.after + b.after, rejected: a.rejected + b.rejected,
+    cuts: a.cuts + b.cuts, branches: a.branches + b.branches, blamed: a.blamed + b.blamed, gone, added: a.added + b.added, ms: a.ms + b.ms,
+    decisions: { guesses: [...a.decisions.guesses, ...b.decisions.guesses], sides: [...a.decisions.sides, ...b.decisions.sides], runTime: [...a.decisions.runTime, ...b.decisions.runTime] },
+  };
+}
+
+/** A problem by its kind and place (its address, or none), to find it in another analysis's log. */
+const problemKey = (l: LogEntry) => `${l.code}@${l.addr ?? ''}`;
+
+/** The start of the instruction the normal analysis `N` had where the instruction at `pc` overlaps it (`overlap`), or
+ *  that the jump to `pc` goes into the middle of (`mid-instruction`). */
+function overlapped(N: AnalysisResult, l: LogEntry): Addr | null {
+  const pc = l.addr!;
+  if (l.code === 'mid-instruction') return N.codeOwner[pc] >= 0 ? N.codeOwner[pc] : null;
+  for (let k = 1; k < OPC[N.mem[pc]].len; k++) {
+    const b = (pc + k) & 0xffff;
+    if (N.insLen[b]) return b;
+    if (N.codeOwner[b] >= 0) return N.codeOwner[b];
+  }
+  return null;
+}
+
+/**
+ * Why each problem of the normal analysis `N` is gone in the deep one `A` (8.11e): by what the deep analysis has now
+ * where the problem was, or by what lies behind its decisions (`behind`). Also how many problems are new.
+ */
+export function goneWhy(N: AnalysisResult, A: AnalysisResult, ctx: Ctx, behind: Map<Addr, GoneWhy>): { gone: Partial<Record<GoneWhy, number>>; added: number } {
+  const now = new Set(A.log.filter(isProblem).map(problemKey)), was = new Set(N.log.filter(isProblem).map(problemKey));
+  const gone: Partial<Record<GoneWhy, number>> = {};
+  const why = (l: LogEntry): GoneWhy => {
+    const a = l.addr;
+    if (a == null) return 'other';
+    // the code is there, without the problem: the jump's target found, $01 followed, the bytes of a tip read as code
+    if (A.insLen[a] > 0 || A.codeOwner[a] >= 0) {
+      if (l.code === 'ijmp-unknown' && A.insLen[a]) return 'pointer';
+      if (l.code === 'port-unknown' && A.insLen[a]) return 'port';
+      if (l.code === 'unreached') return 'kept';
+    } else if (ctx.rejected.has(a)) return 'rejected';
+    const b = behind.get(a);
+    if (b) return b;
+    // a BRK or JAM the code writes: the path stops there, as the instruction is set at run time
+    if ((l.code === 'brk' || l.code === 'jam') && ctx.deep?.written?.[a]) return 'smc';
+    // a tip about bytes in a block where a guess left out starts, near its start (as the tip is left out, 5.17)
+    if (l.code === 'unreached') {
+      const blk = A.blocks.find(x => a >= x.start && a < x.end);
+      if (blk) for (let k = blk.start; k < blk.end && k < blk.start + 16; k++) if (ctx.rejected.has(k) && !A.insLen[k]) return 'rejected';
+      // or its block began after code the normal analysis has and this one does not: for what lies behind that code
+      const p = (a - 1) & 0xffff, s = N.insLen[p] ? p : N.codeOwner[p];
+      if (s >= 0 && !A.insLen[s] && behind.get(s)) return behind.get(s)!;
+    }
+    // two readings overlapped: the other one is gone, for what lies behind it, or it chose
+    if (l.code === 'overlap' || l.code === 'mid-instruction') {
+      const o = overlapped(N, l);
+      return (o != null && behind.get(o)) || 'chosen';
+    }
+    return 'other';
+  };
+  for (const l of N.log) {
+    if (!isProblem(l) || now.has(problemKey(l))) continue;
+    const w = why(l);
+    gone[w] = (gone[w] ?? 0) + 1;
+  }
+  return { gone, added: A.log.filter(l => isProblem(l) && !was.has(problemKey(l))).length };
+}
+
+const GONE_TEXT: Record<GoneWhy, string> = {
+  flags: 'on sides of branches the flags never take', rom: 'behind calls into ROM', smc: 'behind calls and jumps whose target the code writes',
+  noreturn: 'after calls to routines that never return', pointer: 'at indirect jumps whose target is found', port: 'where $01 is followed',
+  rejected: 'in guesses left out as data', kept: 'about bytes now read as code', blamed: 'on sides left out for a strong guess',
+  runTime: 'in routines taken to be put in place at run time', chosen: 'where it chose one of two overlapping readings', other: 'for no reason found',
+};
+
+/**
+ * The log lines of a deep analysis: what it did not follow and left out, why the normal analysis's problems are gone
+ * (`behind`: what lies behind its decisions), and a summary (and `A.deep`).
+ */
+export function deepLog(A: AnalysisResult, ctx: Ctx, normal: AnalysisResult, behind: Map<Addr, GoneWhy>, rounds: number): void {
   const { mem, mcfg, xrefs, insLen } = A;
+  const before = problemCount(normal.log);
   const L = (lvl: LogEntry['lvl'], msg: string, addr: Addr | null) => A.log.push({ lvl, msg, addr, cat: 'deep' });
   const rom = new Map<Addr, Addr[]>();
   for (const [k, why] of [...ctx.cuts].sort((x, y) => x[0] - y[0])) {
@@ -148,7 +236,18 @@ export function deepLog(A: AnalysisResult, ctx: Ctx, before: number, rounds: num
     L('info', `${who} is kept without ${part}: traced on trial, that runs into a problem (${why.msg.replace(/[.;].*$/, '')})`, at);
   }
   const after = problemCount(A.log), cuts = ctx.cuts.size, branches = ctx.flagCut.size, blamed = ctx.blameCut.size;
-  A.deep = { rounds, before, after, rejected, cuts, branches, blamed, ms: 0 };
+  const { gone, added } = goneWhy(normal, A, ctx, behind);
+  const decisions = {
+    guesses: [...ctx.rejected.keys()].filter(a => !insLen[a]).sort((x, y) => x - y),
+    sides: [...ctx.blameCut.values()].map(c => c.side),
+    runTime: [...ctx.cuts].filter(([, why]) => why === 'empty').map(([k]) => k & 0xffff),
+  };
+  A.deep = { rounds, before, after, rejected, cuts, branches, blamed, gone, added, decisions, ms: 0 };
   const s = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
-  L('ok', `Deep analysis: ${before} → ${s(after, 'problem')} in ${s(rounds, 'round')}: ${s(rejected, 'guess', 'guesses')} left out, ${s(cuts, 'call or jump', 'calls and jumps')} not followed, ${s(branches, 'branch', 'branches')} decided by the flags before ${branches === 1 ? 'it' : 'them'}${blamed ? `, ${s(blamed, 'side')} left out where a strong guess ran into a problem` : ''}`, null);
+  // the problems gone: solved, the code read right, or decided on a guess (and those no reason explains)
+  const c = goneCounts(A.deep), part = (keep: (k: GoneWhy) => boolean) => (Object.entries(gone) as [GoneWhy, number][]).filter(([k]) => keep(k)).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${n} ${GONE_TEXT[k]}`).join(', ');
+  if (c.solved + c.decided + c.other) {
+    L('info', `Of the ${s(c.solved + c.decided + c.other, 'problem')} the normal analysis has and this one does not, ${c.solved} ${c.solved === 1 ? 'is' : 'are'} solved, the code read right${c.solved ? ` (${part(k => SOLVED.has(k))})` : ''}, and ${c.decided} decided on a guess${c.decided ? ` (${part(k => !SOLVED.has(k) && k !== 'other')})` : ''}${c.other ? `; ${c.other} ${GONE_TEXT.other}` : ''}${added ? `. It has ${s(added, 'problem')} the normal one does not, in code it reads further` : ''}`, null);
+  } else if (added) L('info', `This analysis has ${s(added, 'problem')} the normal one does not, in code it reads further`, null);
+  L('ok', `Deep analysis: ${before} → ${s(after, 'problem')} in ${s(rounds, 'round')} (${c.solved} solved, ${c.decided} decided${c.other ? `, ${c.other} other` : ''}): ${s(rejected, 'guess', 'guesses')} left out, ${s(cuts, 'call or jump', 'calls and jumps')} not followed, ${s(branches, 'branch', 'branches')} decided by the flags before ${branches === 1 ? 'it' : 'them'}${blamed ? `, ${s(blamed, 'side')} left out where a strong guess ran into a problem` : ''}`, null);
 }

@@ -65,6 +65,31 @@ export function checkRun(A: AnalysisResult, fileUse: Uint8Array, file = 0): RunC
   return c;
 }
 
+/** A deep analysis's decisions on a guess (8.11e) against the run: how many of each there are, and how many ran. */
+export interface DecisionCheck {
+  /** the starts of the guesses it left out as data */
+  guesses: number; guessesRan: number;
+  /** the sides of branches (and the bytes after JSRs) it left out for a strong guess */
+  sides: number; sidesRan: number;
+  /** the routines it takes to be put in place at run time (a JSR or JMP to a BRK or JAM): ran as loaded, they were not */
+  runTime: number; runTimeRan: number;
+}
+
+/** The decisions of the deep analysis `A` against the run's `fileUse` of file `file`; null without a deep analysis. */
+export function checkDecisions(A: AnalysisResult, fileUse: Uint8Array, file = 0): DecisionCheck | null {
+  if (!A.deep) return null;
+  const ran = (a: Addr) => A.owner[a] === file && (fileUse[a] & FILE_RAN) !== 0;
+  const { guesses, sides, runTime } = A.deep.decisions;
+  return { guesses: guesses.length, guessesRan: guesses.filter(ran).length, sides: sides.length, sidesRan: sides.filter(ran).length, runTime: runTime.length, runTimeRan: runTime.filter(ran).length };
+}
+
+/** Add decision checks up (a corpus). */
+export function addDecisionChecks(cs: (DecisionCheck | null)[]): DecisionCheck {
+  const sum: DecisionCheck = { guesses: 0, guessesRan: 0, sides: 0, sidesRan: 0, runTime: 0, runTimeRan: 0 };
+  for (const c of cs) if (c) for (const k of Object.keys(sum) as (keyof DecisionCheck)[]) sum[k] += c[k];
+  return sum;
+}
+
 /** Add run checks up (a corpus). */
 export function addRunChecks(cs: RunCheck[]): RunCheck {
   const sum: RunCheck = { ran: 0, found: 0, outOfStep: 0, missed: 0, read: 0, readAsCode: 0, readAsCodeCopied: 0, codeBytes: 0, codeUntouched: 0, where: { missed: [], outOfStep: [], readAsCode: [] } };
