@@ -1,13 +1,13 @@
 /* Brokkr's command line. `node src/cli.ts <command> [options] <files>`; --json prints one JSON object (the result,
  * or the error with its code), for editors and build tools. */
-import { readFileSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { crunchBrk, type BrkCrunched } from './crunch-brk.ts';
 import { crunchFast, type FastCrunched } from './fast.ts';
 import { crunchData, PROFILES, type CrunchOptions, type Crunched, type Effort } from './crunch.ts';
 import { Disk } from './d64.ts';
-import { decruncherFile } from './decrunch-file.ts';
-import { BrokkrError, h2, h4, span } from './errors.ts';
+import { checkMem, decruncherFile } from './decrunch-file.ts';
+import { BrokkrError, CheckError, h2, h4, span } from './errors.ts';
 import { memBrkFile, memCrunchOptions, memFastFile, memFile, rawBrk, rawFast, rawFile, type MemOptions } from './files.ts';
 import { encodingText, parseEncoding, protocol, type Protocol } from './format.ts';
 import { defaultThreads, Pool } from './node.ts';
@@ -41,6 +41,8 @@ options:
   --threads <n>          threads for --effort max (default ${defaultThreads()})
   --json                 print the result as JSON
   -q                     print nothing but errors
+  --dump <folder>        when a check in the emulated C64 fails: save the program, the file and the
+                         emulated memory there, for a report
 sfx:
   --start <s>            sys (the program's SYS, default), basic (RUN), or an address
   --ram-exit <$01>       $01 after decrunching (default $37)
@@ -52,7 +54,7 @@ sfx:
                          tables while it decrunches (default: where Brokkr finds room)
   --keep <a-b>[,<a-b>]   memory the decruncher, its tables and the crunched data stay out of
                          (also for d64)
-mem:
+mem (checked with Brokkr's 6502 decruncher in the emulated C64):
   -f                     crunch forward
   -l <address|none>      the load address (default: in place)
 raw:
@@ -71,7 +73,7 @@ decruncher:
 interface Args { _: string[]; [k: string]: string | boolean | string[] }
 
 /** the options with a value, the ones without, and those whose value may be left out (with the values they take) */
-const VALUES = new Set(['o', 'keep', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
+const VALUES = new Set(['o', 'dump', 'keep', 'format', 'effort', 'threads', 'start', 'ram-exit', 'irq', 'l', 'P', 'T', 'M', 'm', 'e', 'mode', 'zp', 'table', 'at']);
 const FLAGS = new Set(['json', 'q', 'help', 'h', 'f', 'b', 'r', 'E', 'small', 'effect', 'four', 'no-reuse', 'no-literal-sequences', 'no-effect']);
 const OPTIONAL: Record<string, string[]> = { 'four-tables': ['on', 'off', 'auto'] };
 /** Exomizer's options that Brokkr writes otherwise */
@@ -234,8 +236,11 @@ async function main(argv: string[]): Promise<number> {
   const json = argv.includes('--json');
   const t0 = performance.now();
   let command: string | undefined, close = async () => {};
+  // what --dump saves when a check fails: the program crunched, as a PRG
+  let dump: { dir: string; program: Uint8Array | null } | null = null;
   try {
     const a = parseArgs(argv), quiet = !!a.q;
+    if (typeof a.dump === 'string') dump = { dir: a.dump, program: null };
     const say = (s: string) => { if (!json && !quiet) console.log(s); };
     const [first, ...files] = a._;
     command = first;
@@ -245,6 +250,7 @@ async function main(argv: string[]): Promise<number> {
     let result: Record<string, unknown>;
     if (command === 'sfx' || command === 'mem' || command === 'raw') {
       const { inputs, start, data } = loadInputs(files);
+      if (dump) dump.program = Uint8Array.from([start & 0xff, start >> 8, ...data]);
       const format = formatOf(a);
       const o = crunchOptions(a);
       const inInfo = { files: inputs.map(i => ({ name: i.name, start: i.start, end: i.start + i.bytes.length })), start, end: start + data.length, bytes: data.length };
@@ -279,11 +285,16 @@ async function main(argv: string[]): Promise<number> {
           : memFile(data, start, await crunch(a.f ? data : data.slice().reverse(), memCrunchOptions(mo)), mo);
         const c = 'brk' in r ? brkStats(r.brk) : 'fast' in r ? fastStats(r.fast) : stats(r.crunched);
         const out = outName(files[0], load === 'none' ? '.bin' : '.prg', a.o);
+        // through Brokkr's 6502 decruncher in the emulated C64 before it is written, loaded where it decrunches in place
+        // (wherever -l puts it)
+        const check = checkMem({ format, flags: memCrunchOptions(mo).protocol?.flags, header: o.header !== false, forward: !!a.f },
+          { start: r.inPlace.start, bytes: r.at ? r.bytes.subarray(2) : r.bytes }, { start, bytes: data }, basename(out));
         writeFileSync(out, r.bytes);
         say(`  in place it loads at ${span(r.inPlace.start, r.inPlace.end)} (safety ${c.safety})`);
+        say('skipped' in check ? `  not checked in an emulated C64: ${check.skipped}` : `  checked with Brokkr's decruncher in an emulated C64: ${check.cycles} cycles (${(check.cycles / 985248).toFixed(2)} s), $01 ${h2(check.port)}`);
         for (const w of r.warnings) say(`  note: ${w}`);
         say(`${out}: ${r.bytes.length} bytes${r.at ? ` at ${span(r.at.start, r.at.end)}` : ''}`);
-        result = { input: inInfo, output: { file: out, bytes: r.bytes.length, at: r.at }, inPlace: r.inPlace, crunched: c, warnings: r.warnings };
+        result = { input: inInfo, output: { file: out, bytes: r.bytes.length, at: r.at }, inPlace: r.inPlace, crunched: c, check, warnings: r.warnings };
       } else {
         const ro = { backward: !!a.b, reversed: !!a.r };
         let bytes: Uint8Array, c: Record<string, unknown>;
@@ -329,9 +340,14 @@ async function main(argv: string[]): Promise<number> {
           try {
             let bytes: Uint8Array;
             if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format, crunch: o, place: placeOf(a), start: basic ? 'basic' : 'sys' }, crunch)).prg;
-            else if (format === 'brokkr') bytes = memBrkFile(data, load, crunchBrk(data.slice().reverse(), { effort: o.effort })).bytes;
-            else if (format === 'fast') bytes = memFastFile(data, load, crunchFast(data.slice().reverse(), { effort: o.effort })).bytes;
-            else bytes = memFile(data, load, await crunch(data.slice().reverse(), memCrunchOptions({ crunch: o })), { crunch: o }).bytes;
+            else {
+              const r = format === 'brokkr' ? memBrkFile(data, load, crunchBrk(data.slice().reverse(), { effort: o.effort }))
+                : format === 'fast' ? memFastFile(data, load, crunchFast(data.slice().reverse(), { effort: o.effort }))
+                : memFile(data, load, await crunch(data.slice().reverse(), memCrunchOptions({ crunch: o })), { crunch: o });
+              // through Brokkr's 6502 decruncher, as `mem` does
+              checkMem({ format, flags: memCrunchOptions({ crunch: o }).protocol?.flags, header: o.header !== false }, { start: r.at!.start, bytes: r.bytes.subarray(2) }, { start: load, bytes: data }, `"${f.name}"`);
+              bytes = r.bytes;
+            }
             const written = disk.write(f.raw, bytes, { replace: true });
             say(`"${f.name}": ${f.blocks} blocks -> ${written.blocks} (${mode}${basic && mode === 'sfx' ? ', RUN' : ''})`);
             packed.push({ name: f.name, mode, ...(basic && mode === 'sfx' ? { start: 'basic' } : {}), before: { bytes: prg.length, blocks: f.blocks }, after: { bytes: bytes.length, blocks: written.blocks } });
@@ -374,7 +390,16 @@ async function main(argv: string[]): Promise<number> {
     if (json) console.log(JSON.stringify({ ok: true, command, ms: Math.round(performance.now() - t0), ...result }, null, 2));
     return 0;
   } catch (e) {
-    const err = e instanceof BrokkrError ? { code: e.code, message: e.message, hint: e.hint } : { code: 'BRK-E999', message: (e as Error).message };
+    let saved: string | null = null;
+    if (e instanceof CheckError && dump) {
+      // for the report: the program, the file and the emulated C64's 64 KB when the check stopped
+      mkdirSync(dump.dir, { recursive: true });
+      if (dump.program) writeFileSync(join(dump.dir, 'program.prg'), dump.program);
+      writeFileSync(join(dump.dir, 'file.prg'), e.file);
+      writeFileSync(join(dump.dir, 'memory.bin'), e.memory);
+      saved = dump.dir;
+    }
+    const err = e instanceof BrokkrError ? { code: e.code, message: e.message, hint: saved ? `Saved the program, the file and the emulated C64's memory in ${saved}.` : e.hint } : { code: 'BRK-E999', message: (e as Error).message };
     if (json) console.log(JSON.stringify({ ok: false, command, error: err }, null, 2));
     else console.error(`brokkr: ${err.code}: ${err.message}${'hint' in err && err.hint ? `\n  ${err.hint}` : ''}`);
     return 1;

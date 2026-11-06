@@ -823,6 +823,17 @@ describe('toolchain runner', () => {
     expect(failed.path).toBe(r.path);
   });
 
+  it("leaves what a failed check in Brokkr's emulated C64 had in the pack folder, with the program, for a report", async () => {
+    const policy = new PathPolicy(), prg = Uint8Array.of(0x01, 0x08, 0x60);
+    const dump = [{ name: 'brokkr-check-file.prg', prg: Uint8Array.of(0x01, 0x08, 1, 2) }, { name: 'brokkr-check-memory.bin', prg: new Uint8Array(0x10000) }];
+    const r = await packWithBrokkr({ files: [{ name: 'game.prg', prg }], prefs: DEFAULT_PACK }, policy, async () => ({
+      ok: false, output: '', argv: [], commands: [], ms: 0, inputs: [{ name: 'game.prg', prg }], packed: null, check: null, error: 'BRK-E910',
+      report: { crunched: null, saved: null, layout: [], decruncher: [], entry: null, errors: [] }, dump,
+    }));
+    expect(r.ok).toBe(false);
+    for (const f of [{ name: 'game.prg', prg }, ...dump]) expect(readFileSync(join(r.dir, f.name))).toEqual(Buffer.from(f.prg));
+  });
+
   it('writes crunched data in a file for each block, and the decruncher for them all, to both folders', async () => {
     const policy = new PathPolicy(), out = tmp();
     const prg = Uint8Array.from([0x00, 0x10, ...Array.from({ length: 0x2000 }, (_, i) => ((i * 7) ^ (i >> 4)) & 0xff)]);

@@ -8,7 +8,9 @@ speed: one coded adaptively as LZMA is, for the smallest files, and one of whole
 
 Every self-extracting file Brokkr makes is planned (where the decruncher, its tables and the crunched data go, and what
 `$01` must be) and then run in an emulated C64 from its SYS line until the program starts; the memory is compared with
-the program byte for byte before the file is handed over.
+the program byte for byte, and the file may have written nothing but the program, the stream, the decruncher, its
+tables, its zero page and the top of the stack, before it is handed over. Crunched data (`mem`) runs through Brokkr's
+6502 decruncher the same way.
 
 It is named after Brokkr, the dwarf who forged Mjölnir with his brother Sindri. [Sindri](https://github.com/MikaelEriksson072/Sindri)
 unpacks; Brokkr packs. Both were made for [Mimir Studio](https://github.com/MikaelEriksson072/mimir-studio), whose
@@ -132,7 +134,11 @@ ROM where the decruncher's last instructions run, memory to keep free, the other
 (the file ends with the data's end address), forward with `-f` (Exomizer's format only). It loads where it decrunches in
 place: Brokkr computes the exact margin the decruncher needs so that it never writes over a byte it has not read, and
 sets the file's load address from it. `-l <address>` loads it elsewhere (Brokkr warns when that address would make it
-write over what it has not read), and `-l none` writes a plain `.bin` without a load address.
+write over what it has not read), and `-l none` writes a plain `.bin` without a load address. Before the file is
+written, Brokkr runs it through its 6502 decruncher for the format in the emulated C64, put where neither the file nor
+the data is, and compares what it wrote (`checked with Brokkr's decruncher in an emulated C64: … cycles`); a stream
+crunched forward, without its encoding (`-E`) or with `-P` bits the decruncher does not read is not checked so, and it
+says why.
 
 To decrunch it, write the decruncher for the same format and assemble it with your program:
 
@@ -207,6 +213,7 @@ graphics and all.
 | `-o <file>` | the output (default `<first file>-brokkr.prg`, `.bin`, `.d64` or `.asm`) |
 | `--json` | print the result, or the error, as one JSON object |
 | `-q` | print nothing but errors |
+| `--dump <folder>` | when a check in the emulated C64 fails: save the program (`program.prg`), the file Brokkr made (`file.prg`) and the emulated C64's 64 KB (`memory.bin`) there, for a report |
 | `-P`, `-T`, `-M`, `-m`, `-e`, `-E` | Exomizer's stream options, for `mem` and `raw` in Exomizer's format |
 
 `brokkr --help` lists them all. A one-letter option takes its value right after it too, as Exomizer's do: `-P39`,
@@ -251,7 +258,14 @@ what it wrote. `src/node.ts` adds the pool of worker threads that `--effort max`
   then anywhere the program leaves room, under the ROMs included. It places the stream so that the decruncher never
   writes over a byte it has not read yet, and it sets `$01` while decrunching so that everything it reads and writes is
   RAM (`$34` when data lies under I/O). Then it runs the file in an emulated C64 from its SYS line until the program
-  starts, and compares the memory with the program, byte for byte, before it hands the file over.
+  starts, from RAM full of noise as a C64's is (so a decruncher that counts on zeros it did not write is caught), and
+  compares the memory with the program, byte for byte, before it hands the file over. It also fails a file that wrote
+  anywhere but the program, the stream, the decruncher, its tables, its zero page and the top of the stack, which keeps
+  `--keep` checked too.
+- **The stack as BASIC leaves it.** A self-extracting file starts by its SYS from BASIC, with the stack pointer at
+  about `$f6`; the decruncher uses a few bytes below that, down to `$01e8` at most, and the stack page below it may hold
+  the decruncher. A loader that starts the file with more on the stack must keep the stack page free: `--keep
+  $0100-$01ff`.
 - **The in-place margin.** For crunched data (`mem`) it computes the exact margin a decruncher needs to decrunch in
   place, sets the load address from it, and warns when a load address you give would make the decruncher write over
   what it has not read.

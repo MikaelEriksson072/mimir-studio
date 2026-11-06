@@ -7,8 +7,9 @@ import { decrunchSource, ZP_BYTES } from './decruncher.ts';
 import { brkDecrunchSource, BRK_ZP_BYTES } from './brk-decruncher.ts';
 import { fastDecrunchSource, FAST_ZP_BYTES } from './fast-decruncher.ts';
 import { Machine } from './emulate.ts';
-import { BrokkrError, h2, h4, span } from './errors.ts';
+import { BrokkrError, CheckError, h2, h4, span } from './errors.ts';
 import { ramFor, type SfxFormat } from './sfx.ts';
+import { P } from './format.ts';
 
 /** where the PRG goes when no address is given */
 export const DECRUNCHER_AT = 0xc000;
@@ -92,8 +93,9 @@ export function decruncherFile(o: DecruncherOptions = {}): DecruncherFile {
 
 /**
  * Run the crunched file (as loaded, `crunched`) through the decruncher in the emulated C64, with $01 set so that all
- * of it is RAM, and compare what it wrote with `data`; the cycles it took and that $01. `name` names the file in what
- * goes wrong.
+ * of it is RAM and noise in the RAM around it, and compare what it wrote with `data`, and that it wrote nothing but
+ * that, its own code, tables and zero page and the top of the stack; the cycles it took and that $01. `name` names the
+ * file in what goes wrong.
  */
 export function checkDecruncher(dec: DecruncherFile, crunched: { start: number; bytes: Uint8Array }, data: { start: number; bytes: Uint8Array }, name = 'The file'): { cycles: number; port: number } {
   const end = crunched.start + crunched.bytes.length, dataEnd = data.start + data.bytes.length;
@@ -107,7 +109,7 @@ export function checkDecruncher(dec: DecruncherFile, crunched: { start: number; 
     over(data.start, dataEnd, 'decrunches to');
   }
   const port = ramFor([[crunched.start, end], [data.start, dataEnd], [dec.start, dec.end], ...(dec.tables ? [[dec.tables.start, dec.tables.end] as [number, number]] : [])]);
-  const m = new Machine();
+  const m = new Machine(0x5eed);
   m.port = port;
   m.ram.set(dec.prg.subarray(2), dec.start);
   m.ram.set(crunched.bytes, crunched.start);
@@ -116,9 +118,44 @@ export function checkDecruncher(dec: DecruncherFile, crunched: { start: number; 
   // as a jsr from $fffd: the decruncher's rts comes back to $0000
   m.ram[0x1ff] = 0xff; m.ram[0x1fe] = 0xff; m.cpu.s = 0xfd;
   const run = m.run(dec.entry, pc => pc === 0, 2_000_000_000);
-  const fail = (why: string): never => { throw new BrokkrError('BRK-E911', `${name} does not decrunch with the decruncher in the emulated C64: ${why}.`); };
+  const fail = (why: string): never => { throw new CheckError('BRK-E911', `${name} does not decrunch with the decruncher in the emulated C64: ${why}.`, crunched.bytes, m.ram.slice()); };
   if (m.trouble.length) fail(m.trouble.map(t => `at ${h4(t.pc)} it ${t.what} (${h4(t.addr)})`).join('; '));
   if (!run.stopped) fail(`it did not return within ${run.cycles} cycles`);
   for (let i = 0; i < data.bytes.length; i++) if (m.ram[data.start + i] !== data.bytes[i]) fail(`the byte at ${h4(data.start + i)} is ${h2(m.ram[data.start + i])}, not ${h2(data.bytes[i])}`);
+  if (m.lowestS < 0xe0) fail(`the stack went down to ${h4(0x0100 + m.lowestS)}`);
+  const wild = m.writtenOutside([[data.start, dataEnd], [dec.start, dec.end], [dec.zp.start, dec.zp.end], [0x01e0, 0x0200], ...(dec.tables ? [[dec.tables.start, dec.tables.end] as [number, number]] : [])]);
+  if (wild.count) fail(`it wrote ${wild.count} byte${wild.count > 1 ? 's' : ''} outside the data, the decruncher, its tables, its zero page and the stack, from ${wild.first.map(h4).join(', ')}`);
   return { cycles: run.cycles, port };
+}
+
+/** What the check of a mem file needs to know of its stream: its format, and in Exomizer's the -P bits it was crunched
+ * with, whether it begins with its encoding (not with -E), and whether it is read forward. */
+export interface MemStream { format: SfxFormat; flags?: number; header?: boolean; forward?: boolean }
+
+/**
+ * Check a mem file (`crunched`, as loaded) with Brokkr's decruncher for its stream, put where neither the file nor
+ * its data is, in the emulated C64 (checkDecruncher); or say why it is not checked so: a stream read forward, one
+ * without its encoding, or one with -P bits the decruncher does not read.
+ */
+export function checkMem(s: MemStream, crunched: { start: number; bytes: Uint8Array }, data: { start: number; bytes: Uint8Array }, name?: string): { cycles: number; port: number; at: number } | { skipped: string } {
+  if (s.forward) return { skipped: "Brokkr's decruncher reads backward, and the stream is read forward" };
+  const flags = s.flags ?? 39;
+  if (s.format === 'exomizer') {
+    if (s.header === false) return { skipped: 'the stream has no encoding (-E), which the decruncher reads first' };
+    const base = P.BE | P.COPY_GT7 | P.IMPL_LIT;
+    if ((flags & base) !== base || flags & ~(base | P.FOUR_TABLES | P.REUSE)) return { skipped: `the decruncher reads -P39 streams (with -P+16 or -P-32 too), not -P${flags}` };
+  }
+  // a decruncher that reads every length and literal sequences reads streams without them as well
+  const o: DecruncherOptions = { format: s.format, four: !!(flags & P.FOUR_TABLES), reuse: !!(flags & P.REUSE), literalSequences: true, anyLength: true };
+  for (const zp of [undefined, 0x02, 0x22]) for (const at of [0xc000, 0x1000, 0x4000, 0x8000, 0xe000, 0x0400]) {
+    for (const table of s.format === 'fast' ? [undefined] : [undefined, at + 0x400]) {
+      let dec: DecruncherFile;
+      try { dec = decruncherFile({ ...o, zp, at, table }); } catch { continue; }
+      try { return { ...checkDecruncher(dec, crunched, data, name), at }; } catch (e) {
+        if (e instanceof BrokkrError && e.code === 'BRK-E174') continue;
+        throw e;
+      }
+    }
+  }
+  return { skipped: 'there is no room for the decruncher next to the file and its data' };
 }

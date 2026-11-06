@@ -6,7 +6,7 @@
  * line of the standalone Brokkr that makes the same file.
  * ===================================================================== */
 import {
-  BrokkrError, checkDecruncher, crunchBrk, crunchData, crunchFast, decruncherFile, decruncherNeeds, memBrkFile, memCrunchOptions, memFastFile, memFile, sfxAsync, T,
+  BrokkrError, CheckError, checkDecruncher, crunchBrk, crunchData, crunchFast, decruncherFile, decruncherNeeds, memBrkFile, memCrunchOptions, memFastFile, memFile, sfxAsync, T,
   type CrunchOptions, type Crunched, type DecruncherFile, type DecruncherNeeds, type DecruncherOptions, type SfxPlace, type Start,
 } from '@mimir/brokkr';
 import type { PackPrefs } from './types';
@@ -35,6 +35,9 @@ export interface BrokkrPack {
   prg?: Uint8Array;
   /** every file it writes: the packed files, and next to crunched data the decruncher's source and PRG */
   files?: PackedFile[];
+  /** when a check in the emulated C64 failed: the file Brokkr made and the emulated memory, for a report (written to
+   * the pack folder with the inputs) */
+  dump?: { name: string; prg: Uint8Array }[];
   /** the inputs as the command names them, to write next to the packed file */
   inputs: { name: string; prg: Uint8Array }[];
   packed: { start: number; length: number } | null;
@@ -281,9 +284,13 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
     const packed = one ? base.packed : { start: crunched[0].data.start, length: crunched.reduce((n, c) => n + c.data.bytes.length, 0) };
     return { ok: true, output: lines.join('\n'), ms: performance.now() - t0, name: out, prg: crunched[0].bytes, files: written, report, check, ...base, packed };
   } catch (e) {
-    const msg = e instanceof BrokkrError ? `${e.message}${e.hint ? ` ${e.hint}` : ''}` : (e as Error).message;
+    // a check that failed: the file and the emulated memory go in the pack folder with the program, for a report
+    const dump = e instanceof CheckError ? [{ name: 'brokkr-check-file.prg', prg: e.file }, { name: 'brokkr-check-memory.bin', prg: e.memory }] : undefined;
+    const msg = e instanceof BrokkrError
+      ? `${e.message}${dump ? " The program, the file and the emulated C64's memory are in the pack folder, for the report." : e.hint ? ` ${e.hint}` : ''}`
+      : (e as Error).message;
     const code = e instanceof BrokkrError ? `${e.code}: ` : '';
-    return fail(msg, [...lines, `brokkr: ${code}${msg}`].join('\n'));
+    return { ...fail(msg, [...lines, `brokkr: ${code}${msg}`].join('\n')), ...(dump ? { dump } : {}) };
   }
 }
 

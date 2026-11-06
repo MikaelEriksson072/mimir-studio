@@ -1,7 +1,9 @@
 /* A C64 just big enough to run a decruncher and check it: 64 KB of RAM, the CPU port at $00/$01 banking BASIC,
  * KERNAL, I/O and the character ROM in and out, and nothing behind the ROMs and I/O but traps. A decruncher that
- * reads RAM under a ROM that is still in, or writes to I/O other than the border, is caught: Brokkr runs every
- * self-extracting file it makes through this before it hands it over. */
+ * reads RAM under a ROM that is still in, or writes to I/O other than the border, is caught, and every byte of RAM it
+ * writes is marked, so a check can say what it wrote outside the memory it may: Brokkr runs every self-extracting file
+ * it makes through this before it hands it over. The RAM can start with noise instead of zeros, as a C64's does, so
+ * that a decruncher that counts on zeros it did not write is caught too. */
 import { Cpu, type Bus } from './cpu.ts';
 
 export interface Trouble { pc: number; addr: number; what: string }
@@ -16,8 +18,29 @@ export class Machine implements Bus {
   readonly trouble: Trouble[] = [];
   /** writes to the border colour ($d020), the decrunch effect */
   border = 0;
+  /** 1 for each byte of RAM written (under a ROM too) */
+  readonly written = new Uint8Array(0x10000);
+  /** the lowest the stack pointer went while running */
+  lowestS = 0xff;
 
-  constructor() { this.cpu = new Cpu(this); }
+  /** `noise`: the seed of the bytes the RAM starts with (else zeros) */
+  constructor(noise?: number) {
+    this.cpu = new Cpu(this);
+    if (noise != null) {
+      let x = noise >>> 0 || 1;
+      for (let i = 0; i < 0x10000; i++) { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; this.ram[i] = x & 0xff; }
+    }
+  }
+
+  /** The bytes written outside `allowed` ([start, end) each), lowest first: the first few, and how many. */
+  writtenOutside(allowed: [number, number][]): { first: number[]; count: number } {
+    const ok = new Uint8Array(0x10000);
+    for (const [a, b] of allowed) ok.fill(1, Math.max(0, a), Math.min(0x10000, b));
+    const first: number[] = [];
+    let count = 0;
+    for (let i = 0; i < 0x10000; i++) if (this.written[i] && !ok[i]) { if (first.length < 4) first.push(i); count++; }
+    return { first, count };
+  }
 
   private note(addr: number, what: string): void {
     if (this.trouble.length < 8) this.trouble.push({ pc: this.cpu.pc, addr, what });
@@ -58,6 +81,7 @@ export class Machine implements Bus {
       return;
     }
     this.ram[addr] = value;
+    this.written[addr] = 1;
   }
 
   /** Run from `pc` until `until(pc)` is true before an instruction, or the budget runs out; the cycles used. */
@@ -69,6 +93,7 @@ export class Machine implements Bus {
       if (until(cpu.pc)) return { stopped: true, cycles: this.cycles - start };
       if (cpu.jammed) break;
       this.cycles += cpu.step();
+      if (cpu.s < this.lowestS) this.lowestS = cpu.s;
     }
     return { stopped: false, cycles: this.cycles - start };
   }

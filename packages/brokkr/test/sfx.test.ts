@@ -34,6 +34,15 @@ describe('self-extracting files', () => {
     expect(r.warnings.join()).toMatch(/I\/O is switched out/);
   });
 
+  it('move the stream of a program that loads below $0801, with the start past the program', () => {
+    // hardly crunchable: the file ends past the program, where the start's move loops count on in their own code
+    const r = rng(17), data = Uint8Array.from({ length: 6000 }, (_, i) => (i % 5 ? Math.floor(r() * 256) : 0));
+    for (const format of ['exomizer', 'fast'] as const) {
+      const s = sfx(data, 0x0700, { start: 0x0700, format });
+      expect(area(s, 'File').end).toBeGreaterThan(0x0700 + data.length);
+    }
+  });
+
   it('find room when the program covers the screen and $0334', () => {
     const r = sfx(programLike(0xc000 - 0x0300, 4), 0x0300, { start: 0x0300 });
     const dec = area(r, 'Decruncher'), table = area(r, 'Decrunch table');

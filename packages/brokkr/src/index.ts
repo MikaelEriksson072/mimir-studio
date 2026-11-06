@@ -16,7 +16,7 @@ export { decrunchSource, ZP_BYTES } from './decruncher.ts';
 export { decruncherFile, checkDecruncher, DECRUNCHER_AT, type DecruncherFile, type DecruncherOptions } from './decrunch-file.ts';
 export { assemble, AsmError, type Assembled } from './asm.ts';
 export { Machine } from './emulate.ts';
-export { BrokkrError } from './errors.ts';
+export { BrokkrError, CheckError } from './errors.ts';
 export {
   P, T, DEFAULT_PROTOCOL, protocol, readStream, writeStream, encodingText, parseEncoding,
   type Protocol, type Encoding, type Decoded,

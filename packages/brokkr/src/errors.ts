@@ -10,6 +10,18 @@ export class BrokkrError extends Error {
   }
 }
 
+/** A check of what Brokkr made failed: with the file it made and the emulated C64's memory when the check stopped,
+ * which `--dump` saves for a report. */
+export class CheckError extends BrokkrError {
+  readonly file: Uint8Array;
+  readonly memory: Uint8Array;
+  constructor(code: string, message: string, file: Uint8Array, memory: Uint8Array) {
+    super(code, message, "Run it again with --dump <folder>: Brokkr saves the program, the file and the emulated C64's memory there, for the report.");
+    this.file = file;
+    this.memory = memory;
+  }
+}
+
 export const h4 = (v: number): string => `$${(v & 0xffff).toString(16).padStart(4, '0')}`;
 export const h2 = (v: number): string => `$${(v & 0xff).toString(16).padStart(2, '0')}`;
 /** [start, end) as $xxxx–$yyyy, the end inclusive as C64 people write it */

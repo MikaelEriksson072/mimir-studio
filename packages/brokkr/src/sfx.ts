@@ -15,7 +15,7 @@ import { SFX_PROLOGUE, SFX_RESIDENT, SFX_START, ZP_BYTES } from './decruncher.ts
 import { crunchFast, type FastCrunched, type FastOptions } from './fast.ts';
 import { FAST_RESIDENT, FAST_START, FAST_ZP_BYTES } from './fast-decruncher.ts';
 import { Machine } from './emulate.ts';
-import { BrokkrError, h2, h4, span } from './errors.ts';
+import { BrokkrError, CheckError, h2, h4, span } from './errors.ts';
 import { P, T } from './format.ts';
 
 export type Start = 'sys' | 'basic' | number;
@@ -615,8 +615,8 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   if (head.len) prg.set(stored.subarray(0, head.len), 2 + head.from - 0x0801);
   const used = layout === 'start' ? fE : aAt + startCode.bytes.length;
 
-  // run it
-  const m = new Machine();
+  // run it, from RAM that holds noise but for the file (as a C64's does), with the stack as BASIC's SYS leaves it
+  const m = new Machine(0x5eed);
   m.ram.set(prg.subarray(2, 2 + used - 0x0801), 0x0801);
   m.cpu.s = 0xf6;
   m.cpu.i = 0;
@@ -625,13 +625,19 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   let finished = false;
   const run = m.run(sysAt, pc => { if (pc === done) finished = true; return finished && pc === stopAt; }, 2_000_000_000);
   const fail = (why: string) => {
-    throw new BrokkrError('BRK-E910', `Brokkr's check of the self-extracting file failed: ${why}. This is a bug in Brokkr; please report it with the program.`);
+    throw new CheckError('BRK-E910', `Brokkr's check of the self-extracting file failed: ${why}. This is a bug in Brokkr; please report it with the program.`, prg.subarray(0, 2 + used - 0x0801), m.ram.slice());
   };
   if (m.trouble.length) fail(m.trouble.map(t => `at ${h4(t.pc)} it ${t.what} (${h4(t.addr)})`).join('; '));
   if (!run.stopped) fail(`it did not reach ${h4(stopAt)} within ${run.cycles} cycles`);
   for (let i = 0; i < data.length; i++) if (m.ram[lo + i] !== data[i]) fail(`the byte at ${h4(lo + i)} is ${h2(m.ram[lo + i])}, not ${h2(data[i])}`);
   if ((m.port & 7) !== (ramExit & 7)) fail(`$01 is ${h2(m.port)}, not ${h2(ramExit)}`);
   if (m.cpu.i !== (irqExit ? 0 : 1)) fail(`interrupts are ${m.cpu.i ? 'off' : 'on'}`);
+  // it wrote nothing but the program, the stream, the decruncher with the zero page it starts with, its tables, its
+  // zero page, the top of the stack, the start (whose loops that move the stream count on in their own addresses) and
+  // RUN's end of the program ($2d/$2e); memory to keep free stays as it was
+  if (0x0100 + m.lowestS < STACK[0]) fail(`the stack went down to ${h4(0x0100 + m.lowestS)}, below ${h4(STACK[0])}`);
+  const wild = m.writtenOutside([U, X, [B[0] - preset.length, B[0] + resident.bytes.length], ...tables, [k.zp, k.zp + k.zpBytes], STACK, [aAt, aAt + startCode.bytes.length], ...(basic ? [[0x2d, 0x2f] as Range] : [])]);
+  if (wild.count) fail(`it wrote ${wild.count} byte${wild.count > 1 ? 's' : ''} outside the program, the stream, the decruncher, its tables, its zero page and the stack, from ${wild.first.map(h4).join(', ')}`);
 
   const areas: Area[] = [
     { name: 'Crunched data', start: x, end: x + C },

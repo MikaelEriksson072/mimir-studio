@@ -83,7 +83,8 @@ export async function packWithExomizer(req: PackRequest, settings: ToolchainSett
 export async function packWithBrokkr(req: PackRequest, policy: PathPolicy, pack: (req: PackRequest) => Promise<BrokkrPack> = packInWorker): Promise<PackResponse> {
   const dir = policy.allow(await createBuildFolder('pack'));
   const r = await pack(req);
-  for (const f of r.inputs) await writeFile(join(dir, f.name), f.prg);
+  // with the inputs, what a failed check left for a report
+  for (const f of [...r.inputs, ...(r.dump ?? [])]) await writeFile(join(dir, f.name), f.prg);
   const files = r.ok ? (r.files ?? []).map(f => ({ ...f, path: join(dir, f.name) })) : [];
   for (const f of files) await writeFile(f.path, f.prg);
   return {
