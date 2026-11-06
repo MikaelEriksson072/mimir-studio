@@ -660,10 +660,12 @@ den som startar flest toner), eller den `.sid`-fil som ligger bredvid programmet
   under en minut, och de spelar i VICE.
 - **Montera, ladda första filen, packa upp** (Sindri kör startprogrammet med disken i en 1541 tills demot väntar): The
   Lab sida 1 ger `$1000–$1d1a`, init `$1000`, play `$1003`, och spelar i VICE. Förut valdes delen `$10de` av play-rutinen,
-  vars block saknade koden på `$1012–$1025`: spelaren körde in i en BRK på `$101c` och kraschade. Eyes, Multiverse, i27 och
-  Ranx spelar också. I 1337, No Bounds, Viva Las Vegas, Codeboys och O-tech finns ingen musik i Sindris program: Sindri
-  sparar det senaste lagret (del 1:s kod, 1337 `$7400–$ffff`), och musiken laddades av ett tidigare (1337: lager 4,
-  `$0e00–$1c7a`).
+  vars block saknade koden på `$1012–$1025`: spelaren körde in i en BRK på `$101c` och kraschade. Sindri sparar också det
+  som tidigare lager lämnat och som programmet fortfarande kör, och det ett lager självt laddar och kör efter start (se
+  Sindris avsnitt). Därför finns musiken med också där den laddats av ett tidigare lager (1337: lager 4, `$0e00–$1c7a`,
+  medan del 1:s kod är `$7400–$ffff`). Av tio trackmos och demos på disk spelar nio i VICE: The Lab, 1337 (`$1000`),
+  Eyes, Multiverse, No Bounds (`$0900–$1fff`), Viva Las Vegas (`$0c00–$1b09`), i27, O-tech III och Ranx. I Codeboys väljs
+  init `$109b` (3 toner, sedan tyst) fast musiken ligger på `$1000–$16ff`.
 - **VICE-snapshots** av The Lab (efter 30, 60, 90 och 120 s), Viva Las Vegas (40 och 80 s) och Multiverse (40 och 80 s):
   alla 8 rätt init och play. The Labs första spelare spelar vidare från snapshoten (init startar 3 toner på en minut, play
   utan init 596); förut var den tyst. Blocken når låtdata som förut föll utanför: The Labs andra låt `$0600–$1a1c`
