@@ -87,6 +87,18 @@ Bitfire, Krill's loader, Sparkle, Spindle, the Booze loader and plain KERNAL loa
 memory as `LOAD"*",8,1` would leave it (`$ba` is 8, and the drive has read the disk's ID); the program then loads
 the rest itself. A program that waits while the drive's motor runs is loading, not settled, for up to 10 seconds.
 
+Every run starts at the same moment: the C64 at the READY prompt after its start-up, and the drive started up a
+while before, with the disk's ID just read and its motor still running, as after the LOAD. The first run in a process
+starts both up once, each on its own, and every run, the first too, goes on from what that left; so a disk unpacks the
+same way whichever run it is. Before, the first run's drive was on the bus through the C64's start-up and ran out of
+step with later runs: Xcusemo got a layer further, Multiverse saved from `$0611` instead of `$06be`, I'm Back stopped
+at 4.1 instead of 5.3 s. Now every run gives what later runs gave: on 144 demo disks from CSDB's top lists and 641
+intros and demos without their disks, the layers, the stop and the saved program are the same as a later run's before,
+and the same in the first run and the next. Against a first run before, 34 demos are saved differently, 28 of them in
+1 to 81 bytes the program changes as it runs (sprite pointers, operands, a player's variables); two load on where the
+first run stopped (Out of Contex, Continuum), and two stop in their framework where the first run reached the next
+part (Abstracto, Xcusemo).
+
 On the first disk of each of the 190 top-rated demos at CSDB, 151 get further than the boot file with the drive: the
 loader loads the next part and starts it. Without the drive, 151 waited in the boot, 35 went back to READY when
 their drive code got no answer and 4 crashed; with it 186 run until a part settles, 3 end at READY and 1 runs out of
@@ -289,7 +301,8 @@ the same. The drive tests check the GCR tracks sector by sector, have the DOS re
 with VICE's ROMs, follow a boot file that loads the next file through the KERNAL and one that sends drive code of its
 own with `M-W`, starts it with `M-E` and receives a sector over the serial bus bit by bit; a framework that loads its
 music and plays it is saved with the music as the run left it, and a part that only makes code of its own after the
-load is saved as it started.
+load is saved as it started. A boot file that reads the drive's clock with `M-R` and runs it as code gets the same
+layers, stop and saved program in the first run in a process, which starts the C64 and the drive up, and in the next.
 
 ## Limits
 
@@ -299,9 +312,6 @@ load is saved as it started.
   started is saved as the run left it: the saved program holds two moments. A loader's pointer may lead into what
   was there at the start, and a part loaded over the program it started with is not saved (those bytes keep their
   start). What the layer loaded but ran no code in or near (data far from code) is left out.
-- A run whose C64 starts from power-on (the first in a process) can differ from one that starts from the start-up
-  Sindri keeps after the first (a layer more or less, a few bytes of range): the C64 and the drive are not in the
-  same step with each other.
 - A program on several disks waits when it asks for the next one (its drive code reads track 18 again and again to see
   the disk change): only one disk is in the drive.
 - Copy protections that check what a D64 cannot hold (custom formats, half tracks, timing on the disk; a G64 image

@@ -159,8 +159,8 @@ function fileUse(m: C64): Uint8Array {
 
 interface Snapshot { ram: Uint8Array; port: number; a: number; x: number; y: number; s: number; p: number }
 interface Trap { rom: number; run: () => boolean }
-/** boot to READY, LOAD typed, file loaded, RUN typed (the stand-ins start in 'run') */
-type Phase = 'boot' | 'load' | 'loaded' | 'run';
+/** LOAD typed at the READY prompt, file loaded, RUN typed (the stand-ins start in 'run') */
+type Phase = 'load' | 'loaded' | 'run';
 
 class Layer {
   id: number;
@@ -217,13 +217,24 @@ const CHECK = 4096;
 const CALLS = 1024;
 /** the stand-in SYS pushes this, so RTS lands on the trap at $e147 */
 const SYS_RETURN = 0xe146;
+/** where the KERNAL's screen editor waits for a key at the READY prompt (with none in the buffer) */
+const READY_WAITS = 0xe5cd;
 
 const hex4 = (v: number) => '$' + v.toString(16).padStart(4, '0');
 
-const bootCache = new Map<string, MachineState>();
-/** the 1541 after it started up (by its ROM): it has long been on when a real C64 loads the file */
+/**
+ * The C64 at the READY prompt after it started up, and the 1541 after it started up (by its ROM: it has long been on
+ * when a real C64 loads the file), per set of ROMs. Each is booted once, in a machine of its own, and every run
+ * starts from the saved states, the first one in the process too. A run that went on from a boot of its own would
+ * keep what a saved state leaves out (the instruction count, which sets when Sindri checks the run; how far the
+ * motor turned in the drive's start-up), and its drive would run through the C64's start-up, with the C64's reset
+ * holding the serial lines low: the same disk could unpack differently in the first run and in later ones.
+ */
+const bootCache = new Map<string, MachineState | null>();
 const driveCache = new Map<string, DriveState>();
 const DRIVE_BOOT = 2_500_000;
+/** a C64 that does not get to the READY prompt in this many cycles does not start (20 s) */
+const BOOT_CYCLES = 20_000_000;
 /** a program waiting while the drive's motor runs is loading, not settled: for this long at most (10 s) */
 const DRIVE_PATIENCE = 10_000_000;
 /** a layer loaded from the disk when the drive changed its DATA or CLK line this often while it ran (a sector is
@@ -276,7 +287,7 @@ class Session {
   private nmiWas = false;
   private startCycle = 0;
 
-  private phase: Phase = 'boot';
+  private phase: Phase = 'load';
   private phaseAt = 0;
   private triedSys = false;
   private stopped = false;
@@ -327,24 +338,17 @@ class Session {
     return this.finish(performance.now() - t0);
   }
 
+  /** The C64 started up a while ago, at the READY prompt: type LOAD. */
   private bootReal(): void {
-    const m = this.m;
-    const key = `${this.o.roms!.source}:${checksum(m.kernal)}:${checksum(m.basic)}`;
-    const cached = bootCache.get(key);
-    if (cached) {
-      m.restore(cached);
-      this.typeLine('LOAD');
-      this.setPhase('load');
-      return;
-    }
-    // power on: the port is all inputs (every ROM visible), SP = $fd after the reset sequence
-    m.ddr = 0; m.port = 0; m.updateMap();
-    m.cpu.s = 0xfd; m.cpu.p = 0x24;
-    m.cpu.pc = m.peekWord(0xfffc);
-    this.bootKey = key;
-    this.setPhase('boot');
+    const m = this.m, roms = this.o.roms!;
+    const key = `${roms.source}:${checksum(m.kernal)}:${checksum(m.basic)}`;
+    if (!bootCache.has(key)) bootCache.set(key, bootC64(roms));
+    const booted = bootCache.get(key);
+    if (!booted) { this.stop('not-started', 'the C64 did not get through boot'); return; }
+    m.restore(booted);
+    this.typeLine('LOAD');
+    this.setPhase('load');
   }
-  private bootKey = '';
 
   /** A 1541 with the disk on the serial bus, started up a while ago (it needs the real ROMs and its DOS ROM). */
   private attachDrive(): void {
@@ -352,13 +356,10 @@ class Session {
     if (!this.real) { this.driveNote = 'the stand-ins have no serial bus: the disk was not used'; return; }
     if (!rom) { this.driveNote = 'no 1541 DOS ROM: the disk was not used'; return; }
     const disk = d64ToDisk(this.o.disk!);
-    const d = new Drive(rom), key = checksum(rom);
-    const booted = driveCache.get(key);
-    if (booted) d.restore(booted);
-    else {
-      while (d.cycles < DRIVE_BOOT) d.step();
-      driveCache.set(key, d.save());
-    }
+    const key = checksum(rom);
+    if (!driveCache.has(key)) driveCache.set(key, bootDrive(rom));
+    const d = new Drive(rom);
+    d.restore(driveCache.get(key)!);
     d.insert(disk);
     this.drive = d;
     this.m.attachDrive(d);
@@ -806,14 +807,11 @@ class Session {
     this.trap(0xf1ca, KERNAL, () => { this.print(cpu.a); return this.real ? false : (cpu.c = 0, this.rts()); });
 
     if (this.real) {
-      // the READY prompt waiting for a key: type LOAD, then RUN; after that the program has returned to BASIC
-      this.trap(0xe5cd, KERNAL, () => {
+      // the READY prompt waiting for a key (LOAD was typed at the start): type RUN; after that the program has
+      // returned to BASIC
+      this.trap(READY_WAITS, KERNAL, () => {
         if (m.ram[0xc6]) return false;
-        if (this.phase === 'boot') {
-          bootCache.set(this.bootKey, m.save());
-          this.typeLine('LOAD');
-          this.setPhase('load');
-        } else if (this.phase === 'loaded') {
+        if (this.phase === 'loaded') {
           if (this.started) { this.stop('ready', 'returned to the READY prompt'); return true; }
           const basicStart = m.ram[0x2b] | (m.ram[0x2c] << 8);
           this.typeLine(this.o.entry != null ? `SYS${this.o.entry}` : this.loadAt === basicStart ? 'RUN' : `SYS${this.loadAt}`);
@@ -1065,6 +1063,36 @@ class Session {
     const entry = l.basic ? findSys(a => s.ram[a], basicStart) ?? basicStart : l.entry;
     return { layer: index, prg, start: range.start, end: range.end, entry, basic: l.basic, port: s.port, interrupts: !(s.p & 4) };
   }
+}
+
+/** Power a C64 on and run it to the READY prompt waiting for a key: its state then, or null when it does not get there. */
+function bootC64(roms: Roms): MachineState | null {
+  const m = new C64(roms), cpu = m.cpu;
+  // power on: the port is all inputs (every ROM visible), SP = $fd after the reset sequence
+  m.ddr = 0; m.port = 0; m.updateMap();
+  cpu.s = 0xfd; cpu.p = 0x24;
+  cpu.pc = m.peekWord(0xfffc);
+  let nmiWas = false;
+  while (m.cycles < BOOT_CYCLES) {
+    if (cpu.pc === READY_WAITS && m.map[READY_WAITS >> 8] === KERNAL && !m.ram[0xc6]) return m.save();
+    const iWas = cpu.i;
+    const cycles = cpu.step();
+    m.icount++;
+    if (cpu.jammed) return null;
+    m.advance(cycles);
+    if (m.irqLine && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
+    const nmi = m.nmiLine;
+    if (nmi && !nmiWas) m.advance(cpu.nmi());
+    nmiWas = nmi;
+  }
+  return null;
+}
+
+/** Power a 1541 on, without a disk, and let it start up: its state then. */
+function bootDrive(rom: Uint8Array): DriveState {
+  const d = new Drive(rom);
+  while (d.cycles < DRIVE_BOOT) d.step();
+  return d.save();
 }
 
 function checksum(bytes: Uint8Array): string {

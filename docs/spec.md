@@ -777,6 +777,26 @@ kommer 151 längre än startfilen (laddaren laddar och startar nästa del); utan
 gick tillbaka till READY och 4 kraschade. Ett program på flera disketter väntar när det ber om nästa; skydd som kräver
 mer än en D64 rymmer (G64) kommer inte igenom.
 
+**Varje körning börjar likadant.** C64:an står vid READY efter sin uppstart, och stationen startade en stund innan,
+har just läst diskens ID och har motorn igång, som efter `LOAD`. Den första körningen i en process (i appen den första
+uppackningen efter start) startar upp båda en gång, var för sig (`bootC64()` och `bootDrive()` i Sindris `session.ts`),
+och varje körning, den första också, fortsätter därifrån. Förut fortsatte den första körningen från sin egen uppstart:
+stationen satt på bussen genom C64:ans hela uppstart, med seriebussens ledningar nere under C64:ans reset, och kom ur
+takt med de senare körningarna, och Sindris kontroller (var 4096:e instruktion) räknades från strömpåslaget. Samma
+disk kunde då packas upp olika beroende på vad som packats upp före: Xcusemo kom ett lager längre, Multiverse sparades
+från `$0611` i stället för `$06be` och I'm Back stannade efter 4,1 i stället för 5,3 s.
+
+Nu blir varje körning som de senare blev förut. På 144 demodisketter ur CSDB:s topplistor (startfilen med disken) och
+641 intron och demos utan disk är lager, stopp och sparat program desamma som en senare körning gav förut, och lika i
+den första körningen och de senare. Mot en första körning förut sparas 34 demos annorlunda: 28 med 1–81 byte som
+programmet ändrar medan det kör (sprite-pekare, operander, spelarens variabler); Multiverse från `$06be`; Out of Contex
+och Continuum laddar vidare (den första körningen stannade efter 167 785 lästa byte) och sparas från `$0200`,
+Continuum ett lager längre; Datastorm Leftovers kör in i sin JAM senare och behåller mer av det den laddat; Abstracto
+och Xcusemo stannar i sin ram, där en första körning råkade nå nästa del (Abstracto väntar vid `$c088` en sekund innan
+delen på `$4000` startar; Xcusemo mitt i en färgtoning, då inget nytt skrivits på 1,5 miljoner cykler sedan motorn
+stannat). Utan disk ändras inget sparat program, bara ögonblicket då körningen stannar (oftast en kontroll tidigare
+eller senare).
+
 **Vad Sindri sparar.** Det sparade programmet är minnet som det var när det nyaste lagret startade, från den första
 till den sista byte som hör till programmet (små delar långt från resten räknas inte): det som lagret före skrev och
 inte körde självt, och orörda delar av den laddade filen, men inte packad data som uppackarna förbrukade, deras egen
