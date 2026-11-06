@@ -12,7 +12,9 @@
  * unpacked, stays even then; of a block a mover copied, nothing does.
  *
  * When the layer ends, the parts of earlier programs that it ran join it (keptParts): a trackmo's music and loader,
- * which an earlier part loaded and the depackers since ran too. */
+ * which an earlier part loaded and the depackers since ran too. A layer that loaded from the disk while it ran also
+ * keeps the parts it loaded after it started and ran (loadedParts), as they were when it ended: a trackmo's framework
+ * that loads its parts and the music and calls them. */
 import { BOOT, LOADED, type C64 } from './c64.ts';
 import type { Kind, Range } from './analyze.ts';
 
@@ -173,6 +175,30 @@ export function keptParts(owner: Int32Array, self: number, then: (id: number) =>
   for (const p of open.values()) close(p);
   for (const p of parts) for (let a = p.start; a <= p.end; a++) if (owner[a] === p.owner && intact(a, p.owner)) out[a] = 1;
   return parts.sort((x, y) => x.start - y.start);
+}
+
+/**
+ * The parts a layer loaded after it started and then ran, as a trackmo's framework loads its parts and the music and
+ * calls them: with a disk what it loads is not in memory when it starts, and the saved program could not make it again.
+ * A part is a stretch of bytes the layer wrote after it started (`wrote`), outside the program it started with and the
+ * parts of earlier programs it kept, whole (`taken`: what such a program writes in itself is its variables and changed
+ * code, not something loaded), with gaps up to JOIN, in which it ran at least KEEP_RAN bytes after writing them
+ * (`ran`). Their bytes are set in `out`.
+ */
+export function loadedParts(taken: Uint8Array, wrote: (a: number) => boolean, ran: (a: number) => boolean,
+  out: Uint8Array): Range[] {
+  const parts: (Range & { ran: number })[] = [];
+  let p: (Range & { ran: number }) | null = null;
+  for (let a = 0x200; a < 0x10000; a++) {
+    if (taken[a] || !wrote(a)) continue;
+    if (p && a - p.end > JOIN) { if (p.ran >= KEEP_RAN) parts.push(p); p = null; }
+    if (!p) p = { start: a, end: a, ran: 0 };
+    p.end = a;
+    if (ran(a)) p.ran++;
+  }
+  if (p && p.ran >= KEEP_RAN) parts.push(p);
+  for (const q of parts) for (let a = q.start; a <= q.end; a++) if (!taken[a] && wrote(a)) out[a] = 1;
+  return parts.map(q => ({ start: q.start, end: q.end }));
 }
 
 /** The PRG of `start`..`end` (load address first); with `clean`, bytes not in the mask become 0. */

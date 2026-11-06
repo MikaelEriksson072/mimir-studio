@@ -167,6 +167,62 @@ tune:
 ${byteLines(noise(128, 3))}
 `);
 
+/** music on its own: a JMP table at $1000, play writes the SID from its tune and steps it on */
+const TUNE = asm(`
+* = $1000
+       jmp play
+       jmp play
+play:  ldx #24
+pl:    lda tune,x
+       sta $d400,x
+       dex
+       bpl pl
+       inc tune
+       rts
+tune:
+${byteLines(noise(128, 5))}
+`);
+
+/** a trackmo's framework, as No Bounds has one: it loads the music after it starts, calls its init and plays it in
+ *  its interrupt (subroutine calls into code it loaded: they return to it) */
+const FRAMEWORK = asm(`
+* = $c000
+${kernalLoad('name', 4)}
+       jsr $1000
+       sei
+       lda #<irq
+       sta $0314
+       lda #>irq
+       sta $0315
+       cli
+loop:  jmp loop
+irq:   jsr $1003
+       jmp $ea31
+name:  .text "TUNE"
+`);
+
+/** a part that writes a routine of its own next to it after it starts and calls it, and loads nothing */
+const MAKES_CODE = asm(`
+* = $c000
+       ldx #19
+cp:    lda own,x
+       sta $c100,x
+       dex
+       bpl cp
+loop:  jsr $c100
+       jmp loop
+own:   ${Array(6).fill('inc $d020').join('\n       ')}
+       rts
+       .byte 0
+`);
+
+/** a boot file that loads `name` through the KERNAL and starts it at $c000 */
+const bootInto = (name: string) => asm(`${SYS_LINE}
+${kernalLoad('name', name.length)}
+       jmp $c000
+name:  .text "${name}"
+`);
+
 /** a trackmo's boot file: it loads MUSIC_PART and starts it */
 const TRACKMO_BOOT = asm(`${SYS_LINE}
 ${kernalLoad('name', 5)}
@@ -336,6 +392,37 @@ describe.skipIf(!withDrive)('programs that load from the disk', () => {
     const tune = MUSIC_PART.labels.tune, at = (a: number, prg: Uint8Array, load: number) => prg[a - load + 2];
     for (let a = 0x1000; a < tune; a++) expect(at(a, s.prg, irq)).toBe(at(a, MUSIC_PART.prg, 0x0e00));
     expect(at(tune + 1, s.prg, irq)).toBe(at(tune + 1, MUSIC_PART.prg, 0x0e00));
+  });
+
+  it('keeps the music a framework loaded after it started and plays, as it was when the run stopped', () => {
+    const boot = bootInto('FRAME');
+    const disk = makeD64([{ name: 'BOOT', prg: boot.prg }, { name: 'FRAME', prg: FRAMEWORK.prg }, { name: 'TUNE', prg: TUNE.prg }]);
+    const r = unpack(boot.prg, { roms, disk });
+    // the calls into the music returned to the framework: it is the newest layer
+    expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+    expect(r.layers[1].calls).toEqual([{ entry: 0x1000, via: 'jsr' }, { entry: 0x1003, via: 'jsr' }]);
+    expect(r.layers[1].loaded).toEqual([{ start: 0x1000, end: TUNE.end }]);
+    expect(r.layers[1].kept).toEqual([]);
+    const s = r.saved!;
+    expect(s).toMatchObject({ layer: 1, entry: 0xc000, start: 0x1000, end: FRAMEWORK.end });
+    const at = (a: number) => s.prg[a - s.start + 2];
+    // the framework as it started, and the music as the run left it: its code as loaded, its tune stepped on
+    expect(Array.from({ length: FRAMEWORK.end - 0xc000 + 1 }, (_, i) => at(0xc000 + i))).toEqual([...FRAMEWORK.prg.subarray(2)]);
+    const tune = TUNE.labels.tune;
+    expect(Array.from({ length: tune - 0x1000 }, (_, i) => at(0x1000 + i))).toEqual([...TUNE.prg.subarray(2, 2 + tune - 0x1000)]);
+    expect(at(tune)).not.toBe(TUNE.prg[2 + tune - 0x1000]);
+    expect(at(tune + 1)).toBe(TUNE.prg[2 + tune + 1 - 0x1000]);
+  });
+
+  it('saves a part as it started when it makes code of its own and loads nothing more', () => {
+    const boot = bootInto('PART');
+    const disk = makeD64([{ name: 'BOOT', prg: boot.prg }, { name: 'PART', prg: MAKES_CODE.prg }]);
+    const r = unpack(boot.prg, { roms, disk });
+    expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+    expect(r.layers[1].calls).toEqual([{ entry: 0xc100, via: 'jsr' }]);
+    // the drive lets go of the bus after the load ended, while the part has started: that is not loading
+    expect(r.layers[1].loaded).toEqual([]);
+    expect([...r.saved!.prg]).toEqual([...MAKES_CODE.prg]);
   });
 
   it('follows drive code of the program\'s own that sends a sector over the serial bus', () => {

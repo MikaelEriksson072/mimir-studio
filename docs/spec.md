@@ -795,11 +795,39 @@ laddar första filen och trycker *Unpack*:
 | Viva Las Vegas (sida 1) | `$2000-$9473` | `$0b01-$9473` | `$0c00-$1b09`, spelar |
 | O-tech People III | `$e000-$f6e3` | `$0200-$f6e3` | `$1000-$1c07`, spelar |
 | Codeboys & Endians (sida 1) | `$0200-$0bff` | `$0200-$bfff` | musiken vid `$1000` finns nu i programmet |
-| No Bounds (sida 1) | `$0255-$fffb` | `$0200-$fffb` | ingen: se nedan |
+| No Bounds (sida 1) | `$0255-$fffb` | `$0200-$fffb` | `$0900-$1fff`, spelar: se nedan |
 
-The Lab, Eyes, Multiverse, I'm Back och Ranx sparas som förut (musiken låg redan i det sparade). I No Bounds laddar
-programmets eget lager (ramverket vid `$ff40`) musiken och delarna efter att det startat och anropar dem, så de fanns
-inte i minnet när lagret startade.
+The Lab, Eyes, Multiverse, I'm Back och Ranx sparas som förut (musiken låg redan i det sparade).
+
+I No Bounds laddar programmets eget lager (ramverket vid `$ff40`) delarna och musiken efter att det startat och anropar
+dem med `JSR`; de återvänder till ramverket och blir inga egna lager, och musiken spelar i delarnas avbrott. Minnet när
+lagret startade har inget av det, och det sparade programmet kan inte göra det igen, för det kommer från disken. Därför
+hör också det dit som lagret laddade efter att det startat och sedan körde, när stationen pratade på seriebussen medan
+lagret körde: stationen ändrade sin DATA- eller CLK-ledning minst 256 gånger (en sektor är tusentals; slutet på en
+laddning som började före lagret några få). Det är sträckor av byte som lagret skrev efter att det startat, utanför
+programmet det startade med och utanför delarna det behöll från tidigare lager (hela deras omfång: det en sådan del
+skriver i sig själv är dess variabler), med luckor på högst 256 byte, där lagret körde minst 16 byte kod efter att det
+skrev dem. De sparas som minnet höll dem när lagret slutade, för det nyaste lagret när körningen stannade; programmets
+egna byte och de behållna delarnas behåller värdena från lagrets start. Lagerrapporten säger det på programmets rad:
+`keeps what it loaded after it started and ran, as it was at the end: $02ff-$2aff $3fff-$a446` (`LayerReport.loaded`).
+Utan disk ändras inget: det ett program skriver senare gör det av det som det sparade redan håller.
+
+I No Bounds skilde 2180 av 2304 byte på `$0900-$11ff`, där SID-skrivningarna kommer ifrån, mellan det sparade och
+minnet när körningen stannade. Nu hittar Mimir musiken på `$0900-$1fff` (init `$0900`, play `$0903`; körd ger den 25
+register och 1604 toner, också när blocket körs ensamt). De åtta trackmos ovan sparas som förut och har samma musik,
+både när C64:an startar från början och från den start som Sindri sparar efter första körningen. Sparat är nu två
+ögonblick: en laddares pekare kan leda in i det som låg där när lagret startade, och en del som laddas över programmet
+lagret startade med sparas inte (de byten behåller sina startvärden).
+
+På 138 demodisketter ur CSDB:s topp-200 och topp-500 (startfilen med disken) sparas 18 annorlunda: 4 slutar högre, 6
+börjar lägre, 8 har samma omfång med andra byte, inget blir mindre och inget lager, stopp eller tid ändras. Mimir
+hittar musik i 7 som inte hade någon: No Bounds, CatYa Dancing Queen, Uncle PETSCIIs Christmas Show och RGB spelar när
+de körs, Good King Wenceslas spelar inte när den körs, Datastorm Leftovers ger bara 2 toner, och Black Celebrations
+block spelar inte heller och varnar att det kör in i en JAM ensamt. I 10 är musiken densamma. I Xcusemo slutar
+musikblocket på `$0f07` i stället för `$16c8` (samma init, play och toner, men spelaren läser till `$16c8`): laddaren
+som programmet lagt på `$0200` följer nu med, och analysen följer dess `JMP $1003` in i melodins data. Samma block får
+gamla Sindri när C64:an startar från början, för då sparas laddaren också. På 741 intron och demos utan disk ändras
+inget.
 
 På 103 demodisketter ur CSDB:s topp-200 och topp-500 (startfilen med disken) sparas 42 annorlunda, alla demos i
 flera delar vars program kör sin kvarliggande laddare eller musiken från ett tidigare lager: 36 börjar lägre (oftast

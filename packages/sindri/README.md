@@ -36,6 +36,15 @@ that layer starts:
   that it did not write itself, the part's bytes that still hold what they held when that program started join it,
   except those run or read since by others (that part's start-up code, data a depacker copied from there). They are
   known when the layer ends, and `LayerReport.kept` lists them;
+- with a disk, the parts the layer loaded itself after it started and then ran, as a trackmo's framework loads its
+  parts and the music and calls them (subroutine calls into code it loaded, which return to it: no layers of their
+  own). Memory at the layer's start cannot hold them, and the saved program could not make them again. When the drive
+  changed its DATA or CLK line at least 256 times while the layer ran (it loaded; the end of a transfer begun before
+  is a few), stretches of bytes the layer wrote after it started, outside the program it started with and the parts
+  it kept (gaps up to 256 bytes), in which it ran at least 16 bytes after writing them, join it as memory held them
+  when the layer ended: for the newest layer, when the run stopped. The bytes of the program it started with and of
+  the kept parts keep their values from its start. `LayerReport.loaded` lists them. Without a disk nothing changes:
+  what a program writes later it makes from what it holds;
 - not the packed data the depackers consumed (a copy they moved and read), its unread rest, the stub's leftovers,
   the depackers' own code and variables, or what the C64 wrote itself (the screen editor, the clock, the keyboard).
 
@@ -88,6 +97,14 @@ as `$0200-$ffff`, with the loader at `$0200` and the music at `$1000` that the f
 `$7400-$ffff` before; Viva Las Vegas as `$0b01-$9473` with its music at `$0c00`. Of 103 demo disks from CSDB's top
 lists, 42 are saved differently, all of them demos in several parts whose program runs its loader or music from an
 earlier layer; none got smaller.
+
+A framework that loads the parts and the music itself is saved with what it loaded and ran (see above). No Bounds'
+framework at `$ff40` loads its music to `$0900` and plays it from the parts it calls; it is saved as `$0200-$fffb`
+as before, but `$02ff-$2aff` and `$3fff-$a446` now hold memory as the run left it, where 2180 of the 2304 bytes at
+`$0900-$11ff` (where the SID writes come from) were what was there before the music was loaded. Mimir now finds the
+music at `$0900-$1fff`. Of 138 demo disks from CSDB's top lists, 18 are saved differently (4 end higher, 6 start
+lower, 8 have the same range with other bytes; none got smaller, and no layer, stop or time changed); 741 intros and
+demos without their disks are saved as before.
 
 ## Use
 
@@ -270,14 +287,21 @@ JAMs of code that was written over, no Action Replay or Freeze Machine entry may
 both layers of either backup get their names, as they ran in backups whose fingerprints are close to an entry but not
 the same. The drive tests check the GCR tracks sector by sector, have the DOS read sectors all over a disk, and,
 with VICE's ROMs, follow a boot file that loads the next file through the KERNAL and one that sends drive code of its
-own with `M-W`, starts it with `M-E` and receives a sector over the serial bus bit by bit.
+own with `M-W`, starts it with `M-E` and receives a sector over the serial bus bit by bit; a framework that loads its
+music and plays it is saved with the music as the run left it, and a part that only makes code of its own after the
+load is saved as it started.
 
 ## Limits
 
 - Without a disk, a program that loads more files (a linker with a loader, a multi-part demo) stops at the load; the
   layer it reached is saved. With one it goes on through the parts until a part settles.
-- Memory is saved as it was when the newest layer started. A layer that loads its parts itself after it starts and
-  calls them (a demo's framework, as in No Bounds) is saved without them: they were not in memory yet.
+- Memory is saved as it was when the newest layer started, but with a disk what the layer loaded and ran after it
+  started is saved as the run left it: the saved program holds two moments. A loader's pointer may lead into what
+  was there at the start, and a part loaded over the program it started with is not saved (those bytes keep their
+  start). What the layer loaded but ran no code in or near (data far from code) is left out.
+- A run whose C64 starts from power-on (the first in a process) can differ from one that starts from the start-up
+  Sindri keeps after the first (a layer more or less, a few bytes of range): the C64 and the drive are not in the
+  same step with each other.
 - A program on several disks waits when it asks for the next one (its drive code reads track 18 again and again to see
   the disk change): only one disk is in the drive.
 - Copy protections that check what a D64 cannot hold (custom formats, half tracks, timing on the disk; a G64 image

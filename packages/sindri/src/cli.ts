@@ -56,6 +56,7 @@ function describe(l: LayerReport): string {
   }
   if (l.calls.length) lines.push(`         called code it wrote: ${l.calls.map(c => `${hex4(c.entry)} (${c.via})`).join(', ')}`);
   if (l.kind === 'program' && l.kept.length) lines.push(`         keeps what earlier layers left that it ran: ${l.kept.map(k => `${range(k)} (layer ${k.layer})`).join(', ')}`);
+  if (l.kind === 'program' && l.loaded.length) lines.push(`         keeps what it loaded after it started and ran, as it was at the end: ${ranges(l.loaded, 4)}`);
   if (l.text.length) lines.push(`         text: ${l.text.slice(0, 4).map(t => JSON.stringify(t)).join(', ')}`);
   const printed = l.printed.replace(/\s+/g, ' ').trim();
   if (printed) lines.push(`         printed: ${JSON.stringify(printed.slice(0, 80))}`);

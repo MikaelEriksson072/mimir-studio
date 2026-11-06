@@ -325,6 +325,25 @@ own:   ${Array(10).fill('inc $d020').join('\n       ')}
       expect(over.layers[2].kept).toEqual([]);
     });
 
+    it('saves the program as it started, without a disk, though it writes code next to it and calls that', () => {
+      const t = trackmo(`ldx #19
+cp:    lda own,x
+       sta $4200,x
+       dex
+       bpl cp
+loop:  jsr $4200
+       jmp loop
+own:   ${Array(6).fill('inc $d020').join('\n       ')}
+       rts
+       .byte 0`);
+      const r = go(t.prg);
+      expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0x0e00, 0x4000]);
+      expect(r.layers[2].calls).toEqual([{ entry: 0x4200, via: 'jsr' }]);
+      // (with a disk it might have loaded that code; without one it made it from what it holds)
+      expect(r.layers[2].loaded).toEqual([]);
+      expect(r.saved).toMatchObject({ layer: 2, entry: 0x4000, start: t.irq, end: 0x41ff });
+    });
+
     it('says when nothing was unpacked', () => {
       const r = go(asm(`${SYS_LINE}\nloop: inc $d020\n jmp loop`).prg);
       expect(r.unpacked).toBe(false);

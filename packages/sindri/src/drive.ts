@@ -47,6 +47,10 @@ export class Drive implements Bus {
   /** bytes the head read and wrote, for the report */
   bytesRead = 0;
   bytesWritten = 0;
+  /** times the drive changed its own DATA or CLK line: it talks on the serial bus (sends what it read, answers the
+   *  C64) */
+  busChanges = 0;
+  private lines = 0;
 
   constructor(rom: Uint8Array) {
     if (rom.length !== 0x4000) throw new Error(`a 1541 DOS ROM has 16 KB, not ${rom.length} bytes`);
@@ -56,6 +60,10 @@ export class Drive implements Bus {
     this.via2.inputA = () => this.latch;
     this.via2.inputB = () => (this.sync ? 0 : 0x80) | (this.disk?.writeProtected ? 0 : 0x10);
     this.via2.changedB = () => this.step2();
+    this.via1.changedB = () => {
+      const l = this.via1.outB & 0x0a;
+      if (l !== this.lines) { this.lines = l; this.busChanges++; }
+    };
     this.reset();
   }
 
@@ -210,5 +218,6 @@ export class Drive implements Bus {
     c.a = s.cpu.a; c.x = s.cpu.x; c.y = s.cpu.y; c.s = s.cpu.s; c.pc = s.cpu.pc; c.p = s.cpu.p;
     this.via1.restore(s.via1); this.via2.restore(s.via2);
     this.cycles = s.cycles; this.halftrack = s.halftrack; this.phase = s.phase;
+    this.lines = this.via1.outB & 0x0a;
   }
 }

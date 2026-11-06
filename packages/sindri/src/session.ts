@@ -19,7 +19,7 @@ import { OP_IRQ, OP_NMI } from './cpu.ts';
 import { LEN } from './opcodes.ts';
 import { initStandIn, KERNAL_VECTORS, standInRoms } from './standin.ts';
 import { activity, fingerprintId, identify, strings, type Activity, type Kind, type Range } from './analyze.ts';
-import { buildPrg, contentMask, keptParts, saveRange, type KeptPart } from './output.ts';
+import { buildPrg, contentMask, keptParts, loadedParts, saveRange, type KeptPart } from './output.ts';
 import { Drive, type DriveState } from './drive.ts';
 import { d64ToDisk } from './gcr.ts';
 import { basicLines, evaluate, findSys, listLine, statements, T } from './basic.ts';
@@ -96,6 +96,11 @@ export interface LayerReport {
    * then, such as the music and the loader a trackmo's earlier part loaded: they are saved with it
    */
   kept: (Range & { layer: number })[];
+  /**
+   * with a disk: parts it loaded after it started and then ran, such as the parts and the music a trackmo's framework
+   * loads and calls; they are saved with it as they were when it ended (the run stopped, or the next layer started)
+   */
+  loaded: Range[];
 }
 
 export interface Saved {
@@ -169,9 +174,15 @@ class Layer {
   snapshot: Snapshot;
   /** the bytes that belong to the program it starts (null for the loaded file) */
   mask: Uint8Array | null = null;
-  /** the mask with the parts of earlier programs it ran (set when it ends), and those parts */
+  /** the mask with the parts of earlier programs it ran and the parts it loaded and ran (set when it ends), and those
+   *  parts */
   live: Uint8Array | null = null;
   kept: KeptPart[] = [];
+  loaded: Range[] = [];
+  /** memory to save from: the snapshot, with the parts it loaded as they were when it ended (null when it has none) */
+  image: Uint8Array | null = null;
+  /** the drive's bus changes when it started (Drive.busChanges) */
+  driveBus = 0;
   activity: Activity | null = null;
   calls: { entry: number; via: Via }[] = [];
   printed = '';
@@ -215,6 +226,9 @@ const driveCache = new Map<string, DriveState>();
 const DRIVE_BOOT = 2_500_000;
 /** a program waiting while the drive's motor runs is loading, not settled: for this long at most (10 s) */
 const DRIVE_PATIENCE = 10_000_000;
+/** a layer loaded from the disk when the drive changed its DATA or CLK line this often while it ran (a sector is
+ * thousands; the end of a transfer that began before it, a few) */
+const LOADS = 256;
 
 /** Unpack a PRG (load address first). */
 export function unpack(file: Uint8Array, options: UnpackOptions = {}): UnpackResult {
@@ -418,6 +432,7 @@ class Session {
     this.started = true;
     this.phase = 'run';
     const root = new Layer(0, null, pc, 'start', null, m.cycles, m.icount, this.snapshot());
+    root.driveBus = this.busChanges();
     this.layers = [root];
     this.owner.fill(0, Math.max(2, this.loadAt), this.loadAt + this.data.length);
     this.cur = root; this.curId = 0;
@@ -584,6 +599,7 @@ class Session {
     const op = late ? this.irqOp : cpu.lastOp, from = late ? this.irqFrom : this.lastPc;
     const layer = new Layer(++this.nextId, parent, pc, VIA[op] ?? 'jmp', from, m.cycles, m.icount, this.snapshot());
     layer.basic = basic;
+    layer.driveBus = this.busChanges();
     const kinds = new Map(this.layers.filter(l => l.activity).map(l => [l.id, l.activity!.kind]));
     layer.mask = contentMask(m, parent.id, parent.snapshot.ram, kinds);
     for (let a = 0; a < 0x10000; a++) if (layer.mask[a]) this.owner[a] = layer.id;
@@ -598,18 +614,37 @@ class Session {
    * what they held when those programs started, join the bytes saved for it (a trackmo's music and loader). Only
    * bytes it ran without writing them count: code it loaded over such a part is not the part. Bytes run or read
    * since such a program started, but not by P, were spent before it (start-up code, data copied from there).
+   *
+   * When the drive talked on the serial bus while P ran (at least LOADS changes of its lines: P loaded from the disk),
+   * the parts P loaded after it started and then ran join them too, as they are now (a trackmo's framework that loads
+   * its parts and the music and calls them): the snapshot at P's start cannot hold them, and the saved program cannot
+   * make them again. Bytes of the program P started with, and of the parts of earlier programs it kept, keep the
+   * values they had then.
    */
   private keep(P: Layer): void {
     if (!P.mask) return;
     const then = new Map(this.layers.map(l => [l.id, l.snapshot.ram]));
     const began = new Map(this.layers.map(l => [l.id, l.icount]));
-    const { etime, wtime, rtime } = this.m, since = P.icount, live = P.mask.slice();
+    const { etime, wtime, rtime, wid, ram } = this.m, since = P.icount, live = P.mask.slice();
     const spent = (a: number, k: number): boolean => {
       const last = Math.max(etime[a], rtime[a]);
       return last < since && last >= (began.get(k) ?? since);
     };
     P.kept = keptParts(this.owner, P.id, id => then.get(id), P.snapshot.ram, P.mask, a => etime[a] >= since && wtime[a] < since, spent, live);
-    P.live = P.kept.length ? live : null;
+    P.loaded = [];
+    P.image = null;
+    if (this.busChanges() - P.driveBus >= LOADS) {
+      // (what P wrote inside a kept part is that program's own variables and changed code, not something it loaded)
+      const got = new Uint8Array(0x10000), id = P.id, taken = live.slice();
+      for (const k of P.kept) taken.fill(1, k.start, k.end + 1);
+      P.loaded = loadedParts(taken, a => wid[a] === id && wtime[a] >= since, a => etime[a] > wtime[a], got);
+      if (P.loaded.length) {
+        const image = P.snapshot.ram.slice();
+        for (let a = 0; a < 0x10000; a++) if (got[a]) { image[a] = ram[a]; live[a] = 1; }
+        P.image = image;
+      }
+    }
+    P.live = P.kept.length || P.loaded.length ? live : null;
   }
 
   /** Layer L returned to the layer that called it: it and the layers after it join that one again. */
@@ -701,6 +736,13 @@ class Session {
   private snapshot(): Snapshot {
     const m = this.m, c = m.cpu;
     return { ram: m.ram.slice(), port: m.cpuPort, a: c.a, x: c.x, y: c.y, s: c.s, p: c.p };
+  }
+
+  /** how often the drive has changed its DATA or CLK line, up to now (0 without a drive): it loads while this grows */
+  private busChanges(): number {
+    if (!this.drive) return 0;
+    this.m.syncDrive();
+    return this.drive.busChanges;
   }
 
   private trace(line: string): void { this.o.trace?.(line); }
@@ -997,6 +1039,7 @@ class Session {
       // (a small part far from the rest is left out of the range, as the program's own small parts are)
       kept: l.kept.filter(k => range && k.start <= range.end && k.end >= range.start)
         .map(k => ({ layer: this.layers.findIndex(o => o.id === k.owner), start: k.start, end: k.end })),
+      loaded: l.loaded.filter(k => range && k.start <= range.end && k.end >= range.start),
     };
   }
 
@@ -1017,7 +1060,7 @@ class Session {
     }
     const range = this.rangeOf(l);
     if (!range) return null;
-    const prg = buildPrg(s.ram, range, clean ? l.live ?? l.mask! : undefined);
+    const prg = buildPrg(l.image ?? s.ram, range, clean ? l.live ?? l.mask! : undefined);
     const basicStart = s.ram[0x2b] | (s.ram[0x2c] << 8);
     const entry = l.basic ? findSys(a => s.ram[a], basicStart) ?? basicStart : l.entry;
     return { layer: index, prg, start: range.start, end: range.end, entry, basic: l.basic, port: s.port, interrupts: !(s.p & 4) };
