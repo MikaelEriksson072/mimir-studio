@@ -2424,12 +2424,16 @@ test('deep analysis from the Problems tab: a snapshot\'s ROM calls are not trace
   await expect(toast(page, 'Loaded raster-demo.prg at $0200')).toBeVisible();
   const tab = page.getByRole('tab', { name: /Problems/ });
   await tab.click();
+  // a new project has the deep analysis on: off, the normal analysis traces the ROM calls into the RAM below
+  const box = page.getByRole('checkbox', { name: 'Deep analysis' });
+  await expect(box).toBeChecked();
+  await box.uncheck();
   await expect(tab.locator('.count')).toHaveText('4');
   await expect(page.locator('.loglist .logrow', { hasText: 'BRK at $ffd2 ends the code path' })).toBeVisible();
   const result = page.getByRole('status', { name: 'Deep analysis result' });
   await expect(result).toContainText('analyses again until the problems are at a minimum');
 
-  await page.getByRole('checkbox', { name: 'Deep analysis' }).check();
+  await box.check();
   // the four BRKs in the RAM below the ROM are solved: the calls reach the ROM
   await expect(result).toHaveText(/^4 → 0 problems in 3 rounds, \d+\.\d s: 4 solved, 0 decided · the Log tells what it left out$/, { timeout: 30_000 });
   await expect(tab.locator('.count')).toHaveText('0');

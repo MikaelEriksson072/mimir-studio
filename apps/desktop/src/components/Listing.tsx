@@ -152,6 +152,9 @@ interface ListingProps {
   patches?: readonly Patch[];
   /** when this changes (data shown as code), the line in view stays where it is on screen once the new lines come */
   keepView?: unknown;
+  /** when this changes together with the lines (the deep analysis's reading landing after the normal one's), the line
+   *  in view stays where it is on screen: its place is taken from the lines shown before */
+  holdView?: unknown;
   /** the offset column (as in SourceGen): where the byte at an address is in the file it was opened from, and that
    *  file's name; null where no file holds it. Missing: no column */
   offsetAt?: ((a: Addr) => { n: number; file: string } | null) | null;
@@ -181,7 +184,7 @@ const lastLine = (lineOf: Int32Array, start: Addr, end: Addr): number => {
   return e >= start ? lineOf[e] : -1;
 };
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -427,7 +430,10 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   const keptOnce = useRef(false);
   const place = () => {
     const el = box.current, k = keep.current; if (!el || !k) return;
-    const i = lineOf[k.addr]; if (i < 0) return;
+    // the address's line, or (read another way now, inside a row or an instruction) the nearest line before it
+    let i = lineOf[k.addr] ?? -1;
+    for (let b = k.addr - 1; i < 0 && b >= 0 && k.addr - b < 64; b--) i = lineOf[b] ?? -1;
+    if (i < 0) return;
     // a whole pixel: on a 200 % screen the scroll position takes half pixels, rounded up, and the line would creep up
     // a quarter of a pixel each time Data as code is turned on or off
     el.scrollTop = Math.max(0, Math.round(el.getBoundingClientRect().top + i * ROW - k.y));
@@ -444,6 +450,20 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     keep.current = { addr: i === ci && cursor != null ? cursor : lines[i].a, y: boxTop.current + i * ROW - s, at: Date.now() };
     place();
   }, [keepView]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A new reading of the same program (the deep analysis after the normal one) comes with its lines in the same render:
+  // the line in view is taken from the lines shown before it, here, before they are replaced, and kept as above
+  const shown = useRef({ lines, lineOf, hold: holdView });
+  if (holdView !== shown.current.hold) {
+    const el = box.current, prev = shown.current;
+    shown.current.hold = holdView;
+    if (el && prev.lines.length && prev.lines !== lines) {
+      const s = el.scrollTop, ci = cursor != null ? prev.lineOf[cursor] ?? -1 : -1;
+      let i = ci >= 0 && ci * ROW >= s && (ci + 1) * ROW <= s + el.clientHeight ? ci : -1;
+      if (i < 0) { i = Math.ceil(s / ROW); while (i < prev.lines.length && !('n' in prev.lines[i] && (prev.lines[i] as { n: number }).n > 0)) i++; }
+      if (i < prev.lines.length) keep.current = { addr: i === ci && cursor != null ? cursor : prev.lines[i].a, y: boxTop.current + i * ROW - s, at: Date.now() };
+    }
+  }
+  useLayoutEffect(() => { shown.current.lines = lines; shown.current.lineOf = lineOf; });
   useLayoutEffect(() => {
     const k = keep.current; if (!k) return;
     if (Date.now() - k.at < 10000) place();

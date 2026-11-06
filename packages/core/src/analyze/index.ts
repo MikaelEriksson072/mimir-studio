@@ -116,7 +116,8 @@ function analyzeOnce(project: ProjectInput, deepIn: Deep | null, text: ReadonlyS
     const islands = codeIslands(ctx, cls.blocks, cls.music, deep ? a => ctx.rejected.has(a) : undefined, text);
     if (!islands.length) break;
     takeBack(logAt);
-    for (const c of islands) { ctx.enqueue(c.at, 'guess'); if (!deep) island(c); }
+    // (a deep analysis traces the island where the normal one looks as that one does, the rest on trial: 8.11h)
+    for (const c of islands) { ctx.enqueue(c.at, 'guess', !!c.window); if (!deep) island(c); }
     traceAll();
     if (deep) for (const c of islands) if (ctx.insLen[c.at]) island(c);
     logAt = ctx.log.length;

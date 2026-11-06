@@ -4,7 +4,7 @@ import type { Addr, Block, LabelInfo, MusicInfo, Stats } from '../types';
 import { T } from '../model';
 import { OPC, type OpcodeInfo } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
-import { hwSymbol, isIO } from '../c64/symbols';
+import { hwSymbol, isIO, SYM } from '../c64/symbols';
 import { $4, now } from '../util/hex';
 import { trial } from './trace';
 import { inlineAfter, printsAfter } from './strings';
@@ -23,8 +23,10 @@ export function ioLabelNotice(ctx: Ctx, labels: Map<Addr, LabelInfo>): void {
   L('warn', `Bank tracking is off, so the code's accesses to ${io.length} I/O address${io.length === 1 ? '' : 'es'} inside the loaded bytes are written as labels (${shown}). Turn on Settings → Analysis → Follow the memory configuration ($01) and VIC bank to write them as registers.`, io[0], 'banks', 'io-as-labels');
 }
 
-/** A routine in a data block that nothing traced reaches: where it starts and ends, its instructions and the last one. */
-export interface CodeIsland { at: Addr; end: Addr; n: number; last: string }
+/** A routine in a data block that nothing traced reaches: where it starts and ends, its instructions and the last one.
+ *  `known`: it calls known code (traced code that is not another island, or a routine of the ROMs) or prints a string
+ *  handed to it. `window`: a deep analysis found it where the normal one looks, and traces it as that one does */
+export interface CodeIsland { at: Addr; end: Addr; n: number; last: string; known: boolean; window?: boolean }
 
 /**
  * 5.13 code islands: the data blocks that start with a routine. After fill (3+ equal bytes) and bytes the code uses as
@@ -32,8 +34,8 @@ export interface CodeIsland { at: Addr; end: Addr; n: number; last: string }
  * acknowledges its interrupt) RTI, with no BRK, all inside the block, every branch landing in it (after the start) or
  * on traced code, no JSR/JMP into the middle of a traced instruction or into a player (but for its init and play),
  * and not 1541 drive code. User blocks are the user's word and stay as they are. A deep analysis (`left`: the starts
- * it left out) looks for routines all through the block and lets their branches leave it, as each one is traced on
- * trial (5.17).
+ * it left out) takes that one as the normal analysis does (`window`), and looks further into the block for routines
+ * that call known code, each traced on trial (5.17): data that decodes as a routine seldom calls code (8.11h).
  */
 export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], left?: (a: Addr) => boolean, text?: ReadonlySet<Addr> | null): CodeIsland[] {
   const { mem, insLen, codeOwner, xrefs, loaded } = ctx;
@@ -44,7 +46,7 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
   const via = (t: Addr | null) => t != null && ((t >= 0x1800 && t < 0x1810) || (t >= 0x1c00 && t < 0x1c10));
   /** the routine at `s` in a block that ends at `e`; `starts` gets its instructions' starts */
   const routine = (s: Addr, e: Addr, starts?: Addr[]): CodeIsland | null => {
-    let p = s, n = 0, strings = 0, drive = 0, ack = false, last: OpcodeInfo | null = null;
+    let p = s, n = 0, strings = 0, drive = 0, ack = false, last: OpcodeInfo | null = null, known = false;
     while (p < e && n < 64) {
       starts?.push(p);
       const o = OPC[mem[p]];
@@ -52,12 +54,13 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
       // not over a string a print routine is handed (5.5b)
       if (text) for (let k = 0; k < o.len; k++) if (text.has(p + k)) return null;
       const t = decode(mem, p).target;
-      // a deep analysis traces the routine on trial, branches out of the block too
-      if (o.flow === 'br' && !(t! >= s && t! < e) && !insLen[t!] && !left) return null;
+      if (o.flow === 'br' && !(t! >= s && t! < e) && !insLen[t!]) return null;
       if ((o.flow === 'jsr' || o.flow === 'jmp') && codeOwner[t!] >= 0 && !insLen[t!]) return null;
       // into a player other than by its init and play (a copy of the player's code, say)
       if ((o.flow === 'jsr' || o.flow === 'jmp') && music.some(m => t! >= m.start && t! < m.end && t !== m.init && t !== m.play)) return null;
       if ((o.mode === 'abs' && via(t)) || (mem[p] === 0x50 && mem[p + 1] === 0xfe)) drive++;
+      // a call to known code: what data that decodes as a routine seldom has
+      if ((o.flow === 'jsr' || o.flow === 'jmp') && ((insLen[t!] && ctx.entryKind.get(t!) !== 'guess') || SYM.exact.get(t!)?.call)) known = true;
       if (o.mode === 'abs' && ((t === 0xd019 && o.access !== 'read') || ((t === 0xdc0d || t === 0xdd0d) && o.access !== 'write'))) ack = true;
       n++; p += o.len;
       if (o.flow === 'ret' || o.flow === 'jmp' || o.flow === 'jmpi') {
@@ -76,7 +79,7 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
       }
     }
     // an interrupt handler acknowledges its interrupt; $40 (RTI) ends many a table
-    return last && n + 4 * strings >= 6 && drive < 2 && (last.mn !== 'RTI' || ack) ? { at: s, end: p, n, last: last.mn } : null;
+    return last && n + 4 * strings >= 6 && drive < 2 && (last.mn !== 'RTI' || ack) ? { at: s, end: p, n, last: last.mn, known: known || strings > 0 } : null;
   };
   for (const b of blocks) {
     if (b.type !== 'data' || b.user || b.end - b.start < 12) continue;
@@ -95,20 +98,21 @@ export function codeIslands(ctx: Ctx, blocks: Block[], music: MusicInfo[] = [], 
     out.push(...sure);
     // another island keeps out of them, or runs into one at its start
     const clear = (r: CodeIsland, starts: Addr[]) => sure.every(f => f.end <= r.at || f.at >= r.end || starts.includes(f.at));
-    if (left) {
-      for (let a = s; a + 6 <= b.end;) {
-        const in_ = sure.find(f => a >= f.at && a < f.end);
-        if (in_) { a = in_.end; continue; }
-        let f = 0; while (a + f < b.end && mem[a + f] === mem[a]) f++;
-        if (f >= 3) { a += f; continue; }
-        const starts: Addr[] = [], r = left(a) || asData(a) ? null : routine(a, b.end, starts);
-        if (r && clear(r, starts)) { out.push(r); a = r.end; } else a++;
-      }
-      continue;
-    }
+    // where the normal analysis looks: the first routine, which a deep analysis traces as the normal one does
+    let end = s;
     for (let k = 0; k < 8 && s + k < b.end; k++) {
+      if (left?.(s + k)) continue;
       const starts: Addr[] = [], r = routine(s + k, b.end, starts);
-      if (r && clear(r, starts)) { out.push(r); break; }
+      if (r && clear(r, starts)) { out.push(left ? { ...r, window: true } : r); end = r.end; break; }
+    }
+    // a deep analysis: further into the block, routines that call known code (on trial)
+    if (left) for (let a = Math.max(end, s + 8); a + 6 <= b.end;) {
+      const in_ = sure.find(f => a >= f.at && a < f.end);
+      if (in_) { a = in_.end; continue; }
+      let f = 0; while (a + f < b.end && mem[a + f] === mem[a]) f++;
+      if (f >= 3) { a += f; continue; }
+      const starts: Addr[] = [], r = left(a) || asData(a) ? null : routine(a, b.end, starts);
+      if (r && r.known && clear(r, starts)) { out.push(r); a = r.end; } else a++;
     }
   }
   return out;

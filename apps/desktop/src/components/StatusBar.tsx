@@ -5,14 +5,17 @@ import type { Sel } from '../lib/types';
 
 interface StatusBarProps {
   A: AnalysisResult; fileCount: number; cursor: Addr | null; curLabel: string | null; blk: Block | null; sel: Sel | null;
-  renderMs: number; busy: boolean; verify: { ok: boolean; kick: boolean | null } | null;
+  renderMs: number; busy: boolean;
+  /** the deep analysis is still running (the normal one is shown meanwhile) */
+  deepBusy?: boolean;
+  verify: { ok: boolean; kick: boolean | null } | null;
   /** cycle counting on: the cycles of the counted range on its path */
   cycles?: number | null;
   /** the cartridge bank the cursor is in (13.9b); null without banks */
   bank?: number | null;
 }
 
-export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, busy, verify, cycles, bank }: StatusBarProps) {
+export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, busy, deepBusy, verify, cycles, bank }: StatusBarProps) {
   // the memory configuration the instruction at the cursor runs with
   const port = cursor != null && A.mcfg ? A.mcfg.port[A.codeOwner[cursor] >= 0 ? A.codeOwner[cursor] : cursor] : 0;
   return (
@@ -24,7 +27,7 @@ export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, 
       {sel && sel.multi && <span className="sb-item mono hide-narrow">sel ${h4(sel.start)}–${h4(sel.end - 1)} ({sel.end - sel.start} B)</span>}
       {cycles != null && <span className="sb-item mono" title="Cycles of the selection (or the code block at the cursor) on the path in the Cycles section">{cycles} cycles</span>}
       <span className="grow" />
-      <span className="sb-item hide-narrow">{busy ? 'analysing…' : `analysis ${A.stats.ms.toFixed(1)} ms · render ${renderMs.toFixed(1)} ms (worker)`}</span>
+      <span className="sb-item hide-narrow">{busy ? 'analysing…' : `analysis ${A.stats.ms.toFixed(1)} ms · render ${renderMs.toFixed(1)} ms (worker)${deepBusy ? ' · deep analysis…' : ''}`}</span>
       <span className={cx('sb-item', verify && (verify.ok ? 'ok' : 'bad'))}>
         {verify ? (verify.ok ? `✓ round-trip verified${verify.kick ? ' with KickAss.jar' : ''}` : '✗ round-trip failed') : 'round-trip not verified'}
       </span>

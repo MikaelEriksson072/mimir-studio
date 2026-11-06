@@ -14,7 +14,7 @@ import {
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
-import { forgetUnsavedWork, keepUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
+import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
@@ -95,16 +95,20 @@ export function App() {
 function Studio({ note, onStartScreen }: { note: Note | null; onStartScreen: () => void }) {
   const project = useProject(s => s.present);
   const dataAsCode = useUi(s => s.dataAsCode);
-  const { analysis, error, busy } = useAnalysis(project, { dataAsCode });
+  const { analysis, error, busy, deepBusy } = useAnalysis(project, { dataAsCode });
   const [toolchain, setToolchain] = useState<ToolchainSettings>(() => pickToolchain(project.settings));
   useEffect(() => { if (kr) kr.getSettings().then(setToolchain).catch(() => { /* keep project defaults */ }); }, []);
 
   if (!analysis) return <div className="boot">{error ? `Analysis failed: ${error}` : 'Analysing…'}</div>;
-  return <Workspace A={analysis.A} R={analysis.R} aKey={analysis.aKey} renderMs={analysis.renderMs} rProject={analysis.project} busy={busy} toolchain={toolchain} setToolchain={setToolchain} note={note} onStartScreen={onStartScreen} />;
+  return <Workspace A={analysis.A} R={analysis.R} aKey={analysis.aKey} renderMs={analysis.renderMs} rProject={analysis.project} final={analysis.final} swaps={analysis.swaps} busy={busy} deepBusy={deepBusy} toolchain={toolchain} setToolchain={setToolchain} note={note} onStartScreen={onStartScreen} />;
 }
 
 interface WorkspaceProps {
-  A: AnalysisResult; R: RenderResult; aKey: number; renderMs: number; /** the project A and R were computed for */ rProject: Project; busy: boolean; toolchain: ToolchainSettings; setToolchain: (t: ToolchainSettings) => void;
+  A: AnalysisResult; R: RenderResult; aKey: number; renderMs: number; /** the project A and R were computed for */ rProject: Project;
+  /** A is the analysis the settings ask for (not the normal one standing in for the deep one), and how many times a deep
+   *  one took the place of the normal one */
+  final: boolean; swaps: number;
+  busy: boolean; /** the deep analysis of the project is still running */ deepBusy: boolean; toolchain: ToolchainSettings; setToolchain: (t: ToolchainSettings) => void;
   note: Note | null;
   /** back to the start screen (the project's work is saved first) */
   onStartScreen: () => void;
@@ -113,7 +117,7 @@ interface WorkspaceProps {
 /** `p` in `to` instead of `from`, when it is in `from` */
 const rebase = <T extends string | null | undefined>(p: T, from: string, to: string): T => (p && p.startsWith(from) ? `${to}${p.slice(from.length)}` as T : p);
 
-function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolchain, note, onStartScreen }: WorkspaceProps) {
+function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBusy, toolchain, setToolchain, note, onStartScreen }: WorkspaceProps) {
   const project = useProject(s => s.present);
   const past = useProject(s => s.past), future = useProject(s => s.future), home = useProject(s => s.home);
   const { update, replace, undo, redo, enter, setHome } = useProject.getState();
@@ -121,13 +125,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
   const S: Settings = useMemo(() => ({ ...A.S, ...toolchain }), [A.S, toolchain]);
   // the newest analysis, project and settings, for work that awaits (verify, build, export) and must not use a stale
   // render: an export right after a settings change runs with the settings of the analysis it waited for
-  const latest = useRef({ A, R, aKey, project, rProject, S });
-  latest.current = { A, R, aKey, project, rProject, S };
+  const latest = useRef({ A, R, aKey, project, rProject, S, final });
+  latest.current = { A, R, aKey, project, rProject, S, final };
   /** resolves once A and R belong to the latest edit (the store, read directly: an edit made a moment ago may not
-   *  have rendered yet, so render-time flags cannot tell); gives up after 15 s */
+   *  have rendered yet, so render-time flags cannot tell), and are the deep analysis when it is on, not the normal one
+   *  shown meanwhile; gives up after 30 s */
   const analysisSettled = () => new Promise<void>(resolve => {
     const t0 = Date.now();
-    const tick = () => { if (latest.current.rProject === useProject.getState().present || Date.now() - t0 > 15000) resolve(); else setTimeout(tick, 25); };
+    const tick = () => { if ((latest.current.rProject === useProject.getState().present && latest.current.final) || Date.now() - t0 > 30000) resolve(); else setTimeout(tick, 25); };
     tick();
   });
   const ui = useUi();
@@ -427,7 +432,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const note = opts.note && `${opts.note}${left ? leftNote : opts.undoLabel ? '. Ctrl+Z goes back to the project before' : ''}`;
     if (cart && ownCart) {
       const files: LoadedFile[] = opened.map(({ id, name, load, bytes, chip, cart: c }) => ({ id, name, load, bytes, ...(c === cart && chip != null ? { chip } : {}) }));
-      replace(createProject({ files, settings: project.settings, cart }), undoLabel); resetView();
+      replace(createProject({ files, settings: newProjectSettings(project.settings), cart }), undoLabel); resetView();
       if (opts.show) showSection('cart');
       let what = '';
       try { what = `: ${describeCrt(parseCrt(cart.crt, cart.name))}`; } catch { /* the files say enough */ }
@@ -442,7 +447,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
     const start = add ? undefined : opened.find(f => f.start != null)?.start;
     if (add) update(`Add ${files.map(f => f.name).join(', ')}`, d => { d.files.push(...files); for (const e of entries) if (!d.entries.includes(e)) d.entries.push(e); });
     // an empty project's nothing comes back with Ctrl+Z
-    else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: project.settings }), entries, entryPoint: start ?? null }, undoLabel); resetView(); }
+    else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: newProjectSettings(project.settings) }), entries, entryPoint: start ?? null }, undoLabel); resetView(); }
     if (opts.show) showSection('files');
     if (note) { toast(note, 'ok'); return; }
     toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}${leftNote}`, 'ok');
@@ -2391,7 +2396,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
                 }}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
-                patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}
+                patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} holdView={swaps} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}
                 startAt={viewAt.current} onView={seeAt} />
               {findOpen && <FindBar q={findQ} opts={findOpts} onQuery={setFindQ} onOpts={setFindOpts} count={findHits.length} at={findAt >= 0 ? findAt + 1 : null} onStep={stepFind} onClose={closeFind} focusKey={findFocus} />}
               </div>
@@ -2424,7 +2429,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
           </div>
           <div className="bottom-body"><ErrorBoundary>
             {shownBottom === 'log' && <LogList items={A.log} onNavigate={nav} empty="No analysis messages." />}
-            {shownBottom === 'problems' && <ProblemsPanel items={problems} onNavigate={nav} deep={A.deep} on={!!project.settings.deepAnalysis} busy={busy} onDeep={on => update(on ? 'Deep analysis on' : 'Deep analysis off', d => { d.settings.deepAnalysis = on; })} />}
+            {shownBottom === 'problems' && <ProblemsPanel items={problems} onNavigate={nav} deep={A.deep} on={!!project.settings.deepAnalysis} busy={busy} deepBusy={deepBusy} onDeep={on => update(on ? 'Deep analysis on' : 'Deep analysis off', d => { d.settings.deepAnalysis = on; })} />}
             {shownBottom === 'xrefs' && <XrefPanel A={A} R={R} cursor={cursor} onNavigate={nav} S={S} />}
             {shownBottom === 'irqs' && <RasterPanel A={A} R={R} onNavigate={nav} />}
             {shownBottom === 'relocs' && <RelocPanel A={A} R={R} relocs={project.relocs} onNavigate={nav} onRelocate={(r, copyAt) => startRelocate(r, copyAt)} onUnrelocate={unrelocate} />}
@@ -2454,7 +2459,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, busy, toolchain, setToolcha
       {inspector === 'auto' && <button className={cx('insp-rail', drawer === 'insp' && 'on')} onClick={() => (drawer === 'insp' ? closeInspector() : setDrawer('insp'))} aria-label="Inspector" aria-expanded={drawer === 'insp'}
         title={drawer === 'insp' ? 'Fold in the inspector (a click outside it or Esc does too)' : 'Open the inspector: the memory map, the block at the cursor and its preview'}><Icon name="panel" size={16} /><span>Inspector</span></button>}
 
-      <StatusBar A={A} fileCount={project.files.length} cursor={cursor} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} cycles={path && path.instructions ? path.total : null}
+      <StatusBar A={A} fileCount={project.files.length} cursor={cursor} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} deepBusy={deepBusy} cycles={path && path.instructions ? path.total : null}
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null} />
 
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}

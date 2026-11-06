@@ -934,10 +934,26 @@ sätter sin egen nästa rad, en rad ur en tabell, demot och en snapshots rutin s
 
 ### 8.11e Djupanalys
 
-**Djupanalysen** (`packages/core/src/analyze/deep.ts`, `Settings.deepAnalysis`, av som standard) byter hastighet mot
-noggrannhet. Den slås på med kryssrutan **Deep analysis** överst i fliken Problems eller i *Settings → Analysis → Deep
-analysis (slower)*, och gäller projektet. Målet är så få problem som möjligt i Problems (loggens varningar, fel och
-tips), utan att något döljs: varje beslut står i loggen (kategori `deep`).
+**Djupanalysen** (`packages/core/src/analyze/deep.ts`, `Settings.deepAnalysis`) byter hastighet mot noggrannhet. Den
+är på för nya projekt i appen: ett projekt av filer som öppnas tar över det öppna projektets inställningar med
+djupanalysen på (`newProjectSettings` i `store/project.ts`), och ett program som packas upp på sin plats behåller sitt
+projekts. Sparade projekt behåller sitt värde. Biblioteket (`DEFAULT_SETTINGS`) och kommandoraden har den vanliga
+analysen som standard (`--deep`). Den slås av och på med kryssrutan **Deep analysis** överst i fliken Problems eller i
+*Settings → Analysis → Deep analysis (slower)*, och gäller projektet. Den är på som standard sedan den mätts mot
+körningar (8.11h): den hittar lite mer av den körda koden än den vanliga analysen, med 43 % färre problem. Målet är så
+få problem som möjligt i Problems (loggens varningar, fel och tips), utan att något döljs: varje beslut står i loggen
+(kategori `deep`).
+
+**Två steg i appen.** Den vanliga analysen av samma indata visas direkt, och djupanalysen, i en worker för sig, tar dess
+plats när den är klar (`useAnalysis` i `lib/analysis.ts`). Under tiden säger Problems *Deep analysis running · the
+normal analysis shows meanwhile* och statusraden *deep analysis…*. Ändras analysens indata medan djupanalysen körs
+avslutas dess worker och en ny startar, så en djupanalys av gamla indata väntas aldrig in. En ändring som bara ritar om
+(en etikett, en kommentar) ritar om den djupa analysen direkt. När den djupa analysen tar över står raden i vy
+(markörens, annars den översta med byte) kvar på samma ställe på skärmen, fast raderna ovanför ändras (`holdView` i
+`Listing`). Verifiering (F7), bygge och export väntar på djupanalysen. Varje djupanalys görs från början, utan vad en
+tidigare lärt sig, så att samma projekt alltid ger samma listning. Mätt på ett spel där djupanalysen tar 11,6 s: den
+vanliga analysen visas efter 0,9 s, och en ändring mitt i ger det djupa resultatet 12,7 s efter ändringen (inte efter
+den gamla körningen).
 
 Först görs en vanlig analys, som ger antalet problem och fel att jämföra med. Sedan görs hela analysen om i **varv**:
 - **Gissningar spåras på prov.** En kodö (8.11), ett mål i en pekartabell, en IRQ-, NMI- eller BRK-rutin som koden
@@ -946,9 +962,13 @@ Först görs en vanlig analys, som ger antalet problem och fel att jämföra med
   användaren markerat, eller ett indirekt hopp via en pekare som ingen kod skriver (varken koden hittills eller den som
   spåras på prov). Annars blir den kvar som data, och
   loggen säger varför (*The routine-like bytes at $5001 (and 37 more starts up to $5152) stay data: traced on trial,
-  they run into a problem (BRK at $6a68 ends the code path)*). Kodöar söks i hela datablocket, inte bara i början, och
-  deras grenar får gå ut ur blocket, eftersom provet ändå fäller det som leder fel. Ett tips *Possible unreached code*
-  ges inte för byte som spårats på prov och gått in i ett problem.
+  they run into a problem (BRK at $6a68 ends the code path)*). Ett tips *Possible unreached code* ges inte för byte som
+  spårats på prov och gått in i ett problem.
+- **Kodöar.** Kodön där den vanliga analysen letar (den första rutinen bland ett datablocks första 8 adresser, 5.13)
+  tas som den vanliga analysen tar den, utan prov, och spåras som koden hittills. Längre in i blocket letar
+  djupanalysen efter rutiner som anropar känd kod (spårad kod som inte är en annan kodö, eller en rutin i ROM:en) och
+  spårar dem på prov. Data som avkodas som en rutin anropar sällan kod: mätt mot körningar (8.11h) kördes de kodöar
+  som anropar känd kod ungefär lika ofta som de bara lästes, de andra längre in i blocken 1 gång på 16.
 - **Skulden läggs där problemet uppstår, för starka gissningar.** En avbrottsrutin som koden installerar och
   laddadressen är starka bevis. En sådan gissning fälls inte för ett problem bakom ett beslut. Det sista beslutet på
   vägen till problemet lämnas bort, och gissningen spåras på prov igen, högst 8 gånger. Beslutet är sidan av en gren som
@@ -978,10 +998,12 @@ Det ett varv lär sig använder nästa varv redan när det spårar:
   följs inte in i RAM:et under (*The JSR at $c88a to $ffe4 reaches the KERNAL ROM there, so the RAM below it is not
   traced*). Ny kod antas köras med huvudkodens konfigurationer. En vektor i `$0314`–`$0319` som pekar på `$e000`–`$ffff`
   är KERNAL:ens egen rutin, för KERNAL:en anropar den med sin ROM inkopplad (`$ea31`).
-- **Självmodifierad adress:** en `JSR` eller `JMP` vars operand koden skriver har sitt mål satt vid körning och följs
-  inte (*The code at $b07b writes the address of the JSR at $b08c, so its target $b345 is set at run time*). En väg
-  som når en instruktion som koden skriver och som nu är BRK eller JAM stannar där, med en rad i loggen i stället för
-  en varning.
+- **Självmodifierad adress:** en `JSR` eller `JMP` vars operand koden skriver har sitt mål satt vid körning. Målet den
+  har som den laddats är en gissning som spåras på prov, eftersom det ofta körs innan koden ändrar adressen (*The code
+  at $080f writes the address of the JMP at $0817, so its target is set at run time; as loaded, $0830 is traced on
+  trial and kept*, eller *… runs into a problem on trial (…), so it is not followed*). Att inte följa det alls tappade
+  mer än hälften av den körda kod som djupanalysen inte hittade (8.11h). En väg som når en instruktion som koden skriver
+  och som nu är BRK eller JAM stannar där, med en rad i loggen i stället för en varning.
 - **Rutinen finns inte än:** ingen rutin börjar med BRK eller JAM, så en `JSR` eller `JMP` dit följs inte: koden läggs
   dit vid körning, av en uppackare eller en kopieringsslinga (*The JSR at $080d goes to $0900, which holds $00: the
   routine is put there at run time*). Det gäller inte en gissning på prov: där fäller det gissningen.
@@ -989,7 +1011,7 @@ Det ett varv lär sig använder nästa varv redan när det spårar:
   inte byten efter en `JSR` dit.
 
 Varven slutar när nästa varv skulle besluta likadant (samma snitt i varvets kod, samma huvudkonfiguration), efter högst
-6. Resultatet är djupanalysens, utom när den vanliga analysen har färre **fel**: då är det den vanliga, med en rad om
+6. Ett snitt vars mål är kod ändå räknas inte, eftersom spårningen inte gör några snitt till kod den redan har. Resultatet är djupanalysens, utom när den vanliga analysen har färre **fel**: då är det den vanliga, med en rad om
 det. Fel är varningar och fel som säger att kod läses fel (JAM, BRK, överlapp, ett hopp in i en instruktion …), inte
 tips och inte indirekta hopp vars mål inte är känt: de kommer med koden som läses, och en djupanalys som hittar mer kod
 hittar fler av dem. I Fairlights cartridge (bank 0) har djupanalysen 11 problem, alla indirekta hopp via RAM-vektorer och
@@ -1220,6 +1242,32 @@ programmen utan problem kommer 181 dit enbart genom lösta problem. Mot körning
 691 av 79 368 starter av fällda gissningar (de flesta är förskjutna starter i samma datablock) och 4 av 1 475 rutiner
 som antogs läggas dit vid körning. Rapporten kostar lite: djupanalysen tar i snitt 448 ms mot 74 ms för den vanliga
 (6,1 gånger, mätt utan något annat igång; tidigare 5,9–6,3 gånger), som mest 11,1 s.
+
+**Kodöarna** (`--set codeIslands=false`) står för en stor del av den kod som körs, och för det mesta av datan som blir
+kod. Utan dem hittar den vanliga analysen 85,0 % (i stället för 92,3 %) och gör 38 905 bara lästa byte till kod (i
+stället för 148 278). Djupanalysen hittar 79,7 % (i stället för 91,8 %) och gör 28 745 till kod (i stället för
+399 748). Djupanalysens kodöar, som söktes i hela datablocket, gav alltså 12 procentenheter mer körd kod men 371 000
+fler bara lästa byte som kod, mot 7 procentenheter och 109 000 för den vanligas.
+
+**Kodöarna gjorda träffsäkrare** (8.11e), prövat en regel i taget mot körningarna. Av de 27 081 kodöar djupanalysen
+behöll kördes 2 016 och 9 741 lästes bara. De som anropar känd kod kördes ungefär lika ofta som de lästes; de utan anrop
+och utan I/O längre in i blocken 1 gång på 16. Att fälla kodöarna på prov tappade äkta kodöar: även med skulden på sista
+beslutet nådde ingen sådan variant den vanliga analysens 92,3 %. Av den körda kod djupanalysen inte hittade låg mer än
+hälften (8 494 av 16 030 instruktioner, i 109 program) bakom hopp vars adress koden skriver. Det som blev kvar:
+
+| | hittade | bara läst, som kod | problem |
+|---|---|---|---|
+| djupanalysen före | 91,8 % | 399 748 | 1 532 |
+| + adressen som koden skriver, som den laddats, på prov | 93,2 % | 400 057 | 1 534 |
+| + kodön i fönstret som den vanliga, längre in bara med anrop till känd kod | **92,8 %** | **169 496** | 4 253 |
+| (samma, med I/O som tecken också) | 93,5 % | 198 221 | 4 901 |
+| (bara kodön i fönstret) | 91,3 % | 121 383 | 3 451 |
+| den vanliga analysen | 92,3 % | 148 278 | 7 509 |
+
+Djupanalysen hittar nu lite mer av den körda koden än den vanliga och gör 14 % fler bara lästa byte till kod, med 43 %
+färre problem. Av de 3 669 problem den vanliga har och den inte har är 1 048 lösta, 2 393 avgjorda och 228 utan funnen
+orsak. Den tar i snitt 243 ms (4,1 gånger den vanligas 60 ms, tidigare 448 ms) och som mest 3,8 s (tidigare 11–16 s),
+eftersom den provar färre kodöar och varven slutar tidigare.
 
 **Test:** `test/runcheck.test.ts` (varje sorts utfall på en konstruerad körning, och en riktig körning där analysen
 hittar varje instruktion), Sindris `test/unpack.test.ts` (byte som körs, läses, skrivs före körning och aldrig rörs) och

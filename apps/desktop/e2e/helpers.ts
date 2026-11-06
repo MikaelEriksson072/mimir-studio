@@ -19,9 +19,11 @@ export const listing = (page: Page): Locator => page.getByLabel('Disassembly lis
 export const statusBar = (page: Page): Locator => page.locator('footer.statusbar');
 export const toast = (page: Page, text: string | RegExp): Locator => page.locator('.toasts .toast', { hasText: text });
 
-/** Wait until the analysis worker delivered the first listing. */
+/** Wait until the analysis worker delivered the first listing, and (a new project has the deep analysis on) the deep
+ *  analysis took the place of the normal one shown first: a test starts from where the listing stays. */
 export async function waitForListing(page: Page): Promise<void> {
   await expect(listing(page).locator('.row').first()).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => statusBar(page).textContent(), { timeout: 30_000 }).toMatch(/analysis [\d.]+ ms · render [\d.]+ ms \(worker\)(?! · deep analysis)/);
 }
 
 /**

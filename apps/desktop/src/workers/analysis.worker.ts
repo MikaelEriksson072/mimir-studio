@@ -27,12 +27,13 @@ const analysed = (project: Project, aKey: number) => {
 };
 
 const api = {
-  /** `opts` only changes the listing (data as code); files and verification never see it */
-  run(project: Project, aKey: number, opts: RenderOptions = {}): RunResult {
+  /** `opts` only changes the listing (data as code); files and verification never see it. `withA`: the analysis also
+   *  when it was not computed again (the window does not have it: a deep one it dropped as an edit came in) */
+  run(project: Project, aKey: number, opts: RenderOptions = {}, withA = false): RunResult {
     const { A, fresh } = analysed(project, aKey);
     const t0 = performance.now();
     const R = render(A, project, opts);
-    return { aKey, A: fresh ? toWindow(A) : null, R: toWindow(R), renderMs: performance.now() - t0 };
+    return { aKey, A: fresh || withA ? toWindow(A) : null, R: toWindow(R), renderMs: performance.now() - t0 };
   },
 
   /** Round trip with the built-in Kick-subset assembler (render is cheap, so it is redone here). */

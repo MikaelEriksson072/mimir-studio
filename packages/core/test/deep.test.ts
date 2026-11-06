@@ -50,17 +50,29 @@ describe('deep analysis', () => {
     expect(deep.deep!.branches).toBe(0);
   });
 
-  it('keeps a code island only when tracing it runs into no problem', () => {
-    const src = `${BASIC} rts\nbad: lda #0\n sta $d020\n jsr junk\n lda #1\n sta $d021\n rts\ngood: lda #2\n sta $d020\n ldx #0\n stx $d021\n inx\n rts\njunk: .byte $02,$02,$02\n`;
+  it('takes the code island where the normal analysis looks as that one does', () => {
+    const src = `${BASIC} rts\nisland: lda #0\n sta $d020\n jsr junk\n lda #1\n sta $d021\n rts\njunk: .byte $02,$02,$02\n`;
     const { normal, deep } = both(fromSource('p.prg', src));
-    expect(findBlock(normal.blocks, 0x080e)?.type).toBe('code');
-    expect(problems(normal).some(l => l.msg.startsWith('JAM'))).toBe(true);
-    expect(findBlock(deep.blocks, 0x080e)?.type).toBe('data');
-    expect(findBlock(deep.blocks, 0x081c)).toMatchObject({ type: 'code', start: 0x081c });
+    for (const A of [normal, deep]) expect(findBlock(A.blocks, 0x080e)?.type).toBe('code');
+    // traced as the code so far is: its JSR to a JAM goes to a routine put there at run time
+    expect(problems(normal).map(l => l.code)).toEqual(['jam']);
     expect(problems(deep)).toEqual([]);
-    expect(deepLines(deep)).toContain('The routine-like bytes at $080e stay data: traced on trial, they run into a problem (JAM opcode $02 reached at $0828)');
-    // the JAM is gone because the guess is left out: decided, not solved
-    expect(deep.deep).toMatchObject({ gone: { rejected: 1 }, decisions: { guesses: [0x080e], sides: [], runTime: [] } });
+    expect(deep.deep).toMatchObject({ gone: { runTime: 1 } });
+  });
+
+  it('looks further into a data block for routines that call known code, and keeps one when tracing it runs into no problem', () => {
+    // a table no routine starts in (JAM opcodes), then a routine 16 bytes in: past where the normal analysis looks
+    const at = (calls: string, after = '') => fromSource('p.prg', `${BASIC} jsr main\n rts\nmain: inc $d020\n rts\n .byte ${Array(8).fill('$02,$12').join(',')}\nisland: lda #0\n sta $d020\n ${calls}\n ldx #1\n stx $d021\n rts\n${after}`);
+    const calls = both(at('jsr main'));
+    expect(findBlock(calls.normal.blocks, 0x0825)?.type).not.toBe('code');
+    expect(findBlock(calls.deep.blocks, 0x0825)).toMatchObject({ type: 'code', start: 0x0825 });
+    // one that calls nothing known is data, as data that decodes as a routine seldom calls code
+    expect(findBlock(both(at('nop\n nop\n nop')).deep.blocks, 0x0825)?.type).not.toBe('code');
+    // one that calls known code but runs into a problem stays data, and says so
+    const bad = both(at('jsr main\n jsr junk', 'junk: .byte $02\n')).deep;
+    expect(findBlock(bad.blocks, 0x0825)?.type).not.toBe('code');
+    expect(deepLines(bad)).toContain('The routine-like bytes at $0825 (and 1 more start up to $0827) stay data: traced on trial, they run into a problem (JAM opcode $02 reached at $0836)');
+    expect(bad.deep!.decisions.guesses).toContain(0x0825);
   });
 
   it('does not follow a call into the KERNAL ROM of a snapshot, nor its IRQ vector at $ea31', () => {
@@ -145,12 +157,25 @@ describe('deep analysis', () => {
     expect(deepLines(deep)).toContain('The IRQ handler at $081a stays data: traced on trial, it runs into a problem (JAM opcode $02 reached at $081d)');
   });
 
-  it('does not follow a JMP whose address the code writes', () => {
-    const src = `${BASIC} lda #<target\n sta jump+1\n lda #>target\n sta jump+2\njump: jmp $0830\ntarget: rts\n.pc = $0830\n .byte $02,$02\n`;
-    const { normal, deep } = both(fromSource('p.prg', src));
+  it('traces the target a JMP whose address the code writes has as loaded on trial', () => {
+    const src = (loaded: string) => `${BASIC} lda #<target\n sta jump+1\n lda #>target\n sta jump+2\njump: jmp $0830\ntarget: rts\n.pc = $0830\n${loaded}`;
+    // as loaded it goes to data: left out
+    const { normal, deep } = both(fromSource('p.prg', src(' .byte $02,$02\n')));
     expect(problems(normal).some(l => l.msg.startsWith('JAM'))).toBe(true);
     expect(problems(deep)).toEqual([]);
-    expect(deepLines(deep)).toContain('The code at $080f writes the address of the JMP at $0817, so its target $0830 is set at run time and is not followed');
+    expect(deepLines(deep)).toContain('The code at $080f writes the address of the JMP at $0817, so its target is set at run time; as loaded, $0830 runs into a problem on trial (JAM opcode $02 reached at $0830), so it is not followed');
+    // as loaded it goes to a routine (that runs before the code changes the address, say): kept
+    const kept = both(fromSource('p.prg', src(' inc $d020\n rts\n'))).deep;
+    expect(kept.insLen[0x0830]).toBe(3);
+    expect(deepLines(kept)).toContain('The code at $080f writes the address of the JMP at $0817, so its target is set at run time; as loaded, $0830 is traced on trial and kept');
+  });
+
+  it('ends its rounds when a target the code writes is code all the same', () => {
+    // `routine` is an entry, so it is code before the JSR whose address the code writes is traced: no cut is made there
+    const src = `${BASIC}call: jsr routine\n lda #<other\n sta call+1\n lda #>other\n sta call+2\n rts\nroutine: inc $d020\n rts\nother: rts\n`;
+    const { deep } = both(fromSource('p.prg', src), { entries: [0x081b] });
+    expect(deep.insLen[0x081b]).toBe(3);
+    expect(deep.deep!.rounds).toBeLessThanOrEqual(2);
   });
 
   it('does not trace the bytes after a JSR to a routine that never returns', () => {
@@ -170,9 +195,10 @@ describe('deep analysis', () => {
     expect(problems(deep)).toEqual([]);
     expect(deepLines(deep)).toContain('The JSR at $080d goes to $0900, which holds $00: the routine is put there at run time (unpacked or copied), so it is not traced');
     expect(deep.log.some(l => l.msg === 'The code writes the instruction at $0815 ($00 now), so it is set at run time and the path stops there')).toBe(true);
-    // a guess that calls into zeros is still left out
-    const guess = both(fromSource('p.prg', `${BASIC} rts\n lda #0\n sta $d020\n jsr $0900\n lda #1\n sta $d021\n rts\n.pc = $0900\n .fill 16, 0\n`));
-    expect(findBlock(guess.deep.blocks, 0x080e)?.type).toBe('data');
+    // the island where the normal analysis looks is traced as the code so far is: its call into zeros is not followed
+    const island = both(fromSource('p.prg', `${BASIC} rts\n lda #0\n sta $d020\n jsr $0900\n lda #1\n sta $d021\n rts\n.pc = $0900\n .fill 16, 0\n`)).deep;
+    expect(findBlock(island.blocks, 0x080e)?.type).toBe('code');
+    expect(problems(island)).toEqual([]);
   });
 
   it('follows $01 through the stack and through a variable that code only stores to', () => {

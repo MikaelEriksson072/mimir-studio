@@ -2,7 +2,7 @@
  * through `update(label, recipe)` and becomes one undoable step. */
 import { create } from 'zustand';
 import type { Draft } from 'immer';
-import { DEFAULT_SETTINGS, demoProject, deserializeProject, serializeProject, type Project, type SerializedProject } from '@mimir/core';
+import { DEFAULT_SETTINGS, demoProject, deserializeProject, serializeProject, type Project, type SerializedProject, type Settings } from '@mimir/core';
 import { store } from '../lib/util';
 import { commit, commitReplace, initHistory, ownChanges, redo, undo, type History } from './history';
 import type { ProjectHome } from '../../shared/ipc';
@@ -48,9 +48,16 @@ interface ProjectState extends History<Project> {
 
 const withDefaults = (project: Project): Project => ({ ...project, settings: { ...DEFAULT_SETTINGS, ...project.settings } });
 
+/** What a new project in the app starts with besides the settings it takes over: the deep analysis on (8.11e). The
+ *  library and the command line keep the normal analysis as their default. */
+export const NEW_PROJECT: Partial<Settings> = { deepAnalysis: true };
+/** The settings of a new project made from files opened while the project with settings `from` is open: those, with the
+ *  deep analysis on (a program unpacked in place keeps its project's settings) */
+export const newProjectSettings = (from: Settings): Settings => ({ ...from, ...NEW_PROJECT });
+
 const kept = unsavedWork();
 export const useProject = create<ProjectState>((set) => ({
-  ...initHistory(kept ?? demoProject(), !!kept && unsavedWorkChanged()),
+  ...initHistory(kept ?? demoProject(NEW_PROJECT), !!kept && unsavedWorkChanged()),
   home: null,
   update: (label, recipe) => set(s => commit(s, label, recipe)),
   replace: (project, undoLabel) => set(s => (undoLabel ? commitReplace(s, undoLabel, withDefaults(project)) : initHistory(withDefaults(project)))),

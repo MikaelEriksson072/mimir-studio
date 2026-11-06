@@ -61,10 +61,12 @@ function flagsAfter(f: Flags, o: OpcodeInfo, v: number, pc: number): Flags {
 export function trace(ctx: Ctx): void {
   const { queue, mem, insLen, codeOwner, skip, loaded, forcedData, addX, enqueue, ijumps, inlineCalls, entryKind, flagCut, S, L } = ctx;
   const { deep, cuts, blameCut, decOf, blame, newIns } = ctx;
-  // a deep analysis does not follow a JSR or JMP into ROM or through an operand that code writes
+  // a deep analysis does not follow a JSR or JMP into ROM or through an operand that code writes; the target an
+  // operand the code writes has as loaded is a guess, traced on trial (it often runs before the code changes it)
   const follow = (from: number, to: number) => {
     const why = deep && !insLen[to] && cutFor(deep, loaded, mem, from, to, ctx.onTrial, ctx.cart, ctx.trialPort);
     if (why) cuts.set(cutKey(from, to), why);
+    if (why === 'smc') enqueue(to, 'ptr');
     return !why;
   };
   // the way to each address queued and to each problem: the last decision on it (`trial` blames it)

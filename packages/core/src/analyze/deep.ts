@@ -97,7 +97,11 @@ export function learn(A: AnalysisResult, ctx: Ctx, deep: Deep): boolean {
     next.noReturn.add(pc);
     would.set(cutKey(pc, pc + 3), 'noreturn');
   }
-  const same = would.size === ctx.cuts.size && [...would].every(([k, w]) => ctx.cuts.get(k) === w);
+  // (a cut whose target is code after all, as the trace makes none to code it has, counts on neither side: the target
+  // an operand the code writes has as loaded is traced on trial, and code once kept)
+  const counts = ([k]: [number, CutWhy]) => !insLen[k & 0xffff];
+  const now = [...would].filter(counts), was = new Map([...ctx.cuts].filter(counts));
+  const same = now.length === was.size && now.every(([k, w]) => was.get(k) === w);
   const changed = !same || main !== deep.main || text.size !== deep.text.size;
   Object.assign(deep, next);
   return changed;
@@ -205,9 +209,14 @@ export function deepLog(A: AnalysisResult, ctx: Ctx, normal: AnalysisResult, beh
     if (why === 'rom') { const s = rom.get(to) ?? []; s.push(from); rom.set(to, s); continue; }
     if (why === 'noreturn') { L('info', `The routine at ${$4(decode(mem, from).target!)} never returns, so the bytes after the JSR at ${$4(from)} are not traced`, from); continue; }
     if (why === 'empty') { L('info', `The ${mn} at ${$4(from)} goes to ${$4(to)}, which holds $${mem[to].toString(16).padStart(2, '0')}: the routine is put there at run time (unpacked or copied), so it is not traced`, from); continue; }
+    // the target it has as loaded is traced on trial
     const by = [from + 1, from + 2].flatMap(a => xrefs.get(a & 0xffff) || []).find(x => (x.kind === 'write' || x.kind === 'rmw') && insLen[x.from]);
-    L('info', `${by ? `The code at ${$4(by.from)}` : 'Code'} writes the address of the ${mn} at ${$4(from)}, so its target ${$4(to)} is set at run time and is not followed`, from);
+    const loadedTo = insLen[to] ? `; as loaded, ${$4(to)} is traced on trial and kept`
+      : ctx.rejected.has(to) ? `; as loaded, ${$4(to)} runs into a problem on trial (${ctx.rejected.get(to)!.why.msg.replace(/[.;].*$/, '')}), so it is not followed` : ' and is not followed';
+    L('info', `${by ? `The code at ${$4(by.from)}` : 'Code'} writes the address of the ${mn} at ${$4(from)}, so its target is set at run time${loadedTo}`, from);
   }
+  // (an operand the code writes: its target as loaded is told about above)
+  const smcTo = new Set([...ctx.cuts].filter(([, why]) => why === 'smc').map(([k]) => k & 0xffff));
   for (const [t, from] of rom) {
     const area = mcfg ? AREA[areaAt(t, portsOf(mcfg.port[from[0]])[0] ?? 7, false, mcfg.cart)] : 'ROM';
     L('info', `${from.length === 1 ? `The ${OPC[mem[from[0]]].mn} at ${$4(from[0])}` : `${from.length} calls and jumps (at ${list(from)})`} to ${$4(t)} reach${from.length === 1 ? 'es' : ''} the ${area} there, so the RAM below it is not traced`, from[0]);
@@ -224,6 +233,7 @@ export function deepLog(A: AnalysisResult, ctx: Ctx, normal: AnalysisResult, beh
     if (g) { g.more++; g.end = a; } else groups.set(key, { a, kind, why, more: 0, end: a });
   }
   for (const { a, kind, why, more, end } of groups.values()) {
+    if (kind === 'ptr' && smcTo.has(a) && !more) continue;
     const what = kind === 'entry' ? `The load address ${$4(a)} is not used as the entry point`
       : kind === 'guess' ? `The routine-like bytes at ${$4(a)}${more ? ` (and ${more} more start${more === 1 ? '' : 's'} up to ${$4(end)})` : ''} stay data`
         : `The ${KIND[kind]} at ${$4(a)} stays data`;
