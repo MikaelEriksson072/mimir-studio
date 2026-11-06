@@ -2613,6 +2613,14 @@ test('the Graphics tab shows memory as characters, sprites or bitmaps, and marks
     await expect(sel).toContainText('$2000–$207f (128 bytes)');
     await view.getByRole('button', { name: 'Mark as Sprite data' }).click();
     await expect(toast(page, '$2000–$207f marked as Sprite data')).toBeVisible();
+    // any count of sprites a row from 1 to 24
+    const picture = canvas.locator('canvas');
+    await expect(view.getByLabel('Cells per row').locator('option')).toHaveCount(24);
+    await view.getByLabel('Cells per row').selectOption('24');
+    await expect(picture).toHaveCSS('width', `${24 * 26 * 2}px`);
+    await view.getByLabel('Cells per row').selectOption('1');
+    await expect(picture).toHaveCSS('width', `${26 * 2}px`);
+    await view.getByLabel('Cells per row').selectOption('8');
   });
 
   await test.step('bitmaps: 8 KB frames; Show in listing goes there, and the marks verify', async () => {

@@ -13,7 +13,7 @@ import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture,
 import { Icon } from '../lib/icons';
 import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
 import { parseGoto } from '../lib/goto';
-import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, NO_FONT, gfxLayout, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout } from '../lib/gfxview';
+import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, NO_FONT, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
 import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -31,7 +31,10 @@ const GFX_MODES: ViewMode<GfxKind>[] = [
 const SHOWS: Record<Exclude<GfxKind, 'bitmap'>, string> = {
   chars: '8 bytes each', sprites: '64 bytes each', screens: '1000 screen codes each', fontrows: 'a font for each row',
 };
-const COLS: Record<GfxKind, number[]> = { chars: [16, 32, 40, 64], sprites: [4, 8, 16], bitmap: [1], screens: [1, 2, 3], fontrows: [1] };
+/** sprites per row: every count from 1 to 24 */
+const COLS: Record<GfxKind, number[]> = {
+  chars: [16, 32, 40, 64], sprites: Array.from({ length: MAX_SPRITE_COLS }, (_, i) => i + 1), bitmap: [1], screens: [1, 2, 3], fontrows: [1],
+};
 /** characters per row can also be typed in, up to this many */
 const MAX_CHAR_COLS = 128;
 const NAMES: Record<GfxKind, string> = { chars: 'character', sprites: 'sprite', bitmap: 'bitmap', screens: 'screen', fontrows: 'row' };

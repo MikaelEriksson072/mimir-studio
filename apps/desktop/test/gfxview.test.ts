@@ -1,6 +1,6 @@
 /* The memory graphics browser's geometry and drawing (src/lib/gfxview.ts). */
 import { describe, expect, it } from 'vitest';
-import { bitmapAround, bitmapRowsOf, builtinFont, byteAt, cellAt, cellBytes, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spritePointer } from '../src/lib/gfxview';
+import { bitmapAround, bitmapRowsOf, builtinFont, byteAt, cellAt, cellBytes, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer } from '../src/lib/gfxview';
 import { C64, hexRgb } from '../src/lib/palette';
 
 describe('memory graphics layout', () => {
@@ -12,6 +12,17 @@ describe('memory graphics layout', () => {
     expect(gfxLayout('chars', 32, 3)).toMatchObject({ offset: 3, rows: 256 });
     expect(gfxLayout('chars', 32, -1).offset).toBe(7);
     expect(rowAddr(gfxLayout('chars', 32, 3), 2)).toBe(3 + 512);
+  });
+
+  it('lays sprites out 1 to 24 a row; a saved count outside that is 8', () => {
+    expect(gfxLayout('sprites', 1)).toMatchObject({ rows: 1024, width: 26 });
+    // 1024 sprites, 24 a row: 43 rows, the last of 16
+    const L = gfxLayout('sprites', 24);
+    expect(L).toMatchObject({ rows: 43, width: 24 * 26 });
+    expect(rowAddr(L, 42)).toBe(42 * 24 * 64);
+    expect(cellOf(L, 0xffc0)).toMatchObject({ start: 0xffc0, x: 15 * 26, y: 42 * 23 });
+    expect([1, 5, 24].map(spriteColsOf)).toEqual([1, 5, 24]);
+    expect([0, 25, 2.5, -3, NaN, '10', undefined, null].map(spriteColsOf)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
   });
 
   it('finds the cell and the byte under a point, and back', () => {

@@ -39,6 +39,10 @@ export const BITMAP_ROWS = 25;
 export const BITMAP_ROW_BYTES = 320;
 /** a bitmap height as a whole number of character rows, 1 to 25 (anything else is a whole bitmap) */
 export const bitmapRowsOf = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= BITMAP_ROWS ? n : BITMAP_ROWS);
+/** sprites a row can show, 1 to this many */
+export const MAX_SPRITE_COLS = 24;
+/** a count of sprites a row, 1 to 24 (anything else is the default 8) */
+export const spriteColsOf = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_SPRITE_COLS ? n : 8);
 /** bytes a screen shows: 40 x 25 screen codes */
 export const SCREEN_BYTES = 1000;
 
