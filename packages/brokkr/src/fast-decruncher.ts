@@ -9,10 +9,11 @@ import { SFX_EXIT, SFX_START_HEAD } from './brk-decruncher.ts';
 /** The zero page bytes the decruncher uses from ZP on. */
 export const FAST_ZP_BYTES = 10;
 
-const SYMBOLS = `.label DEST = ZP                          // the page written in (DEST+1); Y is the low byte
-.label SRC = ZP + 2                         // where Y copies from: DEST plus the offset, or the stream less Y
-.label STREAM = ZP + 4                      // the lowest stream byte read so far
-.label LEN = ZP + 6
+const SYMBOLS = `.label SRC = ZP                             // where Y copies from: DEST plus the offset, or the stream less Y
+.label LEN = ZP + 2
+// the last six are those a self-extracting file sets by copying them with the resident part (ZP_SET)
+.label DEST = ZP + 4                        // the page written in (DEST+1); Y is the low byte
+.label STREAM = ZP + 6                      // the lowest stream byte read so far
 .label LAST = ZP + 8                        // the last offset less 1
 `;
 
@@ -158,8 +159,10 @@ length_base:
  * not flash the border. */
 export const FAST_RESIDENT = `${SYMBOLS}${resident(SFX_EXIT)}`;
 
-/** The start of a self-extracting file: $01, the resident part and the stream moved, the pointers set, `next`. */
-export const FAST_START = `${SYMBOLS}${SFX_START_HEAD}        lda #0                              // the last offset 1
+/** The start of a self-extracting file: $01, the resident part and the stream moved, the pointers set (unless they
+ * came with the resident part: ZP_SET), `next`. */
+export const FAST_START = `${SYMBOLS}${SFX_START_HEAD}.if (ZP_SET == 0) {
+        lda #0                              // the last offset 1
         sta LAST
         sta LAST+1
         sta DEST
@@ -169,6 +172,7 @@ export const FAST_START = `${SYMBOLS}${SFX_START_HEAD}        lda #0            
         sta STREAM+1
         lda #>DATA_END
         sta DEST+1
+}
         ldy #<DATA_END
         jmp next
 `;

@@ -80,6 +80,14 @@ describe('self-extracting files', () => {
     expect(() => sfx(prog, 0x0801, { place: { zp: 0x22, decruncher: 0xc000, tables: 0xc000 } })).toThrow(/overlap/);
   });
 
+  it('take this many bytes besides the stream: the BASIC line, the start and the decruncher', () => {
+    // every byte the code around the stream gains or loses shows here
+    const basic = basicProgram(programLike(20000, 2), 2064), high = programLike(0xc000 - 0x1000, 3);
+    const overhead = (data: Uint8Array, load: number, o: Parameters<typeof sfx>[2]) => { const r = sfx(data, load, o); return r.prg.length - r.stream.length; };
+    expect([overhead(basic, 0x0801, {}), overhead(basic, 0x0801, { format: 'brokkr' }), overhead(basic, 0x0801, { format: 'fast' })]).toEqual([357, 586, 262]);
+    expect([overhead(high, 0x1000, { start: 0x1000 }), overhead(high, 0x1000, { start: 0x1000, format: 'brokkr' }), overhead(high, 0x1000, { start: 0x1000, format: 'fast' })]).toEqual([354, 583, 259]);
+  });
+
   it('run a BASIC program with RUN', () => {
     const r = sfx(basicProgram(programLike(3000, 5)), 0x0801, { start: 'basic' });
     expect(r.basic).toBe(true);

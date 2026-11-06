@@ -2286,9 +2286,12 @@ uppackaren för egen kod skrivs med `brokkr decruncher --format fast`. Ett förs
 - *Self-extracting*: Brokkr planerar var uppackarens två delar, dess tabell, nollsidebytes och den packade datan ska ligga
   (helst stackens sida `$0100-$01e7` och `$0334-$03ff`, så att inget syns på skärmen), så att uppackaren aldrig skriver över
   byte den inte läst, och väljer `$01` medan den packar upp så att allt den läser och skriver är RAM (`$34` när data
-  ligger under I/O; då blinkar inte kanten). Filen körs sedan i Brokkrs emulerade C64 från SYS-raden tills programmet
-  startar, och minnet jämförs med det som packades. Kontrollen syns som *Decrunched in Brokkr's emulated C64: … has the
-  same … bytes, and it starts at $….*
+  ligger under I/O; då blinkar inte kanten). Strömmen ligger i filen där den packas upp ifrån, så när som på de första
+  byten, som filen har efter den och startkoden kopierar ned över BASIC-raden; uppackaren kopieras till sin plats med
+  nollsidan den börjar med före sig, och `$01` lämnas som BASIC har det när det ska vara `$37` hela tiden. Bara ett
+  program som inte lämnar plats för det får strömmen flyttad. Filen körs sedan i Brokkrs emulerade C64 från SYS-raden
+  tills programmet startar, och minnet jämförs med det som packades. Kontrollen syns som *Decrunched in Brokkr's
+  emulated C64: … has the same … bytes, and it starts at $….* (testerna kör också filerna i riktiga VICE).
 - *Crunched data*: Exomizers mem-format (`-T4` som standard, för `exodecrunch.s`), eller Brokkrs egna. Med *Write the
   decruncher too* (`PackPrefs.decruncher`, på som standard; inte med *Crunch forward*, för uppackaren läser bakåt)
   skrivs Brokkrs uppackare bredvid: `<namn>-decrunch.prg`, assemblerad vid *Decruncher at* (`$c000` på *Auto*), att

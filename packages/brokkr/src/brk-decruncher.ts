@@ -304,8 +304,10 @@ length: .word 0
 
 /** the end of a self-extracting file's decrunching (for every format but Exomizer's): $01, the interrupts, and the
  * program's start */
-export const SFX_EXIT = `        lda #RAM_EXIT
+export const SFX_EXIT = `.if (EXIT_PORT == 1) {
+        lda #RAM_EXIT                       // (left out when $01 is $37 all along)
         sta $01
+}
 .if (IRQ_EXIT == 1) {
         cli
 }
@@ -432,16 +434,27 @@ ${INIT}        lda #0
 ${DEST_SET}${resident('        rts\n', !o.small, '0')}`;
 }
 
-/** The start of a self-extracting file up to its own set-up (for every format): $01, the resident part copied from
- * B_FROM to B_TO, and the stream moved from MOVE_FROM to MOVE_TO (down from its first byte, up from its last). */
+/** The start of a self-extracting file up to its own set-up (for every format): $01 (with SET_PORT; left as BASIC has
+ * it, $37, without), the resident part copied from B_FROM to B_TO, the stream's first HEAD_LEN bytes from
+ * HEAD_FROM to HEAD_TO (the file has them after the rest, which lies where it is decrunched from), and the stream moved
+ * from MOVE_FROM to MOVE_TO (down from its first byte, up from its last). */
 export const SFX_START_HEAD = `* = A_ADDR
 .if (PROLOGUE == 1) {
         sei
+.if (SET_PORT == 1) {
         lda #RAM_DURING
         sta $01
 }
+}
+.if (B_LEN < 256) {
+        ldy #B_LEN                          // the resident part to its place, from its last byte down (by Y, as there
+copy_down:                                  // is no lda or sta zp,y: B_TO - 1 may be $ff, and zp,x would wrap)
+        lda B_FROM - 1,y
+        sta B_TO - 1,y
+        dey
+        bne copy_down
+} else {
         ldx #0                              // the resident part to its place: whole pages, then the rest
-.if (B_LEN >= 256) {
         ldy #>B_LEN
 copy_page:
 copy_from:
@@ -454,7 +467,6 @@ copy_to:
         inc copy_to+2
         dey
         bne copy_page
-}
 .if ((B_LEN & 255) > 0) {
 copy_rest:
         lda B_FROM + (B_LEN & $ff00),x
@@ -462,6 +474,15 @@ copy_rest:
         inx
         cpx #<B_LEN
         bne copy_rest
+}
+}
+.if (HEAD_LEN > 0) {
+        ldy #HEAD_LEN                       // the stream's first bytes, stored after the rest, to where they are read last
+head_down:
+        lda HEAD_FROM - 1,y
+        sta HEAD_TO - 1,y
+        dey
+        bne head_down
 }
 .if (MOVE_LEN > 0) {
 .if (MOVE_TO < MOVE_FROM) {

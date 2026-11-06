@@ -311,9 +311,12 @@ On 163 unpacked C64 programs (demos, games and intros from CSDB, unpacked with S
 | time (one thread) | 954 s | 121 s | 31 s |
 
 Exomizer decrunches every Brokkr stream to the same bytes (`exomizer raw -d`), and its `desfx` decrunches Brokkr's
-self-extracting files. As self-extracting programs, on 62 of them, Brokkr's files are 0.39 % smaller in all, smaller on
-36 and up to 81 bytes larger on 26: its decruncher is a little longer than Exomizer's, and it decrunches about 9 %
-slower. Both are the next things to improve.
+self-extracting files. As self-extracting programs in Exomizer's format (each started at its load address, 154 of
+them), Brokkr's files are 0.44 % smaller in all: smaller on 114, the same on 1, and up to 53 bytes larger on 39, most
+of them small (of those under 8 KB, Brokkr's file is smaller on 15 of 39). The stream is 66 bytes smaller (the median),
+but the code around it is still 34 bytes longer than Exomizer's (the median; its table builder and resident part are
+longer), which a small program does not make up for. In Brokkr's emulated C64 its files take about 3 % longer to
+decrunch than Exomizer's (the median of 39).
 
 ## How it works
 
@@ -328,8 +331,10 @@ slower. Both are the next things to improve.
   worker threads.
 - `src/sfx.ts`, `src/decruncher.ts`, `src/asm.ts`, `src/emulate.ts`: the self-extracting file. The decruncher is Kick
   Assembler source that Brokkr assembles with its own small assembler at the addresses each file needs; it has a part
-  that runs once from where the file loaded (it copies the rest, moves the stream and reads the tables) and a resident
-  part of about 200 bytes. The emulated C64 is a 6510 with the CPU port banking BASIC, KERNAL and I/O, where reading a
+  that runs once from where the file loaded and a resident part of about 200 bytes. The stream lies in the file where
+  it is decrunched from in place, but for its first few bytes, which the file has after it and the start copies down
+  over the BASIC line; the start copies the resident part to its place with the zero page it starts with right before
+  it, and reads the tables. Only a program that leaves no room for that has its stream moved. The emulated C64 is a 6510 with the CPU port banking BASIC, KERNAL and I/O, where reading a
   ROM that is switched in or writing to I/O counts as a fault.
 - `src/brk.ts`, `src/parse-brk.ts`, `src/crunch-brk.ts`, `src/brk-decruncher.ts`: Brokkr's own format: its coder,
   model and prices, its parse, the rounds of parse and prices, and its 6502 decruncher (the self-extracting one and the

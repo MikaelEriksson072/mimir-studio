@@ -7,30 +7,34 @@
  * -T traits. It has two parts: TABLES reads the encoding at the start of the stream into the decrunch table, and
  * RESIDENT decrunches. A self-extracting file runs TABLES from where it loaded and keeps only RESIDENT while it
  * decrunches. */
+import { SFX_START_HEAD } from './brk-decruncher.ts';
 
 /** The zero page bytes the decruncher uses from ZP on. */
 export const ZP_BYTES = 9;
 
 /** The constants both parts use. */
 const SYMBOLS = `.const ENTRIES = FOUR == 1 ? 68 : 52
-.label BITBUF = ZP
-.label DEST = ZP + 1                        // the write page is DEST+1, its low byte is in Y (DEST stays 0)
-.label SRC = ZP + 3                         // a match: the offset's low byte, and DEST+1 plus its high byte
-.label LEN = ZP + 5
-.label HIBITS = ZP + 7                      // bits above the low byte of a value
+.label SRC = ZP                             // a match: the offset's low byte, and DEST+1 plus its high byte
+.label LEN = ZP + 2
+.label HIBITS = ZP + 4                      // bits above the low byte of a value
+// the last four are those a self-extracting file sets by copying them with the resident part (ZP_SET)
+.label BITBUF = ZP + 5
+.label DEST = ZP + 6                        // the write page is DEST+1, its low byte is in Y (DEST stays 0)
 .label STATE = ZP + 8                       // 2 after a match, 1 after a match and a literal (the offset may come again)
 .label TBL_BI = TABLE                       // per entry: the sentinel of its bits below 8 (0: none), bit 0 a byte
 .label TBL_LO = TABLE + ENTRIES             // per entry: its base less 1 (the reads end with the carry set)
 .label TBL_HI = TABLE + 2 * ENTRIES
 `;
 
-/** Reads the encoding into the table; then Y and DEST+1 are set to the data's end and it goes on at `literal`. */
-const TABLES = `        ldx #0
-        stx DEST
+/** The zero page the decruncher starts with but for DEST+1: DEST and STATE 0, the bit buffer the stream's first byte. */
+const ZP_INIT = `        stx DEST
         stx STATE
         jsr getbyte                         // the stream's first byte is the bit buffer
         sta BITBUF
-        // an entry's bit count comes as 3 bits and then bit 3; the bases start at 1 in each 16 and go up by
+`;
+
+/** Reads the encoding into the table; then Y and DEST+1 are set to the data's end and it goes on at `literal`. */
+const TABLE_LOOP = `        // an entry's bit count comes as 3 bits and then bit 3; the bases start at 1 in each 16 and go up by
         // 2^count (kept less 1, in LEN)
 table_next:
         txa
@@ -72,6 +76,8 @@ table_add:
         cpx #ENTRIES
         bne table_next
 `;
+const TABLES = `        ldx #0
+${ZP_INIT}${TABLE_LOOP}`;
 
 /** The code of each bit count: the sentinel of count & 7, bit 0 from 8 up. */
 const CODES = `codes:
@@ -258,8 +264,10 @@ offset_tables:
 
 /** The resident part of a self-extracting file's decruncher, assembled at its place. */
 /** The end of a self-extracting file's decrunching: $01, the interrupts, and the program's start. */
-const SFX_EXIT = `        lda #RAM_EXIT
+const SFX_EXIT = `.if (EXIT_PORT == 1) {
+        lda #RAM_EXIT                       // (left out when $01 is $37 all along)
         sta $01
+}
 .if (IRQ_EXIT == 1) {
         cli
 }
@@ -280,103 +288,30 @@ export const SFX_RESIDENT = `${SYMBOLS}${resident(SFX_EXIT)}`;
 
 /**
  * The start of a self-extracting file (runs from where it loaded): $01, the resident part copied to B_TO, the
- * stream moved, the table read, then the resident part's `literal`. Constants besides the decruncher's: A_ADDR,
- * PROLOGUE (1: begin with sei and $01, else a prologue at $080d did), RAM_DURING, B_FROM, B_TO, B_LEN, MOVE_FROM,
- * MOVE_TO, MOVE_LEN, DATA_END, and the resident part's labels literal, getbyte and getbits.
+ * stream's head copied or the stream moved (SFX_START_HEAD), the table read, then the resident part's `literal`.
+ * Constants besides the decruncher's: those of SFX_START_HEAD, DATA_END, ZP_SET (1: BITBUF, DEST and STATE came
+ * with the resident part, and the stream has no bit buffer byte) and the resident part's labels literal, getbyte and
+ * getbits.
  */
-export const SFX_START = `${SYMBOLS}* = A_ADDR
-.if (PROLOGUE == 1) {
-        sei
-        lda #RAM_DURING
-        sta $01
-}
-        ldx #0                              // the resident part to its place: whole pages, then the rest
-.if (B_LEN >= 256) {
-        ldy #>B_LEN
-copy_page:
-copy_from:
-        lda B_FROM,x
-copy_to:
-        sta B_TO,x
-        inx
-        bne copy_page
-        inc copy_from+2
-        inc copy_to+2
-        dey
-        bne copy_page
-}
-.if ((B_LEN & 255) > 0) {
-copy_rest:
-        lda B_FROM + (B_LEN & $ff00),x
-        sta B_TO + (B_LEN & $ff00),x
-        inx
-        cpx #<B_LEN
-        bne copy_rest
-}
-.if (MOVE_LEN > 0) {
-// the crunched stream, from where the file put it to where it is decrunched from
-.if (MOVE_TO < MOVE_FROM) {
-        ldy #0                              // down: from the first byte on
-        ldx #>MOVE_LEN
-        beq move_tail
-move_page:
-move_from:
-        lda MOVE_FROM,y
-move_to:
-        sta MOVE_TO,y
-        iny
-        bne move_page
-        inc move_from+2
-        inc move_to+2
-        dex
-        bne move_page
-move_tail:
-        ldx #<MOVE_LEN
-        beq move_done
-move_byte:
-        lda MOVE_FROM + (MOVE_LEN & $ff00),y
-        sta MOVE_TO + (MOVE_LEN & $ff00),y
-        iny
-        dex
-        bne move_byte
-} else {
-        ldy #<MOVE_LEN                      // up: from the last byte down
-        beq move_pages
-move_tail:
-        dey
-        lda MOVE_FROM + (MOVE_LEN & $ff00),y
-        sta MOVE_TO + (MOVE_LEN & $ff00),y
-        tya
-        bne move_tail
-move_pages:
-        ldx #>MOVE_LEN
-        beq move_done
-move_page:
-        dey
-move_from:
-        lda MOVE_FROM + (MOVE_LEN & $ff00) - $100,y
-move_to:
-        sta MOVE_TO + (MOVE_LEN & $ff00) - $100,y
-        tya
-        bne move_page
-        dec move_from+2
-        dec move_to+2
-        dex
-        bne move_page
-}
-move_done:
-}
-${TABLES}        ldy #<DATA_END
+export const SFX_START = `${SYMBOLS}${SFX_START_HEAD}        ldx #0
+.if (ZP_SET == 0) {
+${ZP_INIT}}
+${TABLE_LOOP}        ldy #<DATA_END
+.if (ZP_SET == 0) {
         lda #>DATA_END
         sta DEST+1
+}
         jmp literal
 ${CODES}`;
 
-/** The prologue at $080d when the start sits at the end of the file: $01, then a jump to it. */
+/** The prologue at $080d when the start sits at the end of the file: $01 (with SET_PORT; left as BASIC has it, $37,
+ * without), then a jump to it. */
 export const SFX_PROLOGUE = `* = $080d
         sei
+.if (SET_PORT == 1) {
         lda #RAM_DURING
         sta $01
+}
         jmp A_ADDR
 `;
 

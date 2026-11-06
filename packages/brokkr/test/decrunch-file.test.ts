@@ -55,7 +55,7 @@ describe('the decruncher as a file of its own', () => {
   it('is written by `brokkr decruncher`, as source or as a PRG', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brokkr-dec-')), cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
     const out = execFileSync(process.execPath, [cli, 'decruncher', '--format', 'fast', '--at', '$9000', '-o', join(dir, 'd.prg')], { encoding: 'utf8' });
-    expect(out).toMatch(/d\.prg: Brokkr's decruncher of its fast format at \$9000–\$90e0 \(225 bytes\): set stream \(\$fa\)/);
+    expect(out).toMatch(/d\.prg: Brokkr's decruncher of its fast format at \$9000–\$90e0 \(225 bytes\): set stream \(\$fc\)/);
     expect(new Uint8Array(readFileSync(join(dir, 'd.prg')))).toEqual(decruncherFile({ format: 'fast', at: 0x9000 }).prg);
     execFileSync(process.execPath, [cli, 'decruncher', '-o', join(dir, 'd.asm')]);
     expect(readFileSync(join(dir, 'd.asm'), 'utf8')).toBe(decruncherFile().source);

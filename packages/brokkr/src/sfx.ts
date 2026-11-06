@@ -144,7 +144,9 @@ const LOW: Range[] = [[0x0100, 0x01e8], [0x0334, 0x0400], [0x0200, 0x0281]];
 const ZP_SPOTS = [0xf7, 0x02, 0x22, 0xa3, 0x92, 0xb0, 0x57];
 /** the top of the stack, which the decruncher's subroutine calls use (some bytes below where BASIC's SYS leaves it) */
 const STACK: Range = [0x01e8, 0x0200];
+/** the prologue at $080d: sei, $01 set (4 bytes, left out when it stays $37), and a jmp to the start */
 const PROLOGUE_SIZE = 8;
+const PORT_SIZE = 4;
 
 function build(source: string, defs: Record<string, number>, at?: number): ReturnType<typeof assemble> {
   try { return assemble(at == null ? source : `* = ${at}\n${source}`, defs); }
@@ -175,7 +177,7 @@ export function decruncherNeeds(o: Pick<SfxOptions, 'format' | 'start' | 'effect
   const known = needsCache.get(key);
   if (known) return known;
   const basic = o.start === 'basic', ramExit = basic ? 0x37 : o.ramExit ?? 0x37;
-  const exit = { RAM_EXIT: ramExit, IRQ_EXIT: (o.irqExit ?? (ramExit & 2) !== 0) ? 1 : 0, START: 0x1000, BASIC: basic ? 1 : 0, BASIC_END: 0x2000, EFFECT: o.effect === false ? 0 : 1 };
+  const exit = { RAM_EXIT: ramExit, EXIT_PORT: 1, IRQ_EXIT: (o.irqExit ?? (ramExit & 2) !== 0) ? 1 : 0, START: 0x1000, BASIC: basic ? 1 : 0, BASIC_END: 0x2000, EFFECT: o.effect === false ? 0 : 1 };
   const size = (source: string, defs: Record<string, number>) => build(source, { ...exit, ZP: 0x02, STREAM_END: 0x1000, ...defs }, 0x1000).bytes.length;
   let needs: DecruncherNeeds;
   if (o.format === 'brokkr') {
@@ -190,6 +192,8 @@ export function decruncherNeeds(o: Pick<SfxOptions, 'format' | 'start' | 'effect
     const tables = fours.map(four => 3 * (four ? 68 : 52));
     needs = { resident: { min: Math.min(...sizes), max: Math.max(...sizes) }, tables: { what: 'decrunch table', min: Math.min(...tables), max: Math.max(...tables), align: 1 }, zp: ZP_BYTES };
   }
+  // with $01 $37 all along, the resident part leaves it alone at its end
+  if (ramExit === 0x37) needs = { ...needs, resident: { min: needs.resident.min - PORT_SIZE, max: needs.resident.max } };
   needsCache.set(key, needs);
   return needs;
 }
@@ -209,7 +213,11 @@ function places(size: number, blocked: Range[], from: number, to: number, align 
 
 /** A decruncher for a stream: its sources, zero page and tables, and the sizes of its parts. */
 interface Kit {
-  stream: Uint8Array; safety: number;
+  /** the crunched stream, and what of it lies in memory to be read (without the bytes `preset` carries) */
+  stream: Uint8Array; placed: Uint8Array; safety: number;
+  /** zero page bytes the start copies with the resident part, right before it (the zero page then ends where the
+   * resident part begins, at $0100), instead of code setting them: how many, and their values */
+  preset?: { size: number; values: (dataEnd: number, streamEnd: number) => number[] };
   zp: number; zpBytes: number;
   resident: string; start: string;
   /** the constants both parts take (the tables' addresses are added by name) */
@@ -218,15 +226,18 @@ interface Kit {
   tables: { name: string; what: string; size: number; align?: number }[];
   /** labels of the resident part the start jumps to or calls */
   links: string[];
-  /** the resident part's size, and the start's when it moves the stream down and up */
-  bSize: number; aDown: number; aUp: number;
+  /** the resident part's size, and the start's when it moves the stream down and up (with $01 set), and when it
+   * copies the stream's head (or nothing) */
+  bSize: number; aDown: number; aUp: number; aHead: number; aStay: number;
   /** about what the file takes */
   size: number;
   /** tried before the others when it finds room (the faster decruncher), whatever its size */
   first: boolean;
   format: SfxFormat; protocol: number; crunched?: Crunched; brk?: BrkCrunched; fast?: FastCrunched;
 }
-type Plan = { layout: 'end' | 'start'; fB: number; fC: number; aAt: number; fE: number; B: Range; tables: Range[]; x: number };
+/** where each part goes; `head`: the stream's first bytes, stored at `from` in the file (layout `split`); `port`: the
+ * start sets $01 */
+type Plan = { layout: 'split' | 'end' | 'start'; fB: number; fC: number; aAt: number; fE: number; B: Range; tables: Range[]; x: number; head: { from: number; len: number }; port: boolean };
 
 /** What to crunch, and how: to Exomizer's format, or to Brokkr's own. */
 export type CrunchRequest = { format: 'exomizer'; data: Uint8Array; options: CrunchOptions } | { format: 'brokkr'; data: Uint8Array; options: BrkOptions }
@@ -300,7 +311,9 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   for (const r of keep) {
     if (!(r[0] >= 0 && r[0] < r[1] && r[1] <= 0x10000)) throw new BrokkrError('BRK-E144', `The range to keep free ${h4(r[0])}-${h4(r[1] - 1)} is not a range of memory.`, 'Give its first and last address, the first the lower one: $c000-$cfff.');
   }
-  const zpFor = (bytes: number) => {
+  /** where the decruncher's zero page goes: where it was told, else the first spot the program leaves free (`top`: the
+   * one ending at $ff first, right before a resident part at $0100) */
+  const zpFor = (bytes: number, top = false) => {
     const want = o.place?.zp;
     if (want != null) {
       const Z: Range = [want, want + bytes];
@@ -315,24 +328,31 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
       if (k) throw new BrokkrError('BRK-E143', `The decruncher's zero page bytes ${span(Z[0], Z[1])} lie in ${span(k[0], k[1])}, which it is to keep free.`);
       return want;
     }
-    const z = ZP_SPOTS.find(s => s + bytes <= 0x100 && !overlaps([s, s + bytes], U) && !keep.some(r => overlaps(r, [s, s + bytes])));
+    const z = [...(top ? [0x100 - bytes] : []), ...ZP_SPOTS].find(s => s + bytes <= 0x100 && !overlaps([s, s + bytes], U) && !keep.some(r => overlaps(r, [s, s + bytes])));
     if (z == null) throw new BrokkrError('BRK-E140', `The program ${span(lo, hi)} covers every zero page place the decruncher could use (${bytes} bytes from ${ZP_SPOTS.map(h2).join(', ')}).`, 'Leave the zero page out of what is packed.');
     return z;
   };
-  const exitDefs = { RAM_EXIT: ramExit, IRQ_EXIT: irqExit ? 1 : 0, START: basic ? 0 : entry, BASIC: basic ? 1 : 0, BASIC_END: hi & 0xffff, EFFECT: o.effect === false ? 0 : 1 };
-  /** the sizes of a kit's parts: the resident one, and the start moving the stream down (at the file's end) or up */
-  const sized = (k: Omit<Kit, 'bSize' | 'aDown' | 'aUp' | 'size'>): Kit => {
+  const exitDefs = { RAM_EXIT: ramExit, EXIT_PORT: 1, IRQ_EXIT: irqExit ? 1 : 0, START: basic ? 0 : entry, BASIC: basic ? 1 : 0, BASIC_END: hi & 0xffff, EFFECT: o.effect === false ? 0 : 1 };
+  /** the sizes of a kit's parts: the resident one, and the start moving the stream down (at the file's end) or up,
+   * copying the stream's head, or leaving the stream where it is */
+  const sized = (k: Omit<Kit, 'bSize' | 'aDown' | 'aUp' | 'aHead' | 'aStay' | 'size'>): Kit => {
     const tablesAt = Object.fromEntries(k.tables.map(t => [t.name, 0x1000]));
     const defs = { ...k.base, ...tablesAt, ZP: k.zp, STREAM_END: 0x1000 };
     const bSize = build(k.resident, defs, 0x1000).bytes.length;
     const startDefs = {
-      ...defs, A_ADDR: 0x3000, RAM_DURING: 0x37, B_FROM: 0x2000, B_TO: 0x0100, B_LEN: bSize, DATA_END: 0x1000, MOVE_LEN: k.stream.length,
-      ...Object.fromEntries(k.links.map(l => [l, 0x0100])),
+      ...defs, A_ADDR: 0x3000, RAM_DURING: 0x35, SET_PORT: 1, B_FROM: 0x2000, B_TO: 0x0100, B_LEN: bSize + (k.preset?.size ?? 0), DATA_END: 0x1000,
+      MOVE_LEN: k.placed.length, HEAD_LEN: 0, HEAD_FROM: 0x2000, HEAD_TO: 0x1000, ZP_SET: k.preset ? 1 : 0, ...Object.fromEntries(k.links.map(l => [l, 0x0100])),
     };
     const aDown = build(k.start, { ...startDefs, PROLOGUE: 0, MOVE_FROM: 0x2000, MOVE_TO: 0x1000 }).bytes.length;
     const aUp = build(k.start, { ...startDefs, PROLOGUE: 1, MOVE_FROM: 0x1000, MOVE_TO: 0x2000 }).bytes.length;
-    return { ...k, bSize, aDown, aUp, size: k.stream.length + bSize + Math.max(aDown + PROLOGUE_SIZE, aUp) };
+    const aHead = build(k.start, { ...startDefs, PROLOGUE: 0, MOVE_LEN: 0, HEAD_LEN: 100 }).bytes.length;
+    const aStay = build(k.start, { ...startDefs, PROLOGUE: 0, MOVE_LEN: 0 }).bytes.length;
+    return { ...k, bSize, aDown, aUp, aHead, aStay, size: k.placed.length + bSize + (k.preset?.size ?? 0) + Math.max(aDown + PROLOGUE_SIZE, aUp) };
   };
+  /** a kit, and where its zero page ends at $ff, one that copies it in with the resident part (when that can go at
+   * $0100: the planner tries both) */
+  const withPreset = (k: Omit<Kit, 'bSize' | 'aDown' | 'aUp' | 'aHead' | 'aStay' | 'size'>, preset: Kit['preset'], placed = k.placed): Kit[] =>
+    [sized(k), ...(k.zp + k.zpBytes === 0x100 ? [sized({ ...k, preset, placed })] : [])];
 
   // crunch backward, as the decruncher reads
   const reversed = data.slice().reverse();
@@ -348,12 +368,14 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
         crunches.push((yield { format: 'exomizer', data: reversed, options: { ...o.crunch, protocol: { ...o.crunch?.protocol, flags, traits: T.NO_LIT_SEQ | T.NO_MIRRORS } } }) as Crunched);
       }
       for (const c of crunches) {
-        out.push(sized({
-          stream: c.stream, safety: c.safety, zp, zpBytes: ZP_BYTES, resident: SFX_RESIDENT, start: SFX_START,
+        // the preset: the bit buffer (the stream's first byte, which then stays out of memory), DEST, the data's end
+        // page, STATE
+        out.push(...withPreset({
+          stream: c.stream, placed: c.stream, safety: c.safety, zp, zpBytes: ZP_BYTES, resident: SFX_RESIDENT, start: SFX_START,
           base: { ...exitDefs, SFX: 1, FOUR: four ? 1 : 0, REUSE: 1, LITSEQ: c.stats.sequences ? 1 : 0, MIRRORS: 0 },
           tables: [{ name: 'TABLE', what: 'Decrunch table', size: 3 * (four ? 68 : 52) }],
           links: ['literal', 'getbyte', 'getbits'], first: false, format: 'exomizer', protocol: flags, crunched: c,
-        }));
+        }, { size: 4, values: dataEnd => [c.stream[0], 0, (dataEnd >> 8) & 0xff, 0] }, c.stream.subarray(1)));
       }
     }
     return out;
@@ -365,7 +387,7 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
     // the faster decruncher multiplies with 1 KB of quarter squares; without room for them, it shifts and adds
     for (const qsq of [true, false]) {
       kits.push(sized({
-        stream: brk.stream, safety: brk.safety, zp, zpBytes: BRK_ZP_BYTES, resident: brkResident(qsq), start: BRK_START,
+        stream: brk.stream, placed: brk.stream, safety: brk.safety, zp, zpBytes: BRK_ZP_BYTES, resident: brkResident(qsq), start: BRK_START,
         base: { ...exitDefs, QSQ: qsq ? 1 : 0, ...(qsq ? {} : { SQ: 0 }) },
         tables: [{ name: 'PROBS', what: 'Probabilities', size: 512, align: 256 }, ...(qsq ? [{ name: 'SQ', what: 'Quarter squares', size: 1024, align: 256 }] : [])],
         links: ['next'], first: qsq, format: 'brokkr', protocol: 0, brk,
@@ -373,10 +395,11 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
     }
   } else if (o.format === 'fast') {
     const fast = (yield { format: 'fast', data: reversed, options: { effort: o.crunch?.effort, profile: o.crunch?.profile } }) as FastCrunched;
-    kits.push(sized({
-      stream: fast.stream, safety: fast.safety, zp: zpFor(FAST_ZP_BYTES), zpBytes: FAST_ZP_BYTES, resident: FAST_RESIDENT, start: FAST_START,
+    // the preset: DEST, the data's end page, the stream's end, the last offset 1 (0 less 1)
+    kits.push(...withPreset({
+      stream: fast.stream, placed: fast.stream, safety: fast.safety, zp: zpFor(FAST_ZP_BYTES, true), zpBytes: FAST_ZP_BYTES, resident: FAST_RESIDENT, start: FAST_START,
       base: { ...exitDefs }, tables: [], links: ['next'], first: false, format: 'fast', protocol: 0, fast,
-    }));
+    }, { size: 6, values: (dataEnd, streamEnd) => [0, (dataEnd >> 8) & 0xff, streamEnd & 0xff, (streamEnd >> 8) & 0xff, 0, 0] }));
   } else kits = yield* exomizerKits();
 
   /** Why a kit finds no room with the places it was told: the first thing in the way of one of them. */
@@ -417,34 +440,35 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
    * are filled after, by the start, so they miss the start; while decrunching none may be in the program or the
    * stream.
    */
-  const planFor = (k: Kit, ioFree: boolean): Plan | null => {
-    const C = k.stream.length, s = k.safety, bSize = k.bSize;
+  const planFor = (k: Kit, ioFree: boolean, port: boolean): Plan | null => {
+    // the file holds the resident part with the preset before it (stored), and it goes at $0100, after the zero page;
+    // the resident part leaves $01 alone at its end when it is $37 all along
+    const C = k.placed.length, s = k.safety, bSize = k.bSize - (port || ramExit !== 0x37 ? 0 : PORT_SIZE), stored = bSize + (k.preset?.size ?? 0);
     const Z: Range = [k.zp, k.zp + k.zpBytes];
-    for (const layout of ['end', 'start'] as const) {
-      const fB = layout === 'end' ? sysAt + PROLOGUE_SIZE : sysAt + k.aUp;
-      const fC = fB + bSize;
-      const aAt = layout === 'end' ? fC + C : sysAt;
-      const fE = layout === 'end' ? aAt + k.aDown : fC + C;
-      if (fE > 0xd000) continue;
-      const file: Range = [0x0801, fE], A: Range = [aAt, aAt + (layout === 'end' ? k.aDown : k.aUp)];
-      const io: Range[] = ioFree ? [] : [IO];
-      // the resident part ends by switching $01 to its value after decrunching, so it must be RAM then too
-      const exitRom: Range[] = [IO];
-      if ((ramExit & 3) === 3) exitRom.push([0xa000, 0xc000]);
-      if (ramExit & 2) exitRom.push([0xe000, 0x10000]);
-      const fits = (r: Range, size: number) => r[1] - r[0] >= size && !keep.some(x => overlaps(x, [r[0], r[0] + size]));
+    const io: Range[] = ioFree ? [] : [IO];
+    // the resident part ends by switching $01 to its value after decrunching, so it must be RAM then too
+    const exitRom: Range[] = [IO];
+    if ((ramExit & 3) === 3) exitRom.push([0xa000, 0xc000]);
+    if (ramExit & 2) exitRom.push([0xe000, 0x10000]);
+    const fits = (r: Range, size: number) => r[1] - r[0] >= size && !keep.some(x => overlaps(x, [r[0], r[0] + size]));
+    const pro = PROLOGUE_SIZE - (port ? 0 : PORT_SIZE), aUp = k.aUp - (port ? 0 : PORT_SIZE);
+    /** the places of the resident part and the tables, with the file and the start where they are (and the stream,
+     * when it is where it is decrunched from already) */
+    function* parts(file: Range, A: Range, X: Range | null): Generator<{ B: Range; tables: Range[] }> {
       const fixedB = o.place?.decruncher;
-      const bAts = fixedB != null ? [fixedB]
-        : [...LOW.filter(r => fits(r, bSize)).map(r => r[0]), ...places(bSize, [U, file, Z, STACK, [0, 0x100], ...exitRom, ...keep], 0x0400, 0x10000)];
+      const stream = X ? [X] : [];
+      if (k.preset && fixedB != null && fixedB !== k.zp + k.zpBytes) return;
+      const bAts = k.preset ? [k.zp + k.zpBytes] : fixedB != null ? [fixedB]
+        : [...LOW.filter(r => fits(r, bSize)).map(r => r[0]), ...places(bSize, [U, file, Z, STACK, [0, 0x100], ...exitRom, ...keep, ...stream], 0x0400, 0x10000)];
       for (const bAt of bAts) {
         const B: Range = [bAt, bAt + bSize];
-        if ([U, file, Z, STACK, ...keep].some(r => overlaps(r, B))) continue;
+        if ([U, file, Z, STACK, ...keep, ...stream].some(r => overlaps(r, B))) continue;
         if (fixedB != null && (B[1] > 0x10000 || [[0, 0x100] as Range, ...exitRom].some(r => overlaps(r, B)))) continue;
         // each table in the first place that misses the rest, or one after the other from where it was told
         const tables: Range[] = [];
         let next = o.place?.tables;
         for (const t of k.tables) {
-          const blocked = [U, B, Z, A, STACK, [0, 0x100] as Range, ...keep, ...tables];
+          const blocked = [U, B, Z, A, STACK, [0, 0x100] as Range, ...keep, ...tables, ...stream];
           const align = t.align ?? 1;
           let at: number | undefined;
           if (next != null) {
@@ -458,7 +482,29 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
           if (at == null) break;
           tables.push([at, at + t.size]);
         }
-        if (tables.length < k.tables.length) continue;
+        if (tables.length === k.tables.length) yield { B, tables };
+      }
+    }
+
+    // split: the stream lies in the file where it is decrunched from in place, right after the prologue, but for its
+    // first bytes, which would lie on the BASIC line and the prologue: the file has them after the stream, with the
+    // resident part and the start, which copies them down. Nothing to copy when the program loads higher.
+    {
+      const fT = sysAt + pro, x = Math.min(lo - s, fT), D = fT - x;
+      const fH = x + C, fB = fH + D, aAt = fB + stored, fE = aAt + (D ? k.aHead : k.aStay);
+      const X: Range = [x, x + C];
+      if (x >= 2 && D <= 255 && C > D && fE <= 0xd000 && ![Z, STACK, [0, 2] as Range, ...io, ...keep].some(r => overlaps(r, X))) {
+        for (const p of parts([0x0801, fE], [aAt, fE], X)) return { layout: 'split', fB, fC: fT, aAt, fE, x, head: { from: fH, len: D }, port, ...p };
+      }
+    }
+    for (const layout of ['end', 'start'] as const) {
+      const fB = layout === 'end' ? sysAt + pro : sysAt + aUp;
+      const fC = fB + stored;
+      const aAt = layout === 'end' ? fC + C : sysAt;
+      const fE = layout === 'end' ? aAt + k.aDown : fC + C;
+      if (fE > 0xd000) continue;
+      const file: Range = [0x0801, fE], A: Range = [aAt, aAt + (layout === 'end' ? k.aDown : aUp)];
+      for (const { B, tables } of parts(file, A, null)) {
         const blocked: Range[] = [B, ...tables, Z, STACK, [0, 2], ...io, ...keep];
         const free = (a: number) => a >= 2 && a + C <= 0x10000 && (layout === 'end' ? a < fC : a >= fC)
           && !blocked.some(r => overlaps(r, [a, a + C]));
@@ -473,21 +519,30 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
           if (free(a)) { x = a; break; }
           a = blocked.filter(r => overlaps(r, [a, a + C])).reduce((m, r) => Math.max(m, r[1]), a + 1);
         }
-        if (x != null) return { layout, fB, fC, aAt, fE, B, tables, x };
+        if (x != null) return { layout, fB, fC, aAt, fE, B, tables, x, head: { from: 0, len: 0 }, port };
       }
     }
     return null;
   };
 
-  // the first kit that finds room among those tried first, else the smallest; the decruncher on the screen shows
-  // as garbage while it runs, so that counts as 64 bytes more
+  /** A plan with $01 left as BASIC has it when all it reads and writes is RAM then, else with $01 set. */
+  const planOf = (k: Kit, ioFree: boolean): Plan | null => {
+    if (ramFor([U]) === 0x37) {
+      const p = planFor(k, ioFree, false);
+      if (p && ramFor([U, [0x0801, p.fE], [p.x, p.x + k.placed.length], p.B, ...p.tables]) === 0x37) return p;
+    }
+    return planFor(k, ioFree, true);
+  };
+
+  // the first kit that finds room among those tried first, else the one that makes the smallest file; the decruncher
+  // on the screen shows as garbage while it runs, so that counts as 64 bytes more
   const choose = () => {
     let best: { k: Kit; plan: Plan; score: number } | null = null;
     for (const k of [...kits].sort((a, b) => Number(b.first) - Number(a.first))) {
-      const plan = planFor(k, false) ?? planFor(k, true);
+      const plan = planOf(k, false) ?? planOf(k, true);
       if (!plan) continue;
       if (k.first) return { k, plan, score: 0 };
-      const score = k.size + (overlaps(plan.B, [0x0400, 0x0800]) ? 64 : 0);
+      const score = plan.fE + (overlaps(plan.B, [0x0400, 0x0800]) ? 64 : 0);
       if (!best || score < best.score) best = { k, plan, score };
     }
     return best;
@@ -521,11 +576,11 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   }
 
   const { k, plan } = chosen;
-  const stored = k.stream.slice().reverse();
+  const stored = k.placed.slice().reverse();
   const C = stored.length;
-  const { layout, fB, fC, aAt, fE, B, tables, x } = plan;
+  const { layout, fB, fC, aAt, fE, B, tables, x, head, port } = plan;
   const X: Range = [x, x + C], file: Range = [0x0801, fE];
-  const ramDuring = ramFor([U, file, X, B, ...tables]);
+  const ramDuring = port ? ramFor([U, file, X, B, ...tables]) : 0x37;
   const ioVisible = (ramDuring & 3) !== 0 && (ramDuring & 4) !== 0;
   // the fast format's decruncher does not flash the border
   const flashes = k.format !== 'fast';
@@ -538,21 +593,27 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions): Generator<Cru
   }
 
   const tableDefs = Object.fromEntries(k.tables.map((t, i) => [t.name, tables[i][0]]));
-  const defs = { ...k.base, ...tableDefs, ZP: k.zp, EFFECT: effect ? 1 : 0, STREAM_END: (x + C) & 0xffff };
+  const defs = { ...k.base, ...tableDefs, ZP: k.zp, EFFECT: effect ? 1 : 0, EXIT_PORT: port || ramExit !== 0x37 ? 1 : 0, STREAM_END: (x + C) & 0xffff };
   const resident = build(k.resident, defs, B[0]);
   const L = resident.labels;
+  const portDefs = { RAM_DURING: ramDuring, SET_PORT: port ? 1 : 0 };
+  // the resident part with the zero page it starts with before it, when the start copies that in with it
+  const preset = k.preset?.values(hi & 0xffff, (x + C) & 0xffff) ?? [];
   const startCode = build(k.start, {
-    ...defs, A_ADDR: aAt, PROLOGUE: layout === 'start' ? 1 : 0, RAM_DURING: ramDuring,
-    B_FROM: fB, B_TO: B[0], B_LEN: resident.bytes.length, DATA_END: hi & 0xffff, MOVE_FROM: fC, MOVE_TO: x, MOVE_LEN: C,
+    ...defs, ...portDefs, A_ADDR: aAt, PROLOGUE: layout === 'start' ? 1 : 0, ZP_SET: k.preset ? 1 : 0,
+    B_FROM: fB, B_TO: B[0] - preset.length, B_LEN: preset.length + resident.bytes.length, DATA_END: hi & 0xffff,
+    MOVE_FROM: fC, MOVE_TO: x, MOVE_LEN: layout === 'split' ? 0 : C, HEAD_FROM: head.from, HEAD_TO: x, HEAD_LEN: head.len,
     ...Object.fromEntries(k.links.map(l => [l, L[l]])),
   });
   const prg = new Uint8Array(2 + fE - 0x0801);
   prg.set([0x01, 0x08, ...line]);
-  if (layout === 'end') prg.set(build(SFX_PROLOGUE, { RAM_DURING: ramDuring, A_ADDR: aAt }).bytes, 2 + sysAt - 0x0801);
+  if (layout !== 'start') prg.set(build(SFX_PROLOGUE, { ...portDefs, A_ADDR: aAt }).bytes, 2 + sysAt - 0x0801);
   prg.set(startCode.bytes, 2 + aAt - 0x0801);
-  prg.set(resident.bytes, 2 + fB - 0x0801);
-  prg.set(stored, 2 + fC - 0x0801);
-  const used = layout === 'end' ? aAt + startCode.bytes.length : fE;
+  prg.set([...preset, ...resident.bytes], 2 + fB - 0x0801);
+  // split: the stream from its head's end on where it is decrunched from, its head after it
+  prg.set(stored.subarray(head.len), 2 + fC - 0x0801);
+  if (head.len) prg.set(stored.subarray(0, head.len), 2 + head.from - 0x0801);
+  const used = layout === 'start' ? fE : aAt + startCode.bytes.length;
 
   // run it
   const m = new Machine();

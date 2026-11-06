@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workerFile } from '@mimir/brokkr/node';
 import { brokkrArgs, DEFAULT_PACK, makeDemo, makePrg, packNeeds, packWithBrokkr, parsePrg, type PackPrefs } from '../src';
-import { packWithBrokkrThreads } from '../src/node';
+import { findVice, packWithBrokkrThreads } from '../src/node';
+import { fromSource, rng } from './helpers/programs';
 
 const P = (o: Partial<PackPrefs> = {}): PackPrefs => ({ ...DEFAULT_PACK, ...o });
 const bytes = (n: number, f = (i: number) => i & 0xff) => Uint8Array.from({ length: n }, (_, i) => f(i));
@@ -105,7 +106,8 @@ describe('packing with Brokkr', () => {
   });
 
   it('says what the decruncher takes with the settings, before anything is packed', () => {
-    expect(packNeeds(P())).toMatchObject({ resident: { min: 205, max: 229 }, tables: { min: 156, max: 156 }, zp: 9 });
+    // the least: without literal sequences, and leaving $01 alone at the end when it is $37 all along
+    expect(packNeeds(P())).toMatchObject({ resident: { min: 201, max: 229 }, tables: { min: 156, max: 156 }, zp: 9 });
     expect(packNeeds(P({ format: 'brokkr' }))).toMatchObject({ tables: { min: 512, max: 1536, align: 256 }, zp: 12 });
     expect(packNeeds(P({ format: 'fast' })).tables.max).toBe(0);
     // RUN ends the decruncher with a longer exit
@@ -163,7 +165,7 @@ describe('packing with Brokkr', () => {
       // the stream: the address after the file's last byte as loaded
       const [, end, stream] = /^\$1000–\$17ff, loaded at \$[0-9a-f]{4}–\$([0-9a-f]{4}): stream \$([0-9a-f]{4})$/.exec(r.files![0].note)!;
       expect(parseInt(stream, 16)).toBe(parseInt(end, 16) + 1);
-      expect(r.files![2].note).toMatch(/^the decruncher at \$9000–\$90e0: set stream \(\$fa\)/);
+      expect(r.files![2].note).toMatch(/^the decruncher at \$9000–\$90e0: set stream \(\$fc\)/);
       expect(r.check).toMatchObject({ status: 'same', text: expect.stringMatching(/each of the 2 files gives the same bytes/) });
       expect(r.report.layout.map(a => a.name)).toEqual(['Decruncher']);
       expect(r.commands.map(c => c[c.indexOf('-o') + 1])).toEqual(['game-brokkr-1000.prg', 'game-brokkr-2400.prg', 'game-brokkr-decrunch.asm', 'game-brokkr-decrunch.prg']);
@@ -228,5 +230,49 @@ describe('packing with Brokkr', () => {
     expect(r.ok).toBe(true);
     expect(r.check?.status).toBe('same');
     expect(r.prg!.length).toBeLessThanOrEqual(normal.prg!.length);
+  });
+});
+
+const vice = process.env.VICE || findVice();
+
+describe.skipIf(!vice)('a file Brokkr packs, in real VICE', () => {
+  // headless, with a config of its own (nothing goes to the user's vice.ini); the debug cartridge makes VICE exit with
+  // the value the program writes to $d7ff: the xor of its 4 KB of data, computed after decrunching
+  const headless = (dir: string) => ['-config', join(dir, 'vice.ini'), '-default', '-console', '-sounddev', 'dummy', '+confirmonexit', '-debugcart', '-limitcycles', '120000000', '-autostartprgmode', '1'];
+  /** 10 SYS2061: xor the 16 pages of data at `at` and exit with it */
+  const program = (at: number) => {
+    const r = rng(64);
+    const data = Array.from({ length: 4096 }, (_, i) => (i % 97 < 40 ? i & 7 : Math.floor(r() * 256)));
+    let sum = data.reduce((a, b) => a ^ b, 0);
+    if (sum === 0) { data[0] ^= 0x5a; sum = 0x5a; }
+    const rows: string[] = [];
+    for (let i = 0; i < data.length; i += 32) rows.push(`.byte ${data.slice(i, i + 32).map(v => `$${v.toString(16).padStart(2, '0')}`).join(',')}`);
+    const p = fromSource('checksum.prg', ['.pc = $0801', '.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00', '.pc = $080d',
+      ' lda #$00', ' sta $fb', ` lda #$${(at >> 8).toString(16)}`, ' sta $fc', ' ldx #16', ' lda #0', ' ldy #0', 'loop:', ' eor ($fb),y', ' iny', ' bne loop', ' inc $fc', ' dex', ' bne loop',
+      ' sta $d7ff', ' jmp *', `.pc = $${at.toString(16)}`, ...rows].join('\n'));
+    return { prg: makePrg(p.load, p.bytes), sum };
+  };
+  const packAndRun = async (at: number, prefs: PackPrefs) => {
+    const { prg, sum } = program(at);
+    const r = await packWithBrokkr([{ name: 'checksum.prg', prg }], prefs);
+    expect(r.error).toBeUndefined();
+    expect(r.check?.status).toBe('same');
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-brokkr-vice-'));
+    try {
+      await writeFile(join(dir, 'packed.prg'), r.prg!);
+      expect(spawnSync(vice!, [...headless(dir), '-autostart', join(dir, 'packed.prg')], { timeout: 120_000, windowsHide: true }).status).toBe(sum);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+    return r;
+  };
+
+  // the stream decrunched where the file has it, its first bytes copied down over the BASIC line, the zero page
+  // copied in with the decruncher and $01 left at $37
+  for (const format of ['exomizer', 'brokkr', 'fast'] as const) {
+    it(`decrunches a file in ${format === 'exomizer' ? "Exomizer's format" : format === 'fast' ? "Brokkr's fast format" : "Brokkr's own format"} and starts it by its SYS`, () => packAndRun(0x0900, P({ format })));
+  }
+
+  it('decrunches data under BASIC with $01 set while it does, and leaves it at $35 with interrupts off', async () => {
+    const r = await packAndRun(0xa000, P({ ramExit: 0x35, irqExit: false }));
+    expect(r.report.decruncher.find(d => d.what === 'RAM config')).toMatchObject({ during: '$36', exit: '$35' });
   });
 });

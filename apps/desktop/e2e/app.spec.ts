@@ -2994,7 +2994,7 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await view.getByRole('button', { name: 'Pack', exact: true }).click();
     await expect(card).not.toContainText('Out of date', { timeout: 120_000 });
     await expect(card).toContainText("Decrunched in Brokkr's emulated C64: $0801–$37ff has the same 12287 bytes, and it starts at $0810");
-    await expect(card).toContainText('$0100–$01d6');
+    await expect(card).toContainText('$0100–$01d2');
   });
 
   await test.step('a folder for the packed file: chosen in a dialog, the file goes there each time, and can be cleared', async () => {
@@ -3020,11 +3020,11 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     const section = await openSection(page, "Decruncher's memory");
     const line = (id: string) => section.locator(`#${id} ~ small`);
     const dec = view.getByLabel('Decruncher at', { exact: true });
-    await expect(line('pack-dec-at')).toHaveText('Takes 205 to 229 bytes, where Brokkr finds room.');
+    await expect(line('pack-dec-at')).toHaveText('Takes 201 to 229 bytes, where Brokkr finds room.');
     await dec.selectOption({ label: '$0334: tape buffer' });
     await expect(line('pack-dec-at')).toHaveText('It takes up to 229 bytes, and the tape buffer has 204.');
     await dec.selectOption({ label: '$c000: free RAM' });
-    await expect(line('pack-dec-at')).toHaveText('Takes 205 to 229 bytes: $c000–$c0e4 at most.');
+    await expect(line('pack-dec-at')).toHaveText('Takes 201 to 229 bytes: $c000–$c0e4 at most.');
     const tables = view.getByLabel('Tables at', { exact: true });
     await tables.selectOption({ label: 'An address of your own…' });
     await expect(line('pack-tables-at')).toHaveText('Type the address below.');
@@ -3046,7 +3046,7 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await view.getByRole('button', { name: 'Pack', exact: true }).click();
     await expect(card).not.toContainText('Out of date', { timeout: 120_000 });
     await expect(card).toContainText("Decrunched in Brokkr's emulated C64");
-    await expect(card).toContainText('$c000–$c0cc');
+    await expect(card).toContainText('$c000–$c0c8');
     await expect(card).toContainText('$c400–$c49b');
   });
 });
