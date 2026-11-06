@@ -583,6 +583,11 @@ export interface MusicInfo {
   why: string[];
   file: number;
   user?: boolean;
+  /** running init and play (5.8, c64/sidrun.ts) played: the SID registers written, the notes started, in how long */
+  run?: { regs: number; notes: number; seconds: number };
+  /** a snapshot's player that init no longer starts again: it plays on from the snapshot without init, with these
+   *  bytes outside the block (the zero page, its other variables) as they were, [address, value] */
+  resume?: [Addr, number][];
 }
 
 export interface SpriteRef { n: number; ptr: number; addr: Addr }

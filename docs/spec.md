@@ -519,6 +519,10 @@ och inte från en `JMP` i en tabell strax före (högst 12 byte).
 | `B` är sidjusterad (t.ex. `$1000`) | +1 |
 | Koden skriver ≥ 4 olika SID-register | +3 (1–3 register: +1) |
 | Koden läser en notfrekvenstabell | +2 |
+| Init och play spelar när de körs (se *Körningen*) | +4 |
+
+En indexerad skrivning (`sta $d400,x`) räknas som tre register, eller som alla som slingan skriver när en `cpx`/`cpy #n`
+följer inom fyra instruktioner: en buffrad spelares `sta $d400,x` till `cpx #$19` skriver 25.
 
 **Notfrekvenstabellen** finns i varje trackerspelare. `noteTables()` letar efter högbytena: minst 24 stigande byte, en
 isär (låg- och högbyte i egna tabeller) eller två (i par), där en byte är ungefär dubbelt så stor som den tolv toner (en
@@ -532,21 +536,80 @@ Tröskeln är 5 poäng. Dessutom gäller:
   kod. Rinner koden före in i en tabell som anropas är det ett program som startar init så, och det räknas.
 - **Play-kod direkt efter en enda `JMP`** kräver att både init och play anropas, eller en nottabell och en anropare.
   Slutet på en rutin och början på nästa ser ut så i all kod.
-- **Programmets egen start** (BASIC SYS-målet eller laddadressen) är aldrig init.
+- **Programmets egen start** (BASIC SYS-målet eller laddadressen) är aldrig init, utom när den spelar (nedan).
 - **Koden måste hålla ihop.** Den ska ligga inom `B−$800`…`B+$2000`, med högst 16 instruktioner utanför. Är mer än 8
   spårade instruktioner i regionen kod som tabellen inte når, får det vara högst var fjärde av dem. Några ingångar som
   programmet anropar direkt går bra.
+
+**Körningen** (`runPlayer()` i `packages/core/src/c64/sidrun.ts`). En tabell vars kod skriver till SID körs också på
+Sindris 6510: init med låt 0 i A, sedan varje ingång efter init som play, en gång per bildruta i 3 s (150 anrop). Den
+körs i en kopia av minnet, med en snapshots nollsida, stack och andra byte som projektet inte har med. VIC, CIA och SID
+svarar så långt spelare frågar (rasterraden går vidare för varje läsning, oscillator 3 ger brus), och inget avbryter.
+En körning **spelar** när init (inom 400 000 cykler) och varje play-anrop (inom en bildruta) återvänder utan BRK, JAM,
+RTI eller kod i byte som inte är laddade, och den skriver minst 8 SID-register och startar minst 2 toner (en röst vars
+gate-bit slås på). En låt kan börja lugnt: en körning som skriver minst 8 register men startar färre toner hörs i en
+minut (som stannar efter 10 s utan någon SID-skrivning). Den ingång som spelar mest blir play, men play är den ingång
+IRQ:n anropar när också den spelar: körningens bästa kan vara en del av play-rutinen. IRQ:n anropar play också när den
+anropar koden som play-ingångens `JMP` går till (ett program kan anropa spelarens play-rutin direkt).
+
+En tabell som spelar är en spelare vad som än anropar den, också när koden inte klarar reglerna ovan. Det hittar en
+musikfil som laddats ensam från en trackmo-disk (ingen BASIC-rad, så laddadressen är programmets start och inget
+anropar den), en spelare vars play-kod skriver om sig själv vid första anropet (som The Labs: koden reglerna läser når
+inte play-rutinen) och buffrade spelare. Körningarna sparas mellan analysens varv (samma minne, samma ingångar):
+utfallet för upp till 8192, och de som spelade med sina byte (de som ger blockets omfång eller avgör vem som anropar
+vem) för 128.
+
+**En del av en spelare** spelar ofta också när den körs: The Labs spelare har en `JMP` mitt i play-rutinen (`$10de`),
+följd av rutinens fortsättning. I ett minne där låten redan har spelat en stund (en snapshot, eller ett program som
+Sindri packat upp och kört tills det väntar) spelar den direkt, medan spelarens init börjar lugnt. Två regler håller isär
+dem:
+- **Körningen kör kod före tabellen** (högst `$800` byte före, samma fil): tabellen är en del av en spelare. Den kan inte
+  ha någon anropare, och den kommer efter tabellerna som spelar på egen hand.
+- **Play-koden är dit en annan tabells `JMP` går** (koden, inte en `JMP`), och ingen av den tabellens `JMP` går till
+  dess init: det är `JMP`-instruktionen strax före en spelares play-rutin (SWiRL: `$11e7` före play-rutinen `$11ea`, som
+  `$1000`-tabellens `JMP` går till). Den räknas inte. En tabell av `JMP` till både init och play är däremot den andras
+  anropare.
 
 **Flera tabeller:** alla tabeller prövas först.
 - **Anroparen är ingen spelare.** En tabell vars kod hoppar till en annan spelares ingångar är den spelarens anropare,
   till exempel programmets starttabell eller en rutin som anropar init och play. Det gäller när hoppen kommer utifrån,
   koden inte kör in i den andra spelarens kod på annat sätt och de flesta SID-skrivningarna är den andras. Det gäller bara
   om den andra tabellen inleder sin kod. En tabell inne i en spelare, som spelarens egen kod hoppar till, har spelarkod
-  före sig.
-- **Den starkaste vinner där tabeller överlappar.** En svagare tabell inne i en spelare som redan hittats, eller vars kod
-  kör in i den, räknas inte. En spelares kod slutar där nästa spelares tabell börjar.
+  före sig. En tabell som bara körningen hittade är ingen sådan spelare: spelarens kod hoppar in i den.
+- **Anroparen, för tabeller som spelar:** en tabell vars körning körde den andras ingångar, där den andra spelar lika
+  mycket på egen hand under en minut, aldrig kör den första tabellen och inleder sin kod (dess körning kör ingenting
+  före den), är dess anropare. En spelare som spelar mer än en inre rutin den anropar är ingen anropare, och inte heller
+  en tabell som klarar reglerna av en som bara körningen hittade, eller en tabell av en som ligger inne i den.
+- **Ordningen där tabeller överlappar:** först de vars play IRQ:n anropar (programmets egna ingångar, inte en del av
+  spelaren), sedan de som spelar på egen hand (den som spelar mest under en minut först: en del av en spelare kan starta
+  några toner och sluta, en låt börja lugnt), sedan den starkaste. En tabell inne i en spelare som redan hittats, eller vars kod kör
+  in i den, räknas inte. En spelares kod slutar där nästa spelares tabell börjar.
 
-Regionen sträcker sig från `B` till slutet av spelarkoden och dess datareferenser. Sedan förlängs den över efterföljande data tills något refereras utifrån, ny kod eller nästa spelares tabell börjar, eller 32 identiska byte (luckfyllnad) hittas. Fyndets skäl (`MusicInfo.why`, i inspektorn och analysloggen) säger hur spelaren hittades, t.ex. *Music detected at $1000-$1fff (score 9: JMP init / JMP play table, called from outside, page aligned, writes 13 SID registers, 4 instructions decoded from the table (the trace did not reach them), note frequency table at $14bb)*. Exporten skriver en **PSID v2-fil** (`music/music_1000.sid`, init/play, PAL, 6581) och laddar den idiomatiskt:
+Regionen sträcker sig från `B` till slutet av spelarkoden och dess datareferenser. Sedan förlängs den över efterföljande
+data tills något refereras utifrån, ny kod eller nästa spelares tabell börjar, eller 32 identiska byte (luckfyllnad)
+hittas. För en spelare som spelar hör också de byte till blocket som körningen använde (körde, eller läste innan den
+skrev dem) under tre minuter av låten, eller tills den gått runt (30 s utan en byte som används för första gången): data
+före tabellen och låtdata efter koden som spelaren läser genom pekare, också förbi en byte som resten av programmet läser
+(en synkning mot musiken). Koden som körningen körde nära tabellen (`B−$800`…`B+$2000`, samma fil) hör alltid till
+blocket, med allt mellan: utan den hoppar spelaren ut ur sitt block. Därifrån växer blocket över använda byte så länge
+luckorna är kortare än `$800` byte och det inte kommer kod som körningen inte körde, en annan spelare eller en annan
+fils byte.
+
+**Uppspelningen kontrolleras** (`musicPlayData()`): byten som spelas (blocket, och en snapshots rutin) körs ensamma i
+minnet, som spelarens PRG har dem, i 150 bildrutor. Stannar körningen (kod utanför blocket, BRK, init som inte
+återvänder) säger appen varför i en varning när blocket spelas, i stället för att spelaren i VICE kraschar utan förklaring.
+
+**En snapshots spelare** har redan kört, och init startar inte alltid om låten: The Labs första spelare skriver om sitt
+play-anrop vid första anropet, och init går sedan genom det. För den spelare som blir block körs låten därför en minut
+med init och en minut utan, med play från där den var. Startar init färre än 30 toner på en minut och play utan init
+fyra gånger fler, spelar den vidare från snapshoten: `MusicInfo.resume` får de byte utanför blocket som play läser innan
+den skriver dem (nollsidan och andra variabler, högst 256; inte stacken, `$0314`–`$0319`, `$fffa`–`$ffff` eller I/O) med
+snapshotens värden, och SID-registren från snapshotens SID-modul (volym och filter som bara init satte). Uppspelningen
+(`musicPlayData()` i `c64/sidplayer.ts`, i VICE och i DeepSID) lägger då en rutin direkt efter blocket (eller före det)
+som skriver tillbaka dem och återvänder, som init: låten går vidare där demot var, och en tangent startar den där igen.
+Exportens `.sid` är blockets egna byte. Spelar init lika bra, eller saknar projektet snapshoten, används init.
+
+`MusicInfo.run` säger vad körningen gav (register, toner, sekunder). Fyndets skäl (`MusicInfo.why`, i inspektorn och analysloggen) säger hur spelaren hittades, t.ex. *Music detected at $1000-$1fff (score 9: JMP init / JMP play table, called from outside, page aligned, writes 13 SID registers, 4 instructions decoded from the table (the trace did not reach them), note frequency table at $14bb, init and play run: 13 SID registers and 3 notes in 3 s)*. En snapshots spelare som spelar vidare har *init does not start it again (11 SID registers and 3 notes in 60 s), play goes on from the snapshot: 22 SID registers and 596 notes in 60 s*, och en som hittats på sin kod men inte spelar *running init and play plays nothing (…)*. Exporten skriver en **PSID v2-fil** (`music/music_1000.sid`, init/play, PAL, 6581) och laddar den idiomatiskt:
 
 ```
 .var music = LoadSid("music/music_1000.sid")
@@ -561,12 +624,23 @@ Referenser in i musiken som inte är init/play blir `music.location+$xx`. Använ
 **Test:** `test/music.test.ts` bygger en spelare med en PAL-nottabell. Den testar:
 - init och play anropade, och en VICE-snapshot tagen efter init där bara play är spårad, från IRQ:n. Källkoden får där
   `jsr music.play`, och verifieringen ger samma byte;
-- en spelare som inget spårat når, på en sidgräns, men inte en sidförskjuten;
+- en spelare som inget spårat når, på en sidgräns, och en sidförskjuten som bara körningen hittar;
+- en musikfil som laddats ensam, med tabellen på laddadressen (programmets start);
+- en buffrad spelare (`sta $d400,x` till `cpx #$19`): 25 register, och hittad ensam genom körningen;
+- låtdata som spelaren läser genom en pekare, förbi en byte som programmet läser: blocket når låtens slut;
+- en lös fil vars låt börjar efter 100 tysta bildrutor, med en `JMP` mitt i play-rutinen som spelar genast: spelarens
+  tabell väljs, blocket spelar ensamt, och skuret före koden som `JMP`-instruktionen går till säger kontrollen var det
+  tar slut (med regeln från före ändringen väljs delen);
+- en snapshot där init inte längre startar om låten: `resume` får nollsidans byte, och spelardatan med rutinen som
+  lägger tillbaka dem spelar ensam i minnet, men inte utan den;
 - play efter två och efter fyra `JMP`, och play-kod direkt efter `JMP init`;
 - IRQ:ns ingång före en volymingång som programmet anropar;
 - programmets starttabell och en rutin som anropar play, som inte är spelare;
 - ett `JMP`-par i kod som rensar SID, som inte är någon spelare;
 - notfrekvenstabeller i båda layouterna, och att en ramp, en fyllnad och en sinus inte är det.
+
+`test/sidrun.test.ts` testar körningen: register, toner och använda byte för en spelare, play utan init, och varför en
+körning som inte är någon spelare slutar (init återvänder inte, BRK, ingen SID-skrivning, kod utanför det laddade).
 
 Det differentiella testet låter referensen anropa den nya detekteringen (avvikelse 18), så att resten av analysen
 jämförs som förut.
@@ -578,8 +652,33 @@ de tre andra:
 - en spelare saknar hopptabell;
 - en spelare har play direkt efter `JMP init` utan nottabell, med bara init anropad.
 
-Detekteringen tar 10–20 ms för en hel snapshot. **Planerat:** spelare utan hopptabell, som bara känns igen på sina
-anrop (klassiska spelrutiner).
+**Mätt med körningen (2026-11-06).** Facit är en körning av varje hopptabell i filen (init, sedan play i tre sekunder;
+den som startar flest toner), eller den `.sid`-fil som ligger bredvid programmet:
+- **Lösa musikfiler från trackmo-diskar** (The Lab sida 1–3, 1337, Multiverse sida 1–2, Viva Las Vegas; Bitfire-filerna
+  uppackade och analyserade en och en, som när de laddas från en monterad disk): 12 av 12 låtar får rätt init och play,
+  mot 5 utan körningen. 3 fick förut en inre tabell (tyst), 4 hittades inte. Ingen av dem läser byte utanför sitt block
+  under en minut, och de spelar i VICE.
+- **Montera, ladda första filen, packa upp** (Sindri kör startprogrammet med disken i en 1541 tills demot väntar): The
+  Lab sida 1 ger `$1000–$1d1a`, init `$1000`, play `$1003`, och spelar i VICE. Förut valdes delen `$10de` av play-rutinen,
+  vars block saknade koden på `$1012–$1025`: spelaren körde in i en BRK på `$101c` och kraschade. Eyes, Multiverse, i27 och
+  Ranx spelar också. I 1337, No Bounds, Viva Las Vegas, Codeboys och O-tech finns ingen musik i Sindris program: Sindri
+  sparar det senaste lagret (del 1:s kod, 1337 `$7400–$ffff`), och musiken laddades av ett tidigare (1337: lager 4,
+  `$0e00–$1c7a`).
+- **VICE-snapshots** av The Lab (efter 30, 60, 90 och 120 s), Viva Las Vegas (40 och 80 s) och Multiverse (40 och 80 s):
+  alla 8 rätt init och play. The Labs första spelare spelar vidare från snapshoten (init startar 3 toner på en minut, play
+  utan init 596); förut var den tyst. Blocken når låtdata som förut föll utanför: The Labs andra låt `$0600–$1a1c`
+  (förut `$0fff`, tyst efter 15 s), Viva Las Vegas `$0c00–$1b09` (förut `$1485`, fel efter 0,2 s).
+- **Program med en `.sid` bredvid sig** (565 `.sid`-filer i CSDB-intron, CSDB-demos och CSDB-spel, uppackade med Sindri):
+  i 88 av dem finns `.sid`-datan i programmets minne. 82 får `.sid`-filens init och play, mot 79 utan körningen, och i 75
+  av dem täcker blocket hela `.sid`-datan, mot 48 (oftast var det låtdatans sista byte som saknades). Inget program fick
+  sämre resultat. Av de sex andra har tre en egen init i `.sid`-filen (`$0ff6`, `$dff6`) som programmet inte använder (dess
+  egna ingångar hittas), och tre saknar en vanlig hopptabell.
+
+**Tid.** Utan körningar tar detekteringen 10–20 ms för en hel snapshot. Körningarna lägger till 30–300 ms första gången
+ett minne analyseras (mest de tre minuterna av låten som ger blockets omfång, och för en snapshot två minuter för att
+pröva init), och knappt något i analysens följande varv, som får körningarna ur sparade resultat.
+
+**Planerat:** spelare utan hopptabell, som bara känns igen på sina anrop (klassiska spelrutiner).
 
 ### 8.7 VIC-II-evidens och grafik
 

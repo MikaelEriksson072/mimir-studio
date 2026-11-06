@@ -6,6 +6,7 @@
 import type { Addr } from '../types';
 import { assemble } from '../verify/kick-subset-assembler';
 import { makePrg } from './prg';
+import { runPlayer } from './sidrun';
 import { h2, h4 } from '../util/hex';
 
 export interface SidPlayerOptions {
@@ -205,4 +206,59 @@ function driverPlace(size: number, busy: [number, number][]): Addr | null {
   for (let p = 0x9f00; p >= 0x0800; p -= 0x100) places.push(p);
   const limit = (p: number) => (p >= 0xc000 ? 0xd000 : 0xa000);
   return places.find(p => p + size <= limit(p) && !busy.some(([s, e]) => overlaps(p, p + size, s, e))) ?? null;
+}
+
+export interface MusicPlayData {
+  /** the bytes to play and where they go, init and play */
+  data: Uint8Array; load: Addr; init: Addr; play: Addr;
+  /** a snapshot's player played on without its own init: where the routine that puts its bytes back went */
+  resume?: { at: Addr; bytes: number };
+  /** why it cannot play on from the snapshot as `resume` says (it plays with its init then) */
+  problem?: string;
+  /** why the bytes do not play with nothing else in memory, as the player's PRG has them (a run of init and play
+   *  that stops: its code runs out of the block, say) */
+  alone?: string;
+}
+
+/**
+ * What a music block plays with (in VICE and in DeepSID): its bytes, init and play. For a snapshot's player that init
+ * no longer starts again (`MusicInfo.resume`), init is a routine put right after the block (or before it) that writes
+ * back the bytes outside the block the player reads, as the snapshot has them, and returns: play goes on from where
+ * the demo was. The export's .sid file is the block's bytes alone (render/kick.ts).
+ */
+export function musicPlayData(block: Uint8Array, load: Addr, init: Addr, play: Addr, resume?: [Addr, number][]): MusicPlayData {
+  return withAlone(resumed(block, load, init, play, resume));
+}
+
+function resumed(block: Uint8Array, load: Addr, init: Addr, play: Addr, resume?: [Addr, number][]): MusicPlayData {
+  if (!resume) return { data: block, load, init, play };
+  // lda #v once for each value, then a sta (zero page or absolute) for each byte that has it; rts
+  const byValue = new Map<number, Addr[]>();
+  for (const [a, v] of resume) { let l = byValue.get(v); if (!l) byValue.set(v, l = []); l.push(a); }
+  const code: number[] = [];
+  for (const [v, as] of byValue) {
+    code.push(0xa9, v);
+    for (const a of as) code.push(...(a < 0x100 ? [0x85, a] : [0x8d, a & 0xff, a >> 8]));
+  }
+  code.push(0x60);
+  const end = load + block.length, n = code.length;
+  const free = (s: number) => s >= 0x0200 && s + n <= 0xfffa && !overlaps(s, s + n, 0xd000, 0xe000) && !resume.some(([a]) => a >= s && a < s + n);
+  if (free(end)) {
+    const data = new Uint8Array(block.length + n); data.set(block); data.set(code, block.length);
+    return { data, load, init: end, play, resume: { at: end, bytes: n } };
+  }
+  if (free(load - n)) {
+    const data = new Uint8Array(block.length + n); data.set(code); data.set(block, n);
+    return { data, load: load - n, init: load - n, play, resume: { at: load - n, bytes: n } };
+  }
+  return { data: block, load, init, play, problem: `no room next to the block for the ${n} bytes that put the snapshot's bytes back` };
+}
+
+/** The bytes run with nothing else in memory, as the player's PRG has them (c64/sidrun.ts): why they would not play */
+function withAlone(d: MusicPlayData): MusicPlayData {
+  const mem = new Uint8Array(0x10000);
+  mem.set(d.data.subarray(0, 0x10000 - d.load), d.load);
+  const end = d.load + d.data.length;
+  const r = runPlayer(mem, { init: d.init, play: d.play, frames: 150, loaded: a => a >= d.load && a < end });
+  return r.stop ? { ...d, alone: r.stop } : d;
 }

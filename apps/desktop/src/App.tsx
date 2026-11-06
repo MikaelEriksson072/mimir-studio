@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, readBitfireDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, makePsid, decode, zpPairable,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -1282,7 +1282,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const musicPlayerName = toolchain.musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE';
   /** The music block at `at` in VICE: a PRG of its bytes (those the export's .sid holds) with a driver that puts them
    *  where they run, calls init with the song in A and play each frame from a raster interrupt (c64/sidplayer.ts); or
-   *  in DeepSID, the online player, as the .sid the export writes (electron/main/deepsid.ts) */
+   *  in DeepSID, the online player, as the .sid the export writes (electron/main/deepsid.ts). A snapshot's player that init
+   *  no longer starts again plays on from the snapshot: init puts back the bytes outside the block it reads (musicPlayData) */
   const playMusic = async (at: Addr | null | undefined) => {
     if (!kr) return needDesktop();
     const b = at != null ? findBlock(A.blocks, at) : null;
@@ -1290,28 +1291,35 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const m = A.music.find(x => x.start === b.start);
     const load = spaceAddr(b.start), init = spaceAddr(m?.init ?? b.props.init ?? b.start), play = spaceAddr(m?.play ?? b.props.play ?? b.start + 3);
     const name = R.labels.get(b.start)?.name ?? `music_${h4(load)}`, span = `$${h4(load)}-$${h4(load + b.end - b.start - 1)}`;
+    const d = musicPlayData(A.mem.slice(b.start, b.end), load, init, play, m?.resume);
+    const kept = (m?.resume ?? []).filter(([a]) => a < 0xd400 || a > 0xd418), sidToo = kept.length < (m?.resume?.length ?? 0);
+    const how = d.resume ? `plays on from the snapshot (init no longer starts it again): $${h4(d.resume.at)} puts back the ${kept.length} bytes it reads outside the block${sidToo ? ' and the SID as the snapshot had it' : ''}, then play $${h4(play)} each frame` : null;
+    if (d.problem) toast(`${name} cannot play on from the snapshot: ${d.problem}. It plays with its init $${h4(init)}, which may not start it again`, 'warn');
+    // the player's PRG holds the block alone: a run of it on its own tells whether that is enough
+    if (d.alone) toast(`${name} may not play: with only its block (${span}) in memory, ${d.alone}. The player may need bytes outside the block, or other entries`, 'warn');
     if (toolchain.musicPlayer === 'deepsid') {
       try {
-        const sid = makePsid(A.mem.slice(b.start, b.end), load, init, play, `${project.name || 'music'} ${h4(load)}`);
+        const sid = makePsid(d.data, d.load, d.init, d.play, `${project.name || 'music'} ${h4(load)}`);
         // DeepSID keeps the file under its name with everyone's: the bytes' hash keeps it apart from other tunes
         let hash = 0x811c9dc5;
         for (const v of sid) hash = Math.imul(hash ^ v, 0x01000193) >>> 0;
         const file = `${name.slice(0, 40)}-${hash.toString(16).padStart(8, '0').slice(0, 6)}.sid`;
         toast(`Opening ${name} (${span}) in DeepSID…`, 'info');
         const r = await kr.playInDeepSid({ name: file, sid });
-        if (r.played) toast(`DeepSID plays ${name} (${span}): the .sid with init $${h4(init)} and play $${h4(play)}, as ${file}`, 'ok');
+        if (r.played) toast(`DeepSID plays ${name} (${span}): ${how ?? `the .sid with init $${h4(init)} and play $${h4(play)}`}, as ${file}`, 'ok');
         else toast(`DeepSID did not start ${name}: ${r.problem}. Its window ${/did not open/.test(r.problem ?? '') ? 'is' : 'stays'} open: press L there (Load SID) and choose ${r.path}`, 'warn');
       } catch (e) { toast(`Could not play ${name} in DeepSID: ${errorText(e)}`, 'err'); }
       return;
     }
     try {
       const file0 = project.files[A.owner[b.start]]?.name;
-      const p = sidPlayer({ data: A.mem.slice(b.start, b.end), load, init, play, title: file0 ? `${name} IN ${file0}` : name });
+      const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, title: file0 ? `${name} IN ${file0}` : name });
       const file = `${name}.prg`;
       const w = await kr.writeExport({ target: 'temp', name: 'play', files: { [file]: p.prg } });
       if (!w) return;
       await kr.run({ prgPath: `${w.dir}/${file}` });
-      toast(`VICE plays ${name} (${span}): init $${h4(init)} with song $00, then play $${h4(play)} each frame. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before`, 'ok');
+      toast(d.resume ? `VICE plays ${name} (${span}): it ${how}. Any key starts it again from the snapshot`
+        : `VICE plays ${name} (${span}): init $${h4(init)} with song $00, then play $${h4(play)} each frame. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before`, 'ok');
       for (const x of p.warnings) toast(x, 'warn');
     } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }
   };

@@ -33,6 +33,9 @@ export interface Snapshot {
   cpu: { pc: Addr; a: number; x: number; y: number; sp: number; status: number } | null;
   /** CIA 2's port A ($dd00) and its direction ($dd02), when the CIA2 module could be read */
   cia2: { pra: number; ddra: number } | null;
+  /** the SID's registers $d400-$d418 as last written (the SID module of VICE 3.x: 4 bytes of settings, then the
+   *  chip's 32 registers), when it could be read; a player that plays on from the snapshot needs its volume and filter */
+  sid: Uint8Array | null;
 }
 
 const text = (b: Uint8Array, at: number, n: number) => String.fromCharCode(...b.subarray(at, at + n));
@@ -66,7 +69,9 @@ export function parseVsf(b: Uint8Array, name = 'snapshot'): Snapshot {
   // CIA2: PRA, PRB, DDRA, DDRB first
   const ciaMod = modules.find(m => m.name === 'CIA2');
   const cia2 = ciaMod && ciaMod.size >= 4 ? { pra: b[ciaMod.offset], ddra: b[ciaMod.offset + 2] } : null;
-  return { machine, version, vice, modules, ram, port, cpu, cia2 };
+  const sidMod = modules.find(m => m.name === 'SID');
+  const sid = sidMod && sidMod.major === 1 && sidMod.size >= 4 + 0x19 ? b.slice(sidMod.offset + 4, sidMod.offset + 4 + 0x19) : null;
+  return { machine, version, vice, modules, ram, port, cpu, cia2, sid };
 }
 
 /** The VIC bank (0-3, $0000/$4000/$8000/$c000) the snapshot was showing: $dd00 bits 0-1, inputs read as 1; null: unknown. */
