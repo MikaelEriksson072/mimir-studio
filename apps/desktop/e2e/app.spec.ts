@@ -962,7 +962,7 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
   await test.step('File → Open PRG files… opens a PRG; the File button closes its menu too', async () => {
     await file.click();
     await expect(file).toHaveAttribute('aria-expanded', 'true');
-    await expect(menu.getByRole('menuitem')).toHaveText(['Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount D64 disk image…', 'Save: create a project from this work…Ctrl+S']);
+    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount D64 disk image…', 'Save: create a project from this work…Ctrl+S']);
     await file.click();
     await expect(menu).toBeHidden();
     await expect(file).toHaveAttribute('aria-expanded', 'false');
@@ -1087,6 +1087,75 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     await expect(statusBar(page)).toContainText('$0810 · start');
     expect((await lastDialog()).filters).toEqual(['C64 programs, VICE snapshots and cartridges: prg PRG vsf VSF crt CRT', 'All files: *']);
     await expect(explorer).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+test('Smart attach opens each file as its extension says, and Brokkr packs a Kick Assembler source', async ({ workDir: work, app, page }) => {
+  await waitForListing(page);
+  const kickJar = (await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<{ kickJar: string }> } }).kr.getSettings())).kickJar;
+  const smart = async (...paths: string[]) => { await stubDialogs(app, { open: paths }); await fromFileMenu(page, 'Smart attach…'); };
+  const files = page.locator('.file-name');
+
+  await test.step('a PRG and a D64 from one dialog: the PRG opens and the disk is mounted', async () => {
+    await smart(join(repoDir, 'fixtures/prg/raster-demo.prg'), join(repoDir, 'fixtures/d64/mimir-demo.d64'));
+    await expect(toast(page, 'Mounted mimir-demo.d64')).toBeVisible();
+    await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+    await expect(files).toHaveText(['raster-demo.prg']);
+    await expect(page.getByRole('list', { name: 'Files on mimir-demo.d64' }).getByRole('listitem')).toHaveCount(3);
+    const o = await app.evaluate(() => {
+      const all = (globalThis as unknown as { dialogOptions?: { title?: string; filters?: { name: string; extensions: string[] }[]; properties?: string[] }[] }).dialogOptions ?? [];
+      const d = all[all.length - 1];
+      return { title: d?.title, filters: d?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: d?.properties };
+    });
+    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 disks, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
+  });
+
+  await test.step('a VICE snapshot and a cartridge, each by its extension', async () => {
+    await expect(statusBar(page)).not.toContainText('analysing');
+    await smart(join(repoDir, 'fixtures/vsf/raster-demo.vsf'));
+    await expect(toast(page, /Loaded raster-demo\.prg at \$0200 from a VICE/)).toBeVisible();
+    await expect(statusBar(page)).not.toContainText('analysing');
+    await smart(join(repoDir, 'fixtures/crt/mimir-demo.crt'));
+    await expect(toast(page, 'Opened the cartridge mimir-demo.crt')).toBeVisible();
+    await expect(files).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+  });
+
+  await test.step('a Kick Assembler source goes to Brokkr: Pack a file over the work, which stays as it was', async () => {
+    const source = join(work, 'my border.asm');
+    writeFileSync(source, 'BasicUpstart2(start)\nstart:\n  inc $d020\n  jmp start\n');
+    // a second source is left, and said so
+    await smart(source, join(work, 'other.asm'));
+    await expect(toast(page, 'Not opened: other.asm (Brokkr packs one source at a time)')).toBeVisible();
+    const over = page.getByRole('dialog', { name: 'Pack a file' });
+    await expect(over.getByRole('heading', { name: 'Pack a file' })).toBeVisible();
+    await expect(over.getByRole('tablist', { name: 'Packer' }).getByRole('tab', { name: 'Brokkr' })).toHaveAttribute('aria-selected', 'true');
+    await expect(over.locator('.qp-source')).toContainText('my border.asm');
+    if (kickJar && existsSync(kickJar)) {
+      await expect(over.getByRole('list', { name: 'Files to pack' })).toContainText('my border.prg $0801', { timeout: 60_000 });
+      const settings = over.getByLabel('Pack settings');
+      await settings.getByRole('button', { name: 'Pack', exact: true }).click();
+      await expect(settings.getByRole('status', { name: 'Packed file' })).toContainText('my border-brokkr.prg', { timeout: 120_000 });
+      expect(existsSync(join(work, 'my border-brokkr.prg'))).toBe(true);
+    }
+    // the work's keys wait while it is open
+    await page.keyboard.press('g');
+    await expect(page.getByRole('dialog', { name: 'Go to address, label or range' })).toHaveCount(0);
+    await over.getByRole('button', { name: 'Back to the work' }).click();
+    await expect(over).toBeHidden();
+    await expect(files).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+  });
+
+  await test.step('a project file opens the project, by itself', async () => {
+    const copy = join(work, 'copy.mimir.json');
+    await stubDialogs(app, { save: copy });
+    await page.getByRole('button', { name: /^No project/ }).click();
+    await page.getByRole('menuitem', { name: 'Save a copy of the project file…' }).click();
+    await expect(toast(page, `A copy of the project saved to ${copy}`)).toBeVisible();
+    await smart(copy, join(repoDir, 'fixtures/prg/raster-demo.prg'));
+    await expect(toast(page, 'Not opened: raster-demo.prg (a project opens by itself)')).toBeVisible();
+    await expect(toast(page, `Opened the project copy (${work})`)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Project copy' })).toBeVisible();
+    await expect(files).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
   });
 });
 

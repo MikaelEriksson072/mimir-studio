@@ -7,7 +7,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { assertEntryName, type PathPolicy } from './paths';
 import { z, type ZodTypeAny } from 'zod';
-import { CHANNELS, type AsmPickResult, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind } from '../../shared/ipc';
+import { CHANNELS, type AsmPickResult, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind, type SmartAttachResult } from '../../shared/ipc';
+import { SMART_EXTENSIONS, smartPlan } from '../../shared/smart-attach';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
 import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
@@ -23,7 +24,7 @@ import { findEditors } from '@mimir/core/node';
 import { openedPrg } from './project-fs';
 import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
-  quicksaveSchema, runSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
+  quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
 } from './schemas';
 
 export interface IpcDeps {
@@ -172,6 +173,32 @@ export function registerIpc(deps: IpcDeps): void {
       chose(dirname(path), 'disk');
     }
     return readDiskImage(path);
+  });
+
+  // Smart attach: every kind of file in one dialog, each read as its extension says (shared/smart-attach.ts); the
+  // folders picked are open in this session, as each kind's own dialog would leave them
+  handle(CHANNELS.fileSmart, smartAttachSchema, async (req, e): Promise<SmartAttachResult | null> => {
+    const all = [...new Set(Object.values(SMART_EXTENSIONS).flat())];
+    const paths = await pick(e, 'smart', { title: 'Smart attach', properties: ['openFile', 'multiSelections'], filters: [
+      { name: 'PRGs, snapshots, cartridges, D64 disks, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
+      { name: 'All files', extensions: ['*'] },
+    ] });
+    if (!paths.length) return null;
+    chose(dirname(paths[0]), 'smart');
+    const plan = smartPlan(paths);
+    const out: SmartAttachResult = { files: [], disk: null, project: null, asm: null, left: plan.left.map(l => ({ name: basename(l.path), why: l.why })), problems: [] };
+    /** one file read: a file that cannot be read is told about, and the others still open */
+    const read = async <T>(path: string, fn: () => Promise<T> | T): Promise<T | null> => {
+      try { policy.allow(dirname(path)); return await fn(); } catch (err) { out.problems.push({ name: basename(path), message: err instanceof Error ? err.message : String(err) }); return null; }
+    };
+    if (plan.project) out.project = await read(plan.project, () => plan.project);
+    if (plan.asm) {
+      const path = plan.asm;
+      out.asm = await read(path, () => ({ path, dir: policy.allow(dirname(path)), entry: assertEntryName(basename(path)) }));
+    }
+    if (plan.disk) { const path = plan.disk; out.disk = await read(path, () => readDiskImage(path)); }
+    for (const p of plan.files) out.files.push(...(await read(p, () => readPrgFiles([p], { zeroPage: req.zeroPage }))) ?? []);
+    return out;
   });
 
   handle(CHANNELS.exportWrite, exportWriteSchema, async (req, e): Promise<ExportWriteResult | null> => {

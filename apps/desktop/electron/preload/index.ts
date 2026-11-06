@@ -21,6 +21,7 @@ const api: KrApi = {
   forgetProject: req => invoke(CHANNELS.projectForget, req),
   openPrg: req => invoke(CHANNELS.prgOpen, req ?? {}),
   openDisk: req => invoke(CHANNELS.diskOpen, req ?? {}),
+  smartAttach: req => invoke(CHANNELS.fileSmart, req ?? {}),
   writeExport: req => invoke(CHANNELS.exportWrite, req),
   build: req => invoke(CHANNELS.toolchainBuild, req),
   pickAsm: () => invoke(CHANNELS.asmPick),

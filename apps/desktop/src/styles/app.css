@@ -1090,6 +1090,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 8px 0 4px; }
 
 /* ---------- Pack a file, from the start screen (QuickPack) ---------- */
+/* over the work, when Smart attach gave it a Kick Assembler source: the work stays as it was behind it */
+.pack-over { position: fixed; inset: 0; z-index: 55; }
 .start.quick-pack { place-items: start center; padding-top: 28px; }
 .qp-box { width: min(1040px, 100%); display: flex; flex-direction: column; gap: 14px; }
 .qp-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }

@@ -51,7 +51,8 @@ import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
-import type { EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
+import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
+import { QuickPack } from './components/QuickPack';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
@@ -536,6 +537,24 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try { const r = await kr.openDisk(); if (r) mountBytes(r.name, r.path, r.bytes); } catch (e) { toast(errorText(e), 'err'); }
   };
   const ejectDisk = () => { if (disk) toast(`Ejected ${disk.name}`, 'info'); setDisk(null); };
+  /** the Kick Assembler source Smart attach gave Brokkr: Pack a file over the work, until it goes back */
+  const [packSource, setPackSource] = useState<AsmPickResult | null>(null);
+  /** File → Smart attach…: one dialog for every kind of file, each opened as its extension says (shared/smart-attach.ts):
+   *  PRGs, snapshots and cartridges open as Open PRG files… opens them, a .d64 is mounted, a project opens, and a
+   *  Kick Assembler source goes to Brokkr (Pack a file: KickAss.jar assembles it, Brokkr packs the PRG) */
+  const smartAttach = async () => {
+    if (!kr) return needDesktop();
+    try {
+      const r = await kr.smartAttach({ zeroPage: !!project.settings.snapshotZeroPage });
+      if (!r) return;
+      for (const p of r.problems) toast(`${p.name}: ${p.message}`, 'err');
+      if (r.left.length) toast(`Not opened: ${r.left.map(l => `${l.name} (${l.why})`).join(', ')}`, 'warn');
+      if (r.project) { await openProject(r.project); return; }
+      if (r.disk) mountBytes(r.disk.name, r.disk.path, r.disk.bytes);
+      if (r.files.length) addFiles(r.files, false, { show: true });
+      if (r.asm) setPackSource(r.asm);
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
   /** the disk each file opened from a mounted D64 came from: Sindri puts it in its drive */
   const diskOf = useRef(new Map<string, Uint8Array>());
   const openFromDisk = (f: D64File, add: boolean) => {
@@ -737,11 +756,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       setUnpacked({ ok: true, title: `Unpacked ${f.name} with ${unpackerName}${r.packer ? ` (${r.packer})` : ''}: ${where}.`, output: `${output}\n\nKept ${r.name} from ${r.dir}`, label });
     } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
   };
-  const openProject = async () => {
+  /** `path`: the project file to open (Smart attach picked it), else a dialog asks */
+  const openProject = async (path?: string) => {
     if (!kr) return needDesktop();
     try {
       await saveNow();
-      const r = await kr.openProject();
+      const r = await kr.openProject(path ? { path } : undefined);
       if (r) { enter(r.project, r.home); resetView(); setExportDir(null); toast(`Opened the project ${r.home.name} (${r.home.dir})`, 'ok'); }
     } catch (e) { toast(errorText(e), 'err'); }
   };
@@ -1791,6 +1811,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /* ---- commands & keys ---- */
   const undoLabel = past.length ? past[past.length - 1].label : null;
   const commands: Command[] = [
+    { id: 'smart', label: 'Smart attach: open any file as its extension says (PRG, snapshot, cartridge, D64, project; Brokkr packs a .asm)…', run: () => void smartAttach() },
     { id: 'open', label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false) },
     { id: 'add', label: 'Add PRG files to the project…', run: () => void openPrgs(project.files.length > 0, 'add') },
     { id: 'open-crt', label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
@@ -1888,6 +1909,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   ];
   // the dialogs of "The work is not saved" hold the keys too
   const dialog = modal ?? (unsavedAsk || saveFirst ? 'project' : null);
+  /** Pack a file over the work (Smart attach gave it a source): the work's keys wait until it goes back */
+  const overWork = !!packSource;
   /** ← / →: the byte before or after the cursor's, on to the line before or after; from a line picked whole, its first
    *  (→) or last (←) byte. A line without bytes of its own as cells (an instruction) is picked whole. */
   const stepCell = (dirn: 1 | -1, extend: boolean) => {
@@ -1905,11 +1928,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     }
     pickCell(next, extend);
   };
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
+      if (k.overWork) return;
       const t = e.target as HTMLElement | null;
       const typing = !!t?.closest?.('input, textarea, select, .monaco-editor');
       const ctrl = e.ctrlKey || e.metaKey;
@@ -2249,12 +2273,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: home ? 'Close the project (start screen)' : 'Start screen', run: () => void toStartScreen() },
     ] });
   };
-  /** the title bar's File menu: what to open (PRGs, a cartridge, a VICE snapshot, a D64 to mount), each shown in its
-   *  section of the Explorer, and save the project (a project made of the work without one) */
+  /** the title bar's File menu: Smart attach (any of them, by its extension), what to open (PRGs, a cartridge, a VICE
+   *  snapshot, a D64 to mount), each shown in its section of the Explorer, and save the project (a project made of the
+   *  work without one) */
   const fileMenu = (e: ReactMouseEvent<HTMLElement>) => {
     if (menu?.owner === 'file') { setMenu(null); return; }
     const r = e.currentTarget.getBoundingClientRect();
     setMenu({ owner: 'file', x: r.left, y: r.bottom + 2, items: [
+      { label: 'Smart attach…', run: () => void smartAttach() },
+      { sep: true },
       { label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false, 'prg') },
       { label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
       { label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
@@ -2465,6 +2492,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
       {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, or a .d64 to mount it</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
+        <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />
+      </div>}
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}

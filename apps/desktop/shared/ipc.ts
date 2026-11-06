@@ -16,6 +16,7 @@ export const CHANNELS = {
   projectForget: 'project:forget',
   prgOpen: 'prg:open',
   diskOpen: 'disk:open',
+  fileSmart: 'file:smart',
   exportWrite: 'export:write',
   toolchainBuild: 'toolchain:build',
   toolchainRun: 'toolchain:run',
@@ -96,6 +97,21 @@ export type OpenedPrg = LoadedFile & { entries?: number[]; snapshot?: string; st
 /** A .d64 disk image to mount. `path` given: read it (in a folder the user picked); otherwise a file dialog. */
 export interface DiskOpenRequest { path?: string }
 export interface DiskOpenResult { path: string; name: string; bytes: Uint8Array }
+
+/** Smart attach: a dialog for every kind of file Mimir opens (shared/smart-attach.ts says what each is opened as).
+ *  `zeroPage` as for prg:open. */
+export interface SmartAttachRequest { zeroPage?: boolean }
+/** What was picked, read: PRGs, snapshots and cartridges as prg:open gives them, a disk image as disk:open does, the path
+ *  of a project to open with project:open, and a Kick Assembler source as asm:pick gives it (its folder open in this
+ *  session), for Brokkr to pack. `left`: files not opened, and why; `problems`: files that could not be read. */
+export interface SmartAttachResult {
+  files: OpenedPrg[];
+  disk: DiskOpenResult | null;
+  project: string | null;
+  asm: AsmPickResult | null;
+  left: { name: string; why: string }[];
+  problems: { name: string; message: string }[];
+}
 
 /**
  * Where to write: `dir` (a folder the user picked earlier in this session), `target: 'pick'` (ask
@@ -275,6 +291,8 @@ export interface KrApi {
   openPrg(req?: PrgOpenRequest): Promise<OpenedPrg[]>;
   /** null: the dialog was cancelled */
   openDisk(req?: DiskOpenRequest): Promise<DiskOpenResult | null>;
+  /** File → Smart attach…: any file Mimir opens, each opened by its extension; null: the dialog was cancelled */
+  smartAttach(req?: SmartAttachRequest): Promise<SmartAttachResult | null>;
   writeExport(req: ExportWriteRequest): Promise<ExportWriteResult | null>;
   build(req: BuildRequest): Promise<BuildResult>;
   /** a Kick Assembler source picked in a dialog, to build where it is; null: cancelled */

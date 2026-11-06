@@ -11,20 +11,21 @@ import { assertEntryName, PathPolicy } from '../electron/main/paths';
 import { bringOldSettings } from '../electron/main/migrate';
 import { RecentFolders } from '../electron/main/recent';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { deepSidPlaySchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema } from '../electron/main/schemas';
+import { deepSidPlaySchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema } from '../electron/main/schemas';
 import { buildWithKickAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
 import { charRomFiles, readCharRom } from '../electron/main/chargen';
 import { createProjectFolder, gatherWork, homeOf, isOwnTemp, nearestFolder, ProjectStore, RECENT_PROJECTS } from '../electron/main/projects';
 import { projectNameOf, projectNameProblem } from '../shared/projects';
+import { smartKind, smartPlan } from '../shared/smart-attach';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
 const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play'].sort());
   });
 });
 
@@ -661,6 +662,24 @@ describe('project files', () => {
     // the File menu's choices: what the dialog asks for
     for (const kind of ['prg', 'crt', 'vsf', 'add'] as const) expect(prgOpenSchema.parse({ kind })).toEqual({ kind });
     expect(() => prgOpenSchema.parse({ kind: 'd64' })).toThrow();
+  });
+
+  it('Smart attach opens each file as its extension says, a project or one source by itself', () => {
+    expect(['a.prg', 'B.PRG', 'x.vsf', 'cart.CRT', 'disk.d64', 'demo.mimir.json', 'my border.asm', 'C:\\c64\\intro.Asm', 'noext', 'data.bin', 'game.p00', 'odd.prg.d64'].map(smartKind))
+      .toEqual(['prg', 'prg', 'vsf', 'crt', 'd64', 'project', 'asm', 'asm', 'prg', 'prg', 'prg', 'd64']);
+    // PRGs, snapshots and cartridges together, one disk and one source; the others are left with why
+    expect(smartPlan(['a.prg', 'one.d64', 'x.vsf', 'two.d64', 'a.asm', 'b.asm', 'c.crt'])).toEqual({
+      project: null, asm: 'a.asm', disk: 'one.d64', files: ['a.prg', 'x.vsf', 'c.crt'],
+      left: [{ path: 'two.d64', why: 'one disk is mounted at a time' }, { path: 'b.asm', why: 'Brokkr packs one source at a time' }],
+    });
+    // a project takes the place of the work: it opens by itself
+    expect(smartPlan(['a.prg', 'demo.mimir.json', 'a.asm'])).toEqual({
+      project: 'demo.mimir.json', asm: null, disk: null, files: [],
+      left: [{ path: 'a.prg', why: 'a project opens by itself' }, { path: 'a.asm', why: 'a project opens by itself' }],
+    });
+    expect(smartAttachSchema.parse(undefined)).toEqual({});
+    expect(smartAttachSchema.parse({ zeroPage: true })).toEqual({ zeroPage: true });
+    expect(() => smartAttachSchema.parse({ paths: ['C:\\x.prg'] })).toThrow();
   });
 
   it('opens a cartridge as every chip, each with the image, which the project schemas keep with work at bank addresses', async () => {

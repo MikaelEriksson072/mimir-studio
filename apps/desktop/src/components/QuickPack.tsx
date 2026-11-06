@@ -1,7 +1,8 @@
 /* Pack from the start screen: PRG files, or a Kick Assembler source, packed with Brokkr or Exomizer as they are, without
  * a project or the analysis. A source is assembled with KickAss.jar where it is (its folder's out\, as its own build
  * would), when it is chosen and again before each pack. The settings are the Pack view's (PackSettings), kept for the
- * next time; the packed file goes next to what was packed unless another folder is chosen. */
+ * next time; the packed file goes next to what was packed unless another folder is chosen. Smart attach opens it over
+ * the work with a source already chosen, for Brokkr to pack. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { h4, makePrg, parseBasic, type BasicInfo, type KickProblem, type PackPrefs, type PackRange, type ToolchainSettings } from '@mimir/core';
 import type { AsmPickResult } from '../../shared/ipc';
@@ -40,7 +41,15 @@ function prefsFor(p: PackPrefs, first: Packed | undefined, dir: string): PackPre
   return { ...p, dir, out: '', ranges: null, start: sys != null ? 'sys' : 'jmp', jmp: sys != null ? null : first?.load ?? null, memLoad: typeof p.memLoad === 'number' ? 'auto' : p.memLoad };
 }
 
-export function QuickPack({ onBack }: { onBack: () => void }) {
+interface QuickPackProps {
+  onBack: () => void;
+  /** a source chosen already (Smart attach): it is assembled at once, and Brokkr is the packer */
+  source?: AsmPickResult;
+  /** the button that goes back: to the start screen, or to the work Smart attach was chosen in */
+  back?: { label: string; title: string };
+}
+
+export function QuickPack({ onBack, source: given, back = { label: 'Start', title: 'Back to the start screen' } }: QuickPackProps) {
   const prefs = useUi(s => s.quickPack);
   const set = (patch: Partial<PackPrefs>) => useUi.getState().set({ quickPack: { ...useUi.getState().quickPack, ...patch } });
   const [toolchain, setToolchain] = useState<ToolchainSettings | null>(null);
@@ -90,19 +99,32 @@ export function QuickPack({ onBack }: { onBack: () => void }) {
       set(prefsFor(prefs, list[0], list[0].path.includes('\\') || list[0].path.includes('/') ? folderOf(list[0].path) : ''));
     } catch (e) { setError(errorText(e)); }
   };
+  /** a source, from the dialog or given: assembled now, so its PRG is there to set the start by; `patch`: settings
+   *  that go with how it came (Smart attach: Brokkr packs it) */
+  const takeAsm = async (source: AsmPickResult, patch: Partial<PackPrefs> = {}) => {
+    setResult(null); setLog('');
+    setInput({ kind: 'asm', source, built: null, problems: [] });
+    setBusy('Assembling');
+    try {
+      const built = await assemble(source);
+      set({ ...prefsFor(useUi.getState().quickPack, built ?? undefined, source.dir), ...patch });
+    } finally { setBusy(null); }
+  };
   const chooseAsm = async () => {
     if (!kr) return;
     setError(null);
     try {
       const source = await kr.pickAsm();
-      if (!source) return;
-      setResult(null); setLog('');
-      setInput({ kind: 'asm', source, built: null, problems: [] });
-      setBusy('Assembling');
-      const built = await assemble(source);
-      set(prefsFor(prefs, built ?? undefined, source.dir));
-    } catch (e) { setError(errorText(e)); } finally { setBusy(null); }
+      if (source) await takeAsm(source);
+    } catch (e) { setError(errorText(e)); }
   };
+  // a source given is taken once (StrictMode runs the effect twice)
+  const took = useRef<AsmPickResult | null>(null);
+  useEffect(() => {
+    if (!given || took.current === given) return;
+    took.current = given;
+    takeAsm(given, { packer: 'brokkr' }).catch((e: unknown) => setError(errorText(e)));
+  }, [given]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** a source is assembled again first (it may have changed); then the files are packed, into the folder chosen */
   const pack = async () => {
@@ -151,7 +173,7 @@ export function QuickPack({ onBack }: { onBack: () => void }) {
     <div className="start quick-pack">
       <div className="qp-box">
         <div className="qp-head">
-          <button className="btn ghost" onClick={onBack}><Icon name="left" size={14} />Start</button>
+          <button className="btn ghost" onClick={onBack} title={back.title}><Icon name="left" size={14} />{back.label}</button>
           <h1>Pack a file</h1>
           <span className="muted">with Brokkr or Exomizer, as it is: no project, no analysis</span>
         </div>

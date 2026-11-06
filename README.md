@@ -168,8 +168,9 @@ the next start offers to continue it. Without a project you work as before, and 
 start; *Save* (`Ctrl+S`) then creates a project and moves the work into its folder, with the last export, build and
 packed file.
 
-1. **Open a program.** Use the *File* menu: *Open PRG files…* (`Ctrl+O`), a cartridge `.crt`, a VICE
-   snapshot `.vsf`, or *Mount D64 disk image…* for a disk. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
+1. **Open a program.** Use the *File* menu: *Smart attach…* opens any of them, each file by its extension (`.prg`,
+   `.vsf`, `.crt`, `.d64`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG
+   files…* (`Ctrl+O`), a cartridge `.crt`, a VICE snapshot `.vsf`, or *Mount D64 disk image…* for a disk. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview. `G` goes to an address or label, `Ctrl+F` finds text (labels,

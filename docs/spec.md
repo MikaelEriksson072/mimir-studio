@@ -121,7 +121,7 @@ Fyra designprinciper bär hela arkitekturen:
 - Strikt CSP i renderern: inga fjärrskript; Monaco och typsnitt paketeras lokalt.
 - IPC-kanaler är en uttömmande allowlist (se 13.4). Sökvägar normaliseras och begränsas till användarvalda projektmappar; körbara filer (`java`, `x64sc`) anges explicit i inställningarna och startas med argumentlista, aldrig via shell-strängar.
 - Projektfiler är JSON med schema-validering (zod) vid inläsning.
-- Fildialogerna (Open PRG, Mount D64, projekt, Export) öppnas i den mapp där samma slags dialog senast användes, annars
+- Fildialogerna (Open PRG, Mount D64, Smart attach, projekt, Export) öppnas i den mapp där samma slags dialog senast användes, annars
   där någon dialog senast användes. Mapparna sparas i `recent-folders.json` i användardatamappen och gäller även efter
   en omstart (`electron/main/recent.ts`). En mapp som inte längre finns hoppas över. Exportdialogen öppnas i mappen
   runt den senaste exporten. Minnet anger bara var dialogen börjar: åtkomst får appen fortfarande bara till det
@@ -1693,6 +1693,7 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `project:forget` | renderer → main | `{ file }` → listan: ett projekt struket ur listan över de senaste (mappen rörs inte) |
 | `prg:open` | renderer → main | `{ paths?, zeroPage? }` → `OpenedPrg[]` (`LoadedFile`, för en VICE-snapshot också `vsf`, `entries`, `start` och `snapshot`, 13.7) |
 | `disk:open` | renderer → main | `{ path? }` → `{ path, name, bytes }` för en `.d64` (dialog om sökväg saknas; `null` om den avbryts) |
+| `file:smart` | renderer → main | `{ zeroPage? }` → `{ files, disk, project, asm, left, problems }`: **Smart attach** (13.4b), en dialog för alla slags filer, var och en läst som dess filändelse säger; mapparna får användas under sessionen (`null` om dialogen avbryts) |
 | `export:write` | renderer → main | `{ dir \| target, files: Record<string, string \| Uint8Array> }` → `{ dir, written: string[] }`; `target`: `pick` (mappdialog), `temp` (ny mapp i temp), `project` (projektets `source`), `build` (projektets `build`, utan projekt en ny mapp i temp) |
 | `toolchain:build` | renderer → main | `{ dir, entries: string[] }` → `{ ok, stdout, problems: Problem[], prg?: Uint8Array }` |
 | `asm:pick` | renderer → main | → `{ path, dir, entry }`: en Kick Assembler-källa vald i en dialog, att bygga där den ligger (13.8b); mappen får byggas i under sessionen (`null` om dialogen avbryts) |
@@ -1713,6 +1714,37 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `vice:attach` / `vice:command` | renderer → main | monitorkommandon → svar |
 | `settings:get` / `settings:set` | renderer → main | `Settings` |
 | `fs:changed` | main → renderer | `{ path }` (fil-watcher) |
+
+### 13.4b Smart attach
+
+**Smart attach…** står överst i titelradens File-meny (och i kommandopaletten): en dialog (*Smart attach*, flera filer
+får väljas) som visar allt Mimir öppnar, och varje fils **filändelse** avgör vad den öppnas som
+(`apps/desktop/shared/smart-attach.ts`, `smartKind`):
+
+| Filändelse | Öppnas som |
+|---|---|
+| `.prg` | PRG-filer, som *Open PRG files…* öppnar dem |
+| `.vsf` | en VICE-snapshot (13.7) |
+| `.crt` | en cartridge, ett projekt för sig (13.9) |
+| `.d64` | en diskavbild som monteras (13.5) |
+| `.json` | ett Mimir-projekt (`.mimir.json`), som *Open project…* öppnar det (13.10) |
+| `.asm` | en Kick Assembler-källa som **Brokkr** packar: *Pack a file* (13.8b) öppnas över arbetet med källan vald och Brokkr som packare; KickAss.jar assemblerar den där den ligger och Brokkr packar PRG:n |
+| annan eller ingen | läses som en PRG (en snapshot eller cartridge känns ändå igen på huvudet, som när den släpps i fönstret) |
+
+Väljs flera filer öppnas PRG:erna, snapshotarna och cartridgen tillsammans, som med *Open PRG files…*, medan en disk
+monteras och en källa packas åt gången: de andra lämnas, och en rad säger vilka och varför (*Not opened: b.asm (Brokkr
+packs one source at a time)*). Ett projekt öppnas för sig, eftersom det tar arbetets plats: är ett projekt bland filerna
+öppnas bara det (`smartPlan`). En fil som inte kan läsas sägs med sitt namn, och de andra öppnas ändå.
+
+*Pack a file* över arbetet är samma vy som startskärmens (13.8b), i ett lager över fönstret: arbetet står kvar som det
+var bakom, listningens tangenter väntar så länge vyn är öppen, och **Back to \<projektet\>** (*Back to the work* utan
+projekt) går tillbaka till det. Dialogen öppnas där Smart attach senast användes (`recent-folders.json`, `smart`).
+
+**Test:** `e2e/app.spec.ts` (*Smart attach opens each file as its extension says*): en PRG och en D64 i samma dialog
+(PRG:n öppnas, disken monteras, dialogens titel och filter), en `.vsf` och en `.crt`, en `.asm` (en andra källa lämnas;
+*Pack a file* över arbetet med Brokkr vald; med KickAss.jar assembleras och packas `my border.asm`; `g` öppnar inte
+*Go to*; *Back to the work* lämnar filerna som de var) och en projektfil (en PRG bredvid lämnas, projektet öppnas).
+`test/main.test.ts` prövar `smartKind`, `smartPlan` och kanalens schema.
 
 ### 13.5 Diskavbilder (.d64)
 
@@ -2237,7 +2269,8 @@ med **Run in VICE** och **Save as…**. Utan analys läses BASIC-raden med `pars
 `$0801`: har den en SYS startar programmet där (**SYS in the BASIC line**), annars hoppar det till laddadressen. Den
 packade filen hamnar bredvid det som packades, om inte **Choose…** väljer en annan mapp. Inställningarna sparas i
 fönstret (`kr.quickPack`) till nästa gång; mapp, filnamn, intervall och start följer de filer som väljs. **Start** går
-tillbaka till startskärmen.
+tillbaka till startskärmen. Smart attach (13.4b) öppnar samma vy över arbetet med en `.asm` redan vald och Brokkr som
+packare; där går knappen tillbaka till arbetet.
 
 **Test:** `e2e/quickpack.spec.ts`: en kopia av `raster-demo.prg` packas med Brokkr (*SYS 2064*, start *sys*, mappen
 bredvid), filen `raster-demo-brokkr.prg` blir mindre och laddar på `$0801`; *Address ranges* föreslår filens intervall
@@ -2505,7 +2538,7 @@ blir för lång.
 
 | Region | Innehåll |
 |---|---|
-| Titelrad | File-menyn (öppna PRG-filer, en cartridge eller en VICE-snapshot, montera en D64; spara), Ångra/Gör om, kommandosök, Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
+| Titelrad | File-menyn (Smart attach, 13.4b; öppna PRG-filer, en cartridge eller en VICE-snapshot, montera en D64; spara), Ångra/Gör om, kommandosök, Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
 | Aktivitetsrad | Explorer, Blocks, Symbols, Bookmarks (med antal), Pack (med antal intervall), specifikation, kommandopalett. Knappen för vyn som visas fäller ihop sidopanelen; är den ihopfälld är ingen knapp vald, och en vys knapp visar panelen igen med den vyn |
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
