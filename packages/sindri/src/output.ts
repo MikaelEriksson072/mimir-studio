@@ -9,7 +9,10 @@
  * Older bytes (from the loaded file, or written by an earlier layer) belong to it when no depacker read or ran them,
  * unless they are the rest of a block the depackers used: the stub's leftovers around its code, the end of a copy of
  * packed data that was never read. A large untouched stretch of the loaded file, or of what an earlier depacker
- * unpacked, stays even then; of a block a mover copied, nothing does. */
+ * unpacked, stays even then; of a block a mover copied, nothing does.
+ *
+ * When the layer ends, the parts of earlier programs that it ran join it (keptParts): a trackmo's music and loader,
+ * which an earlier part loaded and the depackers since ran too. */
 import { BOOT, LOADED, type C64 } from './c64.ts';
 import type { Kind, Range } from './analyze.ts';
 
@@ -131,6 +134,45 @@ export function saveRange(mask: Uint8Array, keep: number[]): Range | null {
   const kept = parts.filter(p => p.bytes >= SMALL || keep.some(k => k >= p.start && k <= p.end));
   const use = kept.length ? kept : parts;
   return { start: Math.min(...use.map(p => p.start)), end: Math.max(...use.map(p => p.end)) };
+}
+
+/** a layer keeps a part of an earlier program when it ran at least this many of its bytes */
+const KEEP_RAN = 16;
+
+/** A part of an earlier program that a layer still runs: `owner` is the layer whose program it was (0: the loaded file). */
+export interface KeptPart extends Range { owner: number; bytes: number }
+
+/**
+ * The parts of earlier programs that a layer still uses, as a trackmo's part keeps playing the music an earlier part
+ * loaded and calls the loader the boot file left. `owner[a]` is the newest layer whose program held the byte at a when
+ * that layer started (0 for the loaded file), and `then(owner)` memory as it was then. A part is a stretch of one
+ * owner's bytes (gaps up to JOIN) outside the layer's own `mask` that still hold what they held then and were not
+ * `spent` since (run or read after that program started, but not by this layer: the earlier part's own start-up
+ * code, data a depacker took from there), in which the layer ran at least KEEP_RAN bytes. Their bytes are set in
+ * `out` (the mask with the parts).
+ */
+export function keptParts(owner: Int32Array, self: number, then: (id: number) => Uint8Array | undefined, now: Uint8Array,
+  mask: Uint8Array, ran: (a: number) => boolean, spent: (a: number, owner: number) => boolean, out: Uint8Array): KeptPart[] {
+  const open = new Map<number, KeptPart & { ran: number }>();
+  const parts: KeptPart[] = [];
+  const close = (p: KeptPart & { ran: number }) => { if (p.ran >= KEEP_RAN) parts.push({ owner: p.owner, start: p.start, end: p.end, bytes: p.bytes }); };
+  const intact = (a: number, k: number): boolean => {
+    if (k < 0 || k === self || mask[a]) return false;
+    const before = then(k);
+    return !!before && before[a] === now[a] && !spent(a, k);
+  };
+  for (let a = 0x200; a < 0x10000; a++) {
+    const k = owner[a];
+    if (!intact(a, k)) continue;
+    let p = open.get(k);
+    if (p && a - p.end > JOIN) { close(p); p = undefined; }
+    if (!p) { p = { owner: k, start: a, end: a, bytes: 0, ran: 0 }; open.set(k, p); }
+    p.end = a; p.bytes++;
+    if (ran(a)) p.ran++;
+  }
+  for (const p of open.values()) close(p);
+  for (const p of parts) for (let a = p.start; a <= p.end; a++) if (owner[a] === p.owner && intact(a, p.owner)) out[a] = 1;
+  return parts.sort((x, y) => x.start - y.start);
 }
 
 /** The PRG of `start`..`end` (load address first); with `clean`, bytes not in the mask become 0. */

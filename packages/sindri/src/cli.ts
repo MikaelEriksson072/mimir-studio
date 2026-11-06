@@ -55,6 +55,7 @@ function describe(l: LayerReport): string {
     if (l.kind !== 'jump') lines.push(`         ${l.packer ? `packer: ${l.packer.name} (${Math.round(l.packer.similarity * 100)}% alike)` : `unknown depacker, fingerprint ${l.fingerprint}`}`);
   }
   if (l.calls.length) lines.push(`         called code it wrote: ${l.calls.map(c => `${hex4(c.entry)} (${c.via})`).join(', ')}`);
+  if (l.kind === 'program' && l.kept.length) lines.push(`         keeps what earlier layers left that it ran: ${l.kept.map(k => `${range(k)} (layer ${k.layer})`).join(', ')}`);
   if (l.text.length) lines.push(`         text: ${l.text.slice(0, 4).map(t => JSON.stringify(t)).join(', ')}`);
   const printed = l.printed.replace(/\s+/g, ' ').trim();
   if (printed) lines.push(`         printed: ${JSON.stringify(printed.slice(0, 80))}`);

@@ -5,7 +5,8 @@
  * wrote and has not run yet: a depacker that copied itself to $0100, the program it decrunched, the code a decoder
  * decrypted. Jumping into BASIC's RUN counts too, but not a BASIC program going on with itself (an extension's command
  * ending in NEWSTT, RUN again). Memory is copied at each layer's start, with the bytes that belong to the program it
- * starts. Layers begun inside a subroutine call or an interrupt that then returns to where it was called from were
+ * starts; when it ends, the parts of earlier programs that it still ran join them (a trackmo's music and loader).
+ * Layers begun inside a subroutine call or an interrupt that then returns to where it was called from were
  * temporary (a depacker called with JSR, generated speedcode, a new IRQ handler): they join the layer that made the
  * call again.
  *
@@ -18,7 +19,7 @@ import { OP_IRQ, OP_NMI } from './cpu.ts';
 import { LEN } from './opcodes.ts';
 import { initStandIn, KERNAL_VECTORS, standInRoms } from './standin.ts';
 import { activity, fingerprintId, identify, strings, type Activity, type Kind, type Range } from './analyze.ts';
-import { buildPrg, contentMask, saveRange } from './output.ts';
+import { buildPrg, contentMask, keptParts, saveRange, type KeptPart } from './output.ts';
 import { Drive, type DriveState } from './drive.ts';
 import { d64ToDisk } from './gcr.ts';
 import { basicLines, evaluate, findSys, listLine, statements, T } from './basic.ts';
@@ -90,6 +91,11 @@ export interface LayerReport {
   presses: string[];
   /** the range that would be saved for it */
   range: Range | null;
+  /**
+   * parts of earlier layers' programs (layer 0: the loaded file) that it ran while they still held what they held
+   * then, such as the music and the loader a trackmo's earlier part loaded: they are saved with it
+   */
+  kept: (Range & { layer: number })[];
 }
 
 export interface Saved {
@@ -161,7 +167,11 @@ class Layer {
   icount: number;
   basic = false;
   snapshot: Snapshot;
+  /** the bytes that belong to the program it starts (null for the loaded file) */
   mask: Uint8Array | null = null;
+  /** the mask with the parts of earlier programs it ran (set when it ends), and those parts */
+  live: Uint8Array | null = null;
+  kept: KeptPart[] = [];
   activity: Activity | null = null;
   calls: { entry: number; via: Via }[] = [];
   printed = '';
@@ -217,6 +227,8 @@ class Session {
   readonly o: UnpackOptions;
   /** the layer that last executed each instruction start */
   readonly eid = new Int32Array(0x10000).fill(-3);
+  /** the newest layer whose program held each byte when it started (0: the loaded file), -1 for none */
+  private readonly owner = new Int32Array(0x10000).fill(-1);
   /** when BASIC last went on from each byte of program text (NEWSTT at the end of a statement, RUN at the start) */
   private readonly basicRan = new Uint32Array(0x10000);
   private readonly special = new Uint8Array(0x10000);
@@ -407,6 +419,7 @@ class Session {
     this.phase = 'run';
     const root = new Layer(0, null, pc, 'start', null, m.cycles, m.icount, this.snapshot());
     this.layers = [root];
+    this.owner.fill(0, Math.max(2, this.loadAt), this.loadAt + this.data.length);
     this.cur = root; this.curId = 0;
     m.tag = 0;
     this.startCycle = m.cycles;
@@ -565,6 +578,7 @@ class Session {
   private enter(pc: number, basic: boolean): void {
     const m = this.m, cpu = m.cpu, parent = this.cur!;
     parent.activity = activity(m, this.eid, parent.id, parent.icount);
+    this.keep(parent);
     // a jump the CPU took just before an interrupt counts as made when the interrupt returns
     const late = cpu.lastOp === 0x40 && pc === this.irqRet && this.irqOp >= 0;
     const op = late ? this.irqOp : cpu.lastOp, from = late ? this.irqFrom : this.lastPc;
@@ -572,19 +586,40 @@ class Session {
     layer.basic = basic;
     const kinds = new Map(this.layers.filter(l => l.activity).map(l => [l.id, l.activity!.kind]));
     layer.mask = contentMask(m, parent.id, parent.snapshot.ram, kinds);
+    for (let a = 0; a < 0x10000; a++) if (layer.mask[a]) this.owner[a] = layer.id;
     this.layers.push(layer);
     this.cur = layer; this.curId = layer.id;
     m.tag = layer.id;
     this.trace(`${layer.via} ${basic ? 'into BASIC ' : ''}from ${hex4(from)} to ${hex4(pc)}: layer ${this.layers.length - 1} (${parent.activity.kind} before it, ${this.calls} open calls, sp $${this.m.cpu.s.toString(16)})`);
   }
 
+  /**
+   * Layer P ends (a new layer starts, or the run stops): the parts of earlier programs it ran, which still held then
+   * what they held when those programs started, join the bytes saved for it (a trackmo's music and loader). Only
+   * bytes it ran without writing them count: code it loaded over such a part is not the part. Bytes run or read
+   * since such a program started, but not by P, were spent before it (start-up code, data copied from there).
+   */
+  private keep(P: Layer): void {
+    if (!P.mask) return;
+    const then = new Map(this.layers.map(l => [l.id, l.snapshot.ram]));
+    const began = new Map(this.layers.map(l => [l.id, l.icount]));
+    const { etime, wtime, rtime } = this.m, since = P.icount, live = P.mask.slice();
+    const spent = (a: number, k: number): boolean => {
+      const last = Math.max(etime[a], rtime[a]);
+      return last < since && last >= (began.get(k) ?? since);
+    };
+    P.kept = keptParts(this.owner, P.id, id => then.get(id), P.snapshot.ram, P.mask, a => etime[a] >= since && wtime[a] < since, spent, live);
+    P.live = P.kept.length ? live : null;
+  }
+
   /** Layer L returned to the layer that called it: it and the layers after it join that one again. */
   private merge(L: Layer): void {
     const m = this.m, P = L.parent!, gone = this.layers.splice(this.layers.indexOf(L));
-    const { wid } = m, eid = this.eid;
+    const { wid } = m, eid = this.eid, owner = this.owner;
     for (let a = 0; a < 0x10000; a++) {
       if (wid[a] >= L.id) wid[a] = P.id;
       if (eid[a] >= L.id) eid[a] = P.id;
+      if (owner[a] >= L.id) owner[a] = -1;
     }
     for (const g of gone) {
       if (P.calls.length < 16) P.calls.push({ entry: g.entry, via: g.via });
@@ -919,6 +954,7 @@ class Session {
     if (last) {
       last.activity = activity(m, this.eid, last.id, last.icount);
       last.activity.kind = 'program';
+      this.keep(last);
     }
     const peekFile = (a: number) => a >= this.loadAt && a < this.loadAt + this.data.length ? this.data[a - this.loadAt] : 0;
     const basic = this.loadAt === 0x0801 ? basicLines(peekFile, 0x0801, 8).map(listLine) : [];
@@ -949,6 +985,7 @@ class Session {
     const ram = l.snapshot.ram;
     const around = a.code.map(r => ({ start: Math.max(0, r.start - 256), end: Math.min(0xffff, r.end + 256) }));
     const packer = a.kind === 'program' ? null : identify(a.opcodes);
+    const range = index > 0 && l.mask ? this.rangeOf(l) : null;
     return {
       index, entry: l.entry, via: l.via, from: l.from, cycle: l.cycle - this.startCycle, basic: l.basic,
       kind: a.kind, code: a.code, instructions: a.instructions,
@@ -956,15 +993,18 @@ class Session {
       calls: l.calls, fingerprint: fingerprintId(a.opcodes), opcodes: a.opcodes, packer,
       text: strings(p => ram[p], around).slice(0, 12),
       printed: l.printed, presses: l.presses,
-      range: index > 0 && l.mask ? this.rangeOf(l) : null,
+      range,
+      // (a small part far from the rest is left out of the range, as the program's own small parts are)
+      kept: l.kept.filter(k => range && k.start <= range.end && k.end >= range.start)
+        .map(k => ({ layer: this.layers.findIndex(o => o.id === k.owner), start: k.start, end: k.end })),
     };
   }
 
   private rangeOf(l: Layer): Range | null {
-    const ram = l.snapshot.ram;
-    if (!l.basic) return saveRange(l.mask!, [l.entry]);
+    const ram = l.snapshot.ram, mask = l.live ?? l.mask!;
+    if (!l.basic) return saveRange(mask, [l.entry]);
     const start = ram[0x2b] | (ram[0x2c] << 8), end = (ram[0x2d] | (ram[0x2e] << 8)) - 1;
-    const r = saveRange(l.mask!, [start]);
+    const r = saveRange(mask, [start]);
     return { start: Math.min(r?.start ?? start, start), end: Math.max(r?.end ?? end, end) };
   }
 
@@ -977,7 +1017,7 @@ class Session {
     }
     const range = this.rangeOf(l);
     if (!range) return null;
-    const prg = buildPrg(s.ram, range, clean ? l.mask! : undefined);
+    const prg = buildPrg(s.ram, range, clean ? l.live ?? l.mask! : undefined);
     const basicStart = s.ram[0x2b] | (s.ram[0x2c] << 8);
     const entry = l.basic ? findSys(a => s.ram[a], basicStart) ?? basicStart : l.entry;
     return { layer: index, prg, start: range.start, end: range.end, entry, basic: l.basic, port: s.port, interrupts: !(s.p & 4) };

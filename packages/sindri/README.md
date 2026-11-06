@@ -31,6 +31,11 @@ that layer starts:
 
 - what the layer before it wrote and did not run itself;
 - untouched parts of the loaded file;
+- parts of an earlier layer's program (or of the loaded file) that it goes on running, as a trackmo's part plays the
+  music an earlier part loaded and calls the loader the boot file left: when it ran at least 16 bytes of code there
+  that it did not write itself, the part's bytes that still hold what they held when that program started join it,
+  except those run or read since by others (that part's start-up code, data a depacker copied from there). They are
+  known when the layer ends, and `LayerReport.kept` lists them;
 - not the packed data the depackers consumed (a copy they moved and read), its unread rest, the stub's leftovers,
   the depackers' own code and variables, or what the C64 wrote itself (the screen editor, the clock, the keyboard).
 
@@ -77,6 +82,12 @@ On the first disk of each of the 190 top-rated demos at CSDB, 151 get further th
 loader loads the next part and starts it. Without the drive, 151 waited in the boot, 35 went back to READY when
 their drive code got no answer and 4 crashed; with it 186 run until a part settles, 3 end at READY and 1 runs out of
 time. A disk takes about 0.3 s.
+
+In such a demo the part that settles keeps what earlier parts left that it runs (see above): Fairlight's 1337 is saved
+as `$0200-$ffff`, with the loader at `$0200` and the music at `$1000` that the first part loaded, where it was
+`$7400-$ffff` before; Viva Las Vegas as `$0b01-$9473` with its music at `$0c00`. Of 103 demo disks from CSDB's top
+lists, 42 are saved differently, all of them demos in several parts whose program runs its loader or music from an
+earlier layer; none got smaller.
 
 ## Use
 
@@ -213,6 +224,11 @@ The saved range differs in 30 of the 488: usually by a few bytes the depacker wr
 always cuts off; once it is shorter, where unp64 saves leftover packed data up to the packer's end pointer. With the
 stand-ins instead of the ROMs, 487 files give the same result. A file takes about 80 ms.
 
+Saving what earlier layers left that the program runs (November 2026) changed 2 of 617 intros and demos run without
+their disks, and no layer, stop or time: one intro now has the same bytes as unp64 (`$0801-$3fff`; it was cut at
+`$22fe`), and in one, where this goes a layer deeper than unp64 as before, the program's code at `$8000-$eaff` is now
+saved with it.
+
 `--json` gives all of it (with the full fingerprints) for scripts.
 
 ## API
@@ -260,6 +276,8 @@ own with `M-W`, starts it with `M-E` and receives a sector over the serial bus b
 
 - Without a disk, a program that loads more files (a linker with a loader, a multi-part demo) stops at the load; the
   layer it reached is saved. With one it goes on through the parts until a part settles.
+- Memory is saved as it was when the newest layer started. A layer that loads its parts itself after it starts and
+  calls them (a demo's framework, as in No Bounds) is saved without them: they were not in memory yet.
 - A program on several disks waits when it asks for the next one (its drive code reads track 18 again and again to see
   the disk change): only one disk is in the drive.
 - Copy protections that check what a D64 cannot hold (custom formats, half tracks, timing on the disk; a G64 image

@@ -126,6 +126,54 @@ fail:  inc $d020
 name:  .text "PART2"
 `);
 
+/** LOAD "<name>",8,1 through the KERNAL, the name at `label` */
+const kernalLoad = (label: string, length: number) => `
+       lda #${length}
+       ldx #<${label}
+       ldy #>${label}
+       jsr $ffbd
+       lda #1
+       ldx #8
+       ldy #1
+       jsr $ffba
+       lda #0
+       jsr $ffd5`;
+
+/** a trackmo's first part: it plays the music at $1000 in its interrupt, loads PART2 and jumps to it */
+const MUSIC_PART = asm(`
+* = $0e00
+       sei
+       lda #<irq
+       sta $0314
+       lda #>irq
+       sta $0315
+       cli
+${kernalLoad('name', 5)}
+       jmp $c000
+irq:   jsr $1003
+       jmp $ea31
+name:  .text "PART2"
+* = $1000
+       jmp play
+       jmp play
+play:  ldx #24
+pl:    lda tune,x
+       sta $d400,x
+       dex
+       bpl pl
+       inc tune
+       rts
+tune:
+${byteLines(noise(128, 3))}
+`);
+
+/** a trackmo's boot file: it loads MUSIC_PART and starts it */
+const TRACKMO_BOOT = asm(`${SYS_LINE}
+${kernalLoad('name', 5)}
+       jmp $0e00
+name:  .text "MUSIC"
+`);
+
 /**
  * Drive code for $0500: it reads track 1 sector 0 into buffer 4 ($0700) through the job queue, pulls DATA low to
  * say it is ready, then sends the 256 bytes: a bit on DATA (low for 1) at every edge of CLK, which the C64 drives;
@@ -272,6 +320,22 @@ describe.skipIf(!withDrive)('programs that load from the disk', () => {
     expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
     expect(r.saved).toMatchObject({ entry: 0xc000, start: 0xc000, end: PART2.end });
     expect([...r.saved!.prg]).toEqual([...PART2.prg]);
+  });
+
+  it('keeps the music an earlier part loaded when the part it loads next plays it on', () => {
+    const disk = makeD64([{ name: 'BOOT', prg: TRACKMO_BOOT.prg }, { name: 'MUSIC', prg: MUSIC_PART.prg }, { name: 'PART2', prg: PART2.prg }]);
+    const r = unpack(TRACKMO_BOOT.prg, { roms, disk });
+    expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0x0e00, 0xc000]);
+    // from the interrupt handler to the music's end: the start-up code before it and the name it loaded by were spent
+    const irq = MUSIC_PART.labels.irq;
+    expect(r.layers[2].kept).toEqual([{ layer: 1, start: irq, end: MUSIC_PART.end }]);
+    const s = r.saved!;
+    expect(s).toMatchObject({ entry: 0xc000, start: irq, end: PART2.end });
+    expect([...s.prg.subarray(2 + 0xc000 - irq)]).toEqual([...PART2.prg.subarray(2)]);
+    // the music's code as it was loaded; its tune has stepped on as it played
+    const tune = MUSIC_PART.labels.tune, at = (a: number, prg: Uint8Array, load: number) => prg[a - load + 2];
+    for (let a = 0x1000; a < tune; a++) expect(at(a, s.prg, irq)).toBe(at(a, MUSIC_PART.prg, 0x0e00));
+    expect(at(tune + 1, s.prg, irq)).toBe(at(tune + 1, MUSIC_PART.prg, 0x0e00));
   });
 
   it('follows drive code of the program\'s own that sends a sector over the serial bus', () => {

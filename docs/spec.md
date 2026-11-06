@@ -777,6 +777,37 @@ kommer 151 längre än startfilen (laddaren laddar och startar nästa del); utan
 gick tillbaka till READY och 4 kraschade. Ett program på flera disketter väntar när det ber om nästa; skydd som kräver
 mer än en D64 rymmer (G64) kommer inte igenom.
 
+**Vad Sindri sparar.** Det sparade programmet är minnet som det var när det nyaste lagret startade, från den första
+till den sista byte som hör till programmet (små delar långt från resten räknas inte): det som lagret före skrev och
+inte körde självt, och orörda delar av den laddade filen, men inte packad data som uppackarna förbrukade, deras egen
+kod eller vad C64:an skrev själv. I en trackmo laddar ett tidigare lager det som programmet sedan använder: musiken
+som spelar i avbrottet, laddaren som ligger kvar på `$0200`. Därför hör också delar av ett tidigare lagers program
+(eller av den laddade filen) dit, när programmet körde minst 16 byte kod där som det inte skrivit självt; av en sådan
+del räknas de byte som fortfarande håller det de höll när det lagret startade, utom de som körts eller lästs sedan dess
+av någon annan än programmet (delens egen startkod, data som en uppackare kopierade därifrån). Det avgörs när lagret
+slutar, och lagerrapporten säger det på programmets rad: `keeps what earlier layers left that it ran: $0200-$03d5
+(layer 3), $0e40-$1c7a (layer 4)` (`LayerReport.kept`). Startfilen med disken i stationen, som när man monterar disken,
+laddar första filen och trycker *Unpack*:
+
+| Demo | Sparat förut | Sparat nu | Musik som Mimir hittar |
+|---|---|---|---|
+| Fairlight 1337 (disk A) | `$7400-$ffff` | `$0200-$ffff` | `$1000-$1c7a`, spelar |
+| Viva Las Vegas (sida 1) | `$2000-$9473` | `$0b01-$9473` | `$0c00-$1b09`, spelar |
+| O-tech People III | `$e000-$f6e3` | `$0200-$f6e3` | `$1000-$1c07`, spelar |
+| Codeboys & Endians (sida 1) | `$0200-$0bff` | `$0200-$bfff` | musiken vid `$1000` finns nu i programmet |
+| No Bounds (sida 1) | `$0255-$fffb` | `$0200-$fffb` | ingen: se nedan |
+
+The Lab, Eyes, Multiverse, I'm Back och Ranx sparas som förut (musiken låg redan i det sparade). I No Bounds laddar
+programmets eget lager (ramverket vid `$ff40`) musiken och delarna efter att det startat och anropar dem, så de fanns
+inte i minnet när lagret startade.
+
+På 103 demodisketter ur CSDB:s topp-200 och topp-500 (startfilen med disken) sparas 42 annorlunda, alla demos i
+flera delar vars program kör sin kvarliggande laddare eller musiken från ett tidigare lager: 36 börjar lägre (oftast
+laddaren på `$0200`), 11 slutar högre (en laddare högst upp i minnet, kod som en tidigare del packade upp), inget blir
+mindre. På 617 intron och demos utan disk ändras 2: ett intro blir byte för byte lika med unp64 (`$0801-$3fff`, förut
+slut vid `$22fe`), och i ett där Sindri går ett lager djupare än unp64 följer programmets kod på `$8000-$eaff` med.
+Inget lager, stopp eller tid ändras.
+
 **unp64 som externt verktyg.** När uppackaren i inställningarna är unp64 frågar appen den i stället (`unp64 fil -i`, som
 inte packar upp något) vilken packare varje öppnad fil har. unp64 känner hundratals packare vid namn. En fil den känner igen visas som packad med det
 namnet, även om tecknen ovan inte räckte. Känner den ingen packare och tecknen bara räcker till *kanske*, visas ingen

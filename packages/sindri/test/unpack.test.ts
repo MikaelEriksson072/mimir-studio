@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { FILE_ARG, FILE_RAN, FILE_READ, FILE_WRITTEN, unpack, type UnpackResult } from '../src/index.ts';
 import { findRoms } from '../src/node.ts';
 import { asm, basic, byteLines, SYS_LINE } from './asm.ts';
-import { coded, pack, PROGRAM } from './packers.ts';
+import { coded, noise, pack, PROGRAM } from './packers.ts';
 
 const roms = findRoms();
 const body = PROGRAM.prg.subarray(2);
@@ -85,6 +85,90 @@ ${byteLines(zp)}
        .fill 26, $ea
 `).prg;
 })();
+
+/** the music of TRACKMO's first part: a JMP table at $1000, play writes the SID from its tune and steps it on */
+const MUSIC = asm(`
+* = $1000
+       jmp play
+       jmp play
+play:  ldx #24
+pl:    lda tune,x
+       sta $d400,x
+       dex
+       bpl pl
+       inc tune
+       rts
+tune:
+${byteLines(noise(128, 3))}
+`);
+
+/**
+ * A trackmo's way in one file: the stub copies the first part (3 pages, at $0900 in the file) to $0e00 and starts
+ * it; the part plays MUSIC in its interrupt, copies the next part (2 pages, at $0c00) to $4000 and starts that, and
+ * the music plays on unless the next part stops it. `next` is the next part's code; `irq` is where the handler is.
+ */
+function trackmo(next: string): { prg: Uint8Array; irq: number } {
+  const first = asm(`
+* = $0e00
+       sei
+       lda #<irq
+       sta $0314
+       lda #>irq
+       sta $0315
+       cli
+       lda #$00
+       sta $fb
+       sta $fd
+       lda #$0c
+       sta $fc
+       lda #$40
+       sta $fe
+       ldx #2
+       jsr pages
+       jmp $4000
+pages: ldy #0
+pc:    lda ($fb),y
+       sta ($fd),y
+       iny
+       bne pc
+       inc $fc
+       inc $fe
+       dex
+       bne pages
+       rts
+irq:   jsr $1003
+       jmp $ea31
+* = $1000
+${byteLines(MUSIC.prg.subarray(2))}
+* = $10ff
+       .byte 0
+`);
+  const part1 = first.prg.subarray(2);
+  const part2 = asm(`* = $4000\n${next}\n${byteLines(noise(300, 4))}\n* = $41ff\n .byte 0`).prg.subarray(2);
+  return { prg: asm(`${SYS_LINE}
+       lda #$00
+       sta $fb
+       sta $fd
+       lda #$09
+       sta $fc
+       lda #$0e
+       sta $fe
+       ldx #3
+cp:    ldy #0
+c:     lda ($fb),y
+       sta ($fd),y
+       iny
+       bne c
+       inc $fc
+       inc $fe
+       dex
+       bne cp
+       jmp $0e00
+* = $0900
+${byteLines(part1)}
+${byteLines(part2)}
+`).prg, irq: first.labels.irq };
+}
 
 for (const mode of roms ? ['stand-ins', 'ROMs'] as const : ['stand-ins'] as const) {
   const go = (prg: Uint8Array) => unpack(prg, { roms: mode === 'ROMs' ? roms : null });
@@ -198,6 +282,47 @@ ${byteLines(code)}
       expect(r.layers.map(l => [l.entry, l.kind])).toEqual([[0x080d, 'jump'], [0x0040, 'mover'], [0x1000, 'program']]);
       // ldx lda sta dex bpl jmp, twice; not the BRKs it left at $0040-$007f
       expect(r.layers[1].opcodes).toBe('a2bd9dca104c' + 'a2a995ca104c');
+    });
+
+    it('keeps the music an earlier part started when the program plays it on, as in a trackmo', () => {
+      const t = trackmo('loop: inc $d020\n jmp loop'), r = go(t.prg);
+      expect(r.layers.map(l => [l.entry, l.kind])).toEqual([[0x080d, 'mover'], [0x0e00, 'mover'], [0x4000, 'program']]);
+      const s = r.saved!;
+      // from the interrupt handler on: the part's start-up code before it, and the next part's bytes it copied
+      // from in front of that, were spent before the program started
+      expect(s).toMatchObject({ layer: 2, entry: 0x4000, start: t.irq, end: 0x41ff });
+      expect(r.layers[2].kept).toEqual([{ layer: 1, start: t.irq, end: 0x10ff }]);
+      // the music's code as the part loaded it; its tune has stepped on while it played
+      const at = (a: number) => s.prg[a - s.start + 2];
+      expect(Array.from({ length: MUSIC.labels.tune - 0x1000 }, (_, i) => at(0x1000 + i))).toEqual([...MUSIC.prg.subarray(2, 2 + MUSIC.labels.tune - 0x1000)]);
+      expect(at(MUSIC.labels.tune + 1)).toBe(MUSIC.prg[MUSIC.labels.tune + 1 - 0x1000 + 2]);
+      // the earlier layer's range holds what it ran of its own and nothing earlier
+      expect(r.layers[1].kept).toEqual([]);
+    });
+
+    it('saves the program alone when it stops the earlier part\'s music, or loads code over it', () => {
+      const stops = go(trackmo('sei\n lda #$31\n sta $0314\n lda #$ea\n sta $0315\n cli\nloop: inc $d020\n jmp loop').prg);
+      expect(stops.saved).toMatchObject({ layer: 2, entry: 0x4000, start: 0x4000 });
+      expect(stops.layers[2].kept).toEqual([]);
+      // its own player over the old one: what it ran there it wrote itself
+      const over = go(trackmo(`sei
+       lda #$31
+       sta $0314
+       lda #$ea
+       sta $0315
+       cli
+       ldx #31
+cp:    lda own,x
+       sta $1003,x
+       dex
+       bpl cp
+loop:  jsr $1003
+       jmp loop
+own:   ${Array(10).fill('inc $d020').join('\n       ')}
+       rts
+       .fill 1, 0`).prg);
+      expect(over.saved).toMatchObject({ layer: 2, entry: 0x4000, start: 0x4000 });
+      expect(over.layers[2].kept).toEqual([]);
     });
 
     it('says when nothing was unpacked', () => {
