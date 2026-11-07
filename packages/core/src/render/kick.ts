@@ -68,6 +68,38 @@ export interface RenderOptions {
 /** loader parts that span code or data: their end gets a mark too */
 const LOADER_SPANS: Partial<Record<LoaderPart['role'], string>> = { resident: 'its part on the C64', drivecode: 'its drive code', install: 'its installer', tape: 'the tape loader' };
 
+/** the longest a loader's description runs in the source's head before it goes on to the next line (text after `// `) */
+const LOADER_TEXT_WIDTH = 110;
+
+/**
+ * A comment's text as lines of at most `width` characters, broken between words: the first indented by two spaces,
+ * the rest by four, under it. A run of hex bytes (`55 AE 9B …`) and instructions joined by ` / ` stay on one line
+ * when they fit on one; a word longer than a line stays whole.
+ */
+export function wrapComment(text: string, width: number): string[] {
+  // the units a line may break between
+  const units: string[] = [];
+  const hexByte = /^[0-9A-F]{2}[,)]?$/;
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const prev = units[units.length - 1];
+    const join = prev != null && units.length && (
+      (hexByte.test(word) && /(^|\s|\()[0-9A-F]{2}$/.test(prev)) || word === '/' || prev.endsWith(' /')
+      // an instruction's operand stays with it (lda $dd00)
+      || (/^[#$(]/.test(word) && /(^|[\s(])[a-z]{3}$/.test(prev)));
+    if (join && `${prev} ${word}`.length <= width - 4) units[units.length - 1] = `${prev} ${word}`;
+    else units.push(word);
+  }
+  const lines: string[] = [];
+  let line = '';
+  for (const word of units) {
+    const indent = lines.length ? '    ' : '  ';
+    if (line && indent.length + line.length + 1 + word.length > width) { lines.push(indent + line); line = word; }
+    else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push((lines.length ? '    ' : '  ') + line);
+  return lines;
+}
+
 export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOptions = {}): RenderResult {
   const S = A.S;
   const up = S.hexCase === 'upper';
@@ -682,7 +714,12 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     const fileLoaders = (A.loaders ?? []).filter(l => l.parts.some(p => fileOf(p.start) === fi));
     if (fileLoaders.length) {
       head.push({ k: 'cmt', a: f.load, text: `loader${fileLoaders.length > 1 ? 's' : ''} found by Mimir Studio (the ==== lines mark their parts):`, mark: true });
-      for (const l of fileLoaders) head.push({ k: 'cmt', a: f.load, text: `  ${l.name}${l.sure === 'likely' ? ' (by its traits)' : ''}: ${l.how}`, mark: true });
+      for (const l of fileLoaders) {
+        // a long description goes on over lines of its own, indented under the loader's name
+        for (const t of wrapComment(`${l.name}${l.sure === 'likely' ? ' (by its traits)' : ''}: ${l.how}`, LOADER_TEXT_WIDTH)) {
+          head.push({ k: 'cmt', a: f.load, text: t, mark: true });
+        }
+      }
     }
     // the Spindle script, in the file with the first driver
     if (A.spindle?.length && fileOf(A.spindle[0].start) === fi) {

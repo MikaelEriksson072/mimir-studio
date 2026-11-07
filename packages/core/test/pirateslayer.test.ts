@@ -3,7 +3,8 @@
  * (analyze/loaders.ts) by its key check, its signature and its receive loops. The disks are made here: the files are
  * a few bytes of what each boot is known by, nothing of Electronic Arts' own code beyond them. */
 import { describe, expect, it } from 'vitest';
-import { analyze, makeD64, readPirateSlayerDisk, type ProjectInput } from '../src';
+import { analyze, makeD64, readPirateSlayerDisk, render, type ProjectInput } from '../src';
+import { wrapComment } from '../src/render/kick';
 import { fromSource } from './helpers/programs';
 import { keyTrack, toG64 } from './helpers/g64';
 
@@ -66,9 +67,8 @@ describe('Pirate Slayer on a disk', () => {
 const BASIC = '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n';
 const project = (src: string): ProjectInput => ({ name: 'loader', files: [fromSource('loader.prg', BASIC + src)] });
 
-describe('the Pirate Slayer loader', () => {
-  it('is known by its receive loop, the drive code it uploads (the key check) and the key it compares', () => {
-    const found = analyze(project(` jsr recv
+/** a receive loop like Pirate Slayer's, the key check it uploads to the drive and the key's last bytes */
+const SOURCE = ` jsr recv
  rts
 recv: ldy #0
 byte: sec
@@ -107,13 +107,34 @@ go: stx $dd00
  rts
 drive: .byte ${CHECK.map(b => `$${b.toString(16)}`).join(',')}
 key: .byte $55,$ae,$9b,$55,$ad,$55,$cb,$ae,$6b,$ab,$ad,$af
-`)).loaders;
+`;
+
+describe('the Pirate Slayer loader', () => {
+  it('is known by its receive loop, the drive code it uploads (the key check) and the key it compares', () => {
+    const found = analyze(project(SOURCE)).loaders;
     const ps = found.find(l => l.id === 'pirateslayer');
+    // the source's head says so over lines of 110 characters at most, the key's bytes on one of them
+    const p = project(SOURCE);
+    const head = (render(analyze(p), p).files['loader.asm'] as string).split('\n').filter(l => l.startsWith('//   '));
+    expect(head[0]).toMatch(/^\/\/   Pirate Slayer \(Electronic Arts\): /);
+    expect(head.length).toBeGreaterThan(2);
+    expect(head.every(l => l.length <= 113)).toBe(true);
+    expect(head.some(l => l.includes('55 AE 9B 55 AD 55 CB AE 6B AB AD AF'))).toBe(true);
     expect(ps?.sure).toBe('match');
     // the check and the key right after it are one part of drive code
     expect(ps?.parts.map(p => p.role).sort()).toEqual(['drivecode', 'resident']);
     const drive = ps!.parts.find(p => p.role === 'drivecode')!;
     expect(drive.end - drive.start).toBeGreaterThanOrEqual(CHECK.length + 12);
     expect(found.filter(l => l.id !== 'pirateslayer')).toEqual([]);
+  });
+});
+
+describe('a comment in the source', () => {
+  it('is broken between words, the first line under the head and the rest under it, runs of bytes kept whole', () => {
+    expect(wrapComment('short text', 100)).toEqual(['  short text']);
+    expect(wrapComment('one two three four five six', 15)).toEqual(['  one two three', '    four five', '    six']);
+    expect(wrapComment('the key: then 55 AE 9B 55 AD AF, and lda $dd00 / lsr / lsr / eor $dd00 last', 42))
+      .toEqual(['  the key: then 55 AE 9B 55 AD AF, and', '    lda $dd00 / lsr / lsr / eor $dd00 last']);
+    expect(wrapComment('a key of 55 AE 9B 55 AD AF here', 21)).toEqual(['  a key of', '    55 AE 9B 55 AD AF', '    here']);
   });
 });
