@@ -4704,7 +4704,7 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
   });
 });
 
-test('a mounted Pirate Slayer disk: the files outside its directory in the Pirate Slayer tab, opened decoded and re-assembled', async ({ app, page }) => {
+test('a mounted Pirate Slayer disk: the files outside its directory in the Pirate Slayer tab, opened decoded and re-assembled, and saved', async ({ app, page, workDir }) => {
   // fixtures/d64/pirateslayer-demo.d64 (packages/core/test/pirateslayer.test.ts): EA and LOADER with the boot's text, the
   // raster demo on 3/0 and a sine table on 9/0, both stored XOR $EA as EA's loader reads them
   await waitForListing(page);
@@ -4737,6 +4737,23 @@ test('a mounted Pirate Slayer disk: the files outside its directory in the Pirat
     await expect(page.locator('.file-name')).toHaveText(['t3s0_0801.prg', 't9s0_4000.prg']);
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  });
+
+  await test.step('Save files… saves every file decoded, with files.txt; Copy list copies that list', async () => {
+    await page.getByRole('tab', { name: /Pirate Slayer/ }).click();
+    const out = join(workDir, 'pirateslayer-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 2 files of pirateslayer-demo\.d64 to .*, decoded, and files\.txt that lists them$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['files.txt', 't3s0_0801.prg', 't9s0_4000.prg']);
+    expect(readFileSync(join(out, 't3s0_0801.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+    const list = readFileSync(join(out, 'files.txt'), 'utf8').split('\r\n');
+    expect(list[0]).toBe('; Pirate Slayer files of pirateslayer-demo.d64, read by Mimir Studio: 2 files outside the directory.');
+    expect(list[4]).toMatch(/^t9s0_4000\.prg {6}; 9\/0, 2 blocks, loads at \$4000-\$40ff \(256 bytes\), XOR \$ea: /);
+    await page.getByRole('button', { name: 'Copy list' }).click();
+    await expect(toast(page, 'Copied the file list')).toBeVisible();
+    expect((await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n')).toEqual(list.slice(0, -1));
   });
 
   await test.step('ejecting the disk takes the tab away', async () => {

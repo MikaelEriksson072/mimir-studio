@@ -2,7 +2,7 @@
  * disk's files, the BoozeLoader script, Pirate Slayer on the mounted disk, the tape in the datasette, statistics,
  * build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -262,8 +262,9 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
 
 /** The Pirate Slayer tab (spec 13.5h): Electronic Arts' copy protection on the mounted disk: its key track (on a G64:
  *  where, how framed, each copy a turn), the boot and what it does, where the drive's check is, the boot's text, and
- *  the files outside the directory, a row each: a row opens the file as a PRG at its load address, decoded; + adds it. */
-export function PirateSlayerPanel({ disk, onOpenFile }: { disk: MountedDisk; onOpenFile: (f: PirateSlayerFile, add: boolean) => void }) {
+ *  the files outside the directory, a row each: a row opens the file as a PRG at its load address, decoded; + adds it.
+ *  Save files… saves them all, decoded, with files.txt that lists them; Copy list copies that list. */
+export function PirateSlayerPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: PirateSlayerFile, add: boolean) => void; onSaveFiles: () => void }) {
   const p = disk.pirateslayer!;
   const hex = (v: number) => v.toString(16).toUpperCase().padStart(2, '0');
   const keys = [...new Set(p.files.filter(f => f.key).map(f => `$${hex(f.key)}`))];
@@ -294,6 +295,8 @@ export function PirateSlayerPanel({ disk, onOpenFile }: { disk: MountedDisk; onO
       {p.files.length > 0 && <>
         <div className="xref-head spindle-head">
           <span>Files outside the directory: {p.files.length} <span className="muted">· sector chains EA&apos;s loader reads by track and sector, the load address first{keys.length ? `; stored XOR ${keys.join(' and ')} on the disk, which the loader's transfer undoes: they open decoded` : ''}; the names are made up of the first sector and the load address</span></span>
+          <button className="btn small" onClick={() => onCopy(pirateSlayerFileList(p, disk.name).join('\n'), 'Copied the file list')}><Icon name="copy" size={14} />Copy list</button>
+          <button className="btn small" onClick={onSaveFiles} title="Save every file outside the directory as a PRG to a folder, decoded, with files.txt that lists them"><Icon name="download" size={14} />Save files…</button>
         </div>
         <table className="tbl ps-files" aria-label="Pirate Slayer files"><thead><tr><th>From</th><th>Blocks</th><th>Loads</th><th>Bytes</th><th>Name</th><th>Notes</th><th /></tr></thead><tbody>
           {p.files.map(f => {

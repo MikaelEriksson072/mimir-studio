@@ -200,6 +200,31 @@ function looseFiles(image: Uint8Array, boot: PirateSlayerBoot | null): PirateSla
 export const pirateSlayerFileName = (f: Pick<PirateSlayerFile, 'track' | 'sector' | 'load'>): string =>
   `t${f.track}s${f.sector}_${f.load.toString(16).padStart(4, '0')}.prg`;
 
+/** A file outside the directory as a PRG: its load address and its bytes, decoded, as far as memory holds them. */
+export function pirateSlayerPrg(f: PirateSlayerFile): Uint8Array {
+  const out = new Uint8Array(2 + f.end - f.load);
+  out[0] = f.load & 0xff; out[1] = f.load >> 8;
+  out.set(f.bytes.subarray(0, f.end - f.load), 2);
+  return out;
+}
+
+/** The files outside the directory as text (files.txt beside them when they are saved): a line each, after a header
+ *  that says what they are. */
+export function pirateSlayerFileList(disk: PirateSlayerDisk, name: string): string[] {
+  const n = disk.files.length, h = (v: number, w: number) => v.toString(16).padStart(w, '0');
+  const keys = [...new Set(disk.files.filter(f => f.key).map(f => `$${h(f.key, 2)}`))];
+  const out = [
+    `; Pirate Slayer files of ${name}, read by Mimir Studio: ${n} file${n === 1 ? '' : 's'} outside the directory.`,
+    `; Sector chains EA's loader reads by track and sector, the load address first${keys.length ? `; stored XOR ${keys.join(' and ')} on the disk, saved decoded` : ''}.`,
+    '; The names are made up: the first sector and the load address.',
+  ];
+  for (const f of disk.files) {
+    const past = f.load + f.bytes.length - f.end;
+    out.push(`${pirateSlayerFileName(f).padEnd(18)} ; ${f.track}/${f.sector}, ${f.blocks} block${f.blocks === 1 ? '' : 's'}, loads at $${h(f.load, 4)}-$${h(f.end - 1, 4)} (${f.end - f.load} bytes)${f.key ? `, XOR $${h(f.key, 2)}` : ''}${past > 0 ? `, the ${past} bytes past $ffff left out` : ''}: ${f.note}`);
+  }
+  return out;
+}
+
 /** Pirate Slayer on a disk image (D64 or G64): its key, its boot, where its check is; null when it shows no sign of it. */
 export function readPirateSlayerDisk(image: Uint8Array): PirateSlayerDisk | null {
   const format = isG64(image) ? 'G64' : 'D64';

@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { analyze, makeD64, pirateSlayerFileName, readPirateSlayerDisk, render, type ProjectInput } from '../src';
+import { analyze, makeD64, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, render, type ProjectInput } from '../src';
 import { sectorOffset, sectorsOnTrack } from '../src/c64/d64';
 import { wrapComment } from '../src/render/kick';
 import { fromSource } from './helpers/programs';
@@ -94,6 +94,20 @@ describe('Pirate Slayer on a disk', () => {
       expect(p.files[1].note).toMatch(/the game's copy of the loader reads it/);
       expect(p.summary).toMatch(/; 2 files outside the directory$/);
     }
+  });
+
+  it('saves each file as a PRG, decoded, as far as memory holds it, and lists them in files.txt', () => {
+    // 300 bytes at $ff80: the 172 past $ffff are left out
+    const p = readPirateSlayerDisk(chain(chain(eaDisk, 3, 0, 0x8f1f, 300, 0xea), 9, 0, 0xff80, 300, 0xea))!;
+    expect([...pirateSlayerPrg(p.files[0])]).toEqual([0x1f, 0x8f, ...fill(300, 0x8f1f)]);
+    expect([...pirateSlayerPrg(p.files[1])]).toEqual([0x80, 0xff, ...fill(300, 0xff80).subarray(0, 128)]);
+    expect(pirateSlayerFileList(p, 'game.g64')).toEqual([
+      '; Pirate Slayer files of game.g64, read by Mimir Studio: 2 files outside the directory.',
+      "; Sector chains EA's loader reads by track and sector, the load address first; stored XOR $ea on the disk, saved decoded.",
+      '; The names are made up: the first sector and the load address.',
+      't3s0_8f1f.prg      ; 3/0, 2 blocks, loads at $8f1f-$904a (300 bytes), XOR $ea: the first file: the drive sends it as soon as it has found the key, and the boot starts it at its load address',
+      "t9s0_ff80.prg      ; 9/0, 2 blocks, loads at $ff80-$ffff (128 bytes), XOR $ea, the 172 bytes past $ffff left out: the game's copy of the loader reads it, as a chain or a sector at a time",
+    ]);
   });
 
   it('decodes the chain on 3/0 of the stack-page boot with $A5, and keeps other chains as they are', () => {

@@ -2450,7 +2450,9 @@ Vid montering säger toasten och Explorer (*Disk*) vad som hittats, och fliken *
 nyckeln (spår, mönster, SYNC, bitfas, kopiorna), bootet och vad det gör, var kontrollen finns, bootets text och
 filerna utanför katalogen: en rad per fil med första sektorn, block, var den laddar, storlek, namn och vad som läser
 den. En rad öppnar filen som en PRG på laddadressen, avkodad, och + lägger till den i projektet; byte efter `$FFFF`
-lämnas utanför. Analysen känner igen laddaren i spelets första fil (8.11c), och källans huvud beskriver hur den anropas
+lämnas utanför. **Save files…** sparar alla filerna avkodade som PRG:er i en mapp man väljer, med `files.txt` som listar
+dem (`pirateSlayerFileList`: en rad per fil med första sektorn, block, var den laddar, nyckeln och vad som läser den),
+och **Copy list** kopierar samma lista. Analysen känner igen laddaren i spelets första fil (8.11c), och källans huvud beskriver hur den anropas
 (kommandot i A, spåret i Y, sektorn i X).
 
 Bootet körs i Sindri med G64:an i driven, nyckelspår och allt (13.5, 8.11b): Arctic Fox, Chuck Yeager's Advanced

@@ -168,7 +168,7 @@ Stack-bootet (Yeager, Demon Stalkers) har spelets filer i katalogen, okodade. Ef
 `$9700`–`$A000`. Kedjorna på spår 1 är bootets egna block, som `EA` läser med `U1`.
 
 Mimir listar filerna i fliken **Pirate Slayer** (spec 13.5h) och öppnar dem avkodade, så de kan disassembleras och
-assembleras om. Arctic Fox 3/0, 9/0, 19/0 och 23/0 blir byte för byte desamma igen.
+assembleras om. **Save files…** sparar dem avkodade som PRG:er, med en `files.txt` som listar dem. Arctic Fox 3/0, 9/0, 19/0 och 23/0 blir byte för byte desamma igen.
 
 ## Boot 3: Ferrari Formula One (Argonaut/Imagitec för EA)
 
