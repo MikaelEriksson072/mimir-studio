@@ -2484,6 +2484,52 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
   });
 });
 
+test('pack a VICE snapshot: Pack from leaves out the start of its RAM, so the decruncher has room', async ({ app, page }) => {
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
+  await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0200')).toBeVisible();
+  await page.locator('nav.activity').getByRole('button', { name: 'Pack' }).click();
+  for (const name of ['What to pack', 'Packed file', 'Self-extracting', 'Command']) await openSection(page, name);
+  const view = page.locator('.pack-view'), cmd = view.getByLabel('Brokkr command'), from = view.getByLabel('Pack from');
+  const failed = view.getByRole('status').filter({ hasText: 'Brokkr failed' }), card = view.getByRole('status', { name: 'Packed file' });
+
+  await test.step('all of its RAM from $0200 leaves the decruncher no room: the view says so before and after Pack', async () => {
+    await expect(from).toHaveValue('');
+    await expect(from).toHaveAttribute('placeholder', '$0200');
+    await expect(view).toContainText("The build fills memory from $0200 up, as a snapshot's RAM does, where a self-extracting file's decruncher works: there is no room for it.");
+    await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    await expect(failed).toContainText('There is no room for the decruncher', { timeout: 120_000 });
+    await expect(failed).toContainText('next to the program $0200–$ffff. The program fills memory from $0200 up, where the decruncher works: leave out its start with Pack from, under What to pack');
+  });
+
+  await test.step('Pack from $0800 in the failure leaves out $0200–$07ff, and the file decrunches to the rest', async () => {
+    await failed.getByRole('button', { name: 'Pack from $0800' }).click();
+    await expect(from).toHaveValue('$0800');
+    await expect(view).toContainText('Leaves out $0200–$07ff (1536 bytes): after decrunching the program finds there what the decruncher left.');
+    await expect(view).not.toContainText('there is no room for it');
+    await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg,$0800,1536,63488');
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    await expect(card).toContainText('raster-demo-brokkr.prg', { timeout: 120_000 });
+    await expect(card).toContainText("Decrunched in Brokkr's emulated C64: $0800–$ffff has the same 63488 bytes, and it starts at $0810");
+  });
+
+  await test.step('a Pack from that leaves out the SYS line, or all of it, says so; emptied, it packs all of it', async () => {
+    await from.fill('$0900');
+    await from.press('Enter');
+    await expect(view).toContainText('Pack from $0900 leaves out the BASIC line, so there is no SYS to start from');
+    await from.fill('$ffff');
+    await from.press('Enter');
+    await expect(view).toContainText('Leaves out $0200–$fffe');
+    await from.fill('');
+    await from.press('Enter');
+    await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
+    await expect(view.getByRole('button', { name: 'Pack from $0800' })).toBeVisible();
+  });
+});
+
 test('deep analysis from the Problems tab: a snapshot\'s ROM calls are not traced into the RAM below', async ({ app, page }) => {
   // the snapshot's RAM covers the KERNAL and BASIC ROM: the normal analysis traces their calls into it
   await waitForListing(page);

@@ -9,7 +9,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  checkDecrunched, DEFAULT_PACK, editRanges, extraProblem, keepText, makeDemo, makePrg, mergeRanges, packArgs, packEffective, packFileName, packImage, packInputs,
+  checkDecrunched, DEFAULT_PACK, editRanges, extraProblem, keepText, makeDemo, makePrg, mergeRanges, nothingPacked, packArgs, packEffective, packFileName, packImage, packInputs,
   MEMORY_PLACES, packOptions, packOutName, packParts, packProblem, parseExomizer, parseKeep, parsePrg, placeSpan, rangeCover, ZP_PLACES, type PackPrefs, type PackRange,
 } from '../src';
 import { findExomizer, findVice, runExomizer } from '../src/node';
@@ -38,6 +38,18 @@ describe('pack ranges', () => {
     expect(packInputs(parts)).toEqual(['main.prg,$0810,15,16', 'main.prg,$1700,3839,257', 'music.prg,$1700,1792,256']);
     expect(packInputs(packParts(null, files), 'out\\')).toEqual(['out\\main.prg', 'out\\music.prg']);
     expect(packParts([{ start: 0xc000, end: 0xd000 }], files)).toEqual([]);
+    // Pack from: the whole build but for the bytes before it, which Exomizer and Brokkr read as a part of the file
+    const snap = [{ name: 'snap.prg', load: 0x0200, bytes: bytes(0xfe00) }, { name: 'game.prg', load: 0x1000, bytes: bytes(16) }];
+    const from = packParts(null, snap, 0x0800);
+    expect(from.map(p => [p.name, p.start, p.offset, p.bytes.length, p.whole])).toEqual([['snap.prg', 0x0800, 0x0600, 0xf800, false], ['game.prg', 0x1000, 0, 16, true]]);
+    expect(packInputs(from)).toEqual(['snap.prg,$0800,1536,63488', 'game.prg']);
+    expect(packParts(null, snap, 0x0200)).toEqual(packParts(null, snap));
+    expect(packParts(null, [snap[1]], 0x2000)).toEqual([]);
+    expect(nothingPacked(P({ from: 0x2000 }))).toBe('Pack from $2000 leaves out all of the build: it ends before that.');
+    // the chosen blocks are packed as they are: Pack from is for the whole build
+    expect(packParts([{ start: 0x0300, end: 0x0400 }], snap, 0x0800).map(p => p.start)).toEqual([0x0300]);
+    expect(packEffective(P({ ranges: [{ start: 0x0300, end: 0x0400 }], from: 0x0800 })).from).toBeNull();
+    expect(packEffective(P({ from: 0x0800 })).from).toBe(0x0800);
     // the later file wins where they overlap, as when Exomizer loads them in order
     const img = packImage([{ start: 0x1000, bytes: Uint8Array.of(1, 2, 3) }, { start: 0x1001, bytes: Uint8Array.of(9) }, { start: 0x1005, bytes: Uint8Array.of(7) }])!;
     expect([img.start, [...img.bytes]]).toEqual([0x1000, [1, 9, 3, 0, 0, 7]]);

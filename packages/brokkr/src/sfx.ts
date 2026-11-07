@@ -362,10 +362,12 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions & { format?: Sf
   const basic = startKind === 'basic';
   let entry: number;
   if (startKind === 'sys') {
-    const sys = lo === 0x0801 ? readSys(a => (a >= lo && a < hi ? data[a - lo] : 0), 0x0801) : { address: null };
+    // the BASIC line at $0801, where the program holds it (a snapshot's RAM from below it does too)
+    const holds = lo <= 0x0801 && hi > 0x0801;
+    const sys = holds ? readSys(a => (a >= lo && a < hi ? data[a - lo] : 0), 0x0801) : { address: null };
     if (sys.address == null) {
-      throw new BrokkrError('BRK-E110', lo !== 0x0801
-        ? `The program loads at ${h4(lo)}, not at $0801, so it has no BASIC line with a SYS to start it.`
+      throw new BrokkrError('BRK-E110', !holds
+        ? `The program loads at ${h4(lo)}${lo < 0x0801 ? ` and ends at ${h4(hi - 1)}` : ', not at $0801'}, so it has no BASIC line with a SYS to start it.`
         : sys.other != null
         ? `The first BASIC line has SYS ${sys.other}, which Brokkr does not read as an address, so it does not know where the program starts.`
         : 'The program has no SYS in its first BASIC line, so Brokkr does not know where it starts.',
@@ -656,10 +658,13 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions & { format?: Sf
         'Make the program smaller or leave parts out, or pack them with `mem` and load them with a loader.');
     }
     const tables = k.tables.map(t => `${t.what.toLowerCase()} (${t.size} bytes)`).join(', ');
-    throw new BrokkrError('BRK-E150', `There is no room for the decruncher (${k.bSize} bytes), its ${tables} and the crunched data (${k.stream.length} bytes) next to the program ${span(lo, hi)}.`,
-      k.format === 'brokkr'
-        ? "Brokkr's own format needs more memory while it decrunches than Exomizer's: leave some free, or pack with the Exomizer format."
-        : 'Leave out a part of memory the program does not need at its start, such as $0100-$01ff or $0334-$03ff, or pack with `mem`.');
+    // a program from low memory up (a snapshot's RAM from $0200) leaves the decruncher nothing below it
+    const low = lo < 0x0800 ? `The program fills memory from ${h4(lo)} up, where the decruncher works: leave out its start (from $0800 there is usually room; file.prg,$0800,${0x0800 - lo} packs it from there)` : null;
+    throw new BrokkrError('BRK-E150', `There is no room for the decruncher (${k.bSize} bytes)${tables ? `, its ${tables}` : ''} and the crunched data (${k.stream.length} bytes) next to the program ${span(lo, hi)}.`,
+      low ? `${low}, or pack with \`mem\`.`
+        : k.format === 'brokkr'
+          ? "Brokkr's own format needs more memory while it decrunches than Exomizer's: leave some free, or pack with the Exomizer format."
+          : 'Leave out a part of memory the program does not need at its start, such as $0100-$01ff or $0334-$03ff, or pack with `mem`.');
   }
 
   const { k, plan } = chosen;

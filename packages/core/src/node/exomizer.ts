@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PackPrefs } from '../types';
 import {
-  checkDecrunched, packArgs, packFileName, packImage, packInputs, packOutName, packParts, packProblem, parseExomizer,
+  checkDecrunched, nothingPacked, packArgs, packFileName, packImage, packInputs, packOutName, packParts, packProblem, parseExomizer,
   type ExomizerReport, type PackCheck,
 } from '../pack';
 import { runTool } from './unpack';
@@ -57,8 +57,8 @@ export async function runExomizer(o: ExomizerOptions): Promise<ExomizerResult> {
   });
   const outName = packOutName(o.prefs, files[0].name);
   if (used.has(outName.toLowerCase())) return fail(`The packed file cannot be called ${outName}: that is the name of a file it packs.`);
-  const parts = packParts(o.prefs.ranges, files);
-  if (!parts.length) return fail('None of the chosen blocks is in the built files.');
+  const parts = packParts(o.prefs.ranges, files, o.prefs.from ?? null);
+  if (!parts.length) return fail(nothingPacked(o.prefs));
   for (const f of files) await writeFile(join(o.dir, f.name), f.prg);
 
   const args = packArgs(o.prefs, packInputs(parts), outName);

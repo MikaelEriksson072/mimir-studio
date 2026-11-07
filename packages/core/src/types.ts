@@ -178,6 +178,9 @@ export interface PackPrefs {
   mode: PackMode;
   /** null: the built PRGs whole; otherwise these ranges of them (sorted, not overlapping) */
   ranges: PackRange[] | null;
+  /** the whole build (no ranges): the bytes before this address are left out, which makes room below the program for
+   * a self-extracting file's decruncher (a snapshot's RAM fills memory from $0200); null: all of it */
+  from: Addr | null;
   start: PackStart;
   /** the jmp address for start 'jmp' */
   jmp: Addr | null;

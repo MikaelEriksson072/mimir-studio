@@ -10,7 +10,7 @@ import {
   type BrkCrunched, type BrkOptions, type CrunchOptions, type Crunched, type DecruncherFile, type DecruncherNeeds, type DecruncherOptions, type SfxPlace, type Start,
 } from '@mimir/brokkr';
 import type { PackPrefs } from './types';
-import { mergeRanges, packEffective, packOptions, packFileName, packImage, packInputs, packOutName, packParts, shellWord, type ExomizerReport, type PackCheck, type PackFile, type PackPart } from './pack';
+import { mergeRanges, nothingPacked, packEffective, packOptions, packFileName, packImage, packInputs, packOutName, packParts, shellWord, type ExomizerReport, type PackCheck, type PackFile, type PackPart } from './pack';
 import { h2, h4 } from './util/hex';
 
 /** A crunch: here (the default), or on a pool of threads (node/brokkr.ts). */
@@ -52,7 +52,13 @@ export interface BrokkrPack {
   report: ExomizerReport;
   check: PackCheck | null;
   error?: string;
+  /** Brokkr's code for the error (NO_ROOM: the program leaves the decruncher no room) */
+  code?: string;
 }
+
+/** Brokkr's errors for a program that leaves the decruncher no room: it covers the top of the stack, every zero page
+ * place it could use, or the rest of memory it could work in */
+export const NO_ROOM: readonly string[] = ['BRK-E120', 'BRK-E140', 'BRK-E150'];
 
 const $4 = (v: number) => `$${h4(v)}`;
 const $2 = (v: number) => `$${h2(v)}`;
@@ -131,7 +137,7 @@ export interface BrokkrPlan { files: { out: string; parts: PackPart[] }[]; decru
 export function brokkrPlan(typed: PackPrefs, files: readonly PackFile[]): BrokkrPlan {
   const prefs = packEffective(typed);
   const out = packOutName(prefs, files[0]?.name ?? 'packed.prg');
-  const groups = (prefs.split ? prefs.ranges ? mergeRanges(prefs.ranges).map(r => packParts([r], files)) : files.map(f => packParts(null, [f])) : []).filter(g => g.length);
+  const groups = (prefs.split ? prefs.ranges ? mergeRanges(prefs.ranges).map(r => packParts([r], files)) : files.map(f => packParts(null, [f], prefs.from)) : []).filter(g => g.length);
   const ext = /\.\w+$/.exec(out)![0], base = out.slice(0, -ext.length);
   const used = new Set<string>();
   const named = groups.length > 1 ? groups.map(parts => {
@@ -139,7 +145,7 @@ export function brokkrPlan(typed: PackPrefs, files: readonly PackFile[]): Brokkr
     for (let k = 2; used.has(name.toLowerCase()); k++) name = packFileName(`${base}-${h4(Math.min(...parts.map(p => p.start)))}-${k}`, ext);
     used.add(name.toLowerCase());
     return { out: name, parts };
-  }) : [{ out, parts: packParts(prefs.ranges, files) }];
+  }) : [{ out, parts: packParts(prefs.ranges, files, prefs.from) }];
   return { files: named, decruncher: packOptions(prefs).decruncher && prefs.decruncher ? { source: packFileName(`${base}-decrunch`, '.asm'), prg: packFileName(`${base}-decrunch`, '.prg') } : null };
 }
 
@@ -180,7 +186,7 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
     return { name, load: f.prg[0] | (f.prg[1] << 8), bytes: f.prg.subarray(2), prg: f.prg };
   });
   const plan = brokkrPlan(prefs, named), out = plan.files[0].out;
-  const parts = packParts(prefs.ranges, named);
+  const parts = packParts(prefs.ranges, named, prefs.from);
   const image = packImage(parts);
   const commands = brokkrCommands(prefs, plan);
   const base = { argv: commands[0], commands, inputs: named.map(f => ({ name: f.name, prg: f.prg })), packed: image && { start: image.start, length: image.bytes.length } };
@@ -189,7 +195,7 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
   const outs = [...plan.files.map(f => f.out), ...(plan.decruncher ? [plan.decruncher.source, plan.decruncher.prg] : [])];
   const taken = outs.find(o => used.has(o.toLowerCase()));
   if (taken) return fail(`The packed file cannot be called ${taken}: that is the name of a file it packs.`);
-  if (!image) return fail('None of the chosen blocks is in the built files.');
+  if (!image) return fail(nothingPacked(prefs));
   if (prefs.mode === 'sfx' && prefs.start === 'jmp' && prefs.jmp == null) return fail('Enter the address the program starts at after decrunching.');
   const own = prefs.format === 'brokkr' || prefs.format === 'fast';
 
@@ -300,11 +306,16 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
   } catch (e) {
     // a check that failed: the file and the emulated memory go in the pack folder with the program, for a report
     const dump = e instanceof CheckError ? [{ name: 'brokkr-check-file.prg', prg: e.file }, { name: 'brokkr-check-memory.bin', prg: e.memory }] : undefined;
+    // no room next to a program from low memory up (a snapshot's RAM, with the zero page and stack or without): the
+    // view's Pack from leaves its start out
+    const low = e instanceof BrokkrError && NO_ROOM.includes(e.code) && image.start < 0x0800 && !prefs.ranges;
+    const hint = low ? `The program fills memory from $${h4(image.start)} up, where the decruncher works: leave out its start with Pack from, under What to pack (from $0800 there is usually room).`
+      : e instanceof BrokkrError ? e.hint : undefined;
     const msg = e instanceof BrokkrError
-      ? `${e.message}${dump ? " The program, the file and the emulated C64's memory are in the pack folder, for the report." : e.hint ? ` ${e.hint}` : ''}`
+      ? `${e.message}${dump ? " The program, the file and the emulated C64's memory are in the pack folder, for the report." : hint ? ` ${hint}` : ''}`
       : (e as Error).message;
     const code = e instanceof BrokkrError ? `${e.code}: ` : '';
-    return { ...fail(msg, [...lines, `brokkr: ${code}${msg}`].join('\n')), ...(dump ? { dump } : {}) };
+    return { ...fail(msg, [...lines, `brokkr: ${code}${msg}`].join('\n')), ...(dump ? { dump } : {}), ...(e instanceof BrokkrError ? { code: e.code } : {}) };
   }
 }
 

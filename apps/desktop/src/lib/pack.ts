@@ -2,7 +2,7 @@
  * built PRGs (Exomizer), or packs them the same way with Brokkr, which Build & Run verified to be the loaded files
  * byte for byte. */
 import {
-  brokkrCommands, brokkrPlan, DEFAULT_PACK, packArgs, packEffective, packFileName, packImage, packInputs, packOutName, packParts, rangeCover, shellWord,
+  brokkrCommands, brokkrPlan, DEFAULT_PACK, h4, packArgs, packEffective, packFileName, packImage, packInputs, packOutName, packParts, rangeCover, shellWord,
   type AnalysisResult, type FileInput, type PackPart, type PackPrefs, type Project,
 } from '@mimir/core';
 
@@ -29,7 +29,7 @@ export interface PackCommand { args: string[]; text: string; out: string; outs: 
 export function packCommand(prefs: PackPrefs, files: readonly Pick<FileInput, 'load' | 'bytes'>[], fileNames: readonly string[], exe = 'exomizer'): PackCommand {
   const names = packNames(fileNames);
   const named = files.map((f, i) => ({ name: names[i] ?? `file${i + 1}.prg`, load: f.load, bytes: f.bytes }));
-  const parts = packParts(prefs.ranges, named);
+  const parts = packParts(prefs.ranges, named, prefs.from ?? null);
   const out = packOutName(prefs, names[0] ?? 'packed.prg');
   const size = packImage(parts)?.bytes.length ?? 0;
   if (prefs.packer !== 'exomizer') {
@@ -43,10 +43,16 @@ export function packCommand(prefs: PackPrefs, files: readonly Pick<FileInput, 'l
 
 /** A warning about settings the packer would refuse or that would not start the program, or null. */
 export function packWarning(prefs: PackPrefs, A: Pick<AnalysisResult, 'basics'>): string | null {
-  if (prefs.mode !== 'sfx' || prefs.start !== 'sys') return null;
+  if (prefs.mode !== 'sfx') return null;
+  // Pack from leaves out the bytes before it (the whole build only)
+  const from = prefs.ranges ? null : prefs.from ?? null, fromText = from != null ? `Pack from $${h4(from)}` : '';
+  if (from != null && prefs.start === 'jmp' && prefs.jmp != null && prefs.jmp < from) return `The program starts at $${h4(prefs.jmp)}, which ${fromText} leaves out: pack from $${h4(prefs.jmp)} or lower, or start it elsewhere.`;
+  if (from != null && prefs.start === 'basic' && from > 0x0801) return `${fromText} leaves out the start of the BASIC program that RUN starts: pack from $0801 or lower.`;
+  if (prefs.start !== 'sys') return null;
   const b = A.basics.find(x => x.sys != null && (x.file ?? 0) === 0);
   if (!b) return 'There is no BASIC line with a SYS to start from: choose “Jump to address”.';
   if (prefs.ranges && rangeCover(prefs.ranges, b.start, b.end) < b.end - b.start) return 'The chosen blocks leave out the BASIC line, so there is no SYS to start from: add it, or choose “Jump to address”.';
+  if (from != null && b.start < from) return `${fromText} leaves out the BASIC line, so there is no SYS to start from: pack from $${h4(b.start)} or lower, or choose “Jump to address”.`;
   return null;
 }
 

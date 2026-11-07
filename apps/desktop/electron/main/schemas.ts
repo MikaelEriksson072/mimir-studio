@@ -31,6 +31,8 @@ export const packPrefsSchema = z.object({
   format: z.enum(['exomizer', 'brokkr', 'fast', 'auto']).default('exomizer'),
   mode: z.enum(['sfx', 'mem']),
   ranges: z.array(packRange).max(4096).nullable(),
+  // project files from before it have none: all of the build
+  from: z.number().int().min(0).max(0xffff).nullable().default(null),
   start: z.enum(['sys', 'basic', 'jmp']),
   jmp: z.number().int().min(0).max(0xffff).nullable(),
   effect: z.enum(['default', 'none', 'x1', 'x2', 'x3']),

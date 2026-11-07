@@ -6,7 +6,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workerFile } from '@mimir/brokkr/node';
-import { brokkrArgs, DEFAULT_PACK, makeDemo, makePrg, packNeeds, packWithBrokkr, parsePrg, type PackPrefs } from '../src';
+import { readFileSync } from 'node:fs';
+import { brokkrArgs, DEFAULT_PACK, makeDemo, makePrg, openC64File, packNeeds, packWithBrokkr, parsePrg, type PackPrefs } from '../src';
 import { findVice, packWithBrokkrThreads } from '../src/node';
 import { fromSource, rng } from './helpers/programs';
 
@@ -74,6 +75,25 @@ describe('packing with Brokkr', () => {
       expect(run.stderr).toBe('');
       expect(new Uint8Array(await readFile(join(dir, r.name!)))).toEqual(r.prg);
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("packs a VICE snapshot from $0800: its RAM from $0200 up leaves the decruncher no room", async () => {
+    const snap = openC64File('raster-demo.vsf', new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/vsf/raster-demo.vsf'))));
+    const files = [{ name: 'raster-demo.prg', prg: makePrg(snap.load, snap.bytes) }];
+    expect(snap.load).toBe(0x0200);
+    const whole = await packWithBrokkr(files, P());
+    expect(whole.ok).toBe(false);
+    expect(whole.code).toBe('BRK-E150');
+    expect(whole.error).toMatch(/^There is no room for the decruncher .* next to the program \$0200–\$ffff\. The program fills memory from \$0200 up, where the decruncher works: leave out its start with Pack from, under What to pack \(from \$0800 there is usually room\)\.$/);
+    for (const format of ['exomizer', 'brokkr', 'fast'] as const) {
+      const r = await packWithBrokkr(files, P({ from: 0x0800, format }));
+      expect(r.ok, `${format}: ${r.error}`).toBe(true);
+      expect(r.check?.status).toBe('same');
+      expect(r.packed).toEqual({ start: 0x0800, length: 0xf800 });
+      expect(r.argv.at(-1)).toBe('raster-demo.prg,$0800,1536,63488');
+    }
+    // with Pack from beyond its end, nothing is packed
+    expect((await packWithBrokkr([{ name: 'game.prg', prg: makePrg(0x1000, bytes(16)) }], P({ from: 0x2000, start: 'jmp', jmp: 0x1000 }))).error).toBe('Pack from $2000 leaves out all of the build: it ends before that.');
   });
 
   it("packs in Brokkr's own format, smaller, as the command it shows does", async () => {

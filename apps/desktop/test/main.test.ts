@@ -417,6 +417,11 @@ describe('schemas', () => {
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, format: 'auto', maxSeconds: 0 } }).success).toBe(false);
     const { maxSeconds: _max, ...untimed } = DEFAULT_PACK;
     expect(packSchema.parse({ files, prefs: untimed }).prefs.maxSeconds).toBeNull();
+    // Pack from: project files from before it have none, all of the build
+    expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, from: 0x0800 } }).success).toBe(true);
+    expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, from: 0x10000 } }).success).toBe(false);
+    const { from: _from, ...whole } = DEFAULT_PACK;
+    expect(packSchema.parse({ files, prefs: whole }).prefs.from).toBeNull();
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, packer: 'zip' } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, effort: 'ultra' } }).success).toBe(false);
     expect(packSchema.safeParse({ files, prefs: { ...DEFAULT_PACK, extra: '-p 4 -Di_ram_during=$34' } }).success).toBe(true);

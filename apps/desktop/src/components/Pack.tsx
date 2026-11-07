@@ -4,7 +4,7 @@
  * with the packer, format and kind of file chosen (packOptions); they are kept in the project. Pack builds, verifies
  * and packs. */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, MEMORY_PLACES, mergeRanges, packDecruncher, packEffective, packNeeds, packOptions, packProblem, parseKeep, placeSpan, ZP_PLACES, type PackPlace, rangeCover, relocAt, type Addr, type AnalysisResult, type FileInput, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
+import { editRanges, extraProblem, h2, h4, keepText, kindInfo, loadAddress, loadRange, MEMORY_PLACES, mergeRanges, NO_ROOM, nothingPacked, packDecruncher, packEffective, packNeeds, packOptions, packProblem, parseKeep, placeSpan, ZP_PLACES, type PackPlace, rangeCover, relocAt, type Addr, type AnalysisResult, type FileInput, type PackFormat, type PackPrefs, type Project, type RenderResult } from '@mimir/core';
 import type { PackResponse } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
 import { SideSection } from './SideSection';
@@ -162,6 +162,31 @@ function PlaceField({ id, label, value, places, max, need, clash, auto, onCommit
   );
 }
 
+/** where Pack from goes when the build starts too low for the decruncher: the first 1.5 KB above $0200 make room */
+const ROOM_FROM = 0x0800;
+
+/** Pack from: the bytes of the whole build before an address left out, which makes room below the program for a
+ * self-extracting file's decruncher (a snapshot's RAM fills memory from $0200); what it leaves out, and, for a build
+ * that starts below $0400 (there is no room then in any format), a button that packs from $0800. */
+export function PackFrom({ id, prefs, set, files }: { id: string; prefs: PackPrefs; set: (patch: Partial<PackPrefs>, label: string) => void; files: readonly Pick<FileInput, 'load' | 'bytes'>[] }) {
+  if (!files.length) return null;
+  const lo = Math.min(...files.map(f => f.load)), hi = Math.max(...files.map(f => f.load + f.bytes.length));
+  const from = prefs.from, out = from != null && from > lo ? Math.min(from, hi) - lo : 0;
+  const help = from == null ? 'Empty: all of it. An address leaves out the bytes before it, to make room for the decruncher below the program.'
+    : from >= hi ? null
+    : out ? `Leaves out $${h4(lo)}–$${h4(from - 1)} (${out} bytes): after decrunching the program finds there what the decruncher left.`
+    : `The build starts at $${h4(lo)}: there is nothing before it to leave out.`;
+  return <>
+    <HexField id={id} label="Pack from" value={from} placeholder={`$${h4(lo)}`} help={help ?? undefined}
+      onCommit={v => set({ from: v }, v == null ? 'Pack all of the build' : `Pack from $${h4(v)}`)} />
+    {from != null && from >= hi && <p className="err-text small">That leaves out all of it: the build ends at ${h4(hi - 1)}.</p>}
+    {from == null && lo < 0x0400 && prefs.mode === 'sfx' && <div className="pack-note">
+      <p className="warn-text small">The build fills memory from ${h4(lo)} up, as a snapshot's RAM does, where a self-extracting file's decruncher works: there is no room for it. From ${h4(ROOM_FROM)} there is usually room.</p>
+      <button className="btn small" onClick={() => set({ from: ROOM_FROM }, `Pack from $${h4(ROOM_FROM)}`)}>Pack from ${h4(ROOM_FROM)}</button>
+    </div>}
+  </>;
+}
+
 /** Address ranges as typed (`$c000-$cfff, $0334-$03ff`), committed when they read as ranges; what is wrong below. */
 export function RangesField({ id, label, value, placeholder, help, onCommit }: { id: string; label: string; value: PackPrefs['keep']; placeholder?: string; help?: string; onCommit: (v: PackPrefs['keep']) => void }) {
   const [text, setText] = useState(keepText(value));
@@ -206,6 +231,7 @@ export function PackView(p: PackViewProps) {
           <div className="pack-files">
             {project.files.map((f, i) => <div key={f.id || i} className="mono small"><Icon name="doc" size={12} /> {R.fileNames[i]}.prg <span className="muted">${h4(f.load)}–${h4(f.load + f.bytes.length - 1)} · {fmtBytes(f.bytes.length)}</span></div>)}
             <p className="muted small">The PRG{project.files.length > 1 ? 's' : ''} Build &amp; Run builds{project.files.length > 1 ? ', packed together into one file' : ''}.</p>
+            <PackFrom id="pack-from" prefs={prefs} set={set} files={project.files} />
           </div>
         ) : <>
           <div className="pack-sum small">{ranges.length ? <><b>{fmtBytes(cmd.size)}</b> <span className="muted">from ${h4(cmd.parts[0]?.start ?? ranges[0].start)} in {ranges.length} range{ranges.length > 1 ? 's' : ''}</span></> : <span className="muted">Nothing chosen yet: tick blocks below, or select a range in the listing.</span>}</div>
@@ -287,7 +313,10 @@ export function PackSettings(p: PackSettingsProps) {
   const { prefs, set, files, fileNames, entry, warning, exomizer, desktop, busy, packing, result, current } = p;
   const exe = exomizer ? exomizer.split(/[\\/]/).pop()! : 'exomizer';
   const cmd = packCommand(prefs, files, fileNames, exe);
-  const problem = packProblem(prefs) ?? (prefs.ranges && !cmd.parts.length ? 'None of the chosen ranges holds loaded bytes.' : null);
+  const problem = packProblem(prefs) ?? (!cmd.parts.length && files.length ? (prefs.ranges ? 'None of the chosen ranges holds loaded bytes.' : nothingPacked(prefs)) : null);
+  // Brokkr found no room for the decruncher next to a whole build from low memory up: pack from higher
+  const roomFrom = !!result && !result.ok && result.code != null && NO_ROOM.includes(result.code) && !prefs.ranges && result.packed != null
+    && result.packed.start < ROOM_FROM && (prefs.from ?? 0) < ROOM_FROM ? ROOM_FROM : null;
   const fresh = !!result && result.key === current;
   const brokkr = prefs.packer !== 'exomizer', sfx = prefs.mode === 'sfx';
   // what is shown: only the settings that take effect; the format as it is packed (auto is for a self-extracting file)
@@ -434,7 +463,8 @@ export function PackSettings(p: PackSettingsProps) {
         <button className="btn primary pack-go" disabled={!ready} onClick={p.onPack} title={p.packTitle}>
           {packing ? <><span className="spinner" aria-hidden />Packing…</> : <><Icon name="download" size={14} />{busy ?? 'Pack'}</>}</button>
         {!packing && p.before && <p className="muted small">{p.before}</p>}
-        {packing ? <PackingCard packing={packing} /> : <div ref={resultRef}>{result && <PackResultCard result={result} fresh={fresh} onRun={p.onRun} onSave={p.onSave} onSaveFile={p.onSaveFile} onLog={p.onLog} />}</div>}
+        {packing ? <PackingCard packing={packing} /> : <div ref={resultRef}>{result && <PackResultCard result={result} fresh={fresh} onRun={p.onRun} onSave={p.onSave} onSaveFile={p.onSaveFile} onLog={p.onLog}
+          onFrom={roomFrom != null ? () => set({ from: roomFrom }, `Pack from $${h4(roomFrom)}`) : undefined} fromText={roomFrom != null ? `Pack from $${h4(roomFrom)}` : undefined} />}</div>}
       </SideSection>
   </>;
 }
@@ -473,13 +503,18 @@ function PackingCard({ packing }: { packing: PackProgress }) {
   );
 }
 
-function PackResultCard({ result: r, fresh, onRun, onSave, onSaveFile, onLog }: { result: PackResult; fresh: boolean; onRun: () => void; onSave: () => void; onSaveFile: (f: { name: string; prg: Uint8Array }) => void; onLog: () => void }) {
+function PackResultCard({ result: r, fresh, onRun, onSave, onSaveFile, onLog, onFrom, fromText }: { result: PackResult; fresh: boolean; onRun: () => void; onSave: () => void; onSaveFile: (f: { name: string; prg: Uint8Array }) => void; onLog: () => void;
+  /** a failure for lack of room: set Pack from where there is room (fromText: the button) */
+  onFrom?: () => void; fromText?: string }) {
   if (!r.ok) {
     return (
       <div className="pack-result bad" role="status">
         <div className="pack-result-head"><Icon name="err" size={14} /><b>{r.argv[0] === 'brokkr' ? 'Brokkr' : 'Exomizer'} failed</b></div>
         <div className="small">{r.error}</div>
-        <div className="bm-actions"><button className="btn small" onClick={onLog}>Show output</button></div>
+        <div className="bm-actions">
+          {onFrom && <button className="btn small primary" onClick={onFrom}>{fromText}</button>}
+          <button className="btn small" onClick={onLog}>Show output</button>
+        </div>
       </div>);
   }
   // several files: crunched data in a file for each part, or with the decruncher written next to it

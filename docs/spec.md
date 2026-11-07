@@ -2714,7 +2714,14 @@ och den packade filen. Kommandot vyn visar är den fristående Brokkrs (`brokkr 
 **Exomizer** packar som förut:
 
 **Vad som packas:**
-- *Whole build*: de byggda PRG:erna hela. Flera filer packas ihop till en.
+- *Whole build*: de byggda PRG:erna hela. Flera filer packas ihop till en. *Pack from* (`PackPrefs.from`, tomt: allt)
+  lämnar bort byten före en adress, så att uppackaren får plats under programmet: en snapshots RAM från $0200 fyller
+  minnet där den arbetar, och då finns ingen plats i något format. Fältet säger vad som lämnas bort (*Leaves out
+  $0200–$07ff (1536 bytes)*: programmet hittar där vad uppackaren lämnade); ett bygge som börjar under $0400 får en
+  notis med knappen *Pack from $0800* (därifrån finns oftast plats), och när Brokkr inte hittar plats för ett bygge som
+  börjar under $0800 (BRK-E120, -E140, -E150) säger felet det och har samma knapp. Kommandot packar då en del av filen
+  (`raster-demo.prg,$0800,1536,63488`), och vyn varnar när starten, SYS-raden eller BASIC-programmet för RUN lämnas
+  bort. *Chosen blocks* packas som de är. Brokkr läser SYS-raden på $0801 också i ett program som börjar under den.
 - *Chosen blocks*: adressintervall (`PackPrefs.ranges`, sorterade, utan överlapp). Vyn listar blocken med en kryssruta
   var: ikryssad när blocket är helt med, halvt när en del är med. *Selection* lägger till markeringen i listningen och
   *Block at the cursor* blocket där markören står. I listningens högerklicksmeny under *Program* finns *Pack block/selection with

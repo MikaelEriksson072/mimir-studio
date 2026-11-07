@@ -6,7 +6,7 @@ import { splitArgs } from './util/args';
 import { h2, h4 } from './util/hex';
 
 export const DEFAULT_PACK: PackPrefs = {
-  packer: 'brokkr', effort: 'normal', format: 'exomizer', mode: 'sfx', ranges: null, start: 'sys', jmp: null, effect: 'default', ramExit: null, irqExit: null,
+  packer: 'brokkr', effort: 'normal', format: 'exomizer', mode: 'sfx', ranges: null, from: null, start: 'sys', jmp: null, effect: 'default', ramExit: null, irqExit: null,
   memLoad: 'auto', forward: false, compat: false, fast: false, extra: '', out: '', dir: '',
   zp: null, decruncherAt: null, tablesAt: null, keep: [], split: false, decruncher: true, maxSeconds: null,
 };
@@ -44,7 +44,7 @@ export function packOptions(p: PackPrefs) {
 export function packEffective(p: PackPrefs): PackPrefs {
   const on = packOptions(p), d = DEFAULT_PACK;
   return {
-    ...p, format: on.format ? (p.format === 'auto' && !(p.mode === 'sfx') ? 'exomizer' : p.format) : d.format, maxSeconds: on.maxSeconds ? p.maxSeconds : null, effort: on.effort ? p.effort : d.effort, start: on.start ? p.start : d.start,
+    ...p, from: p.ranges ? null : p.from ?? null, format: on.format ? (p.format === 'auto' && !(p.mode === 'sfx') ? 'exomizer' : p.format) : d.format, maxSeconds: on.maxSeconds ? p.maxSeconds : null, effort: on.effort ? p.effort : d.effort, start: on.start ? p.start : d.start,
     jmp: on.jmp ? p.jmp : null, effect: on.effect ? p.effect : d.effect, ramExit: on.ramExit ? p.ramExit : null,
     irqExit: on.irqExit ? p.irqExit : null, memLoad: on.memLoad ? p.memLoad : d.memLoad, forward: on.forward && p.forward,
     compat: on.compat && p.compat, fast: on.fast && p.fast, extra: on.extra ? p.extra : '',
@@ -140,9 +140,17 @@ export function rangeCover(ranges: readonly PackRange[], start: Addr, end: Addr)
   return n;
 }
 
-/** The parts of the files that are packed, file by file in order (Exomizer loads them so: a later one wins). */
-export function packParts(ranges: readonly PackRange[] | null, files: readonly PackFile[]): PackPart[] {
-  if (!ranges) return files.map(f => ({ name: f.name, start: f.load, offset: 0, bytes: f.bytes, whole: true }));
+/** The parts of the files that are packed, file by file in order (Exomizer loads them so: a later one wins): the
+ * ranges' bytes, or (no ranges) the files whole, but for the bytes before `from`. */
+export function packParts(ranges: readonly PackRange[] | null, files: readonly PackFile[], from: Addr | null = null): PackPart[] {
+  if (!ranges) {
+    const out: PackPart[] = [];
+    for (const f of files) {
+      const s = Math.max(f.load, from ?? 0), e = f.load + f.bytes.length;
+      if (e > s) out.push({ name: f.name, start: s, offset: s - f.load, bytes: s === f.load ? f.bytes : f.bytes.subarray(s - f.load), whole: s === f.load });
+    }
+    return out;
+  }
   const merged = mergeRanges(ranges), out: PackPart[] = [];
   for (const f of files) for (const r of merged) {
     const s = Math.max(r.start, f.load), e = Math.min(r.end, f.load + f.bytes.length);
@@ -150,6 +158,10 @@ export function packParts(ranges: readonly PackRange[] | null, files: readonly P
   }
   return out;
 }
+
+/** Why nothing is packed: no chosen block holds loaded bytes, or Pack from leaves out all of the build. */
+export const nothingPacked = (p: Pick<PackPrefs, 'ranges' | 'from'>): string =>
+  p.ranges || p.from == null ? 'None of the chosen blocks is in the built files.' : `Pack from $${h4(p.from)} leaves out all of the build: it ends before that.`;
 
 /** Exomizer's in-file arguments: `file.prg` for a whole PRG, `file.prg,$0810,14,1000` for a range of one. */
 export const packInputs = (parts: readonly PackPart[], dir = ''): string[] =>

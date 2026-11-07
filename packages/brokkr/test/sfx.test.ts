@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BrokkrError } from '../src/errors.ts';
 import { decruncherNeeds, findSys, LONG_SECONDS, PAL_HZ, ramFor, sfx } from '../src/sfx.ts';
 import { EXOMIZER, basicProgram, programLike, rng } from './tools.ts';
 
@@ -78,6 +79,29 @@ describe('self-extracting files', () => {
       expect(tables).toBeLessThanOrEqual(needs.tables.max);
     }
     expect(decruncherNeeds({ format: 'fast', start: 'basic' }).resident.max).toBeGreaterThan(decruncherNeeds({ format: 'fast' }).resident.max);
+  });
+
+  it('start by the SYS at $0801 a program that holds it from below, as a snapshot packed from $0800 does', () => {
+    const prog = Uint8Array.from([0, ...basicProgram(programLike(8000, 4), 2064)]);
+    expect(sfx(prog, 0x0800).entry).toBe(2064);
+    expect(() => sfx(prog.subarray(0, 1), 0x0800)).toThrow(/^The program loads at \$0800 and ends at \$0800, so it has no BASIC line with a SYS to start it\.$/);
+    expect(() => sfx(programLike(300, 1), 0x1000)).toThrow(/^The program loads at \$1000, not at \$0801, so it has no BASIC line/);
+  });
+
+  it('say to leave out the start of a program that fills memory from low up, as a snapshot does', () => {
+    const snap = programLike(0x10000 - 0x0200, 9);
+    const fails = (format: 'exomizer' | 'fast') => {
+      try { sfx(snap, 0x0200, { start: 0x0810, format, fallback: false }); } catch (e) { return e as BrokkrError; }
+      throw new Error('it packed');
+    };
+    const exo = fails('exomizer'), fast = fails('fast');
+    expect(exo.code).toBe('BRK-E150');
+    expect(exo.message).toMatch(/^There is no room for the decruncher \(\d+ bytes\), its decrunch table \(156 bytes\) and the crunched data \(\d+ bytes\) next to the program \$0200–\$ffff\.$/);
+    // the fast format has no tables
+    expect(fast.message).toMatch(/^There is no room for the decruncher \(\d+ bytes\) and the crunched data/);
+    expect(exo.hint).toMatch(/fills memory from \$0200 up, where the decruncher works: leave out its start .* file\.prg,\$0800,1536 packs it from there\), or pack with `mem`\./);
+    // from $0800 it has room
+    expect(sfx(snap.subarray(0x0600), 0x0800, { start: 0x0810 }).format).toBe('exomizer');
   });
 
   it('say what is in the way of where they are told to go', () => {

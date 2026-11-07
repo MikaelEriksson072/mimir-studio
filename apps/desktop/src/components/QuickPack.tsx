@@ -10,7 +10,7 @@ import { Icon } from '../lib/icons';
 import { packKeyOf, packWarning } from '../lib/pack';
 import { cx, errorText, fmtBytes } from '../lib/util';
 import { useUi } from '../store/ui';
-import { PackerChoice, PackSettings, RangesField, type PackProgress, type PackResult } from './Pack';
+import { PackerChoice, PackFrom, PackSettings, RangesField, type PackProgress, type PackResult } from './Pack';
 
 const kr = window.kr;
 
@@ -24,21 +24,22 @@ type Input =
 const folderOf = (path: string) => path.replace(/[\\/][^\\/]*$/, '');
 const bare = (name: string) => name.replace(/\.prg$/i, '');
 
-/** the BASIC line of a PRG that loads at $0801 (its SYS starts the program), read without the analysis */
+/** the BASIC line at $0801 of a PRG that holds it (its SYS starts the program; a snapshot's RAM from $0200 holds it
+ * too), read without the analysis */
 function basicOf(f: Pick<Packed, 'load' | 'bytes'> | undefined): BasicInfo | null {
-  if (!f || f.load !== 0x0801) return null;
+  if (!f || f.load > 0x0801 || f.load + f.bytes.length <= 0x0801) return null;
   const mem = new Uint8Array(0x10000), owner = new Int16Array(0x10000).fill(-1);
   const n = Math.min(f.bytes.length, 0x10000 - f.load);
   mem.set(f.bytes.subarray(0, n), f.load);
   owner.fill(0, f.load, f.load + n);
-  return parseBasic(mem, owner, f.load);
+  return parseBasic(mem, owner, 0x0801);
 }
 
 /** settings for new files: the packer and how it packs stay, what belongs to the files before goes; the program starts
  *  with the SYS of its BASIC line, else at its load address; the packed file goes next to them */
 function prefsFor(p: PackPrefs, first: Packed | undefined, dir: string): PackPrefs {
   const sys = basicOf(first)?.sys ?? null;
-  return { ...p, dir, out: '', ranges: null, start: sys != null ? 'sys' : 'jmp', jmp: sys != null ? null : first?.load ?? null, memLoad: typeof p.memLoad === 'number' ? 'auto' : p.memLoad };
+  return { ...p, dir, out: '', ranges: null, from: null, start: sys != null ? 'sys' : 'jmp', jmp: sys != null ? null : first?.load ?? null, memLoad: typeof p.memLoad === 'number' ? 'auto' : p.memLoad };
 }
 
 interface QuickPackProps {
@@ -203,8 +204,9 @@ export function QuickPack({ onBack, source: given, back = { label: 'Start', titl
                   <button role="tab" aria-selected={!ranges} className={cx(!ranges && 'on')} onClick={() => ranges && set({ ranges: null })}>{files.length > 1 ? 'Whole files' : 'Whole file'}</button>
                   <button role="tab" aria-selected={!!ranges} className={cx(ranges && 'on')} onClick={() => !ranges && set({ ranges: [{ start: first.load, end: first.load + first.bytes.length }] })}>Address ranges</button>
                 </div>
-                {ranges && <RangesField id="qp-ranges" label="Ranges to pack" value={ranges as PackRange[]} placeholder={`$${h4(first.load)}-$${h4(first.load + first.bytes.length - 1)}`}
-                  help="Each range by its first and last address, separated by commas. Only these bytes are packed." onCommit={v => set({ ranges: v })} />}
+                {ranges ? <RangesField id="qp-ranges" label="Ranges to pack" value={ranges as PackRange[]} placeholder={`$${h4(first.load)}-$${h4(first.load + first.bytes.length - 1)}`}
+                  help="Each range by its first and last address, separated by commas. Only these bytes are packed." onCommit={v => set({ ranges: v })} />
+                  : <PackFrom id="qp-from" prefs={prefs} set={set} files={files} />}
               </>}
             </section>
             {error && <div className="np-error" role="alert">{error}</div>}

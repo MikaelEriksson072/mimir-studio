@@ -89,7 +89,7 @@ export async function packWithBrokkr(req: PackRequest, policy: PathPolicy, pack:
   for (const f of files) await writeFile(f.path, f.prg);
   return {
     ok: r.ok, output: r.output, argv: r.argv, commands: r.commands, ms: r.ms, dir, packed: r.packed, report: r.report,
-    check: r.check && { ...r.check, argv: [], output: '' }, error: r.error, ...(r.tried ? { tried: r.tried } : {}),
+    check: r.check && { ...r.check, argv: [], output: '' }, error: r.error, ...(r.tried ? { tried: r.tried } : {}), ...(r.code ? { code: r.code } : {}),
     ...(r.ok && r.name && r.prg ? { name: r.name, path: join(dir, r.name), prg: r.prg, files } : {}),
   };
 }

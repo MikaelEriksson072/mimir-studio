@@ -106,10 +106,13 @@ memory image (where they overlap, a later one wins; gaps between them are zero).
 
 The file loads at `$0801`, decrunches the program and starts it.
 
-- `--start sys` (the default) starts it with the SYS of the program's first BASIC line, `--start basic` with `RUN` (a
-  BASIC program), `--start <address>` with a jump there (a program that loads elsewhere than `$0801` needs this). The
-  SYS is read as a number (`SYS 2061`, `SYS(2061)`); one with an expression (`SYS 2*1024`) is an error that asks for
-  `--start`, as Brokkr does not work out its value.
+- `--start sys` (the default) starts it with the SYS of the program's first BASIC line, at `$0801` (a program that
+  starts below it, such as a snapshot's RAM, holds it there too), `--start basic` with `RUN` (a BASIC program),
+  `--start <address>` with a jump there (a program that loads after `$0801` needs this). The SYS is read as a number
+  (`SYS 2061`, `SYS(2061)`); one with an expression (`SYS 2*1024`) is an error that asks for `--start`, as Brokkr does
+  not work out its value.
+- A program that fills memory from low up (a snapshot's RAM from `$0200`) leaves the decruncher no room: pack it from
+  `$0800` as a part of the file, `snap.prg,$0800,1536` (its first 1536 bytes left out).
 - `--ram-exit <$01>` is `$01` after decrunching (default `$37`, BASIC and KERNAL in); `--irq on|off` the interrupt flag
   after decrunching (default on when the KERNAL is in).
 - `--no-effect`: no border flashing while it decrunches (the fast format never flashes).

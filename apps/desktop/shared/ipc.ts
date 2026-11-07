@@ -241,6 +241,8 @@ export interface PackResponse {
   /** sfx: Exomizer's desfx (or Brokkr's emulated C64) decrunched it, and this is how that compares with what was packed */
   check: (PackCheck & { argv: string[]; output: string }) | null;
   error?: string;
+  /** Brokkr's code for the error (NO_ROOM: the program leaves the decruncher no room) */
+  code?: string;
 }
 
 /** Save a file with a save dialog (the packed PRG); null: the dialog was cancelled. */
