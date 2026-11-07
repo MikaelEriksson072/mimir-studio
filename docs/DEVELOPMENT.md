@@ -312,8 +312,9 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   (`gfxLayout(…, parts)`, rows found with a binary search) and draws a band of rows on a canvas the size of the window.
   `fmt` writes `1:$8000`, `resolve` takes typed addresses into a bank. The bank list's *All banks* sets the same setting.
 - **Music.** `detectMusic()` (`packages/core/src/analyze/music.ts`) finds a player by its jump table (`JMP init`, then
-  `JMP play`, up to four JMPs, or the play code right after them) and decodes the code its entries reach where the trace
-  did not get to it. A snapshot taken after init ran, a play called from an interrupt the trace missed and a player
+  `JMP play`, up to four JMPs, or the play code right after them; or an init that does nothing, an `rts` at the start of
+  a page with play right after, when that plays) and decodes the code its entries reach where the trace did not get to
+  it. A snapshot taken after init ran, a play called from an interrupt the trace missed and a player
   nothing traced reaches are found too. Play is the entry the IRQ calls (traced, or the vectors in a snapshot), else one
   the program or untraced code calls. The note frequency table every tracker player has counts. The program's start-up
   table, a routine that calls init and play, and a JMP pair in other code are not taken for players. On 57 real

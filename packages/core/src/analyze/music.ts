@@ -1,5 +1,7 @@
 /* 5.8 SID music detection. A player starts with a jump table: JMP init, then JMP play (up to four JMPs) or the play
- * code right after them, scored by the code its entries reach. That code is decoded from the table where the trace did
+ * code right after them, scored by the code its entries reach. A tune whose song is set in its data can have an init
+ * that does nothing in place of JMP init (rts, nop / rts, nop / nop / rts at the start of a page, as Booze Design's):
+ * that table counts only when it plays, and it never calls another player. That code is decoded from the table where the trace did
  * not get to it, so a player still counts when its init ran before a snapshot was taken or its play is called from an
  * interrupt the trace did not find. Play is the entry the IRQ or the program calls, else the one that writes the most
  * SID registers. A table whose code calls another player's entries is that player's caller, and where tables overlap
@@ -57,8 +59,8 @@ interface Slot { at: Addr; to: Addr; jmp: boolean }
 
 /** A jump table that passed the tests: its entries, the code they reach and where that code ends; `irq` when the
  *  IRQ calls play, `judged` when its code passed the tests (not only its run); `run`: the run that played (init and
- *  `play`), `resume` when it played without init */
-interface Cand { start: Addr; api: Addr[]; play: Addr; sub: Reach; regs: Set<Addr>; sidAt: Addr[]; score: number; why: string[]; hi: Addr; irq: boolean; judged: boolean; run?: PlayerRun; resume?: boolean }
+ *  `play`), `resume` when it played without init, `empty` when its init does nothing (an rts where JMP init would be) */
+interface Cand { start: Addr; api: Addr[]; play: Addr; sub: Reach; regs: Set<Addr>; sidAt: Addr[]; score: number; why: string[]; hi: Addr; irq: boolean; judged: boolean; run?: PlayerRun; resume?: boolean; empty?: boolean }
 
 /**
  * Where note frequency tables start (their high bytes): a run of at least 24 rising bytes, one apart (the low and
@@ -249,15 +251,27 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     return false;
   };
 
+  /** the three bytes at `a` as an init that returns at once: rts (two bytes of the player's after it), nop / rts, nop /
+   *  nop / rts */
+  const emptyInit = (a: Addr): string | null => {
+    if (!loaded(a) || !loaded(a + 2)) return null;
+    if (mem[a] === 0x60) return 'rts';
+    if (mem[a] === 0xea && mem[a + 1] === 0x60) return 'nop / rts';
+    return mem[a] === 0xea && mem[a + 1] === 0xea && mem[a + 2] === 0x60 ? 'nop / nop / rts' : null;
+  };
+
   // every table first, then the players among them
   const cands: Cand[] = [];
   if (S.detectMusic) for (let a = 0; a < 0xfffa; a++) {
-    if (mem[a] !== 0x4c || !loaded(a) || !loaded(a + 5) || (!insLen[a] && codeOwner[a] >= 0)) continue;
+    // an init that does nothing where JMP init would be (rts, nop / rts or nop / nop / rts at the start of a page): the
+    // song is set in the player's data, and the program only calls play, right after (Booze Design's tunes)
+    const empty = (a & 0xff) === 0 ? emptyInit(a) : null;
+    if ((mem[a] !== 0x4c && !empty) || !loaded(a) || !loaded(a + 5) || (!insLen[a] && codeOwner[a] >= 0)) continue;
     const near = (t: Addr) => loaded(t) && owner[t] === owner[a] && t >= a - BEFORE && t < a + SPAN;
-    const t0 = word(mem, a + 1);
+    const t0 = empty ? a : word(mem, a + 1);
     if (!near(t0)) continue;
     // JMP init, then JMP play (up to four JMPs), or the play code itself right after them
-    const slots: Slot[] = [{ at: a, to: t0, jmp: true }];
+    const slots: Slot[] = [{ at: a, to: t0, jmp: !empty }];
     for (let s = a + 3; s <= a + 12; s += 3) {
       if (codeOwner[s] >= 0) break;
       if (s <= a + 9 && mem[s] === 0x4c && loaded(s + 2) && near(word(mem, s + 1))) { slots.push({ at: s, to: word(mem, s + 1), jmp: true }); continue; }
@@ -290,8 +304,9 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     }
 
     const judged = ((): Cand | null => {
-      // the program's own start is not a player's init (unless it plays)
-      if (entryKind.get(a) === 'entry') return null;
+      // the program's own start is not a player's init (unless it plays), and an init that does nothing counts only
+      // when the player plays (an rts with code after it is everywhere)
+      if (entryKind.get(a) === 'entry' || empty) return null;
       // code right after the JMPs is everywhere: as play it needs a caller or SID writes of its own
       const live = slots.filter((s, i) => s.jmp || calls(s.at).length || rawHit(s.at) || sidRegs(reaches[i]).size >= 4);
       if (live.length < 2) return null;
@@ -370,11 +385,12 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
       // the run decides play; the table is a player whatever calls it
       const r = ran.run, play = ran.slot.at;
       if (!c) {
-        const entries = slots.filter(s => s.jmp || s === ran!.slot);
+        const entries = slots.filter(s => s.jmp || s === ran!.slot || s === slots[0]);
         const sub = reach(entries.map(s => s.to));
         const regs = sidRegs(sub);
         const callsA = calls(a).filter(x => x.kind === 'call').length, callsB = calls(play).filter(x => x.kind === 'call').length;
-        const why = [ran.slot.jmp && play === a + 3 ? 'JMP init / JMP play table' : ran.slot.jmp ? `JMP init / JMP play table (play at +${play - a})` : `JMP init, then the play code at +${play - a}`];
+        const why = [empty ? `an init that does nothing (${empty}), then ${ran.slot.jmp ? 'JMP play' : 'the play code'} at +${play - a}`
+          : ran.slot.jmp && play === a + 3 ? 'JMP init / JMP play table' : ran.slot.jmp ? `JMP init / JMP play table (play at +${play - a})` : `JMP init, then the play code at +${play - a}`];
         let score = 2 + ((a & 0xff) === 0 ? 1 : 0) + (callsA && callsB ? 2 : callsA || callsB ? 1 : 0);
         if (callsA || callsB) why.push(callsA && callsB ? 'init and play both called from outside' : 'called from outside');
         if ((a & 0xff) === 0) why.push('page aligned');
@@ -382,7 +398,7 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
         for (const [pc, len] of sub.ins) hi = Math.max(hi, pc + len);
         const irq = irqPlays(ran.slot);
         if (irq) why.push('play called from the IRQ');
-        c = { start: a, api: entries.map(s => s.at), play, sub, regs, sidAt: [...sub.ins.keys()].filter(isSidWrite), score, why, hi, irq, judged: false };
+        c = { start: a, api: entries.map(s => s.at), play, sub, regs, sidAt: [...sub.ins.keys()].filter(isSidWrite), score, why, hi, irq, judged: false, ...(empty ? { empty: true } : {}) };
       } else if (c.play !== play) {
         c.why.push(`play at ${$4(play)}, not ${$4(c.play)}: that is the one that plays`);
         c.play = play;
@@ -422,7 +438,9 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     return true;
   };
   const clientOf = (a: Cand, b: Cand) => {
-    if (b.start >= a.start && b.start < a.start + 3 * a.api.length) return false;
+    // (a caller starts the player it calls, which an init that does nothing does not: a table it runs through is a JMP
+    // in its own play code, followed by more of it)
+    if (a.empty || (b.start >= a.start && b.start < a.start + 3 * a.api.length)) return false;
     // runs: a plays through b when its run ran b's entries, b plays as much on its own (over a minute) and never runs
     // a's table, and b's table starts its code (a part of a player, which the player's own flow runs through, has code
     // before it). A player that plays more than the inner routine it calls is no caller of it

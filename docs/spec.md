@@ -500,7 +500,10 @@ Efter varje spårning körs ett linjärt pass över instruktionerna i adressordn
 
 `detectMusic()` (`packages/core/src/analyze/music.ts`) körs efter spårningen. En spelare börjar med en hopptabell på `B`:
 `JMP init`, sedan `JMP play` (upp till fyra `JMP` i rad) eller play-koden direkt efter dem (`B+3`, `+6`, `+9` eller
-`+12`). Koden som ingångarna når avkodas från tabellen där spårningen inte kom fram. Spelaren hittas därför också när
+`+12`). En låt vars sång ligger färdig i datan kan i stället för `JMP init` ha en **init som inte gör något**: `rts`,
+`nop / rts` eller `nop / nop / rts` i början av en sida, med play direkt efter (`B+3`; Booze Designs låtar, där
+programmet bara anropar play). En sådan tabell räknas bara när den spelar (se *Körningen*), och den är aldrig en annan
+spelares anropare. Koden som ingångarna når avkodas från tabellen där spårningen inte kom fram. Spelaren hittas därför också när
 init kördes innan en VICE-snapshot togs (bara play är spårad), när play anropas från ett avbrott som spårningen inte
 hittade, och när inget spårat når den alls. Avkodningen stannar vid JAM, BRK, instabila opkoder, mitten av en spårad
 instruktion (utom BIT-skip-idiomet) och data-overrides. Fler än två sådana vägar, eller fler odokumenterade opkoder än
@@ -579,7 +582,10 @@ dem:
 - **Anroparen, för tabeller som spelar:** en tabell vars körning körde den andras ingångar, där den andra spelar lika
   mycket på egen hand under en minut, aldrig kör den första tabellen och inleder sin kod (dess körning kör ingenting
   före den), är dess anropare. En spelare som spelar mer än en inre rutin den anropar är ingen anropare, och inte heller
-  en tabell som klarar reglerna av en som bara körningen hittade, eller en tabell av en som ligger inne i den.
+  en tabell som klarar reglerna av en som bara körningen hittade, eller en tabell av en som ligger inne i den. En tabell
+  med en init som inte gör något är aldrig någon anropare, eftersom en anropare startar spelaren den anropar. En `JMP`
+  som dess play-kod kör igenom, följd av mer play-kod, är en del av den, också när den spelar lika mycket. I Codeboys
+  ligger en sådan `JMP` på `$1145`, mitt i play-rutinen på `$1003`.
 - **Ordningen där tabeller överlappar:** först de vars play IRQ:n anropar (programmets egna ingångar, inte en del av
   spelaren), sedan de som spelar på egen hand (den som spelar mest under en minut först: en del av en spelare kan starta
   några toner och sluta, en låt börja lugnt), sedan den starkaste. En tabell inne i en spelare som redan hittats, eller vars kod kör
@@ -626,6 +632,10 @@ Referenser in i musiken som inte är init/play blir `music.location+$xx`. Använ
   `jsr music.play`, och verifieringen ger samma byte;
 - en spelare som inget spårat når, på en sidgräns, och en sidförskjuten som bara körningen hittar;
 - en musikfil som laddats ensam, med tabellen på laddadressen (programmets start);
+- en låt vars init inte gör något (`rts` med tempo och rad i de två byten efter, `nop / rts`, `nop / nop / rts`) och
+  vars play-kod kör igenom en `JMP` som spelar när den körs som tabell. Låten testas laddad ensam och med play anropad
+  från IRQ:n, och blocket spelar ensamt. Regeln från före ändringen väljer `JMP`-instruktionen, med blocket från
+  variablerna efter `rts`. En tom init räknas inte utanför en sidgräns, och inte när koden efter den inte spelar;
 - en buffrad spelare (`sta $d400,x` till `cpx #$19`): 25 register, och hittad ensam genom körningen;
 - låtdata som spelaren läser genom en pekare, förbi en byte som programmet läser: blocket når låtens slut;
 - en lös fil vars låt börjar efter 100 tysta bildrutor, med en `JMP` mitt i play-rutinen som spelar genast: spelarens
@@ -664,8 +674,8 @@ den som startar flest toner), eller den `.sid`-fil som ligger bredvid programmet
   som tidigare lager lämnat och som programmet fortfarande kör, och det ett lager självt laddar och kör efter start (se
   Sindris avsnitt). Därför finns musiken med också där den laddats av ett tidigare lager (1337: lager 4, `$0e00–$1c7a`,
   medan del 1:s kod är `$7400–$ffff`). Av tio trackmos och demos på disk spelar nio i VICE: The Lab, 1337 (`$1000`),
-  Eyes, Multiverse, No Bounds (`$0900–$1fff`), Viva Las Vegas (`$0c00–$1b09`), i27, O-tech III och Ranx. I Codeboys väljs
-  init `$109b` (3 toner, sedan tyst) fast musiken ligger på `$1000–$16ff`.
+  Eyes, Multiverse, No Bounds (`$0900–$1fff`), Viva Las Vegas (`$0c00–$1b09`), i27, O-tech III och Ranx. Codeboys
+  valdes fel (init `$109b`, 3 toner och sedan tyst) tills tabeller med en init som inte gör något kom till (nedan).
 - **VICE-snapshots** av The Lab (efter 30, 60, 90 och 120 s), Viva Las Vegas (40 och 80 s) och Multiverse (40 och 80 s):
   alla 8 rätt init och play. The Labs första spelare spelar vidare från snapshoten (init startar 3 toner på en minut, play
   utan init 596); förut var den tyst. Blocken når låtdata som förut föll utanför: The Labs andra låt `$0600–$1a1c`
@@ -675,6 +685,22 @@ den som startar flest toner), eller den `.sid`-fil som ligger bredvid programmet
   av dem täcker blocket hela `.sid`-datan, mot 48 (oftast var det låtdatans sista byte som saknades). Inget program fick
   sämre resultat. Av de sex andra har tre en egen init i `.sid`-filen (`$0ff6`, `$dff6`) som programmet inte använder (dess
   egna ingångar hittas), och tre saknar en vanlig hopptabell.
+
+**Mätt med en init som inte gör något (2026-11-07).** HCL:s spelare i Booze Designs demos har ingen hopptabell. På
+sidans start ligger en `rts` (ibland `rts / nop / nop` eller `nop / nop / rts`), och play börjar direkt efter med att
+räkna bildrutor. Förut valdes en `JMP` inne i play-koden, som bara kör en del av rösterna.
+- **BoozeLoader-diskarnas filer,** 1 281 filer från de 57 olika diskarna, öppnade en och en som från fliken
+  *Booze script*: 8 fynd ändrades, och alla fick init på sidans start och play på `+3`. Codeboys fem låtar (file25
+  `$1000`, file1e `$e000`, sida 2:s file03, file05 och file0b) spelade 3 toner och sedan inget, och spelar nu med 22–24
+  register. Andropolis `$4000` och Mekanix `$8000` hade fått en inre `JMP` (`$400d`, `$800d`). Mekanix `$1000` hade fått
+  init `$1003`, en `JMP` till play-koden. Musik hittas i 111 filer, lika många som förut.
+- **Startprogram,** 865 stycken (CSDB:s Top 500 och Booze Designs, uppackade med Sindri): 2 fynd ändrades. Codeboys
+  `$1000–$1baa` med play anropad från IRQ:n hade förut init `$109b`. Mekanix `$0800–$1f07` hade förut `$0af7`, en `JMP` mitt
+  i play-koden. Musik hittas i 659 program, lika många som förut.
+- **I VICE** (`vsid`, 20 s) är file25 med det gamla fyndets init `$1145` och play `$1148` nästan tyst (RMS omkring 200
+  efter första sekunden). Med init `$1000` och play `$1003` spelar den hela tiden (RMS 1 500–2 800). Alla tio nya block
+  spelar ensamma (`musicPlayData()`).
+- **Tid:** ingen skillnad (startprogrammen 339 s mot 344 s, filerna 143 s mot 145 s).
 
 **Tid.** Utan körningar tar detekteringen 10–20 ms för en hel snapshot. Körningarna lägger till 30–300 ms första gången
 ett minne analyseras (mest de tre minuterna av låten som ger blockets omfång, och för en snapshot två minuter för att

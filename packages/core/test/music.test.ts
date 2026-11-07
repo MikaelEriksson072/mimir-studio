@@ -90,6 +90,49 @@ loop: jmp loop
 irqh: ${irq}
  jmp $ea31
 `;
+/** a tune whose init does nothing, its song set in its data (as Booze Design's): `head` where JMP init would be, then
+ *  play, which runs on into a JMP (to the code that holds the notes) followed by the code that starts the next row: a
+ *  JMP with code after it that plays when it is run as a table, and runs only that part of the player */
+const presetTune = (head: string, at = 0x1000) => `.pc = $${at.toString(16)}
+${head}play: dec tempo
+ bmi next
+ jmp hold
+next: lda #3
+ sta tempo
+ inc row
+ lda row
+ and #7
+ tax
+ ldy notes,x
+ lda freqlo,y
+ sta $d400
+ lda freqhi,y
+ sta $d401
+ lda #$40
+ sta $d404
+ lda #$41
+ sta $d404
+ lda freqlo+12,y
+ sta $d407
+ lda freqhi+12,y
+ sta $d408
+ lda #$20
+ sta $d40b
+ lda #$21
+ sta $d40b
+hold: lda #$0f
+ sta $d418
+ lda #$09
+ sta $d405
+ sta $d40c
+ lda #$f0
+ sta $d406
+ sta $d40d
+ rts
+${head.includes('tempo:') ? '' : 'tempo: .byte 0\nrow: .byte 0\n'}notes: .byte 24,28,31,36,31,28,24,19
+freqlo: .byte ${hex(FREQ.map(f => f & 0xff))}
+freqhi: .byte ${hex(FREQ.map(f => f >> 8))}
+`;
 const project = (src: string): ProjectInput => ({ name: 'music', files: [fromSource('music.prg', src)] });
 const music = (p: ProjectInput) => analyze(p).music.map((m: MusicInfo) => [m.start, m.init, m.play]);
 
@@ -136,6 +179,31 @@ describe('music detection', () => {
     const p = project(player());
     expect(analyze(p).entry).toBe(0x1000);
     expect(music(p)).toEqual([[0x1000, 0x1000, 0x1003]]);
+  });
+
+  it('takes a tune whose init does nothing (an rts where JMP init would be), not a JMP inside its play code (Codeboys)', () => {
+    // loaded on its own: the rts, the tempo and row in the two bytes after it, play at +3
+    const p = project(presetTune(' rts\ntempo: .byte 0\nrow: .byte 0\n'));
+    const A = analyze(p);
+    expect(A.music.map(m => [m.start, m.init, m.play])).toEqual([[0x1000, 0x1000, 0x1003]]);
+    expect(A.music[0].why).toEqual(expect.arrayContaining(['an init that does nothing (rts), then the play code at +3', 'init and play run: 11 SID registers and 76 notes in 3 s']));
+    expect(A.music[0].end).toBe(p.files[0].load + p.files[0].bytes.length);
+    // it plays from its block alone
+    const m = A.music[0], d = musicPlayData(A.mem.slice(m.start, m.end), m.start, m.init, m.play);
+    expect(d.alone).toBeUndefined();
+    // nop / rts and nop / nop / rts, with play called from the IRQ and init never called
+    for (const [head, what] of [[' nop\n rts\n .byte 0\n', 'nop / rts'], [' nop\n nop\n rts\n', 'nop / nop / rts']]) {
+      const B = analyze(project(program('', 'jsr $1003') + presetTune(head)));
+      expect(B.music.map(x => [x.start, x.init, x.play])).toEqual([[0x1000, 0x1000, 0x1003]]);
+      expect(B.music[0].why).toEqual(expect.arrayContaining([`an init that does nothing (${what}), then the play code at +3`, 'play called from the IRQ']));
+    }
+  });
+
+  it('takes an init that does nothing only at the start of a page, and only for a player that plays', () => {
+    // off a page the rts is the end of some routine: the JMP inside the play code is all there is to find
+    expect(music(project(presetTune(' rts\n .byte 0,0\n', 0x1040))).every(([, init]) => init !== 0x1040)).toBe(true);
+    // a page that starts with an rts and code at +3 that writes the SID without playing notes
+    expect(music(project(`${BASIC} jsr $1003\n rts\n.pc = $1000\n rts\n .byte 0,0\n lda #$0f\n sta $d418\n lda #$21\n sta $d404\n rts\n`))).toEqual([]);
   });
 
   it('takes a player whose tune starts quietly, not a part of its play routine that plays at once (The Lab, unpacked)', () => {
