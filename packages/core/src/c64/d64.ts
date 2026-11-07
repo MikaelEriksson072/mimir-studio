@@ -1,5 +1,8 @@
 /* 1541 disk images (.d64): the directory, free blocks, and the files' bytes along their sector chains.
- * 35, 40 and 42 tracks, with or without the error byte per sector that some images append. */
+ * 35, 40 and 42 tracks, with or without the error byte per sector that some images append. A G64 (the tracks as GCR
+ * bits, copy protection and all) is read through its standard sectors, which Sindri decodes into a D64 (diskSectors),
+ * and a file is written back into either kind in place (writeDiskFile). */
+import { g64ToD64, isG64, writeG64Sectors } from '@mimir/sindri';
 
 export type D64FileType = 'DEL' | 'SEQ' | 'PRG' | 'USR' | 'REL';
 
@@ -20,6 +23,8 @@ export interface D64File {
 
 export interface D64Image {
   name: string; id: string; dosType: string;
+  /** the kind of image: a G64's sectors were decoded from its GCR tracks */
+  format: 'D64' | 'G64';
   tracks: 35 | 40 | 42;
   /** the image has an error byte per sector after the data */
   errorInfo: boolean;
@@ -48,9 +53,24 @@ export function sectorOffset(t: number, s: number, tracks: number): number {
 
 const sizeInfo = (u8: Uint8Array) => {
   const info = SIZES[u8.length];
-  if (!info) throw new Error(`not a .d64 disk image: ${u8.length} bytes (a 35-track image has 174848)`);
+  if (!info) throw new Error(`not a .d64 or .g64 disk image: ${u8.length} bytes (a 35-track D64 has 174848)`);
   return info;
 };
+
+/** a D64 (by its size) or a G64 (by its signature) */
+export const isDiskImage = (u8: Uint8Array): boolean => isG64(u8) || !!SIZES[u8.length];
+
+const decoded = new WeakMap<Uint8Array, Uint8Array>();
+/**
+ * The sectors of a disk image as a D64: a D64 as it is, a G64's standard sectors decoded from its GCR tracks (with an
+ * error byte per sector: a track with no sectors, a copy protection's, reads as errors). Decoded once per image.
+ */
+export function diskSectors(image: Uint8Array): Uint8Array {
+  if (!isG64(image)) return image;
+  let d = decoded.get(image);
+  if (!d) { d = g64ToD64(image); decoded.set(image, d); }
+  return d;
+}
 
 /** PETSCII name bytes to text: letters, digits and punctuation as they look in upper case mode, other codes as `·`. */
 export function petsciiName(raw: Uint8Array): string {
@@ -65,8 +85,9 @@ export function petsciiName(raw: Uint8Array): string {
   return s;
 }
 
-/** Read the directory of a .d64 image. */
-export function parseD64(u8: Uint8Array): D64Image {
+/** Read the directory of a .d64 image (or a .g64's, through its decoded sectors). */
+export function parseD64(image: Uint8Array): D64Image {
+  const u8 = diskSectors(image);
   const { tracks, errorInfo } = sizeInfo(u8);
   const bam = u8.subarray(sectorOffset(DIR_TRACK, 0, tracks), sectorOffset(DIR_TRACK, 0, tracks) + 256);
   let freeBlocks = 0;
@@ -91,15 +112,15 @@ export function parseD64(u8: Uint8Array): D64Image {
     if (t !== 0 && (t > tracks || s >= sectorsOnTrack(t))) break; // a broken link ends the listing
   }
   const text = (a: number, n: number) => petsciiName(u8.subarray(sectorOffset(DIR_TRACK, 0, tracks) + a, sectorOffset(DIR_TRACK, 0, tracks) + a + n));
-  return { name: text(0x90, 16), id: text(0xa2, 2), dosType: text(0xa5, 2), tracks, errorInfo, freeBlocks, files };
+  return { name: text(0x90, 16), id: text(0xa2, 2), dosType: text(0xa5, 2), format: u8 === image ? 'D64' : 'G64', tracks, errorInfo, freeBlocks, files };
 }
 
-/** The bytes of a file (for a PRG, its load address first), following its sector chain. */
-export function readD64File(u8: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'>): Uint8Array {
+/** A file's sectors along its chain: where each is in the D64 and how many of its bytes are the file's. */
+function fileChain(u8: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'>): { track: number; sector: number; off: number; used: number }[] {
   const { tracks } = sizeInfo(u8);
-  const parts: Uint8Array[] = [];
+  const chain: { track: number; sector: number; off: number; used: number }[] = [];
   const seen = new Set<number>();
-  let t = f.track, s = f.sector, n = 0;
+  let t = f.track, s = f.sector;
   if (t === 0) throw new Error(`"${f.name}" has no data on the disk`);
   while (t !== 0) {
     const off = sectorOffset(t, s, tracks);
@@ -107,14 +128,41 @@ export function readD64File(u8: Uint8Array, f: Pick<D64File, 'name' | 'track' | 
     seen.add(off);
     const [nt, ns] = [u8[off], u8[off + 1]];
     // the last sector: the second byte is the index of its last used byte
-    const end = nt === 0 ? Math.max(1, ns) + 1 : 256;
-    parts.push(u8.subarray(off + 2, off + end));
-    n += end - 2;
+    chain.push({ track: t, sector: s, off, used: (nt === 0 ? Math.max(1, ns) + 1 : 256) - 2 });
     [t, s] = [nt, ns];
   }
-  const out = new Uint8Array(n);
+  return chain;
+}
+
+/** The bytes of a file (for a PRG, its load address first), following its sector chain. */
+export function readD64File(image: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'>): Uint8Array {
+  const u8 = diskSectors(image);
+  const chain = fileChain(u8, f);
+  const out = new Uint8Array(chain.reduce((n, c) => n + c.used, 0));
   let p = 0;
-  for (const x of parts) { out.set(x, p); p += x.length; }
+  for (const c of chain) { out.set(u8.subarray(c.off + 2, c.off + 2 + c.used), p); p += c.used; }
+  return out;
+}
+
+/**
+ * A copy of the disk image with the file's bytes replaced along its own sector chain (a D64's sectors, or a G64's data
+ * blocks encoded again in place, so the rest of its tracks stays as it was: a copy protection's too). The bytes must
+ * fill as many blocks as the file has on the disk; the last one's length byte follows them.
+ */
+export function writeDiskFile(image: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'>, data: Uint8Array): Uint8Array {
+  const u8 = diskSectors(image);
+  const chain = fileChain(u8, f);
+  const need = Math.max(1, Math.ceil(data.length / 254));
+  if (need !== chain.length) throw new Error(`"${f.name}" is ${chain.length} block${chain.length === 1 ? '' : 's'} on the disk, and ${data.length} bytes need ${need}`);
+  const writes = chain.map((c, k) => {
+    const sector = u8.slice(c.off, c.off + 256), part = data.subarray(k * 254, k * 254 + 254);
+    sector.set(part, 2);
+    if (k === chain.length - 1) { sector[1] = part.length + 1; sector.fill(0, 2 + part.length); }
+    return { track: c.track, sector: c.sector, data: sector };
+  });
+  if (isG64(image)) return writeG64Sectors(image, writes);
+  const out = image.slice(), { tracks } = sizeInfo(out);
+  for (const w of writes) out.set(w.data, sectorOffset(w.track, w.sector, tracks));
   return out;
 }
 

@@ -36,7 +36,7 @@
  * demos (2014-2015: Comaland, Fantasmolytic) have no end address, always the end, and the offsets in another order: 3,
  * 6, 8 and 10 after a match of 2. */
 import type { Addr } from '../types';
-import { parseD64, petsciiName, sectorOffset, sectorsOnTrack } from './d64';
+import { diskSectors, parseD64, petsciiName, sectorOffset, sectorsOnTrack } from './d64';
 
 /** the format of the directory: 0.x, 1.0 (and 1.1), after 1.1, 1.2 and later */
 export type BitfireFormat = '0.x' | '1.0' | '1.1+' | '1.2';
@@ -196,7 +196,8 @@ function bitnax(data: Uint8Array, load: Addr, withEnd: boolean, offsetBits: numb
 interface Entry { load: Addr; len: number; track?: number; sector?: number }
 
 /** The files of a Bitfire disk; null when it is not one. */
-export function readBitfireDisk(image: Uint8Array): BitfireDisk | null {
+export function readBitfireDisk(disk: Uint8Array): BitfireDisk | null {
+  const image = diskSectors(disk);
   const tracks = SIZES[image.length];
   if (!tracks) return null;
   const sec = (t: number, s: number) => { const o = sectorOffset(t, s, tracks); return image.subarray(o, o + 256); };

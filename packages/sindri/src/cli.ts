@@ -1,4 +1,4 @@
-/* sindri <file.prg | disk.d64 | tape.tap> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
+/* sindri <file.prg | disk.d64 | disk.g64 | tape.tap> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
  * or newer runs the TypeScript as it is), or `pnpm unpack` in this folder. */
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
@@ -6,19 +6,20 @@ import { fileURLToPath } from 'node:url';
 import { unpack, type LayerReport, type Saved, type UnpackOptions } from './session.ts';
 import { findRoms, loadRoms } from './node.ts';
 import { d64File, d64Pick } from './d64.ts';
+import { g64ToD64, isG64 } from './g64.ts';
 import { tapeFiles, tapPulses } from './tape.ts';
 import type { Range } from './analyze.ts';
 
-const HELP = `sindri <file.prg | disk.d64 | tape.tap> [options]
+const HELP = `sindri <file.prg | disk.d64 | disk.g64 | tape.tap> [options]
 
 Runs the program in an emulated C64, follows it through its layers (coders, movers, decrunchers) and saves
-the unpacked program when it starts. With a disk (a D64, or --disk) a 1541 is on the serial bus, so the
+the unpacked program when it starts. With a disk (a D64 or G64, or --disk) a 1541 is on the serial bus, so the
 program can go on loading from it, with the KERNAL or a fast loader of its own. With a tape (a TAP, or --tape)
 the datasette plays it from after the file, PLAY held down, for the program's own tape loader and LOAD.
 
   -o FILE        save here (default: <name>.<start address>.prg next to the file)
-  --file NAME    the file on the D64 or TAP to unpack (default: its first program; * and ? as the DOS takes them)
-  --disk FILE    put this D64 in the drive for a PRG given on its own
+  --file NAME    the file on the D64, G64 or TAP to unpack (default: its first program; * and ? as the DOS takes them)
+  --disk FILE    put this D64 or G64 in the drive for a PRG given on its own
   --tape FILE    put this TAP in the datasette for a PRG given on its own
   -e ADDR        start with SYS ADDR instead of RUN
   -l ADDR        load the file at ADDR instead of its own load address
@@ -84,7 +85,7 @@ function badFiles(argv: string[], inputs: string[], fileName: string | null, isF
     if (isFile(p)) whole = { path: p, from: i, to: j };
   }
   const at = fileName === null ? -1 : argv.lastIndexOf('--file') + 1;
-  const disk = whole && whole.from <= at && at < whole.to ? whole.path : !inputs.length && fileName !== null && (isFile(fileName) || /\.d64$/i.test(fileName)) ? fileName : null;
+  const disk = whole && whole.from <= at && at < whole.to ? whole.path : !inputs.length && fileName !== null && (isFile(fileName) || /\.[dg]64$/i.test(fileName)) ? fileName : null;
   if (disk) throw new Error(`--file takes the name of a file on the disk, not the disk: give the disk on its own${disk === whole?.path ? ', in quotes as its path has spaces' : ''}, as in sindri ${quote(disk)} (its first PRG, or --file NAME after it for another)`);
   if (whole) throw new Error(`a path with spaces goes in quotes: sindri ${quote(whole.path)}`);
   if (inputs.length > 1) throw new Error(`one file at a time, not ${inputs.length}: ${inputs.map(f => `"${f}"`).join(', ')} (a path with spaces goes in quotes)`);
@@ -130,10 +131,10 @@ function main(argv: string[]): number {
   const path = resolve(cwd, inputs[0]);
   let file = new Uint8Array(readFileSync(path));
   let base = join(dirname(path), basename(path, extname(path))), shown = basename(path);
-  if (/\.d64$/i.test(path)) {
-    const disk = file, entry = d64Pick(disk, fileName ?? undefined);
+  if (/\.[dg]64$/i.test(path)) {
+    const disk = file, sectors = isG64(disk) ? g64ToD64(disk) : disk, entry = d64Pick(sectors, fileName ?? undefined);
     if (!entry) throw new Error(fileName ? `no PRG named "${fileName}" on the disk` : 'no PRG on the disk');
-    file = new Uint8Array(d64File(disk, entry));
+    file = new Uint8Array(d64File(sectors, entry));
     o.disk = disk;
     shown = `${basename(path)}: "${entry.name}"`;
     base += `.${entry.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
@@ -151,7 +152,7 @@ function main(argv: string[]): number {
     o.tape = tape;
     shown = `${basename(path)}: "${name(f.header)}"`;
     base += `.${name(f.header).replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
-  } else if (fileName) throw new Error('--file picks a file on a D64 or a TAP');
+  } else if (fileName) throw new Error('--file picks a file on a D64, G64 or TAP');
   if (diskPath) o.disk = new Uint8Array(readFileSync(resolve(cwd, diskPath)));
   if (tapePath) o.tape = new Uint8Array(readFileSync(resolve(cwd, tapePath)));
   o.roms = roms === false ? null : roms ? loadRoms(resolve(cwd, roms)) : findRoms();

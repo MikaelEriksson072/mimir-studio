@@ -1,7 +1,8 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
- * disk's files, the BoozeLoader script, the tape in the datasette, statistics, build output. */
+ * disk's files, the BoozeLoader script, Pirate Slayer on the mounted disk, the tape in the datasette, statistics,
+ * build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -259,6 +260,39 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
   );
 }
 
+/** The Pirate Slayer tab (spec 13.5h): Electronic Arts' copy protection on the mounted disk: its key track (on a G64:
+ *  where, how framed, each copy a turn), the boot and what it does, where the drive's check is, and the boot's text. */
+export function PirateSlayerPanel({ disk }: { disk: MountedDisk }) {
+  const p = disk.pirateslayer!;
+  const hex = (v: number) => v.toString(16).toUpperCase().padStart(2, '0');
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>{p.summary} <span className="muted">· Sindri runs the boot with {disk.name} in its drive{p.format === 'G64' ? ', key track and all' : ''}; Build &amp; Run puts a copy in VICE's drive 8 with the files built from it written back{p.format === 'D64' ? '. A D64 has no key track, so the boot fails its check: mount the G64' : ''}</span></span>
+      </div>
+      {p.keys.length > 0 && (
+        <table className="tbl" aria-label="Pirate Slayer key"><thead><tr><th>Track</th><th>Looks for</th><th>SYNCs</th><th>Framed from</th><th>Copies a turn</th></tr></thead><tbody>
+          {p.keys.map(k => (
+            <tr key={k.track}>
+              <td className="mono">{k.track}</td>
+              <td className="mono">{k.pattern.map(hex).join(' ')}</td>
+              <td className="mono">{k.syncs}</td>
+              <td className="mono">bit {k.bitPhase}</td>
+              <td className="muted">{k.copies.map(c => c.pairs ? `${c.d7} × D7, EB, ${c.pairs} × CC AD${c.signature ? ', the 12 bytes' : ' (cut short)'}` : 'found').join(' · ')}</td>
+            </tr>
+          ))}
+        </tbody></table>
+      )}
+      <div className="ps-notes">
+        {p.boot && <p><b>Boot ({p.boot.files.join(' → ')}):</b> {p.boot.how}</p>}
+        {p.checkIn.length > 0 && <p><b>The drive's check</b> is in {p.checkIn.join(', ')}, not encrypted.</p>}
+        {p.text && <p><b>Its text:</b> <span className="mono">{p.text}</span></p>}
+        {p.keys.length > 0 && <p className="muted">The key track has no SYNC: the drive frames its bytes wherever its bit counter is, and that moves on with every turn of a real disk, so the check reads for a turn where they line up ({PIRATESLAYER_SIGNATURE.map(hex).join(' ')} last). Sindri's drive slips a bit each turn on such a track to do the same.</p>}
+      </div>
+    </div>
+  );
+}
+
 /** The Tape tab (spec 13.5e): what is on the tape in the datasette, in tape order: each file (KERNAL, TapeTool, Turbo
  *  Tape) with where it starts, and the stretches of turbo data no format here reads. A row opens the file, + adds it.
  *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them. */
@@ -512,4 +546,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

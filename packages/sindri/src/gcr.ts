@@ -12,10 +12,10 @@ export const TRACK_BYTES = [6250, 6666, 7142, 7692];
 /** drive cycles per byte at each density setting (VIA 2 port B bits 5-6) */
 export const BYTE_CYCLES = [32, 30, 28, 26];
 
-const GCR = [0x0a, 0x0b, 0x12, 0x13, 0x0e, 0x0f, 0x16, 0x17, 0x09, 0x19, 0x1a, 0x1b, 0x0d, 0x1d, 0x1e, 0x15];
+export const GCR = [0x0a, 0x0b, 0x12, 0x13, 0x0e, 0x0f, 0x16, 0x17, 0x09, 0x19, 0x1a, 0x1b, 0x0d, 0x1d, 0x1e, 0x15];
 
 /** 4 bytes as 5 GCR bytes, each nibble as 5 bits */
-function encode(out: number[], bytes: number[]): void {
+export function encode(out: number[], bytes: number[]): void {
   for (let i = 0; i < bytes.length; i += 4) {
     let v = 0;
     for (let k = 0; k < 4; k++) { const b = bytes[i + k] ?? 0; v = v * 1024 + ((GCR[b >> 4] << 5) | GCR[b & 15]); }
@@ -26,6 +26,9 @@ function encode(out: number[], bytes: number[]): void {
 export interface Disk {
   /** the GCR bytes of each track, by track number (1-42); missing tracks are unformatted */
   tracks: (Uint8Array | null)[];
+  /** a G64's tracks by half track (2 = track 1, 3 = track 1.5, … 85): when given, the head reads these, half tracks
+   *  too; a D64 has whole tracks only */
+  halves?: (Uint8Array | null)[];
   /** the disk name and ID from the BAM, for the report */
   name: string;
   id: string;

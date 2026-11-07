@@ -43,10 +43,11 @@ export async function readPrgFiles(paths: string[], opts: OpenOptions = {}): Pro
 export const openedPrg = (f: OpenedFile): OpenedPrg =>
   ({ ...withId(f), ...(f.entries ? { entries: f.entries } : {}), ...(f.snapshot ? { snapshot: f.snapshot } : {}), ...(f.start != null ? { start: f.start } : {}) });
 
-/** A .d64 disk image (the renderer reads its directory and files); anything that is not one is refused here. */
+/** A .d64 or .g64 disk image (the renderer reads its directory and files); anything that is not one is refused here.
+ *  A G64 holds every half track as GCR bytes: up to 84 tracks of 7928 bytes and its tables, under 700 KB. */
 export async function readDiskImage(path: string): Promise<{ path: string; name: string; bytes: Uint8Array }> {
   const st = await stat(path);
-  if (!st.isFile() || st.size > 206114) throw new Error(`${basename(path)} is not a .d64 disk image (${st.size} bytes)`);
+  if (!st.isFile() || st.size > 1024 * 1024) throw new Error(`${basename(path)} is not a .d64 or .g64 disk image (${st.size} bytes)`);
   const bytes = new Uint8Array(await readFile(path));
   parseD64(bytes);
   return { path, name: basename(path), bytes };

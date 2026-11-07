@@ -95,7 +95,7 @@ export interface PrgOpenRequest { paths?: string[]; zeroPage?: boolean; kind?: P
  *  cartridge (`chip`) the image it is from (the same object for every chip of it); `path`: the file it was read from */
 export type OpenedPrg = LoadedFile & { entries?: number[]; snapshot?: string; start?: number; cart?: Cartridge; path?: string };
 
-/** A .d64 disk image to mount. `path` given: read it (in a folder the user picked); otherwise a file dialog. */
+/** A .d64 or .g64 disk image to mount. `path` given: read it (in a folder the user picked); otherwise a file dialog. */
 export interface DiskOpenRequest { path?: string }
 export interface DiskOpenResult { path: string; name: string; bytes: Uint8Array }
 /** A .tap tape image to put in the datasette, as disk:open does it for a disk. */
@@ -164,7 +164,7 @@ export interface BuildResult {
 /** Start x64sc with the PRG (and VICE labels) from a build. */
 /**
  * `start`: run with `sys <start>` after loading instead of autostarting (the program start set by the user).
- * `disk`: a .d64 image (a copy of the mounted disk in a build folder) to put in drive 8.
+ * `disk`: a .d64 or .g64 image (a copy of the mounted disk in a build folder) to put in drive 8.
  * `tape`: a .tap image (a copy of the tape in the datasette) to put in VICE's datasette.
  */
 /** `cart`: `prgPath` is a cartridge image (.crt), which VICE attaches (-cartcrt) and starts at reset; a `prgPath` that is

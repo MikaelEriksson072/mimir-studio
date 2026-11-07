@@ -3,7 +3,8 @@
  * Spindle, Krill's loader, Bitfire, Sparkle and the Covert Bitops loader are known by their own receive loops, install
  * commands and texts; the byte patterns come from their sources (Spindle 3.1 stage1.s, Krill's loader v194
  * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops loader v3 loader.s); BoozeLoader's
- * (HCL) come from Booze Design's demos, 2008 to 2025, as its source is not public. The Action
+ * (HCL) come from Booze Design's demos, 2008 to 2025, as its source is not public; Pirate Slayer's (Electronic Arts) from
+ * the drive code and loaders its boots upload and run (Sindri with the G64s of four EA disks). The Action
  * Replay's loaders (Datel) come from its ROMs (5.1, 7.2 and 7.5 keep the same code in other places; 7.2's turbo tape differs), the backups and loader files
  * they saved in VICE, and the MK4's loader file; Novaload is in the 7.2, whose Nova transfer reads such tapes with
  * Novaload's own code. TapeTool's loaders (Martin Piper) come from its sources (TapeLoaderCIACommon.a, TapeLoaderCIAIRQ.a,
@@ -97,6 +98,21 @@ const KNOWN: Known[] = [
       { pat: pat('04 02 02 02 05 02 02 03'), role: 'resident', what: 'ByteBoozer 1 offset table: the files are unpacked while they load', weak: true },
       { pat: pat('4D 2D 45 0B 02 12 12 12 0F 12 0C A2 05 BD 05 02 95 06'), role: 'command', what: 'drive command M-E $020b: its own bytes have the DOS read the drive code from 18/18, 18/15 and 18/12 and start it' },
     ],
+  },
+  {
+    // Electronic Arts' copy protection and loader (1986-1989): read from the boots of Arctic Fox, Chuck Yeager's
+    // Advanced Flight Trainer, Demon Stalkers and Ferrari Formula One run from their G64s (spec 13.5h)
+    id: 'pirateslayer', name: 'Pirate Slayer (Electronic Arts)',
+    how: "EA's copy protection and loader: the drive looks for a key on a track with no SYNC (track 2 in version 2: D7 … D7, EB, CC AD 512 times, then 55 AE 9B 55 AD 55 CB AE 6B AB AD AF), as its own code or as a DOS job; the C64 receives with the classic 2-bit loop (lda $dd00 / lsr / lsr / eor $dd00 …), each byte started by letting DATA go on a line that is not just before a badline",
+    signs: [
+      { pat: pat('50 FE B8 AD 01 1C C9 D7 D0 .. 50 FE B8 AD 01 1C C9 D7 F0 .. C9 EB D0'), role: 'drivecode', what: 'code for the 1541: it looks for the key on the track with no SYNC (D7 … D7, EB, CC AD 512 times, then 12 bytes)', span: [0, 0x48] },
+      { pat: pat('55 AE 9B 55 AD 55 CB AE 6B AB AD AF'), role: 'drivecode', what: "the key's last 12 bytes, which the drive code compares" },
+      { pat: pat('A9 01 8D 00 18 2C 00 18 D0 FB 8E 00 18 8A 0A 29 0F 8D 00 18'), role: 'drivecode', what: 'code for the 1541: it sends a byte, waiting for the C64 to let DATA go, then two bits at a time on DATA and CLK' },
+      { pat: pat('38 A6 02 AD 12 D0 E9 .. 90 04 29 07 F0 F5 8E 00 DD'), role: 'resident', what: 'receives a byte: waits for a line that is not just before a badline, lets DATA go and reads the serial bus four times' },
+      // the stack-page boots (Chuck Yeager's Advanced Flight Trainer, Demon Stalkers) and their games
+      { pat: pat('AD 00 DD 29 07 09 08 8D 00 DD AD 00 DD 30 .. 88 F0 .. 2C 00 DD 70 F8 88 F0 .. 2C 00 DD 50 F8'), role: 'resident', what: 'starts a transfer: pulls ATN and gives the drive a while to answer on DATA and then CLK' },
+    ],
+    text: 'PIRATESLAYER',
   },
   {
     id: 'covert', name: 'Covert Bitops loader (Cadaver)', how: '2-bit, the C64 reads $dd00 four times per byte (lsr / lsr / eor $dd00)',
@@ -260,7 +276,8 @@ const KNOWN: Known[] = [
     signs: [
       { pat: pat('AD 00 DD 30 FB 09 17 8D 00 DD AD 00 DD 10 FB 29 07 8D 00 DD'), role: 'resident', what: 'the disk copier receives a sector into $0500, four reads of the serial bus a byte (… eor $dd00 / eor #$f9); it runs at $176a' },
       { pat: pat('A0 00 B9 00 05 48 A2 27 8E 00 DD 2C 00 DD 70 FB'), role: 'resident', what: 'the disk copier sends the sector at $0500 to the drive' },
-      { pat: pat('AD 00 1C 09 0C 8D 00 1C A9 EE 8D 0C 1C'), role: 'drivecode', what: 'code for the 1541 at $033f that the disk copier uploads: it reads and writes the sectors of a track', span: [0, 0x220] },
+      // (motor and light on, the head's PCR set to $ee: other drive code starts so too, Pirate Slayer's for one)
+      { pat: pat('AD 00 1C 09 0C 8D 00 1C A9 EE 8D 0C 1C'), role: 'drivecode', what: 'code for the 1541 at $033f that the disk copier uploads: it reads and writes the sectors of a track', span: [0, 0x220], weak: true },
       { pat: pat('78 20 3F 03 20 E1 04 A5 BB 20 7A 03'), role: 'drivecode', what: 'code for the 1541 at $057c that the disk copier uploads: it runs the copy of a track', span: [0, 0x160] },
       { pat: pat('32 41 9C 78 A0 02 8C 00 18 AD 00 1C 09 0C 8D 00 1C 20 E9 F5'), role: 'drivecode', what: 'code for the 1541 at $0400 that the file copier uploads: it reads and writes the files\' sectors', span: [0, 0x300] },
     ],

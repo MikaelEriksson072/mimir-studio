@@ -676,6 +676,8 @@ describe('project files', () => {
   it('Smart attach opens each file as its extension says, a project or one source by itself', () => {
     expect(['a.prg', 'B.PRG', 'x.vsf', 'cart.CRT', 'disk.d64', 'demo.mimir.json', 'my border.asm', 'C:\\c64\\intro.Asm', 'noext', 'data.bin', 'game.p00', 'odd.prg.d64', 'game.TAP'].map(smartKind))
       .toEqual(['prg', 'prg', 'vsf', 'crt', 'd64', 'project', 'asm', 'asm', 'prg', 'prg', 'prg', 'd64', 'tap']);
+    // a G64 (GCR tracks, copy protection and all) is mounted as a disk too
+    expect(smartKind('Arctic Fox.G64')).toBe('d64');
     // PRGs, snapshots and cartridges together, one disk, one tape and one source; the others are left with why
     expect(smartPlan(['a.prg', 'one.d64', 'x.vsf', 'two.d64', 'a.asm', 'b.asm', 'c.crt', 'one.tap', 'two.tap'])).toEqual({
       project: null, asm: 'a.asm', disk: 'one.d64', tape: 'one.tap', files: ['a.prg', 'x.vsf', 'c.crt'],
@@ -712,16 +714,24 @@ describe('project files', () => {
     expect(runSchema.parse({ prgPath: 'c.crt', cart: true })).toEqual({ prgPath: 'c.crt', cart: true });
   });
 
-  it('reads .d64 disk images and refuses anything else', async () => {
-    const dir = tmp(), disk = join(dir, 'disk.d64'), big = join(dir, 'big.d64'), prg = join(dir, 'p.d64');
+  it('reads .d64 and .g64 disk images and refuses anything else', async () => {
+    const dir = tmp(), disk = join(dir, 'disk.d64'), big = join(dir, 'big.d64'), odd = join(dir, 'odd.d64'), prg = join(dir, 'p.d64'), gcr = join(dir, 'disk.g64');
     writeFileSync(disk, makeD64({ name: 'test', files: [{ name: 'a', data: Uint8Array.from([1, 8, 0x60]) }] }));
-    writeFileSync(big, new Uint8Array(300000));
+    writeFileSync(big, new Uint8Array(2_000_000));
+    writeFileSync(odd, new Uint8Array(300000));
     writeFileSync(prg, Uint8Array.from([1, 8, 0x60]));
+    // a G64 with its tables and no tracks: its sectors all read as errors, and it has no files
+    const g64 = new Uint8Array(12 + 84 * 8);
+    g64.set([...'GCR-1541'].map(c => c.charCodeAt(0)));
+    g64[9] = 84;
+    writeFileSync(gcr, g64);
     const r = await readDiskImage(disk);
     expect(r).toMatchObject({ path: disk, name: 'disk.d64' });
     expect(r.bytes.length).toBe(174848);
-    await expect(readDiskImage(big)).rejects.toThrow(/big\.d64 is not a \.d64 disk image \(300000 bytes\)/);
-    await expect(readDiskImage(prg)).rejects.toThrow(/not a \.d64 disk image: 3 bytes/);
+    expect(await readDiskImage(gcr)).toMatchObject({ path: gcr, name: 'disk.g64' });
+    await expect(readDiskImage(big)).rejects.toThrow(/big\.d64 is not a \.d64 or \.g64 disk image \(2000000 bytes\)/);
+    await expect(readDiskImage(odd)).rejects.toThrow(/not a \.d64 or \.g64 disk image: 300000 bytes/);
+    await expect(readDiskImage(prg)).rejects.toThrow(/not a \.d64 or \.g64 disk image: 3 bytes/);
   });
 });
 

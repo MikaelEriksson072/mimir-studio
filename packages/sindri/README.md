@@ -71,22 +71,31 @@ packer's end pointer.
 
 ## The disk drive
 
-With a disk (a D64 image, given instead of the file or with `--disk`) a 1541 is on the serial bus:
+With a disk (a D64 or G64 image, given instead of the file or with `--disk`) a 1541 is on the serial bus:
 
 - its own 6502 with 2 KB of RAM and the DOS ROM, taken from VICE's `DRIVES` folder like the C64's ROMs;
 - VIA 1 on the serial bus: ATN, CLK and DATA as open-collector lines either side pulls low, the drive's automatic
   answer to ATN (DATA pulled low while ATN and the acknowledge bit differ), and the ATN interrupt;
-- VIA 2 on the head: the stepper moving it half a track at a time, the motor, the density (the bit rate of the speed
-  zone), SYNC, and byte ready, which also sets the CPU's overflow flag as the DOS and fast loaders wait for it;
+- VIA 2 on the head: the stepper moving it half a track at a time (its phase tied to where the head is: phase 0 on
+  track 1, 2 on track 2; the opposite phase moves it a whole track in, as VICE has it), the motor, the density (the bit
+  rate of the speed zone), SYNC, and byte ready, which also sets the CPU's overflow flag as the DOS and fast loaders
+  wait for it;
 - the D64 as the 1541 formats it, GCR-encoded with its SYNC marks, headers and gaps, turning at 300 rpm. The error
-  bytes of a D64 that has them become missing headers or data blocks, missing SYNC, bad checksums and wrong IDs.
+  bytes of a D64 that has them become missing headers or data blocks, missing SYNC, bad checksums and wrong IDs;
+- or a G64 (`src/g64.ts`): the tracks as a bit copier read them, half tracks and copy protection included. The head
+  reads them bit by bit: a SYNC is ten 1 bits in a row, a byte every 8 bits after it, and on a track with no SYNC at
+  all (a copy protection's key) the framing slips a bit every turn, as it moves on a real disk whose bits in a turn
+  are rarely a multiple of 8. Electronic Arts' Pirate Slayer boots get through with it, into the games.
 
 The drive runs behind the C64 at its own 1 MHz. Whenever the C64 reads or writes the serial port it first catches up
 to that cycle, running every instruction whose bus access comes before the C64's; its reads of the head, the timers
-and the overflow flag see them as they are in the cycle of the access. So transfer protocols that count cycles work:
+and the overflow flag see them as they are in the cycle of the access. CLK or DATA the C64 lets go reaches the drive a
+cycle later (the line rises through the pull-ups); a line pulled low, and ATN, at once. So transfer protocols that count cycles work:
 Bitfire, Krill's loader, Sparkle, Spindle, the Booze loader and plain KERNAL loads all get through. The file is put in
-memory as `LOAD"*",8,1` would leave it (`$ba` is 8, and the drive has read the disk's ID); the program then loads
-the rest itself. A program that waits while the drive's motor runs is loading, not settled, for up to 10 seconds.
+memory as `LOAD"*",8,1` would leave it (`$ba` is 8, and the drive has read the disk's ID), a byte at a time through
+LOAD's pointer at `$ae/$af` (a file that loads over the pointer goes on where it now points); the program then loads
+the rest itself. A program that waits while the drive's motor runs is loading, not settled, for up to 10 seconds, and
+one that talks with the drive (drive code sent with M-W a byte at a time, the motor off) is not settled either.
 
 Every run starts at the same moment: the C64 at the READY prompt after its start-up, and the drive started up a
 while before, with the disk's ID just read and its motor still running, as after the LOAD. The first run in a process
@@ -178,8 +187,8 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
 | option | |
 |---|---|
 | `-o FILE` | save here (default: `<name>.<start address>.prg` next to the file) |
-| `--file NAME` | the file on the D64 or TAP to unpack (default: its first program; `*` and `?` as the DOS takes them) |
-| `--disk FILE` | put this D64 in the drive for a PRG given on its own |
+| `--file NAME` | the file on the D64, G64 or TAP to unpack (default: its first program; `*` and `?` as the DOS takes them) |
+| `--disk FILE` | put this D64 or G64 in the drive for a PRG given on its own |
 | `--tape FILE` | put this TAP in the datasette for a PRG given on its own |
 | `-e ADDR` | start with `SYS ADDR` instead of `RUN` |
 | `-l ADDR` | load the file at `ADDR` instead of its own load address |
@@ -377,9 +386,11 @@ reads the program from the tape and starts it, with the pointers a tape LOAD lea
   start). What the layer loaded but ran no code in or near (data far from code) is left out.
 - A program on several disks waits when it asks for the next one (its drive code reads track 18 again and again to see
   the disk change): only one disk is in the drive.
-- Copy protections that check what a D64 cannot hold (custom formats, half tracks, timing on the disk; a G64 image
-  would), and programs that depend on exact VIC timing (sprite DMA, the cycle within a raster line), may not get
-  through. What the drive writes stays in memory; the D64 is not changed.
+- Copy protections that check what a D64 cannot hold (custom formats, half tracks, timing on the disk) need the
+  disk's G64; a G64 holds whole bytes a track, so bit counts per turn and weak bits are not there. Programs that depend
+  on exact VIC timing (sprite DMA, the cycle within a raster line) may not get through; badlines take the bus from
+  cycle 11 to 54 of the line (from its first read on), CIA timers are read in the instruction's last cycle and never
+  read 0. What the drive writes stays in memory; the image is not changed.
 - An intro that waits for something other than the keys it tries stays where it is; `-e` can start the program behind
   it.
 

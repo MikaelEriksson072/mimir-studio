@@ -962,7 +962,7 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
   await test.step('File → Open PRG files… opens a PRG; the File button closes its menu too', async () => {
     await file.click();
     await expect(file).toHaveAttribute('aria-expanded', 'true');
-    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount D64 disk image…', 'Insert TAP tape image…', 'Save: create a project from this work…Ctrl+S']);
+    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount disk image (D64, G64)…', 'Insert TAP tape image…', 'Save: create a project from this work…Ctrl+S']);
     await file.click();
     await expect(menu).toBeHidden();
     await expect(file).toHaveAttribute('aria-expanded', 'false');
@@ -1040,9 +1040,9 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     await page.getByRole('menu').getByRole('menuitem', { name: item }).click();
   };
 
-  await test.step('Mount D64 disk image…: the Explorer, with the disk open', async () => {
+  await test.step('Mount disk image (D64, G64)…: the Explorer, with the disk open', async () => {
     await elsewhere();
-    await choose('Mount D64 disk image…', join(repoDir, 'fixtures/d64/mimir-demo.d64'));
+    await choose('Mount disk image (D64, G64)…', join(repoDir, 'fixtures/d64/mimir-demo.d64'));
     await expect(toast(page, 'Mounted mimir-demo.d64')).toBeVisible();
     await expect(explorer).toHaveAttribute('aria-pressed', 'true');
     await expect(expanded('Disk')).toHaveAttribute('aria-expanded', 'true');
@@ -1107,7 +1107,7 @@ test('Smart attach opens each file as its extension says, and Brokkr packs a Kic
       const d = all[all.length - 1];
       return { title: d?.title, filters: d?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: d?.properties };
     });
-    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 disks, TAP tapes, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 tap TAP json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
+    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 and G64 disks, TAP tapes, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 g64 G64 tap TAP json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
   });
 
   await test.step('a VICE snapshot and a cartridge, each by its extension', async () => {
@@ -1164,10 +1164,10 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   await waitForListing(page);
   const files = page.getByRole('list', { name: 'Files on mimir-demo.d64' });
 
-  await test.step('File → Mount D64 disk image… lists the directory', async () => {
+  await test.step('File → Mount disk image (D64, G64)… lists the directory', async () => {
     await openSection(page, 'Files');
     await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64')] });
-    await fromFileMenu(page, 'Mount D64 disk image…');
+    await fromFileMenu(page, 'Mount disk image (D64, G64)…');
     await expect(toast(page, 'Mounted mimir-demo.d64: "MIMIR DEMO", 3 files')).toBeVisible();
     await openSection(page, 'Disk');
     await expect(page.locator('.disk-head')).toContainText('"MIMIR DEMO"');
@@ -1206,7 +1206,7 @@ test('Add PRG file… in the Explorer adds PRGs beside the open ones; the File m
   await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
   const section = await openSection(page, 'Files');
   await expect(section.getByRole('button', { name: 'Open PRG…' })).toHaveCount(0);
-  await expect(section.getByRole('button', { name: 'Mount D64…' })).toHaveCount(0);
+  await expect(section.getByRole('button', { name: 'Mount D64/G64…' })).toHaveCount(0);
 
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/spindle-demo.prg')] });
   await section.getByRole('button', { name: 'Add PRG file…' }).click();
@@ -1654,7 +1654,7 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/kernal-load.d64')] });
-  await fromFileMenu(page, 'Mount D64 disk image…');
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await openSection(page, 'Disk');
   await page.getByRole('list', { name: 'Files on kernal-load.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
   const bar = page.locator('.pack-bar');
@@ -1679,20 +1679,20 @@ test('file dialogs open in the folder they were last used in', async ({ app, pag
   await expect(toast(page, 'Loaded packed-demo.prg at $0801')).toBeVisible();
   // the disk dialog has no folder of its own yet: it starts where the PRG came from
   await stubDialogs(app, { open: [join(diskDir, 'mimir-demo.d64')] });
-  await fromFileMenu(page, 'Mount D64 disk image…');
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await expect(toast(page, 'Mounted mimir-demo.d64')).toBeVisible();
   await stubDialogs(app, { open: [join(prgDir, 'raster-demo.prg')] });
   await page.keyboard.press('Control+o');
   await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
   await stubDialogs(app, { open: [join(diskDir, 'mimir-demo.d64')] });
-  await fromFileMenu(page, 'Mount D64 disk image…');
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await expect(toast(page, 'Mounted mimir-demo.d64')).toHaveCount(2);
 
   expect(await dialogOptions(app)).toEqual([
     { title: 'Open PRG files', defaultPath: undefined },
-    { title: 'Mount D64 disk image', defaultPath: prgDir },
+    { title: 'Mount disk image (D64, G64)', defaultPath: prgDir },
     { title: 'Open PRG files', defaultPath: prgDir },
-    { title: 'Mount D64 disk image', defaultPath: diskDir },
+    { title: 'Mount disk image (D64, G64)', defaultPath: diskDir },
   ]);
   // kept for the next start of the app
   expect(JSON.parse(readFileSync(join(userData, 'recent-folders.json'), 'utf8'))).toEqual({ prg: prgDir, disk: diskDir, last: diskDir });
@@ -4617,7 +4617,7 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/spindle-demo.d64')] });
-  await fromFileMenu(page, 'Mount D64 disk image…');
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await expect(toast(page, 'Mounted spindle-demo.d64: "SPINDLE DEMO", 1 file, a Spindle 3 disk with 4 jobs')).toBeVisible();
   await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('Spindle 3 disk: 4 jobs the loader reads, not files');
@@ -4660,7 +4660,7 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/bitfire-demo.d64')] });
-  await fromFileMenu(page, 'Mount D64 disk image…');
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await expect(toast(page, 'Mounted bitfire-demo.d64: "BITFIRE DEMO", 2 files, a Bitfire disk with 3 files of its own')).toBeVisible();
   await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('Bitfire disk: 3 files the loader reads, not in the directory');
@@ -4804,7 +4804,7 @@ test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, a
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/booze-demo.d64')] });
-  await fromFileMenu(page, 'Mount D64 disk image…');
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await expect(toast(page, 'Mounted booze-demo.d64: "BOOZE DEMO", 1 file, a BoozeLoader disk with 3 files of its own')).toBeVisible();
   await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('BoozeLoader disk: 3 files the loader reads, not in the directory');

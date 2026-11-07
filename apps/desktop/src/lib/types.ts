@@ -1,10 +1,11 @@
-import type { Addr, BitfireDisk, BoozeDisk, D64Image, KickProblem, ListingLine, LogLevel, ProblemCode, SpindleDisk, TapeImage, VerifyResult } from '@mimir/core';
+import type { Addr, BitfireDisk, BoozeDisk, D64Image, KickProblem, ListingLine, LogLevel, PirateSlayerDisk, ProblemCode, SpindleDisk, TapeImage, VerifyResult } from '@mimir/core';
 import type { IconName } from './icon-paths';
 
-/** The mounted .d64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build & Run;
- *  `spindle`: its jobs, when it is a Spindle 3 disk (the Spindle script tab lists them); `bitfire`: its files, when it
- *  is a Bitfire disk (the Bitfire script tab lists them) */
-export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null }
+/** The mounted .d64 or .g64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build &
+ *  Run (with the files the project opened from it built and written back); `spindle`: its jobs, when it is a Spindle 3
+ *  disk (the Spindle script tab lists them); `bitfire`: its files, when it is a Bitfire disk (the Bitfire script tab
+ *  lists them); `pirateslayer`: Electronic Arts' copy protection on it (the Pirate Slayer tab) */
+export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null; pirateslayer: PirateSlayerDisk | null }
 
 /** The tape in the datasette (13.5e): its files are listed in the Explorer (and every block in the Tape tab), a file
  *  opens with the tape in Sindri's datasette, and Build & Run puts a copy in VICE's datasette (or the tape with the

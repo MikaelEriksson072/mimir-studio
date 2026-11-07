@@ -23,6 +23,7 @@ import { activity, fingerprintId, identify, strings, type Activity, type Kind, t
 import { buildPrg, contentMask, keptParts, loadedParts, saveRange, type KeptPart } from './output.ts';
 import { Drive, type DriveState } from './drive.ts';
 import { d64ToDisk } from './gcr.ts';
+import { g64ToD64, g64ToDisk, isG64 } from './g64.ts';
 import { d64NameOf } from './d64.ts';
 import { Datasette, tapeFiles, tapeNameMatches, tapPulses, type TapeFile } from './tape.ts';
 import { basicLines, evaluate, findSys, listLine, statements, T } from './basic.ts';
@@ -31,8 +32,8 @@ export interface UnpackOptions {
   /** the C64 ROMs; without them the stand-ins run (fine for most packers, but not for BASIC programs) */
   roms?: Roms | null;
   /**
-   * the disk the file came from (a D64 image): with the 1541 DOS ROM in `roms` a 1541 with this disk is on the
-   * serial bus, so the program can load more files and run its fast loader
+   * the disk the file came from (a D64 or G64 image): with the 1541 DOS ROM in `roms` a 1541 with this disk is on
+   * the serial bus, so the program can load more files and run its fast loader (a G64 with its copy protection)
    */
   disk?: Uint8Array | null;
   /**
@@ -278,6 +279,8 @@ class Session {
   private readonly file: Uint8Array;
   private maxCycles: number;
   private readonly settleCycles: number;
+  /** the drive's bus changes when the last progress window began */
+  private windowBus = 0;
 
   layers: Layer[] = [];
   private cur: Layer | null = null;
@@ -323,6 +326,8 @@ class Session {
   private basicStatements: number[][] = [];
   private basicPos = 0;
   private basicRunning = false;
+  /** the disk's sectors as a D64 (a G64's decoded), for its directory */
+  private d64: Uint8Array | null = null;
   /** the 1541 (with a disk and its DOS ROM), or why there is none */
   private drive: Drive | null = null;
   private driveNote: string | null = null;
@@ -381,7 +386,8 @@ class Session {
     const rom = this.o.roms?.drive;
     if (!this.real) { this.driveNote = 'the stand-ins have no serial bus: the disk was not used'; return; }
     if (!rom) { this.driveNote = 'no 1541 DOS ROM: the disk was not used'; return; }
-    const disk = d64ToDisk(this.o.disk!);
+    const disk = isG64(this.o.disk!) ? g64ToDisk(this.o.disk!) : d64ToDisk(this.o.disk!);
+    this.d64 = isG64(this.o.disk!) ? g64ToD64(this.o.disk!) : this.o.disk!;
     const key = checksum(rom);
     if (!driveCache.has(key)) driveCache.set(key, bootDrive(rom));
     const d = new Drive(rom);
@@ -497,8 +503,7 @@ class Session {
     initStandIn(m);
     // from a tape: its header in the tape buffer, and the IRQ vector as LOAD from the tape leaves it
     if (this.tapeFile) { this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
-    this.loadFile();
-    const end = this.loadAt + this.data.length;
+    const end = this.loadFile();
     if (this.tapeFile) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
     if (this.loadAt === 0x0801) for (const p of [0x2d, 0x2f, 0x31]) { m.ram[p] = end & 0xff; m.ram[p + 1] = end >> 8; }
     m.cpu.s = 0xf8;
@@ -535,20 +540,30 @@ class Session {
   private setPhase(p: Phase): void { this.phase = p; this.phaseAt = this.progressAt = this.m.cycles; }
 
   /** Write the file into RAM, as LOAD does (the processor port at $00/$01 is left alone). */
-  private loadFile(): void {
+  /**
+   * The file's bytes into memory as the KERNAL's LOAD puts them: a byte at a time through the pointer at $ae/$af, so a
+   * file that loads over that pointer goes on where it now points (Ferrari Formula One's boot loads at $00ae and has
+   * the rest go to $02b0). Returns where LOAD ends, the address after the last byte, as it leaves it in $ae/$af.
+   */
+  private loadFile(): number {
     const m = this.m;
+    let lo = this.loadAt & 0xff, hi = this.loadAt >> 8;
     for (let i = 0; i < this.data.length; i++) {
-      const a = this.loadAt + i;
-      if (a < 2) continue;
-      m.ram[a] = this.data[i];
-      m.wid[a] = LOADED;
-      m.wtime[a] = m.icount;
+      const a = lo | (hi << 8), v = this.data[i];
+      if (a >= 2) {
+        m.ram[a] = v;
+        m.wid[a] = LOADED;
+        m.wtime[a] = m.icount;
+      }
+      if (a === 0xae) lo = v; else if (a === 0xaf) hi = v;
+      lo = (lo + 1) & 0xff;
+      if (!lo) hi = (hi + 1) & 0xff;
     }
     // from here on: what the run does with the loaded bytes
     for (const t of [m.firstOp, m.firstArg, m.firstRead, m.firstWrite]) t.fill(0);
-    const end = this.loadAt + this.data.length;
-    m.ram[0xae] = end & 0xff; m.ram[0xaf] = (end >> 8) & 0xff;
+    m.ram[0xae] = lo; m.ram[0xaf] = hi;
     m.ram[0x90] = 0x40;
+    return lo | (hi << 8);
   }
 
   /** Type a line into the keyboard buffer (10 characters at most, RETURN added). */
@@ -610,6 +625,7 @@ class Session {
       this.lastPc = pc;
       if (this.o.onStep && this.started) this.o.onStep(pc, m);
       const iWas = cpu.i;
+      m.dmaWait();
       const cycles = cpu.step();
       m.icount++;
       if (cpu.jammed) { this.jam(pc); break; }
@@ -810,6 +826,10 @@ class Session {
     if (now >= this.windowEnd) {
       // a window is a third of the settle time; fresh writes in it, or a new layer, are progress
       if (m.fresh >= 128 || this.cur !== this.progressLayer) { this.progressLayer = this.cur; this.progressAt = now; this.driveBusy = 0; }
+      // the program talks with the drive (sends it code with M-W, a byte at a time, with its motor off): not settled
+      const bus = this.drive?.busChanges ?? 0;
+      if (bus - this.windowBus >= LOADS) this.progressAt = now;
+      this.windowBus = bus;
       this.freshSum += m.fresh;
       m.fresh = 0;
       m.freshMark = this.windowIcount;
@@ -932,7 +952,7 @@ class Session {
         // LOAD typed at the prompt at the top of its string space, below $a000 (the file can load over it)
         if (this.drive) {
           m.ram[0xba] = 8; m.ram[0xb9] = 1;
-          const name = d64NameOf(this.o.disk!, this.file);
+          const name = d64NameOf(this.d64!, this.file);
           if (name?.length) {
             const at = 0xa000 - name.length;
             this.loadName = { at, bytes: name, before: m.ram.slice(at, 0xa000), icount: m.icount, used: false };
@@ -942,8 +962,7 @@ class Session {
         // from a tape: device 1, and the file's header in the tape buffer
         const fromTape = !!this.tape && (!!this.tapeFile || !this.drive);
         if (fromTape) { m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
-        this.loadFile();
-        const end = this.loadAt + this.data.length;
+        const end = this.loadFile();
         if (fromTape) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
         cpu.x = end & 0xff; cpu.y = (end >> 8) & 0xff; cpu.c = 0;
         this.setPhase('loaded');
@@ -1259,6 +1278,7 @@ function bootC64(roms: Roms): MachineState | null {
   while (m.cycles < BOOT_CYCLES) {
     if (cpu.pc === READY_WAITS && m.map[READY_WAITS >> 8] === KERNAL && !m.ram[0xc6]) return m.save();
     const iWas = cpu.i;
+    m.dmaWait();
     const cycles = cpu.step();
     m.icount++;
     if (cpu.jammed) return null;

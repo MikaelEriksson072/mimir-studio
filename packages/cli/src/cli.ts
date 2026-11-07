@@ -18,7 +18,7 @@ Usage:
   mimir analyse <file.prg | cartridge.crt | project.mimir.json>... [--json] [--bank <n>]
   mimir verify  <file.prg | cartridge.crt | project.mimir.json>... [--kickass [KickAss.jar]] [--java <java>]
   mimir export  <file.prg | cartridge.crt | project.mimir.json>... -o <folder> [--name <name>] [--force]
-  mimir unpack  <file.prg | disk.d64 | tape.tap> [--file <name>] [--disk <disk.d64>] [--tape <tape.tap>] [-o <unpacked.prg>] [--no-roms]
+  mimir unpack  <file.prg | disk.d64 | disk.g64 | tape.tap> [--file <name>] [--disk <disk.d64|g64>] [--tape <tape.tap>] [-o <unpacked.prg>] [--no-roms]
   mimir measure <file.prg | project.mimir.json | folder>... [--json] [--no-roms]
                 runs each PRG (a folder: every PRG and project in it and below; a project: its first file,
                 from its program start) in Sindri and sets what the analysis made of each byte against what
@@ -34,8 +34,8 @@ Options:
   --no-roms         unpack with Sindri's stand-ins instead of VICE's C64 ROMs (default: the ROMs of a
                     VICE installation, or the folder in C64_ROMS)
   --bank <n>        a cartridge: only this bank (by default every bank, each a space of its own)
-  --file <name>     unpack: the file on the D64 or TAP (default: its first program; * and ? as the DOS takes them)
-  --disk <d64>      unpack: put this disk in the drive (a D64 given as the file is in it already), so the
+  --file <name>     unpack: the file on the D64, G64 or TAP (default: its first program; * and ? as the DOS takes them)
+  --disk <d64|g64>  unpack: put this disk in the drive (a D64 or G64 given as the file is in it already), so the
                     program can load from it with the KERNAL or its own fast loader
   --tape <tap>      unpack: put this tape in the datasette, PLAY held down (a TAP given as the file is in it
                     already, wound to after the file), so the program's own tape loader reads it
@@ -305,7 +305,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if (inputs.length !== 1) { io.err('unpack takes one PRG'); return 2; }
         const path = resolve(io.cwd, inputs[0]);
         let prg: Uint8Array = new Uint8Array(readFileSync(path)), disk: Uint8Array | null = null, name = basename(path), base = basename(path).replace(/\.prg$/i, '');
-        if (/\.d64$/i.test(path)) {
+        if (/\.[dg]64$/i.test(path)) {
           // a disk: its first PRG (or the one named), with the disk in the drive
           disk = prg;
           const want = flags.get('file');
@@ -314,7 +314,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
           if (!f) { io.err(typeof want === 'string' ? `no PRG named "${want}" on ${name}` : `no PRG on ${name}`); return 2; }
           prg = readD64File(disk, f);
           name = `${name}: "${f.name}"`;
-          base = `${basename(path).replace(/\.d64$/i, '')}-${f.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
+          base = `${basename(path).replace(/\.[dg]64$/i, '')}-${f.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
         }
         let tape: UnpackTape | null = null;
         if (/\.tap$/i.test(path)) {

@@ -48,7 +48,7 @@ describe('d64', () => {
     expect(parseD64(grow(197376))).toMatchObject({ tracks: 40, errorInfo: true });
     expect(parseD64(grow(205312))).toMatchObject({ tracks: 42, errorInfo: false });
     expect(readD64File(grow(206114), parseD64(img).files[0])).toEqual(bytes(600));
-    expect(() => parseD64(new Uint8Array(1000))).toThrow(/not a \.d64 disk image: 1000 bytes/);
+    expect(() => parseD64(new Uint8Array(1000))).toThrow(/not a \.d64 or \.g64 disk image: 1000 bytes/);
   });
 
   it('lists scratched, splat, locked and DEL entries the way the 1541 does', () => {

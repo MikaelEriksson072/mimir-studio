@@ -924,8 +924,9 @@ Stationen går efter C64:an i sin egen takt (1 MHz) och hinner ikapp till rätt 
 skriver seriebussen, så snabbladdare som räknar cykler fungerar. Startfilen läggs i minnet som `LOAD"*",8,1`, och
 programmet laddar resten själv, med KERNAL eller sin egen laddare. På första disken av CSDB:s 190 bäst betygsatta demos
 kommer 151 längre än startfilen (laddaren laddar och startar nästa del); utan stationen väntade 151 i startfilen, 35
-gick tillbaka till READY och 4 kraschade. Ett program på flera disketter väntar när det ber om nästa; skydd som kräver
-mer än en D64 rymmer (G64) kommer inte igenom.
+gick tillbaka till READY och 4 kraschade. Ett program på flera disketter väntar när det ber om nästa. Ett skydd som
+kräver mer än en D64 rymmer kommer igenom med skivans G64 (13.5, 13.5h): huvudet läser då spåren bit för bit, halvspår
+och spår utan SYNC med.
 
 **Varje körning börjar likadant.** C64:an står vid READY efter sin uppstart, och stationen startade en stund innan,
 har just läst diskens ID och har motorn igång, som efter `LOAD`. Den första körningen i en process (i appen den första
@@ -1074,6 +1075,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Bitfire (Bitbreaker/Oxyron) | `adc $dd00 / stx $dd02 / lsr / lsr / dey / cpy #$01`, `ora $dd00 / stx $dd02 / ror / ror / ldx #$3f / sax` (resident.asm), och den äldre `ldy #$37 / lda $dcc9,y / sty $dd02` |
 | Sparkle (Sparta/OMG) | `lda $dd00 / sty $dd00 / lsr / lsr / dex / nop / ldy #$c0 / ora $dd00 / sty $dd00` och `and $dd00 / sta $dd00 / ora #0 / sta buffer,x / bvc` (sl.asm), i en senare version `inx` och `ora #1`; texten "sparkle" |
 | BoozeLoader (HCL/Booze Design) | mottagarloopen `dey / ldx #8 / lda $dd00 / stx $dd00 / lsr / lsr / iny / nop / ldx #0 / eor $dd00 / stx $dd00 / lsr / lsr`, där ATN skrivs till `$dd00` som klocka, och dess fjärde läsning `lda #$c0 / and $dd00 / sta $dd00 / ora #0 / sta buffer,y`; hur den skickar en bit av filnumret (`ldy #0 / bcc / ldy #$10 / lda #8 / sta $dd00 / bit $dd00 / bpl / sty $dd00 / rts`); ByteBoozer 1:s och 2:s offsettabeller, som bara räknas med loaderns egen kod; drivkommandot `"M-E" $020b` med sina egna byte, som låter DOS:en läsa drivkoden från 18/18, 18/15 och 18/12. Mönstren kommer ur Booze Designs demos 2008–2025 (källkoden är inte offentlig). Drivkoden finns aldrig i C64:ans minne, och skriptet i koden läses som 13.5d säger |
+| Pirate Slayer (Electronic Arts) | drivkodens nyckelkontroll `bvc * / clv / lda $1c01 / cmp #$d7 / bne / bvc * / clv / lda $1c01 / cmp #$d7 / beq / cmp #$eb / bne` (`50 FE B8 AD 01 1C C9 D7 D0 .. 50 FE B8 AD 01 1C C9 D7 F0 .. C9 EB D0`) och nyckelns 12 sista byte `55 AE 9B 55 AD 55 CB AE 6B AB AD AF`; drivens sändrutin `lda #1 / sta $1800 / bit $1800 / bne / stx $1800 / txa / asl / and #$0f / sta $1800`; C64:ans mottagarloop `sec / ldx $02 / lda $d012 / sbc #$32 / bcc / and #$07 / beq / stx $dd00` och stack-bootens handskakning `lda $dd00 / and #$07 / ora #$08 / sta $dd00 / lda $dd00 / bmi / dey / beq / bit $dd00 / bvs …`; texten `PIRATESLAYER`. Mönstren kommer ur drivkoden och laddarna som bootarna på fyra EA-skivor laddade upp och körde (Sindri med deras G64:or, 13.5h). Super Snapshot-kopierarens tecken `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c` (motor och lampa på) räknas nu bara med kopierarens egen kod: Pirate Slayers drivkod börjar likadant |
 | Covert Bitops loader (Cadaver) | badline-väntan `lda $d011 / clc / sbc $d012 / and #$07 / beq` följd av `lda #$10 / ora $dd00 / sta $dd00` (v3 loader.s), och `M-W` lagrat baklänges (`"W-M"`) |
 | Action Replay fastload (Datel) | byten tas emot på en rad utan badline: `bit $dd00 / bvc / sec / lda $d012 / sbc $aa / bcc / and #$07 / beq` (MK4: `cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); ett block till `$0200` (`… ora $dd00 / sta $0200,y`); stackkoden som kopierar blocken med cartridgen avbankad (`lda #$23 / sta $de00`, 128 byte till `$013f`); drivkoden: starten vid `$0150` (`sei / jsr $01xx / lda #$7a / sta $1802`), 1541-koden vid `$0300`, 1581-koden vid `$0500` (`sta $4001`); installationen som skickar `M-`, `-` och `W`/`E`/`R` var för sig |
 | Action Replay Warp*25 (Datel) | mottagarloopen som lägger tre byte per varv på stacken (`… eor $dd00 / pha / lda $dd00 …`); avkodningen `inc $01 / pla / eor #$f9 / dey / sta ($ae),y` (MK4 `dec $01`); stackkoden (`ldx #$20 / stx $de00`); 1541-koden vid `$0400` (768 byte); `B-E 2 0 18 5/6` i loaderfilen, som bara räknas med koden (andra loaders har samma B-E) |
@@ -2018,10 +2020,13 @@ projekt) går tillbaka till det. Dialogen öppnas där Smart attach senast anvä
 *Go to*; *Back to the work* lämnar filerna som de var) och en projektfil (en PRG bredvid lämnas, projektet öppnas).
 `test/main.test.ts` prövar `smartKind`, `smartPlan` och kanalens schema.
 
-### 13.5 Diskavbilder (.d64)
+### 13.5 Diskavbilder (.d64, .g64)
 
-**Mount D64 disk image…** (titelradens File-meny, kommandopaletten, eller dra och släpp en `.d64`) läser en 1541-avbild med 35, 40 eller 42 spår,
-med eller utan felbyte per sektor (`packages/core/src/c64/d64.ts`). Explorer visar katalogen, i sektionen *Disk* direkt
+**Mount disk image (D64, G64)…** (titelradens File-meny, kommandopaletten, eller dra och släpp en `.d64` eller `.g64`) läser en 1541-avbild med 35, 40 eller 42 spår,
+med eller utan felbyte per sektor (`packages/core/src/c64/d64.ts`). En G64 (spåren som GCR-bitar, som en bitkopierare
+läste dem, halvspår och kopieringsskydd med) läses genom sina vanliga sektorer: Sindri avkodar dem till en D64 med en
+felbyte per sektor (`diskSectors`, `g64ToD64`; ett spår utan sektorer, ett skydds, läses som fel), så katalogen,
+filerna och Spindle-, Bitfire- och BoozeLoader-läsarna fungerar som för en D64. Explorer säger `G64 (GCR tracks)`. Explorer visar katalogen, i sektionen *Disk* direkt
 under *Files*, som 1541:an listar den:
 diskens namn och id, en rad per fil med block, `"NAMN"` och typ (`*PRG` för en fil som aldrig stängdes, `PRG<` för en
 låst), och "blocks free" (spår 1–35 utom katalogspåret). Tomma och raderade poster visas inte.
@@ -2031,8 +2036,14 @@ sektorkedjan (en kedja som går i cirkel eller pekar utanför disken ger ett fel
 filnamnet blir namnet med de tecken Windows inte tillåter bytta mot `_`, plus `.prg`. SEQ-, USR-, REL- och DEL-filer
 listas men öppnas inte. Disken stannar monterad tills den matas ut, även när ett nytt projekt öppnas.
 
-Vid **Build & Run** läggs en kopia av den monterade disken i VICE:s drive 8 (`-8 <kopia>.d64`, i en ny byggmapp), så
-ett program som laddar fler delar från disken hittar dem, och ett program som sparar ändrar inte originalet. Det
+Vid **Build & Run** läggs en kopia av den monterade disken i VICE:s drive 8 (`-8 <kopia>.d64` eller `.g64`, i en ny
+byggmapp), så ett program som laddar fler delar från disken hittar dem, och ett program som sparar ändrar inte
+originalet. Projektets filer som öppnats från disken skrivs tillbaka i kopian som de byggdes, i sina egna sektorer
+(`writeDiskFile`: en D64:s sektorer, en G64:s datablock kodade på nytt där de låg, så resten av spåret, ett skydds
+spår också, är orört); en fil som behöver fler eller färre block än den har på disken skrivs inte tillbaka, och det
+sägs. Är projektets första fil diskens första program (det `LOAD"*",8,1` laddar) och ingen programstart är satt,
+autostartar VICE kopian i stället (`-autostart <kopia>`), så diskens egen boot laddar de byggda filerna – också en
+kopieringsskyddad G64:s. Annars läggs programmet i minnet med disken i drive 8. Det
 kräver PRG-läget inject (diskavbildsläget lägger en egen disk i drive 8), så `-autostartprgmode 1` läggs till om
 inställningarna säger något annat. Ett program som läggs rakt i minnet lämnar drivenheten som vid påslag, utan att
 ha läst disken; på en C64 laddades det från disken (`LOAD"*",8,1`), och snabbladdare räknar med det (Sparkle i *We
@@ -2413,6 +2424,34 @@ beq / clc / lda #$19 / sta $dc0e`), IRQ-laddarens (`lda $dc0d / ldx #$19 / stx $
 synken och TinyHeader. Fixturen `fixtures/tap/mimir-demo.tap` (`test/helpers/tapetool-tape.ts`) har en egen liten
 bootladdare i TinyHeader-stil, raster-demot som TinyHeader-fil, en sinustabell i två block i omvänd ordning och en fil
 med RLE-packade block; inget av TapeTools egen kod finns i repot.
+
+### 13.5h Pirate Slayer (Electronic Arts kopieringsskydd)
+
+`readPirateSlayerDisk` (`packages/core/src/c64/pirateslayer.ts`) läser skyddet på en monterad disk; analysen av bootet
+finns i `docs/pirateslayer.md`.
+
+- **Nyckeln** (bara en G64 har den): spår 2 (V2), 36 och 37 (V1) och 35 (PirateBusters) söks bit för bit efter
+  mönstren, inramade var som helst. För V2 räknas varje kopia ett varv: D7:orna, CC AD-paren efter EB och om de 12
+  byten `55 AE 9B 55 AD 55 CB AE 6B AB AD AF` följer. Bitfasen (där avbildens byte måste ramas in för att nyckeln ska
+  läsas) och antalet SYNC-märken (inga) sägs.
+- **Bootet**: EA:s eget (`EA` och `LOADER` med texten `+2 PIRATESLAYER BOOT PROGRAMMED BY KRIS HATLELID`), stack-bootet
+  (`EA` på `$0102`, känt på sina första byte, kontrollen körd som DOS-jobb) eller ett eget (Ferrari Formula Ones
+  `FF1-BOOT` på `$00AE`: var resten hamnar räknas ut som KERNAL:ns laddslinga gör). Filer som har drivens kontroll
+  okrypterad räknas upp.
+- På en D64 sägs att nyckelspåret saknas och att bootet därför fallerar kontrollen.
+
+Vid montering säger toasten och Explorer (*Disk*) vad som hittats, och fliken **Pirate Slayer** i bottenpanelen visar
+nyckeln (spår, mönster, SYNC, bitfas, kopiorna), bootet och vad det gör, var kontrollen finns och bootets text.
+
+Bootet körs i Sindri med G64:an i driven, nyckelspår och allt (13.5, 8.11b): Arctic Fox, Chuck Yeager's Advanced
+Flight Trainer, Demon Stalkers och Ferrari Formula One packas upp till spelet; Dan Dares avbild är skadad (också i
+VICE). Det krävde att Sindri läser G64:s spår bit för bit (ett spår utan SYNC glider en bit per varv, som en riktig
+skivas inramning), läser CIA-timrar i instruktionens sista cykel (en timer som går visar aldrig 0), lägger badline-DMA
+i cykel 11–54, låter CLK och DATA som C64:an släpper nå driven en cykel senare (ATN direkt), knyter stegmotorns fas till huvudets läge
+(`UJ` flyttar huvudet från nyckelspåret), lagrar LOAD genom pekaren på `$ae/$af` och räknar busstrafik med driven som
+arbete; se `docs/pirateslayer.md`. Laddaren känns igen i analysen (8.11c). `test/pirateslayer.test.ts` och
+`test/g64.test.ts` gör egna skivor (bara nyckelns bytemönster, inget av EA:s kod); Sindris `test/g64.test.ts` provar
+läsningen bit för bit, timrarna, stegmotorn och LOAD-pekaren.
 
 ### 13.6 Terminal
 

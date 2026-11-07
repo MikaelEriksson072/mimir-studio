@@ -6,7 +6,7 @@
 
 *Named after Mímir, who keeps the well of wisdom in Norse myth; the logo is his rune ᛗ glowing over the rings of his well.*
 
-Mimir Studio is a desktop IDE for re-assembling C64 software. Open a `.prg`, a `.d64` disk image, a `.tap` tape, a
+Mimir Studio is a desktop IDE for re-assembling C64 software. Open a `.prg`, a `.d64` or `.g64` disk image, a `.tap` tape, a
 VICE snapshot or a cartridge (`.crt`). The app traces the code, recognises graphics, music, tables and text, and names every hardware register
 and KERNAL routine. You can then rename, comment and re-type anything. It exports a
 [Kick Assembler](http://theweb.dk/KickAssembler/) project that assembles back to **exactly the same bytes**, and starts
@@ -46,6 +46,10 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   - routines nothing traced reaches, such as an init that ran before a snapshot was taken;
   - fast loaders: Spindle, Krill's loader, Bitfire, Sparkle, BoozeLoader (HCL's, in Booze Design's demos since 2008),
     the Covert Bitops loader, and any other one by its drive code;
+  - Pirate Slayer, Electronic Arts' copy protection (1986-1989): its loader in the analysis, and on a mounted disk its
+    key track (on a G64: track 2 with no SYNC, read bit by bit), its boot (EA and LOADER, the stack-page EA, or a
+    game's own) and what it does, in the *Pirate Slayer* tab; Sindri runs the boot with the G64 in its drive, key
+    check, timer-keyed decryption and fast loader, into the game. See `docs/pirateslayer.md`;
   - the Action Replay's loaders: its fastload, Warp*25, the tape backups' turbo and superturbo, and the turbo tape of
     LOAD and SAVE, in the cartridge's banks (5.1, 7.2 and 7.5 are checked against real ones) and in what it saves: the
     loader file of a Warp*25 backup (the MK4's too) and the loader in a tape backup's header. Novaload, which the
@@ -58,8 +62,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     have the same);
   - packed programs, which [Sindri](https://github.com/MikaelEriksson072/Sindri), Mimir's own unpacker, unpacks with one
     click: it runs the program in an emulated C64, reports each layer it peels off (coders, movers, decrunchers) and
-    names the packer by its fingerprint. A file opened from a mounted D64 gets that disk in an emulated 1541, so a boot
-    file's fast loader (Bitfire, Krill's, Sparkle, Spindle and others) goes on loading the next part. A file opened
+    names the packer by its fingerprint. A file opened from a mounted D64 or G64 gets that disk in an emulated 1541, so
+    a boot file's fast loader (Bitfire, Krill's, Sparkle, Spindle and others) goes on loading the next part; a G64's
+    tracks are read bit by bit, half tracks and copy-protection tracks with no SYNC too. A file opened
     from a tape gets the tape in an emulated datasette, wound to after the file with PLAY held down, so a tape boot
     file's own turbo loader (Novaload, Cyberload, TapeTool's and the rest) goes on loading the game. Freezer backups
     (the Action Replay's, the Freeze Machine's and the Super Snapshot's) are known as packed by their depacker, and a
@@ -192,8 +197,8 @@ start; *Save* (`Ctrl+S`) then creates a project and moves the work into its fold
 packed file.
 
 1. **Open a program.** Use the *File* menu: *Smart attach…* opens any of them, each file by its extension (`.prg`,
-   `.vsf`, `.crt`, `.d64`, `.tap`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG
-   files…* (`Ctrl+O`), a cartridge `.crt`, a VICE snapshot `.vsf`, *Mount D64 disk image…* for a disk or *Insert TAP
+   `.vsf`, `.crt`, `.d64`, `.g64`, `.tap`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG
+   files…* (`Ctrl+O`), a cartridge `.crt`, a VICE snapshot `.vsf`, *Mount disk image (D64, G64)…* for a disk or *Insert TAP
    tape image…* for a tape. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
@@ -214,7 +219,10 @@ packed file.
    **Build & Run** it in VICE (`F5`).
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
-the Spindle, Bitfire and Booze scripts (when there is one), statistics and the build output.
+the Spindle, Bitfire and Booze scripts and Pirate Slayer (when there is one), statistics and the build output. With a
+disk mounted, Build & Run writes the files the project opened from it back into a copy of the disk as they were built
+(a G64's sectors encoded again in place, its copy protection untouched), and autostarts that copy when the project
+starts with the disk's first program, so the disk's own boot loads them.
 
 ### Command line
 

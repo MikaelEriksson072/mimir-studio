@@ -678,6 +678,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .disk-spindle { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; color: var(--fg-2); }
 .disk-spindle > span { flex: 1; min-width: 0; }
 .disk-spindle .btn { flex: none; }
+.ps-notes { padding: 4px 10px 8px; font-size: 12px; color: var(--fg-2); }
+.ps-notes p { margin: 4px 0; }
 .kind { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--line); color: var(--fg-2); }
 .kind-call { color: var(--syn-mn); } .kind-write, .kind-rmw { color: var(--syn-ill); } .kind-read { color: var(--syn-hw); } .kind-branch, .kind-jump { color: var(--syn-dir); } .kind-ptr { color: var(--syn-label); }
 

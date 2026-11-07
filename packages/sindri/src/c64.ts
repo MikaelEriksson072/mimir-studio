@@ -19,6 +19,18 @@ export const RAM = 0, ZP = 1, BASIC = 2, KERNAL = 3, CHAR = 4, IO = 5;
 export const BOOT = -2, LOADED = -1;
 
 export const CYCLES_PER_LINE = 63, LINES = 312;
+
+/** read-modify-write instructions (their last two cycles write) and those whose last cycle writes (stores, pushes) */
+const RMW = new Set([
+  0x06, 0x0e, 0x16, 0x1e, 0x46, 0x4e, 0x56, 0x5e, 0x26, 0x2e, 0x36, 0x3e, 0x66, 0x6e, 0x76, 0x7e, 0xe6, 0xee, 0xf6, 0xfe,
+  0xc6, 0xce, 0xd6, 0xde, 0x03, 0x07, 0x0f, 0x13, 0x17, 0x1b, 0x1f, 0x23, 0x27, 0x2f, 0x33, 0x37, 0x3b, 0x3f, 0x43, 0x47,
+  0x4f, 0x53, 0x57, 0x5b, 0x5f, 0x63, 0x67, 0x6f, 0x73, 0x77, 0x7b, 0x7f, 0xc3, 0xc7, 0xcf, 0xd3, 0xd7, 0xdb, 0xdf, 0xe3,
+  0xe7, 0xef, 0xf3, 0xf7, 0xfb, 0xff,
+]);
+const WRITES_LAST = new Set([
+  0x81, 0x85, 0x8d, 0x91, 0x95, 0x99, 0x9d, 0x84, 0x8c, 0x94, 0x86, 0x8e, 0x96, 0x83, 0x87, 0x8f, 0x97, 0x93, 0x9f, 0x9c,
+  0x9e, 0x9b, 0x48, 0x08,
+]);
 export const CYCLES_PER_FRAME = CYCLES_PER_LINE * LINES;
 /** PAL: 985248 Hz */
 export const CLOCK = 985248;
@@ -31,11 +43,15 @@ export class Vic {
   flags = 0;
   /** DEN was set on line $30, so this frame has badlines */
   private den = true;
+  /** this line is a badline whose cycles the VIC has not taken yet */
+  bad = false;
 
-  read(r: number): number {
+  /** register r as the CPU reads it `at` cycles into the instruction (the raster line may have moved on) */
+  read(r: number, at = 0): number {
+    const line = this.lineCycle + at >= CYCLES_PER_LINE ? (this.line === LINES - 1 ? 0 : this.line + 1) : this.line;
     switch (r) {
-      case 0x11: return (this.regs[0x11] & 0x7f) | ((this.line & 0x100) >> 1);
-      case 0x12: return this.line & 0xff;
+      case 0x11: return (this.regs[0x11] & 0x7f) | ((line & 0x100) >> 1);
+      case 0x12: return line & 0xff;
       case 0x16: return this.regs[0x16] | 0xc0;
       case 0x18: return this.regs[0x18] | 0x01;
       case 0x19: return this.flags | 0x70 | (this.flags & this.regs[0x1a] & 0x0f ? 0x80 : 0);
@@ -59,19 +75,22 @@ export class Vic {
 
   get irq(): boolean { return (this.flags & this.regs[0x1a] & 0x0f) !== 0; }
 
-  /** Let n cycles pass; returns the cycles the CPU loses to badlines on the lines that start meanwhile. */
+  /**
+   * Let n cycles pass; returns the cycles the CPU loses to badlines meanwhile. On a badline the VIC takes the bus for
+   * 40 cycles, until cycle 54 of the line (counted from 0, when the raster line changes), as a real one does (fast
+   * loaders that time their transfers around badlines and read $d012 to stay clear of them depend on where they go).
+   */
   advance(n: number): number {
     let stolen = 0;
     this.lineCycle += n;
-    while (this.lineCycle >= CYCLES_PER_LINE) {
+    for (;;) {
+      if (this.bad && this.lineCycle >= 14) { this.bad = false; stolen += 40; this.lineCycle += 40; }
+      if (this.lineCycle < CYCLES_PER_LINE) break;
       this.lineCycle -= CYCLES_PER_LINE;
       const line = this.line = this.line === LINES - 1 ? 0 : this.line + 1;
       if (line === 0x30) this.den = (this.regs[0x11] & 0x10) !== 0;
       if (line === this.compare) this.flags |= 1;
-      if (this.den && line >= 0x30 && line <= 0xf7 && (line & 7) === (this.regs[0x11] & 7)) {
-        stolen += 40;
-        this.lineCycle += 40;
-      }
+      this.bad = this.den && line >= 0x30 && line <= 0xf7 && (line & 7) === (this.regs[0x11] & 7);
     }
     return stolen;
   }
@@ -85,7 +104,7 @@ export class Cia {
   sdr = 0;
   /**
    * cycles a timer does not count yet: one started or loaded by a write waits for the rest of the writing
-   * instruction, and starts one cycle later still; its interrupt follows the underflow a cycle after that
+   * instruction and one cycle more, so it counts from the third cycle after the write
    */
   waitA = 0; waitB = 0;
   /** a write just started or loaded the timer (the C64 sets the wait, as it knows the instruction) */
@@ -142,16 +161,31 @@ export class Cia {
     t[3] = h === 0x11 ? 0x12 | (pm ^ 0x80) : h === 0x12 ? 0x01 | pm : inc(h) | pm;
   }
 
-  read(r: number): number {
+  /**
+   * A timer's count `n` cycles on, without letting them pass: the CIA moves on after each instruction, but the
+   * instruction reads the timer in its last cycle (code that decrypts itself with the timer's value depends on it).
+   */
+  private ahead(t: number, latch: number, cr: number, wait: number, n: number): number {
+    if (!(cr & 1)) return Math.max(t, 0);
+    const v = t - (n - Math.min(n, wait));
+    // a running timer reloads as it reaches 0, so it never reads 0: the latch shows for two cycles instead (the
+    // underflow still comes a cycle later; Pirate Slayer's boot decrypts itself with these values)
+    if (v === 0) return latch;
+    if (v > 0) return v;
+    return cr & 8 ? latch : latch - ((-v - 1) % (latch + 1));
+  }
+
+  /** register r as the CPU reads it `at` cycles into the instruction (the timers count on meanwhile) */
+  read(r: number, at = 0): number {
     switch (r) {
       case 0x0: return (this.pra | ~this.ddra) & this.inputA() & 0xff;
       case 0x1: return (this.prb | ~this.ddrb) & this.inputB() & 0xff;
       case 0x2: return this.ddra;
       case 0x3: return this.ddrb;
-      case 0x4: return Math.max(this.ta, 0) & 0xff;
-      case 0x5: return Math.max(this.ta, 0) >> 8;
-      case 0x6: return Math.max(this.tb, 0) & 0xff;
-      case 0x7: return Math.max(this.tb, 0) >> 8;
+      case 0x4: return this.ahead(this.ta, this.tal, this.cra & 0x20 ? 0 : this.cra, this.waitA, at) & 0xff;
+      case 0x5: return this.ahead(this.ta, this.tal, this.cra & 0x20 ? 0 : this.cra, this.waitA, at) >> 8;
+      case 0x6: return this.ahead(this.tb, this.tbl, this.crb & 0x60 ? 0 : this.crb, this.waitB, at) & 0xff;
+      case 0x7: return this.ahead(this.tb, this.tbl, this.crb & 0x60 ? 0 : this.crb, this.waitB, at) >> 8;
       case 0x8: return this.tod[0];
       case 0x9: return this.tod[1];
       case 0xa: return this.tod[2];
@@ -205,7 +239,7 @@ export interface Roms {
 export interface MachineState {
   ram: Uint8Array; color: Uint8Array; ddr: number; port: number;
   cpu: { a: number; x: number; y: number; s: number; pc: number; p: number };
-  vic: { regs: Uint8Array; line: number; lineCycle: number; compare: number; flags: number };
+  vic: { regs: Uint8Array; line: number; lineCycle: number; compare: number; flags: number; bad?: boolean };
   cia: [Cia, Cia];
   cycles: number;
 }
@@ -309,8 +343,14 @@ export class C64 implements Bus {
 
   /** the C64's ATN, CLK and DATA outputs (bits 3-5 of $dd00, through inverters: a 1 pulls the line low) */
   private serialOut(): void {
+    const l = this.serialLines();
+    this.drive!.setC64((l & 1) !== 0, (l & 2) !== 0, (l & 4) !== 0);
+  }
+
+  /** the lines the C64 pulls low: bit 0 ATN, 1 CLK, 2 DATA */
+  private serialLines(): number {
     const out = this.cia2.pra | ~this.cia2.ddra;
-    this.drive!.setC64((out & 0x08) !== 0, (out & 0x10) !== 0, (out & 0x20) !== 0);
+    return ((out >> 3) & 1) | ((out >> 3) & 2) | ((out >> 3) & 4);
   }
 
   /** the cycle in which the running instruction reaches the bus: its last one */
@@ -409,14 +449,16 @@ export class C64 implements Bus {
   peekWord(a: number): number { return this.peek(a) | (this.peek((a + 1) & 0xffff) << 8); }
 
   private readIo(a: number): number {
-    if (a < 0xd400) return this.vic.read(a & 0x3f);
+    // the timers and the raster line as they are in the cycle the instruction reads them (its last one)
+    const at = CYCLES[this.cpu.lastOp & 0xff] - 1;
+    if (a < 0xd400) return this.vic.read(a & 0x3f, at);
     if (a < 0xd800) return this.readSid(a & 0x1f);
     if (a < 0xdc00) return this.color[a & 0x3ff] & 0x0f;
-    if (a < 0xdd00) return this.cia1.read(a & 0x0f);
+    if (a < 0xdd00) return this.cia1.read(a & 0x0f, at);
     if (a < 0xde00) {
       // ($dd00 and $dd02, the serial port and its data direction: the drive catches up first)
       if (this.drive && (a & 0x0d) === 0) this.syncDrive(this.busCycle);
-      return this.cia2.read(a & 0x0f);
+      return this.cia2.read(a & 0x0f, at);
     }
     return 0;
   }
@@ -430,15 +472,32 @@ export class C64 implements Bus {
     else if (a < 0xde00) {
       const serial = this.drive && (a & 0x0d) === 0;
       if (serial) this.syncDrive(this.busCycle);
+      const before = serial ? this.serialLines() : 0;
       this.cia2.write(a & 0x0f, v);
       this.timerStart(this.cia2);
-      if (serial) this.serialOut();
+      if (serial) {
+        // a line the C64 pulls low is low at once; CLK or DATA it lets go reaches the drive a cycle later (the line rises
+        // through the pull-ups and the cable). Fast loaders that start a byte by letting DATA go are timed so: Pirate
+        // Slayer's reads its first bit pair 16 cycles after it, with no cycle to spare otherwise, and Ferrari Formula
+        // One's needs it too. ATN goes at once: loaders that clock the bits with it (Krill's) were timed that way (see
+        // docs/pirateslayer.md for how this was measured)
+        const after = this.serialLines(), rising = before & ~after & 6;
+        if (rising) {
+          this.drive!.setC64(((after | rising) & 1) !== 0, ((after | rising) & 2) !== 0, ((after | rising) & 4) !== 0);
+          this.syncDrive(this.busCycle + 1);
+        }
+        this.serialOut();
+      }
     }
   }
 
-  /** a timer the write started waits for the rest of this instruction (see Cia.waitA) */
+  /**
+   * a timer the write started waits for the rest of this instruction (see Cia.waitA): the write is in its last
+   * cycle, and the timer counts from the third cycle after it, as on the 6526 (read right after STA $DC0E, LDA
+   * $DC04 gives the latch minus 2)
+   */
   private timerStart(cia: Cia): void {
-    const wait = CYCLES[this.cpu.lastOp & 0xff] + 2;
+    const wait = CYCLES[this.cpu.lastOp & 0xff] + 1;
     if (cia.startedA) { cia.waitA = wait; cia.startedA = false; }
     if (cia.startedB) { cia.waitB = wait; cia.startedB = false; }
   }
@@ -459,6 +518,26 @@ export class C64 implements Bus {
   }
 
   // --- time and interrupts ----------------------------------------------------------------------------------------
+  /**
+   * Before the instruction at PC: on a badline the VIC holds the CPU from its first read at cycle 11 of the line (counted
+   * from 0, when the raster line changes; BA goes low there, 3 cycles before its first fetch) until cycle 54; writes go
+   * on for three cycles more. When this instruction reads at cycle 11 or later, it waits that long before it starts
+   * (or, started before 11, after the cycles it ran): its bus access comes after the VIC's. The fast loaders that read
+   * the serial port at counted cycles around badlines depend on it: a byte started right after $d012 shows a badline
+   * cannot be sent before the VIC takes the bus.
+   */
+  dmaWait(): void {
+    const v = this.vic;
+    if (!v.bad) return;
+    const s = v.lineCycle;
+    if (s >= 54) return;
+    const op = this.peek(this.cpu.pc);
+    const lastRead = s + CYCLES[op] - 1 - (RMW.has(op) ? 2 : WRITES_LAST.has(op) ? 1 : 0);
+    if (lastRead < 11) return;
+    v.bad = false;
+    this.advance(54 - Math.max(s, 11));
+  }
+
   /** Let the cycles of one instruction pass; returns them plus the cycles badlines stole. */
   advance(n: number): number {
     const total = n + this.vic.advance(n);
@@ -480,7 +559,7 @@ export class C64 implements Bus {
     return {
       ram: this.ram.slice(), color: this.color.slice(), ddr: this.ddr, port: this.port,
       cpu: { a: c.a, x: c.x, y: c.y, s: c.s, pc: c.pc, p: c.p },
-      vic: { regs: this.vic.regs.slice(), line: this.vic.line, lineCycle: this.vic.lineCycle, compare: this.vic.compare, flags: this.vic.flags },
+      vic: { regs: this.vic.regs.slice(), line: this.vic.line, lineCycle: this.vic.lineCycle, compare: this.vic.compare, flags: this.vic.flags, bad: this.vic.bad },
       cia: [copyCia(this.cia1), copyCia(this.cia2)],
       cycles: this.cycles,
     };
@@ -492,7 +571,7 @@ export class C64 implements Bus {
     const c = this.cpu;
     c.a = s.cpu.a; c.x = s.cpu.x; c.y = s.cpu.y; c.s = s.cpu.s; c.pc = s.cpu.pc; c.p = s.cpu.p;
     this.vic.regs.set(s.vic.regs); this.vic.line = s.vic.line; this.vic.lineCycle = s.vic.lineCycle;
-    this.vic.compare = s.vic.compare; this.vic.flags = s.vic.flags;
+    this.vic.compare = s.vic.compare; this.vic.flags = s.vic.flags; this.vic.bad = s.vic.bad ?? false;
     for (const [mine, saved] of [[this.cia1, s.cia[0]], [this.cia2, s.cia[1]]] as const) {
       const { inputA, inputB } = mine;
       Object.assign(mine, saved, { tod: saved.tod.slice(), inputA, inputB });

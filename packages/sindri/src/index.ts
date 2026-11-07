@@ -8,3 +8,5 @@ export { basicLines, listLine, findSys } from './basic.ts';
 export { identify, similarity, fingerprintId, SIGNATURES, type Kind, type Range, type Signature } from './analyze.ts';
 export { standInRoms } from './standin.ts';
 export { Datasette, tapeFiles, tapPulses, type TapeFile } from './tape.ts';
+export { isG64, parseG64, g64ToD64, g64ToDisk, trackSectors, syncEnds, decodeGcr, writeG64Sectors, type G64, type G64Sector } from './g64.ts';
+export { d64ToDisk, sectorsOn, type Disk } from './gcr.ts';

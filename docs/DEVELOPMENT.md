@@ -589,6 +589,33 @@ the reference as a patch in `test/helpers/reference.ts`):
     before; C64Tapes-org's tapes hold 723 Freeload and 613 US Gold files, and the tapes with unknown turbo data fell from
     765 to 639; on the first 98 boot files 93 play the tape for more than 5 s (80 before); no loader finding changed on
     600 disk programs.
+33. G64 disk images and Pirate Slayer (spec 13.5, 13.5h; the analysis is `docs/pirateslayer.md`) are new. Sindri reads a
+    G64 (`packages/sindri/src/g64.ts`): `g64ToD64` decodes its standard sectors into a D64 with error bytes (core's
+    `diskSectors`, so `parseD64`, `readD64File` and the Spindle, Bitfire and BoozeLoader readers take a G64 as they
+    are), `writeG64Sectors` encodes data blocks again in place (core's `writeDiskFile` writes a built file back into
+    its own sectors of a D64 or a G64; Build & Run does so in the disk's copy and autostarts it when the project starts
+    with the disk's first program), and the drive reads a G64's tracks bit by bit (a D64's still a byte at a time).
+    `readPirateSlayerDisk` reads Electronic Arts' protection: the key track (version 2 on track 2: no SYNC, D7 … D7,
+    EB, CC AD × 512, 55 AE 9B 55 AD 55 CB AE 6B AB AD AF; framed off the image's bytes), the boot (EA and LOADER, the
+    stack-page EA at `$0102`, or a game's own) and where the drive's check is; `pirateslayer` is a known loader. The app
+    mounts `.g64` (dialogs, drop, Smart attach) and has a Pirate Slayer tab; `mimir unpack` and Sindri's CLI take G64.
+    Running the boots of the archive's five Pirate Slayer disks (all version 2, in Preservers/Disc; Dan Dare's image is
+    damaged, in VICE too) against VICE 3.10 took eight Sindri fixes: the bit-level head (a track with no SYNC slips a
+    bit a turn, as a real disk's framing does), CIA timers read in the instruction's last cycle and counting from the
+    third cycle after the write (`STA $DC0E / LDA $DC04` gives the latch minus 2), a running timer never reading 0
+    (LOADER decrypts 36 771 bytes with CIA 2's timer A; 32 are read as it reloads), badline DMA from cycle 11 to 54
+    of the line and only from the CPU's first read on, CLK and DATA the C64 lets go reaching the drive a cycle later
+    (ATN at once: Krill's loader clocks with it), the stepper's phase tied to the head (UJ moves it off the key track),
+    LOAD storing through its pointer at `$ae/$af` (Ferrari's boot loads at `$00ae`), and talk with the drive counting
+    as progress (an M-W upload a byte at a time). Arctic Fox, Chuck Yeager's Advanced Flight Trainer, Demon Stalkers
+    and Ferrari Formula One now unpack into their games, and the 59 064 bytes Arctic Fox's loader receives up to the
+    game are the same as in VICE. Measured old against new Sindri on 200 disk and tape boots (CSDB Top200 games and
+    demos, Preservers tapes and disks): 196 the same, 4 changed (The Violators 7 layers to 11, Asterix's tape and Bard's
+    Tale 3 now unpack where they stopped at a JAM and a reset; Barnsley Badger's FLOAD v2.1 fails its load either way,
+    waiting before and crashing now, from the badline timing); 255 CSDB intros without a disk: 254 the same. A uniform
+    one-cycle delay on every line (VICE's `maincpu_clk + 1`) changed 12 of the 200, 7 for the worse (Scramble
+    Infinity's Krill installer among them), which is why only CLK and DATA rising are delayed. A D64's tracks are still
+    read a byte at a time (bit by bit took three times as long); disk runs take about 2 % longer per emulated second.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

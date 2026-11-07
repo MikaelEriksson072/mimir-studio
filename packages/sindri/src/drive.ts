@@ -22,7 +22,7 @@ export const DRIVE_RATIO = 1_000_000 / 985248;
 
 export interface DriveState {
   ram: Uint8Array; cpu: { a: number; x: number; y: number; s: number; pc: number; p: number };
-  via1: ViaState; via2: ViaState; cycles: number; halftrack: number; phase: number;
+  via1: ViaState; via2: ViaState; cycles: number; halftrack: number;
 }
 
 export class Drive implements Bus {
@@ -34,14 +34,29 @@ export class Drive implements Bus {
   disk: Disk | null = null;
   /** drive cycles since power-on */
   cycles = 0;
-  /** the head: half tracks from 2 (track 1) to 84 (track 42), and the stepper phase that put it there */
+  /**
+   * the head: half tracks from 2 (track 1) to 84 (track 42). The stepper's phase (VIA 2 port B bits 0-1) is tied to
+   * where the head is: phase 0 on track 1, 2 on track 2, 0 on track 3 and so on (as in VICE, after its first seek
+   * to track 1), so a reset that sets phase 0 moves the head off an even track
+   */
   halftrack = 36;
-  private phase = 0;
-  /** the byte under the head, its position on the track, and the cycles towards the next one */
-  private pos = 0;
+  /**
+   * The head on a G64 reads bit by bit, as the 1541's does: the bit under it on the track, the bits since the last
+   * SYNC (a byte every 8, which the SYNC lines up), the 1 bits in a row (ten are a SYNC), the bits read lately, and the
+   * time towards the next bit (in eighths of a cycle); a G64 track is as a bit copier read it, SYNCs anywhere, or none
+   * at all. A track a D64 makes is whole bytes after every SYNC, so it reads a byte at a time (and as fast as before).
+   */
+  private bit = 0;
+  private count = 0;
+  private ones = 0;
+  private shift = 0;
   private rot = 0;
   private latch = 0;
   private sync = false;
+  /** the byte being written, loaded from VIA 2 port A when the last one was done */
+  private wbyte = 0;
+  /** tracks with no SYNC anywhere on them */
+  private syncless = new WeakMap<Uint8Array, boolean>();
   /** the lines the C64 pulls low */
   c64Atn = false; c64Clk = false; c64Data = false;
   /** bytes the head read and wrote, for the report */
@@ -151,50 +166,123 @@ export class Drive implements Bus {
 
   // --- the head and the disk -------------------------------------------------------------------------------------
   private track(): Uint8Array | null {
-    return this.halftrack & 1 ? null : this.disk?.tracks[this.halftrack >> 1] ?? null;
+    const d = this.disk;
+    if (!d) return null;
+    if (d.halves) return d.halves[this.halftrack] ?? null;
+    return this.halftrack & 1 ? null : d.tracks[this.halftrack >> 1] ?? null;
   }
 
-  /** VIA 2 port B changed: the stepper moves the head half a track in or out */
+  /**
+   * VIA 2 port B changed: the stepper moves the head half a track in or out, towards the phase now powered; the
+   * opposite phase moves it a whole track in, as VICE has it (Pirate Slayer's boots reset the drive with UJ while the
+   * head is on their track with no SYNC, phase 2: the reset's phase 0 puts it on track 3, where the DOS finds headers)
+   */
   private step2(): void {
-    const p = this.via2.outB & 3;
-    if (p === this.phase) return;
+    const d = ((this.via2.outB & 3) - (this.halftrack - 2)) & 3;
+    if (!d) return;
     const before = this.track()?.length ?? 0;
-    if (p === ((this.phase + 1) & 3)) this.halftrack = Math.min(84, this.halftrack + 1);
-    else if (p === ((this.phase - 1) & 3)) this.halftrack = Math.max(2, this.halftrack - 1);
-    this.phase = p;
+    this.halftrack = Math.max(2, Math.min(84, this.halftrack + (d === 1 ? 1 : d === 3 ? -1 : 2)));
     // the disk keeps turning: the head lands at the same angle on the new track
     const after = this.track()?.length ?? 0;
-    if (before && after) this.pos = Math.floor((this.pos * after) / before);
+    if (before && after) this.bit = Math.floor((this.bit * after) / before);
   }
 
   /** n drive cycles of the disk turning under the head (while the motor runs) */
   private turn(n: number): void {
     const b = this.via2.outB;
     if (!(b & 0x04)) return;
+    // a byte takes `per` cycles at this density: a bit is per/8 of a cycle
     const per = BYTE_CYCLES[(b >> 5) & 3];
-    this.rot += n;
-    while (this.rot >= per) { this.rot -= per; this.nextByte(); }
+    this.rot += n * 8;
+    if (this.rot < per) return;
+    const t = this.track();
+    if (!this.disk?.halves) {
+      // a D64's tracks are whole bytes after every SYNC: the head reads them a byte at a time
+      while (this.rot >= per * 8) { this.rot -= per * 8; if (t && t.length) this.nextByte(t); else this.noByte(); }
+      return;
+    }
+    while (this.rot >= per) { this.rot -= per; if (t && t.length) this.nextBit(t); else this.noBit(); }
   }
 
-  private nextByte(): void {
-    const t = this.track(), v2 = this.via2;
-    const writing = !v2.cb2;
-    if (!t) { this.sync = false; this.latch = 0; this.ready(); return; }
-    this.pos = (this.pos + 1) % t.length;
-    if (writing) {
-      t[this.pos] = v2.outA;
+  /** the next byte of a D64's track passes under the head */
+  private nextByte(t: Uint8Array): void {
+    const v2 = this.via2;
+    this.bit = ((this.bit & ~7) + 8) % (t.length * 8);
+    const i = this.bit >> 3;
+    if (!v2.cb2) {
+      t[i] = v2.outA;
       this.bytesWritten++;
       this.sync = false;
       this.ready();
       return;
     }
-    const byte = t[this.pos];
+    const byte = t[i];
     // SYNC: the head over at least ten 1 bits in a row; no byte is ready meanwhile
-    this.sync = byte === 0xff && t[(this.pos + t.length - 1) % t.length] === 0xff;
+    this.sync = byte === 0xff && t[(i + t.length - 1) % t.length] === 0xff;
     if (this.sync) return;
     this.latch = byte;
     this.bytesRead++;
     this.ready();
+  }
+
+  /** no track under the head, a byte's time: no SYNC, and a 0 byte */
+  private noByte(): void {
+    this.sync = false; this.latch = 0;
+    this.ready();
+  }
+
+  /** no track under the head (unformatted, or between the tracks of a D64): no SYNC, and a 0 byte every 8 bits */
+  private noBit(): void {
+    this.sync = false; this.ones = 0;
+    if (++this.count < 8) return;
+    this.count = 0; this.latch = 0;
+    this.ready();
+  }
+
+  /** the next bit of track t passes under the head */
+  private nextBit(t: Uint8Array): void {
+    const v2 = this.via2;
+    // a turn of the disk: on a real one the bits in a turn are rarely a multiple of 8, so where the drive frames the
+    // bytes of a track without a SYNC moves on with every turn; a G64 track is whole bytes, so the head slips a bit
+    // there to do the same (a copy protection's track with no SYNC is read where it lines up)
+    if (++this.bit >= t.length * 8) this.bit = this.noSync(t) ? 1 : 0;
+    const i = this.bit;
+    if (!v2.cb2) {
+      // writing: the byte in port A when the last one was done, bit by bit
+      if (this.count === 0) { this.wbyte = v2.outA; this.bytesWritten++; this.ready(); }
+      const m = 0x80 >> (i & 7);
+      t[i >> 3] = (this.wbyte << this.count) & 0x80 ? t[i >> 3] | m : t[i >> 3] & ~m;
+      this.count = (this.count + 1) & 7;
+      this.sync = false; this.ones = 0;
+      this.syncless.delete(t);
+      return;
+    }
+    const v = (t[i >> 3] >> (7 - (i & 7))) & 1;
+    if (v) {
+      // SYNC: ten 1 bits in a row and more; meanwhile no byte is ready, and the next one starts after it
+      if (++this.ones >= 10) { this.sync = true; this.count = 0; return; }
+    } else this.ones = 0;
+    this.sync = false;
+    this.shift = ((this.shift << 1) | v) & 0xff;
+    if (++this.count < 8) return;
+    this.count = 0;
+    this.latch = this.shift;
+    this.bytesRead++;
+    this.ready();
+  }
+
+  /** the track has no SYNC anywhere */
+  private noSync(t: Uint8Array): boolean {
+    let none = this.syncless.get(t);
+    if (none === undefined) {
+      none = true;
+      let ones = 0;
+      for (let k = 0; k < t.length * 8 + 10 && none; k++) {
+        if ((t[(k >> 3) % t.length] >> (7 - (k & 7))) & 1) { if (++ones >= 10) none = false; } else ones = 0;
+      }
+      this.syncless.set(t, none);
+    }
+    return none;
   }
 
   /** a byte is ready: VIA 2's CA1 flag, and the CPU's overflow flag while byte ready is enabled (CA2 high) */
@@ -208,7 +296,7 @@ export class Drive implements Bus {
     const c = this.cpu;
     return {
       ram: this.ram.slice(), cpu: { a: c.a, x: c.x, y: c.y, s: c.s, pc: c.pc, p: c.p },
-      via1: this.via1.save(), via2: this.via2.save(), cycles: this.cycles, halftrack: this.halftrack, phase: this.phase,
+      via1: this.via1.save(), via2: this.via2.save(), cycles: this.cycles, halftrack: this.halftrack,
     };
   }
 
@@ -217,7 +305,7 @@ export class Drive implements Bus {
     const c = this.cpu;
     c.a = s.cpu.a; c.x = s.cpu.x; c.y = s.cpu.y; c.s = s.cpu.s; c.pc = s.cpu.pc; c.p = s.cpu.p;
     this.via1.restore(s.via1); this.via2.restore(s.via2);
-    this.cycles = s.cycles; this.halftrack = s.halftrack; this.phase = s.phase;
+    this.cycles = s.cycles; this.halftrack = s.halftrack;
     this.lines = this.via1.outB & 0x0a;
   }
 }

@@ -42,6 +42,7 @@ interface SidebarProps {
   /** open the Bitfire script tab (a Bitfire disk's files) */
   onShowBitfire: () => void;
   onShowBooze: () => void;
+  onShowPirateSlayer: () => void;
   /** per file: packed (or maybe packed), else null */
   packing: (PackingInfo | null)[];
   /** open a file from the mounted disk (`add`: add it to the project) */
@@ -79,7 +80,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -112,7 +113,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} />}
+        {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowPirateSlayer={onShowPirateSlayer} />}
         {tape && <TapeSection tape={tape} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
@@ -381,8 +382,8 @@ const bankAdr = (A: Pick<AnalysisResult, 'spaces'>, a: Addr): string => {
   return `${s ? `${s.bank}:` : ''}$${h4(a)}`;
 };
 
-/** The mounted .d64, listed the way the 1541 lists it. A PRG opens with a click; + adds it to the project. */
-function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze }: { disk: MountedDisk; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void }) {
+/** The mounted .d64 or .g64, listed the way the 1541 lists it. A PRG opens with a click; + adds it to the project. */
+function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowPirateSlayer }: { disk: MountedDisk; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowPirateSlayer: () => void }) {
   const { img } = disk;
   return (
     <SideSection id="disk" title="Disk" summary={`"${img.name}"`} actions={<button className="icon-btn" title={`Eject ${disk.name}`} aria-label="Eject disk" onClick={onEject}><Icon name="eject" size={14} /></button>}>
@@ -420,7 +421,13 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
           <button className="btn small" onClick={onShowBooze}>Booze script</button>
         </div>
       )}
-      <div className="side-hint">{img.freeBlocks} blocks free{img.tracks !== 35 ? ` · ${img.tracks} tracks` : ''} · in drive 8 on Build &amp; Run</div>
+      {disk.pirateslayer && (
+        <div className="disk-spindle">
+          <span><b>Pirate Slayer:</b> {disk.pirateslayer.keys.length ? `the key on track ${disk.pirateslayer.keys.map(k => k.track).join(' and ')}, no SYNC` : disk.pirateslayer.format === 'D64' ? 'a D64 has no key track: the boot fails its check' : 'no key track on the image'}{disk.pirateslayer.boot ? `; boot ${disk.pirateslayer.boot.files.join(' → ')}` : ''}</span>
+          <button className="btn small" onClick={onShowPirateSlayer}>Pirate Slayer</button>
+        </div>
+      )}
+      <div className="side-hint">{img.freeBlocks} blocks free{img.tracks !== 35 ? ` · ${img.tracks} tracks` : ''}{img.format === 'G64' ? ' · G64 (GCR tracks)' : ''} · in drive 8 on Build &amp; Run</div>
     </SideSection>
   );
 }

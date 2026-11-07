@@ -99,7 +99,7 @@ export async function stubDialogs(app: ElectronApplication, answers: { open?: st
   }, answers);
 }
 
-/** A choice of the title bar's File menu ("Open PRG files…", "Mount D64 disk image…"…); stub its dialog first. */
+/** A choice of the title bar's File menu ("Open PRG files…", "Mount disk image (D64, G64)…"…); stub its dialog first. */
 export async function fromFileMenu(page: Page, item: string): Promise<void> {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menu').getByRole('menuitem', { name: item }).click();

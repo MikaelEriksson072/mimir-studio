@@ -168,7 +168,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.diskOpen, diskOpenSchema, async (req, e) => {
     let path = req.path ? policy.assert(req.path, 'Disk image') : null;
     if (!path) {
-      [path] = await pick(e, 'disk', { title: 'Mount D64 disk image', properties: ['openFile'], filters: [{ name: 'C64 disk images', extensions: ['d64', 'D64'] }, { name: 'All files', extensions: ['*'] }] });
+      [path] = await pick(e, 'disk', { title: 'Mount disk image (D64, G64)', properties: ['openFile'], filters: [{ name: 'C64 disk images', extensions: ['d64', 'D64', 'g64', 'G64'] }, { name: 'All files', extensions: ['*'] }] });
       if (!path) return null;
       chose(dirname(path), 'disk');
     }
@@ -190,7 +190,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.fileSmart, smartAttachSchema, async (req, e): Promise<SmartAttachResult | null> => {
     const all = [...new Set(Object.values(SMART_EXTENSIONS).flat())];
     const paths = await pick(e, 'smart', { title: 'Smart attach', properties: ['openFile', 'multiSelections'], filters: [
-      { name: 'PRGs, snapshots, cartridges, D64 disks, TAP tapes, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
+      { name: 'PRGs, snapshots, cartridges, D64 and G64 disks, TAP tapes, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
       { name: 'All files', extensions: ['*'] },
     ] });
     if (!paths.length) return null;

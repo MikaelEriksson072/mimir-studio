@@ -18,7 +18,7 @@
  *   loader makes after the job (`jmp`, Pefchain's side door), units into the loader's page patch it (shadow RAM).
  * Copies come from higher addresses, so a job decrunches from its highest byte down. */
 import type { Addr } from '../types';
-import { sectorOffset } from './d64';
+import { diskSectors, sectorOffset } from './d64';
 
 export interface SpindleChunk { start: Addr; end: Addr; bytes: Uint8Array }
 
@@ -61,7 +61,8 @@ const SIZES: Record<number, 35 | 40> = { 174848: 35, 175531: 35, 196608: 40, 197
 const indexOf = (b: Uint8Array, p: number[]) => { for (let a = 0; a + p.length <= b.length; a++) if (p.every((x, i) => b[a + i] === x)) return a; return -1; };
 
 /** The jobs of a Spindle 3 disk; null when it is not one. */
-export function readSpindleDisk(image: Uint8Array): SpindleDisk | null {
+export function readSpindleDisk(disk: Uint8Array): SpindleDisk | null {
+  const image = diskSectors(disk);
   const tracks = SIZES[image.length];
   if (!tracks) return null;
   const sec = (t: number, s: number) => { const o = sectorOffset(t, s, tracks); return image.subarray(o, o + 256); };

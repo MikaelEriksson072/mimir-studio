@@ -27,7 +27,7 @@
  * after one, a match's length the length + 1 (256 ends), and its offset built from 2 bits of prefix: 4, 2, 2 or 2 bits
  * after a match of 2, 5, 2, 2 or 3 after a longer one, each further group shifted on after adding 1. */
 import type { Addr } from '../types';
-import { parseD64, petsciiName, sectorOffset, sectorsOnTrack } from './d64';
+import { diskSectors, parseD64, petsciiName, sectorOffset, sectorsOnTrack } from './d64';
 
 /** the packer: ByteBoozer 1.x or 2.0 */
 export type BoozeCruncher = 'b1' | 'b2';
@@ -170,7 +170,8 @@ const unpackers: Record<BoozeCruncher, (data: Uint8Array, load: Addr) => BoozeUn
 interface Chain { track: number; sector: number; sectors: number; data: Uint8Array; used: number[] }
 
 /** The files of a BoozeLoader disk; null when it is not one. */
-export function readBoozeDisk(image: Uint8Array): BoozeDisk | null {
+export function readBoozeDisk(disk: Uint8Array): BoozeDisk | null {
+  const image = diskSectors(disk);
   const tracks = SIZES[image.length];
   if (!tracks) return null;
   const off = (t: number, s: number) => sectorOffset(t, s, tracks);
