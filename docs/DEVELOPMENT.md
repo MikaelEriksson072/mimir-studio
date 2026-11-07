@@ -32,7 +32,7 @@ pnpm test
 | `pnpm test` | All Vitest suites: core (round-trip, fast-check fuzz, differential vs. the prototype, real KickAss.jar when installed), CLI, desktop main process |
 | `pnpm typecheck` | `tsc` for every package (main/preload, renderer and the e2e tests separately) |
 | `pnpm build` | CLI bundle (`packages/cli/dist`) and the Electron app (`apps/desktop/out`) |
-| `pnpm mimir <cmd>` | CLI from source: `analyse`, `verify [--kickass]`, `export -o <dir>`, `unpack <file.prg \| disk.d64>`, `demo` |
+| `pnpm mimir <cmd>` | CLI from source: `analyse`, `verify [--kickass]`, `export -o <dir>`, `unpack <file.prg \| disk.d64 \| tape.tap>`, `demo` |
 | `pnpm --filter @mimir/desktop e2e` | Builds the app and runs the Playwright-for-Electron tests in `apps/desktop/e2e` |
 | `pnpm --filter @mimir/desktop package` | Builds the app and packages it for Windows with electron-builder (installer + portable exe in `apps/desktop/release/<version>/`) |
 
@@ -105,6 +105,7 @@ Playwright inspector).
 | the memory map zooms with the wheel around the pointer, a right-drag moves it and Whole map shows it all again | the inspector's map starts whole, `$0800`, `$1400`, `$2000` and `$2c00` down its side; the wheel over a byte zooms in with that byte still under the pointer (the tooltip keeps its address), up to ×32, without scrolling the inspector, and then each row has its address beside it, a page apart; a right-drag moves the map with the pointer (the byte grabbed is under it where it is let go) without jumping or a context menu, and a right-click that does not move jumps there; a left click still jumps and a left drag selects (`sel $…–$…`); `G` to `charset_3000` and then `start` brings each into view; *Zoom to the loaded pages* off and on keeps the zoom and the bytes in view; *Whole map*, and the wheel turned back, show the whole map again |
 | loaders: the Explorer names the loader and lists its parts, which the listing and the source mark | the raster demo has none; `fixtures/prg/loader-demo.prg` shows *Spindle (lft)* (2-bit + ATN …) with its installer, two drive commands, `$0c00–$0cff` on the C64 and its drive code at `$3000`; a part goes to the listing, where `// ==== Spindle (lft): resident page (jsr here to load the next part) ====` and the header's *Spindle* mark it; the analysis log names it and `F7` verifies |
 | the Spindle script: a tab when Pefchain drivers are in memory, a row per script line that goes to its driver | the demo has no *Spindle script* tab; `fixtures/prg/spindle-demo.prg` (the drivers pefchain 3.1 built for five test parts) has one with 6 rows: `part1.pef space`, `part2.pef f0 = 05`, `\| f0 = 20`, `part3.pef -`, `part4.pef @`, `- stay`, then *its \| line* and *the end of the demo*; a row goes to `$1201 · part3_driver`, marked `// ==== Spindle part 3: its driver (script line "part3.pef -") ====`, and `part4_fadeout` to `$1314`; *Copy script* copies the script with `part1.pef     space      # driver $108c: …`; `F7` verifies; the demo again has no such tab and shows the log |
+| a tape in the datasette: its files in the Explorer and the Tape tab, TapeTool's command lines, the boot file with its header, Build & Run and Sindri reading the tape | *File → Insert TAP tape image…* puts `fixtures/tap/mimir-demo.tap` in the datasette (*4 files (1 KERNAL, 3 TapeTool)*); the *Tape* section lists `"MIMIR TAPE" +header PRG`, the TinyHeader file and files 1 and 2 with their times; the Tape tab lists their addresses and notes (*name byte 1, 2 blocks, in random order*, *3 RLE packed*), a row opens `tinyheader.prg` at `$0801` (the raster demo), *Copy script* copies TapeTool's five command lines, *Save files…* writes the six files (`boot.bin`, `build.bat`, the PRGs; `tinyheader.prg` is the raster demo); the boot file opens with `MIMIR TAPE-header.prg` at `$033c`; Build & Run (a Windows program stands in for VICE) autostarts a `.tap` whose end is the fixture's; Sindri plays the tape (*packed*, the program starts at `$0810`), *Unpack* gives `$0801-$37ff` and the layer report's `Tape:` line; *Eject* takes the section and the tab away |
 | a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and d64write's command line | `fixtures/d64/bitfire-demo.d64` (written by `test/helpers/bitfire-disk.ts`) mounts with *a Bitfire disk with 3 files of its own*; the Explorer's *Bitfire script* opens the tab (count 3) with *Bitfire 1.2 or later, side 1: 3 files, 2 unpacked*, the names `file00_0801.lz`, `file01_4000.lz`, `file02_2ed4.lz`, *Unpacks to* `$0801–$37ff`, — and `$2ed4–$2fff`, and the notes *not packed · from 1/…* and *packed with dali, in place*; a row opens `file00_0801.prg` at `$0801` (the raster demo: `BasicUpstart2(start)`, `jsr music.init`), + adds `file01_4000.prg`; *Copy script* copies the comment lines and `d64write -c bitfire-demo.d64 -h "bitfire demo" -i bf --side 1` with `--boot boot.prg`, a `-b` per file and `-s note.prg`; *Eject* takes the tab away |
 | a mounted Spindle 3 disk: its load script in the Spindle script tab, each chunk opened as a PRG | `fixtures/d64/spindle-demo.d64` (written by `test/helpers/spindle-disk.ts`) mounts with *a Spindle 3 disk with 4 jobs*; the Explorer's *Load script* opens the tab with *4 jobs, 6 chunks*, the chunks `job01_0800.bin` … `job04_cf00.bin`, job 3's labels `02:` and `1f:` and job 4's *then jumps to $307a · loads under I/O*; a row opens `job01_0800.prg` at `$0800`, + adds `job02_4000.prg`; *Copy script* copies `# spin -e 0800` and a line per chunk; *Eject* takes the tab away |
 | the Raster IRQs panel lists every IRQ handler with its $d012 and $d011 and goes to it | the demo: *1 raster interrupt, 1 handler*, the row `98 ($062)`, `$62`, `$1b`, `irq_08b7`, `$0836`, *main code via $0314*; clicking `irq_08b7` and `$0836` moves the cursor there |
@@ -205,6 +206,8 @@ apps/desktop     Electron app
 docs/spec.md     technical specification
 fixtures/prg     test programs (raster-demo.prg, and the loader, packed and Spindle demos)
 fixtures/d64     disk images (mimir-demo.d64, spindle-demo.d64, a Spindle 3 disk, and bitfire-demo.d64, a Bitfire one)
+fixtures/tap     mimir-demo.tap: a boot file whose own loader reads the raster demo in TapeTool's TinyHeader format, and
+                 TapeTool files in blocks (written by packages/core/test/helpers/tapetool-tape.ts)
 fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from source (packages/core/test/crt.test.ts)
 ```
 
@@ -262,6 +265,12 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   loaders such as Sparkle need. It is typed without a string (`DRIVE_INIT` in `packages/core/src/node/toolchain.ts`:
   the KERNAL's CHKOUT/CHROUT/CLRCHN send it), because BASIC copies a string typed at READY into string space, and a
   program loaded up to `$a000` or beyond leaves none: `open15,8,15,"i"` stopped there with ?OUT OF MEMORY. See spec 13.5.
+- **Tape images.** *File → Insert TAP tape image…* (or drop a `.tap`) puts a tape in the datasette, beside the disk:
+  the Explorer's *Tape* section lists its files (`packages/core/src/c64/tap.ts`: KERNAL, Turbo Tape 64, TapeTool) and
+  the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the renderer's `tapeOf` map, as
+  `diskOf` for disks); a KERNAL boot file with code in its header opens with the header as a second file, which Sindri
+  does not run. Build & Run writes the built boot file back on the tape when the project's first file came from it,
+  else puts a copy in VICE's datasette. See spec 13.5e-g.
 - **VICE snapshots.** *Open PRG…* and drag and drop also take `.vsf` files. `openC64File()`
   (`packages/core/src/c64/vsf.ts`) reads the snapshot's C64MEM and MAINCPU modules and opens its RAM from `$0200` as
   `<name>.prg`, or from `$0002` (zero page and stack included) with Settings → Analysis → *VICE snapshots: include
@@ -555,6 +564,19 @@ the reference as a patch in `test/helpers/reference.ts`):
     276 414 disks, 379 are BoozeLoader disks (57 different), and 1 267 of their 1 281 files unpack; on Codeboys &
     Endians side 1 the files Sindri loaded land where the reader says. Of 865 boot programs (CSDB Top500 and Booze
     Design) 30 loader findings changed, all from an unknown fast loader to BoozeLoader, and 26 of those get a script.
+31. Tapes (spec 13.5e-g) are new. `readTape` (`packages/core/src/c64/tap.ts`) reads TAP versions 0-2 and the files in
+    the KERNAL's format (both copies, the cleaner taken or the two merged byte by byte; a relocatable program at `$0801`),
+    Turbo Tape 64 and Martin Piper's TapeTool (TinyHeader, full headers, checksum blocks of a page in any order, RLE),
+    and lists what is left as unknown turbo data. `tapeToolScript` writes TapeTool's command lines (the leader pairs
+    TapeTool writes itself were measured on its output: 4 before a TinyHeader or whole file, 2 around each block, 8
+    after an RLE packed one; another speed with `ft`); they rebuild TapeTool 1.0.0.10's `ExampleBuild.bat` tape and four
+    SEUCK Redux releases from the archive byte for byte. Sindri has a
+    datasette (`packages/sindri/src/tape.ts`, see its README), the app a Tape section and tab, Smart attach and drag
+    and drop take `.tap`, Build & Run writes the re-assembled boot file back on the tape (`replaceTapeFile`) or puts
+    the tape in VICE's datasette (`-1`), and the analysis knows TapeTool's loaders. Measured on the user's archive: 921
+    tapes read in 50 s, 1 295 KERNAL files (one with a damaged block), 46 Turbo Tape files, no false TapeTool file; on
+    the boot files of the first 98 first sides, 80 play the tape for more than 5 s and 67 save a later layer than the
+    boot file (median 2.0 s a tape for 118 s of C64 time on average).
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

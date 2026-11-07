@@ -195,6 +195,7 @@ export const projectForgetSchema = z.object({ file: z.string().min(1).max(4096) 
 /** `zeroPage`: VICE snapshots open from $0002 (zero page and stack included); `kind`: what the dialog asks for */
 export const prgOpenSchema = z.object({ paths: z.array(z.string().max(4096)).max(64).optional(), zeroPage: z.boolean().optional(), kind: z.enum(['prg', 'crt', 'vsf', 'add']).optional() }).default({});
 export const diskOpenSchema = z.object({ path: z.string().max(4096).optional() }).default({});
+export const tapeOpenSchema = z.object({ path: z.string().max(4096).optional() }).default({});
 export const smartAttachSchema = z.object({ zeroPage: z.boolean().optional() }).strict().default({});
 export const terminalOpenSchema = z.object({ dir: z.string().min(1).max(4096).optional() }).default({});
 /** the folder of the export (one of this session) and its first source, a plain .asm name */
@@ -210,7 +211,7 @@ export const exportWriteSchema = z.object({
 /** the sources to assemble: one per project file, and a cartridge's own source after them */
 export const buildSchema = z.object({ dir: z.string().min(1).max(4096), entries: z.array(z.string().max(255)).min(1).max(1025) });
 /** `cart`: prgPath is a cartridge image VICE attaches (-cartcrt) */
-export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), disk: z.string().min(1).max(4096).optional(), cart: z.boolean().optional() });
+export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional() });
 const prg = z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG');
 /** the built PRGs (one per project file, in order) and how to pack them */
 export const packSchema = z.object({ files: z.array(z.object({ name: fileName, prg })).min(1).max(64), prefs: packPrefsSchema });

@@ -183,6 +183,11 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .disk-row:hover, .disk-row:focus-visible { background: var(--row-hover); }
 .disk-row.off { cursor: default; opacity: 0.55; }
 .disk-row.off:hover { background: none; }
+.tape-row { grid-template-columns: 3.4em minmax(0, 1fr) auto 22px; }
+.tape-row.bad .disk-name { color: var(--warn, #d9a441); }
+.spindle td.warn { color: var(--warn); }
+.tape-table td.mono { white-space: nowrap; }
+.tape-script { margin: 8px 0 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; white-space: pre; overflow-x: auto; color: var(--fg-2); }
 .disk-blocks { text-align: right; }
 /* a cartridge's banks: the open ones marked like the selected block */
 .cart-row.on { background: var(--sel); color: var(--fg); }

@@ -28,6 +28,7 @@ export {
   cartImageLines, cartLineText, describeCrt, isCrt, makeCrt, openCartridge, parseCrt, rebuildCrt, type CartLine, type CartSourceOptions, type ChipFile, type Crt, type CrtChip,
 } from './c64/crt';
 export { d64FileName, makeD64, parseD64, petsciiName, readD64File, sectorsOnTrack, type D64File, type D64FileType, type D64Image } from './c64/d64';
+export { isTap, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, TAPE_CLOCK, type TapeFile, type TapeFileType, type TapeFormat, type TapeImage, type TapeUnknown, type TapPulses } from './c64/tap';
 export { readSpindleDisk, spinChunkName, spinScript, type SpindleChunk, type SpindleDisk, type SpindleJob } from './c64/spindle-disk';
 export { BOOZE_CRUNCHER, boozeFileList, boozeFileName, readBoozeDisk, unpackByteBoozer1, unpackByteBoozer2, type BoozeCruncher, type BoozeDisk, type BoozeFile, type BoozeUnpacked } from './c64/booze-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
@@ -63,7 +64,7 @@ export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles,
 export { applyPatch, assemblePatch, patchAt, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, projectUnpatched, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';
 export { NOTES_FILE, NOTES_TEXT_FILE, notesDocument, notesExport, notesFile, notesFor, notesText, lineHtml } from './notes-doc';
 export { detectPacking, packerSignature, type PackingInfo } from './packing';
-export { conclusive, depackers, depackerText, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun } from './sindri';
+export { conclusive, depackers, depackerText, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun, type UnpackTape } from './sindri';
 export { addDecisionChecks, addRunChecks, checkDecisions, checkRun, type DecisionCheck, type RunCheck } from './runcheck';
 export { brokkrArgs, brokkrCommands, brokkrCommandText, brokkrPlan, crunchHere, packDecruncher, packNeeds, packWithBrokkr, type BrokkrCrunch, type BrokkrPack, type BrokkrPlan, type PackedFile, type PackTried } from './brokkr';
 export {

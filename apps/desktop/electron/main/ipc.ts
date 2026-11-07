@@ -13,7 +13,7 @@ import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
 import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
 import { PROJECT_FOLDERS } from '../../shared/projects';
-import { createBuildFolder, readDiskImage, readPrgFiles, readProjectFile, writeExportFolder, writeProjectFile, type ExportWatcher } from './project-fs';
+import { createBuildFolder, readDiskImage, readPrgFiles, readTapeImage, readProjectFile, writeExportFolder, writeProjectFile, type ExportWatcher } from './project-fs';
 import { buildWithKickAssembler, c64Roms, currentEditor, identifyWithTool, keepPacked, openInEditor, openTerminal, packWithBrokkr, packWithExomizer, runInVice, unpackWithTool } from './toolchain';
 import { viceAttach, viceCommand } from './vice-monitor';
 import { quicksaveFileName, quicksaveFiles, quicksaveInfo, readQuicksave, type QuicksaveHistory, type QuicksaveWatcher } from './quicksave';
@@ -23,7 +23,7 @@ import { openC64File } from '@mimir/core';
 import { findEditors } from '@mimir/core/node';
 import { openedPrg } from './project-fs';
 import {
-  buildSchema, deepSidPlaySchema, diskOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
+  buildSchema, deepSidPlaySchema, diskOpenSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
 } from './schemas';
 
@@ -175,18 +175,28 @@ export function registerIpc(deps: IpcDeps): void {
     return readDiskImage(path);
   });
 
+  handle(CHANNELS.tapeOpen, tapeOpenSchema, async (req, e) => {
+    let path = req.path ? policy.assert(req.path, 'Tape image') : null;
+    if (!path) {
+      [path] = await pick(e, 'tape', { title: 'Insert TAP tape image', properties: ['openFile'], filters: [{ name: 'C64 tape images', extensions: ['tap', 'TAP'] }, { name: 'All files', extensions: ['*'] }] });
+      if (!path) return null;
+      chose(dirname(path), 'tape');
+    }
+    return readTapeImage(path);
+  });
+
   // Smart attach: every kind of file in one dialog, each read as its extension says (shared/smart-attach.ts); the
   // folders picked are open in this session, as each kind's own dialog would leave them
   handle(CHANNELS.fileSmart, smartAttachSchema, async (req, e): Promise<SmartAttachResult | null> => {
     const all = [...new Set(Object.values(SMART_EXTENSIONS).flat())];
     const paths = await pick(e, 'smart', { title: 'Smart attach', properties: ['openFile', 'multiSelections'], filters: [
-      { name: 'PRGs, snapshots, cartridges, D64 disks, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
+      { name: 'PRGs, snapshots, cartridges, D64 disks, TAP tapes, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
       { name: 'All files', extensions: ['*'] },
     ] });
     if (!paths.length) return null;
     chose(dirname(paths[0]), 'smart');
     const plan = smartPlan(paths);
-    const out: SmartAttachResult = { files: [], disk: null, project: null, asm: null, left: plan.left.map(l => ({ name: basename(l.path), why: l.why })), problems: [] };
+    const out: SmartAttachResult = { files: [], disk: null, tape: null, project: null, asm: null, left: plan.left.map(l => ({ name: basename(l.path), why: l.why })), problems: [] };
     /** one file read: a file that cannot be read is told about, and the others still open */
     const read = async <T>(path: string, fn: () => Promise<T> | T): Promise<T | null> => {
       try { policy.allow(dirname(path)); return await fn(); } catch (err) { out.problems.push({ name: basename(path), message: err instanceof Error ? err.message : String(err) }); return null; }
@@ -197,6 +207,7 @@ export function registerIpc(deps: IpcDeps): void {
       out.asm = await read(path, () => ({ path, dir: policy.allow(dirname(path)), entry: assertEntryName(basename(path)) }));
     }
     if (plan.disk) { const path = plan.disk; out.disk = await read(path, () => readDiskImage(path)); }
+    if (plan.tape) { const path = plan.tape; out.tape = await read(path, () => readTapeImage(path)); }
     for (const p of plan.files) out.files.push(...(await read(p, () => readPrgFiles([p], { zeroPage: req.zeroPage }))) ?? []);
     return out;
   });

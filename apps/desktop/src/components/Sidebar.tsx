@@ -1,13 +1,13 @@
-/* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, program start, memory map), Blocks (a folder per type, with how many; filterable), Symbols (labels, hardware registers), Bookmarks, Pack.
+/* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, the tape in the datasette, program start, memory map), Blocks (a folder per type, with how many; filterable), Symbols (labels, hardware registers), Bookmarks, Pack.
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type BlockKind, type Crt, type D64File, type LoaderPart, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type BlockKind, type Crt, type D64File, type LoaderPart, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef, type TapeFile } from '@mimir/core';
 import { blockFolders } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
 import { cx, fmtBytes, groupOfKind } from '../lib/util';
-import type { MountedDisk } from '../lib/types';
+import type { MountedDisk, MountedTape } from '../lib/types';
 import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
 import { useUi, type Activity } from '../store/ui';
 import { BookmarksView, type BookmarkEditing } from './Bookmarks';
@@ -24,6 +24,10 @@ interface SidebarProps {
   onSetStart: (a: Addr | null) => void;
   /** the mounted disk (the File menu mounts one) */
   disk: MountedDisk | null; onEject: () => void;
+  /** the tape in the datasette (the File menu inserts one) */
+  tape: MountedTape | null; onEjectTape: () => void;
+  /** open a file from the tape (`add`: add it to the project), and the Tape tab (every block, the TapeTool script) */
+  onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void;
   /** the project's cartridge, read (spec 13.9): a bank in the project is gone to with a click, one out of it added
    *  (`leave`: taken out) */
   cart: Crt | null; onOpenBank: (bank: number, leave?: boolean) => void;
@@ -75,7 +79,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -105,10 +109,11 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
           <div className="side-actions">
             <button className="btn small" onClick={onAdd} title="Add one or more .prg files to this project, beside the ones in it"><Icon name="plus" size={13} />Add PRG file…</button>
           </div>
-          <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot or a D64. Dropped on the window with Shift, files are added.</p>
+          <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
         {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} />}
+        {tape && <TapeSection tape={tape} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
         <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
@@ -416,6 +421,48 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
         </div>
       )}
       <div className="side-hint">{img.freeBlocks} blocks free{img.tracks !== 35 ? ` · ${img.tracks} tracks` : ''} · in drive 8 on Build &amp; Run</div>
+    </SideSection>
+  );
+}
+
+/** a time on the tape, as a datasette's counter would not show it but a player does: m:ss */
+export const tapeTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape' };
+
+/** The tape in the datasette (13.5e), its files in tape order with where each starts. A file opens with a click (a KERNAL
+ *  file with loader code in its header opens with the header as a second file); + adds it to the project. */
+function TapeSection({ tape, onEject, onOpenFromTape, onShowTape }: { tape: MountedTape; onEject: () => void; onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void }) {
+  const { img } = tape;
+  const tt = img.files.filter(f => f.format === 'tapetool').length;
+  return (
+    <SideSection id="tape" title="Tape" summary={tape.name} actions={<button className="icon-btn" title={`Eject ${tape.name}`} aria-label="Eject tape" onClick={onEject}><Icon name="eject" size={14} /></button>}>
+      <div className="disk-head mono small" title={tape.path ?? tape.name}><Icon name="tape" size={13} /><span className="disk-title">{tape.name}</span><span className="muted">{tapeTime(img.seconds)}</span></div>
+      <div className="disk-list" role="list" aria-label={`Files on ${tape.name}`}>
+        {img.files.map((f, i) => {
+          const can = f.load != null && f.data.length > 0 && f.type !== 'SEQ' && f.type !== 'END';
+          const where = f.load != null ? `$${h4(f.load)}-$${h4((f.load + Math.max(1, f.data.length) - 1) & 0xffff)}` : `${f.data.length} bytes`;
+          const why = !can ? (f.type === 'SEQ' ? 'A SEQ file: data, not a program' : f.type === 'END' ? 'The end-of-tape marker' : f.load == null ? 'Its load address is not on the tape: the boot loader knows it' : 'It holds no data') : '';
+          const title = `${f.errors.length ? `${f.errors.join('; ')}. ` : ''}${f.note ? `${f.note}. ` : ''}${can ? `Open ${f.name} (${TAPE_FORMAT[f.format]}, ${where}${f.headerCode ? ', with its header: the tape buffer at $033c holds code' : ''})` : why}`;
+          return (
+            <div key={i} role="listitem" className={cx('disk-row tape-row', !can && 'off', f.errors.length > 0 && 'bad')} title={title}
+              tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (can && e.key === 'Enter') onOpenFromTape(f, false); }}>
+              <span className="mono small disk-blocks">{tapeTime(f.seconds)}</span>
+              <span className="mono disk-name">{f.format === 'tapetool' ? f.name : `"${f.name}"`}{f.headerCode ? <span className="muted"> +header</span> : null}</span>
+              <span className="mono small muted">{f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}</span>
+              {can ? <button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFromTape(f, true); }}><Icon name="plus" size={13} /></button> : <span />}
+            </div>
+          );
+        })}
+        {!img.files.length && <div className="muted small">No files the KERNAL, TapeTool or Turbo Tape write.</div>}
+      </div>
+      {(img.unknown.length > 0 || tt > 0) && (
+        <div className="disk-spindle">
+          <span>{tt ? <><b>TapeTool tape:</b> {tt} turbo file{tt === 1 ? '' : 's'} its boot loader reads{img.unknown.length ? '; ' : ''}</> : null}
+            {img.unknown.length ? <><b>Turbo data</b> no format here reads ({img.unknown.length} stretch{img.unknown.length === 1 ? '' : 'es'}): Sindri reads it, running the boot file with the tape in its datasette</> : null}</span>
+          <button className="btn small" onClick={onShowTape}>{tt ? 'TapeTool script' : 'Tape'}</button>
+        </div>
+      )}
+      <div className="side-hint">{img.files.length} file{img.files.length === 1 ? '' : 's'} · TAP v{img.version} · in the datasette on Build &amp; Run</div>
     </SideSection>
   );
 }

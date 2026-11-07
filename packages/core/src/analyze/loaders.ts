@@ -6,7 +6,8 @@
  * (HCL) come from Booze Design's demos, 2008 to 2025, as its source is not public. The Action
  * Replay's loaders (Datel) come from its ROMs (5.1, 7.2 and 7.5 keep the same code in other places; 7.2's turbo tape differs), the backups and loader files
  * they saved in VICE, and the MK4's loader file; Novaload is in the 7.2, whose Nova transfer reads such tapes with
- * Novaload's own code. The Super Snapshot's (LMS) come from the V5's ROM and what it ran and saved in VICE: its turbo
+ * Novaload's own code. TapeTool's loaders (Martin Piper) come from its sources (TapeLoaderCIACommon.a, TapeLoaderCIAIRQ.a,
+ * the TinyHeader loaders TapeLoaderCIASmall/Novaish/MartyLoad.a). The Super Snapshot's (LMS) come from the V5's ROM and what it ran and saved in VICE: its turbo
  * reads Warp*25 files with the Action Replay's code, and its split backups start with the Action Replay's loader. Any other
  * loader is known by what every disk loader has (Spindle 2.3 and an older Bitfire were read from their releases' binaries): code for the 1541 (it reads and writes the drive's VIA registers at
  * $1800 and $1c00, and waits for GCR bytes with bvc *), drive commands that upload and start it (M-W, M-E, M-R) and a
@@ -162,6 +163,15 @@ const KNOWN: Known[] = [
     signs: [
       { pat: pat('A9 10 2C 0D DC F0 FB AD 05 DC 8E 0E DC 49 80 0A 68 6A'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then the top bit of CIA1\'s timer A' },
       { pat: pat('A9 F4 8D 04 DC A9 81 8D 05 DC'), role: 'tape', what: 'times the pulses with CIA1\'s timer A from $81f4', weak: true },
+    ],
+  },
+  {
+    id: 'tapetool', name: "TapeTool's turbo loaders (Martin Piper)",
+    how: 'tape: a pulse on the FLAG line, then whether CIA1\'s timer A, one shot from 3 × TapeTurboSpeed (367 cycles by default), has run out: a 1 then, a 0 before; the top bit first, a leader of $ff $c3, the sync byte $aa. The boot loader in the tape header reads the next file (the TinyHeader: $69, the data, a checksum), the second loader reads files in checksum blocks of a page ($f0 $96; $b7 when RLE packed) in any order, from an IRQ',
+    signs: [
+      { pat: pat('48 A9 10 2C 0D DC F0 FB AD 04 DC CD 04 DC F0 01 18 A9 19 8D 0E DC'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA1\'s timer A (one shot) has run out' },
+      { pat: pat('AD 0D DC A2 19 8E 0E DC 4A 26'), role: 'tape', what: 'the IRQ loader reads a bit: whether CIA1\'s timer A has run out (lsr), into the byte (rol)' },
+      { pat: pat('C9 AA D0 .. 20 .. .. C9 69 D0'), role: 'tape', what: 'waits for the sync byte $aa and the TinyHeader $69', weak: true },
     ],
   },
   // the Super Snapshot V5 (LMS Technologies): its ROM holds the code it uploads to the drive and copies to $0200; a

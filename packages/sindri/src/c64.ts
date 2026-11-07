@@ -1,13 +1,15 @@
 /* The emulated C64: 64 KB RAM, the ROMs banked by $00/$01, the VIC-II (raster line, raster IRQ, badlines), both
  * CIAs (timers, interrupts, keyboard and joysticks, TOD), the SID registers the CPU can read, and colour RAM.
  * It is as exact as unpacking needs: whole instructions, a PAL timing of 63 cycles x 312 lines. A 1541 can be put on
- * the serial bus (drive.ts); without one nothing answers there.
+ * the serial bus (drive.ts); without one nothing answers there. A datasette with a tape (tape.ts) sends its pulses to
+ * CIA1's FLAG line while the motor runs, PLAY held down.
  *
  * It also records, for every RAM address, which layer wrote it last and when, and when it was last read as data.
  * Sindri finds the layers of a packed program from that. And from the moment the file is loaded, when each byte was
  * first run, read and written: what the program did with the loaded bytes (`UnpackResult.fileUse`). */
 import { Cpu, type Bus } from './cpu.ts';
 import { DRIVE_RATIO, type Drive } from './drive.ts';
+import type { Datasette } from './tape.ts';
 import { CYCLES } from './opcodes.ts';
 
 /** what a 256-byte page reads from */
@@ -228,6 +230,8 @@ export class C64 implements Bus {
   drive: Drive | null = null;
   private driveBase = 0;
   private driveStart = 0;
+  /** the datasette with its tape, PLAY held down: its pulses reach CIA1's FLAG line while the motor runs */
+  tape: Datasette | null = null;
 
   // --- tracking ---------------------------------------------------------------------------------------------------
   /** the layer that wrote each RAM byte last (BOOT, LOADED or a layer id) */
@@ -326,9 +330,10 @@ export class C64 implements Bus {
     for (let p = 0xe0; p < 0x100; p++) map[p] = kernal;
   }
 
-  /** the processor port as read at $01: pull-ups on bits 0-2, no cassette button on bit 4, bits 6-7 fade */
+  /** the processor port as read at $01: pull-ups on bits 0-2, the cassette buttons on bit 4 (0 with PLAY held down on
+   *  the datasette), bits 6-7 fade */
   private readPort(): number {
-    let inputs = 0x17;
+    let inputs = this.tape ? 0x07 : 0x17;
     if (this.cycles < this.fadeUntil) inputs |= this.fade;
     return ((this.port & this.ddr) | (~this.ddr & inputs)) & 0xff;
   }
@@ -341,6 +346,8 @@ export class C64 implements Bus {
       this.ddr = v;
     } else this.port = v;
     this.updateMap();
+    // the cassette motor runs while the port drives bit 5 low
+    if (this.tape) this.tape.motor = (this.ddr & 0x20) !== 0 && (this.port & 0x20) === 0;
   }
 
   /** the value at $01 as a program sees it */
@@ -457,6 +464,8 @@ export class C64 implements Bus {
     const total = n + this.vic.advance(n);
     this.cia1.advance(total);
     this.cia2.advance(total);
+    // a pulse from the tape ends: an edge on the FLAG line
+    if (this.tape?.motor && this.tape.advance(total)) this.cia1.icr |= 0x10;
     this.cycles += total;
     return total;
   }
@@ -479,6 +488,7 @@ export class C64 implements Bus {
 
   restore(s: MachineState): void {
     this.ram.set(s.ram); this.color.set(s.color); this.ddr = s.ddr; this.port = s.port;
+    if (this.tape) this.tape.motor = (this.ddr & 0x20) !== 0 && (this.port & 0x20) === 0;
     const c = this.cpu;
     c.a = s.cpu.a; c.x = s.cpu.x; c.y = s.cpu.y; c.s = s.cpu.s; c.pc = s.cpu.pc; c.p = s.cpu.p;
     this.vic.regs.set(s.vic.regs); this.vic.line = s.vic.line; this.vic.lineCycle = s.vic.lineCycle;

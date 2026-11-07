@@ -12,13 +12,18 @@ export type { LayerReport, Roms } from '@mimir/sindri';
 /** A run of Sindri without its save() function, so that it can cross a worker boundary. */
 export type UnpackRun = Omit<UnpackResult, 'save'>;
 
+/** The tape a file came from (a TAP image) and, when it is not one of its KERNAL files, where the tape stands once the
+ *  file has loaded (a pulse: TapeFile.to). */
+export interface UnpackTape { tap: Uint8Array; at?: number | null }
+
 /**
  * Unpack a PRG (load address first); without ROMs Sindri runs with its stand-ins for the KERNAL and BASIC. With
- * the D64 it came from (and the 1541 DOS ROM in `roms`), the drive reads the disk for the program's loader. `entry`:
- * start it there (SYS) instead of with RUN, as a program without a BASIC line needs.
+ * the D64 it came from (and the 1541 DOS ROM in `roms`), the drive reads the disk for the program's loader; with the
+ * tape it came from, the datasette plays it from after the file for the program's tape loader. `entry`: start it
+ * there (SYS) instead of with RUN, as a program without a BASIC line needs.
  */
-export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null): UnpackRun {
-  const { save: _save, ...run } = unpack(prg, { roms, disk, ...(entry != null ? { entry } : {}) });
+export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null, tape: UnpackTape | null = null): UnpackRun {
+  const { save: _save, ...run } = unpack(prg, { roms, disk, ...(entry != null ? { entry } : {}), ...(tape ? { tape: tape.tap, ...(tape.at != null ? { tapeAt: tape.at } : {}) } : {}) });
   return run;
 }
 
@@ -75,6 +80,7 @@ function layerLines(l: LayerReport): string[] {
 export function unpackLog(run: UnpackRun, name: string, load: number, size: number): string {
   const out = [`${name}: ${rangeText({ start: load, end: load + size - 1 })} (${kb(size)})${run.basic.length ? `, ${run.basic.slice(0, 2).join(' / ')}` : ''}`, `ROMs: ${run.roms}`];
   if (run.drive) out.push(`Drive: ${run.drive}`);
+  if (run.tape) out.push(`Tape: ${run.tape}`);
   for (const l of run.layers) out.push(...layerLines(l));
   out.push(`stopped after ${(run.cycles / 985248).toFixed(1)} s of C64 time (${Math.round(run.ms)} ms): ${stopText(run)}`);
   if (!run.unpacked) out.push('nothing was unpacked');

@@ -10,7 +10,7 @@ const file = { index: 0, size: 6000, entry: 0x080d };
 const run = (layers: [number, LayerReport['kind'], string?][], stop: UnpackRun['stop']['reason'] = 'settled'): UnpackRun => {
   const ls = layers.map(([entry, kind, name], index) => ({ index, entry, kind, fingerprint: `f${index}`.padEnd(8, '0'), packer: name ? { name, similarity: 0.95 } : null }) as LayerReport);
   const unpacked = ls.length > 1, last = ls[ls.length - 1];
-  return { unpacked, layers: ls, stop: { reason: stop, pc: 0x1000, detail: '', cycle: 0 }, saved: unpacked ? { layer: last.index, prg: new Uint8Array(3), start: 0x0801, end: 0x2000, entry: last.entry, basic: false, port: 0x37, interrupts: true } : null, basic: [], roms: 'stand-ins (no ROM files)', drive: null, cycles: 0, ms: 1, fileUse: new Uint8Array(0x10000) };
+  return { unpacked, layers: ls, stop: { reason: stop, pc: 0x1000, detail: '', cycle: 0 }, saved: unpacked ? { layer: last.index, prg: new Uint8Array(3), start: 0x0801, end: 0x2000, entry: last.entry, basic: false, port: 0x37, interrupts: true } : null, basic: [], roms: 'stand-ins (no ROM files)', drive: null, tape: null, cycles: 0, ms: 1, fileUse: new Uint8Array(0x10000) };
 };
 
 describe('onlyRelocates (8.1b)', () => {

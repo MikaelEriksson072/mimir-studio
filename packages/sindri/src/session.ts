@@ -12,8 +12,9 @@
  *
  * The run stops when the newest layer settles (writes no new memory for a while), loads a file, returns to BASIC,
  * crashes or runs out of time. With a disk, a 1541 is on the serial bus and loading goes on: the KERNAL's and fast
- * loaders' alike. Then the newest layer is the unpacked program. An intro that waits before anything
- * was unpacked gets keys pressed (space and fire first). */
+ * loaders' alike. With a tape, the datasette plays it from where the file ended: the program's own tape loader reads
+ * it, and the KERNAL's LOAD from the tape reads on from there. Then the newest layer is the unpacked program. An intro
+ * that waits before anything was unpacked gets keys pressed (space and fire first). */
 import { BASIC, BOOT, C64, KERNAL, LOADED, ZP, type MachineState, type Roms } from './c64.ts';
 import { OP_IRQ, OP_NMI } from './cpu.ts';
 import { LEN } from './opcodes.ts';
@@ -23,6 +24,7 @@ import { buildPrg, contentMask, keptParts, loadedParts, saveRange, type KeptPart
 import { Drive, type DriveState } from './drive.ts';
 import { d64ToDisk } from './gcr.ts';
 import { d64NameOf } from './d64.ts';
+import { Datasette, tapeFiles, tapeNameMatches, tapPulses, type TapeFile } from './tape.ts';
 import { basicLines, evaluate, findSys, listLine, statements, T } from './basic.ts';
 
 export interface UnpackOptions {
@@ -33,6 +35,14 @@ export interface UnpackOptions {
    * serial bus, so the program can load more files and run its fast loader
    */
   disk?: Uint8Array | null;
+  /**
+   * the tape the file came from (a TAP image): it is in the datasette with PLAY held down, wound to where the file
+   * ended, so the program's own loader reads on from there, and LOAD from the tape loads the next file
+   */
+  tape?: Uint8Array | null;
+  /** where the tape stands when the program starts (a pulse); by default after the KERNAL file that holds the file's
+   *  bytes at its address (its header is in the tape buffer then, as LOAD left it), else at the start */
+  tapeAt?: number;
   /** start the program here (SYS) instead of RUN */
   entry?: number;
   /** load the file here instead of at its own load address */
@@ -135,6 +145,8 @@ export interface UnpackResult {
   roms: string;
   /** the 1541 on the serial bus and its disk, or why there was none; null without a disk */
   drive: string | null;
+  /** the datasette and its tape: where it stood and how far it played; null without a tape */
+  tape: string | null;
   /** emulated cycles from the program's start */
   cycles: number;
   ms: number;
@@ -241,6 +253,8 @@ const DRIVE_PATIENCE = 10_000_000;
 /** a layer loaded from the disk when the drive changed its DATA or CLK line this often while it ran (a sector is
  * thousands; the end of a transfer that began before it, a few) */
 const LOADS = 256;
+/** a program waiting while the tape plays is loading, not settled, until the tape ends; then for this long (5 s) */
+const TAPE_END_PATIENCE = 5_000_000;
 
 /** Unpack a PRG (load address first). */
 export function unpack(file: Uint8Array, options: UnpackOptions = {}): UnpackResult {
@@ -262,7 +276,7 @@ class Session {
   private readonly loadAt: number;
   private readonly data: Uint8Array;
   private readonly file: Uint8Array;
-  private readonly maxCycles: number;
+  private maxCycles: number;
   private readonly settleCycles: number;
 
   layers: Layer[] = [];
@@ -317,6 +331,13 @@ class Session {
   /** the file's name as LOAD left it below $a000 (with a disk), what was there before, and whether the program loaded
    *  a file by it */
   private loadName: { at: number; bytes: Uint8Array; before: Uint8Array; icount: number; used: boolean } | null = null;
+  /** the datasette, the tape's KERNAL files, the one the file came from, and where the tape stood at the start */
+  private tape: Datasette | null = null;
+  private tapeKernal: TapeFile[] = [];
+  private tapeFile: TapeFile | null = null;
+  private tapeStart = 0;
+  /** since when the tape has been at its end with the motor on */
+  private tapeEnded = 0;
 
   constructor(file: Uint8Array, o: UnpackOptions) {
     if (file.length < 3) throw new Error('not a PRG: shorter than 3 bytes');
@@ -336,6 +357,7 @@ class Session {
 
   run(): UnpackResult {
     const t0 = performance.now();
+    if (this.o.tape) this.attachTape();
     if (this.real) this.bootReal(); else this.bootStandIn();
     if (this.o.disk) this.attachDrive();
     if (!this.stopped) this.loop();
@@ -370,10 +392,104 @@ class Session {
     this.driveNote = `1541 with "${disk.name}" ${disk.id}`;
   }
 
+  /** The datasette with the tape, PLAY held down, wound to where the file ended (or to tapeAt). */
+  private attachTape(): void {
+    const pulses = tapPulses(this.o.tape!);
+    const d = new Datasette(pulses);
+    this.tapeKernal = tapeFiles(pulses);
+    // the KERNAL file that holds the file's bytes at its address (LOAD puts a relocatable one at the start of BASIC)
+    const same = (f: TapeFile) => (f.type === 3 || f.type === 1) && (f.start === this.loadAt || (f.type === 1 && this.loadAt === 0x0801))
+      && f.data.length >= this.data.length && this.data.every((v, i) => f.data[i] === v);
+    this.tapeFile = this.tapeKernal.find(same) ?? null;
+    this.tapeStart = this.o.tapeAt ?? this.tapeFile?.to ?? 0;
+    d.seek(this.tapeStart);
+    // time to play the rest of the tape, and half a minute after it
+    if (this.o.maxCycles == null) {
+      let left = 0;
+      for (let i = this.tapeStart; i < pulses.length; i++) left += pulses[i];
+      this.maxCycles = Math.max(this.maxCycles, left + 30 * 985248);
+    }
+    this.tape = d;
+    this.m.tape = d;
+    d.motor = (this.m.ddr & 0x20) !== 0 && (this.m.port & 0x20) === 0;
+  }
+
+  /** A KERNAL file's header in the tape buffer ($033c-$03fb), as LOAD from the tape leaves it: bytes that were loaded. */
+  private tapeBuffer(f: TapeFile | null): void {
+    const m = this.m;
+    if (!f) return;
+    for (let i = 0; i < 192; i++) { m.ram[0x033c + i] = f.header[i]; m.wid[0x033c + i] = LOADED; m.wtime[0x033c + i] = m.icount; }
+  }
+
+  /** The KERNAL keeps the IRQ vector at $029f/$02a0 while it reads the tape (its own reading IRQ is in $0314 then).
+   *  It also sets the motor interlock $c0 when it starts the motor: while that is set, its IRQ does not turn the motor
+   *  on again for PLAY held down (at the READY prompt it would, as on a C64), so the tape stands after the file until
+   *  the program runs the motor. */
+  private tapeIrqSave(): void {
+    const m = this.m;
+    m.ram[0x029f] = m.ram[0x0314]; m.ram[0x02a0] = m.ram[0x0315];
+    m.ram[0xc0] = (m.port & 0x1f) || 0x07;
+  }
+
+  /**
+   * At the end it puts that vector back, unless its high byte is 0: a file that loads over $029f/$02a0 has the next
+   * interrupt start it (many tape loaders' boot files start so). That interrupt comes at once: the KERNAL ends the
+   * load inside its tape IRQ and enables CIA1's timer A there, whose underflow is waiting by then, so the CPU takes it
+   * on the RTI, before BASIC goes on with vectors the file may have loaded over.
+   */
+  private tapeIrqRestore(): void {
+    const m = this.m;
+    if (!m.ram[0x02a0]) return;
+    if (m.ram[0x029f] !== m.ram[0x0314] || m.ram[0x02a0] !== m.ram[0x0315]) {
+      this.trace(`the IRQ vector is $${(m.ram[0x029f] | (m.ram[0x02a0] << 8)).toString(16).padStart(4, '0')} after the load (from $029f/$02a0)`);
+      m.cia1.icr |= 1;
+      m.cia1.mask |= 1;
+    }
+    m.ram[0x0314] = m.ram[0x029f]; m.ram[0x0315] = m.ram[0x02a0];
+  }
+
+  /**
+   * LOAD from the tape (device 1), as the KERNAL does it: the next file from where the tape stands whose name starts
+   * with the name asked for (any file without one), its header into the tape buffer; a program saved as relocatable
+   * (type 1) loads where LOAD asks with secondary address 0, else where it was saved. The tape stops after it.
+   */
+  private loadFromTape(): boolean {
+    const m = this.m, cpu = m.cpu, d = this.tape!;
+    const len = m.ram[0xb7], at = m.ram[0xbb] | (m.ram[0xbc] << 8);
+    const name = Uint8Array.from({ length: len }, (_, i) => m.peek((at + i) & 0xffff));
+    const f = this.tapeKernal.find(x => x.at >= d.pos && (x.type === 1 || x.type === 3) && tapeNameMatches(x.header, name));
+    if (!f) {
+      // the KERNAL would search the tape to its end: not found
+      d.seek(d.pulses.length);
+      m.ram[0x90] = 0x40;
+      cpu.a = 4; cpu.c = 1;
+      this.trace(`loads "${this.fileName()}" from the tape: not there`);
+      return this.rts(200);
+    }
+    this.tapeBuffer(f);
+    this.tapeIrqSave();
+    const to = m.ram[0xb9] === 0 && f.type === 1 ? m.ram[0xc3] | (m.ram[0xc4] << 8) : f.start;
+    // (loaded before the program started, by a BASIC loader say: loaded bytes, as the file's are)
+    for (let i = 0; i < f.data.length && to + i < 0x10000; i++) { m.write(to + i, f.data[i]); if (!this.started) m.wid[to + i] = LOADED; }
+    this.tapeIrqRestore();
+    const end = Math.min(0x10000, to + f.data.length) & 0xffff;
+    m.ram[0xae] = end & 0xff; m.ram[0xaf] = end >> 8;
+    m.ram[0x90] = 0;
+    cpu.x = end & 0xff; cpu.y = end >> 8; cpu.c = 0;
+    d.seek(f.to);
+    // what the motor would have read while it loaded counts as loading from the tape
+    d.edges += f.to - f.at;
+    this.trace(`loads "${this.fileName()}" from the tape: $${to.toString(16).padStart(4, '0')}-$${((to + f.data.length - 1) & 0xffff).toString(16).padStart(4, '0')}`);
+    return this.rts(200);
+  }
+
   private bootStandIn(): void {
     const m = this.m;
     initStandIn(m);
+    // from a tape: its header in the tape buffer, and the IRQ vector as LOAD from the tape leaves it
+    if (this.tapeFile) { this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
     this.loadFile();
+    if (this.tapeFile) this.tapeIrqRestore();
     const end = this.loadAt + this.data.length;
     if (this.loadAt === 0x0801) for (const p of [0x2d, 0x2f, 0x31]) { m.ram[p] = end & 0xff; m.ram[p + 1] = end >> 8; }
     m.cpu.s = 0xf8;
@@ -396,6 +512,8 @@ class Session {
       const def = v >= 0x0314 ? KERNAL_VECTORS[(v - 0x0314) >> 1] : [0xe38b, 0xa483][(v - 0x0300) >> 1];
       if (target !== def) return target;
     }
+    // a file from a tape that loaded over $029f/$02a0, which the KERNAL puts in the IRQ vector after the load
+    if (this.tapeFile && covers(0x029f) && m.peekWord(0x0314) !== KERNAL_VECTORS[0]) return m.peekWord(0x0314);
     for (let sp = 0xf6; sp <= 0xfd; sp++) {
       const a = 0x0100 + sp + 1;
       if (!covers(a)) continue;
@@ -693,6 +811,14 @@ class Session {
       if (!this.driveBusy) this.driveBusy = now;
       if (now - this.driveBusy < DRIVE_PATIENCE) this.progressAt = now;
     } else this.driveBusy = 0;
+    // the tape plays: the program is loading (leaders and gaps between files take seconds), until a while after its end
+    const t = this.tape;
+    if (t?.motor) {
+      if (!t.atEnd) { this.progressAt = now; this.tapeEnded = 0; } else {
+        if (!this.tapeEnded) this.tapeEnded = now;
+        if (now - this.tapeEnded < TAPE_END_PATIENCE) this.progressAt = now;
+      }
+    }
     if (!this.holdUntil && now - this.progressAt >= this.settleCycles) this.settled();
   }
 
@@ -740,14 +866,17 @@ class Session {
 
   private snapshot(): Snapshot {
     const m = this.m, c = m.cpu;
-    return { ram: m.ram.slice(), port: m.cpuPort, a: c.a, x: c.x, y: c.y, s: c.s, p: c.p };
+    // (PLAY held down on the datasette reads as a 0 on bit 4, an input: the program's port is without it)
+    return { ram: m.ram.slice(), port: this.tape && !(m.ddr & 0x10) ? m.cpuPort | 0x10 : m.cpuPort, a: c.a, x: c.x, y: c.y, s: c.s, p: c.p };
   }
 
-  /** how often the drive has changed its DATA or CLK line, up to now (0 without a drive): it loads while this grows */
+  /** how often the drive has changed its DATA or CLK line, and how many pulses the tape has played, up to now (0 with
+   *  neither): the program loads while this grows */
   private busChanges(): number {
-    if (!this.drive) return 0;
+    const tape = this.tape?.edges ?? 0;
+    if (!this.drive) return tape;
     this.m.syncDrive();
-    return this.drive.busChanges;
+    return this.drive.busChanges + tape;
   }
 
   private trace(line: string): void { this.o.trace?.(line); }
@@ -801,7 +930,11 @@ class Session {
             m.ram.set(name, at); m.ram[0xb7] = name.length; m.ram[0xbb] = at & 0xff; m.ram[0xbc] = at >> 8;
           }
         }
+        // from a tape: device 1, and the file's header in the tape buffer
+        const fromTape = !!this.tape && (!!this.tapeFile || !this.drive);
+        if (fromTape) { m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
         this.loadFile();
+        if (fromTape) this.tapeIrqRestore();
         const end = this.loadAt + this.data.length;
         cpu.x = end & 0xff; cpu.y = (end >> 8) & 0xff; cpu.c = 0;
         this.setPhase('loaded');
@@ -814,6 +947,8 @@ class Session {
         this.trace(`loads "${this.fileName()}"`);
         return false;
       }
+      // with a tape: the next KERNAL file from where it stands
+      if (this.tape && m.ram[0xba] === 1) return this.loadFromTape();
       this.stop('load', `loads "${this.fileName()}" from device ${m.ram[0xba]}`);
       return true;
     });
@@ -1033,10 +1168,22 @@ class Session {
       basic,
       roms: this.real ? this.o.roms!.source : 'stand-ins (no ROM files)',
       drive: this.drive ? `${this.driveNote}, ${this.drive.bytesRead} bytes read${this.drive.bytesWritten ? `, ${this.drive.bytesWritten} written` : ''}` : this.driveNote,
+      tape: this.tape ? this.tapeNote() : null,
       cycles: this.started ? m.cycles - this.startCycle : 0,
       ms,
       fileUse: fileUse(m),
     };
+  }
+
+  /** the datasette: where the tape stood, how far it played, as seconds of tape */
+  private tapeNote(): string {
+    const t = this.tape!, p = t.pulses;
+    let before = 0, played = 0;
+    for (let i = 0; i < this.tapeStart && i < p.length; i++) before += p[i];
+    for (let i = this.tapeStart; i < t.pos && i < p.length; i++) played += p[i];
+    const s = (c: number) => `${(c / 985248).toFixed(1)} s`;
+    const from = this.tapeFile ? 'after the file' : this.o.tapeAt != null ? 'where asked' : 'at the start';
+    return `datasette: the tape stood ${from} (${s(before)}), played ${s(played)}${t.atEnd ? ' to its end' : ''}, ${t.pos - this.tapeStart} pulses`;
   }
 
   private report(l: Layer, index: number): LayerReport {

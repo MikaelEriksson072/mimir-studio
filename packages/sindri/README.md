@@ -4,7 +4,8 @@
 through its layers (coders, movers, decrunchers, intros in front of them) and saves the unpacked program at the moment
 it starts.
 With the disk the program came from, an emulated 1541 is on the serial bus, so it can go on loading: through the
-KERNAL, or with a fast loader of its own.
+KERNAL, or with a fast loader of its own. With the tape it came from, an emulated datasette plays it from after the
+file, for its own turbo loader.
 It needs no knowledge of the packer: it works for old and unknown crunchers as well as for known ones, and it reports
 what each layer did so that new packers can be recognised and named.
 
@@ -118,6 +119,38 @@ music at `$0900-$1fff`. Of 138 demo disks from CSDB's top lists, 18 are saved di
 lower, 8 have the same range with other bytes; none got smaller, and no layer, stop or time changed); 741 intros and
 demos without their disks are saved as before.
 
+## The datasette
+
+With a tape (a TAP image, given instead of the file or with `--tape`) a datasette is plugged in, PLAY held down
+(`src/tape.ts`):
+
+- its pulses reach CIA1's FLAG line (the ICR's bit 4, and an IRQ when the mask has it) while the motor runs, that is
+  while the 6510's port drives bit 5 low; bit 4 of the port reads 0 (a button is down);
+- the tape stands where the file ended (after the KERNAL file that holds the file's bytes, or at `tapeAt`), so the
+  program's own tape loader reads on from there: Novaload, Cyberload, Martin Piper's TapeTool and the rest are not
+  known by Sindri, they just run;
+- LOAD from the tape (device 1) is done by Sindri, not by the KERNAL's routines, which would take minutes of C64 time:
+  the next KERNAL file from where the tape stands whose name starts with the one asked for (any without a name), its
+  header into the tape buffer at `$033c`, its data where it goes (a relocatable one with secondary address 0 at the
+  start of BASIC), the tape wound to after it. The first file is loaded so as well, its header in the tape buffer,
+  where many tape loaders keep their code;
+- as the KERNAL does, the IRQ vector is kept at `$029f/$02a0` during the load and put back after it. A boot file that
+  loads over `$029f/$02a0` starts through the next interrupt, which comes at once (the KERNAL ends the load in its tape
+  IRQ and enables CIA1's timer A there, whose underflow is waiting), before BASIC goes on with vectors the file may
+  have loaded over. The motor interlock `$c0` is set as the KERNAL sets it when it starts the motor, or the KERNAL's
+  IRQ would turn the motor on as soon as PLAY is down;
+- a program waiting while the tape plays is loading, not settled, until a while (5 s) after the tape's end, and the
+  time limit grows to the rest of the tape and half a minute more. The report's `Tape:` line says where the tape stood
+  and how far it played; pulses read count as loading for the parts a layer loaded and ran. The saved port is the
+  program's: bit 4, which PLAY holds low, is left out.
+
+On the boot files of 98 commercial tapes (the first sides among the first 100 of a tape collection), 80 play the
+tape for more than 5 s and get to the game's code (Novaload, Cyberload and other turbo loaders, none known to Sindri),
+81 end in a running program, 9 at READY, 5 in a reset and 2 on a JAM after loading, and one is a BASIC game that reads
+its data with the KERNAL's own routines; 67 save a later layer than the boot file. A tape takes 2.0 s (median, 8.9 s at
+most) for 118 s of C64 time on average. Without the IRQ vector at `$029f/$02a0` and the motor interlock, only 14 of the
+first 25 got further than the boot file.
+
 ## Use
 
 ```
@@ -142,8 +175,9 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
 | option | |
 |---|---|
 | `-o FILE` | save here (default: `<name>.<start address>.prg` next to the file) |
-| `--file NAME` | the file on the D64 to unpack (default: its first PRG; `*` and `?` as the DOS takes them) |
+| `--file NAME` | the file on the D64 or TAP to unpack (default: its first program; `*` and `?` as the DOS takes them) |
 | `--disk FILE` | put this D64 in the drive for a PRG given on its own |
+| `--tape FILE` | put this TAP in the datasette for a PRG given on its own |
 | `-e ADDR` | start with `SYS ADDR` instead of `RUN` |
 | `-l ADDR` | load the file at `ADDR` instead of its own load address |
 | `--layer N` | save layer N instead of the newest (the report lists them) |
@@ -326,6 +360,9 @@ own with `M-W`, starts it with `M-E` and receives a sector over the serial bus b
 music and plays it is saved with the music as the run left it, and a part that only makes code of its own after the
 load is saved as it started. A boot file that reads the drive's clock with `M-R` and runs it as code gets the same
 layers, stop and saved program in the first run in a process, which starts the C64 and the drive up, and in the next.
+The datasette tests build a tape (a KERNAL boot file with a loader in its header, then a program as turbo data) and run
+its boot file with the stand-ins and the ROMs, started through `$0302` and through the IRQ vector at `$029f`: its loader
+reads the program from the tape and starts it.
 
 ## Limits
 

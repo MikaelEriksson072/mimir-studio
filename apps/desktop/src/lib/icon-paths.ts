@@ -24,7 +24,7 @@ export const ICONS = {
   screen: 'M3 5h18v11H3zM8 20h8M12 16v4', rows: 'M4 4h16v5H4zM4 15h16v5H4zM7.5 6.5h5M7.5 17.5h5',
   image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15.5 9h.01', chevron: 'M9 6l6 6-6 6', down: 'M6 9l6 6 6-6', up: 'M6 15l6-6 6 6', target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   folder: 'M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z',
-  disk: 'M4 4h13l3 3v13H4zM8 4v5h8V4M8 20v-6h8v6', eject: 'M12 5l7 8H5zM5 18h14',
+  disk: 'M4 4h13l3 3v13H4zM8 4v5h8V4M8 20v-6h8v6', tape: 'M3 6h18v12H3zM9.5 11a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM17.5 11a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM9.5 11h5M7 18l1.5-3h7L17 18', eject: 'M12 5l7 8H5zM5 18h14',
   bookmark: 'M7 3.5h10v17l-5-3.8-5 3.8z', pack: 'M3.5 4h17v4h-17zM5 8v12h14V8M10 12h4', clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2',
   star: 'M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.85l-5.25 2.75 1-5.8L3.5 9.7l5.9-.9z',
 } as const;

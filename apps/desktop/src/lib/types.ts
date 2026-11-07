@@ -1,10 +1,15 @@
-import type { Addr, BitfireDisk, BoozeDisk, D64Image, KickProblem, ListingLine, LogLevel, ProblemCode, SpindleDisk, VerifyResult } from '@mimir/core';
+import type { Addr, BitfireDisk, BoozeDisk, D64Image, KickProblem, ListingLine, LogLevel, ProblemCode, SpindleDisk, TapeImage, VerifyResult } from '@mimir/core';
 import type { IconName } from './icon-paths';
 
 /** The mounted .d64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build & Run;
  *  `spindle`: its jobs, when it is a Spindle 3 disk (the Spindle script tab lists them); `bitfire`: its files, when it
  *  is a Bitfire disk (the Bitfire script tab lists them) */
 export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null }
+
+/** The tape in the datasette (13.5e): its files are listed in the Explorer (and every block in the Tape tab), a file
+ *  opens with the tape in Sindri's datasette, and Build & Run puts a copy in VICE's datasette (or the tape with the
+ *  re-assembled boot file on it, when the project is that file) */
+export interface MountedTape { name: string; path: string | null; bytes: Uint8Array; img: TapeImage }
 
 /** Selection in the listing/heatmap; `multi` = an explicit range (shift-click, drag, block header, Go to range).
  * `anchor`..`anchorEnd` is the line or block picked first; extending the selection always keeps it whole.

@@ -108,6 +108,8 @@ export interface ViceLaunch {
   scriptPath?: string;
   /** a .d64 image to put in drive 8, for programs that load more from disk */
   disk?: string | null;
+  /** a .tap image to put in the datasette (-1), for programs that load more from tape (PLAY is pressed in VICE) */
+  tape?: string | null;
   /** `prgPath` is a cartridge image (.crt): VICE attaches it and resets, and the C64 starts it (no start, no autostart) */
   cart?: boolean;
 }
@@ -137,7 +139,8 @@ export const DRIVE_INIT = 'open15,8,15:poke781,15:sys65481:poke780,73:sys65490:s
 
 export function viceArgv(o: Omit<ViceLaunch, 'vice'>): string[] {
   const args = [...(o.args || [])];
-  const drive = o.disk ? ['-8', o.disk] : [];
+  // (a .tap given as the program is autostarted: VICE loads its first file and presses PLAY itself)
+  const drive = [...(o.disk ? ['-8', o.disk] : []), ...(o.tape ? ['-1', o.tape] : [])];
   if (o.cart) return [...args, ...drive, ...(o.labelsPath ? ['-moncommands', o.labelsPath] : []), '-cartcrt', o.prgPath];
   if (o.start != null && o.via === 'monitor') {
     if (!o.scriptPath) throw new Error('starting from the monitor needs a monitor command file');
@@ -145,7 +148,7 @@ export function viceArgv(o: Omit<ViceLaunch, 'vice'>): string[] {
   }
   const i = args.lastIndexOf('-autostartprgmode'), mode = i >= 0 ? args[i + 1] : null;
   if (o.disk ? mode !== '1' : o.start != null && mode === '0') args.push('-autostartprgmode', '1');
-  const init = o.disk && !/\.vsf$/i.test(o.prgPath) ? DRIVE_INIT : '';
+  const init = o.disk && !/\.(vsf|tap)$/i.test(o.prgPath) ? DRIVE_INIT : '';
   const run = o.start == null && !init ? ['-autostart', o.prgPath]
     : ['-autoload', o.prgPath, '-keybuf', `${init}${o.start == null ? 'run' : `sys${o.start & 0xffff}`}\\n`];
   return [...args, ...drive, ...(o.labelsPath ? ['-moncommands', o.labelsPath] : []), ...run];

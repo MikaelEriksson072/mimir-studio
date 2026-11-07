@@ -1079,6 +1079,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Action Replay Warp*25 (Datel) | mottagarloopen som lägger tre byte per varv på stacken (`… eor $dd00 / pha / lda $dd00 …`); avkodningen `inc $01 / pla / eor #$f9 / dey / sta ($ae),y` (MK4 `dec $01`); stackkoden (`ldx #$20 / stx $de00`); 1541-koden vid `$0400` (768 byte); `B-E 2 0 18 5/6` i loaderfilen, som bara räknas med koden (andra loaders har samma B-E) |
 | Action Replay, bandbackuper (Datel) | loadern i bandets header (`$0351–$03fa`, början `lda #$0b / sta $d011 / lda #$05 / sta $01 / sta $c0`), synkbyten `"RB"`, biten genom CIA2:s timer B (`lda $dd0d / stx $dd0f / lsr / lsr / inc $d020`), första filen som skriver över vektorerna vid `$0300` och hoppar till `$0351`; sparrutinen. Turbo och superturbo har samma loader (pulslängden står på bandet) |
 | Action Replay turbo tape (Datel) | LOAD/SAVE med TAPE TURBO ON. 5.1 och 7.5: biten genom CIA1:s timer B, synk `$10 … $01`, sparrutinen. 7.2: Turbo Tape 250:s format (tröskel `$0107`, ledarbyte `$02`, synk `$09 … $01`), biten genom CIA2:s timer B med volym och ram som blinkar (`sta $d418 / sta $d020`); andra turbor läser biten likadant men utan blinket, och synken ensam räcker inte |
+| TapeTool (Martin Piper) | biten genom CIA1:s timer A som one-shot (`pha / lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e`, TapeLoaderCIACommon.a), IRQ-laddarens bit (`lda $dc0d / ldx #$19 / stx $dc0e / lsr / rol`, TapeLoaderCIAIRQ.a); väntan på synken `$aa` och TinyHeader `$69` räknas bara med dem (13.5g) |
 | Novaload (Novagen) | biten genom toppbiten i CIA1:s timer A (`bit $dc0d / beq / lda $dc05 / stx $dc0e / eor #$80 / asl / pla / ror`); timern satt till `$81f4`, som bara räknas med biten. Action Replay 7.2:s Nova transfer läser band med samma kod |
 | Super Snapshot turbo (LMS) | Turbo V5, LOAD och SAVE. LOAD tar emot fyra byte per handskakning till `$aa–$ad` (`bit $dd00 / bvs / ldy #$03 / nop / bit $80 / lda $dd00 / lsr / lsr / nop / nop / ora $dd00 …`), och koden den kopierar till `$0200` lägger dem i minnet med ROM:en avbankade (`lda #$34 / sta $01 / lda $aa / sta ($93),y …`, 51 byte); filens första byte byts en bit i taget (`sta $a6 / ldx #8 / bit $dd00 / bvc …`): laddadressen, och bit 7 för Warp*25. En byte till GET, katalogen och filkopieraren och en från SAVE, båda på en rad utan badline (`bit $dd00 / bpl / sec / lda $d012 / sbc $26 / bcc / and #$07 / cmp #$02 / bcc`, sedan `lda $2a` respektive `lda #$07 / sta $dd00`); drivkoden skickas två halvbyte i taget med MK4:ans badline-väntan (`cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); kommandona `M-R $fffe`, `M-W $0150` och `$0173` (35 byte var) och `M-E $0150`; drivkoden: starten vid `$0150`, 1541-koden vid `$0300` och `$0400`, SAVE:s vid `$0500`, 1581-koden vid `$0503` (`lda #$d2 / sta $4001`). En fil med bit 7 satt läses som Action Replays Warp*25 med Action Replays kod (mottagarloopen och avkodningen ovan; drivkoden är densamma, omflyttad), och de delarna blir turbons |
 | Super Snapshot copiers (LMS) | diskkopieraren tar emot en sektor till `$0500` (`lda $dd00 / bmi / ora #$17 / sta $dd00 / lda $dd00 / bpl / and #$07 / sta $dd00` … `eor $dd00 / eor #$f9 / sta $0500,y`) och skickar den tillbaka (`ldy #0 / lda $0500,y / pha / ldx #$27 / stx $dd00 / bit $dd00 / bvs`); dess drivkod vid `$033f` (544 byte, `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c`) och `$057c` (352 byte); filkopierarens drivkod vid `$0400` (768 byte, märkt `"2A" $9c` först) |
@@ -1977,12 +1978,13 @@ får väljas) som visar allt Mimir öppnar, och varje fils **filändelse** avgö
 | `.vsf` | en VICE-snapshot (13.7) |
 | `.crt` | en cartridge, ett projekt för sig (13.9) |
 | `.d64` | en diskavbild som monteras (13.5) |
+| `.tap` | en bandavbild som läggs i datasetten (13.5e) |
 | `.json` | ett Mimir-projekt (`.mimir.json`), som *Open project…* öppnar det (13.10) |
 | `.asm` | en Kick Assembler-källa som **Brokkr** packar: *Pack a file* (13.8b) öppnas över arbetet med källan vald och Brokkr som packare; KickAss.jar assemblerar den där den ligger och Brokkr packar PRG:n |
 | annan eller ingen | läses som en PRG (en snapshot eller cartridge känns ändå igen på huvudet, som när den släpps i fönstret) |
 
 Väljs flera filer öppnas PRG:erna, snapshotarna och cartridgen tillsammans, som med *Open PRG files…*, medan en disk
-monteras och en källa packas åt gången: de andra lämnas, och en rad säger vilka och varför (*Not opened: b.asm (Brokkr
+monteras, ett band läggs i datasetten och en källa packas åt gången: de andra lämnas, och en rad säger vilka och varför (*Not opened: b.asm (Brokkr
 packs one source at a time)*). Ett projekt öppnas för sig, eftersom det tar arbetets plats: är ett projekt bland filerna
 öppnas bara det (`smartPlan`). En fil som inte kan läsas sägs med sitt namn, och de andra öppnas ändå.
 
@@ -2257,6 +2259,129 @@ filer packade på plats, tabellen i 18/9 och 18/6, en sida utan drivkod, en disk
 BoozeLoaders, skriptet spårat och i byte som inte spårats, och den äldsta versionen. `fixtures/d64/booze-demo.d64` är en
 av diskarna: ett startprogram vars kod laddar fil 0–2, rasterdemot packat med ByteBoozer 2, en tabell som inte är packad
 och en fil packad på plats.
+
+### 13.5e Bandavbilder (.tap)
+
+**Insert TAP tape image…** (File-menyn, kommandopaletten, knappen *Insert TAP…* på den tomma startsidan, Smart attach,
+eller dra och släpp en `.tap`) lägger ett band i datasetten. En C64 kan ha både en disk och ett band, så bandet är ett
+eget tillstånd bredvid den monterade disken, med en egen sektion *Tape* i Explorer (under *Disk*) och en egen
+utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
+
+- **Pulserna.** En TAP (`C64-TAPE-RAW`) har längden på varje puls som datasettens läshuvud skickar till CIA1:s
+  FLAG-linje, från en fallande flank till nästa: version 0 en byte per puls i enheter om 8 cykler (0 = en paus),
+  version 1 samma men 0 följt av exakta cykler i 3 byte, version 2 (C16:s) halvvågor, två per puls.
+- **KERNAL:ns format (CBM).** En ledare av korta pulser, varje byte en lång och en mellanlång puls och 9 bitpar (kort +
+  mellan = 0, mellan + kort = 1, lägsta biten först, sist udda paritet), lång + kort i blockets slut. En fil är ett
+  huvudblock på 192 byte (typ, start, slut, namn och resten av bandbufferten vid `$033c`, där många bandladdare har sin
+  kod) och ett datablock, vart och ett två gånger (synkbyten `$89`…`$81`, kopian `$09`…`$01`) med en XOR-kontrollsumma.
+  Pulslängderna följer bandets fart (kort från ledaren, mellan 1,375× och lång 1,79×, justerade efter varje bit). Den
+  kopia som lästes rent används; annars slås kopiorna ihop byte för byte, och felet står vid filen. Ett datablock på 192
+  byte som ser ut som ett huvud tas som data när huvudet säger 192 byte. Ett relokerbart program (typ 1) laddas av
+  `LOAD` (sekundäradress 0, som SHIFT+RUN/STOP) i början av BASIC, så det öppnas vid `$0801` och var det sparades ifrån
+  står vid filen. Ett huvud som säger mer än datablocket har (en laddare som tar över medan KERNAL:n laddar) står som en
+  anmärkning, inte ett fel: filen är det blocket har.
+- **TapeTool (Martin Piper).** Se 13.5g.
+- **Turbo Tape 64** (och Action Replay 7.2:s "Turbo Tape 250"): en 0 och en 1 omkring 263 cykler isär, högsta biten
+  först, ledaren `$02`, synk `$09`…`$01`; ett huvud (1, start, slut, en byte, namnet) och ett datablock (0, byten,
+  XOR). Datablocket läses till den längd huvudet anger (datan kan innehålla `$02`), och en kontrollsumma som stämmer är
+  det som skiljer Turbo Tape från andra laddare med samma ledare och synk.
+- **Okänd turbodata.** Det som återstår mellan KERNAL-blocken och pauserna med två pulslängder (en 1 som är 1,3–3 gånger
+  så lång som en 0) och som inte är en ledare (fyra bytevärden som utgör 90 %) listas som turbodata som inget format här
+  läser, med sina två pulslängder. Den läses av Sindri (13.5f).
+
+Explorer listar filerna i bandordning med var de börjar (m:ss), namnet (`+header` när bandbufferten har kod), typen
+(KERNAL-filer `PRG`/`BASIC`/`SEQ`) eller formatet, och ett klick öppnar en fil som ett nytt projekt, **+** lägger till
+den. En KERNAL-fil vars huvud har kod öppnas med huvudet som en andra fil, `<namn>-header.prg` vid `$033c-$03fb`
+(bandbufferten): där ligger bandladdarens kod, som ska återassembleras med datan. Huvudfilen körs inte av Sindri (den
+är inget program). SEQ-filer, slutmarkören och filer utan känd laddadress (en TinyHeader-fil vars bootladdare inte kunde
+läsas) listas men öppnas inte. Under listan står hur många TapeTool-filer och sträckor med okänd turbodata bandet har.
+
+**Tape-fliken** (bottenpanelen, bara med ett band i datasetten) visar allt på bandet i bandordning: tid, offset i
+TAP-filen, format, namn, laddadress, antal byte och anmärkningar (kopior, kod i huvudet, TapeTools namnbyte, block, RLE,
+slumpad ordning, fel); de okända sträckorna med antal pulser och pulslängder. En rad öppnar filen, **+** lägger till
+den. **Save files…** sparar varje fil som PRG i en vald mapp (ett TapeTool-band också `boot.bin` och `build.bat`,
+13.5g).
+
+Mätt på användarens arkiv (921 band i C64Tapes-org, kommersiella spel): 50 s för alla (54 ms per band), 1 295
+KERNAL-filer varav en med läsfel (Froggy: ett skadat datablock), 46 Turbo Tape-filer och ingen falsk TapeTool-fil; 765
+band har turbodata från en laddare som inte är känd här, 47 har ingen KERNAL-fil (andra sidor). `test/tap.test.ts` läser det
+`makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
+relokeringen, TapeTool och Turbo Tape, och fixturen `fixtures/tap/mimir-demo.tap`.
+
+### 13.5f Datasetten i Sindri och i VICE
+
+En fil som öppnas från bandet körs av Sindri med bandet i en emulerad datasette (`packages/sindri/src/tape.ts`),
+som en fil från en disk körs med disken i en 1541. Pulserna når CIA1:s FLAG-linje (ICR bit 4, och IRQ med masken)
+medan motorn går (6510-porten driver bit 5 lågt), och PLAY är nedtryckt (port bit 4 läses som 0). Bandet står där
+filen slutade, så programmets egen bandladdare läser vidare därifrån. Sindri gör LOAD:s arbete från bandet i stället för
+KERNAL:ns rutiner, som skulle ta minuter av C64-tid: huvudet läggs i bandbufferten, datan där den ska (en relokerbar
+fil med sekundäradress 0 i början av BASIC), och bandet spolas fram till efter filen. Som KERNAL:n sparar Sindri
+IRQ-vektorn i `$029f/$02a0` före laddningen och lägger tillbaka den efter: en bootfil som laddas över `$029f/$02a0`
+startar genom nästa avbrott, som kommer direkt (KERNAL:n avslutar laddningen i sitt band-IRQ och slår på CIA1:s timer A,
+vars underflöde redan väntar), före BASIC hinner använda vektorer som filen laddat över. Motorspärren `$c0` sätts som
+KERNAL:n gör när den startar motorn, annars slår KERNAL:ns IRQ på motorn så fort PLAY är nedtryckt. Ett program som
+väntar medan bandet spelar laddar, inte vilar; efter bandets slut väntar Sindri 5 s till. Tiden räcker till resten av
+bandet och 30 s till. Lagerrapporten säger var bandet stod och hur långt det spelade (`Tape: datasette: …`), och
+läsningar från bandet räknas som laddning när ett lager sparar det det laddade. Den sparade porten är programmets: bit 4,
+som PLAY håller låg, räknas inte. Mätt på bootfilerna från de 98 första sidorna bland de första 100 banden i arkivet: 80 spelar bandet i mer än 5 s,
+81 slutar i ett program som kör, 9 vid READY, 5 i en reset och 2 i en JAM efter laddningen, och ett är ett BASIC-spel
+som läser sina data med KERNAL:ns egna rutiner; 67 sparar ett senare lager än bootfilen. Ett band tar median 2,0 s
+(max 8,9 s) för i snitt 118 s C64-tid. Utan IRQ-vektorn vid `$029f/$02a0` och motorspärren kom bara 14 av de första 25
+längre än bootfilen (11-A-Side Soccer, APB och 3D Pool startar genom vektorn).
+
+`mimir unpack spel.tap [--file NAMN]` packar upp bandets första program (eller det namngivna) med bandet i datasetten,
+`--tape band.tap` lägger ett band i datasetten för en PRG; Sindris egen CLI tar samma (`sindri spel.tap`, `--tape`).
+
+**Build & Run** med ett band i datasetten:
+- När projektets första fil kommer från en KERNAL-fil på bandet skrivs bandet om: den byggda filen (och dess huvud, när
+  huvudfilen finns i projektet, med start och slut från den byggda datan) som bandets första fil i KERNAL:ns format,
+  därefter bandet som det var efter filen (`replaceTapeFile()`), och VICE autostartar det (`-autostart <namn>.tap`):
+  KERNAL:n laddar den återassemblerade bootfilen och dess laddare läser vidare från bandet. Det som låg före filen tas
+  inte med.
+- Annars läggs en kopia av bandet i VICE:s datasette (`-1 <kopia>.tap`, i en ny byggmapp) bredvid programmet; PLAY
+  trycks i VICE när programmet ber om det.
+`test/vice.integration.test.ts` autostartar i riktiga VICE ett band vars bootladdare läser nästa fil med turbo och
+avslutar VICE med en kod, också efter att bootfilen skrivits om.
+
+### 13.5g TapeTool-band (kommandoraden som skriver bandet igen)
+
+Martin Pipers TapeTool skriver TAP-filer med egna turboladdare (källorna följer med: `TapeLoaderCIA*.a`,
+`TapeLoaderCIAIRQ.a`, `ScrollerMusicLoader.a`). Formatet, läst ur källorna och mätt på TapeTools utdata:
+- Två pulslängder, en 1 dubbelt så lång som en 0 (`TapeTurboSpeed` × 2 och × 4, som standard 256 och 512 cykler);
+  laddarna startar CIA1:s timer A som one-shot från 3 × `TapeTurboSpeed` − `$11` vid varje flank, och en timer som
+  hunnit gå ut är en 1. Högsta biten först, ledaren `$ff $c3`, synkbyten `$aa`.
+- **Hela huvudet:** `$f0`, `$96` (`$b7` när blocket är RLE-packat), filens namnbyte, start, antal block i filen, slut, en
+  XOR av huvudet från synken; datan och dess XOR. Ett RLE-block har den packade längden som slutets låga byte och
+  längden − 1 som höga; först står flyktbyten, sedan byten, flyktbyte + antal (0 = 256) + värde för en körning, och
+  flyktbyten sist.
+- **TinyHeader** (`otft`): `$69` direkt efter synken, sedan datan och dess XOR, utan namn och adress: bootladdaren i
+  bandhuvudet vet var den ska och hur lång den är. Adressen läses därför ur bootladdarens kod: `sta <start>` som räknas
+  upp, sedan `lda` av operandens byte jämförda med slutets (`cmp #<slut`, `cmp #>slut`), som i alla tre
+  TinyHeader-laddarna. Datan går till nästa ledare; byten före den är kontrollsumman. En TinyHeader godtas bara efter
+  TapeTools egen ledare, den har inget annat att kontrollera.
+- **Checksummeblock** (`otfb`, `otfbr`): ett block per sida (laddaren märker block efter startadressens höga byte), i
+  minnesordning eller slumpad (`n <frö>`), och filer kan flätas samman (`s`). Block med samma namnbyte samlas till en fil
+  tills dess antal är nått; ett block vars sida redan finns börjar en ny fil. Saknade block och glapp står vid filen.
+- **Bootfilen** (`ocb1`): ett KERNAL-huvud med laddaren i bandbufferten, datan bara en gång; datan ligger över `$0302`
+  (eller laddaren startar annars när LOAD är klar).
+
+**Kommandoraden** (`tapeToolScript()`): Tape-fliken visar och kopierar (**Copy script**) TapeTools kommandorader som
+skriver bandet igen, en per fil som i TapeTools `ExampleBuild.bat`. Bootfilen sparas som `boot.bin` (namnet, resten av
+huvudet och datan efter varandra) och ges till `ocb1` med sina offsetar; en TinyHeader-fil med `otft`, de andra med
+`otfb` (`otfbr` när block var RLE-packade), `s` före en fil som är sammanflätad med den före, `n 1` där blocken inte låg
+i minnesordning (TapeTool blandar med fröet det får, så ordningen kan skilja), och varje fils ledare (`otl`) räknad
+utan de ledarpar TapeTool själv skriver: 4 före en TinyHeader eller hel fil, 2 före varje block och 2 efter (8 efter
+ett RLE-packat, tid för laddaren att packa upp). Filer TapeTool inte skriver nämns i en kommentar. **Save files…**
+sparar filerna och raderna som `build.bat`. En annan hastighet än TapeTools standard ges med `ft <0> <1> 1 $aa` på
+varje rad. Med TapeTool 1.0.0.10 bygger raderna om TapeTools exempelband (`test.tap` från `ExampleBuild.bat`) **byte för
+byte identiskt**, och likaså fyra SEUCK Redux-spel ur arkivet som är utgivna på TapeTool-band (The Last Hope Redux,
+Double or Nothing Redux, Vampire Hunter 2 Redux och Dark Force Redux; de tre sista med `TapeTurboSpeed` `$a0`).
+
+Analysen känner TapeTools laddare (8.11c): bitläsningen (`pha / lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 /
+beq / clc / lda #$19 / sta $dc0e`), IRQ-laddarens (`lda $dc0d / ldx #$19 / stx $dc0e / lsr / rol`) och väntan på
+synken och TinyHeader. Fixturen `fixtures/tap/mimir-demo.tap` (`test/helpers/tapetool-tape.ts`) har en egen liten
+bootladdare i TinyHeader-stil, raster-demot som TinyHeader-fil, en sinustabell i två block i omvänd ordning och en fil
+med RLE-packade block; inget av TapeTools egen kod finns i repot.
 
 ### 13.6 Terminal
 

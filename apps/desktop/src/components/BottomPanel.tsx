@@ -1,13 +1,13 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
- * disk's files, the BoozeLoader script, statistics, build output. */
+ * disk's files, the BoozeLoader script, the tape in the datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
-  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
 import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
 import type { BottomTab } from '../store/ui';
-import type { BuildState, MountedDisk, UiProblem } from '../lib/types';
+import type { BuildState, MountedDisk, MountedTape, UiProblem } from '../lib/types';
 import type { TypeGroup } from '@mimir/core';
 
 export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNavigate: (a: Addr) => void; empty: string }) {
@@ -259,6 +259,57 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
   );
 }
 
+/** The Tape tab (spec 13.5e): what is on the tape in the datasette, in tape order: each file (KERNAL, TapeTool, Turbo
+ *  Tape) with where it starts, and the stretches of turbo data no format here reads. A row opens the file, + adds it.
+ *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them. */
+export function TapePanel({ tape, onCopy, onOpenFile, onSaveFiles }: { tape: MountedTape; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onSaveFiles: () => void }) {
+  const { img } = tape;
+  const tt = tapeToolScript(img, tape.name);
+  const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape' };
+  const time = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+  const notes = (f: TapeFile) => [
+    f.format === 'cbm' && f.copies ? `header ${f.copies[0]}×, data ${f.copies[1]}×` : '',
+    f.headerCode ? 'the header holds code (the tape buffer at $033c)' : '',
+    f.tiny ? 'TinyHeader: the boot loader knows where it goes' : '',
+    f.format === 'tapetool' && !f.tiny ? `name byte ${f.id}, ${f.blocks} block${f.blocks === 1 ? '' : 's'}${f.packed ? ` (${f.packed} RLE packed)` : ''}${f.shuffled ? ', in random order' : ''}${f.interleaved ? ', mixed with the file before' : ''}` : '',
+    f.note ?? '', ...f.errors,
+  ].filter(Boolean).join(' · ');
+  const rows = [...img.files.map(f => ({ at: f.at, f, u: null as TapeUnknown | null })), ...img.unknown.map(u => ({ at: u.at, f: null as TapeFile | null, u }))].sort((a, b) => a.at - b.at);
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>{tape.name} (TAP version {img.version}, {time(img.seconds)}): {img.files.length} file{img.files.length === 1 ? '' : 's'}{img.unknown.length ? `, ${img.unknown.length} stretch${img.unknown.length === 1 ? '' : 'es'} of turbo data no format here reads` : ''} <span className="muted">· {[tt ? 'TapeTool’s command lines write the tape again from its files (Save files… saves them with the lines as build.bat)' : '', img.unknown.length ? 'an unknown loader’s data is read by Sindri, running the boot file with the tape in its datasette' : 'a file opens with the tape in Sindri’s datasette, after the file'].filter(Boolean).join('; ')}</span></span>
+        {tt && <button className="btn small" onClick={() => onCopy(tt.script.join('\n'), 'Copied the TapeTool command lines')}><Icon name="copy" size={14} />Copy script</button>}
+        <button className="btn small" onClick={onSaveFiles} title={tt ? 'Save every file of the tape, boot.bin and build.bat (TapeTool’s command lines) to a folder' : 'Save every file of the tape as a PRG to a folder'}><Icon name="download" size={14} />Save files…</button>
+      </div>
+      <table className="tbl tape-table" aria-label="Tape files"><thead><tr><th>Time</th><th>Offset</th><th>Format</th><th>Name</th><th>Loads</th><th>Bytes</th><th>Notes</th><th /></tr></thead><tbody>
+        {rows.map(({ f, u }, i) => {
+          if (u) return (
+            <tr key={`u${i}`} className="muted" title="Turbo data of a loader not known here: open the boot file, and Sindri reads it with the tape in its datasette">
+              <td className="mono">{time(u.seconds)}</td><td className="mono">${u.offset.toString(16)}</td><td>turbo</td><td className="muted">—</td><td className="muted">—</td>
+              <td className="mono">{u.pulses} pulses</td><td>{u.short && u.long ? `pulses of ${u.short} and ${u.long} cycles` : ''}</td><td />
+            </tr>
+          );
+          const file = f!, can = file.load != null && file.data.length > 0 && file.type !== 'SEQ' && file.type !== 'END';
+          return (
+            <tr key={`f${i}`} className={can ? undefined : 'muted'} title={can ? `Open ${file.name}${file.headerCode ? ' and its header' : ''}` : undefined} onClick={() => { if (can) onOpenFile(file, false); }}>
+              <td className="mono">{time(file.seconds)}</td>
+              <td className="mono">${file.offset.toString(16)}</td>
+              <td>{FORMAT[file.format]}{file.format === 'cbm' ? ` ${file.type}` : ''}</td>
+              <td className="mono">{file.format === 'tapetool' ? file.name : `"${file.name}"`}</td>
+              <td className="mono">{file.load != null ? `$${h4(file.load)}–$${h4((file.load + Math.max(1, file.data.length) - 1) & 0xffff)}` : <span className="muted">—</span>}</td>
+              <td className="mono">{file.data.length}</td>
+              <td className={file.errors.length ? 'warn' : 'muted'}>{notes(file)}</td>
+              <td>{can && <button className="icon-btn" title={`Add ${file.name} to this project`} aria-label={`Add ${file.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(file, true); }}><Icon name="plus" size={13} /></button>}</td>
+            </tr>
+          );
+        })}
+      </tbody></table>
+      {tt && <pre className="tape-script mono small">{tt.script.join('\n')}</pre>}
+    </div>
+  );
+}
+
 /** The Booze script tab (spec 13.5d): a mounted BoozeLoader disk's own files, a row each by number (a row opens the file
  *  as a PRG, unpacked when it is packed, + adds it), and BoozeLoader's script in the program (5.15b): the loads, sides
  *  and calls of the code that calls the loader, each load with what its file unpacks to on the mounted disk. */
@@ -461,4 +512,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

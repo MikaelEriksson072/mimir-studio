@@ -6,8 +6,8 @@
 
 *Named after Mímir, who keeps the well of wisdom in Norse myth; the logo is his rune ᛗ glowing over the rings of his well.*
 
-Mimir Studio is a desktop IDE for re-assembling C64 software. Open a `.prg`, a `.d64` disk image, a VICE
-snapshot or a cartridge (`.crt`). The app traces the code, recognises graphics, music, tables and text, and names every hardware register
+Mimir Studio is a desktop IDE for re-assembling C64 software. Open a `.prg`, a `.d64` disk image, a `.tap` tape, a
+VICE snapshot or a cartridge (`.crt`). The app traces the code, recognises graphics, music, tables and text, and names every hardware register
 and KERNAL routine. You can then rename, comment and re-type anything. It exports a
 [Kick Assembler](http://theweb.dk/KickAssembler/) project that assembles back to **exactly the same bytes**, and starts
 it in [VICE](https://vice-emu.sourceforge.io/) with one key.
@@ -57,7 +57,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   - packed programs, which [Sindri](https://github.com/MikaelEriksson072/Sindri), Mimir's own unpacker, unpacks with one
     click: it runs the program in an emulated C64, reports each layer it peels off (coders, movers, decrunchers) and
     names the packer by its fingerprint. A file opened from a mounted D64 gets that disk in an emulated 1541, so a boot
-    file's fast loader (Bitfire, Krill's, Sparkle, Spindle and others) goes on loading the next part. Freezer backups
+    file's fast loader (Bitfire, Krill's, Sparkle, Spindle and others) goes on loading the next part. A file opened
+    from a tape gets the tape in an emulated datasette, wound to after the file with PLAY held down, so a tape boot
+    file's own turbo loader (Novaload, Cyberload, TapeTool's and the rest) goes on loading the game. Freezer backups
     (the Action Replay's, the Freeze Machine's and the Super Snapshot's) are known as packed by their depacker, and a
     backup saved as two files loads its second file with its disk;
   - the script of a Spindle trackmo: Pefchain builds a small driver after each part from its line of the script, and
@@ -74,7 +76,14 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     track 18, and Mimir reads them, unpacked with ByteBoozer 1 or 2 as the loader does while it loads. BoozeLoader has
     no script file: the program's own code is the script (`lda #file / jsr $0200` loads a file, then it calls the
     part). The *Booze script* tab lists the disk's files and the loads, disk sides and calls of the code that calls the
-    loader, each load with what its file unpacks to on the mounted disk, and *Copy script* copies them.
+    loader, each load with what its file unpacks to on the mounted disk, and *Copy script* copies them;
+  - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64 and Martin Piper's
+    TapeTool (the TinyHeader file its boot loader reads, files in checksum blocks in any order, RLE packed blocks) are
+    listed in the Explorer with where each starts, and a tape boot file opens with its header, where its loader's code
+    is (the tape buffer at `$033c`). The *Tape* tab lists everything on the tape, turbo data of a loader not known here
+    too; a TapeTool tape gets the TapeTool command lines that write it again (byte for byte for TapeTool's own example
+    tape and the SEUCK Redux releases tried), and *Save files…* saves the files with them. Build & Run puts the re-assembled boot file back on the tape and
+    VICE loads it, the rest of the tape after it;
 - **A deep analysis that works the problems down.** Tick *Deep analysis* in the Problems tab. Every guess (a routine
   nothing traced reaches, a pointer-table target, an interrupt handler) is then traced on trial and kept only when it
   leads to no problem. Calls into ROM are not followed into the RAM below, and `$01` is followed through the stack.
@@ -180,8 +189,9 @@ start; *Save* (`Ctrl+S`) then creates a project and moves the work into its fold
 packed file.
 
 1. **Open a program.** Use the *File* menu: *Smart attach…* opens any of them, each file by its extension (`.prg`,
-   `.vsf`, `.crt`, `.d64`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG
-   files…* (`Ctrl+O`), a cartridge `.crt`, a VICE snapshot `.vsf`, or *Mount D64 disk image…* for a disk. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
+   `.vsf`, `.crt`, `.d64`, `.tap`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG
+   files…* (`Ctrl+O`), a cartridge `.crt`, a VICE snapshot `.vsf`, *Mount D64 disk image…* for a disk or *Insert TAP
+   tape image…* for a tape. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview. `G` goes to an address or label, `Ctrl+F` finds text (labels,
@@ -214,7 +224,8 @@ pnpm mimir analyse game.prg
 `analyse`, `verify [--kickass]`, `export -o <folder>` and `demo` take `.prg` files, a cartridge (`.crt`: every bank, or
 `--bank <n>` for one of them) or saved projects (`.mimir.json`).
 `--deep` runs the deep analysis. `unpack game.prg [-o unpacked.prg]` unpacks a packed program and prints its layers; `unpack demo.d64` takes the disk's
-first PRG (or `--file NAME`) with the disk in the drive. `measure <folder>` runs every program in it in Sindri and sets
+first PRG (or `--file NAME`) with the disk in the drive, `unpack game.tap` the tape's first program with the tape in the
+datasette (`--tape` puts a tape in it for a PRG). `measure <folder>` runs every program in it in Sindri and sets
 what the analysis made of each byte against what the program did with it (the code it ran, the data it read), and
 counts the problems by kind: run it with and without a setting (`--deep`, `--set codeIslands=false`) to see what the
 setting does.

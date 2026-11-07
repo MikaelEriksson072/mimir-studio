@@ -7,12 +7,12 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readSpindleDisk, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
-  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
+  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type InspectorMode } from './store/ui';
@@ -26,7 +26,7 @@ import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
-import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, MountedDisk, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
+import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, MountedDisk, MountedTape, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
 import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
@@ -34,7 +34,7 @@ import { Sidebar } from './components/Sidebar';
 import { Listing, type ListingFind } from './components/Listing';
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
-import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPanel, RelocPanel, SpindlePanel, StatsPanel, XrefPanel } from './components/BottomPanel';
+import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, LogList, ProblemsPanel, RasterPanel, RelocPanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
@@ -160,6 +160,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [buildBusy, setBuildBusy] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
   const [disk, setDisk] = useState<MountedDisk | null>(null);
+  const [tape, setTape] = useState<MountedTape | null>(null);
   /** the folder of the last Kick Assembler export in this session (the terminal opens there) */
   const [exportDir, setExportDir] = useState<string | null>(null);
   /** the files that export was of (their ids): it moves into a project made from the work only while they are the work's */
@@ -540,6 +541,59 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try { const r = await kr.openDisk(); if (r) mountBytes(r.name, r.path, r.bytes); } catch (e) { toast(errorText(e), 'err'); }
   };
   const ejectDisk = () => { if (disk) toast(`Ejected ${disk.name}`, 'info'); setDisk(null); };
+  /* ---- the tape in the datasette (13.5e) ---- */
+  const insertTapeBytes = (name: string, path: string | null, bytes: Uint8Array) => {
+    const img = readTape(bytes);
+    setTape({ name, path, bytes, img });
+    showSection('tape');
+    const n = (f: (x: TapeFile) => boolean) => img.files.filter(f).length;
+    const kinds = [
+      n(f => f.format === 'cbm') ? `${n(f => f.format === 'cbm')} KERNAL` : '',
+      n(f => f.format === 'tapetool') ? `${n(f => f.format === 'tapetool')} TapeTool` : '',
+      n(f => f.format === 'turbotape') ? `${n(f => f.format === 'turbotape')} Turbo Tape` : '',
+    ].filter(Boolean).join(', ');
+    toast(`Inserted ${name} (${Math.round(img.seconds)} s): ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kinds ? ` (${kinds})` : ''}${img.unknown.length ? `, and turbo data of a loader Sindri runs` : ''}`, 'ok');
+  };
+  const insertTape = async () => {
+    if (!kr) return needDesktop();
+    try { const r = await kr.openTape(); if (r) insertTapeBytes(r.name, r.path, r.bytes); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const ejectTape = () => { if (tape) toast(`Ejected ${tape.name}`, 'info'); setTape(null); };
+  /** the tape each file opened from it came from, and where it stood after the file: Sindri plays it on from there.
+   *  `header`: the file is a KERNAL file's header (the tape buffer), not a program Sindri runs */
+  const tapeOf = useRef(new Map<string, { tap: Uint8Array; file: TapeFile; header: boolean }>());
+  /** a file from the tape as a PRG; a KERNAL file whose header holds code opens with its header, the tape buffer at
+   *  $033c, as a second file (where many tape loaders keep their code) */
+  const openFromTape = (f: TapeFile, add: boolean) => {
+    if (!tape || f.load == null) return;
+    try {
+      const base = tapeFileName(f).replace(/\.\w+$/, '');
+      const file = withId(parsePrg(`${base}.prg`, makePrg(f.load, f.data)));
+      tapeOf.current.set(file.id, { tap: tape.bytes, file: f, header: false });
+      const files = [file];
+      if (f.headerCode && f.header) {
+        const h = withId(parsePrg(`${base}-header.prg`, makePrg(0x033c, f.header)));
+        tapeOf.current.set(h.id, { tap: tape.bytes, file: f, header: true });
+        files.push(h);
+      }
+      addFiles(files, add);
+      if (files.length > 1) toast(`${f.name}'s header holds code: it is in the project too, as ${files[1].name} at $033c-$03fb (the tape buffer)`, 'info');
+    } catch (e) { toast(`"${f.name}": ${errorText(e)}`, 'err'); }
+  };
+  /** every file of the tape to a folder, as PRGs; a TapeTool tape's with boot.bin and build.bat, TapeTool's command
+   *  lines that write the tape again */
+  const saveTapeFiles = async () => {
+    if (!kr) return needDesktop();
+    if (!tape) return;
+    const files: Record<string, Uint8Array | string> = {};
+    const tt = tapeToolScript(tape.img, tape.name);
+    for (const f of tape.img.files) if (f.load != null && f.data.length) files[tapeFileName(f)] ??= makePrg(f.load, f.data);
+    if (tt) { Object.assign(files, tt.files); files['build.bat'] = `${tt.script.join('\r\n')}\r\n`; }
+    try {
+      const w = await kr.writeExport({ target: 'pick', files });
+      if (w) toast(`Saved ${w.written.length} file${w.written.length === 1 ? '' : 's'} of ${tape.name} to ${w.dir}${tt ? ': build.bat writes the tape again with TapeTool' : ''}`, 'ok');
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
   /** the Kick Assembler source Smart attach gave Brokkr: Pack a file over the work, until it goes back */
   const [packSource, setPackSource] = useState<AsmPickResult | null>(null);
   /** File → Smart attach…: one dialog for every kind of file, each opened as its extension says (shared/smart-attach.ts):
@@ -554,6 +608,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (r.left.length) toast(`Not opened: ${r.left.map(l => `${l.name} (${l.why})`).join(', ')}`, 'warn');
       if (r.project) { await openProject(r.project); return; }
       if (r.disk) mountBytes(r.disk.name, r.disk.path, r.disk.bytes);
+      if (r.tape) insertTapeBytes(r.tape.name, r.tape.path, r.tape.bytes);
       if (r.files.length) addFiles(r.files, false, { show: true });
       if (r.asm) setPackSource(r.asm);
     } catch (e) { toast(errorText(e), 'err'); }
@@ -684,15 +739,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const runFor = (f: LoadedFile): Promise<UnpackRun> => {
     let p = running.current.get(f.id);
     if (!p) {
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null);
+      const t = tapeOf.current.get(f.id);
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null);
       running.current.set(f.id, p);
       p.then(r => setRuns(m => ({ ...m, [f.id]: r })), () => running.current.delete(f.id));
     }
     return p;
   };
   useEffect(() => {
-    // a cartridge's chip is not a program Sindri can load and run
-    if (!external) for (const f of project.files) if (f.chip == null) runFor(f).catch(() => { /* the heuristics still report it */ });
+    // a cartridge's chip is not a program Sindri can load and run, nor is a tape file's header (the tape buffer)
+    if (!external) for (const f of project.files) if (f.chip == null && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
   }, [project.files, external]); // eslint-disable-line react-hooks/exhaustive-deps
   const [identified, setIdentified] = useState<Record<string, IdentifyResponse>>({});
   const asked = useRef(new Set<string>());
@@ -786,6 +842,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           continue;
         }
         if (/\.d64$/i.test(f.name)) { mountBytes(f.name, null, buf); continue; }
+        if (/\.tap$/i.test(f.name)) { insertTapeBytes(f.name, null, buf); continue; }
         // a cartridge image (known by its header): the chips of its boot bank, with the image
         if (isCrt(buf)) { const o = openCartridge(f.name, buf); prgs.push(...o.files.map(x => ({ ...withId(x), cart: o.cart }))); continue; }
         // a .prg, or a VICE snapshot (known by its header)
@@ -1502,6 +1559,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return w ? `${w.dir}/${copy}` : undefined;
   };
 
+  /** the tape in the datasette, as a copy in a build folder */
+  const tapeCopy = async (): Promise<string | undefined> => {
+    if (!tape || !kr) return undefined;
+    const copy = /\.tap$/i.test(tape.name) ? tape.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') : 'tape.tap'; // eslint-disable-line no-control-regex
+    const w = await kr.writeExport({ target: 'temp', name: 'tape', files: { [copy]: tape.bytes } });
+    return w ? `${w.dir}/${copy}` : undefined;
+  };
+
   const runBuild = async () => {
     if (!kr) return needDesktop();
     const res = await runVerify({ quiet: true });
@@ -1548,6 +1613,31 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         toast(`VICE restarted the snapshot as it was taken (${at}), with the built program in its RAM${labels ? '; labels in the monitor' : ''}`, 'ok');
         return;
       }
+      // a project whose first file came from a KERNAL file of the tape in the datasette (13.5f): VICE loads the tape
+      // with that file written again from the build (and its header, when it is in the project) as its first file and
+      // the rest of the tape as it was after it, so the program's own tape loader reads on from there
+      const t0 = tapeOf.current.get(project.files[0]?.id ?? '');
+      if (t0 && !t0.header && t0.file.format === 'cbm' && t0.file.header && tape && t0.tap === tape.bytes) {
+        const built = (i: number) => res.kick?.compared[i]?.prg ?? res.V.results[i]?.prg ?? null;
+        const data = built(0);
+        if (!data) throw new Error('nothing to run');
+        const hi = project.files.findIndex(f => { const t = tapeOf.current.get(f.id); return !!t?.header && t.file === t0.file; });
+        const hb = hi >= 0 ? built(hi) : null;
+        const header = hb && hb.length === 194 ? hb.slice(2) : t0.file.header.slice();
+        const load = data[0] | (data[1] << 8), end = load + data.length - 2;
+        header[1] = load & 0xff; header[2] = load >> 8; header[3] = end & 0xff; header[4] = (end >> 8) & 0xff;
+        const name = `${R.fileNames[0]}.tap`;
+        const w = await kr.writeExport({ target: 'temp', name: 'run', files: { [name]: replaceTapeFile(tape.bytes, t0.file, header, data.subarray(2)) } });
+        if (!w) return;
+        const tapPath = `${w.dir}/${name}`, labels = res.kick?.compared[0]?.vsPath ?? undefined;
+        const { pid } = await kr.run({ prgPath: tapPath, labelsPath: labels, disk: diskPath });
+        const what = `the built ${R.fileNames[0]}${hb ? ` and its header (${R.fileNames[hi]})` : ''} as its first file, then ${tape.name} from after "${t0.file.name}"`;
+        setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${tapPath} autostarted, ${what}${labels ? `, labels from ${labels}` : ''}${drive}` });
+        toast(`VICE loads ${name}: ${what}`, 'ok');
+        return;
+      }
+      const tapePath = await tapeCopy();
+      const datasette = tapePath && tape ? `, ${tape.name} in the datasette (press PLAY in VICE when the program asks)` : '';
       let prgPath: string, labelsPath: string | undefined;
       if (res.kick?.compared[0]) { prgPath = res.kick.compared[0].prgPath; labelsPath = res.kick.compared[0].vsPath ?? undefined; }
       else {
@@ -1568,12 +1658,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       // the RAM of a snapshot opened before snapshots were kept with the project: it can only start like a PRG
       if (f0 && (f0.load === 0x0200 || f0.load === 0x0002) && f0.load + f0.bytes.length === 0x10000) toast('This file looks like a VICE snapshot that was opened before Mimir kept snapshots, so VICE starts it like a PRG: open the .vsf again and Build & Run restarts it as it was', 'warn');
       else if (start == null && overSystem) toast(`The program overwrites BASIC's work area ($${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}), so RUN cannot start it: set the program start`, 'warn');
-      const { pid, via } = await kr.run({ prgPath, labelsPath, start, disk: diskPath });
+      const { pid, via } = await kr.run({ prgPath, labelsPath, start, disk: diskPath, tape: tapePath });
       const how = start == null ? '' : via === 'monitor'
         ? `, starting at $${h4(start)} (loaded and started from the VICE monitor: the program overwrites BASIC's work area $${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)})`
         : `, starting at $${h4(start)} (sys ${start} after loading)`;
-      setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${prgPath}${labelsPath ? ` with labels from ${labelsPath}` : ''}${how}${drive}` });
-      toast(`VICE started${start != null ? ` at $${h4(start)}` : ''}${labelsPath ? ' with labels in the monitor' : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}`, 'ok');
+      setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${prgPath}${labelsPath ? ` with labels from ${labelsPath}` : ''}${how}${drive}${datasette}` });
+      toast(`VICE started${start != null ? ` at $${h4(start)}` : ''}${labelsPath ? ' with labels in the monitor' : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}${datasette}`, 'ok');
     } catch (e) {
       toast(errorText(e), 'err');
       setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE: ${errorText(e)}` });
@@ -1827,18 +1917,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /* ---- commands & keys ---- */
   const undoLabel = past.length ? past[past.length - 1].label : null;
   const commands: Command[] = [
-    { id: 'smart', label: 'Smart attach: open any file as its extension says (PRG, snapshot, cartridge, D64, project; Brokkr packs a .asm)…', run: () => void smartAttach() },
+    { id: 'smart', label: 'Smart attach: open any file as its extension says (PRG, snapshot, cartridge, D64, TAP, project; Brokkr packs a .asm)…', run: () => void smartAttach() },
     { id: 'open', label: 'Open PRG files…', key: 'Ctrl+O', run: () => void openPrgs(false) },
     { id: 'add', label: 'Add PRG files to the project…', run: () => void openPrgs(project.files.length > 0, 'add') },
     { id: 'open-crt', label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
     { id: 'open-vsf', label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
     { id: 'mount', label: 'Mount D64 disk image…', run: () => void mountDisk() },
+    { id: 'tape', label: 'Insert TAP tape image in the datasette…', run: () => void insertTape() },
     { id: 'quicksave', label: 'Open the VICE quicksave snapshot (Alt+F11 in VICE saves one)', key: 'F9', run: () => void openQuicksave() },
     { id: 'quicksave-follow', label: followQuicksave ? 'Stop opening each new VICE quicksave' : 'Open each new VICE quicksave (Alt+F11 in VICE) by itself', run: () => setUi({ followQuicksave: !followQuicksave }) },
     ...packing.flatMap((p, i) => (p ? [{ id: `unpack-${i}`, label: external ? `Unpack ${project.files[i]?.name} with ${unpackerName}` : `Unpack ${project.files[i]?.name}`, run: () => void unpackFile(i) }] : [])),
     { id: 'terminal', label: 'Open a terminal in the project folder (VICE on PATH, kickass runs Kick Assembler)', run: () => void openTerminal() },
     { id: 'editor', label: `Open the export in ${editors?.current?.name ?? 'an external editor'} (its folder, with ${mainSource(R)} open)`, run: () => void openEditor() },
     ...(disk ? [{ id: 'eject', label: `Eject ${disk.name}`, run: ejectDisk }] : []),
+    ...(tape ? [{ id: 'eject-tape', label: `Eject the tape ${tape.name}`, run: ejectTape }] : []),
     { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: () => loadDemo() },
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
     { id: 'find', label: tab === 'source' ? 'Find in the source' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' ? setSrcFind(n => n + 1) : openFind()) },
@@ -2245,7 +2337,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ...packing.flatMap((p, i) => (p ? [{ lvl: 'warn' as const, msg: `${A.files[i].name} ${p.verdict === 'packed' ? 'is packed' : 'may be packed'}${p.signature ? ` (${p.signature})` : ''}: ${p.reasons.join('; ')}. Unpack it (${unpackLabel}) to see the program.`, addr: p.decruncher, cat: 'packing' }] : [])),
   ], [A, R, kickProblems, packing, unpackLabel]);
   // the Spindle script tab is there when the analysis found Spindle's drivers
-  const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze));
+  const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'tape' || !!tape));
   const shownBottom = bottomTabs.some(([k]) => k === bottom) ? bottom : 'log';
   /** the Relocated tab's count: the relocated blocks (placed or not) and the copy loops found */
   const relocCount = project.relocs.length + A.copies.length;
@@ -2302,6 +2394,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
       { label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
       { label: 'Mount D64 disk image…', run: () => void mountDisk() },
+      { label: 'Insert TAP tape image…', run: () => void insertTape() },
       { sep: true },
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
@@ -2338,6 +2431,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
           disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
+          tape={tape} onEjectTape={ejectTape} onShowTape={() => setUi({ bottom: 'tape', panelOpen: true })} onOpenFromTape={(f, add) => { openFromTape(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
             addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),
@@ -2402,10 +2496,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {tab === 'listing' && !project.files.length && <div className="empty-project">
               <Icon name={home ? 'folder' : 'doc'} size={30} />
               <h2>{home ? `${home.name} has no files yet` : 'No files yet'}</h2>
-              <p>Open the program to re-assemble: a PRG, a VICE snapshot (.vsf) or a cartridge (.crt), or mount a D64 and open its files.</p>
+              <p>Open the program to re-assemble: a PRG, a VICE snapshot (.vsf) or a cartridge (.crt), or mount a D64 or insert a TAP and open its files.</p>
               <div className="empty-actions">
                 <button className="btn primary" onClick={() => void openPrgs(false)}><Icon name="upload" size={14} />Open PRG…</button>
                 <button className="btn" onClick={() => void mountDisk()}><Icon name="disk" size={14} />Mount D64…</button>
+                <button className="btn" onClick={() => void insertTape()}><Icon name="tape" size={14} />Insert TAP…</button>
                 <button className="btn" onClick={() => void openQuicksave()}>VICE quicksave <kbd>F9</kbd></button>
               </div>
               <p className="muted small">Or drop the files on the window.</p>
@@ -2465,7 +2560,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         {tab !== 'spec' && panelOpen && <Splitter dir="h" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, bottom: Math.max(120, Math.min(520, useUi.getState().sizes.bottom - d)) } })} />}
         {tab !== 'spec' && <section className={cx('bottom', !panelOpen && 'collapsed')} aria-label="Panels">
           <div className="tabs small" role="tablist">
-            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : null; return (
+            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : k === 'tape' ? (tape?.img.files.length ?? 0) : null; return (
               <button key={k} role="tab" aria-selected={shownBottom === k} className={cx('tab', shownBottom === k && 'on')} onClick={() => setUi({ bottom: k, panelOpen: true })}>{l}{n != null && <span className={cx('count', k === 'problems' && problems.some(p => p.lvl === 'err') && 'bad')}>{n}</span>}</button>); })}
             <span className="grow" />
             <button className="icon-btn panel-toggle" onClick={() => setUi({ panelOpen: !panelOpen })} aria-label={panelOpen ? 'Collapse panel' : 'Expand panel'} title={panelOpen ? 'Collapse panel' : 'Expand panel'}><Icon name="down" size={14} className={panelOpen ? '' : 'flip'} /></button>
@@ -2479,6 +2574,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} />}
             {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} />}
             {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} />}
+            {shownBottom === 'tape' && tape && <TapePanel tape={tape} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onSaveFiles={() => void saveTapeFiles()} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
             {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild({ ...project, settings: S })} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}
           </ErrorBoundary></div>
@@ -2507,7 +2603,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null} />
 
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
-      {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, or a .d64 to mount it</p><small>Hold Shift to add them to the current project</small></div></div>}
+      {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, a .d64 to mount it or a .tap to put it in the datasette</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />

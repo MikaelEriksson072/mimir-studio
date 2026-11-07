@@ -1,4 +1,4 @@
-/* sindri <file.prg | disk.d64> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
+/* sindri <file.prg | disk.d64 | tape.tap> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
  * or newer runs the TypeScript as it is), or `pnpm unpack` in this folder. */
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
@@ -6,17 +6,20 @@ import { fileURLToPath } from 'node:url';
 import { unpack, type LayerReport, type Saved, type UnpackOptions } from './session.ts';
 import { findRoms, loadRoms } from './node.ts';
 import { d64File, d64Pick } from './d64.ts';
+import { tapeFiles, tapPulses } from './tape.ts';
 import type { Range } from './analyze.ts';
 
-const HELP = `sindri <file.prg | disk.d64> [options]
+const HELP = `sindri <file.prg | disk.d64 | tape.tap> [options]
 
 Runs the program in an emulated C64, follows it through its layers (coders, movers, decrunchers) and saves
 the unpacked program when it starts. With a disk (a D64, or --disk) a 1541 is on the serial bus, so the
-program can go on loading from it, with the KERNAL or a fast loader of its own.
+program can go on loading from it, with the KERNAL or a fast loader of its own. With a tape (a TAP, or --tape)
+the datasette plays it from after the file, PLAY held down, for the program's own tape loader and LOAD.
 
   -o FILE        save here (default: <name>.<start address>.prg next to the file)
-  --file NAME    the file on the D64 to unpack (default: its first PRG; * and ? as the DOS takes them)
+  --file NAME    the file on the D64 or TAP to unpack (default: its first program; * and ? as the DOS takes them)
   --disk FILE    put this D64 in the drive for a PRG given on its own
+  --tape FILE    put this TAP in the datasette for a PRG given on its own
   -e ADDR        start with SYS ADDR instead of RUN
   -l ADDR        load the file at ADDR instead of its own load address
   --layer N      save layer N instead of the newest (see the report)
@@ -95,13 +98,14 @@ function main(argv: string[]): number {
   const o: UnpackOptions = {};
   const inputs: string[] = [];
   let out: string | null = null, info = false, all = false, json = false, learn: string | null = null;
-  let roms: string | null | false = null, fileName: string | null = null, diskPath: string | null = null;
+  let roms: string | null | false = null, fileName: string | null = null, diskPath: string | null = null, tapePath: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
       case '-o': out = argv[++i]; break;
       case '--file': fileName = argv[++i]; break;
       case '--disk': diskPath = argv[++i]; break;
+      case '--tape': tapePath = argv[++i]; break;
       case '-e': o.entry = parseAddr(argv[++i], '-e'); break;
       case '-l': o.load = parseAddr(argv[++i], '-l'); break;
       case '--layer': o.layer = Number(argv[++i]); break;
@@ -133,8 +137,23 @@ function main(argv: string[]): number {
     o.disk = disk;
     shown = `${basename(path)}: "${entry.name}"`;
     base += `.${entry.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
-  } else if (fileName) throw new Error('--file picks a file on a D64');
+  } else if (/\.tap$/i.test(path)) {
+    // the tape's KERNAL programs (a relocatable one loads at the start of BASIC, as LOAD puts it); * ends the name, ?
+    // is any character, as the DOS takes them
+    const tape = file, want = fileName?.toUpperCase();
+    const re = want ? new RegExp(`^${[...want].map(c => (c === '?' ? '.' : c === '*' ? '.*' : c.replace(/[.+^${}()|[\]\\]/g, m => `\\${m}`))).join('').replace(/\.\*.*$/, '.*')}${want.includes('*') ? '' : '$'}`) : null;
+    const name = (h: Uint8Array) => String.fromCharCode(...h.subarray(5, 21)).replace(/[\s\xa0]+$/, '');
+    const f = tapeFiles(tapPulses(tape)).find(x => (x.type === 1 || x.type === 3) && x.data.length && (!re || re.test(name(x.header))));
+    if (!f) throw new Error(fileName ? `no program named "${fileName}" on the tape` : 'no program on the tape');
+    const at = f.type === 1 ? 0x0801 : f.start;
+    file = new Uint8Array(2 + f.data.length);
+    file[0] = at & 0xff; file[1] = at >> 8; file.set(f.data, 2);
+    o.tape = tape;
+    shown = `${basename(path)}: "${name(f.header)}"`;
+    base += `.${name(f.header).replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
+  } else if (fileName) throw new Error('--file picks a file on a D64 or a TAP');
   if (diskPath) o.disk = new Uint8Array(readFileSync(resolve(cwd, diskPath)));
+  if (tapePath) o.tape = new Uint8Array(readFileSync(resolve(cwd, tapePath)));
   o.roms = roms === false ? null : roms ? loadRoms(resolve(cwd, roms)) : findRoms();
   if (roms && !o.roms) throw new Error(`no kernal, basic and chargen ROM files in ${roms}`);
 
@@ -156,6 +175,7 @@ function main(argv: string[]): number {
   console.log(`${shown}: ${range({ start: loadAt, end: loadAt + file.length - 3 })} (${kb(file.length - 2)})${r.basic.length ? `, ${r.basic.slice(0, 2).join(' / ')}` : ''}`);
   console.log(`ROMs: ${r.roms}`);
   if (r.drive) console.log(`Drive: ${r.drive}`);
+  if (r.tape) console.log(`Tape: ${r.tape}`);
   for (const l of r.layers) console.log(describe(l));
   const secs = (r.cycles / 985248).toFixed(1);
   console.log(`stopped after ${secs} s of C64 time (${Math.round(r.ms)} ms): ${r.stop.reason}${r.stop.detail ? `, ${r.stop.detail}` : ''}`);

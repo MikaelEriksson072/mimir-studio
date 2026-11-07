@@ -9,10 +9,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, builtCartridge, makeD64, makePrg, openCartridge, overwritesSystemArea, parseVsf, patchSnapshot, render, verify } from '../src';
+import { analyze, builtCartridge, makeD64, makePrg, makeTap, openCartridge, overwritesSystemArea, parseVsf, patchSnapshot, readTape, render, replaceTapeFile, verify } from '../src';
 import { DRIVE_INIT, findVice, prepareVice, viceArgv, viceMonitorScript } from '../src/node';
 import { fromSource } from './helpers/programs';
 import { readPng } from './helpers/png';
+import { bootLoader, tinyFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
 
 describe('VICE command line', () => {
   it('autostarts without a program start', () => {
@@ -47,6 +48,13 @@ describe('VICE command line', () => {
     expect(viceArgv({ prgPath: 'p.prg', start: 0x1000, via: 'monitor', scriptPath: 'p.start.mon', disk: 'd.d64' })).toEqual(['-8', 'd.d64', '-moncommands', 'p.start.mon', '-initbreak', 'ready']);
     // a snapshot brings its drive as it was taken
     expect(viceArgv({ prgPath: 'p.vsf', disk: 'd.d64' })).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-autostart', 'p.vsf']);
+  });
+
+  it('puts a tape in the datasette (-1), and autostarts a tape given as the program', () => {
+    expect(viceArgv({ prgPath: 'p.prg', tape: 't.tap' })).toEqual(['-1', 't.tap', '-autostart', 'p.prg']);
+    expect(viceArgv({ prgPath: 'p.prg', disk: 'd.d64', tape: 't.tap' }).slice(0, 6)).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-1', 't.tap']);
+    // the tape's first file loads with the KERNAL: no drive to read the disk first
+    expect(viceArgv({ prgPath: 'b.tap', labelsPath: 'p.vs', disk: 'd.d64' })).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-moncommands', 'p.vs', '-autostart', 'b.tap']);
   });
 
   it('attaches a cartridge (-cartcrt) instead of starting a program, with the labels and a disk', async () => {
@@ -117,6 +125,33 @@ describe.skipIf(!vice)(`real VICE (${vice ?? 'not found'})`, () => {
       await writeFile(disk, makeD64({ name: 'parts', files: [{ name: 'part2', data: Uint8Array.from([0x00, 0xc0, 0xa9, 0x42, 0x8d, 0xff, 0xd7, 0x4c, 0x05, 0xc0]) }] }));
       const { argv } = await prepareVice({ args: headless(dir), prgPath, disk });
       expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status).toBe(0x42);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('autostarts a tape: the boot file\'s loader reads the next file from the datasette; the same with the boot file written again', async () => {
+    // the boot loader of the tape fixtures (in the tape buffer, started through $0302) reads a TinyHeader file that
+    // exits with $42; Build & Run writes the boot file again in front of the rest of the tape (replaceTapeFile)
+    const exit = Uint8Array.from([0xa9, 0x42, 0x8d, 0xff, 0xd7, 0x4c, 0x05, 0xc0]);
+    const boot = bootLoader(0xc000, 0xc000 + exit.length, 0xc000);
+    const kernal = makeTap({ files: [{ name: 'BOOT', load: 0x02a7, data: boot.data, header: boot.header }] });
+    const w = new TurboWriter();
+    w.leader(0xc0);
+    tinyFile(w, exit);
+    w.leader(0x40);
+    const tape = withTurbo(kernal, w.pulses);
+    const f = readTape(tape).files[0];
+    const again = replaceTapeFile(tape, f, f.header!, f.data);
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      for (const [name, t] of [['boot.tap', tape], ['again.tap', again]] as const) {
+        const prgPath = join(dir, name);
+        await writeFile(prgPath, t);
+        const { argv } = await prepareVice({ args: headless(dir).map(a => (a === '40000000' ? '200000000' : a)), prgPath });
+        expect(argv).toContain('-autostart');
+        expect(spawnSync(vice!, argv, { timeout: 120_000, windowsHide: true }).status, name).toBe(0x42);
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

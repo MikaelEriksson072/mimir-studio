@@ -962,7 +962,7 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
   await test.step('File → Open PRG files… opens a PRG; the File button closes its menu too', async () => {
     await file.click();
     await expect(file).toHaveAttribute('aria-expanded', 'true');
-    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount D64 disk image…', 'Save: create a project from this work…Ctrl+S']);
+    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount D64 disk image…', 'Insert TAP tape image…', 'Save: create a project from this work…Ctrl+S']);
     await file.click();
     await expect(menu).toBeHidden();
     await expect(file).toHaveAttribute('aria-expanded', 'false');
@@ -1107,7 +1107,7 @@ test('Smart attach opens each file as its extension says, and Brokkr packs a Kic
       const d = all[all.length - 1];
       return { title: d?.title, filters: d?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: d?.properties };
     });
-    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 disks, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
+    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 disks, TAP tapes, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 tap TAP json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
   });
 
   await test.step('a VICE snapshot and a cartridge, each by its extension', async () => {
@@ -4701,6 +4701,100 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
   await test.step('ejecting the disk takes the tab away', async () => {
     await page.getByRole('button', { name: 'Eject disk' }).click();
     await expect(page.getByRole('tab', { name: /Bitfire script/ })).toHaveCount(0);
+  });
+});
+
+test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeTool\'s command lines, the boot file with its header, Build & Run and Sindri reading the tape', async ({ app, page, workDir }) => {
+  // fixtures/tap/mimir-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file whose loader, in the tape buffer,
+  // reads the raster demo (TapeTool's TinyHeader format) from the tape and starts it; a sine table in two blocks in
+  // reverse order and a file of RLE packed blocks after it. VICE is not started: a Windows program stands in for it
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/mimir-demo.tap')] });
+  await fromFileMenu(page, 'Insert TAP tape image…');
+  await expect(toast(page, /^Inserted mimir-demo\.tap \(\d+ s\): 4 files \(1 KERNAL, 3 TapeTool\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on mimir-demo.tap' });
+
+  await test.step('the Explorer lists its files in tape order, with where each starts', async () => {
+    await expect(page.getByRole('region', { name: 'Tape' }).locator('.sec-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"MIMIR TAPE"\s*\+header\s*PRG/, /0:\d\d\s*TinyHeader file\s*TapeTool/, /0:\d\d\s*file 1\s*TapeTool/, /0:\d\d\s*file 2\s*TapeTool/]);
+    await expect(page.locator('.disk-spindle')).toContainText('TapeTool tape: 3 turbo files its boot loader reads');
+    await expect(page.locator('.side-inner')).toContainText('4 files · TAP v1 · in the datasette on Build & Run');
+  });
+
+  await test.step('the Tape tab: every file, a row opens one; TapeTool\'s command lines', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'TapeTool script' }).click();
+    await expect(page.getByRole('tab', { name: /^Tape/ })).toHaveAttribute('aria-selected', 'true');
+    const table = page.getByRole('table', { name: 'Tape files' });
+    await expect(table.locator('tbody tr td:nth-child(4)')).toHaveText(['"MIMIR TAPE"', 'TinyHeader file', 'file 1', 'file 2']);
+    await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$02a7–$0303', '$0801–$37ff', '$4000–$41ff', '$5000–$5257']);
+    await expect(table.locator('tbody tr').nth(2).locator('td').nth(6)).toHaveText('name byte 1, 2 blocks, in random order');
+    await expect(table.locator('tbody tr').nth(3).locator('td').nth(6)).toHaveText('name byte 2, 3 blocks (3 RLE packed)');
+    await table.getByRole('row', { name: /TinyHeader file/ }).click();
+    await expect(toast(page, 'Loaded tinyheader.prg at $0801')).toBeVisible();
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await page.getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, 'Copied the TapeTool command lines')).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text.filter(l => !l.startsWith('rem'))).toEqual([
+      'TapeTool.exe wn "mimir-demo.tap" ocb1 "boot.bin" $2a7 0 16 16 187 187 280 c',
+      'TapeTool.exe w "mimir-demo.tap" a otl$c0 otft "tinyheader.prg" c',
+      'TapeTool.exe n 1 w "mimir-demo.tap" a otl$40 otfb "file1.prg" 1 c',
+      'TapeTool.exe w "mimir-demo.tap" a otl$40 otfbr "file2.prg" 2 c',
+      'TapeTool.exe w "mimir-demo.tap" a otl$40 c',
+    ]);
+  });
+
+  await test.step('Save files… saves every file, boot.bin and build.bat', async () => {
+    const out = join(workDir, 'tape-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 6 files of mimir-demo\.tap to .*: build\.bat writes the tape again with TapeTool$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['MIMIR TAPE.prg', 'boot.bin', 'build.bat', 'file1.prg', 'file2.prg', 'tinyheader.prg']);
+    expect(readFileSync(join(out, 'tinyheader.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+  });
+
+  await test.step('the boot file opens with its header, the tape buffer, as a second file', async () => {
+    await openSection(page, 'Tape');
+    await files.getByRole('listitem').filter({ hasText: 'MIMIR TAPE' }).click();
+    await expect(toast(page, "MIMIR TAPE's header holds code: it is in the project too, as MIMIR TAPE-header.prg at $033c-$03fb (the tape buffer)")).toBeVisible();
+    await expect(page.locator('.file-name')).toHaveText(['MIMIR TAPE.prg', 'MIMIR TAPE-header.prg']);
+  });
+
+  await test.step('Build & Run: VICE loads the tape with the built boot file and its header on it', async () => {
+    test.skip(!existsSync(standIn), 'needs where.exe');
+    await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+    await page.keyboard.press('F5');
+    await expect(toast(page, /^VICE loads .+\.tap: the built .+ and its header \(.+\) as its first file, then mimir-demo\.tap from after "MIMIR TAPE"$/)).toBeVisible({ timeout: 120_000 });
+    await page.getByRole('tab', { name: 'Build output' }).click();
+    const log = await page.locator('.build-log').innerText();
+    const started = /> VICE started \(pid -?\d+\): (.+?\.tap) autostarted/.exec(log);
+    expect(started, log.slice(-600)).toBeTruthy();
+    const tap = readFileSync(started![1]);
+    expect(tap.subarray(0, 12).toString('latin1')).toBe('C64-TAPE-RAW');
+    // the boot file written again in front of the turbo part, which is the tape's own
+    const orig = readFileSync(join(repoDir, 'fixtures/tap/mimir-demo.tap'));
+    expect(tap.subarray(tap.length - 50000)).toEqual(orig.subarray(orig.length - 50000));
+  });
+
+  await test.step('Sindri plays the tape for the boot file: its loader loads the raster demo, which Unpack takes', async () => {
+    const bar = page.locator('.pack-bar');
+    await expect(bar).toContainText('MIMIR TAPE.prg is packed.', { timeout: 60_000 });
+    await expect(bar).toContainText(/the program starts at \$0810/);
+    await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+    await expect(toast(page, /^Unpacked MIMIR TAPE\.prg: \d+ bytes at \$0801-\$37ff$/)).toBeVisible({ timeout: 60_000 });
+    const done = page.locator('.unpack-bar');
+    await done.getByText('Layer report').click();
+    await expect(done.locator('.unpack-log')).toContainText(/Tape: datasette: the tape stood after the file \([\d.]+ s\), played [\d.]+ s/);
+    await expect(page.locator('.file-name')).toHaveText(['MIMIR TAPE-unpacked.prg', 'MIMIR TAPE-header.prg']);
+  });
+
+  await test.step('ejecting the tape takes the section and the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject tape' }).click();
+    await expect(files).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: /^Tape/ })).toHaveCount(0);
   });
 });
 

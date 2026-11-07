@@ -16,6 +16,7 @@ export const CHANNELS = {
   projectForget: 'project:forget',
   prgOpen: 'prg:open',
   diskOpen: 'disk:open',
+  tapeOpen: 'tape:open',
   fileSmart: 'file:smart',
   exportWrite: 'export:write',
   toolchainBuild: 'toolchain:build',
@@ -97,16 +98,21 @@ export type OpenedPrg = LoadedFile & { entries?: number[]; snapshot?: string; st
 /** A .d64 disk image to mount. `path` given: read it (in a folder the user picked); otherwise a file dialog. */
 export interface DiskOpenRequest { path?: string }
 export interface DiskOpenResult { path: string; name: string; bytes: Uint8Array }
+/** A .tap tape image to put in the datasette, as disk:open does it for a disk. */
+export interface TapeOpenRequest { path?: string }
+export type TapeOpenResult = DiskOpenResult;
 
 /** Smart attach: a dialog for every kind of file Mimir opens (shared/smart-attach.ts says what each is opened as).
  *  `zeroPage` as for prg:open. */
 export interface SmartAttachRequest { zeroPage?: boolean }
-/** What was picked, read: PRGs, snapshots and cartridges as prg:open gives them, a disk image as disk:open does, the path
- *  of a project to open with project:open, and a Kick Assembler source as asm:pick gives it (its folder open in this
- *  session), for Brokkr to pack. `left`: files not opened, and why; `problems`: files that could not be read. */
+/** What was picked, read: PRGs, snapshots and cartridges as prg:open gives them, a disk image as disk:open does (a tape
+ *  image as tape:open does), the path of a project to open with project:open, and a Kick Assembler source as asm:pick
+ *  gives it (its folder open in this session), for Brokkr to pack. `left`: files not opened, and why; `problems`: files
+ *  that could not be read. */
 export interface SmartAttachResult {
   files: OpenedPrg[];
   disk: DiskOpenResult | null;
+  tape: TapeOpenResult | null;
   project: string | null;
   asm: AsmPickResult | null;
   left: { name: string; why: string }[];
@@ -159,9 +165,11 @@ export interface BuildResult {
 /**
  * `start`: run with `sys <start>` after loading instead of autostarting (the program start set by the user).
  * `disk`: a .d64 image (a copy of the mounted disk in a build folder) to put in drive 8.
+ * `tape`: a .tap image (a copy of the tape in the datasette) to put in VICE's datasette.
  */
-/** `cart`: `prgPath` is a cartridge image (.crt), which VICE attaches (-cartcrt) and starts at reset */
-export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; disk?: string; cart?: boolean }
+/** `cart`: `prgPath` is a cartridge image (.crt), which VICE attaches (-cartcrt) and starts at reset; a `prgPath` that is
+ *  a .tap is autostarted (VICE loads its first file from it) */
+export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; disk?: string; tape?: string; cart?: boolean }
 /** `via`: RUN, `sys <start>`, (a program over BASIC's work area $0002-$03ff) loaded and started from the monitor, or a
  *  cartridge attached */
 export interface RunResult { pid: number; via: 'run' | 'sys' | 'monitor' | 'cart' }
@@ -293,6 +301,8 @@ export interface KrApi {
   openPrg(req?: PrgOpenRequest): Promise<OpenedPrg[]>;
   /** null: the dialog was cancelled */
   openDisk(req?: DiskOpenRequest): Promise<DiskOpenResult | null>;
+  /** a .tap tape image for the datasette; null: the dialog was cancelled */
+  openTape(req?: TapeOpenRequest): Promise<TapeOpenResult | null>;
   /** File → Smart attach…: any file Mimir opens, each opened by its extension; null: the dialog was cancelled */
   smartAttach(req?: SmartAttachRequest): Promise<SmartAttachResult | null>;
   writeExport(req: ExportWriteRequest): Promise<ExportWriteResult | null>;

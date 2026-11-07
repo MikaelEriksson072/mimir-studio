@@ -6,7 +6,9 @@
  * code, drive commands and a receive loop; tape and KERNAL loading; and the marks in the source. The programs below are
  * those loops (illegal opcodes as .byte), with a BASIC start that reaches them where the loader is called. */
 import { describe, expect, it } from 'vitest';
-import { analyze, createProject, demoProject, makeCrt, makeShowcase, openC64File, openCartridge, parsePrg, render, verify, type LoaderFinding, type ProjectInput } from '../src';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { analyze, createProject, demoProject, makeCrt, makeShowcase, openC64File, openCartridge, parsePrg, readTape, render, verify, type LoaderFinding, type ProjectInput } from '../src';
 import { fromSource, snapshotOf } from './helpers/programs';
 
 const BASIC = '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n';
@@ -522,6 +524,18 @@ describe("the Action Replay's loaders", () => {
     expect(l.parts.map(p => [p.role, p.start])).toEqual([['tape', 0x080d]]);
     // its timer on its own is not enough
     expect(ids(' lda #$f4\n sta $dc04\n lda #$81\n sta $dc05\n rts\n')).toEqual([]);
+  });
+
+  it("know TapeTool's loaders (Martin Piper): the TinyHeader boot loader in the tape header, and the IRQ loader", () => {
+    // the boot loader of fixtures/tap/mimir-demo.tap, which reads a bit as TapeTool's TapeLoaderCIACommon.a does
+    const tape = readTape(new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/tap/mimir-demo.tap'))));
+    const header = tape.files[0].header!;
+    const [l, ...rest] = analyze({ name: 't', files: [{ name: 'boot-header.prg', load: 0x033c, bytes: header }] }).loaders;
+    expect(rest).toEqual([]);
+    expect(l).toMatchObject({ id: 'tapetool', name: "TapeTool's turbo loaders (Martin Piper)" });
+    expect(l.parts.map(p => p.what.split(':')[0])).toEqual(['waits for the sync byte $aa and the TinyHeader $69', 'reads a bit']);
+    // TapeLoaderCIAIRQ.a reads a bit in its IRQ: lda $dc0d / ldx #$19 / stx $dc0e / lsr / rol .byte
+    expect(ids(' sei\n lda #<irq\n sta $0314\n lda #>irq\n sta $0315\n cli\n jmp *\nirq:\n pha\n txa\n pha\n lda $dc0d\n ldx #$19\n stx $dc0e\n lsr\n rol $02\n pla\n tax\n pla\n rti\n')).toEqual(['tapetool']);
   });
 
   it('know them in the banks of an Action Replay cartridge', () => {

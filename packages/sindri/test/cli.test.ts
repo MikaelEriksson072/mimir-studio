@@ -37,6 +37,6 @@ describe('the command line', () => {
     expect(sindri('a.prg', 'b.prg').error).toBe('sindri: one file at a time, not 2: "a.prg", "b.prg" (a path with spaces goes in quotes)');
     expect(sindri('c.prg').error).toBe(`sindri: no file ${join(dir, 'c.prg')}`);
     expect(sindri('-i').error).toBe('sindri: no file given');
-    expect(sindri('a.prg', '--file', 'X').error).toBe('sindri: --file picks a file on a D64');
+    expect(sindri('a.prg', '--file', 'X').error).toBe('sindri: --file picks a file on a D64 or a TAP');
   });
 });

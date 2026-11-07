@@ -100,6 +100,19 @@ describe('mimir CLI', () => {
     expect(c.lines).toEqual(['ERR no PRG named "nothing" on mimir-demo.d64']);
   });
 
+  it('unpacks a TAP\'s first program with the tape in the datasette: its loader reads the next file', async () => {
+    const tape = join(__dirname, '../../../fixtures/tap/mimir-demo.tap');
+    const c = capture(dir);
+    expect(await main(['unpack', tape, '-o', 'from-tape.prg', '--no-roms'], c.io)).toBe(0);
+    const out = c.lines.join('\n');
+    expect(out).toMatch(/^mimir-demo\.tap: "MIMIR TAPE": \$02a7-\$0303/);
+    expect(out).toMatch(/Tape: datasette: the tape stood after the file \([\d.]+ s\), played [\d.]+ s/);
+    expect(c.lines.at(-1)).toBe(`Wrote ${join(dir, 'from-tape.prg')} (12289 bytes, start $0810)`);
+    c.lines.length = 0;
+    expect(await main(['unpack', tape, '--file', 'nothing'], c.io)).toBe(2);
+    expect(c.lines).toEqual(['ERR no program named "nothing" on mimir-demo.tap']);
+  });
+
   it('measures the analysis against what the program did when it ran, and counts the problems by kind', async () => {
     let c = capture(dir);
     expect(await main(['measure', 'demo.prg', '--no-roms'], c.io)).toBe(0);

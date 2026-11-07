@@ -2,12 +2,13 @@
  * extension says what it is opened as. The main process reads what is opened; the renderer puts it where it goes. */
 
 /** what a file is opened as: a PRG, a VICE snapshot or a cartridge (as Open PRG files… opens them), a disk image to
- *  mount, a Mimir project, or a Kick Assembler source that Brokkr packs (Pack a file) */
-export type SmartKind = 'prg' | 'vsf' | 'crt' | 'd64' | 'project' | 'asm';
+ *  mount, a tape image to put in the datasette, a Mimir project, or a Kick Assembler source that Brokkr packs (Pack a
+ *  file) */
+export type SmartKind = 'prg' | 'vsf' | 'crt' | 'd64' | 'tap' | 'project' | 'asm';
 
 /** each kind's extensions, as the dialog's filter shows them */
 export const SMART_EXTENSIONS: Record<SmartKind, string[]> = {
-  prg: ['prg'], vsf: ['vsf'], crt: ['crt'], d64: ['d64'], project: ['json'], asm: ['asm'],
+  prg: ['prg'], vsf: ['vsf'], crt: ['crt'], d64: ['d64'], tap: ['tap'], project: ['json'], asm: ['asm'],
 };
 
 /** What `name` is opened as, by its extension. Any other file (none, `.bin`, `.p00`…) is read as a PRG, where a
@@ -19,17 +20,18 @@ export function smartKind(name: string): SmartKind {
 }
 
 /** What is opened of the files picked: a project by itself (it takes the place of the work), else one source to pack,
- *  one disk to mount and every PRG, snapshot and cartridge. `left`: the files not opened, and why. */
+ *  one disk to mount, one tape for the datasette and every PRG, snapshot and cartridge. `left`: the files not opened, and why. */
 export interface SmartPlan {
   project: string | null;
   asm: string | null;
   disk: string | null;
+  tape: string | null;
   files: string[];
   left: { path: string; why: string }[];
 }
 
 export function smartPlan(paths: string[]): SmartPlan {
-  const plan: SmartPlan = { project: null, asm: null, disk: null, files: [], left: [] };
+  const plan: SmartPlan = { project: null, asm: null, disk: null, tape: null, files: [], left: [] };
   const project = paths.find(p => smartKind(p) === 'project');
   if (project) {
     plan.project = project;
@@ -42,6 +44,8 @@ export function smartPlan(paths: string[]): SmartPlan {
       if (plan.asm == null) plan.asm = p; else plan.left.push({ path: p, why: 'Brokkr packs one source at a time' });
     } else if (kind === 'd64') {
       if (plan.disk == null) plan.disk = p; else plan.left.push({ path: p, why: 'one disk is mounted at a time' });
+    } else if (kind === 'tap') {
+      if (plan.tape == null) plan.tape = p; else plan.left.push({ path: p, why: 'one tape is in the datasette at a time' });
     } else plan.files.push(p);
   }
   return plan;

@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative } from 'node:path';
-import { deserializeProject, isCrt, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
+import { deserializeProject, isCrt, isTap, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
 import type { OpenedPrg } from '../../shared/ipc';
 import { writeVfs } from '@mimir/core/node';
 import { serializedProjectSchema } from './schemas';
@@ -49,6 +49,15 @@ export async function readDiskImage(path: string): Promise<{ path: string; name:
   if (!st.isFile() || st.size > 206114) throw new Error(`${basename(path)} is not a .d64 disk image (${st.size} bytes)`);
   const bytes = new Uint8Array(await readFile(path));
   parseD64(bytes);
+  return { path, name: basename(path), bytes };
+}
+
+/** A .tap tape image (the renderer reads its files): up to 64 MB, known by its header. */
+export async function readTapeImage(path: string): Promise<{ path: string; name: string; bytes: Uint8Array }> {
+  const st = await stat(path);
+  if (!st.isFile() || st.size > 64 * 1024 * 1024) throw new Error(`${basename(path)} is not a .tap tape image (${st.size} bytes)`);
+  const bytes = new Uint8Array(await readFile(path));
+  if (!isTap(bytes)) throw new Error(`${basename(path)} is not a .tap tape image: it does not start with C64-TAPE-RAW`);
   return { path, name: basename(path), bytes };
 }
 

@@ -7,3 +7,4 @@ export { OPCODES, LEN, disassemble } from './opcodes.ts';
 export { basicLines, listLine, findSys } from './basic.ts';
 export { identify, similarity, fingerprintId, SIGNATURES, type Kind, type Range, type Signature } from './analyze.ts';
 export { standInRoms } from './standin.ts';
+export { Datasette, tapeFiles, tapPulses, type TapeFile } from './tape.ts';
