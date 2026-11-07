@@ -317,12 +317,14 @@ function best(o: SfxOptions, made: Map<SfxFormat, SfxResult | BrokkrError>): Sfx
   return { ...chosen, warnings, tried };
 }
 
-/** The same, with a crunch to Exomizer's format that may run elsewhere (the thorough search on a pool of threads). */
-export async function sfxAsync(data: Uint8Array, load: number, o: SfxOptions, crunch: (d: Uint8Array, o: CrunchOptions) => Promise<Crunched>): Promise<SfxResult> {
+/** The same, with crunches that may run elsewhere (the thorough search on a pool of threads): to Exomizer's format
+ * with `crunch`, to Brokkr's own with `crunchOwn` when given. */
+export async function sfxAsync(data: Uint8Array, load: number, o: SfxOptions, crunch: (d: Uint8Array, o: CrunchOptions) => Promise<Crunched>,
+  crunchOwn?: (d: Uint8Array, o: BrkOptions) => Promise<BrkCrunched>): Promise<SfxResult> {
   if (o.format === 'auto') {
     const made = new Map<SfxFormat, SfxResult | BrokkrError>();
     for (const f of AUTO_FORMATS) {
-      try { made.set(f, await sfxAsync(data, load, { ...o, format: f }, crunch)); } catch (e) {
+      try { made.set(f, await sfxAsync(data, load, { ...o, format: f }, crunch, crunchOwn)); } catch (e) {
         if (!(e instanceof BrokkrError) || e instanceof CheckError) throw e;
         made.set(f, e);
       }
@@ -331,7 +333,10 @@ export async function sfxAsync(data: Uint8Array, load: number, o: SfxOptions, cr
   }
   const steps = sfxSteps(data, load, { ...o, format: o.format });
   let r = steps.next();
-  while (!r.done) r = steps.next(r.value.format === 'exomizer' ? await crunch(r.value.data, r.value.options) : crunchHere(r.value));
+  while (!r.done) {
+    const q = r.value;
+    r = steps.next(q.format === 'exomizer' ? await crunch(q.data, q.options) : q.format === 'brokkr' && crunchOwn ? await crunchOwn(q.data, q.options) : crunchHere(q));
+  }
   return r.value;
 }
 

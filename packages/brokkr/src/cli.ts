@@ -2,16 +2,16 @@
  * or the error with its code), for editors and build tools. */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { crunchBrk, type BrkCrunched } from './crunch-brk.ts';
+import { crunchBrk, type BrkCrunched, type BrkOptions } from './crunch-brk.ts';
 import { crunchFast, type FastCrunched } from './fast.ts';
 import { crunchData, PROFILES, type CrunchOptions, type Crunched, type Effort } from './crunch.ts';
 import { Disk } from './d64.ts';
 import { checkMem, decruncherFile } from './decrunch-file.ts';
 import { BrokkrError, CheckError, h2, h4, span } from './errors.ts';
-import { memBrkFile, memCrunchOptions, memFastFile, memFile, rawBrk, rawFast, rawFile, type MemOptions } from './files.ts';
+import { memBrkFile, memCrunchOptions, memFastFile, memFile, rawBrkFile, rawFast, rawFile, type MemOptions } from './files.ts';
 import { encodingText, parseEncoding, protocol, type Protocol } from './format.ts';
 import { defaultThreads, Pool } from './node.ts';
-import { crunchSearch } from './search.ts';
+import { crunchBrkSearch, crunchSearch } from './search.ts';
 import { LONG_SECONDS, PAL_HZ, sfxAsync, type SfxFormat, type SfxPlace, type SfxResult, type Start } from './sfx.ts';
 
 const USAGE = `Brokkr, a C64 cruncher: Exomizer 3 streams, smaller and faster; or its own formats, smaller still or
@@ -39,7 +39,8 @@ options:
                          fast one, whole bytes, about 13 % larger and decrunched about 1.8 times as fast;
                          auto (sfx, d64): each, and the smallest file
   --max-seconds <s>      with auto: the longest the file may take to decrunch on a PAL C64
-  --effort <e>           fast, normal (default) or max (every core, a thorough search)
+  --effort <e>           fast, normal (default) or max (a thorough search on threads: much slower, a few
+                         bytes smaller)
   --threads <n>          threads for --effort max (default ${defaultThreads()})
   --json                 print the result as JSON
   -q                     print nothing but errors
@@ -222,7 +223,8 @@ function protocolBits(s: string): number {
   return v;
 }
 
-function makeCrunch(a: Args): { crunch: (d: Uint8Array, o: CrunchOptions) => Promise<Crunched>; close: () => Promise<void> } {
+/** The crunches, to Exomizer's format and to Brokkr's own: with effort max, the thorough search on a pool of threads. */
+function makeCrunch(a: Args): { crunch: (d: Uint8Array, o: CrunchOptions) => Promise<Crunched>; crunchOwn: (d: Uint8Array, o: BrkOptions) => Promise<BrkCrunched>; close: () => Promise<void> } {
   let pool: Pool | null = null;
   const threads = a.threads != null ? number(String(a.threads), '--threads') : defaultThreads();
   if (threads < 1) throw new BrokkrError('BRK-E018', `--threads is how many threads --effort max crunches on: at least 1, not ${threads}.`);
@@ -231,6 +233,11 @@ function makeCrunch(a: Args): { crunch: (d: Uint8Array, o: CrunchOptions) => Pro
       if (o.effort !== 'max' || o.encoding) return crunchData(d, o);
       pool ??= new Pool(threads);
       return crunchSearch(d, o, pool.runner({ data: d, protocol: protocol(o.protocol), profile: { ...PROFILES.max, ...o.profile }, header: o.header !== false }));
+    },
+    crunchOwn: async (d, o) => {
+      if (o.effort !== 'max') return crunchBrk(d, o);
+      pool ??= new Pool(threads);
+      return crunchBrkSearch(d, pool.runner({ data: d, protocol: protocol(), profile: PROFILES.max, header: true }));
     },
     close: async () => { await pool?.close(); },
   };
@@ -260,7 +267,7 @@ async function main(argv: string[]): Promise<number> {
     const [first, ...files] = a._;
     command = first;
     if (!command || a.help || a.h || command === 'help') { console.log(USAGE); return command ? 0 : 1; }
-    const made = makeCrunch(a), crunch = made.crunch;
+    const made = makeCrunch(a), crunch = made.crunch, crunchOwn = made.crunchOwn;
     close = made.close;
     let result: Record<string, unknown>;
     if (command === 'sfx' || command === 'mem' || command === 'raw') {
@@ -278,7 +285,7 @@ async function main(argv: string[]): Promise<number> {
           irqExit: a.irq != null ? String(a.irq) === 'on' : undefined, effect: !a['no-effect'],
           fourTables: a['four-tables'] === 'auto' ? 'auto' : a['four-tables'] != null && a['four-tables'] !== 'off', place: placeOf(a),
           format: chosen, maxSeconds: maxSeconds(a), crunch: o,
-        }, crunch);
+        }, crunch, crunchOwn);
         const out = outName(files[0], '.prg', a.o);
         writeFileSync(out, r.prg);
         // auto: what each format made, and which it took
@@ -296,7 +303,7 @@ async function main(argv: string[]): Promise<number> {
         const mo = { forward: !!a.f, load, crunch: o };
         if (format !== 'exomizer' && a.f) throw new BrokkrError('BRK-E014', `Brokkr's ${format === 'fast' ? 'fast' : 'own'} format is decrunched backward; -f is for Exomizer's format.`);
         const r = format === 'brokkr'
-          ? memBrkFile(data, start, crunchBrk(data.slice().reverse(), { effort: o.effort }), mo)
+          ? memBrkFile(data, start, await crunchOwn(data.slice().reverse(), { effort: o.effort }), mo)
           : format === 'fast'
           ? memFastFile(data, start, crunchFast(data.slice().reverse(), { effort: o.effort }), mo)
           : memFile(data, start, await crunch(a.f ? data : data.slice().reverse(), memCrunchOptions(mo)), mo);
@@ -316,7 +323,7 @@ async function main(argv: string[]): Promise<number> {
       } else {
         const ro = { backward: !!a.b, reversed: !!a.r };
         let bytes: Uint8Array, c: Record<string, unknown>;
-        if (format === 'brokkr') { const r = rawBrk(data, { ...ro, crunch: { effort: o.effort } }); bytes = r.bytes; c = brkStats(r.brk); }
+        if (format === 'brokkr') { const r = rawBrkFile(await crunchOwn(ro.backward ? data.slice().reverse() : data, { effort: o.effort }), ro); bytes = r.bytes; c = brkStats(r.brk); }
         else if (format === 'fast') { const r = rawFast(data, { ...ro, crunch: { effort: o.effort } }); bytes = r.bytes; c = fastStats(r.fast); }
         else { const r = rawFile(await crunch(a.b ? data.slice().reverse() : data, o), ro); bytes = r.bytes; c = stats(r.crunched); }
         const out = outName(files[0], '.bin', a.o);
@@ -358,9 +365,9 @@ async function main(argv: string[]): Promise<number> {
           // a file that cannot be packed stays as it is, and the others are packed
           try {
             let bytes: Uint8Array;
-            if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format: asked, maxSeconds: maxSeconds(a), crunch: o, place: placeOf(a), start: basic ? 'basic' : 'sys' }, crunch)).prg;
+            if (mode === 'sfx') bytes = (await sfxAsync(data, load, { format: asked, maxSeconds: maxSeconds(a), crunch: o, place: placeOf(a), start: basic ? 'basic' : 'sys' }, crunch, crunchOwn)).prg;
             else {
-              const r = format === 'brokkr' ? memBrkFile(data, load, crunchBrk(data.slice().reverse(), { effort: o.effort }))
+              const r = format === 'brokkr' ? memBrkFile(data, load, await crunchOwn(data.slice().reverse(), { effort: o.effort }))
                 : format === 'fast' ? memFastFile(data, load, crunchFast(data.slice().reverse(), { effort: o.effort }))
                 : memFile(data, load, await crunch(data.slice().reverse(), memCrunchOptions({ crunch: o })), { crunch: o });
               // through Brokkr's 6502 decruncher, as `mem` does

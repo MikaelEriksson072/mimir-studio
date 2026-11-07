@@ -2881,7 +2881,7 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await expect(card).not.toContainText('Out of date');
   });
 
-  await test.step('effort max searches on every core and gives no larger file', async () => {
+  await test.step('effort max searches on threads and gives no larger file', async () => {
     const normal = await packedSize();
     await view.getByLabel('Effort').selectOption('max');
     await expect(cmd).toHaveText('brokkr sfx --start sys --effort max -o raster-demo-brokkr.prg raster-demo.prg');
@@ -2891,7 +2891,7 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await expect(progress).toBeVisible();
     await expect(progress).toContainText('Build and verify the program');
     await expect(progress).toContainText('Crunch and check with Brokkr');
-    await expect(progress).toContainText("Exomizer's format, effort Max, on every core; then the file runs in Brokkr's emulated C64");
+    await expect(progress).toContainText("Exomizer's format, effort Max, on threads; then the file runs in Brokkr's emulated C64");
     await expect(view.getByRole('button', { name: 'Packing…' })).toBeDisabled();
     await expect(page.locator('nav.activity').getByRole('button', { name: 'Pack' })).toHaveAttribute('aria-busy', 'true');
     await expect(card).not.toContainText('Out of date', { timeout: 120_000 });

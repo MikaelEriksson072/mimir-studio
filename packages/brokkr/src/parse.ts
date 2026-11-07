@@ -49,14 +49,15 @@ export function parse(d: Uint8Array, m: Matches, c: Costs, p: Protocol, o: Parti
 
   // the first and last lengths of the length buckets above allLens: of a longer match only these (and its full
   // length) are tried
-  const edgeList: number[] = [];
-  for (let l = allLens + 1; l <= 65535; l++) {
+  // (the length table ends where no match can be longer)
+  const edgeList: number[] = [], top = lenC.length - 1;
+  for (let l = allLens + 1; l <= top; l++) {
     if (lenC[l] >= INF) continue;
-    if (lenC[l] !== lenC[l - 1] || l === 65535 || lenC[l] !== lenC[l + 1]) edgeList.push(l);
+    if (lenC[l] !== lenC[l - 1] || l === top || lenC[l] !== lenC[l + 1]) edgeList.push(l);
   }
   const edges = Int32Array.from(edgeList), E = edges.length;
   // where the repeat at an offset was last counted, and how long it was there
-  const rlPos = new Int32Array(65536).fill(-1), rlLen = new Int32Array(65536);
+  const rlPos = new Int32Array(n + 1).fill(-1), rlLen = new Int32Array(n + 1);
   // the cheapest offsets of a position's pairs from each pair on, for the longest table and the one of length 3
   let most = 0;
   for (let q = 0; q < n; q++) most = Math.max(most, m.start[q + 1] - m.start[q]);

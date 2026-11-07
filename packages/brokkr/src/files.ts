@@ -40,6 +40,11 @@ export function rawBrk(data: Uint8Array, o: { backward?: boolean; reversed?: boo
   return { bytes: rawBytes(brk.stream, o), brk };
 }
 
+/** The bare stream of a crunch in Brokkr's own format (of the data reversed when it is read backward). */
+export function rawBrkFile(brk: BrkCrunched, o: { reversed?: boolean } = {}): { bytes: Uint8Array; brk: BrkCrunched } {
+  return { bytes: rawBytes(brk.stream, o), brk };
+}
+
 export interface MemOptions {
   /** crunch forward (Exomizer's -f); default backward */
   forward?: boolean;

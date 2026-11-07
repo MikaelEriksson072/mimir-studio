@@ -64,6 +64,12 @@ describe('the command line', () => {
     expect(brokkr('mem', '--effort', 'max', '--threads', '0', game).err).toMatch(/BRK-E018: --threads .* at least 1, not 0/);
   });
 
+  it("crunches Brokkr's own format with effort max on threads, never larger than normal", () => {
+    expect(brokkr('raw', '--format', 'brokkr', game, '-o', 'own-normal.bin', '-q').status).toBe(0);
+    expect(brokkr('raw', '--format', 'brokkr', '--effort', 'max', '--threads', '2', game, '-o', 'own-max.bin', '-q')).toMatchObject({ status: 0, err: '' });
+    expect(size('own-max.bin')).toBeLessThanOrEqual(size('own-normal.bin'));
+  });
+
   it('packs a self-extracting file in the format that makes it smallest, within a time if told', () => {
     const sys = prg('auto.prg', 0x0801, basicProgram(programLike(6000, 12)));
     const r = brokkr('sfx', '--format', 'auto', '--max-seconds', '2', sys, '-o', 'auto-sfx.prg');

@@ -84,7 +84,7 @@ More:
 ```
 brokkr sfx game.prg --format brokkr          the smallest file
 brokkr sfx game.prg --format fast            the fastest decrunching
-brokkr sfx game.prg --effort max             a thorough search, on every core
+brokkr sfx game.prg --effort max             a thorough search, on threads
 brokkr sfx code.prg --start $1000            a program without a SYS line, started with jmp $1000
 brokkr sfx intro.prg music.prg@$1000         two files in one: the PRG, and raw bytes at $1000
 brokkr mem level1.prg                        crunched data for your own decruncher
@@ -216,8 +216,8 @@ graphics and all.
 |---|---|
 | `--format exomizer\|brokkr\|fast` | the stream format ([The formats](#the-formats)) |
 | `--at`, `--table`, `--zp`, `--keep` | for `sfx` and `d64`: where the decruncher works ([`sfx`](#sfx-a-self-extracting-program)); for `decruncher`, where it goes (not `--keep`) |
-| `--effort fast\|normal\|max` | how hard it crunches: `fast` takes a quarter of the time for streams about 1.7 % larger, `max` searches further on every core but one |
-| `--threads <n>` | the threads for `--effort max` (at least 1) |
+| `--effort fast\|normal\|max` | how hard it crunches: `fast` takes a quarter of the time for streams about 1.7 % larger, `max` searches further on threads (see Speed) |
+| `--threads <n>` | the threads for `--effort max` (at least 1; by default the cores but one, at most 8) |
 | `-o <file>` | the output (default `<first file>-brokkr.prg`, `.bin`, `.d64` or `.asm`) |
 | `--json` | print the result, or the error, as one JSON object |
 | `-q` | print nothing but errors |
@@ -260,9 +260,16 @@ what it wrote. `src/node.ts` adds the pool of worker threads that `--effort max`
   The tables are made for the parse and the parse for the tables until the stream stops shrinking.
 - **Speed.** On one thread it crunched the 163 programs about 8 times as fast as the Windows build in Exomizer 3.1.1's
   release (121 s against 954 s). Against an Exomizer compiled with optimisation (gcc -O3) it is about as fast, faster
-  on some programs and slower on most. `--effort max` searches further, on
-  every core: from several starting tables, and with each bucket of the best table a bit wider and narrower in turn.
-  The `fast` effort takes a quarter of the time of `normal` for streams 1.7 % larger.
+  on some programs and slower on most. The `fast` effort takes a quarter of the time of `normal` for streams 1.7 %
+  larger. A small file costs what its matches cost: the tables of each round reach as far as its longest match and
+  farthest offset, not over all 64 KB.
+- **`--effort max` costs far more than it gives.** It searches further on a pool of threads (`--threads`, by default
+  the cores but one, at most 8): in Exomizer's format from several starting tables, with each bucket of the best table
+  a bit wider and narrower in turn; in Brokkr's own over a grid of its prices' block sizes and weights, effort normal's
+  crunch among them, so it is never larger than normal. On a 51 KB demo Exomizer's format took 16 s on 8 threads
+  against 0.7 s for normal, and 930 MB against 105 MB, for 5 bytes less (on 23 threads 13 s and 2.1 GB); Brokkr's own
+  took 6 s on 4 threads against 0.8 s, for 3 bytes less. Each thread takes about 90 MB. The data goes to each thread
+  once, and a thread that stops is replaced; its task fails with why.
 - **Self-extracting programs that are planned and checked.** Brokkr works out where the decruncher, its table, its
   zero page bytes and the crunched data can go: the stack page and `$0334-$03ff` first, so nothing shows on the screen,
   then anywhere the program leaves room, under the ROMs included. It places the stream so that the decruncher never

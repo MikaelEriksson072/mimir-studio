@@ -7,7 +7,7 @@
  * ===================================================================== */
 import {
   BrokkrError, CheckError, checkDecruncher, crunchBrk, crunchData, crunchFast, decruncherFile, decruncherNeeds, memBrkFile, memCrunchOptions, memFastFile, memFile, PAL_HZ, sfxAsync, T,
-  type CrunchOptions, type Crunched, type DecruncherFile, type DecruncherNeeds, type DecruncherOptions, type SfxPlace, type Start,
+  type BrkCrunched, type BrkOptions, type CrunchOptions, type Crunched, type DecruncherFile, type DecruncherNeeds, type DecruncherOptions, type SfxPlace, type Start,
 } from '@mimir/brokkr';
 import type { PackPrefs } from './types';
 import { mergeRanges, packEffective, packOptions, packFileName, packImage, packInputs, packOutName, packParts, shellWord, type ExomizerReport, type PackCheck, type PackFile, type PackPart } from './pack';
@@ -16,6 +16,9 @@ import { h2, h4 } from './util/hex';
 /** A crunch: here (the default), or on a pool of threads (node/brokkr.ts). */
 export type BrokkrCrunch = (data: Uint8Array, o: CrunchOptions) => Promise<Crunched>;
 export const crunchHere: BrokkrCrunch = async (d, o) => crunchData(d, o);
+/** A crunch in Brokkr's own format: here (the default), or on a pool of threads for effort max. */
+export type BrokkrCrunchOwn = (data: Uint8Array, o: BrkOptions) => Promise<BrkCrunched>;
+export const crunchOwnHere: BrokkrCrunchOwn = async (d, o) => crunchBrk(d, o);
 
 /** A file a pack writes, with what it is (the Pack view lists them): packed (self-extracting, or crunched data), or the
  * decruncher written next to crunched data, as a PRG or as source. */
@@ -164,7 +167,8 @@ const placeOf = (p: PackPrefs): SfxPlace | undefined =>
 const empty = (): ExomizerReport => ({ crunched: null, saved: null, layout: [], decruncher: [], entry: null, errors: [] });
 
 /** Pack the built PRGs (load address first, in project order) as `prefs` says, with Brokkr. */
-export async function packWithBrokkr(files: readonly { name: string; prg: Uint8Array }[], typed: PackPrefs, crunch: BrokkrCrunch = crunchHere): Promise<BrokkrPack> {
+export async function packWithBrokkr(files: readonly { name: string; prg: Uint8Array }[], typed: PackPrefs, crunch: BrokkrCrunch = crunchHere,
+  crunchOwn: BrokkrCrunchOwn = crunchOwnHere): Promise<BrokkrPack> {
   const t0 = performance.now();
   const prefs = packEffective(typed);
   // the inputs get names the command line reads as one file name, distinct from each other and from the output
@@ -197,7 +201,7 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
       const r = await sfxAsync(image.bytes, image.start, {
         start, ramExit: prefs.ramExit ?? undefined, irqExit: prefs.irqExit ?? undefined, effect: prefs.effect !== 'none', crunch: crunchOptions,
         format: prefs.format, maxSeconds: prefs.maxSeconds ?? undefined, place: placeOf(prefs),
-      }, crunch);
+      }, crunch, crunchOwn);
       const layout = r.areas.filter(a => a.name !== 'File').map(a => ({ name: a.name, start: a.start, end: a.end, ...(a.note ? { note: a.note } : {}) }));
       // auto: what each format made, and which it took
       for (const t of r.tried ?? []) lines.push(`  ${t.format.padEnd(8)} ${t.error ?? `${t.bytes} bytes, ${t.seconds!.toFixed(2)} s to decrunch${t.format === r.format ? ' (taken)' : ''}`}`);
@@ -227,7 +231,7 @@ export async function packWithBrokkr(files: readonly { name: string; prg: Uint8A
     for (const f of plan.files) {
       const img = packImage(f.parts)!, data = img.bytes;
       const r = prefs.format === 'brokkr'
-        ? memBrkFile(data, img.start, crunchBrk(data.slice().reverse(), { effort: prefs.effort }), mo)
+        ? memBrkFile(data, img.start, await crunchOwn(data.slice().reverse(), { effort: prefs.effort }), mo)
         : prefs.format === 'fast'
         ? memFastFile(data, img.start, crunchFast(data.slice().reverse(), { effort: prefs.effort }), mo)
         : memFile(data, img.start, await crunch(prefs.forward ? data : data.slice().reverse(), memCrunchOptions(mo)), mo);

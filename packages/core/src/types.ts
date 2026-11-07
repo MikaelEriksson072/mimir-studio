@@ -150,7 +150,7 @@ export type BuildScript = 'build.bat' | 'build.sh';
 
 /** who packs (spec 13.8): Brokkr, the built-in cruncher (@mimir/brokkr), or the Exomizer set in Settings */
 export type Packer = 'brokkr' | 'exomizer';
-/** how hard Brokkr crunches: fast, normal, or max (every core, a thorough search) */
+/** how hard Brokkr crunches: fast, normal, or max (a thorough search on threads: much slower, a few bytes smaller) */
 export type PackEffort = 'fast' | 'normal' | 'max';
 /** Brokkr's stream format: Exomizer 3's, Brokkr's own (smaller, slower to decrunch, more RAM while it does), its
  * fast one (whole bytes: larger, faster to decrunch), or for a self-extracting file auto: each, and the smallest file

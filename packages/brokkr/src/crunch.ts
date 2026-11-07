@@ -90,7 +90,7 @@ export function refine(d: Uint8Array, m: Matches, p: Protocol, start: Encoding, 
   let enc = start, best: Candidate | null = null, rounds = 0, worse = 0;
   for (let round = 1; round <= (fixed ? 1 : prof.passes); round++) {
     rounds = round;
-    const { tokens } = parse(d, m, costs(enc, p), p, prof);
+    const { tokens } = parse(d, m, costs(enc, p, d.length), p, prof);
     const here = { tokens, encoding: enc, ...streamSize(d, tokens, enc, p.flags, header) };
     let improved = false;
     if (better(here, best)) { best = here; improved = true; }

@@ -96,7 +96,8 @@ export const SEQ_BITS = 1 + 18 + 16;
 /** the end: the flag and gamma code 16 */
 export const END_BITS = 1 + 17;
 
-/** What each length and offset costs in bits with an encoding (INF where it cannot be written). */
+/** What each length and offset costs in bits with an encoding (INF where it cannot be written), up to `limit` (a
+ * crunch of n bytes has no length or offset above n, so its tables need be no longer). */
 export interface Costs {
   /** the gamma-coded bucket and the bits within it (no flag bit) */
   len: Int32Array;
@@ -104,27 +105,28 @@ export interface Costs {
   off: Int32Array[];
 }
 
-export function costs(e: Encoding, p: Protocol): Costs {
-  const len = new Int32Array(65536).fill(INF);
+export function costs(e: Encoding, p: Protocol, limit = 65535): Costs {
+  const size = Math.min(65535, limit) + 1;
+  const len = new Int32Array(size).fill(INF);
   let base = 1;
   for (let g = 0; g < 16; g++) {
-    const end = Math.min(65536, base + (1 << e.len[g]));
+    const end = Math.min(size, base + (1 << e.len[g]));
     for (let l = base; l < end && l <= p.maxLen; l++) len[l] = g + 1 + e.len[g];
     base = end;
-    if (base >= 65536) break;
+    if (base >= size) break;
   }
   if (p.traits & T.NO_MIRRORS) {
     const below = p.flags & P.FOUR_TABLES ? 4 : 3;
-    for (let l = 256; l < 65536; l += 256) for (let k = 0; k < below; k++) len[l + k] = INF;
+    for (let l = 256; l < size; l += 256) for (let k = 0; k < below && l + k < size; k++) len[l + k] = INF;
   }
   const off = e.off.map((bits, t) => {
-    const c = new Int32Array(65536).fill(INF);
+    const c = new Int32Array(size).fill(INF);
     let b = 1;
     for (let i = 0; i < bits.length; i++) {
-      const end = Math.min(65536, b + (1 << bits[i]));
+      const end = Math.min(size, b + (1 << bits[i]));
       for (let o = b; o < end && o <= p.maxOffset; o++) c[o] = TABLE_BITS[t] + bits[i];
       b = end;
-      if (b >= 65536) break;
+      if (b >= size) break;
     }
     return c;
   });

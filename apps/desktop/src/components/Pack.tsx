@@ -338,7 +338,7 @@ export function PackSettings(p: PackSettingsProps) {
           <select id="pack-effort" value={prefs.effort} onChange={e => set({ effort: e.target.value as PackPrefs['effort'] }, 'Pack: effort')}>
             <option value="fast">Fast — a little larger</option>
             <option value="normal">Normal</option>
-            <option value="max">Max — every core</option>
+            <option value="max">Max — on threads, slow</option>
           </select></div>}
         {o.fast && <label className="check"><input id="pack-fast" type="checkbox" checked={prefs.fast} onChange={e => set({ fast: e.target.checked }, 'Pack: faster crunching')} /><span>Crunch faster (-C)<small className="muted"> — a little larger</small></span></label>}
         {o.extra && <TextField id="pack-extra" label="More options" value={prefs.extra} placeholder="-p 4 -Di_line_number=1987" error={extraProblem(prefs.extra)} onCommit={v => set({ extra: v }, 'Pack: options')} />}
@@ -452,7 +452,7 @@ function PackingCard({ packing }: { packing: PackProgress }) {
   const p = packing.prefs, brokkr = p.packer !== 'exomizer', sfx = p.mode === 'sfx', verifying = packing.step === 'verify';
   const before = packing.before === undefined ? BUILD_FIRST : packing.before;
   const who = brokkr ? 'Brokkr' : 'Exomizer';
-  const how = brokkr ? `${FORMAT_NAME[p.format]}, effort ${p.effort === 'max' ? 'Max, on every core' : p.effort === 'fast' ? 'Fast' : 'Normal'}` : sfx ? 'a self-extracting program' : 'crunched data';
+  const how = brokkr ? `${FORMAT_NAME[p.format]}, effort ${p.effort === 'max' ? 'Max, on threads' : p.effort === 'fast' ? 'Fast' : 'Normal'}` : sfx ? 'a self-extracting program' : 'crunched data';
   const written = packEffective(p).decruncher && packOptions(p).decruncher;
   const check = !sfx ? (written ? "then each file is decrunched by the decruncher in Brokkr's emulated C64 and compared" : brokkr ? 'then Brokkr decrunches the stream again and compares' : null)
     : brokkr ? "then the file runs in Brokkr's emulated C64 and is compared" : "then Exomizer's desfx decrunches it and it is compared";

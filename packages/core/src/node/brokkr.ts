@@ -1,6 +1,7 @@
-/* Node-only: Brokkr's effort 'max' on a pool of worker threads, one per core but one. The worker script is the
+/* Node-only: Brokkr's effort 'max' on a pool of worker threads, one per core but one (at most 8), in Exomizer's
+ * format and in Brokkr's own. The worker script is the
  * caller's: one that calls serveBrokkr() (the desktop app bundles its own, electron/main/brokkr-worker.ts). */
-import { crunchData, crunchSearch, PROFILES, protocol } from '@mimir/brokkr';
+import { crunchBrk, crunchBrkSearch, crunchData, crunchSearch, PROFILES, protocol } from '@mimir/brokkr';
 import { defaultThreads, Pool, serve } from '@mimir/brokkr/node';
 import { packWithBrokkr, type BrokkrPack } from '../brokkr';
 import type { PackPrefs } from '../types';
@@ -15,7 +16,9 @@ export async function packWithBrokkrThreads(files: readonly { name: string; prg:
   try {
     return await packWithBrokkr(files, prefs, async (d, o) => (o.effort === 'max' && !o.encoding
       ? crunchSearch(d, o, pool.runner({ data: d, protocol: protocol(o.protocol), profile: { ...PROFILES.max, ...o.profile }, header: o.header !== false }))
-      : crunchData(d, o)));
+      : crunchData(d, o)),
+    // Brokkr's own format: its grid on the threads
+    async (d, o) => (o.effort === 'max' ? crunchBrkSearch(d, pool.runner({ data: d, protocol: protocol(), profile: PROFILES.max, header: true })) : crunchBrk(d, o)));
   } finally {
     await pool.close();
   }
