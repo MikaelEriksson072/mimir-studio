@@ -12,7 +12,7 @@
  * HATLELID"), the stack-page boot of later titles (EA, 1-2 blocks at $0102, the check run as a DOS job and the drive
  * reset with UJ), or a boot of the game's own that runs the same check (Ferrari Formula One's FF1-BOOT at $00AE). */
 import { isG64, parseG64 } from '@mimir/sindri';
-import { parseD64, readD64File, type D64File } from './d64';
+import { diskSectors, looseChains, parseD64, readD64File, sectorOffset, type D64File } from './d64';
 
 export type PirateSlayerVersion = 'v1' | 'v2' | 'piratebusters';
 
@@ -38,6 +38,20 @@ export interface PirateSlayerBoot {
   how: string;
 }
 
+/** A file outside the directory: a sector chain EA's loader reads by its track and sector. */
+export interface PirateSlayerFile {
+  /** its first sector, and how many it has */
+  track: number; sector: number; blocks: number;
+  /** the byte each of its bytes is stored XOR'ed with on the disk ($EA: EA's loader, $A5: the stack-page boot's
+   *  file); 0: as they are */
+  key: number;
+  /** where it loads (its first two bytes, decoded), its bytes after those (decoded), and where they end (at most
+   *  $10000: the rest wraps to $0000, as the loader stores it) */
+  load: number; end: number; bytes: Uint8Array;
+  /** what reads it, as far as known */
+  note: string;
+}
+
 export interface PirateSlayerDisk {
   /** from the key track; from the boot's text when the image has no tracks (a D64) */
   version: PirateSlayerVersion | null;
@@ -49,6 +63,8 @@ export interface PirateSlayerDisk {
   checkIn: string[];
   /** the boot's own text */
   text: string | null;
+  /** the files outside the directory, in disk order */
+  files: PirateSlayerFile[];
   /** one line for the Explorer and the toast */
   summary: string;
 }
@@ -145,6 +161,45 @@ function pointerMove(prg: Uint8Array): number | null {
   return null;
 }
 
+/** the first sector after the key track: the drive reads the chain there as soon as it has found the key */
+const FIRST: { track: number; sector: number } = { track: 3, sector: 0 };
+
+/**
+ * The sector chains the directory does not list, as EA's loader reads them. Its drive code sends a chain by track and
+ * sector, the load address first, and the last sector's second byte is the number of its bytes (one more than DOS's
+ * index of the last). EA's own boot (EA + LOADER) has every such file stored XOR $EA, which its transfer undoes: the
+ * one on 3/0 is the first the drive sends, as soon as it has found the key, and the boot starts it; the game's copy of
+ * the loader reads the others, as chains or a sector at a time. The stack-page boot reads the chain on 3/0 after its
+ * check, stored XOR $A5; the game's other files are in the directory. A chain of fewer than three bytes is no file.
+ */
+function looseFiles(image: Uint8Array, boot: PirateSlayerBoot | null): PirateSlayerFile[] {
+  const u8 = diskSectors(image), files: PirateSlayerFile[] = [];
+  let tracks = 35;
+  try { tracks = parseD64(image).tracks; } catch { return files; }
+  for (const c of looseChains(image)) {
+    const first = c.track === FIRST.track && c.sector === FIRST.sector;
+    const key = boot?.kind === 'loader' ? 0xea : boot?.kind === 'stack' && first ? 0xa5 : 0;
+    const raw: number[] = [];
+    c.sectors.forEach((s, k) => {
+      const o = sectorOffset(s.track, s.sector, tracks);
+      const n = k + 1 < c.sectors.length ? 254 : Math.min(254, c.last);
+      for (let i = 0; i < n; i++) raw.push(u8[o + 2 + i] ^ key);
+    });
+    if (raw.length < 3) continue;
+    const load = raw[0] | (raw[1] << 8), bytes = Uint8Array.from(raw.slice(2));
+    const note = boot?.kind === 'loader'
+      ? first ? 'the first file: the drive sends it as soon as it has found the key, and the boot starts it at its load address' : "the game's copy of the loader reads it, as a chain or a sector at a time"
+      : boot?.kind === 'stack' && first ? 'the drive reads it after the key check; in memory it is decoded'
+      : 'not known what reads it: as it is on the disk';
+    files.push({ track: c.track, sector: c.sector, blocks: c.sectors.length, key, load, end: Math.min(0x10000, load + bytes.length), bytes, note });
+  }
+  return files;
+}
+
+/** A host file name for a file outside the directory: its first sector and where it loads (t3s0_8f1f.prg). */
+export const pirateSlayerFileName = (f: Pick<PirateSlayerFile, 'track' | 'sector' | 'load'>): string =>
+  `t${f.track}s${f.sector}_${f.load.toString(16).padStart(4, '0')}.prg`;
+
 /** Pirate Slayer on a disk image (D64 or G64): its key, its boot, where its check is; null when it shows no sign of it. */
 export function readPirateSlayerDisk(image: Uint8Array): PirateSlayerDisk | null {
   const format = isG64(image) ? 'G64' : 'D64';
@@ -206,6 +261,7 @@ export function readPirateSlayerDisk(image: Uint8Array): PirateSlayerDisk | null
   const where = key
     ? `the key on track ${key.track} (no SYNC, ${key.copies.length} cop${key.copies.length === 1 ? 'y' : 'ies'} a turn${key.bitPhase ? `, framed from bit ${key.bitPhase}` : ''})`
     : format === 'D64' ? 'no key track (a D64 has none: the check fails)' : 'no key track on the image';
-  const summary = `${version ? VERSION[version] : 'Pirate Slayer'} (Electronic Arts): ${where}${boot ? `; boot ${boot.files.join(' → ')}` : ''}`;
-  return { version, format, keys, boot, checkIn, text, summary };
+  const files = looseFiles(image, boot);
+  const summary = `${version ? VERSION[version] : 'Pirate Slayer'} (Electronic Arts): ${where}${boot ? `; boot ${boot.files.join(' → ')}` : ''}${files.length ? `; ${files.length} file${files.length === 1 ? '' : 's'} outside the directory` : ''}`;
+  return { version, format, keys, boot, checkIn, text, files, summary };
 }

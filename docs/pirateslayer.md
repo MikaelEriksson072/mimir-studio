@@ -89,8 +89,9 @@ Stalkers, Ferrari) körs som DOS-jobb `$E0` och svarar med jobbkod 1 (nyckeln hi
    eller ett avbrott ger fel nyckel, och koden kör in i en `BRK`-släde och en `JAM`. Det blir 36 771 dekrypterade
    byte. 32 av dem läses exakt när timern slår om, och där visar en 6526 latchen, aldrig 0.
 4. **Drivkoden** laddas upp med `M-W` i 32-bytesblock från C64:ans `$0400`–`$08FF` till driven `$0300`–`$07FF` och
-   startas med `M-E`. Den kör nyckelkontrollen och blir sedan en snabbladdare. Ett kommando är 4 byte: kommando, spår,
-   sektor och en kontrollsumma, besvarat med `$89` (ACK) eller `$A1` (NAK).
+   startas med `M-E`. Den kör nyckelkontrollen och blir sedan en snabbladdare. Hittar den nyckeln skickar den genast
+   sektorkedjan på 3/0, utan att C64:an bett om den. Sedan väntar den på kommandon. Ett kommando är 4 byte: kommando,
+   spår, sektor och en kontrollsumma, besvarat med `$89` (ACK) eller `$A1` (NAK).
    - `$80`: läs en sektor.
    - `$90`: skriv en sektor (spara).
    - `$F0`: töm minnet och starta om DOS:en.
@@ -100,8 +101,10 @@ Stalkers, Ferrari) körs som DOS-jobb `$E0` och svarar med jobbkod 1 (nyckeln hi
    `$DD00` 16, 26, 39 och 50 cykler senare. Driven ser DATA släppas i en sjucykelsslinga och skriver bitparen 6, 16,
    30 och 40 drivcykler efter det. Ser driven släppet inom en fjärdedels cykel, läser C64:an det första paret i samma
    ögonblick som driven skriver det andra. Det håller när ett släppt DATA når driven ungefär en cykel sent.
-6. Spelet laddas med `LDA #$17 / LDX #8 / LDY #0 / JSR $FF17` (kedjan från 8/0) och startas via en stubbe på `$0073`
-   (`LDA #$37 / STA $01 / JMP …`). Spelet har en egen kopia av laddaren på `$9106`.
+6. Spelet laddas med `LDA #$17 / LDX #8 / LDY #0 / JSR $FF17`. Kommandon `$1x` skickar inget till driven: laddaren tar
+   emot filen som driven skickar ändå, kedjan på 3/0, och X och Y används inte. Bit 0 startar filen via en stubbe på
+   `$0073` (`LDA #$37 / STA $01 / JMP …`). Filen är spelets första och innehåller en egen kopia av laddaren på `$9106`.
+   Den läser resten av spelet, se *Filerna utanför katalogen*.
 
 Texter i bootet: `OUT OF MY CODE HACKER!`, `LICK MY USER PORT!`.
 
@@ -118,6 +121,54 @@ Texter i bootet: `OUT OF MY CODE HACKER!`, `LICK MY USER PORT!`.
 6. `#0` och `B-E 2,0,1,1` kör nästa drivsteg från 1/1.
 7. C64:an öppnar varje överföring med en ATN-handskakning som har en tidsgräns på ungefär 2 800 cykler. Svarar
    driven inte töms `$0400`–`$0FFF` från en rutin på `$EF00`, och programmet kraschar. Text i lagren: `GIVEITUPGUY`.
+
+## Filerna utanför katalogen
+
+Katalogen på en skiva med EA:s eget boot listar bara `EA` och `LOADER` (Dan Dare två filer till). Resten av spelet
+ligger i sektorkedjor som laddaren läser på spår och sektor. Formatet:
+
+- Kedjan är länkad som en vanlig fil: varje sektor börjar med nästa spår och sektor.
+- Sista sektorns andra byte är **antalet** byte i den. DOS har index för den sista byten där, alltså ett mindre.
+- De två första byten är laddadressen, som i en PRG.
+- Varje byte är lagrad **XOR `$EA`**, laddadressen också. Överföringen till C64:an tar bort det, så filen hamnar
+  avkodad i minnet.
+
+Spelets kopia av laddaren (`$9106` i Arctic Fox) tar kommandot i A, spåret i Y och sektorn i X:
+
+| A | Gör |
+|---|---|
+| `$1x` | tar emot filen som driven skickar ändå (den första, när nyckeln är hittad) |
+| `$00` | sätter bufferten för sektorläsning: X = låg, Y = hög byte |
+| `$80` | läser sektorn (Y, X) till bufferten |
+| `$90` | skriver bufferten till sektorn (Y, X) |
+| `$F0` | startar om driven |
+| annat | laddar kedjan som börjar på (Y, X) till dess laddadress |
+
+Bit 0 i kommandot startar filen på laddadressen. Bit 1 blinkar `$D021` för varje block. Tillbaka får man status i A
+och carry satt vid fel. Arctic Fox läser bilderna en sektor i taget (`$80`) ur en tabell med spår, sektor och antal,
+och hoppar över de fyra första byten i första sektorn.
+
+Arctic Fox har 27 sådana filer. Laddadresserna gäller efter avkodningen:
+
+| Från | Laddar | Vad |
+|---|---|---|
+| 3/0 | `$8F1F`–`$97FF` | spelets första fil, med laddaren på `$9106`; driven skickar den efter nyckeln |
+| 19/0 | `$39BD`–`$7F9B` | spelets huvudkod (17 887 byte) |
+| 23/0 | `$9800`–`$9FFF` | fortsättning efter första filen |
+| 9/0, 11/0, 13/0, 15/0 | `$A000`–`$BF3F` | fyra bitmappar à 8 000 byte |
+| 10/11, 12/11, 14/11, 16/11 | `$C000`–`$C3E7` | 1 000 byte till varje bitmapp (skärmminne, av storleken att döma) |
+| 10/15, 12/15, 14/15, 16/15 | `$C400`–`$C7E7` | 1 000 byte till (färger, av storleken att döma) |
+| 31/0, 32/0, 34/0, 35/0 | `$0400`–`$0EA4` | fyra olika filer, lika stora och på samma adress |
+
+Resten är mindre filer och två olika filer på `$3B00` (3/13 och 5/16). 19/0, 23/0, 31/0, 8/19 och 3/0 jämfördes med Sindris minne när spelet gick, och
+stämde byte för byte. Dan Dares 3/0 laddar på `$C000`, och huvudfilen 24/0 på `$0800`–`$3FFF`.
+
+Stack-bootet (Yeager, Demon Stalkers) har spelets filer i katalogen, okodade. Efter kontrollen läser driven kedjan på
+3/0. Den är lagrad XOR **`$A5`** och ligger avkodad i minnet: Demon Stalkers på `$1800`–`$28FF`, Yeager på
+`$9700`–`$A000`. Kedjorna på spår 1 är bootets egna block, som `EA` läser med `U1`.
+
+Mimir listar filerna i fliken **Pirate Slayer** (spec 13.5h) och öppnar dem avkodade, så de kan disassembleras och
+assembleras om. Arctic Fox 3/0, 9/0, 19/0 och 23/0 blir byte för byte desamma igen.
 
 ## Boot 3: Ferrari Formula One (Argonaut/Imagitec för EA)
 

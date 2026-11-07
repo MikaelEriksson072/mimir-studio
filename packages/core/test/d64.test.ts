@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { d64FileName, makeD64, makeDemo, parseD64, parsePrg, petsciiName, readD64File, sectorsOnTrack } from '../src';
+import { d64FileName, looseChains, makeD64, makeDemo, parseD64, parsePrg, petsciiName, readD64File, sectorsOnTrack } from '../src';
+import { sectorOffset } from '../src/c64/d64';
 import { findVice } from '../src/node';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -69,6 +70,24 @@ describe('d64', () => {
     expect(() => readD64File(img, f)).toThrow(/loops back/);
     img[off] = 99;
     expect(() => readD64File(img, f)).toThrow(/track 99 sector .* is not on the disk/);
+  });
+
+  it('finds the sector chains the directory does not list, and nothing else', () => {
+    const img = makeD64({ name: 'x', files: [{ name: 'a', data: bytes(600) }] });
+    const at = (t: number, s: number) => sectorOffset(t, s, 35);
+    const put = (t: number, s: number, ...b: number[]) => img.set(b, at(t, s));
+    // 5/0 → 5/1 → 5/7 (end, 10 bytes); 6/3 alone (end); 7/0 → 7/1 → 7/0, a loop; 8/0 → track 99, not a sector
+    put(5, 0, 5, 1); put(5, 1, 5, 7); put(5, 7, 0, 11);
+    put(6, 3, 0, 40);
+    put(7, 0, 7, 1); put(7, 1, 7, 0);
+    put(8, 0, 99, 0);
+    // 9/0 links into the listed file, and 18/5 is on the directory track
+    const f = parseD64(img).files[0];
+    put(9, 0, f.track, f.sector); put(18, 5, 0, 20);
+    expect(looseChains(img)).toEqual([
+      { track: 5, sector: 0, sectors: [{ track: 5, sector: 0 }, { track: 5, sector: 1 }, { track: 5, sector: 7 }], last: 11 },
+      { track: 6, sector: 3, sectors: [{ track: 6, sector: 3 }], last: 40 },
+    ]);
   });
 
   it('turns PETSCII names into text and host file names', () => {

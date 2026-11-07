@@ -423,7 +423,7 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
       )}
       {disk.pirateslayer && (
         <div className="disk-spindle">
-          <span><b>Pirate Slayer:</b> {disk.pirateslayer.keys.length ? `the key on track ${disk.pirateslayer.keys.map(k => k.track).join(' and ')}, no SYNC` : disk.pirateslayer.format === 'D64' ? 'a D64 has no key track: the boot fails its check' : 'no key track on the image'}{disk.pirateslayer.boot ? `; boot ${disk.pirateslayer.boot.files.join(' → ')}` : ''}</span>
+          <span><b>Pirate Slayer:</b> {disk.pirateslayer.keys.length ? `the key on track ${disk.pirateslayer.keys.map(k => k.track).join(' and ')}, no SYNC` : disk.pirateslayer.format === 'D64' ? 'a D64 has no key track: the boot fails its check' : 'no key track on the image'}{disk.pirateslayer.boot ? `; boot ${disk.pirateslayer.boot.files.join(' → ')}` : ''}{disk.pirateslayer.files.length ? `; ${disk.pirateslayer.files.length} file${disk.pirateslayer.files.length === 1 ? '' : 's'} outside the directory` : ''}</span>
           <button className="btn small" onClick={onShowPirateSlayer}>Pirate Slayer</button>
         </div>
       )}

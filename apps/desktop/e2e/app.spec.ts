@@ -4704,6 +4704,47 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
   });
 });
 
+test('a mounted Pirate Slayer disk: the files outside its directory in the Pirate Slayer tab, opened decoded and re-assembled', async ({ app, page }) => {
+  // fixtures/d64/pirateslayer-demo.d64 (packages/core/test/pirateslayer.test.ts): EA and LOADER with the boot's text, the
+  // raster demo on 3/0 and a sine table on 9/0, both stored XOR $EA as EA's loader reads them
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/pirateslayer-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted pirateslayer-demo.d64: "ELECTRONIC ARTS", 2 files; Pirate Slayer V2 (Electronic Arts): no key track (a D64 has none: the check fails); boot EA → LOADER; 2 files outside the directory')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText('Pirate Slayer: a D64 has no key track: the boot fails its check; boot EA → LOADER; 2 files outside the directory');
+  const table = page.getByRole('table', { name: 'Pirate Slayer files' });
+
+  await test.step('the Explorer opens the tab, a row per file in disk order', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Pirate Slayer' }).click();
+    await expect(page.getByRole('tab', { name: /Pirate Slayer/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.spindle-head').nth(1)).toContainText('Files outside the directory: 2');
+    await expect(page.locator('.spindle-head').nth(1)).toContainText('stored XOR $EA on the disk');
+    await expect(table.locator('tbody tr td:nth-child(1)')).toHaveText(['3/0', '9/0']);
+    await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['t3s0_0801.prg', 't9s0_4000.prg']);
+    await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['$0801–$37ff', '$4000–$40ff']);
+    await expect(table.locator('tbody tr').first().locator('td').nth(5)).toHaveText('the first file: the drive sends it as soon as it has found the key, and the boot starts it at its load address · XOR $EA');
+  });
+
+  await test.step('a row opens its file decoded, as a PRG at its load address; + adds one; the source builds the same bytes', async () => {
+    await table.getByRole('row', { name: /t3s0_0801/ }).click();
+    await expect(toast(page, 'Loaded t3s0_0801.prg at $0801')).toBeVisible();
+    // the raster demo, as it was before it was stored XOR $EA
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await expect(listing(page).locator('.row', { hasText: 'jsr music.init' }).first()).toBeVisible();
+    await table.getByRole('button', { name: 'Add t9s0_4000.prg to this project' }).click();
+    await expect(page.locator('.file-name')).toHaveText(['t3s0_0801.prg', 't9s0_4000.prg']);
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /Pirate Slayer/ })).toHaveCount(0);
+  });
+});
+
 test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeTool\'s command lines, the boot file with its header, Build & Run and Sindri reading the tape', async ({ app, page, workDir }) => {
   // fixtures/tap/mimir-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file whose loader, in the tape buffer,
   // reads the raster demo (TapeTool's TinyHeader format) from the tape and starts it; a sine table in two blocks in

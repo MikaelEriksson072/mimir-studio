@@ -48,8 +48,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     the Covert Bitops loader, and any other one by its drive code;
   - Pirate Slayer, Electronic Arts' copy protection (1986-1989): its loader in the analysis, and on a mounted disk its
     key track (on a G64: track 2 with no SYNC, read bit by bit), its boot (EA and LOADER, the stack-page EA, or a
-    game's own) and what it does, in the *Pirate Slayer* tab; Sindri runs the boot with the G64 in its drive, key
-    check, timer-keyed decryption and fast loader, into the game. See `docs/pirateslayer.md`;
+    game's own) and what it does, in the *Pirate Slayer* tab, with the game's files outside the directory (sector
+    chains EA's loader reads, stored XOR `$EA`) to open decoded and re-assemble; Sindri runs the boot with the G64 in
+    its drive, key check, timer-keyed decryption and fast loader, into the game. See `docs/pirateslayer.md`;
   - the Action Replay's loaders: its fastload, Warp*25, the tape backups' turbo and superturbo, and the turbo tape of
     LOAD and SAVE, in the cartridge's banks (5.1, 7.2 and 7.5 are checked against real ones) and in what it saves: the
     loader file of a Warp*25 backup (the MK4's too) and the loader in a tape backup's header. Novaload, which the

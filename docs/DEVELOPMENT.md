@@ -616,6 +616,13 @@ the reference as a patch in `test/helpers/reference.ts`):
     one-cycle delay on every line (VICE's `maincpu_clk + 1`) changed 12 of the 200, 7 for the worse (Scramble
     Infinity's Krill installer among them), which is why only CLK and DATA rising are delayed. A D64's tracks are still
     read a byte at a time (bit by bit took three times as long); disk runs take about 2 % longer per emulated second.
+    The files outside the directory came after: `looseChains` (d64.ts) finds the sector chains no entry starts, and
+    `readPirateSlayerDisk` reads them as EA's loader does (the load address first, the last sector's second byte its
+    number of bytes, every byte XOR `$EA` with EA's own boot; the stack-page boot's chain on 3/0 XOR `$A5`). Traced in
+    Sindri (the drive's commands and DOS jobs) and checked against the game's memory: Arctic Fox's 3/0 is its first
+    file at `$8F1F`-`$97FF` (the drive sends it as soon as it has found the key; the `LDA #$17` boot call takes it
+    without a command), 19/0 its main code at `$39BD`; Demon Stalkers' 3/0 loads at `$1800`, Yeager's at `$9700`. The
+    Pirate Slayer tab lists them and opens one decoded; 3/0, 9/0, 19/0 and 23/0 of Arctic Fox re-assemble byte for byte.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

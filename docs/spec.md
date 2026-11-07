@@ -2439,9 +2439,19 @@ finns i `docs/pirateslayer.md`.
   `FF1-BOOT` på `$00AE`: var resten hamnar räknas ut som KERNAL:ns laddslinga gör). Filer som har drivens kontroll
   okrypterad räknas upp.
 - På en D64 sägs att nyckelspåret saknas och att bootet därför fallerar kontrollen.
+- **Filerna utanför katalogen**: sektorkedjor som ingen katalogpost startar (`looseChains` i `d64.ts`: en kedja börjar
+  på en sektor som ingen annan länkar till, och varje sektor på den läses utan fel, ligger utanför spår 18 och utanför
+  katalogens filer och länkar vidare eller slutar). EA:s laddare läser dem med laddadressen först och sista sektorns
+  andra byte som antal byte. Med EA:s eget boot är alla lagrade XOR `$EA`; kedjan på 3/0 är den första, som driven
+  skickar så fort nyckeln är hittad. Stack-bootets kedja på 3/0 är lagrad XOR `$A5`. Andra kedjor läses som de är.
+  En kedja med färre än tre byte räknas inte. Namnet är påhittat av första sektorn och laddadressen (`t3s0_8f1f.prg`).
 
 Vid montering säger toasten och Explorer (*Disk*) vad som hittats, och fliken **Pirate Slayer** i bottenpanelen visar
-nyckeln (spår, mönster, SYNC, bitfas, kopiorna), bootet och vad det gör, var kontrollen finns och bootets text.
+nyckeln (spår, mönster, SYNC, bitfas, kopiorna), bootet och vad det gör, var kontrollen finns, bootets text och
+filerna utanför katalogen: en rad per fil med första sektorn, block, var den laddar, storlek, namn och vad som läser
+den. En rad öppnar filen som en PRG på laddadressen, avkodad, och + lägger till den i projektet; byte efter `$FFFF`
+lämnas utanför. Analysen känner igen laddaren i spelets första fil (8.11c), och källans huvud beskriver hur den anropas
+(kommandot i A, spåret i Y, sektorn i X).
 
 Bootet körs i Sindri med G64:an i driven, nyckelspår och allt (13.5, 8.11b): Arctic Fox, Chuck Yeager's Advanced
 Flight Trainer, Demon Stalkers och Ferrari Formula One packas upp till spelet; Dan Dares avbild är skadad (också i

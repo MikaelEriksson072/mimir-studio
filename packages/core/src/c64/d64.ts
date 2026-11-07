@@ -134,6 +134,64 @@ function fileChain(u8: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'>
   return chain;
 }
 
+/** A sector chain no directory entry starts: its sectors in order, and the second byte of the last one. */
+export interface LooseChain {
+  track: number; sector: number;
+  sectors: { track: number; sector: number }[];
+  /** the last sector's second byte: DOS has the index of its last byte there, some loaders (EA's) the number of bytes */
+  last: number;
+}
+
+/**
+ * The sector chains on a disk that the directory does not list: a loader's own files, or a scratched file's sectors.
+ * A chain starts at a sector no other sector links to, and every sector on it reads (a G64's error byte), is off the
+ * directory track and in no listed file, and links on to another such sector or ends it (track 0). In disk order.
+ */
+export function looseChains(image: Uint8Array): LooseChain[] {
+  const u8 = diskSectors(image);
+  const { tracks, errorInfo } = sizeInfo(u8);
+  let total = 0;
+  for (let t = 1; t <= tracks; t++) total += sectorsOnTrack(t);
+  const index = (t: number, s: number) => sectorOffset(t, s, tracks) >> 8;
+  const taken = new Uint8Array(total);
+  for (let s = 0; s < sectorsOnTrack(DIR_TRACK); s++) taken[index(DIR_TRACK, s)] = 1;
+  for (const f of parseD64(image).files) {
+    let t = f.track, s = f.sector;
+    for (let n = 0; t && n < total; n++) {
+      if (t > tracks || s >= sectorsOnTrack(t) || taken[index(t, s)] === 2) break;
+      taken[index(t, s)] = 2;
+      const o = sectorOffset(t, s, tracks);
+      [t, s] = [u8[o], u8[o + 1]];
+    }
+  }
+  // a sector that reads and is no one else's; its link: the next sector's index, -1 at the end, -2 when it is not one
+  const free = (t: number, s: number) => !taken[index(t, s)] && (!errorInfo || u8[total * 256 + index(t, s)] <= 1);
+  const next = new Int32Array(total).fill(-2), into = new Uint8Array(total), where: [number, number][] = [];
+  for (let t = 1; t <= tracks; t++) for (let s = 0; s < sectorsOnTrack(t); s++) {
+    where.push([t, s]);
+    if (!free(t, s)) continue;
+    const o = sectorOffset(t, s, tracks), nt = u8[o], ns = u8[o + 1];
+    if (nt === 0) { if (ns >= 1) next[index(t, s)] = -1; }
+    else if (nt <= tracks && ns < sectorsOnTrack(nt) && free(nt, ns)) { next[index(t, s)] = index(nt, ns); into[index(nt, ns)]++; }
+  }
+  const out: LooseChain[] = [];
+  for (let i = 0; i < total; i++) {
+    if (next[i] === -2 || into[i]) continue;
+    const sectors: { track: number; sector: number }[] = [];
+    const seen = new Set<number>();
+    let j = i;
+    for (;;) {
+      seen.add(j);
+      sectors.push({ track: where[j][0], sector: where[j][1] });
+      if (next[j] < 0 || seen.has(next[j])) break;
+      j = next[j];
+    }
+    if (next[j] !== -1) continue; // it runs into a sector that is not one, or back on itself
+    out.push({ track: where[i][0], sector: where[i][1], sectors, last: u8[(j << 8) + 1] });
+  }
+  return out;
+}
+
 /** The bytes of a file (for a PRG, its load address first), following its sector chain. */
 export function readD64File(image: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'>): Uint8Array {
   const u8 = diskSectors(image);

@@ -2,8 +2,8 @@
  * disk's files, the BoozeLoader script, Pirate Slayer on the mounted disk, the tape in the datasette, statistics,
  * build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
-  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
 import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -261,10 +261,12 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
 }
 
 /** The Pirate Slayer tab (spec 13.5h): Electronic Arts' copy protection on the mounted disk: its key track (on a G64:
- *  where, how framed, each copy a turn), the boot and what it does, where the drive's check is, and the boot's text. */
-export function PirateSlayerPanel({ disk }: { disk: MountedDisk }) {
+ *  where, how framed, each copy a turn), the boot and what it does, where the drive's check is, the boot's text, and
+ *  the files outside the directory, a row each: a row opens the file as a PRG at its load address, decoded; + adds it. */
+export function PirateSlayerPanel({ disk, onOpenFile }: { disk: MountedDisk; onOpenFile: (f: PirateSlayerFile, add: boolean) => void }) {
   const p = disk.pirateslayer!;
   const hex = (v: number) => v.toString(16).toUpperCase().padStart(2, '0');
+  const keys = [...new Set(p.files.filter(f => f.key).map(f => `$${hex(f.key)}`))];
   return (
     <div className="xref spindle">
       <div className="xref-head spindle-head">
@@ -289,6 +291,27 @@ export function PirateSlayerPanel({ disk }: { disk: MountedDisk }) {
         {p.text && <p><b>Its text:</b> <span className="mono">{p.text}</span></p>}
         {p.keys.length > 0 && <p className="muted">The key track has no SYNC: the drive frames its bytes wherever its bit counter is, and that moves on with every turn of a real disk, so the check reads for a turn where they line up ({PIRATESLAYER_SIGNATURE.map(hex).join(' ')} last). Sindri's drive slips a bit each turn on such a track to do the same.</p>}
       </div>
+      {p.files.length > 0 && <>
+        <div className="xref-head spindle-head">
+          <span>Files outside the directory: {p.files.length} <span className="muted">· sector chains EA&apos;s loader reads by track and sector, the load address first{keys.length ? `; stored XOR ${keys.join(' and ')} on the disk, which the loader's transfer undoes: they open decoded` : ''}; the names are made up of the first sector and the load address</span></span>
+        </div>
+        <table className="tbl ps-files" aria-label="Pirate Slayer files"><thead><tr><th>From</th><th>Blocks</th><th>Loads</th><th>Bytes</th><th>Name</th><th>Notes</th><th /></tr></thead><tbody>
+          {p.files.map(f => {
+            const name = pirateSlayerFileName(f), past = f.load + f.bytes.length - f.end;
+            return (
+              <tr key={`${f.track}/${f.sector}`} title={`Open ${name} as a PRG at $${h4(f.load)}${f.key ? `, decoded (XOR $${hex(f.key)})` : ''}`} onClick={() => onOpenFile(f, false)}>
+                <td className="mono">{f.track}/{f.sector}</td>
+                <td className="mono">{f.blocks}</td>
+                <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
+                <td className="mono">{f.bytes.length}</td>
+                <td className="mono">{name}</td>
+                <td className="muted">{[f.note, f.key ? `XOR $${hex(f.key)}` : '', past > 0 ? `the ${past} bytes past $FFFF are left out` : ''].filter(Boolean).join(' · ')}</td>
+                <td><button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(f, true); }}><Icon name="plus" size={13} /></button></td>
+              </tr>
+            );
+          })}
+        </tbody></table>
+      </>}
     </div>
   );
 }
