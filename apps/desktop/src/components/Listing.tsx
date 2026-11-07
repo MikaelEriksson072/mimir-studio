@@ -15,11 +15,15 @@ import { gfxHead, gfxItemAt, gfxSize } from '../lib/gfxlines';
 
 const TOKEN_CLASS: Record<Token['t'], string> = { lbl: 'syn-label', hw: 'syn-hw', kw: 'syn-kw', num: 'syn-num', str: 'syn-str', dir: 'syn-dir', def: 'syn-label', p: 'syn-p' };
 
+/** a click on a reference goes there; with Shift it only ends the selection the line's mousedown has already
+ *  extended, so a Shift+click that lands on a label never jumps away */
+const follow = (e: ReactMouseEvent, t: Token, onToken: (t: Token) => void) => { e.stopPropagation(); if (!e.shiftKey) onToken(t); };
+
 function Tok({ t, onToken }: { t: Token; onToken: (t: Token) => void }) {
   const cls = TOKEN_CLASS[t.t] || '';
   // a raw hardware address (hwInclude "none") keeps its register for the tooltip
   if ((t.t === 'lbl' || t.t === 'hw' || t.t === 'kw' || (t.t === 'num' && t.sym)) && t.to != null) {
-    return <span className={cx(cls, 'link')} title={t.sym ? `${t.sym.name} — ${t.sym.desc}` : `Go to $${h4(t.to)}`} onClick={e => { e.stopPropagation(); onToken(t); }}>{t.s}</span>;
+    return <span className={cx(cls, 'link')} title={t.sym ? `${t.sym.name} — ${t.sym.desc}` : `Go to $${h4(t.to)}`} onClick={e => follow(e, t, onToken)}>{t.s}</span>;
   }
   // a PETSCII control code by name in a text (PET_CLR): what it does and its byte
   return <span className={cls} title={t.sym ? `${t.sym.name} — ${t.sym.desc}` : undefined}>{t.s}</span>;
@@ -44,7 +48,7 @@ function Toks({ tok, onToken }: { tok: Token[]; onToken: (t: Token) => void }) {
       if (off == null) continue;
       // in the label's bank (spec 13.9b): only the address in it wraps
       const to = t.to - (t.to & 0xffff) + ((t.to + off) & 0xffff);
-      out.push(<span key={`${i}+`} className="link offset" title={`Go to $${h4(to)} (${t.s}+${n.s})`} onClick={e => { e.stopPropagation(); onToken({ t: 'num', s: n.s, to }); }}><span className="syn-p">+</span><span className="syn-num">{n.s}</span></span>);
+      out.push(<span key={`${i}+`} className="link offset" title={`Go to $${h4(to)} (${t.s}+${n.s})`} onClick={e => follow(e, { t: 'num', s: n.s, to }, onToken)}><span className="syn-p">+</span><span className="syn-num">{n.s}</span></span>);
       i += 2;
     }
   }
