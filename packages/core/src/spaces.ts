@@ -167,7 +167,7 @@ function mergeAnalyses(project: ProjectInput, parts: Split[], results: AnalysisR
     smc: new Map(), offsetOf: new Map(), lohiTabs: new Map(), ijumps: [], inlineCalls: new Set(), log: [], textPtrs: new Map(),
     stats: { ...base0.stats, mn: {}, modes: {}, illegal: 0, illegalList: [], ins: 0, bytesByType: {}, codeBytes: 0, total: 0, xrefs: 0, entries: 0, labels: 0, ms: 0 },
     mcfg: base0.mcfg ? { port, vic, changes: new Map(), forcedPort, forcedVic, cart: base0.mcfg.cart } : null,
-    loaders: [], raster: [], delays: [], spindle: [], deep: null, relocs: [], copies: [], spaces: [], parts: results,
+    loaders: [], raster: [], delays: [], spindle: [], booze: null, deep: null, relocs: [], copies: [], spaces: [], parts: results,
   };
   const sum = (to: Record<string, number>, from: Record<string, number>) => { for (const [k, v] of Object.entries(from)) to[k] = (to[k] ?? 0) + v; };
   results.forEach((A, i) => {
@@ -468,7 +468,7 @@ export function spaceView(A: AnalysisResult, space: number): AnalysisResult {
     loaders: A.loaders.filter(f => f.parts.some(x => mine(x.start))).map(f => ({ ...f, parts: f.parts.filter(x => mine(x.start)).map(x => ({ ...x, start: l(x.start), end: l(x.start) + (x.end - x.start) })) })),
     raster: A.raster.filter(r => mine(r.handler)).map(r => ({ ...r, handler: l(r.handler), setAt: r.setAt == null ? null : l(r.setAt), installedAt: r.installedAt == null ? null : l(r.installedAt), from: r.from == null ? null : l(r.from), d011: r.d011 && { ...r.d011, at: l(r.d011.at) } })),
     delays: A.delays.filter(d => mine(d.branch)).map(d => ({ ...d, branch: l(d.branch), by: l(d.by), read: l(d.read), start: l(d.start), end: l(d.start) + (d.end - d.start), ins: d.ins.map(l) })),
-    spindle: [], relocs: A.relocs.filter(r => mine(r.start)).map(r => ({ ...r, start: l(r.start), end: l(r.start) + (r.end - r.start), to: l(r.to) })),
+    spindle: [], booze: null, relocs: A.relocs.filter(r => mine(r.start)).map(r => ({ ...r, start: l(r.start), end: l(r.start) + (r.end - r.start), to: l(r.to) })),
     copies: A.copies.filter(c => mine(c.start)).map(c => ({ ...c, start: l(c.start), end: l(c.start) + (c.end - c.start), to: l(c.to), loop: l(c.loop), at: l(c.at), jump: l(c.jump) })), spaces: undefined, parts: undefined,
   };
 }

@@ -2,7 +2,8 @@
  *
  * Spindle, Krill's loader, Bitfire, Sparkle and the Covert Bitops loader are known by their own receive loops, install
  * commands and texts; the byte patterns come from their sources (Spindle 3.1 stage1.s, Krill's loader v194
- * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops loader v3 loader.s). The Action
+ * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops loader v3 loader.s); BoozeLoader's
+ * (HCL) come from Booze Design's demos, 2008 to 2025, as its source is not public. The Action
  * Replay's loaders (Datel) come from its ROMs (5.1, 7.2 and 7.5 keep the same code in other places; 7.2's turbo tape differs), the backups and loader files
  * they saved in VICE, and the MK4's loader file; Novaload is in the 7.2, whose Nova transfer reads such tapes with
  * Novaload's own code. The Super Snapshot's (LMS) come from the V5's ROM and what it ran and saved in VICE: its turbo
@@ -80,6 +81,21 @@ const KNOWN: Known[] = [
       { pat: pat('2D 00 DD 8D 00 DD 09 00|01 9D .. .. 50'), role: 'resident', what: 'receive loop (and $dd00 / sta $dd00 / sta buffer,x)' },
     ],
     text: 'SPARKLE',
+  },
+  {
+    // HCL's loader for Booze Design (2008 on, also Hitmen, Genesis Project): read from the demos' own code, as the
+    // source is not public; the drive code is never in the C64's memory (the drive reads it from track 18)
+    id: 'boozeloader', name: 'BoozeLoader (HCL/Booze Design)',
+    how: '2-bit + ATN, the C64 writing ATN to $dd00 as the clock (the VIC bank set through $dd02); a file is asked for by its number (or its track and sector) and unpacked with ByteBoozer while it loads; the drive reads its own code from 18/18, 18/15 and 18/12',
+    signs: [
+      { pat: pat('88 A2 08 AD 00 DD 8E 00 DD 4A 4A C8 EA A2 00 4D 00 DD 8E 00 DD 4A 4A'), role: 'resident', what: 'receive loop (lda $dd00 / stx $dd00 … eor $dd00 / stx $dd00: ATN clocks each bit pair)' },
+      { pat: pat('A9 C0 2D 00 DD 8D 00 DD 09 00 99'), role: 'resident', what: 'receive loop, its fourth read (and $dd00 / sta $dd00 / ora / sta buffer,y)' },
+      { pat: pat('A0 00 90 02 A0 10 A9 08 8D 00 DD 2C 00 DD 10 FB 8C 00 DD 60'), role: 'resident', what: 'sends a bit of the file number (CLK, ATN as the strobe)' },
+      // the packers' tables are in other decrunchers too: they count with the loader's own code
+      { pat: pat('DF FB 00 80 EF FD 80 F0'), role: 'resident', what: 'ByteBoozer 2 offset table: the files are unpacked while they load', weak: true },
+      { pat: pat('04 02 02 02 05 02 02 03'), role: 'resident', what: 'ByteBoozer 1 offset table: the files are unpacked while they load', weak: true },
+      { pat: pat('4D 2D 45 0B 02 12 12 12 0F 12 0C A2 05 BD 05 02 95 06'), role: 'command', what: 'drive command M-E $020b: its own bytes have the DOS read the drive code from 18/18, 18/15 and 18/12 and start it' },
+    ],
   },
   {
     id: 'covert', name: 'Covert Bitops loader (Cadaver)', how: '2-bit, the C64 reads $dd00 four times per byte (lsr / lsr / eor $dd00)',

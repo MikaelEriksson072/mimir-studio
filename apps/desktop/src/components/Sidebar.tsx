@@ -37,6 +37,7 @@ interface SidebarProps {
   onShowSpindle: () => void;
   /** open the Bitfire script tab (a Bitfire disk's files) */
   onShowBitfire: () => void;
+  onShowBooze: () => void;
   /** per file: packed (or maybe packed), else null */
   packing: (PackingInfo | null)[];
   /** open a file from the mounted disk (`add`: add it to the project) */
@@ -74,7 +75,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -107,7 +108,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot or a D64. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} />}
+        {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
         <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
@@ -376,7 +377,7 @@ const bankAdr = (A: Pick<AnalysisResult, 'spaces'>, a: Addr): string => {
 };
 
 /** The mounted .d64, listed the way the 1541 lists it. A PRG opens with a click; + adds it to the project. */
-function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire }: { disk: MountedDisk; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void }) {
+function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze }: { disk: MountedDisk; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void }) {
   const { img } = disk;
   return (
     <SideSection id="disk" title="Disk" summary={`"${img.name}"`} actions={<button className="icon-btn" title={`Eject ${disk.name}`} aria-label="Eject disk" onClick={onEject}><Icon name="eject" size={14} /></button>}>
@@ -406,6 +407,12 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
         <div className="disk-spindle">
           <span><b>Bitfire disk:</b> {disk.bitfire.files.length} file{disk.bitfire.files.length === 1 ? '' : 's'} the loader reads, not in the directory</span>
           <button className="btn small" onClick={onShowBitfire}>Bitfire script</button>
+        </div>
+      )}
+      {disk.booze && (
+        <div className="disk-spindle">
+          <span><b>BoozeLoader disk:</b> {disk.booze.files.length} file{disk.booze.files.length === 1 ? '' : 's'} the loader reads, not in the directory</span>
+          <button className="btn small" onClick={onShowBooze}>Booze script</button>
         </div>
       )}
       <div className="side-hint">{img.freeBlocks} blocks free{img.tracks !== 35 ? ` · ${img.tracks} tracks` : ''} · in drive 8 on Build &amp; Run</div>

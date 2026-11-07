@@ -29,6 +29,7 @@ export {
 } from './c64/crt';
 export { d64FileName, makeD64, parseD64, petsciiName, readD64File, sectorsOnTrack, type D64File, type D64FileType, type D64Image } from './c64/d64';
 export { readSpindleDisk, spinChunkName, spinScript, type SpindleChunk, type SpindleDisk, type SpindleJob } from './c64/spindle-disk';
+export { BOOZE_CRUNCHER, boozeFileList, boozeFileName, readBoozeDisk, unpackByteBoozer1, unpackByteBoozer2, type BoozeCruncher, type BoozeDisk, type BoozeFile, type BoozeUnpacked } from './c64/booze-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
 export { sidPlayer, musicPlayData, type SidPlayer, type SidPlayerOptions, type MusicPlayData } from './c64/sidplayer';
@@ -40,6 +41,7 @@ export { goneCounts, isFault, isProblem } from './analyze/deep';
 // a cartridge's banks analysed, rendered and verified as spaces of their own (13.9b); one space goes to the engine as it is
 export { analyze, bankAddr, fileSpaces, type SpaceCache, render, SPACE, spaceAddr, spaceFiles, spaceLines, spaceOf, spaceRender, spaceView, splitProject, verify } from './spaces';
 export { spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript } from './analyze/spindle';
+export { boozeLine, boozeScript } from './analyze/booze';
 export { validLabel, type RenderOptions } from './render/kick';
 export { applyZpPairs, zpPairable } from './zp-pairs';
 export { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';

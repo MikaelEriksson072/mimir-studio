@@ -15,6 +15,7 @@ import { ALL_BANKS, ALL_PORTS, areaAt, bankRange, banked, banksOf, describePorts
 import { makePsid } from '../c64/psid';
 import { findBlock } from '../analyze/classify';
 import { spindleCondition, spindleName, spindleScript } from '../analyze/spindle';
+import { boozeScript } from '../analyze/booze';
 import { h4 } from '../util/hex';
 import { kickMnemonic, lineText } from './lines';
 import { hardwareInclude } from './include';
@@ -114,6 +115,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     markAt(loaderStarts, d.start, `==== Spindle part ${d.part}: ${d.first ? 'the early setup and the first driver' : d.extend ? 'a driver that goes on with it' : 'its driver'} (script line "${spindleName(d)} ${spindleCondition(d.condition)}") ====`);
     if (d.side != null && d.side !== d.start) markAt(loaderStarts, d.side, `==== Spindle part ${d.part}: a seek or the next disk side comes in here ====`);
     if (d.front !== d.start) markAt(loaderStarts, d.front, `==== Spindle part ${d.part}: the part before jumps in here ====`);
+  }
+  // BoozeLoader's script (5.15b): where each stretch of code that calls the loader starts
+  for (const r of A.booze?.runs ?? []) {
+    const n = A.booze!.steps.filter(s => s.kind === 'load' && s.jsr >= r.start && s.jsr < r.end).length;
+    markAt(loaderStarts, r.start, `==== BoozeLoader script: ${n} load${n === 1 ? '' : 's'} from here to ${n4(r.end - 1)}${r.traced ? '' : ' (not traced)'} ====`);
   }
   // the user's patches that are on (10.2): where each starts and where it ends
   for (const p of (project.patches ?? []).filter(x => !x.off)) {
@@ -682,6 +688,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     if (A.spindle?.length && fileOf(A.spindle[0].start) === fi) {
       head.push({ k: 'cmt', a: f.load, text: 'Spindle effect drivers found by Mimir Studio (the ==== lines mark them), as the script they were built from:', mark: true });
       for (const t of spindleScript(A.spindle)) head.push({ k: 'cmt', a: f.load, text: t && `  ${t}`, mark: true });
+    }
+    // BoozeLoader's script (5.15b), in the file with its first stretch of code
+    if (A.booze?.runs.length && fileOf(A.booze.runs[0].start) === fi) {
+      head.push({ k: 'cmt', a: f.load, text: 'BoozeLoader script found by Mimir Studio (the ==== lines mark its stretches of code), as its loads and calls:', mark: true });
+      for (const t of boozeScript(A.booze).slice(2)) head.push({ k: 'cmt', a: f.load, text: t && `  ${t}`, mark: true });
     }
     // the relocated blocks of this file (8.1b)
     const fileRelocs = relocs.filter(r => r.file === fi);

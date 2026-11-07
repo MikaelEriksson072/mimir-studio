@@ -478,6 +478,34 @@ export interface BasicInfo {
  */
 export interface DelaySled { branch: Addr; by: Addr; read: Addr; timer: Addr; start: Addr; end: Addr; enter: number; most: number; cycles: [number, number]; ins: Addr[] }
 
+/**
+ * A line of a BoozeLoader script (5.15b): a call of the loader, or of another routine, in the code that calls the
+ * loader. BoozeLoader has no script file: the demo's own code calls it (`lda #file / jsr $0200`) and its parts in turn.
+ */
+export interface BoozeStep {
+  /** where its code starts (the first `lda`/`ldx`/`ldy #` that sets it up) and its `jsr` (or the `jmp` of a tail call) */
+  at: Addr; jsr: Addr;
+  /** load: a file; side: wait for a disk side ($80 + its character); call: another routine */
+  kind: 'load' | 'side' | 'call';
+  /** load: the file number (null: the code sets A otherwise); on a disk without a table, track and sector instead,
+   *  and `mode` what the loader does (0 load and unpack, 1 load as it is, 2 unpack what is in memory at X/Y) */
+  file?: number | null; track?: number | null; sector?: number | null; mode?: number;
+  /** side: the side it waits for */
+  side?: number;
+  /** call: the routine, and A, X and Y as the code right before sets them (null: not set there) */
+  to?: Addr; a?: number | null; x?: number | null; y?: number | null;
+}
+/** BoozeLoader's calls in the program (5.15b), the script its code is. */
+export interface BoozeScript {
+  /** the loader's entry; `byTrack`: it takes a track and sector, not a file number (its oldest version) */
+  loader: Addr; byTrack: boolean;
+  /** the stretches of code that call it, each from its start to its rts or jmp; `traced`: the analysis traced it (else
+   *  it was read from bytes it did not trace: copied elsewhere before it runs, or not reached) */
+  runs: { start: Addr; end: Addr; traced: boolean }[];
+  /** the loads, sides and other calls in those stretches, in address order */
+  steps: BoozeStep[];
+}
+
 /** What ends a Spindle part: the condition column of Pefchain's script (`space`, `-`, `stay`, `addr = value`, `@`). */
 export type SpindleCondition =
   | { kind: 'space' } | { kind: 'drop' } | { kind: 'stay' }
@@ -677,6 +705,8 @@ export interface AnalysisResult {
   delays: DelaySled[];
   /** Spindle's effect drivers (5.4c), in the order the parts run */
   spindle: SpindleDriver[];
+  /** BoozeLoader's calls, the script its code is (5.15b); null without BoozeLoader */
+  booze: BoozeScript | null;
   /** what the deep analysis did (`Settings.deepAnalysis`); null without it */
   deep: DeepReport | null;
   /** the relocated blocks (`Project.relocs`) the analysis placed where they run, in the order placed: a block whose
@@ -712,7 +742,7 @@ export interface SpaceInfo {
   entry: Addr | null;
 }
 
-export type LoaderId = 'spindle' | 'krill' | 'bitfire' | 'sparkle' | 'covert' | 'ar-fastload' | 'ar-warp' | 'ar-tape' | 'ar-turbotape' | 'novaload' | 'ss-turbo' | 'ss-copier' | 'freezer-split' | 'fastloader' | 'tape' | 'kernal';
+export type LoaderId = 'spindle' | 'krill' | 'bitfire' | 'sparkle' | 'boozeloader' | 'covert' | 'ar-fastload' | 'ar-warp' | 'ar-tape' | 'ar-turbotape' | 'novaload' | 'ss-turbo' | 'ss-copier' | 'freezer-split' | 'fastloader' | 'tape' | 'kernal';
 /** part of a loader: the code on the C64 that receives the data (resident), the code that runs in the drive, the drive
  *  commands that upload and start it, the code that sends them, a tape loader's code, a KERNAL LOAD call, or its name */
 export interface LoaderPart {

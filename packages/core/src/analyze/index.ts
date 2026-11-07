@@ -22,6 +22,7 @@ import { rasterIrqs } from './raster';
 import { deepLog, faultCount, learn, problemCount } from './deep';
 import { findDelays } from './delay';
 import { findSpindle } from './spindle';
+import { findBoozeScript } from './booze';
 import { findCopies } from './copies';
 import { textUnderCode } from './strings';
 
@@ -129,6 +130,7 @@ function analyzeOnce(project: ProjectInput, deepIn: Deep | null, text: ReadonlyS
   ioLabelNotice(ctx, labels); // 5.13: I/O named as RAM because bank tracking is off
   const copies = findCopies(ctx); // 8.1b
   const loaders = findLoaders(ctx, cls.blocks); // 5.15
+  const booze = findBoozeScript(ctx, loaders); // 5.15b
   const raster = rasterIrqs(ctx); // 5.16
   const stats = statistics(ctx, cls.tm, cls.blocks, labels, t0); // 5.14
 
@@ -138,6 +140,6 @@ function analyzeOnce(project: ProjectInput, deepIn: Deep | null, text: ReadonlyS
   return [{
     S, files, mem, owner, insLen, codeOwner, skip, xrefs, entryKind, entry, basics, music: cls.music, vic, gfx: cls.gfxBlocks,
     tm: cls.tm, blocks: cls.blocks, labels, zp, hints, smc, offsetOf: cls.offsetOf, lohiTabs, ijumps, inlineCalls, log, stats, textPtrs, mcfg, loaders, raster,
-    delays: [...ctx.delays.values()].sort((x, y) => x.branch - y.branch), spindle: ctx.spindle, deep: null, relocs, copies,
+    delays: [...ctx.delays.values()].sort((x, y) => x.branch - y.branch), spindle: ctx.spindle, booze, deep: null, relocs, copies,
   }, ctx];
 }

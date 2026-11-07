@@ -543,6 +543,17 @@ the reference as a patch in `test/helpers/reference.ts`):
     unpacks more of its files. Checked against the reference archive: of 276 419 disks, 1 476 are Bitfire disks; the
     files of the 1.x ones unpack, and on the 916 0.x ones 23 466 of 24 836 files do (the rest are not packed, or a few
     copy from memory before them).
+30. BoozeLoader (spec 8.11c, 13.5d) is new: HCL's loader for Booze Design (2008-2025, also Hitmen and Genesis Project)
+    is a known loader by its receive loop, the way it sends a bit and its M-E (its drive code is never in the C64's
+    memory: the drive reads it from 18/18, 18/15 and 18/12). `readBoozeDisk` reads a disk's file table (18/9, 18/6 on
+    Edge of Disgrace; none on its oldest disks, whose files are found as the chains the BAM holds) and unpacks the files
+    with ByteBoozer 1 (`unpackByteBoozer1`) or 2 (`unpackByteBoozer2`), read from the loader's decrunchers in the demos
+    as the source is not public. `findBoozeScript` reads the script, which is the program's own code: the loads, disk
+    sides and calls of the stretches of code that call the loader, traced or (often, as the script is copied before it
+    runs) in bytes not traced. The Booze script tab lists both. Checked against the reference archive: of
+    276 414 disks, 379 are BoozeLoader disks (57 different), and 1 267 of their 1 281 files unpack; on Codeboys &
+    Endians side 1 the files Sindri loaded land where the reader says. Of 865 boot programs (CSDB Top500 and Booze
+    Design) 30 loader findings changed, all from an unknown fast loader to BoozeLoader, and 26 of those get a script.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

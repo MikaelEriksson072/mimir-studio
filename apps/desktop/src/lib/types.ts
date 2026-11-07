@@ -1,10 +1,10 @@
-import type { Addr, BitfireDisk, D64Image, KickProblem, ListingLine, LogLevel, ProblemCode, SpindleDisk, VerifyResult } from '@mimir/core';
+import type { Addr, BitfireDisk, BoozeDisk, D64Image, KickProblem, ListingLine, LogLevel, ProblemCode, SpindleDisk, VerifyResult } from '@mimir/core';
 import type { IconName } from './icon-paths';
 
 /** The mounted .d64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build & Run;
  *  `spindle`: its jobs, when it is a Spindle 3 disk (the Spindle script tab lists them); `bitfire`: its files, when it
  *  is a Bitfire disk (the Bitfire script tab lists them) */
-export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null }
+export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null }
 
 /** Selection in the listing/heatmap; `multi` = an explicit range (shift-click, drag, block header, Go to range).
  * `anchor`..`anchorEnd` is the line or block picked first; extending the selection always keeps it whole.

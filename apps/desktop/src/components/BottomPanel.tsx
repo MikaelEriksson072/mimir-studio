@@ -1,8 +1,8 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
- * disk's files, statistics, build output. */
+ * disk's files, the BoozeLoader script, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
-  type Addr, type AnalysisResult, type BitfireFile, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
 import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -259,6 +259,92 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
   );
 }
 
+/** The Booze script tab (spec 13.5d): a mounted BoozeLoader disk's own files, a row each by number (a row opens the file
+ *  as a PRG, unpacked when it is packed, + adds it), and BoozeLoader's script in the program (5.15b): the loads, sides
+ *  and calls of the code that calls the loader, each load with what its file unpacks to on the mounted disk. */
+export function BoozePanel({ A, disk, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+  if (!disk?.booze && !A.booze?.steps.length) return <div className="empty">No BoozeLoader script: a BoozeLoader disk keeps its files in a table of its own, and a program with BoozeLoader calls it with each file's number.</div>;
+  return (
+    <>
+      {disk?.booze && <BoozeDiskSection disk={disk} onCopy={onCopy} onOpenFile={onOpenFile} />}
+      {!!A.booze?.steps.length && <BoozeScriptSection A={A} disk={disk} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
+    </>
+  );
+}
+
+/** A BoozeLoader disk's files (spec 13.5d), a row each. */
+function BoozeDiskSection({ disk, onCopy, onOpenFile }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+  const d = disk.booze!;
+  const unpacked = d.files.filter(f => f.unpacked).length, n = d.files.length;
+  const what = [d.side != null && `side ${d.side}`, d.cruncher && `packed with ${BOOZE_CRUNCHER[d.cruncher]}`, !d.driveCode && 'no drive code on this side'].filter(Boolean).join(', ');
+  const notes = (f: BoozeFile) => [
+    f.unpacked ? `packed with ${BOOZE_CRUNCHER[d.cruncher!]}` : f.long ? `${f.bytes.length} bytes, more than memory holds: the program takes it in pieces` : 'not packed',
+    `from ${f.track}/${f.sector}, ${f.sectors} sector${f.sectors === 1 ? '' : 's'}`,
+  ].join(' · ');
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>Files of {disk.name} (BoozeLoader{what ? `, ${what}` : ''}): {n} file{n === 1 ? '' : 's'}{unpacked ? `, ${unpacked} unpacked` : ''} <span className="muted">· {d.table != null ? `the program loads a file by its number, which the table in 18/${d.table} gives the first sector of` : 'the program loads a file by its track and sector (the disk has no table)'}; the file names are not on the disk</span></span>
+        <button className="btn small" onClick={() => onCopy(boozeFileList(d, disk.name).join('\n'), 'Copied the file list')}><Icon name="copy" size={14} />Copy list</button>
+      </div>
+      <table className="tbl" aria-label="BoozeLoader files"><thead><tr><th>File</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>Name</th><th>Notes</th><th /></tr></thead><tbody>
+        {d.files.map(f => {
+          const name = boozeFileName(f), u = f.unpacked;
+          return (
+            <tr key={`${f.track}/${f.sector}`} title={u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
+              <td className="mono">{f.n != null ? `$${h2(f.n)}` : `${f.track}/${f.sector}`}</td>
+              <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
+              <td className="mono">{u ? `$${h4(u.start)}–$${h4(u.end - 1)}` : <span className="muted">—</span>}</td>
+              <td className="mono">{u ? `${f.bytes.length} → ${u.end - u.start}` : f.bytes.length}</td>
+              <td className="mono">{name}</td>
+              <td className="muted">{notes(f)}</td>
+              <td><button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(f, true); }}><Icon name="plus" size={13} /></button></td>
+            </tr>
+          );
+        })}
+      </tbody></table>
+    </div>
+  );
+}
+
+/** BoozeLoader's script in the program (5.15b), a row per load, side and call; a row goes to its code, and a load's file
+ *  on the mounted disk (of the side the script is on) opens from its row's button. */
+function BoozeScriptSection({ A, disk, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+  const S = A.booze!, d = disk?.booze ?? null;
+  const loads = S.steps.filter(s => s.kind === 'load').length;
+  /** a load's file on the mounted disk, when the script is on its side (or either side is not known) */
+  const fileOf = (s: BoozeStep, side: number | null) => {
+    if (!d || s.kind !== 'load' || (side != null && d.side != null && side !== d.side)) return null;
+    return d.files.find(f => (S.byTrack ? f.track === s.track && f.sector === s.sector : f.n != null && f.n === s.file)) ?? null;
+  };
+  let side: number | null = null;
+  const rows = S.steps.map(s => { if (s.kind === 'side') side = s.side ?? null; return { s, f: fileOf(s, side), side }; });
+  const text = () => boozeScript(S, (s, sd) => { const f = fileOf(s, sd), u = f?.unpacked; return f ? `${boozeFileName(f)}${u ? `, unpacks to $${h4(u.start)}-$${h4(u.end - 1)}` : ''}` : null; });
+  const runOf = (s: BoozeStep) => S.runs.find(r => s.jsr >= r.start && s.jsr < r.end);
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>BoozeLoader script: {loads} load{loads === 1 ? '' : 's'} from the code that calls the loader at ${h4(S.loader)} <span className="muted">· BoozeLoader has no script file: the program's code is the script ({S.byTrack ? 'ldy #sector / ldx #track / lda #0 / jsr' : 'lda #file / jsr'} loads, the calls between run the parts){S.runs.some(r => !r.traced) ? '; code not traced is read from its bytes' : ''}{d ? `; what a file unpacks to is from ${disk!.name}` : '; mount the disk to see what each file unpacks to'}</span></span>
+        <button className="btn small" onClick={() => onCopy(text().join('\n'), 'Copied the BoozeLoader script')}><Icon name="copy" size={14} />Copy script</button>
+      </div>
+      <table className="tbl" aria-label="BoozeLoader script"><thead><tr><th>At</th><th>Script line</th><th>File on the disk</th><th>Notes</th></tr></thead><tbody>
+        {rows.map(({ s, f }, i) => {
+          const u = f?.unpacked, r = runOf(s), first = i === 0 || runOf(rows[i - 1].s) !== r;
+          return (
+            <tr key={s.jsr} className={cx(first && i > 0 && 'job-first')} title={`Go to $${h4(s.at)}`} onClick={() => onNavigate(s.at)}>
+              <td className="mono">${h4(s.at)}</td>
+              <td className="mono script-line"><span className={s.kind === 'call' ? undefined : 'syn-label'}>{boozeLine(s)}</span></td>
+              <td className="mono">{f ? <>{boozeFileName(f)}{u && <span className="muted"> → ${h4(u.start)}–${h4(u.end - 1)}</span>}
+                <button className="icon-btn" title={`Open ${boozeFileName(f)}`} aria-label={`Open ${boozeFileName(f)}`} onClick={e => { e.stopPropagation(); onOpenFile(f, false); }}><Icon name="folder" size={13} /></button></> : <span className="muted">—</span>}</td>
+              <td className="muted">{first && r && !r.traced ? 'not traced: copied elsewhere before it runs, or not reached' : ''}</td>
+            </tr>
+          );
+        })}
+      </tbody></table>
+    </div>
+  );
+}
+
 /** Spindle's effect drivers (spec 8.11f), a row per line of the script they were built from; a row goes to its driver. */
 function DriversSection({ A, R, onNavigate, onCopy }: { A: AnalysisResult; R: RenderResult; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void }) {
   const D = A.spindle;
@@ -375,4 +461,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['stats', 'Statistics'], ['build', 'Build output']];

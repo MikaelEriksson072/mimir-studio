@@ -4704,6 +4704,76 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
   });
 });
 
+test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, and the script of the program that loads them', async ({ app, page }) => {
+  // fixtures/d64/booze-demo.d64 (packages/core/test/booze-disk.test.ts): a boot program whose code loads files 0-2 by
+  // number, the raster demo packed with ByteBoozer 2, a table that is not packed, and a file packed in place
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/booze-demo.d64')] });
+  await fromFileMenu(page, 'Mount D64 disk image…');
+  await expect(toast(page, 'Mounted booze-demo.d64: "BOOZE DEMO", 1 file, a BoozeLoader disk with 3 files of its own')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText('BoozeLoader disk: 3 files the loader reads, not in the directory');
+  const files = page.getByRole('table', { name: 'BoozeLoader files' }), script = page.getByRole('table', { name: 'BoozeLoader script' });
+
+  await test.step('the Explorer opens the tab, a row per file by its number', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Booze script' }).click();
+    await expect(page.getByRole('tab', { name: /Booze script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /Booze script/ })).toContainText('3');
+    await expect(page.locator('.spindle-head').first()).toContainText('Files of booze-demo.d64 (BoozeLoader, side 1, packed with ByteBoozer 2): 3 files, 2 unpacked');
+    await expect(files.locator('tbody tr td:nth-child(1)')).toHaveText(['$00', '$01', '$02']);
+    await expect(files.locator('tbody tr td:nth-child(5)')).toHaveText(['file00_0801.prg', 'file01_4000.prg', 'file02_4c18.prg']);
+    await expect(files.locator('tbody tr td:nth-child(3)')).toHaveText(['$0801–$37ff', '—', '$4c18–$4fff']);
+    await expect(files.locator('tbody tr').nth(1).locator('td').nth(5)).toHaveText('not packed · from 3/5, 2 sectors');
+    await expect(script).toHaveCount(0);
+  });
+
+  await test.step('a row opens its file unpacked, as a PRG where it unpacks to', async () => {
+    await files.getByRole('row', { name: /file00_0801/ }).click();
+    await expect(toast(page, 'Loaded file00_0801.prg at $0801')).toBeVisible();
+    // the raster demo, as it was before it was packed
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+  });
+
+  await test.step('the boot program\'s code is its script: its loads, with what each file unpacks to on the disk', async () => {
+    await page.getByRole('list', { name: 'Files on booze-demo.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
+    await expect(toast(page, 'Loaded BOOT.prg at $0801')).toBeVisible();
+    await expect(page.getByRole('tab', { name: /Booze script/ })).toContainText('6');
+    await expect(page.locator('.spindle-head').nth(1)).toContainText('BoozeLoader script: 3 loads from the code that calls the loader at $082a');
+    await expect(script.locator('tbody tr td:nth-child(2)')).toHaveText(['side 1', 'load $00', 'call $1000', 'load $01', 'load $02', 'call $2000 x=$05']);
+    await expect(script.locator('tbody tr').nth(1).locator('td').nth(2)).toHaveText('file00_0801.prg → $0801–$37ff');
+    await expect(script.locator('tbody tr').nth(2).locator('td').nth(2)).toHaveText('—');
+    // the Loaders section knows it
+    await openSection(page, 'Loaders');
+    await expect(page.locator('.loader-name').first()).toHaveText('BoozeLoader (HCL/Booze Design)');
+  });
+
+  await test.step('it copies the script, each load with its file', async () => {
+    await page.getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, 'Copied the BoozeLoader script')).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text[0]).toBe('; BoozeLoader script, read back by Mimir Studio from the code that calls the loader at $082a: 3 loads.');
+    expect(text).toContain('  load $00                   ; $0812, file00_0801.prg, unpacks to $0801-$37ff');
+    expect(text).toContain('  load $01                   ; $081a, file01_4000.prg');
+  });
+
+  await test.step('a row of the script goes to its code; a load\'s file opens from its row', async () => {
+    await script.getByRole('row', { name: /call \$2000/ }).click();
+    await expect(statusBar(page)).toContainText('$0824');
+    await script.getByRole('button', { name: 'Open file02_4c18.prg' }).click();
+    await expect(toast(page, 'Loaded file02_4c18.prg at $4c18')).toBeVisible();
+  });
+
+  await test.step('ejecting the disk takes its files away; the program\'s script stays', async () => {
+    await page.getByRole('list', { name: 'Files on booze-demo.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
+    await expect(page.locator('.file-name')).toHaveText(['BOOT.prg']);
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(files).toHaveCount(0);
+    await expect(script.locator('tbody tr td:nth-child(3)')).toHaveText(['—', '—', '—', '—', '—', '—']);
+    await expect(page.getByRole('tab', { name: /Booze script/ })).toContainText('3');
+  });
+});
+
 test('the tab row fits a small window: the listing tools lose their labels, then move into the ⋯ menu', async ({ app, page }) => {
   await waitForListing(page);
   const row = page.locator('main.main > .tabs');

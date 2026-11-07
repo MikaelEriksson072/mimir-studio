@@ -1047,6 +1047,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Krill's loader (Krill/Plush) | `ora $dcc9,x / stx $dd02 / ror / ror / ldx #$3f / sax` och `adc $dd00 / stx $dd02 / iny / beq` (v194, hal-c64-c128.inc); installationen skickar `"M-E" $020b "KRILL."` |
 | Bitfire (Bitbreaker/Oxyron) | `adc $dd00 / stx $dd02 / lsr / lsr / dey / cpy #$01`, `ora $dd00 / stx $dd02 / ror / ror / ldx #$3f / sax` (resident.asm), och den äldre `ldy #$37 / lda $dcc9,y / sty $dd02` |
 | Sparkle (Sparta/OMG) | `lda $dd00 / sty $dd00 / lsr / lsr / dex / nop / ldy #$c0 / ora $dd00 / sty $dd00` och `and $dd00 / sta $dd00 / ora #0 / sta buffer,x / bvc` (sl.asm), i en senare version `inx` och `ora #1`; texten "sparkle" |
+| BoozeLoader (HCL/Booze Design) | mottagarloopen `dey / ldx #8 / lda $dd00 / stx $dd00 / lsr / lsr / iny / nop / ldx #0 / eor $dd00 / stx $dd00 / lsr / lsr`, där ATN skrivs till `$dd00` som klocka, och dess fjärde läsning `lda #$c0 / and $dd00 / sta $dd00 / ora #0 / sta buffer,y`; hur den skickar en bit av filnumret (`ldy #0 / bcc / ldy #$10 / lda #8 / sta $dd00 / bit $dd00 / bpl / sty $dd00 / rts`); ByteBoozer 1:s och 2:s offsettabeller, som bara räknas med loaderns egen kod; drivkommandot `"M-E" $020b` med sina egna byte, som låter DOS:en läsa drivkoden från 18/18, 18/15 och 18/12. Mönstren kommer ur Booze Designs demos 2008–2025 (källkoden är inte offentlig). Drivkoden finns aldrig i C64:ans minne, och skriptet i koden läses som 13.5d säger |
 | Covert Bitops loader (Cadaver) | badline-väntan `lda $d011 / clc / sbc $d012 / and #$07 / beq` följd av `lda #$10 / ora $dd00 / sta $dd00` (v3 loader.s), och `M-W` lagrat baklänges (`"W-M"`) |
 | Action Replay fastload (Datel) | byten tas emot på en rad utan badline: `bit $dd00 / bvc / sec / lda $d012 / sbc $aa / bcc / and #$07 / beq` (MK4: `cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); ett block till `$0200` (`… ora $dd00 / sta $0200,y`); stackkoden som kopierar blocken med cartridgen avbankad (`lda #$23 / sta $de00`, 128 byte till `$013f`); drivkoden: starten vid `$0150` (`sei / jsr $01xx / lda #$7a / sta $1802`), 1541-koden vid `$0300`, 1581-koden vid `$0500` (`sta $4001`); installationen som skickar `M-`, `-` och `W`/`E`/`R` var för sig |
 | Action Replay Warp*25 (Datel) | mottagarloopen som lägger tre byte per varv på stacken (`… eor $dd00 / pha / lda $dd00 …`); avkodningen `inc $01 / pla / eor #$f9 / dey / sta ($ae),y` (MK4 `dec $01`); stackkoden (`ldx #$20 / stx $de00`); 1541-koden vid `$0400` (768 byte); `B-E 2 0 18 5/6` i loaderfilen, som bara räknas med koden (andra loaders har samma B-E) |
@@ -2135,6 +2136,102 @@ skriver som d64write, dali och bitnax gör (egna enkla packare, ingen kod från 
 `--overlap` och som de första demona, och filer som inte är bitnax. `fixtures/d64/bitfire-demo.d64` är en av diskarna:
 demot packat med slut, en tabell som inte är packad och en fil packad på plats.
 
+### 13.5d BoozeLoader-diskar och skriptet i koden
+
+BoozeLoader är HCL:s loader för Booze Design. Den finns i deras demos från Edge of Disgrace (2008) till Codeboys &
+Endians (2025) och i demos av Hitmen, Genesis Project och andra. Källkoden är inte offentlig, så formatet är läst ur
+diskarna och ur det som körde i Sindri. BoozeLoader har inget skript och ingen länkare: programmets egen kod anropar
+loadern med filens nummer (`lda #fil / jsr $0200`), anropar delen den laddade, laddar nästa och så vidare. Den koden är
+skriptet. `readBoozeDisk()` (`packages/core/src/c64/booze-disk.ts`) läser diskens filer, och `findBoozeScript()`
+(`packages/core/src/analyze/booze.ts`) läser skriptet ur programmet (`AnalysisResult.booze`, `BoozeScript`,
+`BoozeStep`) när analysen hittat BoozeLoader (8.11c).
+
+**Disken:**
+- **Drivkoden** ligger i 18/18, 18/15 och 18/12. Drivenheten läser den själv: startprogrammet skickar ett enda `M-E` på
+  39 byte, vars egna byte låter DOS:en läsa de tre sektorerna med sin jobbkö och starta koden. Därför finns drivkoden
+  aldrig i C64:ans minne. 18/18 börjar med `tsx / stx $04xx` och anropar `jsr $f50a / bvc *`. DOS:en söker spåren (jobb
+  `$e0` kör koden på `$0300`), GCR avkodas medan byten skickas, och sektorerna följs genom sina länkar.
+- **Sidan** står i byte `$ff` i 18/0 (`'1'`, `'2'`; Edge of Disgraces startdisk har `'0'`). C64:an väntar på den med ett
+  nummer från `$80` (`$b1` är sida 1).
+- **Filtabellen** har 2 byte (spår, sektor) per filnummer, i 18/9 (18/6 i Edge of Disgrace). Drivkoden säger vilken
+  sektor (`ldx #9 / stx $0f`). En andra sida kan sakna drivkod och ha bara tabellen. Den äldsta versionen (Andropolis,
+  Cycle, Tsunami) har ingen tabell: programmet skickar spår och sektor.
+- **En fil** är en vanlig kedja av länkade sektorer, med laddadressen först. Den är packad med ByteBoozer så att den
+  packas upp på plats medan den laddas. En kedja som är längre än vad minnet rymmer tar programmet i bitar (en fil i
+  Edge of Disgrace).
+
+**ByteBoozer 2.0** (`unpackByteBoozer2()`, från 2016) skriver vart filen packas upp (2 byte) och sedan strömmen:
+- Bitarna läses uppifrån i en byte, som hämtas när den behövs, mellan de andra byten.
+- En typbit kommer före en literal (0) eller en kopia (1), men inte före kopian efter en literal kortare än 255.
+- En längd är 1 och, så länge en 1 kommer, nästa bit (sammanflätad Elias-gamma, högst 8 bitar). En literal är så många
+  byte, en kopia en byte mer. 255 avslutar strömmen.
+- Två bitar till, och om kopian är längre än 2, väljer offsetens bredd: 3, 6, 8 eller 10 bitar efter en kopia på 2,
+  annars 4, 7, 10 eller 13. Under 8 bitar är offset − 1 bitarna inverterade. Från 8 kommer de höga bitarna som de är och
+  sedan den låga byten inverterad.
+- En byte som packaren lämnat efter slutet godtas (den påbörjade en byte med bitar som den inte behövde).
+
+**ByteBoozer 1.x** (`unpackByteBoozer1()`, till 2015) skriver först en byte med bitar (redan skiftad, som uppackaren
+håller dem), sedan vart filen packas upp och strömmen. Literaler, kopior och slutet är som i 2.0, men offseten byggs av
+grupper: 2 bitars prefix ger 4, 2, 2 eller 2 bitar efter en kopia på 2 och 5, 2, 2 eller 3 efter en längre, och före
+varje grupp efter den första läggs 1 till.
+
+En disk räknas som en BoozeLoader-disk när drivkoden finns där. Utan drivkod (en andra sida) prövas tabellen i 18/9 och
+18/6, och minst hälften av filerna måste packas upp. Den ByteBoozer som packar upp flest av diskens filer gäller för
+hela disken.
+
+**Skriptet:**
+- **Loaderns ingång** är en rutin nära dess residenta delar som börjar som den (`pha / jsr` som skickar numret, eller
+  `cmp #2 / bne` i den äldsta versionen), eller en adress som programmet inte har än (den residenta delen kopieras dit
+  senare) och anropar med ett nummer i A minst tre gånger.
+- **Sträckorna** är koden runt varje anrop av loadern, bakåt till instruktionen efter en `rts`, `rti` eller `jmp` och
+  framåt till en sådan.
+- **Ofta spåras skriptet inte**, eftersom det kopieras någon annanstans innan det körs eller bara nås från loaderns egen
+  sida. Då läses `lda #n / jsr loader` också i byte som analysen inte spårat: bakåt över `jsr`, laddningar med `#` och
+  skrivningar, framåt till en `rts` eller `jmp`. En sådan sträcka måste ladda minst två gånger eller ligga högst 64
+  byte från nästa anrop (en rad små rutiner, som Triads).
+- **Ett svansanrop** (`lda #n / jmp loader`) laddar också.
+- **Stegen** är laddningar (`load $07`), sidbyten (`side 2`) och andra anrop (`call $4003 a=$04 x=$05`), med A, X och Y
+  som laddningarna med `#` närmast före sätter dem. I den äldsta versionen är en laddning spår och sektor (`load 3/0`).
+  Där laddar A = 1 utan att packa upp (`load 3/0 as it is`), och A = 2 packar upp det som ligger på X/Y (`unpack $4000`).
+- **Källkoden:** filhuvudet har skriptet som kommentarer, och en `====`-rad markerar var varje sträcka börjar.
+
+**I appen:**
+- Explorer säger om en monterad disk *BoozeLoader disk: N files the loader reads, not in the directory*, med knappen
+  **Booze script**.
+- Bottenpanelens flik **Booze script** finns när en sådan disk är monterad eller när analysen hittat skriptet. Antalet
+  är skriptets laddningar plus diskens filer.
+- Diskens filer har en rad var: nummer, var filen laddas, vart den packas upp, storlek (packad → uppackad), ett filnamn
+  (`file07_2000.prg`, påhittat av numret och uppackningsadressen; `t3s0_1000.prg` på en disk utan tabell) och
+  anmärkningar (*packed with ByteBoozer 2*, *not packed*, var filen börjar och hur många sektorer den har). Ett klick
+  öppnar filen som en PRG, uppackad där den packas upp, och **+** lägger till den. **Copy list** kopierar listan.
+- Skriptet har en rad per steg: var dess kod börjar, raden och filen på den monterade disken med vart den packas upp
+  (när skriptet är på diskens sida). Ett klick går till koden, och knappen öppnar filen. **Copy script** kopierar
+  skriptet, varje laddning med sin fil.
+
+**Mätt:**
+- Alla 276 414 diskar i referensarkivet lästes på 7,5 minuter. 379 är BoozeLoader-diskar, 57 olika räknat efter
+  innehåll: 45 med drivkod och 12 utan (Codeboys & Endians sida 2 och 11 av Triad och Twilight, vars startprogram
+  skickar drivkoden själva). 41 har tabellen i 18/9, 6 i 18/6 och 10 ingen tabell; 25 är packade med ByteBoozer 2 och
+  30 med ByteBoozer 1. Utöver Booze Designs egna finns demos av Afrika, Hitmen, Genesis Project, Paragon, c0zmo, Triad
+  och Twilight. Ingen av dem är en Bitfire- eller Spindle-disk.
+- Av de 57 diskarnas 1 281 filer packas 1 267 upp, och 47 diskar packas upp helt. De som inte packas upp är
+  startprogram som också står i tabellen, data som inte är packad och Edge of Disgraces fil på 302 sektorer.
+- Codeboys & Endians sida 1: alla 39 filer packas upp, de 25 som Sindri laddade när demot kördes hamnar på samma
+  adresser, och fil `$19` är byte för byte lik minnet efter laddningen.
+- Startprogrammen på 904 olika diskar (CSDB Top500 och Booze Design; 865 som Sindri packade upp) analyserades med och
+  utan BoozeLoader: 30 fynd ändrades, alla från *A fast loader (not one of the known ones)* till BoozeLoader, och inget
+  annat. 26 av dem fick ett skript (704 laddningar, 19 lästa delvis ur byte som inte spårats). De 4 utan är Edge of
+  Disgraces startdisk, Andropolis (ett enda anrop i det programmet), Industrial Breakdown och Mekanix.
+- Triads demos anropar loadern med ett svansanrop (`lda #n / jmp loader`), som också räknas som en laddning.
+
+**Test:** `test/booze-disk.test.ts` och `test/booze.test.ts`, med diskar och filer som `test/helpers/booze-disk.ts`
+skriver som BoozeLoaders diskar och ByteBoozer 1 och 2 ser ut (egna enkla packare; av drivkoden bara de få byte som den
+känns igen på). Testerna täcker literaler (också 255 med en typbit efter), kopior med alla offsetbredder och prefix,
+filer packade på plats, tabellen i 18/9 och 18/6, en sida utan drivkod, en disk utan tabell, diskar som inte är
+BoozeLoaders, skriptet spårat och i byte som inte spårats, och den äldsta versionen. `fixtures/d64/booze-demo.d64` är en
+av diskarna: ett startprogram vars kod laddar fil 0–2, rasterdemot packat med ByteBoozer 2, en tabell som inte är packad
+och en fil packad på plats.
+
 ### 13.6 Terminal
 
 **Terminal** i titelraden (och kommandopaletten) öppnar ett terminalfönster i mappen du arbetar i: den senast
@@ -2784,7 +2881,7 @@ blir för lång.
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
-| Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Statistics, Build output |
+| Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Statistics, Build output |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, analystid, verifieringsstatus |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.

@@ -44,8 +44,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     with no labels for what its instructions only read to take time. Spindle's jitter correction, which subtracts
     the timer from a constant, is one too;
   - routines nothing traced reaches, such as an init that ran before a snapshot was taken;
-  - fast loaders: Spindle, Krill's loader, Bitfire, Sparkle, the Covert Bitops loader, and any other one by its drive
-    code;
+  - fast loaders: Spindle, Krill's loader, Bitfire, Sparkle, BoozeLoader (HCL's, in Booze Design's demos since 2008),
+    the Covert Bitops loader, and any other one by its drive code;
   - the Action Replay's loaders: its fastload, Warp*25, the tape backups' turbo and superturbo, and the turbo tape of
     LOAD and SAVE, in the cartridge's banks (5.1, 7.2 and 7.5 are checked against real ones) and in what it saves: the
     loader file of a Warp*25 backup (the MK4's too) and the loader in a tape backup's header. Novaload, which the
@@ -69,7 +69,12 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     reads it (the file names are not on the disk);
   - the files of a Bitfire disk: Bitfire has no load script, as each part loads the next file, but its disk keeps the
     files in a directory of their own in the order they load. The *Bitfire script* tab lists them, unpacked when bitnax
-    (Bitfire 0.x) or dali (1.x) packed them, and *Copy script* copies the d64write command line that builds the disk.
+    (Bitfire 0.x) or dali (1.x) packed them, and *Copy script* copies the d64write command line that builds the disk;
+  - BoozeLoader's files and script: a BoozeLoader disk keeps its files out of the directory, in a table of numbers on
+    track 18, and Mimir reads them, unpacked with ByteBoozer 1 or 2 as the loader does while it loads. BoozeLoader has
+    no script file: the program's own code is the script (`lda #file / jsr $0200` loads a file, then it calls the
+    part). The *Booze script* tab lists the disk's files and the loads, disk sides and calls of the code that calls the
+    loader, each load with what its file unpacks to on the mounted disk, and *Copy script* copies them.
 - **A deep analysis that works the problems down.** Tick *Deep analysis* in the Problems tab. Every guess (a routine
   nothing traced reaches, a pointer-table target, an interrupt handler) is then traced on trial and kept only when it
   leads to no problem. Calls into ROM are not followed into the RAM below, and `$01` is followed through the stack.
@@ -196,7 +201,7 @@ packed file.
    **Build & Run** it in VICE (`F5`).
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
-the Spindle script (when there is one), statistics and the build output.
+the Spindle, Bitfire and Booze scripts (when there is one), statistics and the build output.
 
 ### Command line
 
