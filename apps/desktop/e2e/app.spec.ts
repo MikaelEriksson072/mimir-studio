@@ -2978,7 +2978,7 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     await view.getByRole('tab', { name: 'Self-extracting' }).click();
     // the -T 5 ticked for crunched data takes no effect in a self-extracting file
     await expect(cmd).toHaveText('brokkr sfx --format brokkr --start sys -o raster-demo-brokkr.prg raster-demo.prg');
-    await expect(view).toContainText('decrunching takes about 8 times as long');
+    await expect(view).toContainText('decrunching takes about 9 times as long');
     await expect(view.getByLabel('Flash the border while decrunching')).toBeChecked();
     await view.getByRole('button', { name: 'Pack', exact: true }).click();
     await expect(card).not.toContainText('Out of date', { timeout: 120_000 });

@@ -9,18 +9,21 @@
  *
  * The tokens, each made of adaptive bits:
  *  - is it a match? (in the context of whether the token before was a literal or a match)
- *  - a literal: its 8 bits down a binary tree of 255 probabilities
+ *  - a literal: its 8 bits down a binary tree of 255 probabilities; right after a match, its bits from the top are
+ *    first coded against those of the match byte (the byte at the last offset, which the literal seldom is, or the
+ *    match would have gone on), in the context of their place and the match byte's bit, until one differs (LZMA's
+ *    matched literal, with 16 probabilities instead of 768); the bits after that go down the tree from where they are
  *  - after a literal, does the match take the last match's offset again (a rep)? (the first one's is 1)
  *  - a length: for each bit after its top one a 1 and the bit, then a 0 (contexts by step; reps have their own)
  *  - an offset: its bit length (its slot) down a 5-bit tree in the context of the length (1, 2 or more), then the
  *    bits below the top one from the top: the first 4 in the context of the slot and their place, then the bits
  *    in the context of their place (offsets that are multiples of 2, 8 or 16 get cheap). Slot 0 ends the stream.
- * The probabilities are 499 bytes: page 0 the literal tree, page 1 the rest. */
+ * The probabilities are 508 bytes: page 0 the literal tree, page 1 the rest. */
 import { MATCH, type Tokens } from './format.ts';
 
 export const PROBS = 512;
-/** the contexts of page 1 */
-export const IS_MATCH = 256, IS_REP = 258, LEN = 260, REP_LEN = 292, SLOT = 324, OFF_T = 420, LOW = 488;
+/** the contexts of page 1; OFF_T + 4 * slot + place for slots 2 to 16, LOW + place for places 0 to 10 */
+export const IS_MATCH = 256, IS_REP = 258, LEN = 260, REP_LEN = 292, SLOT = 324, OFF_T = 412, LOW = 480, MATCHED = 492;
 const SHIFT = 4;
 
 /** the offset's bit length (its slot): 1 for 1, 16 for $8000 and up */
@@ -30,6 +33,9 @@ export const lenClass = (len: number): number => (len >= 3 ? 2 : len - 1);
 /** the context of the bit at place j of an offset of slot s: the first 4 below the top one by the slot, the others
  * by their place */
 export const offsetCtx = (s: number, j: number): number => (s - 2 - j < 4 ? OFF_T + s * 4 + (s - 2 - j) : LOW + j);
+/** the context of bit i of the first literal after a match, while its bits so far are the match byte's: by the place
+ * and the match byte's bit there */
+export const matchedCtx = (i: number, matchBit: number): number => MATCHED + i * 2 + matchBit;
 
 // --- the coder ----------------------------------------------------------------------------------------------------
 
@@ -129,13 +135,27 @@ function offset(c: Coder, len: number, o: number): void {
   for (let j = s - 2; j >= 0; j--) c.bit(offsetCtx(s, j), (o >> j) & 1);
 }
 
+/** the first literal after a match, against the match byte */
+function matchedLiteral(c: Coder, b: number, mb: number): void {
+  let node = 1, i = 7;
+  for (; i >= 0; i--) {
+    const bit = (b >> i) & 1, mbit = (mb >> i) & 1;
+    c.bit(matchedCtx(i, mbit), bit);
+    node = (node << 1) | bit;
+    if (bit !== mbit) break;
+  }
+  for (i--; i >= 0; i--) { const bit = (b >> i) & 1; c.bit(node, bit); node = (node << 1) | bit; }
+}
+
 /**
  * Code a parse. A match right after a literal that takes the last match's offset again is a rep (none before the
  * first match). The data is in the order it is decrunched; literal tokens of any length are literals one by one.
+ * `at` hears where each token starts.
  */
-export function codeTokens(c: Coder, d: Uint8Array, t: Tokens): void {
+export function codeTokens(c: Coder, d: Uint8Array, t: Tokens, at?: (pos: number) => void): void {
   let pos = 0, prevMatch = 0, last = 1;
   for (let i = 0; i < t.count; i++) {
+    at?.(pos);
     const len = t.len[i];
     if (t.kind[i] === MATCH) {
       c.bit(IS_MATCH + prevMatch, 1);
@@ -151,12 +171,14 @@ export function codeTokens(c: Coder, d: Uint8Array, t: Tokens): void {
     } else {
       for (let k = 0; k < len; k++) {
         c.bit(IS_MATCH + (k === 0 ? prevMatch : 0), 0);
-        c.tree(0, 8, d[pos + k]);
+        if (k === 0 && prevMatch) matchedLiteral(c, d[pos], d[pos - last]);
+        else c.tree(0, 8, d[pos + k]);
       }
       prevMatch = 0;
     }
     pos += len;
   }
+  at?.(pos);
   c.bit(IS_MATCH + prevMatch, 1);
   if (!prevMatch) c.bit(IS_REP, 0);
   gamma(c, LEN, 1);
@@ -196,9 +218,22 @@ export function readBrk(s: Uint8Array, maxOut = 1 << 24): BrkDecoded {
     }
     return v;
   };
+  const matched = (mb: number) => {
+    let node = 1, i = 7;
+    for (; i >= 0; i--) {
+      const mbit = (mb >> i) & 1, bit = dec.bit(matchedCtx(i, mbit));
+      node = (node << 1) | bit;
+      if (bit !== mbit) break;
+    }
+    for (i--; i >= 0; i--) node = (node << 1) | dec.bit(node);
+    return node & 0xff;
+  };
   let prevMatch = 0, last = 1;
   for (;;) {
-    if (!dec.bit(IS_MATCH + prevMatch)) { put(dec.tree(0, 8)); tokens.literals++; prevMatch = 0; continue; }
+    if (!dec.bit(IS_MATCH + prevMatch)) {
+      put(prevMatch ? matched(out[out.length - last]) : dec.tree(0, 8));
+      tokens.literals++; prevMatch = 0; continue;
+    }
     let len: number, o: number;
     if (!prevMatch && dec.bit(IS_REP)) { len = gam(REP_LEN); o = last; tokens.reps++; }
     else {
@@ -230,8 +265,11 @@ const SHORT = 4096;
 
 /** What tokens cost with given probabilities, as the parse looks them up. */
 export interface BrkPrices {
-  /** a literal byte after a literal and after a match, the is-match bit included */
-  litAfterLit: Int32Array; litAfterMatch: Int32Array;
+  /** a literal byte after a literal, the is-match bit included */
+  litAfterLit: Int32Array;
+  /** the parts of a literal's price after a match (matchedPrice): the is-match bit, the matched contexts' bits
+   * ((context - MATCHED) * 2 + bit) and the literal tree's (node * 2 + bit) */
+  litAfterMatch0: number; matched: Int32Array; litNode: Int32Array;
   /** the bits before a match's length: after a literal (is-match, not a rep), after a match (is-match), a rep */
   matchAfterLit: number; matchAfterMatch: number; rep: number;
   /** lengths up to 4096 (longer ones: lenPrice) */
@@ -242,6 +280,19 @@ export interface BrkPrices {
   lenParts: Int32Array; repParts: Int32Array;
   /** the end token, once */
   end: number;
+}
+
+/** the price of literal `b` right after a match whose match byte is `mb` */
+export function matchedPrice(pr: BrkPrices, b: number, mb: number): number {
+  let x = pr.litAfterMatch0, node = 1, i = 7;
+  for (; i >= 0; i--) {
+    const bit = (b >> i) & 1, mbit = (mb >> i) & 1;
+    x += pr.matched[(i * 2 + mbit) * 2 + bit];
+    node = (node << 1) | bit;
+    if (bit !== mbit) break;
+  }
+  for (i--; i >= 0; i--) { const bit = (b >> i) & 1; x += pr.litNode[node * 2 + bit]; node = (node << 1) | bit; }
+  return x;
 }
 
 export function offPrice(pr: BrkPrices, cls: number, o: number): number {
@@ -273,7 +324,10 @@ export function prices(p0: (ctx: number) => number): BrkPrices {
   };
   const lit = new Int32Array(256);
   for (let v = 0; v < 256; v++) lit[v] = treePrice(0, 8, v);
-  const litAfterLit = lit.map(x => x + pb(IS_MATCH, 0)), litAfterMatch = lit.map(x => x + pb(IS_MATCH + 1, 0));
+  const litAfterLit = lit.map(x => x + pb(IS_MATCH, 0));
+  const matched = new Int32Array(32), litNode = new Int32Array(512);
+  for (let i = 0; i < 16; i++) { matched[i * 2] = pb(MATCHED + i, 0); matched[i * 2 + 1] = pb(MATCHED + i, 1); }
+  for (let n = 1; n < 256; n++) { litNode[n * 2] = pb(n, 0); litNode[n * 2 + 1] = pb(n, 1); }
   // parts: [0..15] step i's 1 (one more bit), [16..31] its 0 (the end), [32..] step i's bit, 0 and 1
   const gammaParts = (u: number) => {
     const parts = new Int32Array(64);
@@ -297,7 +351,7 @@ export function prices(p0: (ctx: number) => number): BrkPrices {
   const lenParts = gammaParts(LEN), repParts = gammaParts(REP_LEN);
   const len = gammaTable(lenParts);
   return {
-    litAfterLit, litAfterMatch,
+    litAfterLit, litAfterMatch0: pb(IS_MATCH + 1, 0), matched, litNode,
     matchAfterLit: pb(IS_MATCH, 1) + pb(IS_REP, 0), matchAfterMatch: pb(IS_MATCH + 1, 1), rep: pb(IS_MATCH, 1) + pb(IS_REP, 1),
     len, repLen: gammaTable(repParts), slot, top, low, lenParts, repParts,
     end: pb(IS_MATCH, 1) + len[1] + slot[0],
@@ -351,27 +405,8 @@ export function blockAverages(d: Uint8Array, t: Tokens, shift: number, weight = 
     bit(ctx, b) { (b ? n1 : n0)[block][ctx]++; file.bit(ctx, b); },
     tree(ctx, n, v) { let node = 1; for (let i = n - 1; i >= 0; i--) { const b = (v >> i) & 1; this.bit(ctx + node, b); node = (node << 1) | b; } },
   };
-  let pos = 0;
   // each token counts in the block it starts in
-  let prevMatch = 0, last = 1;
-  for (let i = 0; i < t.count; i++) {
-    block = Math.min(blocks - 1, pos >> shift);
-    const len = t.len[i];
-    if (t.kind[i] === MATCH) {
-      counter.bit(IS_MATCH + prevMatch, 1);
-      const o = t.off[i];
-      if (!prevMatch) {
-        const rep = o === last ? 1 : 0;
-        counter.bit(IS_REP, rep);
-        if (rep) gamma(counter, REP_LEN, len); else { gamma(counter, LEN, len); offset(counter, len, o); }
-      } else { gamma(counter, LEN, len); offset(counter, len, o); }
-      last = o; prevMatch = 1;
-    } else {
-      for (let k = 0; k < len; k++) { counter.bit(IS_MATCH + (k === 0 ? prevMatch : 0), 0); counter.tree(0, 8, d[pos + k]); }
-      prevMatch = 0;
-    }
-    pos += len;
-  }
+  codeTokens(counter, d, t, pos => { block = Math.min(blocks - 1, pos >> shift); });
   return n0.map((b0, i) => prices(ctx => {
     const f0 = (file.n0[ctx] + 0.4) / (file.n0[ctx] + file.n1[ctx] + 0.8);
     const p = (b0[ctx] + weight * f0) / (b0[ctx] + n1[i][ctx] + weight);

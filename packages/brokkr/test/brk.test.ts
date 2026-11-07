@@ -5,7 +5,7 @@ import { readBrk, writeBrk } from '../src/brk.ts';
 import { crunchBrk } from '../src/crunch-brk.ts';
 import { crunchData } from '../src/crunch.ts';
 import { Machine } from '../src/emulate.ts';
-import { memBrk, rawBrk } from '../src/files.ts';
+import { memBrk, memBrkFile, rawBrk } from '../src/files.ts';
 import { LIT, MATCH } from '../src/format.ts';
 import { sfx } from '../src/sfx.ts';
 import { basicProgram, programLike, rng } from './tools.ts';
@@ -60,6 +60,31 @@ describe("Brokkr's own format", () => {
     expect(readBrk(writeBrk(d.subarray(0, pos), tokens)).data).toEqual(d.subarray(0, pos));
   });
 
+  it('codes the first literal after a match against the match byte, which its 6502 decruncher reads too', () => {
+    // after each match a literal: the match byte itself (all eight bits agree), one that differs in bit 0, in bit 7,
+    // in bit 4
+    const r = rng(4), d: number[] = [], kind: number[] = [], len: number[] = [], off: number[] = [];
+    const lit = (b: number) => { d.push(b); kind.push(LIT); len.push(1); off.push(0); };
+    const match = (l: number, o: number) => { for (let k = 0; k < l; k++) d.push(d[d.length - o]); kind.push(MATCH); len.push(l); off.push(o); };
+    for (let i = 0; i < 40; i++) lit(Math.floor(r() * 256));
+    for (let i = 0; i < 400; i++) {
+      const o = 1 + Math.floor(r() * 39);
+      match(3 + (i % 5), o);
+      const mb = d[d.length - o];
+      lit([mb, mb ^ 1, mb ^ 0x80, mb ^ 0x10][i % 4]);
+    }
+    const data = Uint8Array.from(d);
+    const tokens = { kind: Uint8Array.from(kind), len: Int32Array.from(len), off: Int32Array.from(off), count: kind.length };
+    const stream = writeBrk(data, tokens), back = readBrk(stream);
+    expect(back.data).toEqual(data);
+    // the data decrunched backward: in memory it is the other way round
+    const file = memBrkFile(data.slice().reverse(), 0x1000, { stream, tokens, safety: back.safety, stats: back.tokens, rounds: 0, ms: 0 });
+    for (const small of [false, true]) {
+      const { m } = runDecruncher(file.bytes, small);
+      expect(m.ram.subarray(0x1000, 0x1000 + data.length)).toEqual(data.slice().reverse());
+    }
+  });
+
   for (const small of [false, true]) {
     it(`mem files decrunch in place with its 6502 decruncher${small ? ' (shift and add)' : ''}`, () => {
       const r = memBrk(data, 0x1000);
@@ -85,10 +110,11 @@ describe("Brokkr's own format", () => {
   });
 
   it("self-extracting files fall back to Exomizer's format when the program leaves no room", () => {
-    const prg = basicProgram(programLike(0xffe0 - 0x080d, 6));
-    const r = sfx(prg, 0x0801, { format: 'brokkr' });
+    // from the screen up to $ffe0: what is left below it has no page for the probabilities
+    const prg = programLike(0xffe0 - 0x0400, 6);
+    const r = sfx(prg, 0x0400, { start: 0x0400, format: 'brokkr' });
     expect(r.format).toBe('exomizer');
     expect(r.warnings.join()).toMatch(/no room for the probabilities/);
-    expect(() => sfx(prg, 0x0801, { format: 'brokkr', fallback: false })).toThrow(/no room for the decruncher .* its probabilities/);
+    expect(() => sfx(prg, 0x0400, { start: 0x0400, format: 'brokkr', fallback: false })).toThrow(/no room for the decruncher .* its probabilities/);
   });
 });

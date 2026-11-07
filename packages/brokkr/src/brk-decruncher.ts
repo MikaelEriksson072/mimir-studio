@@ -1,8 +1,10 @@
 /* The 6502 decruncher of Brokkr's own format (src/brk.ts), as Kick Assembler source, read and written backward as
- * the Exomizer one is (src/decruncher.ts). Its parts: the token loop from `next`, `gamma` for lengths, `put` for
- * bytes, and the arithmetic decoder (`get_bit`), whose bound comes from a multiply: quarter-square tables when
- * QSQ = 1 (1 KB of RAM, faster), shift and add otherwise. A self-extracting file runs the start (BRK_START) from
- * where it loaded, and keeps only the resident part (brkResident) while it decrunches. */
+ * the Exomizer one is (src/decruncher.ts). Its parts: the token loop from `next` (literals, the first after a match
+ * against the match byte, then matches), `gamma` for lengths, and the arithmetic decoder (`get_bit`), whose bound
+ * comes from a multiply: quarter-square tables when QSQ = 1 (1 KB of RAM, faster), shift and add otherwise. A
+ * self-extracting file runs the start (BRK_START) from where it loaded, and keeps only the resident part
+ * (brkResident) while it decrunches. */
+import { IS_REP, LEN, LOW, MATCHED, OFF_T, REP_LEN, SLOT } from './brk.ts';
 
 /** The zero page bytes the decruncher uses from ZP on. */
 export const BRK_ZP_BYTES = 12;
@@ -75,10 +77,35 @@ const resident = (exit: string, qsq: boolean, streamAt: string) => `next:       
         ldx prev
         jsr get_bit
         bcs match
-        lda #>PROBS                         // a literal: 8 bits down the literal tree, X its node
+        ldx #1                              // a literal: X its node in the literal tree
+        lda prev
+        beq literal_tree
+        stx node                            // right after a match: its bits against the match byte's (the byte at
+        lda (SRC),y                         // the last offset; in length while a literal is read) while they agree,
+        sta length                          // in contexts by their place and the match byte's bit (MATCHED + 2 *
+        lda #${MATCHED - 256 + 14 + 3}                            // place + bit), from bit 7; the carry is clear
+matched_bit:
+        sbc #2                              // A: the context before, with its bit set, and the carry clear
+        asl length
+        adc #0
+        tax
+        jsr get_bit
+        rol node
+        lda node
+        bcs literal_put                     // eight bits agreed
+        txa
+        eor node
+        lsr
+        bcs matched_off                     // the bit differs: the rest down the literal tree
+        txa
+        ora #1
+        bcc matched_bit
+matched_off:
+        ldx node
+literal_tree:
+        lda #>PROBS                         // down the literal tree from node X
         sta bit_load+2
         sta bit_store+2
-        ldx #1
 literal_bit:
         jsr get_bit
         txa
@@ -88,10 +115,17 @@ literal_bit:
         ldx #>MISC
         stx bit_load+2
         stx bit_store+2
+literal_put:
 .if (EFFECT == 1) {
         sta $d020
 }
-        jsr put
+        sta (DEST),y                        // A to the next byte down
+        tya
+        bne literal_down
+        dec DEST+1
+        dec SRC+1
+literal_down:
+        dey
         lsr prev
         bpl next
 
@@ -100,14 +134,14 @@ ${exit}
 match:
         lda prev                            // right after a literal: the last offset again?
         bne match_new
-        ldx #2
+        ldx #${IS_REP - 256}
         jsr get_bit
         bcc match_new
-        ldx #36                             // a rep: its length; SRC is still DEST plus the offset
+        ldx #${REP_LEN - 256}                             // a rep: its length; SRC is still DEST plus the offset
         jsr gamma
         bcc copy
 match_new:
-        ldx #4
+        ldx #${LEN - 256}
         jsr gamma
         lda length+1                        // the slot tree's contexts by the length: 1, 2 or more
         bne slot_class
@@ -122,7 +156,7 @@ slot_set:
         asl
         asl
         asl
-        adc #36
+        adc #${SLOT - 256 - 32}
         sta slot_base+1
         lda #1
 slot_bit:
@@ -146,7 +180,7 @@ slot_base:
         txa
         asl
         asl
-        adc #164
+        adc #${OFF_T - 256}
         sta offset_ctx+1
         lda #4
         sta top
@@ -161,8 +195,8 @@ offset_ctx:
         inc offset_ctx+1
         bne offset_in
 offset_low:
-        txa
-        adc #231
+        txa                                 // X: the bits left, the place plus 1
+        adc #${LOW - 256 - 1}
 offset_in:
         tax
         jsr get_bit
@@ -216,17 +250,6 @@ gamma_more:
         inx
         bne gamma_more
 gamma_done:
-        rts
-
-// A to the next byte down
-put:
-        sta (DEST),y
-        dey
-        cpy #$ff
-        bne put_done
-        dec DEST+1
-        dec SRC+1
-put_done:
         rts
 
 // a bit with the probability at X in the page bit_load and bit_store point at (MISC, or PROBS for the literal

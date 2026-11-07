@@ -22,18 +22,18 @@ they are.
 | `--format` | | Crunched data, against Exomizer 3.1.1 | Decrunching | The decruncher |
 |---|---|---|---|---|
 | `exomizer` (the default) | Exomizer 3's stream: every Exomizer decruncher reads it | 0.6 % smaller | as Exomizer's decrunchers do | about 200 bytes and a 156-byte table |
-| `brokkr` | Brokkr's own, every bit coded adaptively as LZMA does | 6.6 % smaller | about 8 times as long as Exomizer's format: half a minute on a large program | about 425 bytes, 512 bytes of probabilities, 1 KB more where there is room |
+| `brokkr` | Brokkr's own, every bit coded adaptively as LZMA does | 8.0 % smaller | about 9 times as long as Exomizer's format: half a minute on a large program | about 470 bytes, 512 bytes of probabilities, 1 KB more where there is room |
 | `fast` | Brokkr's fast one, whole bytes | 13.2 % larger | about half the time of Exomizer's format | 215 bytes, no tables |
 
 Measured on 163 unpacked C64 programs (see [Results](#results)). Take Exomizer's format unless you need the last bytes
 (`brokkr`) or the shortest wait (`fast`). As self-extracting files of those programs (most of them demos and games of
-20 to 60 KB), Exomizer's format decrunches in 3.3 s (the median; at most 6.9 s) on a PAL C64, Brokkr's own in 28 s
-(13 to 42 s on half of them, up to 2 minutes) and the fast one in 1.6 s (at most 3.7 s). `--format auto` (self-extracting
-files) packs in all three and keeps the smallest file, or with `--max-seconds <s>` the smallest that decrunches within
-that time: on those programs 3.7 % smaller than Exomizer's format without a limit (Brokkr's own on 96 of 154), and
-with 10 s about as small as Exomizer's. A file that takes more than 10 s to decrunch gets a note. Where a program
-leaves no room for the decruncher of Brokkr's own formats, a self-extracting file is made in Exomizer's format, with a
-note.
+20 to 60 KB), Exomizer's format decrunches in 3.3 s (the median; at most 6.9 s) on a PAL C64, Brokkr's own in 30 s
+(14 to 48 s on half of them, up to 2 minutes) and the fast one in 1.6 s (at most 3.7 s). `--format auto`
+(self-extracting files) packs in all three and keeps the smallest file, or with `--max-seconds <s>` the smallest that
+decrunches within that time: on those programs 5.5 % smaller than Exomizer's format without a limit (Brokkr's own on
+107 of 154), and with 10 s about as small as Exomizer's. A file that takes more than 10 s to decrunch gets a note.
+Where a program leaves no room for the decruncher of Brokkr's own formats, a self-extracting file is made in Exomizer's
+format, with a note.
 
 ## Install
 
@@ -300,16 +300,29 @@ what it wrote. `src/node.ts` adds the pool of worker threads that `--effort max`
 binary arithmetic coder whose probabilities adapt after each bit, as LZMA's do: literals down an 8-bit tree, lengths in
 an interleaved gamma code, offsets as their bit length (in the context of the match's length) and then their bits (the
 first four in the context of the bit length, the rest of their place), and "the last offset again" after a literal.
-The parse prices tokens by what the coder charges, block by block, and parses again until the stream stops shrinking.
+The first literal after a match is coded against the match byte, the byte at the last offset, which it seldom is (or
+the match would have gone on), as LZMA's matched literal: its bits from the top, as agreeing with the match byte's until
+one does not, in 16 probabilities (by the bit's place and the match byte's bit) instead of LZMA's 768, the rest down the
+tree. The parse prices tokens by what the coder charges, block by block, and parses again until the stream stops
+shrinking.
 
-On the 163 programs below the streams are 6.6 % smaller than Exomizer 3.1.1's (2 701 397 bytes against 2 891 460;
-smaller on 152 of them), crunched in 84 s on one thread. It costs time and memory when decrunching: every bit takes a
-multiply, so it decrunches about 8 times slower than Exomizer's format (median 7.8; 6.4 to 9.4 on half of them; up to 24
-on data that hardly packs, which is all literals), and the decruncher needs 512 bytes of probabilities, 1 KB of quarter
-squares where there is room (a third faster; without them it shifts and adds) and a resident part of about 425 bytes.
-As self-extracting files on 159 of the programs, Brokkr's own format makes them 3.5 % smaller in all, smaller on 98: on
-small programs Exomizer's format is smaller, its decruncher being shorter, and where a program leaves no room for the
-probabilities the file is in Exomizer's format, with a note (26 of them).
+On the 163 programs below the streams are 8.0 % smaller than Exomizer 3.1.1's (2 659 223 bytes against 2 891 460;
+smaller on 154 of them), crunched in about 2 minutes on one thread. It costs time and memory when decrunching: every
+bit takes a multiply, so as self-extracting files it decrunches about 9 times slower than Exomizer's format (median
+8.8; 7.8 to 12.5 on half of them; up to 35 on data that hardly packs, which is all literals), and the decruncher needs
+512 bytes of probabilities, 1 KB of quarter squares where there is room (a third faster; without them it shifts and
+adds) and a resident part of about 470 bytes. As self-extracting files on 154 of the programs, Brokkr's own format
+makes them 5.6 % smaller than Exomizer 3.1.1's in all, smaller on 118: on small programs Exomizer's format is smaller,
+its decruncher being shorter, and where a program leaves no room for the probabilities the file is in Exomizer's
+format, with a note (14 of them).
+
+Measured on the same programs and left out: more offsets to take again (two: +0.11 %, four: +0.18 %; also right after
+a match: +0.16 to +0.17 %), with a parse that knows them; and with the parse as it is, the top bits of the byte before
+as the literal's context (+0.01 to +0.12 %, for 256 to 1 792 bytes more of probabilities), the low bits of its
+position (+0.7 to +2.0 %), the offset's low bits as plain bits that need no multiply (+0.27 %, for about 2.5 % less
+time decrunching: literals are 59 % of the bits the decruncher decodes), and probabilities that move a 32nd or an 8th
+of the way instead of a 16th (+1.5 %, +0.9 %). LZMA's matched literal in full (512 probabilities) gained less than the
+16 kept: −1.1 % against −1.3 % in the same test.
 
 `brokkr decruncher --format brokkr` writes its decruncher for `mem` files (backward only) as Kick Assembler source:
 `--zp` (12 bytes), `--table` (a page: 1.5 KB, or 512 bytes with `--small`), `--at`, `--effect`.

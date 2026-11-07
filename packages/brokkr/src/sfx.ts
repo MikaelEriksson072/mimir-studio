@@ -230,6 +230,18 @@ function places(size: number, blocked: Range[], from: number, to: number, align 
   return out;
 }
 
+/** The highest place for `size` bytes in each gap between the blocked ranges, from `from` up to `to`. */
+function tops(size: number, blocked: Range[], from: number, to: number): number[] {
+  const out: number[] = [];
+  const sorted = blocked.filter(b => b[1] > from && b[0] < to).sort((x, y) => x[0] - y[0]);
+  let a = from;
+  for (const b of [...sorted, [to, to] as Range]) {
+    if (b[0] - a >= size) out.push(b[0] - size);
+    a = Math.max(a, b[1]);
+  }
+  return out;
+}
+
 /** A decruncher for a stream: its sources, zero page and tables, and the sizes of its parts. */
 interface Kit {
   /** the crunched stream, and what of it lies in memory to be read (without the bytes `preset` carries) */
@@ -531,8 +543,10 @@ function* sfxSteps(data: Uint8Array, load: number, o: SfxOptions & { format?: Sf
       const fixedB = o.place?.decruncher;
       const stream = X ? [X] : [];
       if (k.preset && fixedB != null && fixedB !== k.zp + k.zpBytes) return;
+      // the lowest places first, then the highest of each gap (which leaves the room below it to the tables)
+      const blocked: Range[] = [U, file, Z, STACK, [0, 0x100], ...exitRom, ...keep, ...stream];
       const bAts = k.preset ? [k.zp + k.zpBytes] : fixedB != null ? [fixedB]
-        : [...LOW.filter(r => fits(r, bSize)).map(r => r[0]), ...places(bSize, [U, file, Z, STACK, [0, 0x100], ...exitRom, ...keep, ...stream], 0x0400, 0x10000)];
+        : [...LOW.filter(r => fits(r, bSize)).map(r => r[0]), ...places(bSize, blocked, 0x0400, 0x10000), ...tops(bSize, blocked, 0x0400, 0x10000)];
       for (const bAt of bAts) {
         const B: Range = [bAt, bAt + bSize];
         if ([U, file, Z, STACK, ...keep, ...stream].some(r => overlaps(r, B))) continue;

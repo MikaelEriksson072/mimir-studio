@@ -45,7 +45,7 @@ export interface PackViewProps {
 
 /** what Brokkr's own formats give and cost, measured on the reference corpus against Exomizer 3.1.1 */
 const FORMAT_NOTE: Record<Exclude<PackFormat, 'exomizer'>, string> = {
-  brokkr: "About 6.5 % smaller than Exomizer's format, but decrunching takes about 8 times as long (half a minute on a large program), with more memory.",
+  brokkr: "About 8 % smaller than Exomizer's format, but decrunching takes about 9 times as long (half a minute on a large program), with more memory.",
   fast: "About 13 % larger than Exomizer's format, decrunched about twice as fast, without a border flash.",
   auto: 'Packs in all three formats and keeps the smallest file, or the smallest that decrunches within the time set below.',
 };

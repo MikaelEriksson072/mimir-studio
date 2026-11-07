@@ -5,7 +5,7 @@
  * be taken again here (the bytes here repeat at it). */
 import type { Matches } from './match.ts';
 import { LIT, MATCH, type Tokens } from './format.ts';
-import { lenPrice, offPrice, repLenPrice, type BrkPrices } from './brk.ts';
+import { lenPrice, matchedPrice, offPrice, repLenPrice, type BrkPrices } from './brk.ts';
 
 export interface BrkParseOptions { arrivals: number; allLens: number }
 
@@ -56,13 +56,13 @@ export function parseBrk(d: Uint8Array, m: Matches, blocks: BrkPrices[], shift: 
   for (let q = 0; q < n; q++) {
     const pr = blocks[Math.min(blocks.length - 1, q >> shift)];
     const base = q * S, b = d[q];
-    // a literal: after it the rep offset is the same
+    // a literal: after it the rep offset is the same; right after a match it is coded against the match byte
     const nb = q + 1;
     for (let s = 0; s < S; s++) {
       const cs = cost[base + s];
       if (cs >= INF) continue;
       const of = soff[base + s];
-      const v = cs + (s < LA ? pr.litAfterMatch[b] : pr.litAfterLit[b]);
+      const v = cs + (s < LA ? matchedPrice(pr, b, d[q - of]) : pr.litAfterLit[b]);
       arrive(nb, LA, L0, v, of, repeats(nb, of), q, s, LIT, 1);
     }
 

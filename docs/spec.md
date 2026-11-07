@@ -2250,14 +2250,16 @@ från flera starter och prövar varje tabellfack en bit bredare och smalare, på
 **Format** (`PackPrefs.format`, bara för Brokkr): *Exomizer 3* (standard), *Brokkr's own*, Brokkrs eget format för
 största möjliga packning, eller *Brokkr fast*, dess snabba format för snabbast möjliga uppackning (nedan). Det kodar samma slags LZ-tokens med en binär aritmetisk kodare vars sannolikheter anpassar
 sig efter varje bit, som LZMA: bokstäver i ett 8-bitars träd, längder med en sammanflätad gammakod, offset med längd i
-bitar (i sammanhang av matchens längd) och därefter bitarna, och "samma offset igen" efter en literal. Parsningen
-prissätter tokens efter vad kodaren tar block för block. På de 163 programmen blir strömmarna 6,6 % mindre än Exomizer
-3.1.1:s (mindre på 152), men uppackningen tar i median 8 gånger så lång tid (upp till 24 för data som knappt packas;
-varje bit kostar en multiplikation), och uppackaren behöver mer minne:
-512 byte sannolikheter, 1 KB kvadrattabeller när det finns plats (en tredjedel snabbare; annars multiplicerar den
-med skift och addition) och en resident del på omkring 425 byte i stället för 200. För små program är Exomizers format
-därför mindre som självuppackande fil (på 159 program blev filerna 3,5 % mindre sammanlagt, mindre på 98); där
-programmet inte lämnar plats blir filen i Exomizers format, med en notis.
+bitar (i sammanhang av matchens längd) och därefter bitarna, och "samma offset igen" efter en literal. Den första
+literalen efter en match kodas mot matchbyten (byten vid senaste offset, som den sällan är), som LZMA:s matched literal
+men med 16 sannolikheter. Parsningen prissätter tokens efter vad kodaren tar block för block. På de 163 programmen
+blir strömmarna 8,0 % mindre än Exomizer 3.1.1:s (mindre på 154), men som självuppackande fil tar uppackningen i median
+9 gånger så lång tid som i Exomizers format (upp till 35 för data som knappt packas; varje bit kostar en
+multiplikation), och uppackaren behöver mer minne: 512 byte sannolikheter, 1 KB kvadrattabeller när det finns plats (en
+tredjedel snabbare; annars multiplicerar den med skift och addition) och en resident del på omkring 470 byte i stället
+för 200. För små program är Exomizers format därför mindre som självuppackande fil (på 154 program blev filerna 5,6 %
+mindre än Exomizer 3.1.1:s sammanlagt, mindre på 118); där programmet inte lämnar plats blir filen i Exomizers format,
+med en notis.
 `--format brokkr` står då i kommandot, *Crunched data* packas bara bakåt (*Crunch forward* och *No literal sequences*
 döljs), och uppackaren för egen kod skrivs med `brokkr decruncher --format brokkr`.
 
