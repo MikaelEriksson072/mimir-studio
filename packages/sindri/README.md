@@ -138,18 +138,21 @@ With a tape (a TAP image, given instead of the file or with `--tape`) a datasett
   loads over `$029f/$02a0` starts through the next interrupt, which comes at once (the KERNAL ends the load in its tape
   IRQ and enables CIA1's timer A there, whose underflow is waiting), before BASIC goes on with vectors the file may
   have loaded over. The motor interlock `$c0` is set as the KERNAL sets it when it starts the motor, or the KERNAL's
-  IRQ would turn the motor on as soon as PLAY is down;
+  IRQ would turn the motor on as soon as PLAY is down. The pointers a tape LOAD leaves are set too: the start in
+  `$c1/$c2`, the end in `$ae/$af` and `$ac/$ad` (Mastertronic's and Codemasters' boot files clear memory from (`$ac`)
+  up to `$0800`, and stopped at once without them);
 - a program waiting while the tape plays is loading, not settled, until a while (5 s) after the tape's end, and the
   time limit grows to the rest of the tape and half a minute more. The report's `Tape:` line says where the tape stood
   and how far it played; pulses read count as loading for the parts a layer loaded and ran. The saved port is the
   program's: bit 4, which PLAY holds low, is left out.
 
-On the boot files of 98 commercial tapes (the first sides among the first 100 of a tape collection), 80 play the
-tape for more than 5 s and get to the game's code (Novaload, Cyberload and other turbo loaders, none known to Sindri),
-81 end in a running program, 9 at READY, 5 in a reset and 2 on a JAM after loading, and one is a BASIC game that reads
-its data with the KERNAL's own routines; 67 save a later layer than the boot file. A tape takes 2.0 s (median, 8.9 s at
-most) for 118 s of C64 time on average. Without the IRQ vector at `$029f/$02a0` and the motor interlock, only 14 of the
-first 25 got further than the boot file.
+On the boot files of 98 commercial tapes (the first sides among the first 100 of a tape collection), 93 play the
+tape for more than 5 s and get to the game's code (Novaload, Cyberload and other turbo loaders, none known to Sindri;
+80 before the LOAD pointers were set, the 13 being budget tapes such as Mastertronic's, Codemasters' and
+Zeppelin's), 81 end in a running program, 9 at READY, 5 in a reset and 2 on a JAM after loading, and one is a BASIC
+game that reads its data with the KERNAL's own routines; 80 save a later layer than the boot file (67 before). A tape
+takes 2.1 s (median, 10.0 s at most) for 163 s of C64 time on average. Without the IRQ vector at `$029f/$02a0` and
+the motor interlock, only 14 of the first 25 got further than the boot file.
 
 ## Use
 
@@ -362,7 +365,7 @@ load is saved as it started. A boot file that reads the drive's clock with `M-R`
 layers, stop and saved program in the first run in a process, which starts the C64 and the drive up, and in the next.
 The datasette tests build a tape (a KERNAL boot file with a loader in its header, then a program as turbo data) and run
 its boot file with the stand-ins and the ROMs, started through `$0302` and through the IRQ vector at `$029f`: its loader
-reads the program from the tape and starts it.
+reads the program from the tape and starts it, with the pointers a tape LOAD leaves.
 
 ## Limits
 

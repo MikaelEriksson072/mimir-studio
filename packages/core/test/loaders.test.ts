@@ -526,6 +526,28 @@ describe("the Action Replay's loaders", () => {
     expect(ids(' lda #$f4\n sta $dc04\n lda #$81\n sta $dc05\n rts\n')).toEqual([]);
   });
 
+  it("know the big tape publishers' loaders by the code Sindri ran from their tapes", () => {
+    // an IRQ on the FLAG line that reads bit 1 of CIA1's timer A high byte into the byte, as Freeload does; then what
+    // the loader waits for
+    const irq = (bit: string, then: string) => ` sei\n lda #<irq\n sta $0314\n lda #>irq\n sta $0315\n lda #$90\n sta $dc0d\n cli\n jmp *\nirq: pha\n tya\n pha\n${bit}\n lda $a9\n${then}\nend: lda $dc0d\n pla\n tay\n pla\n rti\n`;
+    const freeBit = ' lda $dc05\n ldy #$19\n sty $dc0e\n eor #$02\n lsr\n lsr\n rol $a9';
+    expect(ids(irq(freeBit, ' cmp #$40\n beq end\n cmp #$5a\n beq end'))).toEqual(['freeload']);
+    expect(ids(irq(freeBit, ' cmp #$20\n beq end\n cmp #$ff\n beq end'))).toEqual(['usgold']);
+    // the bit reading alone, which both have: a tape loader, not named
+    expect(ids(irq(freeBit, ' nop'))).toEqual(['tape?']);
+    // Interceptor Micros': the same bit read the lowest bit first, the border flashing, the pilot $a0
+    expect(ids(irq(' lda $dc05\n ldy #$11\n sty $dc0e\n ldy #$0b\n sty $d020\n eor #$02\n lsr\n lsr\n ror $ae', ' cmp #$a0\n bne end\n lda #$27\n sta $0119\n lda #$07\n sta $a9'))).toEqual(['interceptor']);
+    // Firebird's: the FLAG line, then CIA2's timer A
+    expect(ids(irq(' lda $dc0d\n pha\n and #$01\n ora $b4\n sta $b4\n pla\n clc\n and #$10\n beq nob\n lda #$19\n sta $dd0e\n lda $dd0d\n lsr\n rol $bd\nnob: nop', ' nop'))).toEqual(['firebird']);
+    // the IRQ Novaload: waits for $aa, then stores each byte with a beep and a sum
+    expect(ids(irq(' lda $dc05\n nop', ' cmp #$aa\n beq s\n lda #$02\n bne t\ns: lda #$37\nt: sta $0365\n lda #$7f\n sta $a9\n lda $dc0d\n pla\n tay\n pla\n rti\nstore: ldy $a7\n sta ($a5),y\n sta $d401\n clc\n adc $aa\n sta $aa\n iny\n sty $a7\n bne store'))).toEqual(['novaload']);
+    // Cyberload: TapeTool's bit reading without its pha, with a php after
+    const cyber = ids(' lda #$f3\n sta $dc04\n lda #$01\n sta $dc05\n jsr bit\n rts\nbit: lda #$10\nw: bit $dc0d\n beq w\n lda $dc04\n cmp $dc04\n beq one\n clc\none: lda #$19\n sta $dc0e\n php\n dec $f0\n plp\n rts\n');
+    expect(cyber).toEqual(['cyberload']);
+    // Mastertronic's (Codemasters', M.A.D.'s …): 9 bits a byte, each pulse restarting CIA2's timer A
+    expect(ids(' lda #$b6\n sta $dd04\n lda #$01\n sta $dd05\n jsr byte\n rts\nbit: lda #$10\nw: bit $dc0d\n beq w\n lda #$11\n sta $dd0e\n lda $dd0d\n lsr\n bit $dc0d\n rol $fc\n rts\nbyte: ldx #$09\nb: jsr bit\n inc $d020\n dex\n bne b\n lda $fc\n rts\n')).toEqual(['mastertronic']);
+  });
+
   it("know TapeTool's loaders (Martin Piper): the TinyHeader boot loader in the tape header, and the IRQ loader", () => {
     // the boot loader of fixtures/tap/mimir-demo.tap, which reads a bit as TapeTool's TapeLoaderCIACommon.a does
     const tape = readTape(new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/tap/mimir-demo.tap'))));

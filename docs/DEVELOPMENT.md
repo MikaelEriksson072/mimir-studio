@@ -266,10 +266,10 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   the KERNAL's CHKOUT/CHROUT/CLRCHN send it), because BASIC copies a string typed at READY into string space, and a
   program loaded up to `$a000` or beyond leaves none: `open15,8,15,"i"` stopped there with ?OUT OF MEMORY. See spec 13.5.
 - **Tape images.** *File → Insert TAP tape image…* (or drop a `.tap`) puts a tape in the datasette, beside the disk:
-  the Explorer's *Tape* section lists its files (`packages/core/src/c64/tap.ts`: KERNAL, Turbo Tape 64, TapeTool) and
-  the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the renderer's `tapeOf` map, as
-  `diskOf` for disks); a KERNAL boot file with code in its header opens with the header as a second file, which Sindri
-  does not run. Build & Run writes the built boot file back on the tape when the project's first file came from it,
+  the Explorer's *Tape* section lists its files (`packages/core/src/c64/tap.ts`: KERNAL, Turbo Tape 64, Freeload, US
+  Gold's, TapeTool) and the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the
+  renderer's `tapeOf` map, as `diskOf` for disks); a KERNAL boot file with code in its header opens with the header as
+  a second file, which Sindri does not run. Build & Run writes the built boot file back on the tape when the project's first file came from it,
   else puts a copy in VICE's datasette. See spec 13.5e-g.
 - **VICE snapshots.** *Open PRG…* and drag and drop also take `.vsf` files. `openC64File()`
   (`packages/core/src/c64/vsf.ts`) reads the snapshot's C64MEM and MAINCPU modules and opens its RAM from `$0200` as
@@ -335,7 +335,9 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
 - **Loaders.** `findLoaders()` (`packages/core/src/analyze/loaders.ts`) names the loader a program uses: Spindle (2 and
   3), Krill's loader, Bitfire, Sparkle and the Covert Bitops loader by their own receive loops and install commands (the
   byte patterns come from their sources), the Action Replay's fastload, Warp*25, tape backups and turbo tape, Novaload,
-  the Super Snapshot's turbo and copiers and the split freeze loader by their code (the patterns come from the
+  the big tape publishers' loaders (Freeload, US Gold's, Cyberload, Interceptor Micros', Mastertronic's, Firebird's,
+  Novaload's IRQ version, learned from the code Sindri ran from their tapes), the Super Snapshot's turbo and copiers
+  and the split freeze loader by their code (the patterns come from the
   cartridges' ROMs and what they ran and saved in VICE; a `span` sign marks code the ROM keeps for the drive or the stack
   page, a `weak` one counts only with the loader's own code, `claims` makes another make's code a loader's own when its
   own is there, and a `kernal` loader takes no drive code), any other disk loader by its 1541 drive code, `M-W`/`M-E`/`M-R`
@@ -577,6 +579,16 @@ the reference as a patch in `test/helpers/reference.ts`):
     tapes read in 50 s, 1 295 KERNAL files (one with a damaged block), 46 Turbo Tape files, no false TapeTool file; on
     the boot files of the first 98 first sides, 80 play the tape for more than 5 s and 67 save a later layer than the
     boot file (median 2.0 s a tape for 118 s of C64 time on average).
+32. The big publishers' tape loaders (spec 8.11c) were learned from their tapes: 6 tapes each of the 30 publishers with
+    the most in the archive's Preservers collection ran in Sindri with the tape in the datasette, the code that read
+    the FLAG line while the motor ran was grouped by its instructions, and what each group's tapes share became the
+    signs. The bytes a loader stored while the motor ran, found in the tape's bits, gave Freeload's and US Gold's formats
+    (`pilotFiles` in `tap.ts`). Sindri's tape LOAD now leaves the pointers the KERNAL's does (`$c1`, `$ac`, `$ae`):
+    Mastertronic's and Codemasters' boot files clear memory from (`$ac`) and stopped at once without them.
+    Measured: of 167 of those tapes (144 with turbo data) a known tape loader is named in 98, against 10 (Novaload)
+    before; C64Tapes-org's tapes hold 723 Freeload and 613 US Gold files, and the tapes with unknown turbo data fell from
+    765 to 639; on the first 98 boot files 93 play the tape for more than 5 s (80 before); no loader finding changed on
+    600 disk programs.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

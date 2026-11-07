@@ -427,7 +427,7 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
 
 /** a time on the tape, as a datasette's counter would not show it but a player does: m:ss */
 export const tapeTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape' };
+const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold' };
 
 /** The tape in the datasette (13.5e), its files in tape order with where each starts. A file opens with a click (a KERNAL
  *  file with loader code in its header opens with the header as a second file); + adds it to the project. */
@@ -453,7 +453,7 @@ function TapeSection({ tape, onEject, onOpenFromTape, onShowTape }: { tape: Moun
             </div>
           );
         })}
-        {!img.files.length && <div className="muted small">No files the KERNAL, TapeTool or Turbo Tape write.</div>}
+        {!img.files.length && <div className="muted small">No files in a format known here (KERNAL, TapeTool, Turbo Tape, Freeload, US Gold).</div>}
       </div>
       {(img.unknown.length > 0 || tt > 0) && (
         <div className="disk-spindle">

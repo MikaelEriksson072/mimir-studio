@@ -1,8 +1,8 @@
 /* A writer for tapes in TapeTool's turbo format, to test the tape reader with (c64/tap.ts) and to make
  * fixtures/tap/mimir-demo.tap: TapeTool's leader ($ff $c3), sync byte, full headers and TinyHeader, blocks of a page,
  * RLE packed blocks and the leader pairs TapeTool writes around them itself, as Martin Piper's TapeTool.exe writes them
- * (measured on its output); and Turbo Tape 64's format. The boot file's loader is a small one of our own (it reads the
- * TinyHeader file and starts it): nothing of TapeTool's own code is on the tapes. */
+ * (measured on its output); and the formats of Turbo Tape 64, Freeload and US Gold's loader. The boot file's loader is a
+ * small one of our own (it reads the TinyHeader file and starts it): nothing of TapeTool's own code is on the tapes. */
 import { assemble, makeTap, tapPulses } from '../../src';
 
 /** turbo pulses in TAP units: a 0 and a 1 (TapeTool's default TapeTurboSpeed $80: 256 and 512 cycles) */
@@ -77,6 +77,19 @@ export function turboTapeFile(w: TurboWriter, name: string, load: number, data: 
   for (let i = head.length; i < 192; i++) head.push(0x20);
   block(head);
   block([0, ...data, data.reduce((a, v) => a ^ v, 0)]);
+}
+
+/** Freeload's format (pilot $40, sync $5a) and US Gold's (pilot $20, sync $ff, a 16-byte name): the pilot, the sync,
+ *  [the name,] start, end, the data and their XOR, the top bit first, as their loaders read them. */
+export function pilotFile(w: TurboWriter, o: { pilot: number; sync: number; name?: string; load: number; data: Uint8Array }): void {
+  for (let i = 0; i < 64; i++) w.byte(o.pilot);
+  w.byte(o.sync);
+  if (o.name != null) w.bytes(Array.from({ length: 16 }, (_, i) => (i < o.name!.length ? o.name!.toUpperCase().charCodeAt(i) : 0x20)));
+  const end = o.load + o.data.length;
+  w.bytes([o.load & 0xff, o.load >> 8, end & 0xff, end >> 8]);
+  w.bytes(o.data);
+  w.byte(o.data.reduce((a, v) => a ^ v, 0));
+  for (let i = 0; i < 16; i++) w.byte(0);
 }
 
 /** A whole tape: a KERNAL tape (makeTap) with turbo pulses after it. */

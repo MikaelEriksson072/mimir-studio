@@ -448,6 +448,15 @@ class Session {
     m.ram[0x0314] = m.ram[0x029f]; m.ram[0x0315] = m.ram[0x02a0];
   }
 
+  /** The pointers a tape LOAD leaves: the start in $c1/$c2, the end in $ae/$af and in $ac/$ad, which the KERNAL's tape
+   *  routines count up as they store (boot files go on from there: Codemasters' and Mastertronic's clear the memory
+   *  from the end of the load up to $0800 with it) */
+  private tapePointers(start: number, end: number): void {
+    const m = this.m;
+    m.ram[0xc1] = start & 0xff; m.ram[0xc2] = start >> 8;
+    for (const p of [0xac, 0xae]) { m.ram[p] = end & 0xff; m.ram[p + 1] = (end >> 8) & 0xff; }
+  }
+
   /**
    * LOAD from the tape (device 1), as the KERNAL does it: the next file from where the tape stands whose name starts
    * with the name asked for (any file without one), its header into the tape buffer; a program saved as relocatable
@@ -473,7 +482,7 @@ class Session {
     for (let i = 0; i < f.data.length && to + i < 0x10000; i++) { m.write(to + i, f.data[i]); if (!this.started) m.wid[to + i] = LOADED; }
     this.tapeIrqRestore();
     const end = Math.min(0x10000, to + f.data.length) & 0xffff;
-    m.ram[0xae] = end & 0xff; m.ram[0xaf] = end >> 8;
+    this.tapePointers(to, end);
     m.ram[0x90] = 0;
     cpu.x = end & 0xff; cpu.y = end >> 8; cpu.c = 0;
     d.seek(f.to);
@@ -489,8 +498,8 @@ class Session {
     // from a tape: its header in the tape buffer, and the IRQ vector as LOAD from the tape leaves it
     if (this.tapeFile) { this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
     this.loadFile();
-    if (this.tapeFile) this.tapeIrqRestore();
     const end = this.loadAt + this.data.length;
+    if (this.tapeFile) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
     if (this.loadAt === 0x0801) for (const p of [0x2d, 0x2f, 0x31]) { m.ram[p] = end & 0xff; m.ram[p + 1] = end >> 8; }
     m.cpu.s = 0xf8;
     m.cpu.p = 0x20;
@@ -934,8 +943,8 @@ class Session {
         const fromTape = !!this.tape && (!!this.tapeFile || !this.drive);
         if (fromTape) { m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
         this.loadFile();
-        if (fromTape) this.tapeIrqRestore();
         const end = this.loadAt + this.data.length;
+        if (fromTape) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
         cpu.x = end & 0xff; cpu.y = (end >> 8) & 0xff; cpu.c = 0;
         this.setPhase('loaded');
         return this.rts(200);

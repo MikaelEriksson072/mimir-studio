@@ -160,6 +160,16 @@ describe('the datasette', () => {
     });
   }
 
+  it('leaves the pointers a tape LOAD leaves: the start in $c1, the end in $ae and in $ac', () => {
+    // budget boot files (Mastertronic's, Codemasters') clear the memory from ($ac) up to $0800
+    for (const r of [null, roms]) {
+      if (r === roms && !roms) continue;
+      let seen: number[] | null = null;
+      unpack(prgOf(0x02a7, viaMain()), { roms: r, tape: bootTape(0x02a7, viaMain()), maxCycles: 2_000_000, onStep: (_pc, m) => { seen ??= [0xc1, 0xc2, 0xae, 0xaf, 0xac, 0xad].map(a => m.ram[a]); } });
+      expect(seen).toEqual([0xa7, 0x02, 0x04, 0x03, 0x04, 0x03]);
+    }
+  });
+
   it('without the tape the loader waits for pulses that never come', () => {
     const res = unpack(prgOf(0x02a7, viaMain()), { roms: null, maxCycles: 20_000_000 });
     expect(res.unpacked).toBe(false);

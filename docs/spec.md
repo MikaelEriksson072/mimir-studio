@@ -1081,6 +1081,13 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Action Replay turbo tape (Datel) | LOAD/SAVE med TAPE TURBO ON. 5.1 och 7.5: biten genom CIA1:s timer B, synk `$10 … $01`, sparrutinen. 7.2: Turbo Tape 250:s format (tröskel `$0107`, ledarbyte `$02`, synk `$09 … $01`), biten genom CIA2:s timer B med volym och ram som blinkar (`sta $d418 / sta $d020`); andra turbor läser biten likadant men utan blinket, och synken ensam räcker inte |
 | TapeTool (Martin Piper) | biten genom CIA1:s timer A som one-shot (`pha / lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e`, TapeLoaderCIACommon.a), IRQ-laddarens bit (`lda $dc0d / ldx #$19 / stx $dc0e / lsr / rol`, TapeLoaderCIAIRQ.a); väntan på synken `$aa` och TinyHeader `$69` räknas bara med dem (13.5g) |
 | Novaload (Novagen) | biten genom toppbiten i CIA1:s timer A (`bit $dc0d / beq / lda $dc05 / stx $dc0e / eor #$80 / asl / pla / ror`); timern satt till `$81f4`, som bara räknas med biten. Action Replay 7.2:s Nova transfer läser band med samma kod |
+| Novaload, IRQ-versionen (Novagen) | avbrottet som läser bandet och väntar på synkbyten `$aa` (`cmp #$aa / beq / lda #$02 / bne / lda #$37 / sta … / lda #$7f / sta zp / lda $dc0d / pla / tay / pla / rti`) och lagringen med pip på SID:en och summa (`ldy zp / sta (zp),y / sta $d401 / clc / adc zp / sta zp / iny / sty zp / bne`). Elite, Encore, US Golds Americana, Epyx, System 3, MicroProse … (21 band; texten NOVALOAD i minnet) |
+| Freeload (Ocean) | bitläsningen i avbrottet: bit 1 i CIA1:s timer A:s höga byte (`lda $dc05 / ldy #$19 / sty $dc0e / eor #$02 / lsr / lsr / rol`, delad med US Golds laddare och räknas bara med det egna), och väntan på ledaren `$40` och synken `$5a` (`cmp #$40 / beq / cmp #$5a / beq`). Ocean, Imagine, Mastertronic, Domark, CRL, Gremlin (texten FREELOAD i minnet) |
+| US Golds bandladdare | Freeloads bitläsning med ledaren `$20` och synken `$ff` (`cmp #$20 / beq / cmp #$ff / beq`): 720, Masters of the Universe, Super Huey II, Turbo Out Run |
+| Cyberload | bitläsningen `lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e / php` (TapeTool har samma utan `php`, och med `pha` före), och bootfilens dekryptering av laddaren i bandhuvudet (`ldy #… / eor $0350,y / sta $0350,y / dey / bne / eor #… / sta $dc0d`). Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite (texten "CYBERLOAD NOW LOADING …" i skärmkoder i bootfilen) |
+| Interceptor Micros laddare | bitläsningen `sty $d020 / eor #$02 / lsr / lsr / ror`, minst signifikanta biten först, väntan på ledaren `$a0` (`cmp #$a0 / bne / lda #$27 / sta $0119`), och bootkoden i bandhuvudet som läser laddaren med KERNAL:ns `$f84a` och dekrypterar den till stacksidan (`lda $00ff,y / eor …,y / sta $00ff,y / dey / bne`). Activision, Thalamus Hits, Electric Dreams, Domark (texten "(C) INTERCEPTOR MICROS 1987") |
+| Mastertronics bandladdare | bitläsningen `lda #$10 / bit $dc0d / beq / lda #$11 / sta $dd0e / lda $dd0d / lsr / bit $dc0d / rol` (CIA2:s timer A som one-shot från `$01b6`) och 9 bitar per byte (`ldx #$09 / jsr … / inc $d020 / dex / bne`). Mastertronic, M.A.D., Codemasters, Firebirds och Silverbirds budgetband, Durell (17 band) |
+| Firebirds bandladdare | avbrottet `lda $dc0d / pha / and #$01 / ora zp / sta zp / pla / clc / and #$10 / beq / lda #$19 / sta $dd0e / lda $dd0d / lsr / rol` (FLAG-linjen, sedan CIA2:s timer A) och väntan på en ledarbyte och dess komplement (`cmp zp / beq / eor #$ff / cmp zp / bne`, svag). Firebird, Silverbird. Den piper inte (ingen SID-skrivning), så den kallas inte Bleepload |
 | Super Snapshot turbo (LMS) | Turbo V5, LOAD och SAVE. LOAD tar emot fyra byte per handskakning till `$aa–$ad` (`bit $dd00 / bvs / ldy #$03 / nop / bit $80 / lda $dd00 / lsr / lsr / nop / nop / ora $dd00 …`), och koden den kopierar till `$0200` lägger dem i minnet med ROM:en avbankade (`lda #$34 / sta $01 / lda $aa / sta ($93),y …`, 51 byte); filens första byte byts en bit i taget (`sta $a6 / ldx #8 / bit $dd00 / bvc …`): laddadressen, och bit 7 för Warp*25. En byte till GET, katalogen och filkopieraren och en från SAVE, båda på en rad utan badline (`bit $dd00 / bpl / sec / lda $d012 / sbc $26 / bcc / and #$07 / cmp #$02 / bcc`, sedan `lda $2a` respektive `lda #$07 / sta $dd00`); drivkoden skickas två halvbyte i taget med MK4:ans badline-väntan (`cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); kommandona `M-R $fffe`, `M-W $0150` och `$0173` (35 byte var) och `M-E $0150`; drivkoden: starten vid `$0150`, 1541-koden vid `$0300` och `$0400`, SAVE:s vid `$0500`, 1581-koden vid `$0503` (`lda #$d2 / sta $4001`). En fil med bit 7 satt läses som Action Replays Warp*25 med Action Replays kod (mottagarloopen och avkodningen ovan; drivkoden är densamma, omflyttad), och de delarna blir turbons |
 | Super Snapshot copiers (LMS) | diskkopieraren tar emot en sektor till `$0500` (`lda $dd00 / bmi / ora #$17 / sta $dd00 / lda $dd00 / bpl / and #$07 / sta $dd00` … `eor $dd00 / eor #$f9 / sta $0500,y`) och skickar den tillbaka (`ldy #0 / lda $0500,y / pha / ldx #$27 / stx $dd00 / bit $dd00 / bvs`); dess drivkod vid `$033f` (544 byte, `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c`) och `$057c` (352 byte); filkopierarens drivkod vid `$0400` (768 byte, märkt `"2A" $9c` först) |
 | Split freeze loader (Action Replay, Super Snapshot) | första filen i en backup sparad som två (Super Snapshots *BREAK INTO 2 FILES*, Action Replay 4:s *split freeze*): `sei / inc $01 / ldx #n / ldy #0 / lda $0847,y / sta $d000,y …` kopierar dess n sidor till `$d000` med I/O avbankat; `lda $bb / bne / dec $bc / dec $bb / inc $b7 / lda #"1" / sta ($bb),y` sätter en "1" framför namnet den laddades med, och `jmp $ffd5` med `$080c` på stacken laddar den filen, resten av backupen, över sig själv och fortsätter på `$080d`. Den laddar med KERNAL:s LOAD, så drivkod och drivkommandon räknas aldrig till den |
@@ -1111,6 +1118,19 @@ ta en annan loaders kod (`claims`): finns dess egen kod, blir den andras delar d
 code)* sist i beskrivningen, och den andra försvinner som eget fynd. Action Replays egna loaderfiler förblir Action
 Replays. Den delade backupens laddare är densamma i båda cartridgarna: av arkivets 146 sådana filer har 106 en Action
 Replay-backup som andra fil, 31 en Super Snapshot-backup och 9 ingen andra fil på disken.
+
+**De stora bandförlagens laddare** lärdes in ur deras band (2026-11-07): 6 band per förlag för de 30 största förlagen i
+arkivets *Preservers/Tap* (där förlaget står i filnamnet, 180 band) kördes i Sindri med bandet i datasetten, och koden
+som läste FLAG-linjen (`$dc0d`) medan motorn gick fångades. Koden grupperades efter sina instruktioner (opkoder, I/O-
+och omedelbara operander), och de byte alla band i en grupp delar blev mönstren. Namnet kommer från texten laddaren har i
+minnet där den har en (NOVALOAD, CYBERLOAD, FREELOAD, "(C) INTERCEPTOR MICROS 1987"), annars från förlagen. Ett eget
+mönster räknas också när det ligger i samma rutin som ett mönster som andra laddare delar (Freeloads bitläsning finns i
+US Golds laddare), och det namnger då rutinen. Hittas en känd bandladdare blir det allmänna bandmönstret (FLAG-avbrottet
+som slås på, timern) dess delar i stället för ett eget fynd. Av de 167 av banden som gick att köra har 144 turbodata;
+en känd bandladdare namnges nu i 98 (i bootfilen med huvudet, eller i det Sindri packade upp), mot 10 (Novaload) före,
+22 får bara det allmänna bandfyndet och 47 inget (23 av dem är band med bara KERNAL-filer). Turbo Out Run gav förut en
+KERNAL-fil, 14 sträckor okänd turbodata och "A tape turbo loader"; nu läses LOADER och A–J, och laddaren heter US Golds.
+På 600 program från diskar (demos, intron, spel) ändrades inget fynd.
 
 **Andra diskladdare** känns igen på det som alla diskladdare har. De samlas i fyndet *A fast loader (not one of the known
 ones)*. Är exakt en känd diskladdare hittad, eller flera av samma märke (Action Replays, Super Snapshots), blir de i
@@ -2285,6 +2305,12 @@ utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
   först, ledaren `$02`, synk `$09`…`$01`; ett huvud (1, start, slut, en byte, namnet) och ett datablock (0, byten,
   XOR). Datablocket läses till den längd huvudet anger (datan kan innehålla `$02`), och en kontrollsumma som stämmer är
   det som skiljer Turbo Tape från andra laddare med samma ledare och synk.
+- **Freeload** (Oceans, och Imagines, CRL:s, Domarks, Gremlins band) och **US Golds bandladdare** (Turbo Out Run, 720,
+  Masters of the Universe): två pulslängder, högsta biten först; en ledare av en byte (Freeload `$40`, US Gold `$20`)
+  och en synkbyte (`$5a`, `$ff`), sedan US Golds 16 byte namn (PETSCII, mellanslag som `$20`), start och slut (lägsta
+  byten först, slutet ett förbi), datan och en XOR-kontrollsumma. Formaten lärdes ur Sindris körningar av banden:
+  byten laddaren lagrade medan motorn gick, hittade i bandets bitar (8.11c). Utan namn heter en Freeload-fil
+  `file_<start>`. Kontrollsumman skiljer filerna från data som råkar ha ledaren och synken.
 - **Okänd turbodata.** Det som återstår mellan KERNAL-blocken och pauserna med två pulslängder (en 1 som är 1,3–3 gånger
   så lång som en 0) och som inte är en ledare (fyra bytevärden som utgör 90 %) listas som turbodata som inget format här
   läser, med sina två pulslängder. Den läses av Sindri (13.5f).
@@ -2302,9 +2328,11 @@ slumpad ordning, fel); de okända sträckorna med antal pulser och pulslängder.
 den. **Save files…** sparar varje fil som PRG i en vald mapp (ett TapeTool-band också `boot.bin` och `build.bat`,
 13.5g).
 
-Mätt på användarens arkiv (921 band i C64Tapes-org, kommersiella spel): 50 s för alla (54 ms per band), 1 295
-KERNAL-filer varav en med läsfel (Froggy: ett skadat datablock), 46 Turbo Tape-filer och ingen falsk TapeTool-fil; 765
-band har turbodata från en laddare som inte är känd här, 47 har ingen KERNAL-fil (andra sidor). `test/tap.test.ts` läser det
+Mätt på användarens arkiv (921 band i C64Tapes-org, kommersiella spel): 45 s för alla (49 ms per band), 1 295
+KERNAL-filer varav en med läsfel (Froggy: ett skadat datablock), 46 Turbo Tape-filer, 723 Freeload-filer och 613 från
+US Golds laddare (på 132 band, 126 av dem utan något kvar som inte läses) och ingen falsk TapeTool-fil; 639 band har
+turbodata från en laddare som inte är känd här (765 före Freeload och US Gold), 47 har ingen KERNAL-fil (andra sidor).
+I *Preservers/Tap* (1 009 band): 793 Freeload-filer och 996 US Gold-filer på 156 band. `test/tap.test.ts` läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, och fixturen `fixtures/tap/mimir-demo.tap`.
 
@@ -2319,14 +2347,17 @@ fil med sekundäradress 0 i början av BASIC), och bandet spolas fram till efter
 IRQ-vektorn i `$029f/$02a0` före laddningen och lägger tillbaka den efter: en bootfil som laddas över `$029f/$02a0`
 startar genom nästa avbrott, som kommer direkt (KERNAL:n avslutar laddningen i sitt band-IRQ och slår på CIA1:s timer A,
 vars underflöde redan väntar), före BASIC hinner använda vektorer som filen laddat över. Motorspärren `$c0` sätts som
-KERNAL:n gör när den startar motorn, annars slår KERNAL:ns IRQ på motorn så fort PLAY är nedtryckt. Ett program som
+KERNAL:n gör när den startar motorn, annars slår KERNAL:ns IRQ på motorn så fort PLAY är nedtryckt. Pekarna som en LOAD
+från bandet lämnar sätts också: starten i `$c1/$c2`, slutet i `$ae/$af` och `$ac/$ad` (Mastertronics och Codemasters
+bootfiler rensar minnet från (`$ac`) upp till `$0800`, och stannade direkt utan dem). Ett program som
 väntar medan bandet spelar laddar, inte vilar; efter bandets slut väntar Sindri 5 s till. Tiden räcker till resten av
 bandet och 30 s till. Lagerrapporten säger var bandet stod och hur långt det spelade (`Tape: datasette: …`), och
 läsningar från bandet räknas som laddning när ett lager sparar det det laddade. Den sparade porten är programmets: bit 4,
-som PLAY håller låg, räknas inte. Mätt på bootfilerna från de 98 första sidorna bland de första 100 banden i arkivet: 80 spelar bandet i mer än 5 s,
+som PLAY håller låg, räknas inte. Mätt på bootfilerna från de 98 första sidorna bland de första 100 banden i arkivet: 93 spelar bandet i mer än 5 s
+(80 innan pekarna sattes; de 13 är budgetband som Mastertronics, Codemasters och Zeppelins, som nu läser 18–416 s),
 81 slutar i ett program som kör, 9 vid READY, 5 i en reset och 2 i en JAM efter laddningen, och ett är ett BASIC-spel
-som läser sina data med KERNAL:ns egna rutiner; 67 sparar ett senare lager än bootfilen. Ett band tar median 2,0 s
-(max 8,9 s) för i snitt 118 s C64-tid. Utan IRQ-vektorn vid `$029f/$02a0` och motorspärren kom bara 14 av de första 25
+som läser sina data med KERNAL:ns egna rutiner; 80 sparar ett senare lager än bootfilen (67 innan). Ett band tar median
+2,1 s (max 10,0 s) för i snitt 163 s C64-tid. Utan IRQ-vektorn vid `$029f/$02a0` och motorspärren kom bara 14 av de första 25
 längre än bootfilen (11-A-Side Soccer, APB och 3D Pool startar genom vektorn).
 
 `mimir unpack spel.tap [--file NAMN]` packar upp bandets första program (eller det namngivna) med bandet i datasetten,

@@ -159,10 +159,69 @@ const KNOWN: Known[] = [
   },
   {
     id: 'novaload', name: 'Novaload (Novagen)',
-    how: 'tape: the top bit of CIA1\'s timer A ($81f4) tells short pulses from long; a sync byte $aa, the name, then blocks with a checksum. The Action Replay 7.2\'s Nova transfer reads Novaload tapes with the same code',
+    how: 'tape: the top bit of CIA1\'s timer A ($81f4) tells short pulses from long; a sync byte $aa, the name, then blocks with a checksum. The Action Replay 7.2\'s Nova transfer reads Novaload tapes with the same code. The later Novaload (Elite, Encore, US Gold\'s Americana, Epyx, System 3 …) reads the bits in an IRQ, the lowest first, waits for $aa after a pilot of 0 bits, and stores each byte with a beep on the SID and a sum',
     signs: [
       { pat: pat('A9 10 2C 0D DC F0 FB AD 05 DC 8E 0E DC 49 80 0A 68 6A'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then the top bit of CIA1\'s timer A' },
       { pat: pat('A9 F4 8D 04 DC A9 81 8D 05 DC'), role: 'tape', what: 'times the pulses with CIA1\'s timer A from $81f4', weak: true },
+      // the IRQ Novaload, as Sindri ran it from 21 tapes of 11 publishers (all with NOVALOAD in memory)
+      { pat: pat('C9 AA F0 .. A9 02 D0 .. A9 37 8D .. .. A9 7F 85 .. AD 0D DC 68 A8 68 40'), role: 'tape', what: 'the IRQ that reads the tape: waits for the sync byte $aa, then the bytes' },
+      { pat: pat('A4 .. 91 .. 8D 01 D4 18 65 .. 85 .. C8 84 .. D0'), role: 'tape', what: 'stores a byte, beeps it on the SID ($d401) and adds it to the sum' },
+    ],
+  },
+  // the loaders of the big tape publishers, learned from Sindri's runs of their tapes (the code that read the FLAG line
+  // while the motor ran, grouped by its instructions; named by the text they keep in memory where they have one)
+  {
+    id: 'freeload', name: 'Freeload (Ocean)',
+    how: 'tape: an IRQ on the FLAG line, then bit 1 of CIA1\'s timer A high byte (eor #$02 / lsr / lsr) tells a 0 from a 1, the top bit first; a pilot of $40, the sync byte $5a, start, end, the data and their XOR. Ocean\'s and Imagine\'s, and Mastertronic\'s, Domark\'s, CRL\'s and Gremlin\'s tapes too',
+    signs: [
+      { pat: pat('AD 05 DC A0 19 8C 0E DC 49 02 4A 4A 26'), role: 'tape', what: 'reads a bit in its IRQ: bit 1 of CIA1\'s timer A high byte, into the byte (rol)', weak: true },
+      { pat: pat('C9 40 F0 .. C9 5A F0'), role: 'tape', what: 'waits for the pilot byte $40 and the sync byte $5a' },
+    ],
+    text: 'FREELOAD',
+  },
+  {
+    id: 'usgold', name: "US Gold's tape loader",
+    how: 'tape: Freeload\'s bit reading (an IRQ on the FLAG line, bit 1 of CIA1\'s timer A high byte, the top bit first) with a pilot of $20, the sync byte $ff, a 16-byte name, start, end, the data and their XOR. US Gold\'s 720, Masters of the Universe, Super Huey II, Turbo Out Run …',
+    signs: [
+      { pat: pat('AD 05 DC A0 19 8C 0E DC 49 02 4A 4A 26'), role: 'tape', what: 'reads a bit in its IRQ: bit 1 of CIA1\'s timer A high byte, into the byte (rol)', weak: true },
+      { pat: pat('C9 20 F0 .. C9 FF F0'), role: 'tape', what: 'waits for the pilot byte $20 and the sync byte $ff' },
+    ],
+  },
+  {
+    id: 'cyberload', name: 'Cyberload',
+    how: 'tape: a pulse on the FLAG line, then whether CIA1\'s timer A, one shot from about 500 cycles, has run out; the bytes in several stages, each loading the next with its own speed. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite … (TapeTool\'s bit reading is the same)',
+    signs: [
+      { pat: pat('A9 10 2C 0D DC F0 FB AD 04 DC CD 04 DC F0 01 18 A9 19 8D 0E DC 08'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA1\'s timer A (one shot) has run out' },
+      // its boot file, started through the IRQ vector at $029f, decrypts the loader in the tape header
+      { pat: pat('A0 .. 59 50 03 99 50 03 88 D0 .. 49 .. 8D 0D DC'), role: 'tape', what: 'the boot: decrypts the loader in the tape header ($0350 on) and starts it' },
+    ],
+    text: 'CYBERLOAD',
+  },
+  {
+    id: 'interceptor', name: 'Interceptor Micros\' loader',
+    how: 'tape: an IRQ on the FLAG line, bit 1 of CIA1\'s timer A high byte, the lowest bit first; a pilot of $a0, the sync bytes $0a … $00, the start page and the length as a negative number, the data and their XOR. It runs in the stack page. Interceptor\'s, and Activision\'s, Thalamus\' Hits, Electric Dreams\' and Domark\'s tapes',
+    signs: [
+      { pat: pat('8C 20 D0 49 02 4A 4A 66'), role: 'tape', what: 'reads a bit in its IRQ: bit 1 of CIA1\'s timer A high byte, into the byte (ror), the border flashing' },
+      { pat: pat('C9 A0 D0 0B A9 27 8D 19 01'), role: 'tape', what: 'waits for the pilot byte $a0' },
+      // the boot in the tape header reads the loader with the KERNAL's tape routine and decrypts it into the stack page
+      { pat: pat('B9 FF 00 59 .. .. 99 FF 00 88 D0'), role: 'tape', what: 'the boot in the tape header: decrypts the loader it read with the KERNAL ($f84a) into the stack page' },
+    ],
+    text: 'INTERCEPTOR MICROS',
+  },
+  {
+    id: 'mastertronic', name: "Mastertronic's tape loader",
+    how: 'tape: 9 pulses a byte (a frame bit, then the top bit first), each pulse on the FLAG line restarting CIA2\'s timer A (one shot from $01b6), whose underflow is a 1; a pilot of 0, the sync byte $16, then blocks of the start\'s high byte, the end, the start\'s low byte and the data. The boot file loads over $029f and keeps the loader at $0334. Mastertronic\'s and M.A.D.\'s, Codemasters\', Firebird\'s and Silverbird\'s budget tapes, Durell\'s',
+    signs: [
+      { pat: pat('A9 10 2C 0D DC F0 FB A9 11 8D 0E DD AD 0D DD 4A 2C 0D DC 26'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA2\'s timer A has run out' },
+      { pat: pat('A2 09 20 .. .. EE 20 D0 CA D0 F7'), role: 'tape', what: 'reads a byte: 9 bits, the border flashing' },
+    ],
+  },
+  {
+    id: 'firebird', name: "Firebird's tape loader",
+    how: 'tape: an IRQ on the FLAG line restarts CIA2\'s timer A (one shot), whose underflow is the bit, the top bit first; a pilot byte, its complement and the pilot again, 7 header bytes, the data and their XOR. Firebird\'s and Silverbird\'s tapes',
+    signs: [
+      { pat: pat('AD 0D DC 48 29 01 05 .. 85 .. 68 18 29 10 F0 .. A9 19 8D 0E DD AD 0D DD 4A 26'), role: 'tape', what: 'the IRQ that reads a bit: the FLAG line, then CIA2\'s timer A, into the byte (rol)' },
+      { pat: pat('C5 .. F0 .. 49 FF C5 .. D0'), role: 'tape', what: 'waits for the pilot byte, then its complement', weak: true },
     ],
   },
   {
@@ -262,13 +321,19 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
   for (const k of KNOWN) {
     const parts: LoaderPart[] = [];
     let own = false;
+    const weak = new Set<LoaderPart>();
     for (const s of k.signs) {
       for (const a of find(s.pat)) {
+        // (its own code counts even inside a routine that also has what other loaders have)
+        if (!s.weak) own = true;
         const [start, end] = s.page ? [a, Math.min(0x10000, a + 0x100)] : s.fixed && a >= s.fixed[0] && a < s.fixed[1] ? s.fixed
           : s.span && (s.role === 'drivecode' || !inCode(a)) ? spanned(a, s.span) : around(a, s.pat.length);
-        if (parts.some(p => p.start < end && p.end > start)) continue;
-        parts.push({ start, end, role: s.role, what: s.what });
-        if (!s.weak) own = true;
+        const there = parts.find(p => p.start < end && p.end > start);
+        // a routine found by what others have too is named by what is its own
+        if (there) { if (!s.weak && weak.has(there)) { there.what = s.what; weak.delete(there); } continue; }
+        const part: LoaderPart = { start, end, role: s.role, what: s.what };
+        parts.push(part);
+        if (s.weak) weak.add(part);
       }
     }
     // what other loaders have too counts only with its own code
@@ -416,7 +481,10 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
   if (tape.length) {
     const parts: LoaderPart[] = [];
     for (const a of tape) { const [start, end] = around(a, 5); if (!parts.some(p => p.start === start)) parts.push({ start, end, role: 'tape', what: 'tape turbo: waits for pulses on the FLAG line ($dc0d bit 4) and times them with a CIA timer' }); }
-    findings.push({ id: 'tape', name: 'A tape turbo loader', sure: 'likely', how: 'reads the datasette through CIA1’s FLAG line and measures the pulses with a timer', parts });
+    // one known tape loader found: these are its (its set-up, the FLAG interrupt switched on), not a loader of their own
+    const known = findings.filter(f => BY_ID.get(f.id)?.signs.every(s => s.role === 'tape'));
+    if (known.length === 1) known[0].parts = merged([...known[0].parts, ...parts.filter(p => !known[0].parts.some(q => q.start < p.end && q.end > p.start)).map(p => ({ ...p, what: 'sets up the FLAG line ($dc0d bit 4) and a CIA timer to read the tape' }))]);
+    else findings.push({ id: 'tape', name: 'A tape turbo loader', sure: 'likely', how: 'reads the datasette through CIA1’s FLAG line and measures the pulses with a timer', parts });
   }
 
   // ---- the KERNAL's LOAD ----

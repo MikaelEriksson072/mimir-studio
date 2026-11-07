@@ -265,7 +265,7 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
 export function TapePanel({ tape, onCopy, onOpenFile, onSaveFiles }: { tape: MountedTape; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onSaveFiles: () => void }) {
   const { img } = tape;
   const tt = tapeToolScript(img, tape.name);
-  const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape' };
+  const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold' };
   const time = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
   const notes = (f: TapeFile) => [
     f.format === 'cbm' && f.copies ? `header ${f.copies[0]}×, data ${f.copies[1]}×` : '',

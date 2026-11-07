@@ -546,12 +546,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const img = readTape(bytes);
     setTape({ name, path, bytes, img });
     showSection('tape');
-    const n = (f: (x: TapeFile) => boolean) => img.files.filter(f).length;
-    const kinds = [
-      n(f => f.format === 'cbm') ? `${n(f => f.format === 'cbm')} KERNAL` : '',
-      n(f => f.format === 'tapetool') ? `${n(f => f.format === 'tapetool')} TapeTool` : '',
-      n(f => f.format === 'turbotape') ? `${n(f => f.format === 'turbotape')} Turbo Tape` : '',
-    ].filter(Boolean).join(', ');
+    const LABEL: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold' };
+    const kinds = (Object.keys(LABEL) as TapeFile['format'][]).map(k => { const n = img.files.filter(f => f.format === k).length; return n ? `${n} ${LABEL[k]}` : ''; }).filter(Boolean).join(', ');
     toast(`Inserted ${name} (${Math.round(img.seconds)} s): ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kinds ? ` (${kinds})` : ''}${img.unknown.length ? `, and turbo data of a loader Sindri runs` : ''}`, 'ok');
   };
   const insertTape = async () => {

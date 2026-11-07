@@ -50,6 +50,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     LOAD and SAVE, in the cartridge's banks (5.1, 7.2 and 7.5 are checked against real ones) and in what it saves: the
     loader file of a Warp*25 backup (the MK4's too) and the loader in a tape backup's header. Novaload, which the
     7.2's Nova transfer reads, is known as well;
+  - the big publishers' tape loaders, learned from their tapes: Novaload (and its IRQ version), Ocean's Freeload, US
+    Gold's, Cyberload, Interceptor Micros', Mastertronic's and Firebird's, each by its own code that reads the tape;
   - the Super Snapshot's loaders (V5): its turbo, LOAD and SAVE for the 1541 and the 1581 (it reads the Action Replay's
     Warp*25 files with the Action Replay's code, which then counts as the turbo's), the disk copier and the file copier,
     in the cartridge's banks, and the loader a backup saved as two files starts with (the Action Replay's split freezes
@@ -77,8 +79,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     no script file: the program's own code is the script (`lda #file / jsr $0200` loads a file, then it calls the
     part). The *Booze script* tab lists the disk's files and the loads, disk sides and calls of the code that calls the
     loader, each load with what its file unpacks to on the mounted disk, and *Copy script* copies them;
-  - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64 and Martin Piper's
-    TapeTool (the TinyHeader file its boot loader reads, files in checksum blocks in any order, RLE packed blocks) are
+  - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
+    Gold's loader and Martin Piper's TapeTool (the TinyHeader file its boot loader reads, files in checksum blocks in
+    any order, RLE packed blocks) are
     listed in the Explorer with where each starts, and a tape boot file opens with its header, where its loader's code
     is (the tape buffer at `$033c`). The *Tape* tab lists everything on the tape, turbo data of a loader not known here
     too; a TapeTool tape gets the TapeTool command lines that write it again (byte for byte for TapeTool's own example

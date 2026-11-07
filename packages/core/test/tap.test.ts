@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePrg, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackPrg } from '../src';
-import { blockFile, demoTape, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
+import { blockFile, demoTape, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
 const demo = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/prg/raster-demo.prg')));
@@ -202,6 +202,37 @@ describe('Turbo Tape 64', () => {
     expect(img.files[0].data).toEqual(bytes(3000));
     expect(img.unknown).toHaveLength(1);
     expect(img.unknown[0]).toMatchObject({ pulses: u.pulses.length, short: 0x24 * 8, long: 0x50 * 8 });
+  });
+});
+
+describe('Freeload and US Gold\'s loader', () => {
+  it('read their files: pilot, sync, [a name,] start, end, the data and their XOR', () => {
+    // Freeload's pulses: a 0 of about 280 cycles, a 1 of about 376
+    const w = new TurboWriter(0x23, 0x2f);
+    pilotFile(w, { pilot: 0x40, sync: 0x5a, load: 0x0800, data: bytes(1088, 2) });
+    pilotFile(w, { pilot: 0x40, sync: 0x5a, load: 0xa000, data: bytes(3000, 3) });
+    const u = new TurboWriter(0x24, 0x31);
+    pilotFile(u, { pilot: 0x20, sync: 0xff, name: 'loader', load: 0xc075, data: bytes(1116, 4) });
+    pilotFile(u, { pilot: 0x20, sync: 0xff, name: 'a', load: 0x2000, data: bytes(4000, 5) });
+    const img = readTape(withTurbo(makeTap({ files: [] }), [...w.pulses, 0, 0x20, 0x4e, 0, ...u.pulses]));
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors])).toEqual([
+      ['freeload', 'file_0800', 0x0800, 0x0800 + 1088, []],
+      ['freeload', 'file_a000', 0xa000, 0xa000 + 3000, []],
+      ['usgold', 'LOADER', 0xc075, 0xc075 + 1116, []],
+      ['usgold', 'A', 0x2000, 0x2000 + 4000, []],
+    ]);
+    expect(img.files[2].data).toEqual(bytes(1116, 4));
+    expect(img.unknown).toEqual([]);
+    expect(tapeFileName(img.files[0])).toBe('file_0800.prg');
+    // a checksum that does not fit: not a file of theirs, but turbo data no format reads
+    const bad = new TurboWriter(0x23, 0x2f);
+    pilotFile(bad, { pilot: 0x40, sync: 0x5a, load: 0x0800, data: bytes(3000, 2) });
+    const t = withTurbo(makeTap({ files: [] }), bad.pulses);
+    const at = t.length - 16 * 8 - 8 + 3;
+    t[at] = t[at] === 0x23 ? 0x2f : 0x23;
+    const again = readTape(t);
+    expect(again.files).toEqual([]);
+    expect(again.unknown).toHaveLength(1);
   });
 });
 

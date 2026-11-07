@@ -80,7 +80,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
   return { version, cycles: Uint32Array.from(cycles), offsets: Uint32Array.from(offsets), times };
 }
 
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -641,6 +641,45 @@ function turboTapeFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[
   return out;
 }
 
+/* ---- Freeload and US Gold's loader ---- */
+
+/** Turbo formats of a pilot byte, a sync byte and a plain header, the top bit first; learned from the bytes their
+ *  loaders stored as Sindri ran them with the tape: Freeload (Ocean, Imagine, Mastertronic, Domark …: pilot $40, sync
+ *  $5a, start, end, the data, their XOR) and US Gold's loader (Freeload's bit reading: pilot $20, sync $ff, a 16-byte
+ *  name, start, end, the data, their XOR) */
+const PILOT_FORMATS: { format: TapeFormat; pilot: number; sync: number; name: boolean }[] = [
+  { format: 'freeload', pilot: 0x40, sync: 0x5a, name: false },
+  { format: 'usgold', pilot: 0x20, sync: 0xff, name: true },
+];
+
+function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
+  const out: TapeFile[] = [];
+  for (const fmt of PILOT_FORMATS) {
+    const want = (fmt.pilot << 16) | (fmt.pilot << 8) | fmt.sync;
+    let reg = 0, k = 0;
+    while (k < bits.length) {
+      reg = ((reg << 1) | bits[k]) & 0xffffff;
+      k++;
+      if (reg !== want) continue;
+      const syncAt = k - 24;
+      let at = k;
+      const take = () => { const v = msbByte(bits, at); at += 8; return v; };
+      const raw = fmt.name ? Uint8Array.from({ length: 16 }, take) : null;
+      const start = take() | (take() << 8), stop = take() | (take() << 8);
+      if (raw?.includes(255) || stop <= start || at > bits.length) continue;
+      const data = new Uint8Array(stop - start);
+      let x = 0, whole = true;
+      for (let i = 0; i < data.length; i++) { const v = take(); if (v < 0) { whole = false; break; } data[i] = v; x ^= v; }
+      // the checksum tells the format from data that happens to hold its pilot and sync
+      if (!whole || take() !== x) continue;
+      const name = raw ? petsciiName(raw.map(v => (v === 0x20 ? 0xa0 : v))).trimEnd() || "(no name)" : `file_${hex4(start)}`;
+      out.push({ format: fmt.format, name, ...(raw ? { raw } : {}), type: 'PRG', load: start, end: stop, data, at: base + syncAt, offset: p.offsets[base + syncAt] ?? 0, seconds: (p.times[base + syncAt] ?? 0) / TAPE_CLOCK, to: base + at, errors: [] });
+      k = at; reg = 0;
+    }
+  }
+  return out;
+}
+
 /* ---------------------------------------------------------------------------------------------------------------- */
 
 /** Read a .tap image: its files in every format known here, and the stretches with data none of them reads. */
@@ -664,7 +703,7 @@ export function readTape(u8: Uint8Array): TapeImage {
         for (let at = last.to - r.from; at + 8 <= bits.length; at += 8) { const v = msbByte(bits, at); if (v !== 0xff && v !== 0xc3) break; out++; }
         tapetool = { speed: tapetool?.speed ?? Math.round(two.short / 8) * 8, leadOut: Math.round(out / 2) };
       }
-      found.push(...turboTapeFiles(p, bits, r.from));
+      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from));
     }
     files.push(...found);
     // what no format took: unknown turbo data, when there is enough of it to hold some
