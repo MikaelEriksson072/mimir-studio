@@ -22,6 +22,7 @@ import { activity, fingerprintId, identify, strings, type Activity, type Kind, t
 import { buildPrg, contentMask, keptParts, loadedParts, saveRange, type KeptPart } from './output.ts';
 import { Drive, type DriveState } from './drive.ts';
 import { d64ToDisk } from './gcr.ts';
+import { d64NameOf } from './d64.ts';
 import { basicLines, evaluate, findSys, listLine, statements, T } from './basic.ts';
 
 export interface UnpackOptions {
@@ -313,6 +314,9 @@ class Session {
   private driveNote: string | null = null;
   /** since when the drive's motor runs without the program getting new data */
   private driveBusy = 0;
+  /** the file's name as LOAD left it below $a000 (with a disk), what was there before, and whether the program loaded
+   *  a file by it */
+  private loadName: { at: number; bytes: Uint8Array; before: Uint8Array; icount: number; used: boolean } | null = null;
 
   constructor(file: Uint8Array, o: UnpackOptions) {
     if (file.length < 3) throw new Error('not a PRG: shorter than 3 bytes');
@@ -785,16 +789,31 @@ class Session {
     // both: LOAD and SAVE through their vectors, the KERNAL's own BRK handling, reset
     this.trap(0xf4a5, KERNAL, () => {
       if (this.phase === 'load') {
+        // from a disk the file came from device 8 by its name (LOAD"name",8,1): loaders take the drive's number from
+        // here, and a split freeze's first file loads "1" and the name it was loaded by. BASIC keeps the name of a
+        // LOAD typed at the prompt at the top of its string space, below $a000 (the file can load over it)
+        if (this.drive) {
+          m.ram[0xba] = 8; m.ram[0xb9] = 1;
+          const name = d64NameOf(this.o.disk!, this.file);
+          if (name?.length) {
+            const at = 0xa000 - name.length;
+            this.loadName = { at, bytes: name, before: m.ram.slice(at, 0xa000), icount: m.icount, used: false };
+            m.ram.set(name, at); m.ram[0xb7] = name.length; m.ram[0xbb] = at & 0xff; m.ram[0xbc] = at >> 8;
+          }
+        }
         this.loadFile();
-        // from a disk the file came from device 8 (LOAD"*",8,1): loaders take the drive's number from here
-        if (this.drive) { m.ram[0xba] = 8; m.ram[0xb9] = 1; }
         const end = this.loadAt + this.data.length;
         cpu.x = end & 0xff; cpu.y = (end >> 8) & 0xff; cpu.c = 0;
         this.setPhase('loaded');
         return this.rts(200);
       }
-      // with a disk the KERNAL loads it from the drive
-      if (this.drive && m.ram[0xba] === 8) { this.trace(`loads "${this.fileName()}"`); return false; }
+      // with a disk the KERNAL loads it from the drive (by the name LOAD left, perhaps: then it is the program's)
+      if (this.drive && m.ram[0xba] === 8) {
+        const n = this.loadName, at = m.ram[0xbb] | (m.ram[0xbc] << 8);
+        if (n && at < 0xa000 && at + m.ram[0xb7] > n.at) n.used = true;
+        this.trace(`loads "${this.fileName()}"`);
+        return false;
+      }
       this.stop('load', `loads "${this.fileName()}" from device ${m.ram[0xba]}`);
       return true;
     });
@@ -1059,6 +1078,14 @@ class Session {
     const range = this.rangeOf(l);
     if (!range) return null;
     const prg = buildPrg(l.image ?? s.ram, range, clean ? l.live ?? l.mask! : undefined);
+    // the name LOAD left below $a000 is the run's, not the program's, unless the program loaded a file by it (a split
+    // freeze does): what was there before, where nothing wrote it since and the file did not load over it
+    const n = this.loadName;
+    if (n && !n.used) for (let i = 0; i < n.bytes.length; i++) {
+      const a = n.at + i, k = 2 + a - range.start;
+      if (k < 2 || k >= prg.length || (a >= this.loadAt && a < this.loadAt + this.data.length)) continue;
+      if (prg[k] === n.bytes[i] && this.m.wtime[a] <= n.icount) prg[k] = n.before[i];
+    }
     const basicStart = s.ram[0x2b] | (s.ram[0x2c] << 8);
     const entry = l.basic ? findSys(a => s.ram[a], basicStart) ?? basicStart : l.entry;
     return { layer: index, prg, start: range.start, end: range.end, entry, basic: l.basic, port: s.port, interrupts: !(s.p & 4) };

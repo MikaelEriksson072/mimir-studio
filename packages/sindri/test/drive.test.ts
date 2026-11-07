@@ -126,6 +126,54 @@ fail:  inc $d020
 name:  .text "PART2"
 `);
 
+/** a backup saved as two files, as the Super Snapshot and the Action Replay write them: the first copies the page it
+ *  holds to $d000 under the I/O, puts a "1" in front of the name it was loaded by and loads that file over itself,
+ *  going on at $080d */
+const SPLIT_FIRST = asm(`${SYS_LINE}
+       sei
+       inc $01
+       ldx #$01
+       ldy #$00
+copy:  lda $0847,y
+       sta $d000,y
+       iny
+       bne copy
+       inc copy+2
+       inc copy+5
+       dex
+       bne copy
+       dec $01
+       jsr one
+       iny
+       sty $b9
+       lda #$08
+       pha
+       lda #$0c
+       pha
+       txa
+       jmp $ffd5
+one:   lda $bb
+       bne o
+       dec $bc
+o:     dec $bb
+       inc $b7
+       lda #$31
+       sta ($bb),y
+       rts
+${byteLines(noise(256, 5))}
+`);
+/** the second file: here it puts PART2's loop at $c000 and jumps there */
+const SPLIT_SECOND = asm(`${SYS_LINE}
+       ldx #0
+copy:  lda part,x
+       sta $c000,x
+       inx
+       bne copy
+       jmp $c000
+part:
+${byteLines(PART2.prg.subarray(2, 258))}
+`);
+
 /** LOAD "<name>",8,1 through the KERNAL, the name at `label` */
 const kernalLoad = (label: string, length: number) => `
        lda #${length}
@@ -376,6 +424,14 @@ describe.skipIf(!withDrive)('programs that load from the disk', () => {
     expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
     expect(r.saved).toMatchObject({ entry: 0xc000, start: 0xc000, end: PART2.end });
     expect([...r.saved!.prg]).toEqual([...PART2.prg]);
+  });
+
+  it('loads the file by its name on the disk, as LOAD"name",8,1 leaves it: a split freeze loads "1" and the name', () => {
+    const disk = makeD64([{ name: 'SPLIT', prg: SPLIT_FIRST.prg }, { name: '1SPLIT', prg: SPLIT_SECOND.prg }]);
+    const r = unpack(SPLIT_FIRST.prg, { roms, disk });
+    expect(r.stop.reason).toBe('settled');
+    expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+    expect(r.saved).toMatchObject({ entry: 0xc000 });
   });
 
   it('keeps the music an earlier part loaded when the part it loads next plays it on', () => {

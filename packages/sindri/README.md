@@ -237,6 +237,28 @@ layer of the 2700 Action Replay backups is named after the Freeze Machine, nor t
 files every layer and name stayed. A backup on a Kick Off disk that unp64 does not name has the same depacker; its
 first layer is named (82% alike), its second not (78%). That gives 324 fingerprints of 137 packers.
 
+The Super Snapshot's backups (LMS Technologies' freezer cartridge, SNAPSHOT in its menu) are named *LMS Super Snapshot
+backup* (unp64 calls them Super Snapshot). They are one PRG at `$0801` with two layers: the depacker at `$080d` turns
+off both CIAs' interrupts, moves the packed data to the top of memory, puts the zero page, the stack page and the
+colours back and restores the SID, the VIC and the CIAs; the one at `$008e`, the Action Replay's depacker with another
+end, unpacks the memory and starts the frozen program. 3 entries were learned from the 250 backups in the archive (249
+that unp64 names and a game saved as "snap") and 3 saved with a Super Snapshot V5 in VICE: the first layer ran the same
+in all of them, the second in two ways. Both layers of 252 of the 253 are named, and of the last one with `-e 2061`
+(its BASIC line is gone). None of them is named after the Action Replay, nor the reverse.
+
+A backup saved as two files (the Super Snapshot's BREAK INTO 2 FILES, the Action Replay 4's split freeze; unp64 calls
+the first file an Action Replay v4.x Split Freeze) starts with a loader that copies the top of memory it holds to
+`$d000` and loads its second file over itself: "1" and the name it was itself loaded by, which it takes from where
+BASIC's LOAD left it. A file from a disk is now loaded as `LOAD"name",8,1` leaves things: its name, from the disk's
+directory, is below `$a000` with `$b7`, `$bb` and `$bc` set to it (the saved program gets back what was there before,
+unless the program loaded a file by the name or wrote those bytes itself). With their disks, 104 of the archive's 106
+Action Replay split freezes and 29 of its 31 Super Snapshot ones are unpacked with both layers named (5 entries for
+the first layer, where the loader and the backup's depacker ran as one). Of the other four, two have a BASIC line that
+starts nothing, one's first layer runs on into code of the frozen program, and one goes on in the KERNAL. Before, the
+loader got no name (Sindri stopped at the load in the ones tried). On 100 demo disks from CSDB's Top 200 the change
+kept every layer and start; 92 saved the same bytes, and in 8 the saved program has the name below `$a000`, where the
+program itself moved memory out and back again, as it would on a C64. That gives 332 fingerprints of 138 packers.
+
 ## Compared with unp64
 
 On 550 intros and demos from a C64 archive, with VICE's ROMs:
@@ -295,9 +317,10 @@ and run them with the stand-ins and, when VICE's ROMs are found, with the real R
 programs with an extension go on with themselves and RUN themselves again without new layers, packed or not, and one
 that RUNs another program starts a layer. When Exomizer is installed, an Exomizer 3 self-extracting file is unpacked
 too. The signature list is checked as well: no entry may hold the BRKs and
-JAMs of code that was written over, no Action Replay or Freeze Machine entry may name other code, nor the reverse, and
-both layers of either backup get their names, as they ran in backups whose fingerprints are close to an entry but not
-the same. The drive tests check the GCR tracks sector by sector, have the DOS read sectors all over a disk, and,
+JAMs of code that was written over, no Action Replay, Freeze Machine or Super Snapshot entry may name other code, nor
+the reverse, and both layers of each backup get their names, as they ran in backups whose fingerprints are close to an
+entry but not the same. The drive tests check the GCR tracks sector by sector, have the DOS read sectors all over a
+disk, have a split freeze load its second file by the name it was loaded by, and,
 with VICE's ROMs, follow a boot file that loads the next file through the KERNAL and one that sends drive code of its
 own with `M-W`, starts it with `M-E` and receives a sector over the serial bus bit by bit; a framework that loads its
 music and plays it is saved with the music as the run left it, and a part that only makes code of its own after the

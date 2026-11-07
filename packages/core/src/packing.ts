@@ -10,8 +10,8 @@
  *    trace cannot follow, so a packed file shows a few dozen bytes of code (older crunchers also give less
  *    entropy, about 6.5-7, so this sign counts on its own when the rest is not plain)
  *  - the name of a packer or a "crunched by" line in the bytes (ASCII, PETSCII or screen codes)
- *  - a depacker known by its code at the program start (the Action Replay's and the Freeze Machine's backups):
- *    packed on its own
+ *  - a depacker known by its code at the program start (the Action Replay's, the Freeze Machine's and the Super
+ *    Snapshot's backups): packed on its own
  * ===================================================================== */
 import type { Addr, AnalysisResult } from './types';
 import { $4 } from './util/hex';
@@ -63,6 +63,13 @@ const STUBS: { start: number[]; has: number[][]; name: string }[] = [
   // files unp64 calls Freeze Machine or Freeze Machine Split Freeze, one it does not name (a backup by its code) and
   // none of the 2700 Action Replay backups.
   { start: FREEZER, has: [[0x4c, 0x7e, 0x00]], name: 'Evesham Freeze Machine backup' },
+  // The Super Snapshot's backups (LMS Technologies' freezer cartridge, SNAPSHOT in its menu): a PRG at $0801 whose
+  // code at 2061 turns CIA1's interrupts off too, moves the packed data to the top of memory, puts the zero page, the
+  // stack page and the colours back, restores the SID, the VIC and the CIAs and goes on in the zero page at $008e. A
+  // backup broken into 2 files has the Action Replay's split freeze loader first and this as its second file. In the
+  // archive this finds all 249 files unp64 calls Super Snapshot, one more it does not name (a game saved as "snap"),
+  // and none of the 62 others that start with the same sei / lda #$7f / sta $dc0d / sta $dd0d.
+  { start: [0x78, 0xa9, 0x7f, 0x8d, 0x0d, 0xdc, 0x8d, 0x0d, 0xdd, 0xa9, 0x34, 0x85, 0x01], has: [[0x4c, 0x8e, 0x00]], name: 'LMS Super Snapshot backup' },
 ];
 
 /** The packer whose depacker is the code at `at` (peek gives -1 outside the file), or null. */
@@ -128,7 +135,8 @@ export function detectPacking(A: AnalysisResult, file = 0): PackingInfo | null {
   const tinyCode = codeBytes <= Math.max(64, size * 0.03) && codeBytes < 400;
 
   const reasons: string[] = [];
-  if (known) reasons.push(`the code at ${$4(knownAt!)} is the depacker of ${/^[AEIOU]/.test(known) ? 'an' : 'a'} ${known}`);
+  // "an" before a vowel, and before letters said with one (an LMS …)
+  if (known) reasons.push(`the code at ${$4(knownAt!)} is the depacker of ${/^([AEIOU]|[FHLMNRSX][A-Z])/.test(known) ? 'an' : 'a'} ${known}`);
   if (packedShare > 0) reasons.push(`${Math.round(packedShare * 100)}% of the file looks compressed (1 KB windows with at least ${HIGH} bits of entropy per byte)`);
   reasons.push(`${H.toFixed(2)} bits of entropy per byte outside the code`);
   if (tinyCode) reasons.push(`only ${codeBytes} bytes of code can be traced: a decruncher that moves itself before it runs`);

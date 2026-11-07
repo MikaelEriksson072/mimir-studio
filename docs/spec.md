@@ -839,6 +839,16 @@ så lång tid (250 ms för en hel snapshot).
   dem genom texten "a cruncher"), *kanske* för 60 och ingenting för 42; nu blir alla 133 packade med namnet *Evesham
   Freeze Machine backup*, liksom en backup på en Kick Off-disk som unp64 inte känner igen. Ingen av de 2700 AR-backuperna
   och ingen av 1978 andra filer ur arkivet får ett annat besked än förut.
+  Super Snapshots backuper (LMS frysmodul, *SNAPSHOT* i menyn) är en PRG på `$0801` vars kod på 2061 också stänger av
+  CIA1:s avbrott (`sei / lda #$7f / sta $dc0d / sta $dd0d / lda #$34 / sta $01`), flyttar den packade datan till toppen
+  av minnet, lägger tillbaka nollsidan, stacken och färgerna, återställer SID, VIC och CIA och fortsätter i nollsidan på
+  `$008e`, med Action Replays uppackare där men ett annat slut. En backup som delats i två filer (*BREAK INTO 2 FILES*)
+  har Action Replays split freeze-laddare först (8.11c) och en hel backup som andra fil. Av de 250 filer i arkivet som
+  börjar så och har `jmp $008e` (249 som unp64 kallar Super Snapshot och ett spel sparat som "snap") gav tecknen förut,
+  för de 246 som Mimirs D64-läsare öppnar, *packad* för 66 (5 av dem med fel namn: "a cruncher" och Matcham),
+  *kanske* för 118 och ingenting för 62; nu blir alla 250 packade med namnet *LMS Super Snapshot backup*. Ingen av 55
+  andra filer som börjar med samma instruktioner men inte har `jmp $008e` och ingen av 2959 andra filer ur arkivet får
+  ett annat besked än förut.
 
 *Packad* betyder en känd uppackares kod, eller att minst hälften av fönstren ser komprimerade ut, eller lite kod och
 minst 7 bitar per byte, eller ett namn tillsammans med komprimerad data. *Kanske packad* betyder minst 20 % av fönstren i en fil med lite kod (under 10 %),
@@ -851,7 +861,7 @@ dem kör den med små ersättare för KERNAL och BASIC. Ett nytt lager börjar n
 körande lagret skrev och inte har kört. Varje lager får en sort (*mover*, *decoder*, *decruncher*, *jump*, sist
 *program*) och ett fingeravtryck av opkoderna det körde, som de var när det körde dem (så behåller en uppackare i
 nollsidan sitt fingeravtryck fast programmets egen nollsida skrivs över den innan nästa lager börjar); `data/signatures.json`
-har 324 kända fingeravtryck från 137 packare, och ett lager som liknar ett av dem till minst 80 % får dess namn. Båda
+har 332 kända fingeravtryck från 138 packare, och ett lager som liknar ett av dem till minst 80 % får dess namn. Båda
 lagren i en Action Replay-backup (`$080d` och `$008e`) heter *Datel Action Replay backup*, i 2640 av arkivets 2700.
 Båda lagren i en Freeze Machine-backup (`$080d` och `$007e`) heter *Evesham Freeze Machine backup*: med disketten i 99
 av arkivets 124 och 1 till med `-e 2061` (ändrad BASIC-rad); i 24 slutar körningen i det andra lagret, som då är sist
@@ -859,7 +869,20 @@ av arkivets 124 och 1 till med `-e 2061` (ändrad BASIC-rad); i 24 slutar körni
 lager börjar. En Split Freeze packas bara upp med sin diskett (den laddar sin andra fil): 6 av 9 får båda namnen (3 av
 dem med `-e 2061`), i 3 slutar körningen i det andra lagret; utan disketten stannar de vid laddningen. Inget lager i
 en AR-backup heter Freeze Machine eller tvärtom, och på 1978 andra filer ur arkivet behöll alla 1801 namngivna lager
-sina namn. En fil som den skalar ett lager av visas som
+sina namn. Båda lagren i en Super Snapshot-backup (`$080d` och `$008e`) heter *LMS Super Snapshot backup*: 3
+fingeravtryck lärda av arkivets 250 och 3 sparade med en Super Snapshot V5 i VICE (första lagret körde likadant i alla,
+det andra på två sätt) namnger båda i 252 av de 253 och i den sista med `-e 2061`; inget av dem heter Action Replay
+eller tvärtom. En backup sparad som två filer (Super Snapshots *BREAK INTO 2 FILES*, Action Replay 4:s split freeze)
+laddar sin andra fil med namnet den själv laddades med, där BASIC:s LOAD lämnade det. Sindri laddar därför en fil från
+en disk som `LOAD"namn",8,1` gör: namnet ur diskens katalog ligger under `$a000` och `$b7`, `$bb` och `$bc` pekar på
+det (det sparade programmet får tillbaka det som låg där, om inte programmet laddade en fil med namnet eller själv
+skrev de byten). Med sina disketter packas
+104 av arkivets 106 Action Replay-delningar och 29 av 31 Super Snapshot-delningar upp med båda lagren namngivna (5
+fingeravtryck för första lagret, där laddaren och backupens uppackare körde som ett); förut fick laddaren inget namn.
+På 100 demodisketter ur CSDB:s Top 200 gav ändringen samma lager och start; 92 sparade samma byte, och i 8 har det
+sparade programmet namnet under `$a000`, där programmet självt flyttade minnet ut och tillbaka, som det skulle på en
+C64. En fil som den skalar ett
+lager av visas som
 packad, även om tecknen ovan inte räckte, med lagren i notisen (`unpackSummary()` i `packages/core/src/sindri.ts`:
 "Sindri peels off 2 layers: Exomizer v3.0 (a decruncher at $0100) …; the program starts at $1000") och
 packarnamnen i rubriken. Skalar den inget lager av fast den körde programmet tills det stod still (eller gick tillbaka
@@ -1030,6 +1053,9 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Action Replay, bandbackuper (Datel) | loadern i bandets header (`$0351–$03fa`, början `lda #$0b / sta $d011 / lda #$05 / sta $01 / sta $c0`), synkbyten `"RB"`, biten genom CIA2:s timer B (`lda $dd0d / stx $dd0f / lsr / lsr / inc $d020`), första filen som skriver över vektorerna vid `$0300` och hoppar till `$0351`; sparrutinen. Turbo och superturbo har samma loader (pulslängden står på bandet) |
 | Action Replay turbo tape (Datel) | LOAD/SAVE med TAPE TURBO ON. 5.1 och 7.5: biten genom CIA1:s timer B, synk `$10 … $01`, sparrutinen. 7.2: Turbo Tape 250:s format (tröskel `$0107`, ledarbyte `$02`, synk `$09 … $01`), biten genom CIA2:s timer B med volym och ram som blinkar (`sta $d418 / sta $d020`); andra turbor läser biten likadant men utan blinket, och synken ensam räcker inte |
 | Novaload (Novagen) | biten genom toppbiten i CIA1:s timer A (`bit $dc0d / beq / lda $dc05 / stx $dc0e / eor #$80 / asl / pla / ror`); timern satt till `$81f4`, som bara räknas med biten. Action Replay 7.2:s Nova transfer läser band med samma kod |
+| Super Snapshot turbo (LMS) | Turbo V5, LOAD och SAVE. LOAD tar emot fyra byte per handskakning till `$aa–$ad` (`bit $dd00 / bvs / ldy #$03 / nop / bit $80 / lda $dd00 / lsr / lsr / nop / nop / ora $dd00 …`), och koden den kopierar till `$0200` lägger dem i minnet med ROM:en avbankade (`lda #$34 / sta $01 / lda $aa / sta ($93),y …`, 51 byte); filens första byte byts en bit i taget (`sta $a6 / ldx #8 / bit $dd00 / bvc …`): laddadressen, och bit 7 för Warp*25. En byte till GET, katalogen och filkopieraren och en från SAVE, båda på en rad utan badline (`bit $dd00 / bpl / sec / lda $d012 / sbc $26 / bcc / and #$07 / cmp #$02 / bcc`, sedan `lda $2a` respektive `lda #$07 / sta $dd00`); drivkoden skickas två halvbyte i taget med MK4:ans badline-väntan (`cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); kommandona `M-R $fffe`, `M-W $0150` och `$0173` (35 byte var) och `M-E $0150`; drivkoden: starten vid `$0150`, 1541-koden vid `$0300` och `$0400`, SAVE:s vid `$0500`, 1581-koden vid `$0503` (`lda #$d2 / sta $4001`). En fil med bit 7 satt läses som Action Replays Warp*25 med Action Replays kod (mottagarloopen och avkodningen ovan; drivkoden är densamma, omflyttad), och de delarna blir turbons |
+| Super Snapshot copiers (LMS) | diskkopieraren tar emot en sektor till `$0500` (`lda $dd00 / bmi / ora #$17 / sta $dd00 / lda $dd00 / bpl / and #$07 / sta $dd00` … `eor $dd00 / eor #$f9 / sta $0500,y`) och skickar den tillbaka (`ldy #0 / lda $0500,y / pha / ldx #$27 / stx $dd00 / bit $dd00 / bvs`); dess drivkod vid `$033f` (544 byte, `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c`) och `$057c` (352 byte); filkopierarens drivkod vid `$0400` (768 byte, märkt `"2A" $9c` först) |
+| Split freeze loader (Action Replay, Super Snapshot) | första filen i en backup sparad som två (Super Snapshots *BREAK INTO 2 FILES*, Action Replay 4:s *split freeze*): `sei / inc $01 / ldx #n / ldy #0 / lda $0847,y / sta $d000,y …` kopierar dess n sidor till `$d000` med I/O avbankat; `lda $bb / bne / dec $bc / dec $bb / inc $b7 / lda #"1" / sta ($bb),y` sätter en "1" framför namnet den laddades med, och `jmp $ffd5` med `$080c` på stacken laddar den filen, resten av backupen, över sig själv och fortsätter på `$080d`. Den laddar med KERNAL:s LOAD, så drivkod och drivkommandon räknas aldrig till den |
 
 **I en VICE-snapshot** som öppnats från `$0200` (13.7) finns nollsidan och stacken bara i snapshoten. Sparkle har sin
 mottagarloop i stacken (`$0160`). En känd loaders mönster (inte de fasta sidorna) söks därför också i snapshotens
@@ -1047,15 +1073,32 @@ koden spårats. I en cartridge hamnar varje loader i sin bank: fastload och Warp
 På 2445 program ur arkivet ändrades fyra fynd: två crackares loaders som återanvänder Warp*25-koden och två spel med
 Novaload kvar i minnet.
 
+Super Snapshots mönster kommer ur V5:s ROM (4 banker à 16 KB) och ur det den körde och sparade i VICE: drivens minne
+och C64:ans dumpades medan LOAD, SAVE, 1581-laddningen, diskkopieraren och filkopieraren körde och lästes tillbaka mot
+bankerna. Turbon och filkopierarens drivkod ligger i bank 0, mallen för den delade backupens laddare i bank 2 och
+diskkopieraren i bank 3 (den kör sin C64-kod från `$0801–$23ff`, kopierad ur bank 0, 1 och 3). V5 har ingen bandladdare
+(`$dc0d`-läsningarna kvitterar avbrott), och nibblern och parameterkopieraren laddas från en systemdisk. Turbon läser
+Action Replays Warp*25-format med Action Replays egen kod, så de mönstren hittas i SS5:s ROM. En känd loader kan därför
+ta en annan loaders kod (`claims`): finns dess egen kod, blir den andras delar dess, med *(the Action Replay Warp*25's
+code)* sist i beskrivningen, och den andra försvinner som eget fynd. Action Replays egna loaderfiler förblir Action
+Replays. Den delade backupens laddare är densamma i båda cartridgarna: av arkivets 146 sådana filer har 106 en Action
+Replay-backup som andra fil, 31 en Super Snapshot-backup och 9 ingen andra fil på disken.
+
 **Andra diskladdare** känns igen på det som alla diskladdare har. De samlas i fyndet *A fast loader (not one of the known
-ones)*. Är exakt en känd diskladdare hittad, eller flera av samma märke (Action Replays), blir de i stället dess delar
-(Action Replays fastload):
+ones)*. Är exakt en känd diskladdare hittad, eller flera av samma märke (Action Replays, Super Snapshots), blir de i
+stället dess delar (Action Replays fastload, Super Snapshots turbo). Drivkommandon ensamma blir en loader bara när
+något av dem lägger kod i drivenheten eller startar den: `M-E`, eller `M-W` med fler än 4 byte. `M-R` läser bara, och
+ett kort `M-W` sätter ett värde (enhetsnumret på `$0077` i Super Snapshots verktyg, en byte i ett kopieringsskydd). På
+2900 program ur arkivet ändrade det och Super Snapshots mönster 14 fynd: 9 *okända snabbladdare* som bara var ett
+`M-R` eller ett `M-W` på 1–2 byte försvann, 4 delade backuper fick sin laddare och ett verktyg med Super Snapshots
+byte-mottagare och filkopierarens drivkod blev Super Snapshots turbo. Det som alla diskladdare har:
 
 - **Drivkod:** absolut åtkomst till 1541:ans VIA-register (`$1800–$180f`, `$1c00–$1c0f`) och GCR-väntan `bvc *` (`50 FE`),
   `lda $1c01` räknas dubbelt. Det gäller i data som C64-koden inte spårats in i. Minst tre åtkomster nära varandra (högst
   160 byte emellan) blir en del, som växer till blockets gränser när de ligger nära.
 - **Drivkommandon:** `M-W`, `M-E` och `M-R` med en rimlig adress i drivens RAM eller ROM, i den ordningen eller baklänges.
   Delen säger vad kommandot gör (*M-W $0600, 32 bytes into the drive*, *M-R … reads the drive's ROM (which drive it is)*).
+  Ensamma räknas bara de som lägger in eller startar kod (se ovan).
 - **Mottagarloop:** minst fyra läsningar av `$dd00` inom 48 byte, också indexerade från `$dcc0–$dcff`. Den beskrivs som
   1-bit, 2-bit eller 2-bit + ATN genom `$dd02` (en enkel VIC-bankväxling läser `$dd00` en gång).
 - **Installation:** spårad kod som anropar KERNAL:s LISTEN, SECOND, CIOUT, UNLSN, TALK, TKSA, ACPTR eller UNTLK. Den räknas

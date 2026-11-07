@@ -59,6 +59,28 @@ export function d64File(d64: Uint8Array, entry: Pick<D64Entry, 'track' | 'sector
   return Uint8Array.from(parts);
 }
 
+/** The name (its PETSCII bytes, without the shift-space padding) of the first PRG on the disk whose bytes are `prg`. */
+export function d64NameOf(d64: Uint8Array, prg: Uint8Array): Uint8Array | null {
+  const seen = new Set<number>();
+  try {
+    for (let t = 18, s = 1; t !== 0 && !seen.has(t * 256 + s);) {
+      seen.add(t * 256 + s);
+      const o = sectorOffset(d64, t, s);
+      for (let k = 0; k < 8; k++) {
+        const at = o + k * 32;
+        if ((d64[at + 2] & 0x87) !== 0x82 || !d64[at + 3]) continue;
+        let bytes: Uint8Array;
+        try { bytes = d64File(d64, { track: d64[at + 3], sector: d64[at + 4] }); } catch { continue; }
+        if (bytes.length !== prg.length || bytes.some((b, i) => b !== prg[i])) continue;
+        let n = 16; while (n > 0 && d64[at + 5 + n - 1] === 0xa0) n--;
+        return d64.slice(at + 5, at + 5 + n);
+      }
+      t = d64[o]; s = d64[o + 1];
+    }
+  } catch { /* a directory that leaves the disk */ }
+  return null;
+}
+
 /** The first PRG in the directory, or the one named (`*` and `?` as the DOS takes them). */
 export function d64Pick(d64: Uint8Array, name?: string): D64Entry | null {
   const files = d64Directory(d64).filter(e => e.type === 'PRG' && e.track);

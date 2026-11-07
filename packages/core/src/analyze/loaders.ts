@@ -5,7 +5,8 @@
  * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops loader v3 loader.s). The Action
  * Replay's loaders (Datel) come from its ROMs (5.1, 7.2 and 7.5 keep the same code in other places; 7.2's turbo tape differs), the backups and loader files
  * they saved in VICE, and the MK4's loader file; Novaload is in the 7.2, whose Nova transfer reads such tapes with
- * Novaload's own code. Any other
+ * Novaload's own code. The Super Snapshot's (LMS) come from the V5's ROM and what it ran and saved in VICE: its turbo
+ * reads Warp*25 files with the Action Replay's code, and its split backups start with the Action Replay's loader. Any other
  * loader is known by what every disk loader has (Spindle 2.3 and an older Bitfire were read from their releases' binaries): code for the 1541 (it reads and writes the drive's VIA registers at
  * $1800 and $1c00, and waits for GCR bytes with bvc *), drive commands that upload and start it (M-W, M-E, M-R) and a
  * receive loop that reads the serial bus at $dd00 again and again. A tape turbo loader reads CIA1's FLAG line and times
@@ -37,6 +38,11 @@ interface Known {
   text?: string;
   /** loaders of one make (the Action Replay's): what every disk loader has goes to the main one of them */
   group?: string; main?: boolean;
+  /** another make's loader whose code this one has too (the Super Snapshot reads Warp*25 files with the Action
+   *  Replay's code): found with this one's own code, its parts are this one's */
+  claims?: LoaderId[];
+  /** it loads through the KERNAL: drive code and drive commands are not its */
+  kernal?: boolean;
 }
 
 const KNOWN: Known[] = [
@@ -142,6 +148,48 @@ const KNOWN: Known[] = [
       { pat: pat('A9 F4 8D 04 DC A9 81 8D 05 DC'), role: 'tape', what: 'times the pulses with CIA1\'s timer A from $81f4', weak: true },
     ],
   },
+  // the Super Snapshot V5 (LMS Technologies): its ROM holds the code it uploads to the drive and copies to $0200; a
+  // file whose first byte has bit 7 set it reads as the Action Replay's Warp*25 format, with the Action Replay's code
+  {
+    id: 'ss-turbo', name: 'Super Snapshot turbo (LMS)', group: 'supersnapshot', main: true, claims: ['ar-warp'],
+    how: 'Turbo V5, LOAD and SAVE: code for the 1541 at $0150 receives the rest fast and starts it at $0300 (a 1581 has code of its own at $0500); LOAD takes four bytes a handshake (lda $dd00 / lsr / lsr / ora $dd00 …) and stores them with code at $0200 with the ROMs banked out, SAVE sends each byte as two halves from a table, both on lines with no badline; a file whose first byte has bit 7 set is read as the Action Replay\'s Warp*25 format, with the Action Replay\'s code',
+    signs: [
+      { pat: pat('2C 00 DD 70 FB A0 03 EA 24 80 AD 00 DD 4A 4A EA EA 0D 00 DD'), role: 'resident', what: 'LOAD receives four bytes a handshake into $aa-$ad (lda $dd00 / lsr / lsr / ora $dd00 …)' },
+      { pat: pat('A9 34 85 01 A5 AA 91 93 C8 98 48 A9 37 85 01'), role: 'resident', what: 'stores the bytes LOAD receives with the ROMs banked out ($01 = $34); it runs at $0200', span: [0, 0x33] },
+      { pat: pat('85 A6 A2 08 2C 00 DD 50 FB AD 00 DD 29 DF 8D 00 DD'), role: 'resident', what: 'trades a byte with the drive a bit at a time: the file\'s first bytes (its load address, and bit 7 for Warp*25)' },
+      { pat: pat('2C 00 DD 10 FB 38 AD 12 D0 E5 26 90 06 29 07 C9 02 90 F2 A5 2A 8D 00 DD'), role: 'resident', what: 'receives a byte (GET, the directory, the file copier): waits for the drive and for a line with no badline, then reads the serial bus four times' },
+      { pat: pat('2C 00 DD 10 FB 38 AD 12 D0 E5 26 90 06 29 07 C9 02 90 F2 A9 07 8D 00 DD'), role: 'resident', what: 'sends a byte (SAVE, the file copier): waits for the drive and for a line with no badline, then sends it as two halves from a table' },
+      { pat: pat('2C 00 DD 50 FB B1 AC EA 48 4A 4A 4A 4A AA AD 12 D0 C9 31 90 06 29 06 C9 02 F0 F3'), role: 'install', what: 'sends the drive code: each byte as two halves from a table, on a line with no badline' },
+      { pat: pat('4D 2D 52 FE FF 01 4D 2D 57 50 01 23 4D 2D 57 73 01 23 4D 2D 45 50 01'), role: 'command', what: 'drive commands M-R $fffe (which drive it is), M-W $0150 and $0173 (35 bytes each) and M-E $0150: they start the code that receives the rest' },
+      { pat: pat('78 20 8D 01 20 E9 F5 20 5D 01 4C 00 03'), role: 'drivecode', what: 'code for the 1541 at $0150: it receives the rest of the drive code fast, then starts it at $0300', span: [0, 0x46] },
+      { pat: pat('A9 17 8D 07 1C 20 32 03 CE 89 01 20 AF 03'), role: 'drivecode', what: 'code for the 1541 at $0300: it finds the file and starts the code that reads it (at $0400, or the Warp*25 reader)', span: [0, 0x100] },
+      { pat: pat('A5 43 85 C1 20 82 05 50 FE B8 AD 01 1C'), role: 'drivecode', what: 'code for the 1541 at $0400: it reads the file a sector at a time and sends it', span: [0, 0x200] },
+      { pat: pat('20 83 03 20 C6 06 20 93 05 A9 00 8D 00 18'), role: 'drivecode', what: 'code for the 1541 that reads the Action Replay\'s Warp*25 sectors (the Action Replay\'s code, rearranged)', span: [0, 0x300] },
+      { pat: pat('78 A0 02 8C 00 18 20 E9 F5 A9 0A 85 69'), role: 'drivecode', what: 'code for the 1541 at $0500 that SAVE uploads: it takes the bytes and writes the sectors', span: [0, 0xff] },
+      { pat: pat('78 A9 D2 8D 01 40 A5 4C AE 8B 02 85 0B'), role: 'drivecode', what: 'code for the 1581 at $0503 (its serial port is the CIA at $4000)', span: [0, 0xa6] },
+    ],
+  },
+  {
+    id: 'ss-copier', name: 'Super Snapshot copiers (LMS)', group: 'supersnapshot',
+    how: 'the disk copier copies a disk with code in the 1541 at $033f and $057c, and the C64 takes each sector into $0500 (lda $dd00 / lsr / lsr / eor $dd00 … eor #$f9) with code it runs from $0801 to $23ff; the file copier has code of its own for the 1541 at $0400 and talks to it with the turbo\'s routines',
+    signs: [
+      { pat: pat('AD 00 DD 30 FB 09 17 8D 00 DD AD 00 DD 10 FB 29 07 8D 00 DD'), role: 'resident', what: 'the disk copier receives a sector into $0500, four reads of the serial bus a byte (… eor $dd00 / eor #$f9); it runs at $176a' },
+      { pat: pat('A0 00 B9 00 05 48 A2 27 8E 00 DD 2C 00 DD 70 FB'), role: 'resident', what: 'the disk copier sends the sector at $0500 to the drive' },
+      { pat: pat('AD 00 1C 09 0C 8D 00 1C A9 EE 8D 0C 1C'), role: 'drivecode', what: 'code for the 1541 at $033f that the disk copier uploads: it reads and writes the sectors of a track', span: [0, 0x220] },
+      { pat: pat('78 20 3F 03 20 E1 04 A5 BB 20 7A 03'), role: 'drivecode', what: 'code for the 1541 at $057c that the disk copier uploads: it runs the copy of a track', span: [0, 0x160] },
+      { pat: pat('32 41 9C 78 A0 02 8C 00 18 AD 00 1C 09 0C 8D 00 1C 20 E9 F5'), role: 'drivecode', what: 'code for the 1541 at $0400 that the file copier uploads: it reads and writes the files\' sectors', span: [0, 0x300] },
+    ],
+  },
+  // a backup saved as two files: the Super Snapshot V5's (BREAK INTO 2 FILES) and the Action Replay 4's split freezes
+  // start with this loader, which unp64 knows as the Action Replay v4.x Split Freeze
+  {
+    id: 'freezer-split', name: 'Split freeze loader (Action Replay, Super Snapshot)', kernal: true,
+    how: 'the first file of a backup saved as two: it copies the top of memory it holds to $d000 with the I/O banked out, puts a "1" in front of the name it was loaded by and loads that file, the rest of the backup, over itself; the KERNAL LOAD returns into the backup\'s start at $080d',
+    signs: [
+      { pat: pat('78 E6 01 A2 .. A0 00 B9 47 08 99 00 D0 C8 D0 F7 EE 16 08 EE 19 08 CA D0 EE C6 01 20 38 08 C8 84 B9 A9 08 48 A9 0C 48 8A 4C D5 FF'), role: 'resident', what: 'copies its pages to $d000 with the I/O banked out, then loads the second file over itself' },
+      { pat: pat('A5 BB D0 02 C6 BC C6 BB E6 B7 A9 31 91 BB 60'), role: 'resident', what: 'puts a "1" in front of the file name: the second file is "1" and the first file\'s name' },
+    ],
+  },
 ];
 const BY_ID = new Map(KNOWN.map(k => [k.id, k]));
 /** the classic 2-bit receive loop: the Covert Bitops loader's, and many older loaders' */
@@ -203,6 +251,10 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
     // its name alone could be any text: it counts with its code, or (below) next to drive commands
     if (parts.length) findings.push({ id: k.id, name: k.name, sure: 'match', how: k.how, parts: parts.sort((x, y) => x.start - y.start) });
   }
+  // another make's code that this one has too is this one's, when its own code is there (its parts move over below,
+  // after the parts are merged, so that each keeps what it is)
+  const claimed = new Map<LoaderId, LoaderFinding>();
+  for (const f of findings) for (const id of BY_ID.get(f.id)?.claims ?? []) if (findings.some(x => x.id === id)) claimed.set(id, f);
   // ---- a snapshot opened from $0200: a known loader's code in the zero page or the stack, which it holds ----
   for (const f of ctx.files) {
     if (!f.vsf) continue;
@@ -223,18 +275,25 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
 
   // ---- what every disk loader has ----
   const generic: LoaderPart[] = [];
+  /** drive commands that put code into the drive or start it: M-E, and M-W of more than a few bytes (M-R reads, and
+   *  a short M-W sets a value, such as the device number at $0077) */
+  const uploads = new Set<LoaderPart>();
   // drive commands: "M-W" lo hi length, "M-E" lo hi, "M-R" lo hi length; some loaders send them backwards ("W-M")
   for (const [c, name] of [[0x57, 'M-W'], [0x45, 'M-E'], [0x52, 'M-R']] as const) {
     const plausible = (lo: number, hi: number) => hi <= 0x07 || hi >= 0xc0;
     for (const a of find([new Set([0x4d]), new Set([0x2d]), new Set([c])])) {
       if (inCode(a) || a + 5 > 0xffff || !plausible(mem[a + 3], mem[a + 4])) continue;
       const at = mem[a + 3] | (mem[a + 4] << 8), n = c === 0x45 ? 5 : 6;
-      generic.push({ start: a, end: a + n, role: 'command', what: `drive command ${name} $${h(at)}${c === 0x45 ? ': starts the code there in the drive' : c === 0x57 ? `, ${mem[a + 5]} bytes into the drive` : ': reads the drive' + (at >= 0xc000 ? "'s ROM (which drive it is)" : "'s memory")}` });
+      const p: LoaderPart = { start: a, end: a + n, role: 'command', what: `drive command ${name} $${h(at)}${c === 0x45 ? ': starts the code there in the drive' : c === 0x57 ? `, ${mem[a + 5]} bytes into the drive` : ': reads the drive' + (at >= 0xc000 ? "'s ROM (which drive it is)" : "'s memory")}` };
+      generic.push(p);
+      if (c === 0x45 || (c === 0x57 && mem[a + 5] > 4)) uploads.add(p);
     }
     for (const a of find([new Set([c]), new Set([0x2d]), new Set([0x4d])])) {
       if (inCode(a) || a < 3 || !plausible(mem[a - 1], mem[a - 2])) continue;
       const at = mem[a - 1] | (mem[a - 2] << 8);
-      generic.push({ start: a - (c === 0x45 ? 2 : 3), end: a + 3, role: 'command', what: `drive command ${name} $${h(at)}, stored backwards (sent from its end)` });
+      const p: LoaderPart = { start: a - (c === 0x45 ? 2 : 3), end: a + 3, role: 'command', what: `drive command ${name} $${h(at)}, stored backwards (sent from its end)` };
+      generic.push(p);
+      if (c !== 0x52) uploads.add(p);
     }
   }
   // 1541 code: the drive's VIA registers ($1800 serial port, $1c00 disk controller) and GCR reads (bvc * / lda $1c01)
@@ -303,17 +362,25 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
   if (evidence.length) {
     // one known disk loader, or loaders of one make (the Action Replay's): these are its parts; otherwise they are a
     // loader of their own
-    const disk = findings.filter(f => !BY_ID.get(f.id)?.signs.every(s => s.role === 'tape'));
+    const disk = findings.filter(f => { const k = BY_ID.get(f.id); return !k?.kernal && !claimed.has(f.id) && !k?.signs.every(s => s.role === 'tape'); });
     const makes = new Set(disk.map(f => BY_ID.get(f.id)?.group ?? f.id));
     const known = makes.size === 1 ? disk.find(f => BY_ID.get(f.id)?.main) ?? disk[0] : null;
     const keep = evidence.filter(p => !(known && p.role === 'resident' && known.parts.some(q => q.role === 'resident')));
     if (known) known.parts.push(...keep.filter(p => !known.parts.some(q => q.start < p.end && q.end > p.start)));
-    else if (keep.some(p => p.role === 'drivecode' || p.role === 'resident' || p.role === 'command')) {
+    else if (keep.some(p => p.role === 'drivecode' || p.role === 'resident' || uploads.has(p))) {
       const how = keep.find(p => p.role === 'resident')?.what.replace(/^receive loop: /, '') ?? 'its own code in the drive';
       findings.push({ id: 'fastloader', name: 'A fast loader (not one of the known ones)', sure: 'likely', how, parts: keep });
     }
   }
   for (const f of findings) f.parts = merged(f.parts);
+  for (const [id, f] of claimed) {
+    const i = findings.findIndex(x => x.id === id);
+    if (i < 0 || !findings.includes(f)) continue;
+    const name = BY_ID.get(id)!.name.replace(/ \(.*\)$/, '');
+    f.parts.push(...findings[i].parts.map(p => ({ ...p, what: `${p.what} (the ${name}'s code)` })));
+    f.parts.sort((x, y) => x.start - y.start);
+    findings.splice(i, 1);
+  }
 
   // ---- tape: CIA1's FLAG line (the datasette's read line) and a timer to measure the pulses ----
   const flag = [...find(pat('AD 0D DC 29 10')), ...find(pat('A9 10 2C 0D DC')), ...find(pat('A9 90 8D 0D DC'))].filter(inCode);

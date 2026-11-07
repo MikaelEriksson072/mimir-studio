@@ -324,11 +324,13 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   the handler. `rasterIrqs()` in `packages/core/src/analyze/raster.ts`; see spec 8.11d.
 - **Loaders.** `findLoaders()` (`packages/core/src/analyze/loaders.ts`) names the loader a program uses: Spindle (2 and
   3), Krill's loader, Bitfire, Sparkle and the Covert Bitops loader by their own receive loops and install commands (the
-  byte patterns come from their sources), the Action Replay's fastload, Warp*25, tape backups and turbo tape and Novaload
-  by their code (the patterns come from the cartridges' ROMs and the files they saved in VICE; a `span` sign marks code
-  the ROM keeps for the drive or the stack page, a `weak` one counts only with the loader's own code), any other disk
-  loader by its 1541 drive code, `M-W`/`M-E`/`M-R` commands, KERNAL serial calls and `$dd00` receive loop, a tape turbo
-  by CIA1's FLAG line and a timer, and the KERNAL's LOAD. Explorer →
+  byte patterns come from their sources), the Action Replay's fastload, Warp*25, tape backups and turbo tape, Novaload,
+  the Super Snapshot's turbo and copiers and the split freeze loader by their code (the patterns come from the
+  cartridges' ROMs and what they ran and saved in VICE; a `span` sign marks code the ROM keeps for the drive or the stack
+  page, a `weak` one counts only with the loader's own code, `claims` makes another make's code a loader's own when its
+  own is there, and a `kernal` loader takes no drive code), any other disk loader by its 1541 drive code, `M-W`/`M-E`/`M-R`
+  commands (alone only when one puts code into the drive or starts it), KERNAL serial calls and `$dd00` receive loop, a
+  tape turbo by CIA1's FLAG line and a timer, and the KERNAL's LOAD. Explorer →
   Loaders lists them with their parts; the listing and the exported source mark where each part starts and ends
   (`// ==== Bitfire (Bitbreaker/Oxyron): … ====`). A packed program's loader shows once it is unpacked. See spec 8.11c.
 - **Packed programs.** `detectPacking()` (`packages/core/src/packing.ts`) reports a decruncher in front of compressed

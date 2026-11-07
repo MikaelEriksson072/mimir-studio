@@ -413,6 +413,12 @@
   {
    "name": "Datel Action Replay backup",
    "kind": "decruncher",
+   "opcodes": "78a98da0a9b985a2a0c8b9ee99ee88c0cad0ce20cec8eca9d048e6a28a9ac8b9a599b9c699a94a4a4a4a99c8d0eeeeeecece10a2a99d9da99da99da99d8a38e9aa10a0a90a908ca0a9999988d0c0b0b999b999b999c8c0d020ad85ad85a9a28d8d8ec6a04c2c10a2a0a58da58c8d8ea58da58c8d8ea58da58c8d8ea58da58c8d8eadada58da58d60",
+   "seen": 75
+  },
+  {
+   "name": "Datel Action Replay backup",
+   "kind": "decruncher",
    "opcodes": "a08686b1c685a5918810c6cacad04cade6d0e66020aa2091c8f0cad0f0208520c9f091c8d0f0069026c646902091c8d0e6d0eaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae6adc9d0c6a9cda9cda24c",
    "seen": 68
   },
@@ -443,6 +449,18 @@
   {
    "name": "Datel Action Replay backup",
    "kind": "decruncher",
+   "opcodes": "78a98da0a9b985a2a0c8b9ee99ee88c0cad0ce20cec8eca9d048e6a28a9ac8b9a599b9c699a94a4a4a4a99c8d0eeeeeecece10a2a99d9da99da99da99d8a38e9aa10a0a90a908ca0a9999988d0c0b0b999b999b999c8c0d0ad85ad85a9a28d8d8eadadc6a04c",
+   "seen": 15
+  },
+  {
+   "name": "Datel Action Replay backup",
+   "kind": "decruncher",
+   "opcodes": "78a98da0a9b985a2a0c8b9ee99ee88c0cad0ce20cec8eca9d048e6a28a9aa2c8b9d099c6b9e6484a4a4a4a9d68299de8e8d0eeeec8d0ceeece10a2a99d9da99da99da99d8a38e9aa10a0a90a908ca0a9999988d0c0b0b999b999b999c8c0d0ad85ad85a98dadadc6a04c",
+   "seen": 13
+  },
+  {
+   "name": "Datel Action Replay backup",
+   "kind": "decruncher",
    "opcodes": "a08686b1c685a5918810c6cacad04cade6d0e66020aa2091c8f0cad0f0208520c9f091c8d0f0069026c64690e6d0eaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae6adc9d0c6a9cda9cda24c",
    "seen": 1
   },
@@ -468,6 +486,12 @@
    "name": "Datel Action Replay backup",
    "kind": "mover",
    "opcodes": "78a98da985a2a0b99988c0d0ceceecd0e6a29aa2c8b999b9484a4a4a4a9d68299de8e8d0eeeec8d0ceeece10a2a9bdbda9bda9bda9bd8a38e9aa10a0a90a90aca0a9999988d0c0b0b999b999b999c8c0d0ad85ad85a9a28d8d8eadadc6a04c",
+   "seen": 1
+  },
+  {
+   "name": "Datel Action Replay backup",
+   "kind": "decruncher",
+   "opcodes": "78a98da0a9b985a2a0c8b9ee99ee88c0cad0ce20cec8eca9d048e6a28a9aa2c8b9d099c6b9e6484a4a4a4a9d68299de8e8d0eeeec8d0ceeece10a2a99d9da99da99da99d8a38e9aa10a0a90a908ca0a9999988d0c0b0b999b999b999c8c0d0ad85ad85a9a28d8d8eadadc6a04c",
    "seen": 1
   },
   {
@@ -1375,6 +1399,30 @@
    "kind": "decruncher",
    "opcodes": "a2209de8d0a985a98520d020d02020f020c6d0c6102084f00ad020d0a985a2208a0a0a6585aabdaa207d85a57d85a5e585a5e585b1e6d0e620c6d0f0e8204ad069d0b02069d0e6a22090a985584cb1e6d0e66091e6d0e660a286bdaa20f0a67d8560a6ca10a2ada2868484f0c6d0a9852085062626c6d0e6a6a560",
    "seen": 2
+  },
+  {
+   "name": "LMS Super Snapshot backup",
+   "kind": "mover",
+   "opcodes": "78a98d8da985a2a0b99988c0d0ceceecd0e6a29ac88c8c8c8cb999b9994a4a4a4a99c8d0eeeeeecece10a0c0b0b999b9998810adada0b999b9998810adadadada2a0a98d8d8d8dbd9dbd9de8d08c8c8c8cadadc6a04c",
+   "seen": 252
+  },
+  {
+   "name": "LMS Super Snapshot backup",
+   "kind": "decruncher",
+   "opcodes": "ade6d0e66020aa2091c8f0cad0f0208520c9f091c8d0f0069026c646902091c8d0e6d0e6a985eaeaeaeaeaeaeaeaeaeaeaeaea6c",
+   "seen": 249
+  },
+  {
+   "name": "LMS Super Snapshot backup",
+   "kind": "decruncher",
+   "opcodes": "78a98da08db9a99985a2d0a0eeb9ee99ca88c0c6d020cec8cea9ec48a9d048e64ca29ac88c8cc68ca98c91b999b9994a4a4a4a99c8d0eeeeeecece10a0c0b0b999b9998810adada0b999b9998810adadadada2a0a98d8d8d8dbd9dbd9de8d08c8c8c8cadadc6a04c",
+   "seen": 29
+  },
+  {
+   "name": "LMS Super Snapshot backup",
+   "kind": "decruncher",
+   "opcodes": "ade6d0e66020aa2091c8f0cad0f0208520c9f091c8d0f0069026c64690e6d0e6a985eaeaeaeaeaeaeaeaeaeaeaeaea6c",
+   "seen": 3
   },
   {
    "name": "Marauder Cruncher&Coder v1.x",

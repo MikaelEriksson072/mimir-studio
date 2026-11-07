@@ -1,7 +1,8 @@
 /* Loaders (analyze/loaders.ts): each known loader by its own code, taken from its source (Spindle 3.1 stage1.s, Spindle
  * 2.3's spin.exe, Krill's loader v194 hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops
- * loader v3 loader.s); the Action Replay's fastload, Warp*25 and tape loaders and Novaload, by what their code does
- * (written here from the cartridges' ROMs and the files they save, a few instructions each); other disk loaders by drive
+ * loader v3 loader.s); the Action Replay's fastload, Warp*25 and tape loaders, Novaload, the Super Snapshot's turbo and
+ * disk copier and the split freeze loader, by what their code does (written here from the cartridges' ROMs and the files
+ * they save, a few instructions each); other disk loaders by drive
  * code, drive commands and a receive loop; tape and KERNAL loading; and the marks in the source. The programs below are
  * those loops (illegal opcodes as .byte), with a BASIC start that reaches them where the loader is called. */
 import { describe, expect, it } from 'vitest';
@@ -536,6 +537,181 @@ describe("the Action Replay's loaders", () => {
     // bank 2's and bank 3's addresses
     expect(A.loaders.map(l => [l.id, l.parts[0].start.toString(16)])).toEqual([['ar-fastload', '28004'], ['ar-tape', '38001']]);
     expect(A.loaders[0].parts.map(p => p.start.toString(16))).toEqual(['28004', '29000', '29100']);
+  });
+});
+
+/* The Super Snapshot V5 (LMS). Its turbo LOADs four bytes a handshake and stores them with code it copies to $0200;
+ * SAVE sends each byte as two halves; the ROM keeps the drive code. It reads Warp*25 files with the Action Replay's
+ * code. The disk copier takes a sector at a time into $0500; a backup broken into 2 files starts with a loader. */
+const SS_TURBO = ` jsr recv
+ jsr send
+ rts
+recv: bit $dd00
+ bvs recv
+ ldy #$03
+ nop
+ bit $80
+r: lda $dd00
+ lsr
+ lsr
+ nop
+ nop
+ ora $dd00
+ lsr
+ lsr
+ nop
+ nop
+ ora $dd00
+ lsr
+ lsr
+ nop
+ nop
+ ora $dd00
+ sta $00aa,y
+ dey
+ bpl r
+ rts
+.pc = $0900
+send: bit $dd00
+ bpl send
+line: sec
+ lda $d012
+ sbc $26
+ bcc go
+ and #$07
+ cmp #$02
+ bcc line
+go: lda #$07
+ sta $dd00
+ rts
+.pc = $2000
+store: .byte $a9,$34,$85,$01,$a5,$aa,$91,$93,$c8,$98,$48,$a9,$37,$85,$01
+.pc = $2100
+drive: .byte $78,$20,$8d,$01,$20,$e9,$f5,$20,$5d,$01,$4c,$00,$03
+`;
+const SS_COPIER = ` ldy #$00
+ jsr recv
+ rts
+recv: lda $dd00
+ bmi recv
+ ora #$17
+ sta $dd00
+w: lda $dd00
+ bpl w
+ and #$07
+ sta $dd00
+ nop
+ lda $dd00
+ lsr
+ lsr
+ nop
+ eor $dd00
+ lsr
+ lsr
+ pha
+ pla
+ eor $dd00
+ lsr
+ lsr
+ nop
+ eor $dd00
+ eor #$f9
+ sta $0500,y
+ iny
+ bne recv
+ rts
+`;
+/** the first file of a backup broken into 2 files, from $080d (where its BASIC line starts it) */
+const SPLIT = ` sei
+ inc $01
+ ldx #$10
+ ldy #$00
+l: lda $0847,y
+ sta $d000,y
+ iny
+ bne l
+ inc l+2
+ inc l+5
+ dex
+ bne l
+ dec $01
+ jsr one
+ iny
+ sty $b9
+ lda #$08
+ pha
+ lda #$0c
+ pha
+ txa
+ jmp $ffd5
+one: lda $bb
+ bne o
+ dec $bc
+o: dec $bb
+ inc $b7
+ lda #$31
+ sta ($bb),y
+ rts
+`;
+
+describe("the Super Snapshot's loaders", () => {
+  it('know its turbo by its own code, with the code it copies to $0200 and the drive', () => {
+    const [l, ...rest] = loaders(SS_TURBO);
+    expect(rest).toEqual([]);
+    expect(l).toMatchObject({ id: 'ss-turbo', name: 'Super Snapshot turbo (LMS)', sure: 'match' });
+    expect(l.parts.map(p => [p.role, p.start])).toEqual([['resident', 0x0814], ['resident', 0x0900], ['resident', 0x2000], ['drivecode', 0x2100]]);
+    expect(l.parts[1].what).toBe('sends a byte (SAVE, the file copier): waits for the drive and for a line with no badline, then sends it as two halves from a table');
+    expect(l.parts[3]).toMatchObject({ end: 0x210d, what: 'code for the 1541 at $0150: it receives the rest of the drive code fast, then starts it at $0300' });
+  });
+
+  it("take the Action Replay's Warp*25 code as the turbo's, which reads that format with it", () => {
+    // the Action Replay's receive loop and decoding, with labels of their own
+    const warp = AR_WARP.slice(AR_WARP.indexOf('recv:'), AR_WARP.indexOf(AR_GETBYTE)).replace(/\b(recv|loop|store)\b/g, 'w$1');
+    const found = loaders(SS_TURBO.replace(' jsr send\n', ' jsr send\n jsr wrecv\n').replace(' rts\n.pc = $0900\n', ` rts\n${warp}.pc = $0900\n`));
+    expect(found.map(l => l.id)).toEqual(['ss-turbo']);
+    expect(found[0].parts.filter(p => /Action Replay/.test(p.what)).map(p => p.what)).toEqual(['receive loop: three bytes a round, pushed onto the stack (lda $dd00 / lsr / lsr / eor $dd00 … pha) (the Action Replay Warp*25\'s code)']);
+    // the Action Replay's own loader file stays the Action Replay's
+    expect(ids(AR_WARP)).toEqual(['ar-fastload', 'ar-warp']);
+  });
+
+  it('know the disk copier by the loop that takes a sector into $0500', () => {
+    const [l] = loaders(SS_COPIER);
+    expect(l).toMatchObject({ id: 'ss-copier', name: 'Super Snapshot copiers (LMS)', sure: 'match' });
+    expect(l.parts.map(p => [p.role, p.start])).toEqual([['resident', 0x0813]]);
+  });
+
+  it("know the loader a backup broken into 2 files starts with, the Action Replay's too, and not as a fast loader", () => {
+    const [l, ...rest] = loaders(SPLIT);
+    expect(rest).toEqual([]);
+    expect(l).toMatchObject({ id: 'freezer-split', name: 'Split freeze loader (Action Replay, Super Snapshot)' });
+    expect(l.parts.map(p => p.start)).toEqual([0x080d]);
+    // the Action Replay's copy as many pages as its backup has at the top of memory
+    expect(ids(SPLIT.replace('ldx #$10', 'ldx #$2c'))).toEqual(['freezer-split']);
+    // a drive command with it is not its
+    expect(ids(`${SPLIT}.pc = $2000\n .byte $4d,$2d,$57,$00,$05,$20\n`)).toEqual(['freezer-split', 'fastloader?']);
+  });
+
+  it('find no loader in drive commands that only read the drive or set its device number', () => {
+    expect(loaders(' rts\n.pc = $2000\n .byte $4d,$2d,$52,$fa,$02,$02\n')).toEqual([]);
+    expect(loaders(' rts\n.pc = $2000\n .byte $4d,$2d,$57,$77,$00,$02,$48,$28\n')).toEqual([]);
+    // code put into the drive and started is a loader
+    expect(ids(' rts\n.pc = $2000\n .byte $4d,$2d,$57,$00,$05,$20\n')).toEqual(['fastloader?']);
+    expect(ids(' rts\n.pc = $2000\n .byte $4d,$2d,$45,$00,$05\n')).toEqual(['fastloader?']);
+  });
+
+  it('know them in the banks of a Super Snapshot V5 cartridge', () => {
+    const rom = (src: string) => { const b = new Uint8Array(0x4000).fill(0xff), f = fromSource('b.prg', `.pc = $8000\n${src}`); b.set(f.bytes.subarray(0, 0x4000)); return b; };
+    const crt = makeCrt({ name: 'SS5', hw: 20, exrom: 0, game: 0, chips: [
+      { bank: 0, load: 0x8000, bytes: rom(SS_TURBO.replace('.pc = $0900', '.pc = $85e6').replace('.pc = $2000', '.pc = $a1c1').replace('.pc = $2100', '.pc = $a200')) },
+      { bank: 1, load: 0x8000, bytes: rom(' rts\n.pc = $b057\n .byte $4d,$2d,$52,$fa,$02,$02\n') },
+      // the loader it writes as the first file, kept as data (made for $080d)
+      { bank: 2, load: 0x8000, bytes: rom(` rts\n.pc = $8df2\n .byte ${[...fromSource('s.prg', `.pc = $080d\n${SPLIT}`).bytes].join(',')}`) },
+      { bank: 3, load: 0x8000, bytes: rom(SS_COPIER) },
+    ] });
+    const o = openCartridge('ss5.crt', crt);
+    const A = analyze(createProject({ files: o.files, cart: o.cart }));
+    // bank 0's, bank 2's and bank 3's addresses; bank 1 only reads the drive
+    expect(A.loaders.map(l => [l.id, l.parts[0].start.toString(16)])).toEqual([['ss-turbo', '8007'], ['freezer-split', '28df2'], ['ss-copier', '38006']]);
   });
 });
 

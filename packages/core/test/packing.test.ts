@@ -76,6 +76,19 @@ describe('packing', () => {
     }
   });
 
+  it('knows a Super Snapshot backup by its depacker, which turns off both CIAs\' interrupts', () => {
+    const data = random(30000, 100);
+    // sei / lda #$7f / sta $dc0d / sta $dd0d / lda #$34 / sta $01, the packed data moved up, on at $008e
+    const stub = fromSource('snap.prg', '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n sei\n lda #$7f\n sta $dc0d\n sta $dd0d\n lda #$34\n sta $01\n ldx #$0c\n ldy #$04\nl: lda $df71,y\n sta $fffb,y\n dey\n cpy #$ff\n bne l\n inc $01\n ldx #$f2\n txs\n dec $01\n ldy #$00\n jmp $008e\n.pc = $08ff\n .byte 0');
+    const bytes = Uint8Array.from([...stub.bytes, ...data]);
+    const ss = check({ name: 'snap.prg', load: 0x0801, bytes });
+    expect(ss).toMatchObject({ verdict: 'packed', decruncher: 0x080d, signature: 'LMS Super Snapshot backup' });
+    expect(ss!.reasons[0]).toBe('the code at $080d is the depacker of an LMS Super Snapshot backup');
+    // the same start that goes on elsewhere is something else
+    const other = fromSource('other.prg', '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n sei\n lda #$7f\n sta $dc0d\n sta $dd0d\n lda #$34\n sta $01\n jmp $0900\n.pc = $08ff\n .byte 0');
+    expect(check({ name: 'other.prg', load: 0x0801, bytes: Uint8Array.from([...other.bytes, ...data]) })?.signature ?? null).not.toBe('LMS Super Snapshot backup');
+  });
+
   it('leaves plain programs alone', () => {
     const d = makeDemo();
     expect(check(parsePrg(d.name, d.prg))).toBeNull();
