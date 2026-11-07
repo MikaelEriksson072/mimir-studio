@@ -10,8 +10,9 @@ import { CHANNELS } from '../shared/ipc';
 import { assertEntryName, PathPolicy } from '../electron/main/paths';
 import { bringOldSettings } from '../electron/main/migrate';
 import { RecentFolders } from '../electron/main/recent';
+import { findInFolder, startFolder, toolLook } from '../electron/main/locate';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { deepSidPlaySchema, diskOpenSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema } from '../electron/main/schemas';
+import { deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema } from '../electron/main/schemas';
 import { buildWithKickAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
@@ -25,7 +26,7 @@ const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings =>
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play'].sort());
   });
 });
 
@@ -506,6 +507,65 @@ describe('RecentFolders', () => {
     expect(new RecentFolders(store).folder('prg')).toBeUndefined();
     writeFileSync(join(store, 'recent-folders.json'), JSON.stringify({ prg: 42 }));
     expect(new RecentFolders(store).folder('prg')).toBeUndefined();
+  });
+});
+
+describe('Settings → Choose folder…', () => {
+  const touch = (p: string) => { mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, ''); return p; };
+
+  it('finds the program in the folder, in its bin or win32 folder, or one folder further down', () => {
+    const vice = toolLook('vicePath', true), exo = toolLook('exomizerPath', true);
+    const root = tmp();
+    // a VICE zip unpacked into the folder: x64sc.exe in its bin folder, found from either folder
+    const x64sc = touch(join(root, 'GTK3VICE-3.10-win64', 'bin', 'x64sc.exe'));
+    expect(findInFolder(vice, join(root, 'GTK3VICE-3.10-win64'))).toBe(x64sc);
+    expect(findInFolder(vice, root)).toBe(x64sc);
+    expect(findInFolder(vice, join(root, 'GTK3VICE-3.10-win64', 'bin'))).toBe(x64sc);
+    // the highest version first; one right in the folder before those further down
+    touch(join(root, 'GTK3VICE-3.9-win64', 'bin', 'x64sc.exe'));
+    expect(findInFolder(vice, root)).toBe(x64sc);
+    const top = touch(join(root, 'x64sc.exe'));
+    expect(findInFolder(vice, root)).toBe(top);
+    // an Exomizer release keeps it in win32
+    const e = touch(join(root, 'exomizer-3.1.1', 'win32', 'exomizer.exe'));
+    expect(findInFolder(exo, root)).toBe(e);
+    // not there: null (a folder with that name is not the program)
+    const empty = tmp();
+    mkdirSync(join(empty, 'x64sc.exe'));
+    expect(findInFolder(vice, empty)).toBeNull();
+    expect(findInFolder(vice, join(empty, 'gone'))).toBeNull();
+  });
+
+  it('looks for the file each setting is', () => {
+    expect(toolLook('javaPath', true)).toMatchObject({ names: ['java.exe'], under: ['bin'] });
+    expect(toolLook('javaPath', false).names).toEqual(['java']);
+    expect(toolLook('kickJar', true)).toMatchObject({ names: ['KickAss.jar'], filter: { extensions: ['jar'] } });
+    expect(toolLook('viceQuicksave', true).names).toEqual(['C64SC.vsf', 'C64.vsf']);
+    expect(toolLook('unpackerPath', true).names).toEqual(['unp64.exe']);
+    expect(toolLook('editorPath', true).names).toEqual(['subl.exe', 'Code.exe', 'notepad++.exe']);
+    // the quicksave VICE x64sc writes is preferred over x64's; a JDK's java over nothing further down
+    const dir = tmp();
+    touch(join(dir, 'C64.vsf')); const sc = touch(join(dir, 'C64SC.vsf'));
+    expect(findInFolder(toolLook('viceQuicksave', true), dir)).toBe(sc);
+    const java = touch(join(dir, 'Java', 'jdk-21', 'bin', 'java.exe'));
+    touch(join(dir, 'Java', 'jdk-17', 'bin', 'java.exe'));
+    expect(findInFolder(toolLook('javaPath', true), join(dir, 'Java'))).toBe(java);
+  });
+
+  it('opens the dialog at the folder of the path set, above its bin folder', () => {
+    const root = tmp();
+    const x64sc = touch(join(root, 'vice', 'bin', 'x64sc.exe')), jar = touch(join(root, 'KickAssembler', 'KickAss.jar'));
+    expect(startFolder(x64sc)).toBe(join(root, 'vice'));
+    expect(startFolder(jar)).toBe(join(root, 'KickAssembler'));
+    expect(startFolder(join(root, 'KickAssembler', 'gone.jar'))).toBe(join(root, 'KickAssembler'));
+    expect(startFolder(join(root, 'vice'))).toBe(join(root, 'vice'));
+    expect([startFolder(''), startFolder(undefined), startFolder('x64sc'), startFolder(join(root, 'gone', 'x64sc.exe'))]).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it('takes only the toolchain paths', () => {
+    expect(locateSchema.parse({ key: 'vicePath', current: 'C:\\C64\\vice\\x64sc.exe' }).key).toBe('vicePath');
+    for (const bad of [{ key: 'outDir' }, { key: 'kickArgs' }, { key: 'vicePath', extra: 1 }, { key: 'vicePath', current: 'x'.repeat(1025) }, {}])
+      expect(locateSchema.safeParse(bad).success).toBe(false);
   });
 });
 

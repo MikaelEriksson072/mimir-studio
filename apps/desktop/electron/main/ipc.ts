@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { assertEntryName, type PathPolicy } from './paths';
 import { z, type ZodTypeAny } from 'zod';
-import { CHANNELS, type AsmPickResult, type InvokeChannel, type ExportWriteResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind, type SmartAttachResult } from '../../shared/ipc';
+import { CHANNELS, type AsmPickResult, type InvokeChannel, type ExportWriteResult, type LocateResult, type FileSaveResult, type PackFolderResult, type ProjectCreateResult, type ProjectHome, type ProjectOpenResult, type ProjectParentResult, type ProjectSaveResult, type PrgOpenKind, type SmartAttachResult } from '../../shared/ipc';
 import { SMART_EXTENSIONS, smartPlan } from '../../shared/smart-attach';
 import type { RecentFolders, RecentKind } from './recent';
 import type { SettingsStore } from './settings';
@@ -19,11 +19,12 @@ import { viceAttach, viceCommand } from './vice-monitor';
 import { quicksaveFileName, quicksaveFiles, quicksaveInfo, readQuicksave, type QuicksaveHistory, type QuicksaveWatcher } from './quicksave';
 import { charRomFiles, readCharRom } from './chargen';
 import { playInDeepSid } from './deepsid';
+import { findInFolder, startFolder, toolLook } from './locate';
 import { openC64File } from '@mimir/core';
 import { findEditors } from '@mimir/core/node';
 import { openedPrg } from './project-fs';
 import {
-  buildSchema, deepSidPlaySchema, diskOpenSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
+  buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
 } from './schemas';
 
@@ -323,5 +324,18 @@ export function registerIpc(deps: IpcDeps): void {
     quicksave.watch(quicksaveFiles(next.viceQuicksave));
     kept = keepCurrent();
     return next;
+  });
+  // Settings → Choose folder…: the tool's folder, and the program found in it; when it is not there, a file dialog in
+  // that folder. Nothing is stored here (Save settings goes through settings:set) and no folder is opened for writing.
+  handle(CHANNELS.settingsLocate, locateSchema, async (req, e): Promise<LocateResult | null> => {
+    const look = toolLook(req.key);
+    const start = startFolder(req.current) ?? startFolder(settings.get()[req.key]) ?? recent.folder('tool');
+    const [dir] = await pickPaths(e, { title: `Choose the folder ${look.what} is in`, properties: ['openDirectory'], ...(start ? { defaultPath: start } : {}) });
+    if (!dir) return null;
+    recent.remember('tool', dir);
+    const found = findInFolder(look, dir);
+    if (found) return { dir, path: found, found: true, looked: look.names };
+    const [path] = await pickPaths(e, { title: `${look.names.join(' or ')} is not in ${basename(dir) || dir}: choose ${look.what}`, defaultPath: dir, properties: ['openFile'], filters: [look.filter, { name: 'All files', extensions: ['*'] }] });
+    return { dir, path: path ?? null, found: false, looked: look.names };
   });
 }

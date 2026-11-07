@@ -1,13 +1,15 @@
 /* Settings: toolchain (stored by the main process), analysis and Kick Assembler output (stored in the project), and
  * the app's own preferences (General, kept by the window). */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
 import type { InspectorMode } from '../store/ui';
-import type { EditorInfo } from '../../shared/ipc';
+import type { EditorInfo, LocateKey } from '../../shared/ipc';
 import { Modal } from './Modal';
 
 type Key = keyof Settings;
+
+const kr = window.kr;
 
 /** the app's own preferences in Settings → General */
 export interface AppPrefs {
@@ -26,6 +28,28 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
   const [prefs, setPrefs] = useState<AppPrefs>(prefs0);
   const [tab, setTab] = useState<'toolchain' | 'analysis' | 'output' | 'general'>('toolchain');
   const set = <K extends Key>(k: K, v: Settings[K]) => setS(o => ({ ...o, [k]: v }));
+  /** Choose folder…: what was not found in the folder picked (the field then keeps its path) */
+  const [missing, setMissing] = useState<Partial<Record<LocateKey, string>>>({});
+  const locate = async (k: LocateKey) => {
+    try {
+      const r = await kr!.locateTool({ key: k, current: String(s[k]) });
+      if (!r) return;
+      if (r.path) set(k, r.path);
+      setMissing(m => ({ ...m, [k]: r.found || r.path ? undefined : `${r.looked.join(' or ')} is not in ${r.dir} or the folders in it: the field keeps what it had.` }));
+    } catch (err) {
+      setMissing(m => ({ ...m, [k]: err instanceof Error ? err.message : String(err) }));
+    }
+  };
+  /** a path to a program or file, with Choose folder… in the desktop app; labelled by id: a label around the row would
+   *  take its buttons into the field's name */
+  const path = (k: LocateKey, label: string, help?: ReactNode, o: { placeholder?: string; extra?: ReactNode } = {}) => (
+    <div className="field"><label htmlFor={`set-${k}`}>{label}</label>
+      <div className="field-row"><input id={`set-${k}`} className="mono" value={String(s[k])} placeholder={o.placeholder} onChange={e => { set(k, e.target.value); setMissing(m => ({ ...m, [k]: undefined })); }} spellCheck={false} />
+        {o.extra}
+        {desktop && kr && <button type="button" className="btn small" aria-label={`Choose folder for ${label}`} title={`Choose the folder it is in: Mimir finds ${label} there`} onClick={() => void locate(k)}>Choose folder…</button>}</div>
+      {missing[k] && <small className="warn-text" role="status">{missing[k]}</small>}
+      {help && <small className="muted">{help}</small>}</div>
+  );
   const txt = (k: Key, label: string, help?: string) => <label className="field"><span>{label}</span><input id={`set-${k}`} className="mono" value={String(s[k])} onChange={e => set(k, e.target.value as never)} spellCheck={false} />{help && <small className="muted">{help}</small>}</label>;
   const chk = (k: Key, label: string, help?: string) => <label className="check"><input id={`set-${k}`} type="checkbox" checked={!!s[k]} onChange={e => set(k, e.target.checked as never)} /><span>{label}{help && <small className="muted"> — {help}</small>}</span></label>;
   const sel = (k: Key, label: string, opts: [string | number, string][], help?: string) => <label className="field"><span>{label}</span><select id={`set-${k}`} value={String(s[k])} onChange={e => set(k, (isNaN(+e.target.value) ? e.target.value : +e.target.value) as never)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>{help && <small className="muted">{help}</small>}</label>;
@@ -34,24 +58,22 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
       <div className="seg wide" role="tablist">{([['toolchain', 'Toolchain'], ['analysis', 'Analysis'], ['output', 'Kick Assembler output'], ['general', 'General']] as const).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{l}</button>)}</div>
       <div className="modal-body">
         {tab === 'toolchain' && <>
-          {txt('javaPath', 'Java executable', 'Kick Assembler needs Java 8 or later.')}
-          {txt('kickJar', 'KickAss.jar', 'Verify and Build & Run assemble with this jar when it exists.')}
+          {path('javaPath', 'Java executable', 'Kick Assembler needs Java 8 or later. Choose folder…: the JDK or JRE folder (java is in its bin folder), or the folder with several in it.')}
+          {path('kickJar', 'KickAss.jar', 'Verify and Build & Run assemble with this jar when it exists.')}
           {txt('kickArgs', 'Extra Kick Assembler arguments', '-vicesymbols writes a VICE label file next to the PRG.')}
-          {txt('vicePath', 'VICE emulator (x64sc)')}
+          {path('vicePath', 'VICE emulator (x64sc)', 'Choose folder…: the VICE folder (x64sc is in it or in its bin folder).')}
           {txt('viceArgs', 'Extra VICE arguments')}
           {sel('musicPlayer', 'Play music blocks in', [['vice', 'VICE: a PRG with a player that calls init and play'], ['deepsid', 'DeepSID (deepsid.chordian.net): the .sid file, online']],
             'Play music (the block\'s right-click menu, the inspector, the command palette) plays the block here. VICE: keys 1-9 and 0 start songs $00-$09, + and - the next and the one before, the border shows the raster time of play. DeepSID: a window of its own opens with DeepSID, and the .sid the export writes goes to its Load SID, which sends the file to DeepSID\'s server (it keeps it there to play it) and plays it with DeepSID\'s emulator; needs the internet.')}
-          {txt('viceQuicksave', 'VICE quicksave snapshot', 'Empty: C64SC.vsf (x64sc) or C64.vsf (x64) in VICE\'s settings folder (%APPDATA%\\vice), where Snapshot → Quicksave snapshot (Alt+F11) writes it. F9 opens the newest, and the Explorer can open each new one by itself.')}
+          {path('viceQuicksave', 'VICE quicksave snapshot', 'Empty: C64SC.vsf (x64sc) or C64.vsf (x64) in VICE\'s settings folder (%APPDATA%\\vice), where Snapshot → Quicksave snapshot (Alt+F11) writes it. F9 opens the newest, and the Explorer can open each new one by itself.')}
           {txt('outDir', 'Output folder')}
-          {txt('unpackerPath', 'External unpacker (optional)', 'Empty: Sindri, the built-in unpacker, unpacks packed (crunched) PRGs. It runs the program in an emulated C64, with the ROMs of the VICE above (or of another VICE it finds), and reports each layer it peels off. An external unpacker such as unp64 runs instead, on a copy of the PRG in a folder of its own.')}
+          {path('unpackerPath', 'External unpacker (optional)', 'Empty: Sindri, the built-in unpacker, unpacks packed (crunched) PRGs. It runs the program in an emulated C64, with the ROMs of the VICE above (or of another VICE it finds), and reports each layer it peels off. An external unpacker such as unp64 runs instead, on a copy of the PRG in a folder of its own.')}
           {txt('unpackerArgs', 'External unpacker arguments', '{in} is the packed PRG, {out} a name for the result; without {out} the file it writes is picked up. unp64: {in} · exomizer: desfx -o {out} {in}')}
-          {/* labelled by id: a label around the row would take the editors' buttons into the field's name */}
-          <div className="field"><label htmlFor="set-editorPath">External editor</label>
-            <div className="field-row"><input id="set-editorPath" className="mono" value={s.editorPath} placeholder={editors[0]?.path ?? 'Sublime Text or Visual Studio Code'} onChange={e => set('editorPath', e.target.value)} spellCheck={false} />
-              {editors.map(e => <button key={e.path} type="button" className="btn small" title={`Use ${e.path}`} onClick={() => set('editorPath', e.path)}>{e.name}</button>)}</div>
-            <small className="muted">The Editor button opens the export's folder in it, with its first .asm file open (and exports the project first when it has not been). Empty: the first found of Sublime Text and Visual Studio Code{desktop ? (editors.length ? `, here ${editors[0].name}` : ', and neither was found') : ''}.</small></div>
+          {path('editorPath', 'External editor', <>The Editor button opens the export's folder in it, with its first .asm file open (and exports the project first when it has not been). Empty: the first found of Sublime Text and Visual Studio Code{desktop ? (editors.length ? `, here ${editors[0].name}` : ', and neither was found') : ''}. Choose folder… finds Sublime Text, Visual Studio Code or Notepad++ in the folder; another editor is picked in the file dialog that then opens.</>,
+            { placeholder: editors[0]?.path ?? 'Sublime Text or Visual Studio Code', extra: editors.map(e => <button key={e.path} type="button" className="btn small" title={`Use ${e.path}`} onClick={() => set('editorPath', e.path)}>{e.name}</button>) })}
           {txt('editorArgs', 'External editor arguments', "{dir} is the export's folder, {file} its first .asm file. Sublime Text and Visual Studio Code: {dir} {file} (the folder, with the file open in it) · Notepad++: {file}")}
-          {txt('exomizerPath', 'Exomizer', 'Packs in the Pack view when Exomizer is chosen there instead of Brokkr, the built-in cruncher. The installed app comes with Exomizer 3.1.1 (resources\\exomizer in its folder) and uses it unless you pick another. Empty: Brokkr only.')}
+          {path('exomizerPath', 'Exomizer', 'Packs in the Pack view when Exomizer is chosen there instead of Brokkr, the built-in cruncher. The installed app comes with Exomizer 3.1.1 (resources\\exomizer in its folder) and uses it unless you pick another. Empty: Brokkr only.')}
+          {desktop && kr && <p className="muted small">Choose folder… looks for the program in the folder you pick, in its bin (or win32) folder and in the folders in it, so the folder a zip unpacked to will do. When it is not there, a file dialog opens in that folder. Save settings keeps it.</p>}
           <p className="muted small">{desktop ? 'Stored by the app (not in the project). The main process starts Java, VICE, an external unpacker, Exomizer and the editor with argument lists, never through a shell.' : 'Running outside the desktop app: these paths only fill in the exported build scripts.'}</p>
         </>}
         {tab === 'analysis' && <>

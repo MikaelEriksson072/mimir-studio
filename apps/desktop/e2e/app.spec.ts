@@ -1583,6 +1583,77 @@ test('the Editor button opens the export in the external editor, with its first 
   });
 });
 
+test('Settings → Choose folder… finds the program in the folder picked', async ({ workDir: work, app, page }) => {
+  await waitForListing(page);
+  /** the folder dialogs answer `answers` in turn, then are cancelled; returns each dialog's title and start folder */
+  const answer = async (...answers: string[][]) => {
+    await app.evaluate(({ dialog }, a) => {
+      const g = globalThis as unknown as { asked: { title?: string; defaultPath?: string; properties?: string[] }[] };
+      g.asked = [];
+      (dialog as unknown as Record<string, unknown>).showOpenDialog = async (...args: unknown[]) => {
+        const o = args[args.length - 1] as { title?: string; defaultPath?: string; properties?: string[] };
+        g.asked.push({ title: o.title, defaultPath: o.defaultPath, properties: o.properties });
+        const next = a.shift();
+        return next ? { canceled: false, filePaths: next } : { canceled: true, filePaths: [] };
+      };
+    }, answers);
+  };
+  const asked = () => app.evaluate(() => (globalThis as unknown as { asked: { title?: string; defaultPath?: string; properties?: string[] }[] }).asked);
+  const make = (...p: string[]) => { const f = join(work, ...p); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, ''); return f; };
+  // VICE unpacked from its zip (x64sc.exe in bin of the folder in it), Kick Assembler, an Exomizer release (win32)
+  const x64sc = make('C64', 'vice', 'GTK3VICE-3.10-win64', 'bin', 'x64sc.exe');
+  const jar = make('C64', 'KickAssembler', 'KickAss.jar');
+  const exo = make('C64', 'exomizer-3.1.1', 'win32', 'exomizer.exe');
+  const other = make('C64', 'tools', 'myunp.exe');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  const choose = (label: string) => settings.getByRole('button', { name: `Choose folder for ${label}`, exact: true });
+
+  await test.step('VICE: the folder it was unpacked to', async () => {
+    await answer([join(work, 'C64', 'vice')]);
+    await choose('VICE emulator (x64sc)').click();
+    await expect(settings.locator('#set-vicePath')).toHaveValue(x64sc);
+    expect(await asked()).toEqual([expect.objectContaining({ title: 'Choose the folder VICE is in', properties: ['openDirectory'] })]);
+  });
+
+  await test.step('Kick Assembler and Exomizer: the folder, and its win32 folder', async () => {
+    await answer([join(work, 'C64', 'KickAssembler')]);
+    await choose('KickAss.jar').click();
+    await expect(settings.locator('#set-kickJar')).toHaveValue(jar);
+    await answer([join(work, 'C64')]);
+    await choose('Exomizer').click();
+    await expect(settings.locator('#set-exomizerPath')).toHaveValue(exo);
+  });
+
+  await test.step('the dialog opens at the folder of the path set, above its bin folder', async () => {
+    await answer();
+    await choose('VICE emulator (x64sc)').click();
+    await expect.poll(asked).toEqual([expect.objectContaining({ defaultPath: join(work, 'C64', 'vice', 'GTK3VICE-3.10-win64') })]);
+    await expect(settings.locator('#set-vicePath')).toHaveValue(x64sc);
+  });
+
+  await test.step('not in the folder: a file dialog opens there for it', async () => {
+    await answer([join(work, 'C64', 'tools')], [other]);
+    await choose('External unpacker (optional)').click();
+    await expect(settings.locator('#set-unpackerPath')).toHaveValue(other);
+    expect((await asked())[1]).toEqual({ title: 'unp64.exe is not in tools: choose the external unpacker', defaultPath: join(work, 'C64', 'tools'), properties: ['openFile'] });
+  });
+
+  await test.step('that dialog cancelled: the field keeps its path and says what was not there', async () => {
+    await answer([join(work, 'C64', 'tools')]);
+    await choose('Java executable').click();
+    await expect(settings.getByRole('status').filter({ hasText: `java.exe is not in ${join(work, 'C64', 'tools')} or the folders in it` })).toBeVisible();
+    await expect(settings.locator('#set-javaPath')).toHaveValue('java');
+  });
+
+  await test.step('Save settings keeps the paths found', async () => {
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+    const stored = await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<Record<string, string>> } }).kr.getSettings());
+    expect(stored).toMatchObject({ vicePath: x64sc, kickJar: jar, exomizerPath: exo, unpackerPath: other });
+  });
+});
+
 test('a packed PRG is reported and unpacked with Sindri, or an external unpacker', async ({ app, page }) => {
   // fixtures/prg/packed-demo.prg: the demo behind a decruncher stub (fakePack: a mover, then a decoder at $0340),
   // which Sindri runs in its emulated C64; fake-unp64.cjs (a stand-in for unp64, run with this Node)

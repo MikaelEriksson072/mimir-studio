@@ -55,6 +55,7 @@ const api: KrApi = {
   },
   getSettings: () => invoke(CHANNELS.settingsGet),
   setSettings: patch => invoke(CHANNELS.settingsSet, patch),
+  locateTool: req => invoke(CHANNELS.settingsLocate, req),
   onFsChanged: cb => {
     if (typeof cb !== 'function') throw new TypeError('onFsChanged expects a function');
     const listener = (_e: IpcRendererEvent, data: FsChangedEvent) => cb({ path: String(data?.path ?? '') });

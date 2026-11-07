@@ -44,6 +44,7 @@ export const CHANNELS = {
   deepSidPlay: 'deepsid:play',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
+  settingsLocate: 'settings:locate',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
@@ -265,6 +266,16 @@ export type ViceResult = { ok: true; response: string } | { ok: false; error: st
 
 export interface FsChangedEvent { path: string }
 
+/** the toolchain settings that are a path to a program or file (Settings → Toolchain, Choose folder…) */
+export type LocateKey = 'javaPath' | 'kickJar' | 'vicePath' | 'viceQuicksave' | 'unpackerPath' | 'editorPath' | 'exomizerPath';
+/** A folder dialog for the tool of `key` (it opens at `current`, the path in the form, when that is there), and the
+ *  program found in the folder picked. */
+export interface LocateRequest { key: LocateKey; current?: string }
+/** `path`: the program found in `dir` (`found`), or else picked in the file dialog that then opened there; null: that
+ *  dialog was cancelled too. `looked`: the file names looked for. The whole result is null when the folder dialog was
+ *  cancelled. */
+export interface LocateResult { dir: string; path: string | null; found: boolean; looked: string[] }
+
 /** VICE's quicksave snapshot (13.7b), opened like a snapshot from Open PRG (`zeroPage`: from $0002) */
 export interface QuicksaveRequest { zeroPage?: boolean }
 /** the newest quicksave, or where VICE writes it when there is none yet; `saved`: its modification time */
@@ -329,6 +340,8 @@ export interface KrApi {
   viceCommand(req: ViceCommandRequest): Promise<ViceResult>;
   getSettings(): Promise<ToolchainSettings>;
   setSettings(patch: Partial<ToolchainSettings>): Promise<ToolchainSettings>;
+  /** a tool's folder picked in a dialog, and the program in it (it is not stored: Save settings stores it); null: cancelled */
+  locateTool(req: LocateRequest): Promise<LocateResult | null>;
   openQuicksave(req?: QuicksaveRequest): Promise<QuicksaveResult>;
   quicksaveInfo(): Promise<QuicksaveInfo>;
   /** the quicksaves the app keeps (the newest, and the favourites), the newest first */

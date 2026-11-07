@@ -90,6 +90,12 @@ export const toolchainSettingsSchema = z.object({
   musicPlayer: z.enum(['vice', 'deepsid']),
 });
 
+/** settings:locate: which tool's folder to ask for, and the path in the form (where the dialog opens) */
+export const locateSchema = z.object({
+  key: z.enum(['javaPath', 'kickJar', 'vicePath', 'viceQuicksave', 'unpackerPath', 'editorPath', 'exomizerPath']),
+  current: z.string().max(1024).optional(),
+}).strict();
+
 export const settingsSchema = toolchainSettingsSchema.partial().extend({
   illegal: z.boolean(), detectMusic: z.boolean(), detectGfx: z.boolean(), detectText: z.boolean(), bankTracking: z.boolean(), snapshotZeroPage: z.boolean(), codeIslands: z.boolean(), deepAnalysis: z.boolean(),
   mnemonicCase: z.enum(['lower', 'upper']), hexCase: z.enum(['lower', 'upper']),

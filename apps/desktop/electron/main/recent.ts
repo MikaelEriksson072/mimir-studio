@@ -1,13 +1,13 @@
-/* The folder each file dialog was last used in (PRG, disk image, tape image, project, export, packed file, saved snapshot, Smart attach), stored as JSON in
+/* The folder each file dialog was last used in (PRG, disk image, tape image, project, export, packed file, saved snapshot, Smart attach, a tool's folder in Settings), stored as JSON in
  * the user data folder so it survives a restart. A dialog opens there, or else where any dialog was last used. It only sets
  * where a dialog starts: access still comes from what the user picks (see PathPolicy). */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-export type RecentKind = 'prg' | 'disk' | 'tape' | 'project' | 'export' | 'pack' | 'snapshot' | 'asm' | 'smart';
+export type RecentKind = 'prg' | 'disk' | 'tape' | 'project' | 'export' | 'pack' | 'snapshot' | 'asm' | 'smart' | 'tool';
 
-const KINDS = ['prg', 'disk', 'tape', 'project', 'export', 'pack', 'snapshot', 'asm', 'smart'] as const satisfies readonly RecentKind[];
+const KINDS = ['prg', 'disk', 'tape', 'project', 'export', 'pack', 'snapshot', 'asm', 'smart', 'tool'] as const satisfies readonly RecentKind[];
 const folder = z.string().min(1).max(4096);
 const fileSchema = z.object({ last: folder.optional(), ...Object.fromEntries(KINDS.map(k => [k, folder.optional()])) }).partial();
 
