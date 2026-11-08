@@ -277,6 +277,49 @@ ${byteLines(code)}
       expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000 });
     });
 
+    it('starts a file that loads in the screen with RUN when it has a SYS line at $0801 into it', () => {
+      // as Cybernoid II +17HDF at $05b8: SYS to where it loads runs into the screen's bytes (here a JAM); RUN goes on
+      // from the 0 at $0800
+      const packed = pack(PROGRAM).prg;
+      expect(packed[0] | (packed[1] << 8)).toBe(0x0801);
+      const screen = [0x02, ...new Array<number>(0x0800 - 0x05b8 - 1).fill(0x20), 0];
+      const r = go(Uint8Array.from([0xb8, 0x05, ...screen, ...packed.subarray(2)]));
+      expect(r.basic).toEqual(['10 SYS2061']);
+      expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0x0100, 0x1000]);
+      const s = r.saved!, at = 2 + 0x1000 - s.start;
+      expect(s.entry).toBe(0x1000);
+      expect([...s.prg.subarray(at, at + body.length)]).toEqual([...body]);
+    });
+
+    it('starts a file that loads below BASIC with SYS to where it loads when RUN would not start it', () => {
+      const code = asm(`
+* = $1000
+loop:  inc $d020
+       jmp loop`).prg.subarray(2);
+      // a line that SYSes out of the file; one that SYSes into it after a byte RUN stops at with a ?SYNTAX ERROR
+      for (const [before, line] of [[0, 'SYS4096'], [0x20, 'SYS2061']] as const) {
+        const file = asm(`
+* = $0400
+start: ldx #${code.length - 1}
+cp:    lda payload,x
+       sta $1000,x
+       dex
+       bpl cp
+       jmp $1000
+payload:
+${byteLines(code)}
+* = $0800
+.byte ${before}
+${basic([[10, line]])}
+.byte $02
+`);
+        const r = go(file.prg);
+        expect(r.basic).toEqual([]);
+        expect(r.layers[0].entry).toBe(0x0400);
+        expect(r.saved!.entry).toBe(0x1000);
+      }
+    });
+
     it('fingerprints a depacker by the code it ran, also when it wipes that code before the program starts', () => {
       const r = go(WIPES_ITSELF);
       expect(r.layers.map(l => [l.entry, l.kind])).toEqual([[0x080d, 'jump'], [0x0040, 'mover'], [0x1000, 'program']]);

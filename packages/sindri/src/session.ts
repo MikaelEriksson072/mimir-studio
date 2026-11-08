@@ -512,15 +512,33 @@ class Session {
     if (this.tapeFile) { this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
     const end = this.loadFile();
     if (this.tapeFile) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
-    if (this.loadAt === 0x0801) for (const p of [0x2d, 0x2f, 0x31]) { m.ram[p] = end & 0xff; m.ram[p + 1] = end >> 8; }
+    const basic = this.hasBasic(0x0801);
+    if (basic) for (const p of [0x2d, 0x2f, 0x31]) { m.ram[p] = end & 0xff; m.ram[p + 1] = end >> 8; }
     m.cpu.s = 0xf8;
     m.cpu.p = 0x20;
     this.setPhase('run');
     if (this.o.entry != null) { this.sys(this.o.entry); return; }
     const auto = this.autostart();
     if (auto != null) { m.cpu.pc = auto; m.cpu.lastOp = 0x6c; return; }
-    if (this.loadAt === 0x0801) { this.runBasic(true); return; }
+    if (basic) { this.runBasic(true); return; }
     this.sys(this.loadAt);
+  }
+
+  /**
+   * Whether the file is a BASIC program to start with RUN: it loads at the start of BASIC, or loads over it from below
+   * with a line there whose SYS goes into the file, and a 0 or a colon before it (RUN goes on from that byte as from
+   * the end of a statement; anything else is a ?SYNTAX ERROR). Such a file can begin in the screen, with text or a
+   * frame there (Cybernoid II +17HDF loads at $05b8, where its frame's bytes make JSRs into crunched data, and has
+   * 239 SYS2061 at $0801): LOAD"...",8,1 and RUN start it, SYS to where it loads does not.
+   */
+  private hasBasic(basicStart: number): boolean {
+    const lo = this.loadAt, hi = lo + this.data.length;
+    if (lo === basicStart) return true;
+    if (lo > basicStart || basicStart + 6 > hi) return false;
+    const peek = (a: number) => a >= lo && a < hi ? this.data[a - lo] : 0;
+    if (peek(basicStart - 1) !== 0 && peek(basicStart - 1) !== 0x3a) return false;
+    const sys = findSys(peek, basicStart);
+    return sys != null && sys >= lo && sys < hi;
   }
 
   /** With the stand-ins: where a file that loads over the RAM vectors or the stack starts by itself. */
@@ -1003,7 +1021,7 @@ class Session {
         if (this.phase === 'loaded') {
           if (this.started) { this.stop('ready', 'returned to the READY prompt'); return true; }
           const basicStart = m.ram[0x2b] | (m.ram[0x2c] << 8);
-          this.typeLine(this.o.entry != null ? `SYS${this.o.entry}` : this.loadAt === basicStart ? 'RUN' : `SYS${this.loadAt}`);
+          this.typeLine(this.o.entry != null ? `SYS${this.o.entry}` : this.hasBasic(basicStart) ? 'RUN' : `SYS${this.loadAt}`);
           this.setPhase('run');
         } else if (this.phase === 'run') {
           if (!this.started && !this.triedSys && this.loadAt !== (m.ram[0x2b] | (m.ram[0x2c] << 8))) {
@@ -1172,6 +1190,13 @@ class Session {
       return;
     }
     this.basicRunning = false;
+    // a file that loads below BASIC's start and ran no machine code with RUN: SYS to where it loads, as with the ROMs
+    if (!this.started && !this.triedSys && this.loadAt !== 0x0801) {
+      this.triedSys = true;
+      this.m.cpu.s = 0xf8;
+      this.sys(this.loadAt);
+      return;
+    }
     this.stop('ready', 'the BASIC program ended');
   }
 
@@ -1186,7 +1211,7 @@ class Session {
       this.keep(last);
     }
     const peekFile = (a: number) => a >= this.loadAt && a < this.loadAt + this.data.length ? this.data[a - this.loadAt] : 0;
-    const basic = this.loadAt === 0x0801 ? basicLines(peekFile, 0x0801, 8).map(listLine) : [];
+    const basic = this.hasBasic(0x0801) ? basicLines(peekFile, 0x0801, 8).map(listLine) : [];
     const reports = this.layers.map((l, i) => this.report(l, i));
     const save = (index: number, clean = this.o.clean ?? false): Saved | null => this.saveLayer(index, clean);
     // a last layer that soon resets or crashes is not a program (an intro's exit, a protection's trap)
