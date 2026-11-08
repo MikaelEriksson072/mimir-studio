@@ -319,7 +319,11 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   (`ViewAt`: the top and bottom address, and the listing's own scroll position and lines) to `seeAt` in `App.tsx`; the
   tab opened next starts there unless the last `ScrollReq` (a jump) is newer. A tab's own scroll as it opens is not
   reported (`quietly`), so going back to a tab not scrolled meanwhile lands exactly where it was. Graphics and Memory show
-  `viewSpace`, the bank the listing was in (the cursor's while it is on screen), which a jump also sets.
+  `viewSpace`, the bank the listing was in (the cursor's while it is on screen), which a jump also sets. A file opened
+  from a loader's script or the tape (`addFiles(…, { gfx: true })`) sets `gfxGo`: `MemoryGfx` gets its start as `goTo`
+  and puts it in the top row at once or as it opens, ahead of `start`, then reports the view, which clears `gfxGo`.
+  The address the tab puts at the top itself (`pin`) stays `topAt` while its row is at the top, so another view has
+  that address in its top row rather than the start of the row it was in.
 - **All banks in Graphics and Memory** (spec 13.9b). With *All banks in one .asm* (`settings.cartOneSource`) and more
   than one bank, the two tabs get the merged `AnalysisResult` at bank addresses instead of `spaceView`'s 64 KB:
   `MemoryDump` puts a line over each bank (`spaces`), `MemoryGfx` lays out only the banks' loaded memory

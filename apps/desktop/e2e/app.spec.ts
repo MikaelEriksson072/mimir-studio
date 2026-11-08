@@ -5157,6 +5157,33 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
     await expect(page.locator('.file-name')).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg']);
   });
 
+  await test.step('Graphics opens at the start of the file opened last, in every view; one opened while it is open goes there at once', async () => {
+    const view = page.getByLabel('Memory as graphics'), scroller = view.locator('.gfxv-scroll');
+    // the address of the gutter row at the top of the picture
+    const top = () => scroller.evaluate(el => [...el.querySelectorAll<HTMLElement>('.gfxv-row')].find(r => r.offsetTop <= el.scrollTop + 1 && r.offsetTop + r.offsetHeight > el.scrollTop + 1)?.dataset.addr ?? null);
+    const mode = (name: string) => view.getByRole('button', { name, exact: true }).click();
+    await page.getByRole('tab', { name: 'Graphics', exact: true }).click();
+    // 40 characters of 8 bytes a row: $3000 is in the row from $2f80
+    await expect.poll(top).toBe('2f80');
+    // the file's first byte stays at the top, not the start of its row ($2f80 would be the screen at $2c00)
+    await mode('Screens');
+    await expect.poll(top).toBe('3000');
+    await mode('Bitmaps');
+    await expect.poll(top).toBe('2000');
+    await mode('Sprites');
+    await expect.poll(top).toBe('3000');
+    await mode('Characters');
+    await expect.poll(top).toBe('2f80');
+    // with Graphics open: a file added from the script is at the top at once ($0400 is in the row from $03c0)
+    await bundles.getByRole('button', { name: 'Add bundle02_0400.prg to this project' }).click();
+    await expect(page.locator('.file-name')).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle02_0400.prg']);
+    await expect.poll(top).toBe('03c0');
+    await mode('Screens');
+    await expect.poll(top).toBe('0400');
+    await mode('Characters');
+    await page.getByRole('tab', { name: 'Listing', exact: true }).click();
+  });
+
   await test.step('it copies the loader script: the disk\'s entries, a paragraph per bundle, * under the I/O area', async () => {
     await page.getByRole('button', { name: 'Copy script' }).click();
     await expect(toast(page, 'Copied the loader script')).toBeVisible();

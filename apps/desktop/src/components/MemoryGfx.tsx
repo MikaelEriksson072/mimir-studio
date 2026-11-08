@@ -68,6 +68,9 @@ interface MemoryGfxProps {
   bank?: BankPickProps | null;
   /** where the editor was in memory (14.6b): the tab opens with it at the top (null: at the cursor) */
   start?: { addr: Addr; end: Addr } | null;
+  /** a file just opened from a loader's script or the tape (14.6b): its first byte in the top row, at once when the tab
+   *  is open, else as it opens (before `start`); every view then keeps it at the top. A new `n` goes there again */
+  goTo?: { addr: Addr; n: number } | null;
   /** scrolled: the addresses at the top and the bottom of the picture */
   onView?: (top: Addr, end: Addr) => void;
   /** every bank at once (13.9b): A and R at bank addresses, and the banks' loaded memory to lay out (null: 64 KB) */
@@ -93,7 +96,7 @@ async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArr
 
 const plainAddr = (a: Addr) => `$${h4(a)}`;
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   const set = (p: Partial<GfxPrefs>) => setUi({ gfx: { ...useUi.getState().gfx, ...p } });
   const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows } = prefs;
@@ -163,26 +166,44 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   // at the top (a font per row has fonts for rows and leaves it). It only follows your scrolling, so going through
   // bitmaps (8 KB a row) and back finds the same row again
   const topAt = useRef<Addr | null>(null), restoring = useRef(false), opened = useRef(false);
+  // an address the tab put at the top itself (where the editor was, a file just opened) stays the one at the top while
+  // its row is, so every view has it in the row at the top, not the start of the row it was in
+  const pin = useRef<Addr | null>(null);
   // the scroll the tab makes itself as it opens is not where you went: the other tabs are not told of that position
   const own = useRef<number | null>(null);
   const quietly = (f: () => void) => { f(); own.current = scroller.current?.scrollTop ?? null; };
+  const rowOf = (y: number) => Math.floor(y / zoom / (L.cellH + L.gapY));
+  /** the address after the last row on screen */
+  const viewEnd = (el: HTMLElement) => Math.min(L.size, rowAddr(L, rowOf(el.scrollTop + el.clientHeight) + 1));
   const onScroll = () => {
     const el = scroller.current;
     if (!el || restoring.current || kind === 'fontrows') return;
     fitBand();
-    const row = (y: number) => Math.floor(y / zoom / (L.cellH + L.gapY));
-    topAt.current = Math.min(L.size - 1, rowAddr(L, row(el.scrollTop)));
+    const r = rowOf(el.scrollTop), t = Math.min(L.size - 1, rowAddr(L, r)), p = pin.current;
+    if (p != null && p >= t && p < rowAddr(L, r + 1)) topAt.current = p;
+    else { pin.current = null; topAt.current = t; }
     if (own.current != null && Math.abs(el.scrollTop - own.current) < 1) return;
     own.current = null;
-    onView?.(topAt.current, Math.min(L.size, rowAddr(L, row(el.scrollTop + el.clientHeight) + 1)));
+    onView?.(topAt.current, viewEnd(el));
   };
   /** opening the tab where the editor was (14.6b): that address in the top row, and the cursor on screen when the view
    *  it is from had it */
   const showFrom = (v: { addr: Addr; end: Addr }) => {
     const el = scroller.current, c = cellOf(L, v.addr); if (!el || !c) return;
     el.scrollTop = c.y * zoom;
-    topAt.current = v.addr;
+    topAt.current = pin.current = v.addr;
     if (cursor != null && cursor >= v.addr && cursor < v.end && !onScreen(cursor)) scrollTo(cursor);
+  };
+  /** a file just opened from a loader (`goTo`): its first byte in the top row, and the other tabs told so (a font per
+   *  row stays as it is: the other views open there). It is where you went, so it is not done quietly */
+  const goneTo = useRef(goTo?.n ?? null);
+  const showGoTo = (g: { addr: Addr; n: number }) => {
+    goneTo.current = g.n;
+    topAt.current = pin.current = g.addr;
+    const el = scroller.current, c = kind === 'fontrows' ? null : cellOf(L, g.addr);
+    if (!el) return;
+    if (c) { el.scrollTop = c.y * zoom; own.current = null; }
+    onView?.(g.addr, c ? viewEnd(el) : g.addr + 1);
   };
   useLayoutEffect(() => {
     const el = scroller.current, top = topAt.current;
@@ -190,6 +211,8 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     if (!opened.current || top == null || kind === 'fontrows') {
       const first = !opened.current;
       opened.current = true;
+      // a file just opened from a loader comes before where the editor was
+      if (first && goTo) { showGoTo(goTo); return; }
       if (first && start && kind !== 'fontrows') { quietly(() => showFrom(start)); return; }
       const a = sel?.multi ? sel.start : cursor;
       if (a != null) { if (first) quietly(() => scrollTo(a)); else scrollTo(a); }
@@ -202,6 +225,8 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     // the scroll event this sets off is not yours
     requestAnimationFrame(() => requestAnimationFrame(() => { restoring.current = false; }));
   }, [kind, cols, zoom, bitmapRows]); // eslint-disable-line react-hooks/exhaustive-deps
+  // a file opened from a loader while the tab is open: it goes there
+  useLayoutEffect(() => { if (goTo && goTo.n !== goneTo.current) showGoTo(goTo); }, [goTo?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   // another layout, or the scrolling that came with it: the rows drawn are the ones on screen
   useLayoutEffect(() => { fitBand(); }, [L, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
   // another bank keeps the picture where it is, unless the cursor went off screen in it (the bank does not have its address)

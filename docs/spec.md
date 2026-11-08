@@ -3411,7 +3411,11 @@ grupper med rubrik: *Fonts* (Font per row), *Layout* (per rad eller höjd, zoom,
 man byter läge, antal per rad eller zoom. Raden med den adressen hamnar överst, och i Bitmaps är det den 8 KB-ruta den
 ligger i. Adressen följer bara ens egen scrollning, så Characters → Bitmaps → Characters hittar samma teckenrad igen.
 Font per row har fonter i stället för adresser och lämnar den orörd. När fliken öppnas börjar den där listningen eller
-Memory stod (14.6b), eller vid markören (eller markeringen) när ett hopp är nyare.
+Memory stod (14.6b), eller vid markören (eller markeringen) när ett hopp är nyare. En fil som just öppnats eller lagts
+till från en laddares skript eller bandet (Spindle, Bitfire, Booze, Sparkle, Pirate Slayer, Tape) går före båda: dess
+första byte står i översta raden, genast om fliken är öppen och annars när den öppnas, så att man kan bläddra genom
+lägena och se vad filen är. Ett läge där raden börjar före filen (40 tecken à 320 byte) har filens första byte i raden,
+inte radens början: Characters → Screens med en fil på `$3000` ger skärmen på `$3000`, inte den på `$2c00`.
 
 Det finns fem lägen:
 - **Characters:** 8 byte per tecken, 16, 32, 40 (standard, en skärms bredd) eller 64 per rad. Med *Other…* skrivs
@@ -3605,6 +3609,10 @@ markören på skärmen i den förra fliken kommer den med på skärmen i den nya
   också vägen över källan och SPEC.md.
 - **Ett hopp är nyare:** har markören flyttats med ett hopp (*Go to*, en länk, Explorer, Bookmarks, ett klick i Memory,
   *Show in listing*) efter att fliken scrollades, börjar nästa flik vid markören som förut.
+- **En fil från en laddare:** en fil som öppnas eller läggs till från Spindle-, Bitfire-, Booze- eller Sparkle-skriptet,
+  Pirate Slayer eller Tape ställs överst i Graphics (14.5), genast om fliken är öppen och annars nästa gång den öppnas,
+  före det listningen eller ett hopp säger. När Graphics har visat den säger fliken var den står, som när den scrollas,
+  så listningen och Memory öppnas sedan där.
 - **Banker:** med en cartridge (13.9b) visar Graphics och Memory banken där listningen står: markörens bank när markören
   är på skärmen, annars den översta radens. Är listningen scrollad in i bank 1 med markören kvar i bank 0 öppnar Memory
   alltså bank 1 där, och markören står kvar. Ett hopp och bankväljaren tar vyerna till sin bank. Med All banks står

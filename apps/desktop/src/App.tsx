@@ -202,6 +202,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const viewAt = useRef<ViewAt | null>(null);
   const [viewSpace, setViewSpace] = useState<number | null>(null);
   const seeAt = (v: ViewAt, shows: Addr = v.addr) => { viewAt.current = v; const s = spaceOf(shows); setViewSpace(x => (x === s ? x : s)); };
+  /** a file just opened from a loader's script or the tape: Graphics shows its first byte in the top row, now when the
+   *  tab is open, else when it opens; once it has, the tab says where it is, as when it is scrolled */
+  const [gfxGo, setGfxGo] = useState<{ id: string; n: number } | null>(null);
   /* ---- a cartridge's banks are spaces of their own (13.9b): the listing shows them all, one after the other, at bank
      addresses (space * $10000 + address); the 64 KB views (Graphics, Memory, the heatmap) show the bank of the cursor,
      and Graphics and Memory the bank the editor is in ---- */
@@ -361,7 +364,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** the relocated blocks the bytes at `a` run in, the innermost first (where each one is loaded) */
   const relocsAround = (a: Addr): Addr[] => { const out: Addr[] = []; for (let r = relocAt(A, a); r && out.length < 64; r = relocAt(A, r.start)) out.push(r.start); return out; };
   const unfold = (starts: Addr[]) => { const shut = starts.filter(s => folded.has(s)); if (shut.length) setFolded(f => { const n = new Set(f); for (const s of shut) n.delete(s); return n; }); };
-  const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; viewAt.current = null; setViewSpace(null); };
+  const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; viewAt.current = null; setViewSpace(null); setGfxGo(null); };
   /** fold or unfold the block that starts at (or contains) `a` */
   const toggleFold = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return; setFolded(f => { const n = new Set(f); if (n.has(b.start)) n.delete(b.start); else n.add(b.start); return n; }); if (cursor != null && cursor > b.start && cursor < b.end) setCursor(b.start); };
   // a relocated block holds code too: it is no block of data to fold
@@ -447,8 +450,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** PRGs, and VICE snapshots as their RAM from $0200: the PC and interrupt handlers they hold become entry points */
   /** `undoLabel`: the new project is an undoable step (Ctrl+Z brings the one before back); `note`: the toast instead;
    *  `what`: what "The work is not saved" calls it (the files' names), `asked`: that was answered;
-   *  `show`: the Explorer shows what was opened (the File menu's choices), the cartridge or the files */
-  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean; show?: boolean } = {}) => {
+   *  `show`: the Explorer shows what was opened (the File menu's choices), the cartridge or the files;
+   *  `gfx`: a file from a loader's script or the tape, whose start Graphics shows (14.6b) */
+  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean; show?: boolean; gfx?: boolean } = {}) => {
     if (!opened.length) return;
     // a cartridge's chips open as a project of their own, with the image (13.9): a project holds one cartridge
     const cart = opened.find(f => f.cart)?.cart;
@@ -479,6 +483,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (add) update(`Add ${files.map(f => f.name).join(', ')}`, d => { d.files.push(...files); for (const e of entries) if (!d.entries.includes(e)) d.entries.push(e); });
     // an empty project's nothing comes back with Ctrl+Z
     else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: newProjectSettings(project.settings) }), entries, entryPoint: start ?? null }, undoLabel); resetView(); }
+    if (opts.gfx) setGfxGo({ id: files[0].id, n: Date.now() });
     if (opts.show) showSection('files');
     if (note) { toast(note, 'ok'); return; }
     toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}${leftNote}`, 'ok');
@@ -609,7 +614,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         tapeOf.current.set(h.id, { tap: tape.bytes, file: f, header: true });
         files.push(h);
       }
-      addFiles(files, add);
+      addFiles(files, add, { gfx: true });
       if (files.length > 1) toast(`${f.name}'s header holds code: it is in the project too, as ${files[1].name} at $033c-$03fb (the tape buffer)`, 'info');
     } catch (e) { toast(`"${f.name}": ${errorText(e)}`, 'err'); }
   };
@@ -661,21 +666,21 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a chunk of a Spindle disk's job, as a PRG at its address */
   const openChunk = (j: SpindleJob, c: SpindleChunk, add: boolean) => {
-    try { addFiles([withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))], add); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles([withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a Bitfire disk as a PRG: unpacked, at where it unpacks to; else as it loads */
   const openBitfireFile = (f: BitfireFile, add: boolean) => {
     const u = f.unpacked;
-    try { addFiles([withId(parsePrg(bitfireFileName(f).replace(/\.lz$/, '.prg'), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes)))], add); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles([withId(parsePrg(bitfireFileName(f).replace(/\.lz$/, '.prg'), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a BoozeLoader disk as a PRG: unpacked, at where it unpacks to; else as it loads (as much as memory holds) */
   const openBoozeFile = (f: BoozeFile, add: boolean) => {
     const u = f.unpacked;
-    try { addFiles([withId(parsePrg(boozeFileName(f), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes.subarray(0, f.end - f.load))))], add); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles([withId(parsePrg(boozeFileName(f), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes.subarray(0, f.end - f.load))))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a chunk of a Sparkle disk's bundle, as a PRG at its address */
   const openSparkleChunk = (b: SparkleBundle, c: SparkleChunk, add: boolean) => {
-    try { addFiles([withId(parsePrg(sparkleChunkName(b, c), sparkleChunkPrg(c)))], add); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles([withId(parsePrg(sparkleChunkName(b, c), sparkleChunkPrg(c)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every chunk of a Sparkle disk's bundles as a PRG in a folder, with the loader script rebuilt to load them */
   const saveSparkleFiles = async () => {
@@ -693,7 +698,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a file outside the directory of a Pirate Slayer disk as a PRG at its load address, decoded (as much as memory holds) */
   const openPirateSlayerFile = (f: PirateSlayerFile, add: boolean) => {
-    try { addFiles([withId(parsePrg(pirateSlayerFileName(f), pirateSlayerPrg(f)))], add); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles([withId(parsePrg(pirateSlayerFileName(f), pirateSlayerPrg(f)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every file outside the directory of a Pirate Slayer disk, decoded, as a PRG each in a folder, with files.txt that
    *  lists them */
@@ -789,6 +794,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const seeIn = (all: boolean) => (top: Addr, end: Addr) => (all
     ? seeAt({ addr: top, end, n: Date.now() }, cursor != null && cursor >= top && cursor < end ? cursor : top)
     : seeAt({ addr: inBank(top), end: inBank(end), n: Date.now() }));
+  /** the start of the file just opened from a loader's script or the tape, for Graphics: in the bank it shows (or
+   *  anywhere, with every bank); null once Graphics has shown it, or when the file is gone */
+  const gfxFile = gfxGo ? project.files.findIndex(f => f.id === gfxGo.id) : -1;
+  const goIn = (all: boolean) => {
+    if (!gfxGo || gfxFile < 0) return null;
+    const a = fileAddr(gfxFile);
+    return all ? { addr: a, n: gfxGo.n } : spaceOf(a) === space ? { addr: a - base, n: gfxGo.n } : null;
+  };
   // one bank in the project is analysed without spaces: it is the one shown
   const bankPick = bankChoices && {
     banks: bankChoices, all: (A.spaces?.length ?? 0) > 1,
@@ -2689,7 +2702,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'spec' && <SpecView />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
-              {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} onView={seeIn(allGfx)}
+              {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />)(allGfx ? (a: Addr) => a : inBank)}
