@@ -19,6 +19,7 @@ import { useUi, type Activity, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
+import { closeWindow, holdClose, whenClosing } from './lib/closing';
 import { gfxColsFor, gfxListing } from './lib/gfxlines';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
@@ -49,7 +50,7 @@ import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
 import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
+import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
@@ -243,13 +244,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
 
   /* ---- a project's work is saved to its project file as it changes (the work without a project: the store keeps it) ---- */
   const pending = useRef<{ timer?: ReturnType<typeof setTimeout>; project?: Project; home?: ProjectHome }>({});
-  /** the change waiting to be saved, saved now */
-  const saveNow = useCallback(async () => {
+  /** the change waiting to be saved, saved now; when it could not be, the project and why (it waits to be saved again:
+   *  with the next change, or when the window closes) */
+  const saveNow = useCallback(async (): Promise<{ home: ProjectHome; error: string } | null> => {
     const w = pending.current;
     clearTimeout(w.timer);
     pending.current = {};
-    if (!kr || !w.project || !w.home) return;
-    try { await kr.saveProject({ project: w.project, path: w.home.file }); } catch (e) { toast(`The project was not saved: ${errorText(e)}`, 'err'); }
+    if (!kr || !w.project || !w.home) return null;
+    try { await kr.saveProject({ project: w.project, path: w.home.file }); return null; } catch (e) {
+      if (!pending.current.project) pending.current = { project: w.project, home: w.home };
+      toast(`The project was not saved: ${errorText(e)}`, 'err');
+      return { home: w.home, error: errorText(e) };
+    }
   }, [toast]);
   const seen = useRef({ project, home });
   useEffect(() => {
@@ -301,6 +307,29 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setUnsavedAsk({ what, kept, go });
     return true;
   };
+  /* ---- Mimir is to close (the window's X, Alt+F4, File → Exit): the project's last change is saved first; work without
+     a project with changes in no project asks whether to save it as a project, and a project that could not be saved
+     asks before its changes go ---- */
+  type CloseAsk = { kind: 'unsaved' } | { kind: 'save' } | { kind: 'failed'; home: ProjectHome; error: string };
+  const [closeAsk, setCloseAsk] = useState<CloseAsk | null>(null);
+  const closeAskNow = useRef(closeAsk);
+  closeAskNow.current = closeAsk;
+  const tryClose = useCallback(async () => {
+    holdClose();
+    const failed = await saveNow();
+    if (failed) { setCloseAsk({ kind: 'failed', ...failed }); return; }
+    const s = useProject.getState();
+    if (!s.home && workChanged(s)) { setCloseAsk({ kind: 'unsaved' }); return; }
+    keepUnsavedWork();
+    closeWindow();
+  }, [saveNow]);
+  // asked again while a question is open: it stays open
+  useEffect(() => whenClosing(() => { if (closeAskNow.current) holdClose(); else void tryClose(); }), [tryClose]);
+  /** closed without saving: work without a project is kept for the next start as before, a project's last change goes */
+  const closeUnsaved = () => { pending.current = {}; keepUnsavedWork(); setCloseAsk(null); closeWindow(); };
+  /** "Save as a project…" before closing: the work made a project, then the window closes */
+  const saveThenClose = async (name: string, parent: string) => { await createFromWork(name, parent); setCloseAsk(null); closeWindow(); };
+
   /** the work (or the one the window keeps) made a project, as "Save as a project…" asked; then what waited */
   const saveFirstAs = async (name: string, parent: string) => {
     const s = saveFirst;
@@ -2071,7 +2100,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
   ];
   // the dialogs of "The work is not saved" hold the keys too
-  const dialog = modal ?? (unsavedAsk || saveFirst ? 'project' : null);
+  const dialog = modal ?? (unsavedAsk || saveFirst || closeAsk ? 'project' : null);
   /** Pack a file over the work (Smart attach gave it a source): the work's keys wait until it goes back */
   const overWork = !!packSource;
   /** ← / →: the byte before or after the cursor's, on to the line before or after; from a line picked whole, its first
@@ -2675,6 +2704,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onSave={() => { setSaveFirst(unsavedAsk); setUnsavedAsk(null); }} onDiscard={() => { setUnsavedAsk(null); unsavedAsk.go(); }} onClose={() => setUnsavedAsk(null)} />}
       {saveFirst && <CreateProjectModal title={saveFirst.kept ? 'Create a project from the work without a project' : undefined} name={(saveFirst.kept ?? project).name}
         moving={saveFirst.kept ? ['the work without a project (its files, labels, comments, bookmarks and patches)'] : movingText()} submit={`Create project, then open ${saveFirst.what}`} onCreate={saveFirstAs} onClose={() => setSaveFirst(null)} />}
+      {closeAsk?.kind === 'unsaved' && <CloseUnsavedModal name={project.name} onSave={() => setCloseAsk({ kind: 'save' })} onClose={closeUnsaved} onCancel={() => setCloseAsk(null)} />}
+      {closeAsk?.kind === 'save' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project, then close Mimir" onCreate={saveThenClose} onClose={() => setCloseAsk(null)} />}
+      {closeAsk?.kind === 'failed' && <CloseNotSavedModal name={closeAsk.home.name} file={closeAsk.home.file} error={closeAsk.error} onRetry={() => { setCloseAsk(null); void tryClose(); }} onClose={closeUnsaved} onCancel={() => setCloseAsk(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}
       <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} />{t.msg}</div>)}</div>
     </div>

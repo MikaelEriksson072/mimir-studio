@@ -1,5 +1,5 @@
 /* Main-process logic without Electron: path policy, settings store, IPC schemas, toolchain runner. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,9 +10,10 @@ import { CHANNELS } from '../shared/ipc';
 import { assertEntryName, PathPolicy } from '../electron/main/paths';
 import { bringOldSettings } from '../electron/main/migrate';
 import { RecentFolders } from '../electron/main/recent';
+import { answerClose, askBeforeClose, CLOSE_ANSWER_MS, type ClosingWindow } from '../electron/main/closing';
 import { findInFolder, startFolder, toolLook } from '../electron/main/locate';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema } from '../electron/main/schemas';
+import { deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
 import { buildWithKickAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
@@ -26,7 +27,77 @@ const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings =>
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play', 'window:close', 'window:closing'].sort());
+  });
+});
+
+describe('closing a window', () => {
+  /** a window whose `tryClose` is its X: true when it closed */
+  function fakeWindow(crashed = false) {
+    const on: { close?: (e: { preventDefault(): void }) => void; closed?: () => void } = {};
+    const sent: string[] = [];
+    let closed = false;
+    const win: ClosingWindow = {
+      on: ((event: 'close' | 'closed', fn: never) => { on[event] = fn; }) as ClosingWindow['on'],
+      close: () => { if (tryClose()) { closed = true; on.closed?.(); } },
+      isDestroyed: () => closed,
+      webContents: { send: ch => { sent.push(ch); }, isCrashed: () => crashed },
+    };
+    function tryClose(): boolean {
+      let prevented = false;
+      on.close?.({ preventDefault: () => { prevented = true; } });
+      return !prevented;
+    }
+    askBeforeClose(win);
+    return { win, sent, tryClose: () => { if (tryClose()) { closed = true; on.closed?.(); } return closed; }, isClosed: () => closed };
+  }
+
+  it('asks the page first, and closes once it answers so', () => {
+    const w = fakeWindow();
+    expect(w.tryClose()).toBe(false);
+    expect(w.sent).toEqual([CHANNELS.windowClosing]);
+    answerClose(w.win, true);
+    expect(w.isClosed()).toBe(true);
+  });
+
+  it('waits while the page asks the user, as long as it takes; asked again, the page is asked again', () => {
+    vi.useFakeTimers();
+    try {
+      const w = fakeWindow();
+      w.tryClose();
+      answerClose(w.win, false);
+      vi.advanceTimersByTime(CLOSE_ANSWER_MS * 10);
+      expect(w.isClosed()).toBe(false);
+      expect(w.tryClose()).toBe(false);
+      expect(w.sent).toEqual([CHANNELS.windowClosing, CHANNELS.windowClosing]);
+      answerClose(w.win, false);
+      // Cancel: the window stays, and the next X asks again
+      expect(w.tryClose()).toBe(false);
+      answerClose(w.win, true);
+      expect(w.isClosed()).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('closes anyway when the page does not answer, and at once when it crashed', () => {
+    vi.useFakeTimers();
+    try {
+      const w = fakeWindow();
+      w.tryClose();
+      vi.advanceTimersByTime(CLOSE_ANSWER_MS - 1);
+      expect(w.isClosed()).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(w.isClosed()).toBe(true);
+      const crashed = fakeWindow(true);
+      expect(crashed.tryClose()).toBe(true);
+      expect(crashed.sent).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('takes the answer only as a boolean', () => {
+    expect(windowCloseSchema.safeParse({ close: true }).success).toBe(true);
+    expect(windowCloseSchema.safeParse({ close: 'yes' }).success).toBe(false);
+    expect(windowCloseSchema.safeParse({ close: true, force: true }).success).toBe(false);
+    expect(windowCloseSchema.safeParse(undefined).success).toBe(false);
   });
 });
 

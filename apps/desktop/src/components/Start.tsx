@@ -119,6 +119,52 @@ export function UnsavedWorkModal({ name, what, left, onSave, onDiscard, onClose 
   );
 }
 
+interface CloseUnsavedProps {
+  /** the work without a project */
+  name: string;
+  onSave: () => void;
+  onClose: () => void;
+  onCancel: () => void;
+}
+
+/** Mimir is to close, and the work open is work without a project with changes that are in no project. Save makes a
+ *  project of it first; without, Mimir keeps it for the next start as before */
+export function CloseUnsavedModal({ name, onSave, onClose, onCancel }: CloseUnsavedProps) {
+  return (
+    <Modal title="Save the work before Mimir closes?" onClose={onCancel}>
+      <div className="modal-body unsaved-work">
+        <p><b>{name}</b> is work without a project, and its changes are in no project. Save as a project puts it in a folder of its own before Mimir closes.</p>
+        <p className="muted">Close without saving: Mimir still keeps the work for the next start, but not in a folder of yours.</p>
+      </div>
+      <div className="modal-foot"><span className="grow" /><button className="btn" onClick={onCancel}>Cancel</button><button className="btn" onClick={onClose}>Close without saving</button><button className="btn primary" autoFocus onClick={onSave}>Save as a project…</button></div>
+    </Modal>
+  );
+}
+
+interface CloseNotSavedProps {
+  /** the project, and its project file */
+  name: string;
+  file: string;
+  /** why it was not saved */
+  error: string;
+  onRetry: () => void;
+  onClose: () => void;
+  onCancel: () => void;
+}
+
+/** Mimir is to close, and the project's last change could not be saved to its project file */
+export function CloseNotSavedModal({ name, file, error, onRetry, onClose, onCancel }: CloseNotSavedProps) {
+  return (
+    <Modal title="The project is not saved" onClose={onCancel}>
+      <div className="modal-body unsaved-work">
+        <p>Mimir could not save <b>{name}</b> to <span className="mono">{file}</span>: {error}</p>
+        <p className="muted">Closing now loses the changes made since it was saved last.</p>
+      </div>
+      <div className="modal-foot"><span className="grow" /><button className="btn" onClick={onCancel}>Cancel</button><button className="btn" onClick={onClose}>Close without saving</button><button className="btn primary" autoFocus onClick={onRetry}>Try again</button></div>
+    </Modal>
+  );
+}
+
 export interface StartScreenProps {
   /** go on with what was chosen earlier in this run (the window was reloaded): true when the window opens */
   resume: boolean;

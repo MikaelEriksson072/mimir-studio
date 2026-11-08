@@ -62,6 +62,13 @@ const api: KrApi = {
     ipcRenderer.on(CHANNELS.fsChanged, listener);
     return () => { ipcRenderer.removeListener(CHANNELS.fsChanged, listener); };
   },
+  onCloseAsked: cb => {
+    if (typeof cb !== 'function') throw new TypeError('onCloseAsked expects a function');
+    const listener = () => cb();
+    ipcRenderer.on(CHANNELS.windowClosing, listener);
+    return () => { ipcRenderer.removeListener(CHANNELS.windowClosing, listener); };
+  },
+  answerClose: req => invoke(CHANNELS.windowClose, req),
 };
 
 contextBridge.exposeInMainWorld('kr', api);

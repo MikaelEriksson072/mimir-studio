@@ -3,6 +3,7 @@ import { app, BrowserWindow, Menu, session, shell, type MenuItemConstructorOptio
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CHANNELS } from '../../shared/ipc';
+import { askBeforeClose } from './closing';
 import { closeDeepSid } from './deepsid';
 import { bringOldSettings } from './migrate';
 import { registerIpc } from './ipc';
@@ -44,6 +45,8 @@ function createWindow(): BrowserWindow {
     win.webContents.on('preload-error', (_e, path, error) => console.log(`[preload error] ${path}: ${error.message}`));
     win.webContents.on('did-finish-load', () => console.log('[renderer] loaded'));
   }
+  // the page is asked before the window closes: it saves the project's last change, and asks about work in no project
+  askBeforeClose(win);
   // DeepSID's window (deepsid.ts) goes with the app's
   win.on('closed', () => closeDeepSid());
   if (devUrl) void win.loadURL(devUrl);
@@ -83,7 +86,8 @@ app.whenReady().then(() => {
   buildMenu();
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-  app.on('before-quit', () => { watcher.close(); quicksave.close(); });
+  // not before-quit: that comes before the windows close, and a window whose page asks about unsaved work may stay
+  app.on('will-quit', () => { watcher.close(); quicksave.close(); });
 });
 
 app.on('window-all-closed', () => {

@@ -1987,6 +1987,8 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `vice:attach` / `vice:command` | renderer → main | monitorkommandon → svar |
 | `settings:get` / `settings:set` | renderer → main | `Settings` |
 | `fs:changed` | main → renderer | `{ path }` (fil-watcher) |
+| `window:closing` | main → renderer | fönstret ska stängas (krysset, Alt+F4, File → Exit): sidan svarar med `window:close` inom 2,5 s, annars stängs det ändå (13.10) |
+| `window:close` | renderer → main | `{ close }`: sidans svar, fönstret stängs nu (`true`) eller väntar medan sidan frågar användaren (`false`) |
 
 ### 13.4b Smart attach
 
@@ -3096,6 +3098,20 @@ tiden före projekten, och frågan gällde då något du inte arbetar med). Hist
 `store/history.ts`): ett steg sedan arbetet senast ersattes i sin helhet är en ändring, och Ctrl+Z tillbaka över en
 öppnad fil ger arbetet före den med sina ändringar.
 
+**När Mimir stängs** (fönstrets kryss, Alt+F4, File → Exit) frågar huvudprocessen sidan först (`window:closing`,
+`electron/main/closing.ts`). Sidan sparar projektets senaste ändring direkt, utan att vänta på den automatiska
+sparningen, och stänger sedan. Ett arbete utan projekt med ändringar som inte finns i något projekt frågar först, i
+**Save the work before Mimir closes?**: **Save as a project…** gör ett projekt av arbetet (samma dialog som Save, med
+*Create project, then close Mimir*) och stänger sedan; **Close without saving** stänger, och Mimir håller arbetet till
+nästa start som förut (men inte i någon mapp som är användarens); **Cancel** (Esc) lämnar Mimir öppet. Ett projekt
+som inte gick att spara (projektfilen skrivskyddad, disken full …) frågar i **The project is not saved**: **Try again**
+sparar igen och stänger, **Close without saving** stänger och ändringarna sedan den senaste sparningen går förlorade.
+En ändring som inte gick att spara väntar på att sparas igen, med nästa ändring eller när fönstret stängs. Frågan
+väntar så länge det tar; en sida som inte svarar alls (den har hängt sig eller laddades aldrig) får sitt fönster
+stängt efter 2,5 s, och en sida som kraschat stängs direkt. Startskärmen har inget att fråga om. Filbevakningen och
+quicksave-bevakningen stängs i `will-quit`, inte i `before-quit`: den kommer innan fönstren stängs, och ett fönster som
+frågar kan bli kvar.
+
 Huvudprocessen håller reda på det (`projects.json` i appens datamapp): det som valdes sist, de senaste projekten och
 mappen nya projekt läggs i. Ett projekt i listan öppnas utan dialog (sökvägen kommer från listan, inte från
 renderaren); mappen nya projekt läggs i är den huvudprocessen föreslår eller en vald i sessionen, och projektets mapp
@@ -3106,8 +3122,12 @@ projekt inte skapas två gånger, och att exporten kopieras medan bygget och den
 `e2e/projects.spec.ts`: startskärmen vid första starten, ett nytt projekt (mappen, en PRG öppnad i det, ändringar
 sparade i projektfilen, Ctrl+E till `source`), nästa start (Continue med Enter, omladdning utan startskärm, tillbaka
 till startskärmen), arbete utan projekt bredvid ett projekt, ett projekt skapat av arbetet med exporten flyttad
-dit, och frågan innan arbete med ändringar ersätts (Cancel, Save as a project…, Do not save, pricken efter en
-omladdning). `test/history.test.ts`: vilka steg som är ändringar, efter Ctrl+Z, med inställningar och när historiken
+dit, frågan innan arbete med ändringar ersätts (Cancel, Save as a project…, Do not save, pricken efter en
+omladdning), och frågan när Mimir stängs (Cancel, frågan väntar längre än huvudprocessen väntar på en sida som inte
+svarar, Save as a project…, Close without saving med arbetet kvar till nästa start, projektets sista ändring sparad
+när fönstret stängs, och ett skrivskyddat projekt: Cancel, Try again). `test/main.test.ts` (*closing a window*):
+sidan tillfrågas, väntar så länge den frågar, fönstret stängs ändå när sidan inte svarar och direkt när den kraschat.
+`test/history.test.ts`: vilka steg som är ändringar, efter Ctrl+Z, med inställningar och när historiken
 blir för lång.
 
 ## 14. UI/UX-specifikation

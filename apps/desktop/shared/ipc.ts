@@ -45,12 +45,18 @@ export const CHANNELS = {
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   settingsLocate: 'settings:locate',
+  windowClose: 'window:close',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
+  windowClosing: 'window:closing',
 } as const;
 
-export type InvokeChannel = Exclude<(typeof CHANNELS)[keyof typeof CHANNELS], 'fs:changed' | 'vice:quicksaved'>;
+export type InvokeChannel = Exclude<(typeof CHANNELS)[keyof typeof CHANNELS], 'fs:changed' | 'vice:quicksaved' | 'window:closing'>;
+
+/** The page's answer when its window is to close (electron/main/closing.ts): `close`, it closes now; else it waits
+ *  (the page asks the user, and answers again) */
+export interface WindowCloseRequest { close: boolean }
 
 /** `path` given: open it (in a folder opened in this session, or a project opened before); otherwise the main process
  *  shows a file dialog. The project's folder is where what Mimir writes for it goes from then on. */
@@ -357,4 +363,9 @@ export interface KrApi {
   onQuicksave(cb: (e: QuicksaveEvent) => void): () => void;
   /** Subscribe to file-watcher events for exported project folders; returns an unsubscribe function. */
   onFsChanged(cb: (e: FsChangedEvent) => void): () => void;
+  /** Subscribe to the window being closed (its X, Alt+F4, File → Exit): the page answers with `answerClose`, within a
+   *  moment, or the window closes anyway. Returns an unsubscribe function. */
+  onCloseAsked(cb: () => void): () => void;
+  /** the page's answer: the window closes now, or waits for the page (it asks the user first) */
+  answerClose(req: WindowCloseRequest): Promise<void>;
 }

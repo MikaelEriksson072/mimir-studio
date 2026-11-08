@@ -64,6 +64,17 @@ export async function launchApp(userData: string): Promise<ElectronApplication> 
   return app;
 }
 
+/** The window's X (Alt+F4 and File → Exit do the same): Mimir saves and may ask about unsaved work before it closes. */
+export async function pressClose(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.close(); });
+}
+
+/** A test's last app closed without its questions about unsaved work (nothing looks at that work again). */
+export async function closeApp(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.destroy(); }).catch(() => undefined);
+  await app.close().catch(() => undefined);
+}
+
 export const test = base.extend<Fixtures & Options>({
   start: ['without', { option: true }],
 
@@ -86,7 +97,7 @@ export const test = base.extend<Fixtures & Options>({
     const app = await launchApp(userData);
     await use(app);
     // a test that restarted the app closed this one already
-    await app.close().catch(() => undefined);
+    await closeApp(app);
   },
 
   page: async ({ app, start }, use, testInfo) => {

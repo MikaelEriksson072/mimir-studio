@@ -1,10 +1,10 @@
 /* Projects in the real Electron app: the start screen (continue, a new project, work without one), a project's folder
  * and what Mimir writes there, a project made afterwards from the work without one, and the next start going on with
  * it. Folder dialogs are stubbed: no test writes in the user's documents folder. */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
-import { expect, launchApp, repoDir, test } from './fixtures';
+import { closeApp, expect, launchApp, pressClose, repoDir, test } from './fixtures';
 import { dialogOptions, goTo, listing, listingRows, occurrences, statusBar, stubDialogs, toast, waitForListing } from './helpers';
 
 const OLD = 'var_092d';
@@ -93,7 +93,7 @@ test.describe('the start screen', () => {
         await expect(page2.getByRole('button', { name: 'Continue with the project scroller' })).toBeVisible();
         await expect(page2.getByRole('button', { name: 'Without a project' })).toBeVisible();
       } finally {
-        await again.close();
+        await closeApp(again);
       }
     });
   });
@@ -136,7 +136,7 @@ test.describe('the start screen', () => {
       await settings.getByRole('button', { name: 'Save settings' }).click();
       await expect(settings).toBeHidden();
     } finally {
-      await again.close();
+      await closeApp(again);
     }
 
     again = await launchApp(userData);
@@ -145,7 +145,7 @@ test.describe('the start screen', () => {
       await expect(page3.getByRole('button', { name: 'Continue with the project quiet' })).toBeVisible();
       await expect(page3.getByRole('checkbox', { name: /^Show this window when Mimir starts/ })).toBeChecked();
     } finally {
-      await again.close();
+      await closeApp(again);
     }
   });
 
@@ -154,9 +154,13 @@ test.describe('the start screen', () => {
     await waitForListing(page);
     await expect(page.getByRole('button', { name: 'No project' })).toBeVisible();
     await rename(page, OLD, NEW);
-    // the window keeps it (after a moment)
-    await page.waitForTimeout(1200);
-    await app.close();
+    // closed at once: Mimir asks whether to save it as a project, and without keeps it for the next start
+    await pressClose(app);
+    const ask = page.getByRole('dialog', { name: 'Save the work before Mimir closes?' });
+    await expect(ask).toContainText('raster-demo is work without a project, and its changes are in no project.');
+    const closed = app.waitForEvent('close');
+    await ask.getByRole('button', { name: 'Close without saving' }).click();
+    await closed;
 
     const again = await launchApp(userData);
     try {
@@ -184,7 +188,7 @@ test.describe('the start screen', () => {
       expect(occurrences(await listingRows(page2), NEW)).toBeGreaterThanOrEqual(4);
       await expect(page2.getByRole('button', { name: 'No project' })).toBeVisible();
     } finally {
-      await again.close();
+      await closeApp(again);
     }
   });
 
@@ -276,7 +280,7 @@ test.describe('the start screen', () => {
         await expect(go).toContainText('no files');
         await expect(page2.getByRole('listitem').filter({ hasText: 'kept' })).toBeVisible();
       } finally {
-        await again.close();
+        await closeApp(again);
       }
     });
   });
@@ -383,6 +387,90 @@ test('work without a project, with changes, asks before a file takes its place: 
     expect(occurrences(await listingRows(page), NEW)).toBe(0);
     expect(readFileSync(file, 'utf8')).toContain(NEW);
   });
+});
+
+test('closing Mimir with changes in no project asks whether to save them; a project\'s last change is saved as it closes', async ({ workDir: work, userData, app, page }) => {
+  const dir = join(work, 'closed'), file = join(dir, 'closed.mimir.json');
+  const ask = page.getByRole('dialog', { name: 'Save the work before Mimir closes?' });
+  await waitForListing(page);
+
+  await test.step('a change in the work without a project is in no project', async () => {
+    await rename(page, OLD, NEW);
+    await expect(page.getByRole('button', { name: 'No project, changes not saved' })).toBeVisible();
+  });
+
+  await test.step('Cancel: Mimir stays open with the work as it is', async () => {
+    await pressClose(app);
+    await expect(ask).toContainText('raster-demo is work without a project, and its changes are in no project. Save as a project puts it in a folder of its own before Mimir closes.');
+    await expect(ask.getByRole('button', { name: 'Save as a project…' })).toBeFocused();
+    await ask.getByRole('button', { name: 'Cancel' }).click();
+    await expect(ask).toBeHidden();
+    expect(occurrences(await listingRows(page), NEW)).toBeGreaterThanOrEqual(4);
+  });
+
+  await test.step('the question waits for the answer, however long it takes; Save as a project makes one, then Mimir closes', async () => {
+    await pressClose(app);
+    await expect(ask).toBeVisible();
+    // longer than the main process waits for a page that does not answer at all
+    await page.waitForTimeout(3500);
+    await expect(ask).toBeVisible();
+    await ask.getByRole('button', { name: 'Save as a project…' }).click();
+    const create = page.getByRole('dialog', { name: 'Create a project from this work' });
+    await create.getByLabel('Name').fill('closed');
+    await stubDialogs(app, { open: [work] });
+    await create.getByRole('button', { name: 'Change…' }).click();
+    const closed = app.waitForEvent('close');
+    await create.getByRole('button', { name: 'Create project, then close Mimir' }).click();
+    await closed;
+    expect(readFileSync(file, 'utf8')).toContain(NEW);
+  });
+
+  const again = await launchApp(userData);
+  try {
+    const page2 = await again.firstWindow();
+    await test.step('the next start goes on with the project; a change made a moment before closing is saved, asking nothing', async () => {
+      await page2.getByRole('button', { name: 'Continue with the project closed' }).click();
+      await waitForListing(page2);
+      await rename(page2, NEW, 'wave_pos');
+      // at once, before the project saves itself
+      const closed = again.waitForEvent('close');
+      await pressClose(again);
+      await closed;
+      expect(readFileSync(file, 'utf8')).toContain('wave_pos');
+    });
+  } finally {
+    await closeApp(again);
+  }
+
+  const third = await launchApp(userData);
+  try {
+    const page3 = await third.firstWindow();
+    await test.step('a project that cannot be saved asks before its changes go; Try again saves it, then Mimir closes', async () => {
+      await page3.getByRole('button', { name: 'Continue with the project closed' }).click();
+      await waitForListing(page3);
+      chmodSync(file, 0o444);
+      try {
+        await rename(page3, 'wave_pos', 'last_pos');
+        await expect(toast(page3, 'The project was not saved')).toBeVisible();
+        await pressClose(third);
+        const failed = page3.getByRole('dialog', { name: 'The project is not saved' });
+        await expect(failed).toContainText(`Mimir could not save closed to ${file}`);
+        await expect(failed).toContainText('Closing now loses the changes made since it was saved last.');
+        await failed.getByRole('button', { name: 'Cancel' }).click();
+        await expect(failed).toBeHidden();
+        await pressClose(third);
+        await expect(failed).toBeVisible();
+      } finally {
+        chmodSync(file, 0o644);
+      }
+      const closed = third.waitForEvent('close');
+      await page3.getByRole('dialog', { name: 'The project is not saved' }).getByRole('button', { name: 'Try again' }).click();
+      await closed;
+      expect(readFileSync(file, 'utf8')).toContain('last_pos');
+    });
+  } finally {
+    await closeApp(third);
+  }
 });
 
 test('work without a project kept by an older Mimir has no changes: a file opened in a project asks nothing about it', async ({ workDir: work, app, page }) => {

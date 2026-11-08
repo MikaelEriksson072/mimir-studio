@@ -25,8 +25,9 @@ import { findEditors } from '@mimir/core/node';
 import { openedPrg } from './project-fs';
 import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
-  quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema,
+  quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema, windowCloseSchema,
 } from './schemas';
+import { answerClose } from './closing';
 
 export interface IpcDeps {
   policy: PathPolicy;
@@ -134,6 +135,8 @@ export function registerIpc(deps: IpcDeps): void {
     return { home, moved };
   });
   handle(CHANNELS.projectUnsaved, z.undefined().or(z.object({}).strict()), () => { projects.unsaved(); });
+  // the page's answer when its window is to close (closing.ts)
+  handle(CHANNELS.windowClose, windowCloseSchema, (req, e) => { const win = windowOf(e.sender); if (win) answerClose(win, req.close); });
   handle(CHANNELS.projectReveal, z.undefined().or(z.object({}).strict()), async () => {
     if (!projects.current) throw new Error('No project is open');
     const error = await shell.openPath(projects.current.dir);
