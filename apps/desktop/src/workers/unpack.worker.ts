@@ -4,8 +4,9 @@ import * as Comlink from 'comlink';
 import { unpackPrg, type Roms, type UnpackRun, type UnpackTape } from '@mimir/core';
 
 const api = {
-  unpack(prg: Uint8Array, roms: Roms | null, disk: Uint8Array | null, tape: UnpackTape | null = null): UnpackRun {
-    return unpackPrg(prg, roms, disk, null, tape);
+  /** `entry`: start the program with SYS there instead of as LOAD leaves it (RUN, or SYS to where it loads) */
+  unpack(prg: Uint8Array, roms: Roms | null, disk: Uint8Array | null, tape: UnpackTape | null = null, entry: number | null = null): UnpackRun {
+    return unpackPrg(prg, roms, disk, entry, tape);
   },
 };
 

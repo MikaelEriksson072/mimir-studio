@@ -1863,6 +1863,29 @@ test('a packed PRG is reported and unpacked with Sindri, or an external unpacker
   });
 });
 
+test('a program that waits for a key in front of more packing: Unpack again runs it from the start the first one set', async ({ app, page }) => {
+  // fixtures/prg/packed-menu.prg (packages/core/test/sindri.test.ts), as a cracked game's trainer menu waits in front
+  // of the packed game: fakePack unpacks $07f0-$390c and starts it at $07f8, which waits for a key and then starts the
+  // demo packed by fakePack. As LOAD leaves it, neither SYS to where it loads ($07f0) nor RUN starts it: JAMs there
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  const bar = page.locator('.pack-bar');
+  const done = page.locator('.unpack-bar');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/packed-menu.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(bar).toContainText('packed-menu.prg is packed.');
+  await expect(bar).toContainText(/Sindri peels off 2 layers: an unknown mover at \$080d .*; the program starts at \$07f8/, { timeout: 30_000 });
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(done).toContainText('Unpacked packed-menu.prg: packed-menu-unpacked.prg, $07f0-$390c, starting at $07f8 (set as the program start).', { timeout: 30_000 });
+  // Sindri runs the unpacked program from that start, and the keys it presses get past the wait to the packed demo
+  await expect(bar).toContainText('packed-menu-unpacked.prg is packed.', { timeout: 30_000 });
+  await expect(bar).toContainText(/Sindri peels off 2 layers: an unknown mover at \$07f8 .*, then an unknown decoder at \$0340 .*; the program starts at \$0810/, { timeout: 30_000 });
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(toast(page, 'Unpacked packed-menu-unpacked.prg: 12287 bytes at $0801-$37ff')).toBeVisible({ timeout: 30_000 });
+  await expect(done).toContainText('packed-menu-unpacked-unpacked.prg, $0801-$37ff, starting at $0810 (set as the program start).');
+  await expect(bar).toHaveCount(0);
+});
+
 test('a file opened from a mounted disk is unpacked with the disk in a 1541', async ({ app, page }) => {
   // fixtures/d64/kernal-load.d64: BOOT loads PART2 ($c000) with LOAD "PART2",8,1 through the KERNAL and jumps to it.
   // The 1541 needs VICE's DOS ROM, which a machine without VICE does not have.

@@ -4,7 +4,7 @@
  * fingerprint when Exomizer is installed; and, with VICE's 1541 DOS ROM, a program that loads its next file from the
  * disk it came from. */
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +14,14 @@ import { fakePack } from './helpers/fake-packer';
 
 const demo = makeDemo().prg;
 const packed = fakePack(demo, 0x0810);
+/** fixtures/prg/packed-menu.prg, packed twice with a wait between, as a cracked game's trainer menu waits in front of
+ *  the packed game: fakePack unpacks $07f0-$390c and starts it at $07f8, which waits for a key (GETIN) and then starts
+ *  the demo packed by fakePack ($080d); $07f0-$07f7 and $0800 hold JAMs, so neither SYS to where it loads nor RUN
+ *  starts it */
+const menuPacked = (() => {
+  const head = [0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x20, 0xe4, 0xff, 0xf0, 0xfb, 0x4c, 0x0d, 0x08, 0x02];
+  return fakePack(makePrg(0x07f0, Uint8Array.from([...head, ...packed.subarray(2)])), 0x07f8);
+})();
 const roms = findC64Roms();
 const modes: [string, Roms | null][] = roms ? [['stand-ins', null], ['ROMs', roms]] : [['stand-ins', null]];
 
@@ -35,6 +43,20 @@ for (const [mode, r] of modes) {
       expect(log).toContain('layer 1  $0340  jmp from $0839  decoder');
       expect(log).toContain('         text: "FAKEPACK"');
       expect(log.at(-1)).toBe('saved layer 2: $0801-$37ff (12.0 KB), start with SYS 2064 = $0810');
+    });
+
+    it('unpacks a program that waits for a key in front of more packing when it is run from its start', () => {
+      // the first run stops at the wait (no keys once something was unpacked), and saves it with its start
+      const first = unpackPrg(menuPacked, r);
+      expect(first.layers.map(l => [l.entry, l.kind])).toEqual([[0x080d, 'mover'], [0x0340, 'decoder'], [0x07f8, 'program']]);
+      expect(first.saved).toMatchObject({ start: 0x07f0, end: 0x390c, entry: 0x07f8, basic: false });
+      // run as LOAD leaves it, SYS to where it loads hits a JAM; from its start, the keys Sindri presses go on to the demo
+      expect(unpackPrg(first.saved!.prg, r)).toMatchObject({ unpacked: false, stop: { reason: 'jam' } });
+      const second = unpackPrg(first.saved!.prg, r, null, 0x07f8);
+      expect(second.layers.map(l => [l.entry, l.kind])).toEqual([[0x07f8, 'mover'], [0x0340, 'decoder'], [0x0810, 'program']]);
+      expect(second.layers[0].presses.length).toBeGreaterThan(0);
+      expect(second.saved).toMatchObject({ start: 0x0801, end: 0x37ff, entry: 0x0810 });
+      expect(second.saved!.prg).toEqual(demo);
     });
 
     it('finds nothing to unpack in the plain demo', () => {
@@ -110,5 +132,13 @@ describe.skipIf(!EXO)('an Exomizer self-extracting file', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the fixture fixtures/prg/packed-menu.prg', () => {
+  it('is the demo packed twice with a wait for a key between, which the e2e tests unpack in two steps', () => {
+    const path = join(__dirname, '../../../fixtures/prg/packed-menu.prg');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, menuPacked);
+    expect(new Uint8Array(readFileSync(path))).toEqual(menuPacked);
   });
 });

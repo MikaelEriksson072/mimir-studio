@@ -894,7 +894,8 @@ eller lite kod och minst 6,4 bitar per byte. Demon och vanliga program blir inte
 
 **Sindri, den inbyggda uppackaren** (`packages/sindri`, `@mimir/sindri`) kör varje öppnad fil i en emulerad C64, i en egen
 Web Worker. Med C64-ROM:arna från användarens VICE (mappen `C64` bredvid x64sc i inställningarna, annars en VICE den
-hittar; huvudprocessen läser dem, kanalen `toolchain:roms`) startar den maskinen, laddar filen och skriver `RUN`; utan
+hittar; huvudprocessen läser dem, kanalen `toolchain:roms`) startar den maskinen, laddar filen och skriver `RUN` eller
+`SYS` (se *Hur Sindri startar filen* nedan); utan
 dem kör den med små ersättare för KERNAL och BASIC. Ett nytt lager börjar när processorn hoppar in i kod som det
 körande lagret skrev och inte har kört. Varje lager får en sort (*mover*, *decoder*, *decruncher*, *jump*, sist
 *program*) och ett fingeravtryck av opkoderna det körde, som de var när det körde dem (så behåller en uppackare i
@@ -959,6 +960,18 @@ och Xcusemo stannar i sin ram, där en första körning råkade nå nästa del (
 delen på `$4000` startar; Xcusemo mitt i en färgtoning, då inget nytt skrivits på 1,5 miljoner cykler sedan motorn
 stannat). Utan disk ändras inget sparat program, bara ögonblicket då körningen stannar (oftast en kontroll tidigare
 eller senare).
+
+**Hur Sindri startar filen.** Som man gör efter `LOAD"…",8,1`: `RUN` för ett BASIC-program, annars `SYS` till
+laddadressen. Ett BASIC-program är en fil som laddas där BASIC börjar (`$0801`), eller som laddas under och över den
+med en `SYS` in i filen på någon av de första raderna och en nolla eller ett kolon på `$0800` (`RUN` fortsätter från
+byten före första raden som från slutet av en sats; allt annat ger `?SYNTAX ERROR`). Cybernoid II +17HDF laddas på
+`$05b8`, mitt i skärmen, där ramens byte blir `JSR` in i packad data, och har `239 SYS2061` på `$0801`: förut skrev
+Sindri `SYS1464` och körde in i en JAM. Kör `RUN` ingen maskinkod provas `SYS` till laddadressen. Bland de 2380
+olika filer i arkivet som regeln gäller (första PRG:n på varje D64 och lösa PRG:er) packas 2030 upp, förut 451; ingen
+som packades upp förut slutar göra det, och där starten ändrades börjar unp64 på samma rad. Har projektet en
+programstart i filen (den som *Unpack* satte, eller användarens) startar Sindri den där med `SYS`, som Build & Run gör.
+En VICE-snapshots RAM körs inte alls, och får ingen packningsnotis: maskinen körde redan programmet när snapshoten
+togs, och från `$0200` har den programmets `SYS`-rad på `$0801`, så `RUN` skulle starta det från början.
 
 **Vad Sindri sparar.** Det sparade programmet är minnet som det var när det nyaste lagret startade, från den första
 till den sista byte som hör till programmet (små delar långt från resten räknas inte): det som lagret före skrev och
@@ -1056,6 +1069,14 @@ ersätts av den uppackade filen med startadressen som programstart (8.2); i ett 
 och det går att ångra. Verktygets kommandorad och utdata visas i en rad över listningen. Den uppackade filen räknas som
 en laddning (14.1): *Files* fälls ihop, och *Loaders* och *Program start* öppnas när programmet som packaren gömde har
 en loader eller en känd start.
+
+Sindri kör sedan den uppackade filen från programstarten som *Unpack* satte. Ett program som väntar på en tangent
+framför mer packning, som trainermenyn i ett crackat spel framför det packade spelet, är där den första körningen
+stannar (inga tangenter när något redan packats upp), men från sin start trycker Sindri sig förbi det, och nästa
+*Unpack* tar nästa lager. Cybernoid II +17HDF blir spelet efter tre: trainermenyn på `$2000` (`$03dc-$f700`), ett lager till på
+`$080d` (`$0200-$e000`) och spelet på `$1400` (`$0208-$ffff`). Förut kördes den uppackade filen från laddadressen
+`$03dc` och Sindri hittade inget där. E2e-testet packar upp `fixtures/prg/packed-menu.prg` (demon packad två gånger
+med en tangentväntan på `$07f8` mellan, `test/sindri.test.ts`) i två steg.
 
 **Packa upp när filen öppnas.** Med Settings → General → *Unpack packed files when they are opened* (av från början,
 sparas per användare, `autoUnpack`) packas en fil som öppnas eller läggs till upp direkt, som *Unpack* gör, när den är

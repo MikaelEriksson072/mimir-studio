@@ -895,13 +895,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const unpackLabel = external ? `Unpack with ${unpackerName}` : 'Unpack';
   const [runs, setRuns] = useState<Record<string, UnpackRun>>({});
   const running = useRef(new Map<string, Promise<UnpackRun>>());
+  /** Where Sindri starts file `f`: at the program start when it is in the file (Unpack set it, or the user), with SYS
+   *  as Build & Run starts it, else as LOAD leaves it. A program Unpack saved can start in the middle of its bytes (a
+   *  cracked game's trainer menu at $2000 in $03dc-$f700, waiting for a key in front of the packed game). */
+  const runStart = (f: LoadedFile): number | null => {
+    const e = project.entryPoint;
+    return e != null && e >= f.load && e < f.load + f.bytes.length ? e : null;
+  };
+  /** a run of `f` from where it starts now (another program start is another run) */
+  const runKey = (f: LoadedFile): string => { const e = runStart(f); return e == null ? f.id : `${f.id}@${e}`; };
   const runFor = (f: LoadedFile): Promise<UnpackRun> => {
-    let p = running.current.get(f.id);
+    const key = runKey(f);
+    let p = running.current.get(key);
     if (!p) {
       const t = tapeOf.current.get(f.id);
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null);
-      running.current.set(f.id, p);
-      p.then(r => setRuns(m => ({ ...m, [f.id]: r })), () => running.current.delete(f.id));
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f));
+      running.current.set(key, p);
+      p.then(r => setRuns(m => ({ ...m, [key]: r })), () => running.current.delete(key));
     }
     return p;
   };
@@ -910,7 +920,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // snapshot's RAM: the machine was running it, and LOAD and RUN would start what its BASIC line says (a snapshot from
     // $0200 has the program's SYS line at $0801), not the program as it was
     if (!external) for (const f of project.files) if (f.chip == null && !f.vsf && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
-  }, [project.files, external]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project.files, project.entryPoint, external]); // eslint-disable-line react-hooks/exhaustive-deps
   const [identified, setIdentified] = useState<Record<string, IdentifyResponse>>({});
   const asked = useRef(new Set<string>());
   const idKey = (f: LoadedFile) => `${f.id}:${toolchain.unpackerPath}`;
@@ -929,9 +939,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // was unpacked when it was taken; crunched data left in it is no reason to unpack it)
     const h = f?.chip != null || f?.vsf ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
     // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
-    if (!external && f && onlyRelocates(runs[f.id], A)) return null;
-    return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, f ? runs[f.id] : undefined, at);
-  }), [A, identified, runs, project.files, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!external && f && onlyRelocates(runs[runKey(f)], A)) return null;
+    return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, f ? runs[runKey(f)] : undefined, at);
+  }), [A, identified, runs, project.files, project.entryPoint, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went. */
   const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined): string => {
     const out = withId(parsePrg(`${f.name.replace(/\.prg$/i, '')}-unpacked.prg`, prg));
@@ -995,7 +1005,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     for (const id of [...toUnpack.current]) {
       const i = project.files.findIndex(f => f.id === id), f = project.files[i];
       if (!f || f.chip != null || f.vsf || tapeOf.current.get(id)?.header) { toUnpack.current.delete(id); continue; }
-      const run = runs[id];
+      const run = runs[runKey(f)];
       if (!external && !run) continue;
       toUnpack.current.delete(id);
       if (packing[i]?.verdict !== 'packed' || (!external && !(run?.unpacked && run.saved))) continue;
