@@ -814,10 +814,12 @@ describe('project files', () => {
       .toEqual(['prg', 'prg', 'vsf', 'crt', 'd64', 'project', 'asm', 'asm', 'prg', 'prg', 'prg', 'd64', 'tap']);
     // a G64 (GCR tracks, copy protection and all) is mounted as a disk too
     expect(smartKind('Arctic Fox.G64')).toBe('d64');
+    // a T64 tape archive goes in the datasette as a TAP does
+    expect(smartKind('Paradroid.T64')).toBe('tap');
     // PRGs, snapshots and cartridges together, one disk, one tape and one source; the others are left with why
-    expect(smartPlan(['a.prg', 'one.d64', 'x.vsf', 'two.d64', 'a.asm', 'b.asm', 'c.crt', 'one.tap', 'two.tap'])).toEqual({
+    expect(smartPlan(['a.prg', 'one.d64', 'x.vsf', 'two.d64', 'a.asm', 'b.asm', 'c.crt', 'one.tap', 'two.tap', 'three.t64'])).toEqual({
       project: null, asm: 'a.asm', disk: 'one.d64', tape: 'one.tap', files: ['a.prg', 'x.vsf', 'c.crt'],
-      left: [{ path: 'two.d64', why: 'one disk is mounted at a time' }, { path: 'b.asm', why: 'Brokkr packs one source at a time' }, { path: 'two.tap', why: 'one tape is in the datasette at a time' }],
+      left: [{ path: 'two.d64', why: 'one disk is mounted at a time' }, { path: 'b.asm', why: 'Brokkr packs one source at a time' }, { path: 'two.tap', why: 'one tape is in the datasette at a time' }, { path: 'three.t64', why: 'one tape is in the datasette at a time' }],
     });
     // a project takes the place of the work: it opens by itself
     expect(smartPlan(['a.prg', 'demo.mimir.json', 'a.asm'])).toEqual({

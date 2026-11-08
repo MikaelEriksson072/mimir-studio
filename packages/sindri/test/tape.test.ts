@@ -1,10 +1,11 @@
 /* The datasette (tape.ts): a TAP's pulses on CIA1's FLAG line while the motor runs, PLAY held down; the KERNAL's format
  * read for LOAD from the tape; and a boot file, as tape loaders have them, whose loader in the tape buffer reads the
- * next file from the tape and starts it, or that starts through the IRQ vector the KERNAL puts back after the load. */
+ * next file from the tape and starts it, or that starts through the IRQ vector the KERNAL puts back after the load. A
+ * T64: its directory read as VICE reads it, and LOAD from the tape reading its files. */
 import { describe, expect, it } from 'vitest';
-import { Datasette, tapeFiles, tapPulses, unpack } from '../src/index.ts';
+import { Datasette, isT64, t64Files, tapeFiles, tapeImageFiles, tapPulses, unpack } from '../src/index.ts';
 import { findRoms } from '../src/node.ts';
-import { asm } from './asm.ts';
+import { asm, SYS_LINE } from './asm.ts';
 import { PROGRAM } from './packers.ts';
 
 const roms = findRoms();
@@ -174,5 +175,91 @@ describe('the datasette', () => {
     const res = unpack(prgOf(0x02a7, viaMain()), { roms: null, maxCycles: 20_000_000 });
     expect(res.unpacked).toBe(false);
     expect(res.tape).toBeNull();
+  });
+});
+
+/** a T64 as the C64S emulator wrote them: the header (`max` entries of room, `used` said used), the directory, the files'
+ *  bytes one after another; `end` the end address the directory gives instead of the true one */
+function t64(files: readonly { name: string; load: number; data: Uint8Array; end?: number }[], o: { max?: number; used?: number; sig?: string } = {}): Uint8Array {
+  const max = o.max ?? files.length, dir = 0x40 + 32 * max;
+  const u8 = new Uint8Array(dir + files.reduce((a, f) => a + f.data.length, 0));
+  u8.set([...(o.sig ?? 'C64S tape image file')].map(c => c.charCodeAt(0)));
+  u8.set([0x00, 0x01, max, 0, o.used ?? files.length, 0], 0x20);
+  u8.fill(0x20, 0x28, 0x40);
+  let off = dir;
+  files.forEach((f, i) => {
+    const e = 0x40 + 32 * i, end = f.end ?? (f.load + f.data.length) & 0xffff;
+    u8.set([1, 0x82, f.load & 0xff, f.load >> 8, end & 0xff, end >> 8, 0, 0, off & 0xff, off >> 8], e);
+    u8.fill(0x20, e + 16, e + 32);
+    u8.set([...f.name].map(c => c.charCodeAt(0)), e + 16);
+    u8.set(f.data, off);
+    off += f.data.length;
+  });
+  return u8;
+}
+
+/** a boot file that loads PART2 from the tape through the KERNAL (LOAD "PART2",1,1) and jumps to it */
+const TAPE_BOOT = asm(`${SYS_LINE}
+       lda #5
+       ldx #<name
+       ldy #>name
+       jsr $ffbd
+       lda #1
+       ldx #1
+       ldy #1
+       jsr $ffba
+       lda #0
+       jsr $ffd5
+       bcs fail
+       jmp $1000
+fail:  inc $d020
+       jmp fail
+name:  .text "PART2"
+`);
+
+describe('a T64 in the datasette', () => {
+  const boot = { name: 'BOOT', load: 0x0801, data: TAPE_BOOT.prg.subarray(2) };
+  const junk = { name: 'JUNK', load: 0x2000, data: new Uint8Array(100).fill(0x60) };
+  const part2 = { name: 'PART2', load: 0x1000, data: PROGRAM.prg.subarray(2) };
+
+  it('reads its directory: every entry of type 1, an end the bytes are not there for (or $c3c6) as far as they go', () => {
+    const t = t64([boot, { ...junk, end: 0xc3c6 }, { ...part2, end: 0xffff }], { max: 3, used: 0, sig: 'C64S tape file\r\n*Conv 64*' });
+    expect(isT64(t)).toBe(true);
+    const fs = t64Files(t);
+    expect(fs.map(f => [f.at, f.to, f.start, f.end, f.data.length])).toEqual([[0, 1, 0x0801, 0x0801 + boot.data.length, boot.data.length], [1, 2, 0x2000, 0x2064, 100], [2, 3, 0x1000, 0x1000 + part2.data.length, part2.data.length]]);
+    expect(String.fromCharCode(...fs[2].header.subarray(5, 21))).toBe('PART2           ');
+    expect(tapeImageFiles(t)).toEqual(fs);
+    // a TAP is no T64, a free entry or one that holds text no file
+    expect(isT64(tap([S, M, L]))).toBe(false);
+    const g = t64([boot, part2], { max: 4 });
+    g.set([0x47, 0x30], 0x40 + 32 * 2);
+    expect(t64Files(g).map(f => f.at)).toEqual([0, 1]);
+  });
+
+  for (const [what, r] of [['the stand-ins', null], ['the ROMs', roms]] as const) {
+    it.skipIf(!r && what === 'the ROMs')(`LOAD from the tape reads its next file by the name asked for, from the start again after the last (${what})`, () => {
+      for (const [how, files] of [['after it', [boot, junk, part2]], ['before it', [part2, junk, boot]]] as const) {
+        const res = unpack(prgOf(0x0801, boot.data), { roms: r, tape: t64(files) });
+        expect(res.tape, how).toBe(how === 'after it' ? 'datasette: a T64 of 3 files, the tape stood after the file (before file 2), now at its end'
+          : 'datasette: a T64 of 3 files, the tape stood after the file (at its end), now before file 2');
+        expect(res.unpacked, how).toBe(true);
+        expect(res.saved!.entry, how).toBe(0x1000);
+        const s = res.saved!;
+        expect([...s.prg.subarray(2 + 0x1000 - s.start, 2 + 0x1000 - s.start + part2.data.length)], how).toEqual([...part2.data]);
+      }
+    });
+  }
+
+  it('sends no pulses: a loader of the program\'s own waits for them in vain, and the program settles', () => {
+    const d = new Datasette(new Uint32Array(0), 3);
+    d.motor = true;
+    expect([d.advance(1_000_000), d.edges, d.length, d.atEnd]).toEqual([0, 0, 3, false]);
+    // the boot file's loader, loaded at $0351 as a file of its own (a T64 has no header to hold it) and started there
+    const loader = LOADER.prg.subarray(2);
+    const res = unpack(prgOf(0x0351, loader), { roms: null, tape: t64([{ name: 'LOADER', load: 0x0351, data: loader }]), entry: 0x0351 });
+    expect(res.unpacked).toBe(false);
+    expect(res.stop.reason).toBe('settled');
+    // (the tape counts as loading only while it plays pulses: a T64's never keeps the run going)
+    expect(res.cycles).toBeLessThan(40_000_000);
   });
 });

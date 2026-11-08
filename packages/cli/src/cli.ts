@@ -18,7 +18,7 @@ Usage:
   mimir analyse <file.prg | cartridge.crt | project.mimir.json>... [--json] [--bank <n>]
   mimir verify  <file.prg | cartridge.crt | project.mimir.json>... [--kickass [KickAss.jar]] [--java <java>]
   mimir export  <file.prg | cartridge.crt | project.mimir.json>... -o <folder> [--name <name>] [--force]
-  mimir unpack  <file.prg | disk.d64 | disk.g64 | tape.tap> [--file <name>] [--disk <disk.d64|g64>] [--tape <tape.tap>] [-o <unpacked.prg>] [--no-roms]
+  mimir unpack  <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64> [--file <name>] [--disk <disk.d64|g64>] [--tape <tap|t64>] [-o <unpacked.prg>] [--no-roms]
   mimir measure <file.prg | project.mimir.json | folder>... [--json] [--no-roms]
                 runs each PRG (a folder: every PRG and project in it and below; a project: its first file,
                 from its program start) in Sindri and sets what the analysis made of each byte against what
@@ -34,11 +34,12 @@ Options:
   --no-roms         unpack with Sindri's stand-ins instead of VICE's C64 ROMs (default: the ROMs of a
                     VICE installation, or the folder in C64_ROMS)
   --bank <n>        a cartridge: only this bank (by default every bank, each a space of its own)
-  --file <name>     unpack: the file on the D64, G64 or TAP (default: its first program; * and ? as the DOS takes them)
+  --file <name>     unpack: the file on the D64, G64, TAP or T64 (default: its first program; * and ? as the DOS takes them)
   --disk <d64|g64>  unpack: put this disk in the drive (a D64 or G64 given as the file is in it already), so the
                     program can load from it with the KERNAL or its own fast loader
-  --tape <tap>      unpack: put this tape in the datasette, PLAY held down (a TAP given as the file is in it
-                    already, wound to after the file), so the program's own tape loader reads it
+  --tape <tap|t64>  unpack: put this tape in the datasette, PLAY held down (a TAP or T64 given as the file is in
+                    it already, wound to after the file), so the program's own tape loader reads it (a T64 has
+                    no pulses: LOAD from the tape reads its files)
 `;
 
 interface Parsed { cmd: string; inputs: string[]; flags: Map<string, string | true>; sets: [string, string][] }
@@ -317,8 +318,9 @@ export async function main(argv: string[], io: Io): Promise<number> {
           base = `${basename(path).replace(/\.[dg]64$/i, '')}-${f.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
         }
         let tape: UnpackTape | null = null;
-        if (/\.tap$/i.test(path)) {
-          // a tape: its first program (or the one named), with the tape in the datasette after it
+        if (/\.t(ap|64)$/i.test(path)) {
+          // a tape (a TAP, or a T64's directory): its first program (or the one named), with the tape in the datasette
+          // after it
           const tap = prg, want = flags.get('file');
           const re = typeof want === 'string' ? new RegExp(`^${want.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\?/g, '.').replace(/\*.*$/, '.*')}${want.includes('*') ? '' : '$'}`, 'i') : null;
           const f = readTape(tap).files.find(e => e.load != null && e.data.length && (e.type === 'PRG' || e.type === 'BASIC') && (!re || re.test(e.name)));
@@ -326,7 +328,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
           prg = makePrg(f.load!, f.data);
           tape = { tap, at: f.to };
           name = `${name}: "${f.name}"`;
-          base = `${basename(path).replace(/\.tap$/i, '')}-${f.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
+          base = `${basename(path).replace(/\.t(ap|64)$/i, '')}-${f.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
         }
         const diskFlag = flags.get('disk'), tapeFlag = flags.get('tape');
         if (typeof diskFlag === 'string') disk = new Uint8Array(readFileSync(resolve(io.cwd, diskFlag)));

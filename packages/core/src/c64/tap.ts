@@ -21,6 +21,7 @@
  * Anything else that holds data is the turbo data of a loader not known here: the boot program's loader reads it, so
  * Sindri does, running the boot program with the tape in its datasette (13.5f). */
 import { petsciiName } from './d64';
+import { isT64, readT64, type T64Entry, type T64Info } from './t64';
 
 const hex4 = (v: number) => v.toString(16).padStart(4, '0');
 
@@ -80,7 +81,8 @@ export function tapPulses(u8: Uint8Array): TapPulses {
   return { version, cycles: Uint32Array.from(cycles), offsets: Uint32Array.from(offsets), times };
 }
 
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold';
+/** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -102,8 +104,8 @@ export interface TapeFile {
   header?: Uint8Array;
   /** CBM: the header holds more than the name and its padding (a tape loader's code, mostly) */
   headerCode?: boolean;
-  /** TapeTool: the file name byte the loader asks for; how many blocks it has, how many of them were RLE packed; the
-   *  TinyHeader (no name, no address: the boot loader's next file) */
+  /** TapeTool: the file name byte the loader asks for (a T64's entry number, from 1); how many blocks it has, how many
+   *  of them were RLE packed; the TinyHeader (no name, no address: the boot loader's next file) */
   id?: number;
   blocks?: number;
   packed?: number;
@@ -120,8 +122,11 @@ export interface TapeFile {
   saved?: number;
   /** CBM: how many copies of the header and the data were on the tape (2 each, normally) */
   copies?: [number, number];
+  /** T64: its directory entry */
+  t64?: T64Entry;
   /** the first pulse (the start of its first block) and the pulse after its last one; the TAP file offset of the
-   *  first; seconds from the tape's start */
+   *  first; seconds from the tape's start. A T64's file: its directory slot and the one after it, the offset of its
+   *  bytes in the T64, 0 seconds */
   at: number;
   to: number;
   offset: number;
@@ -141,8 +146,9 @@ export interface TapeUnknown {
 }
 
 export interface TapeImage {
+  /** the TAP version (a T64's version, $0100 or $0101) */
   version: number;
-  /** pulses, and the tape's length in seconds */
+  /** pulses, and the tape's length in seconds (a T64: 0, 0) */
   pulses: number;
   seconds: number;
   /** the files in tape order */
@@ -151,6 +157,8 @@ export interface TapeImage {
   /** TapeTool's turbo files are on it: how fast (the cycles of a 0, TapeTurboSpeed × 2), and the leader pairs after its
    *  last block (the lead-out) */
   tapetool: { speed: number; leadOut: number } | null;
+  /** a T64 tape archive: its header (the files are its directory's) */
+  t64?: T64Info;
 }
 
 /* ---------------------------------------------------------------------------------------------------------------- */
@@ -682,8 +690,10 @@ function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
 
 /* ---------------------------------------------------------------------------------------------------------------- */
 
-/** Read a .tap image: its files in every format known here, and the stretches with data none of them reads. */
+/** Read a .tap image: its files in every format known here, and the stretches with data none of them reads. A .t64
+ *  tape archive is read as its directory says (readT64). */
 export function readTape(u8: Uint8Array): TapeImage {
+  if (isT64(u8)) return readT64(u8);
   const p = tapPulses(u8);
   const cbm = cbmBlocks(p);
   const files = cbmFiles(p, cbm);

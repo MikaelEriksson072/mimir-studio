@@ -5,7 +5,7 @@ through its layers (coders, movers, decrunchers, intros in front of them) and sa
 it starts.
 With the disk the program came from, an emulated 1541 is on the serial bus, so it can go on loading: through the
 KERNAL, or with a fast loader of its own. With the tape it came from, an emulated datasette plays it from after the
-file, for its own turbo loader.
+file, for its own turbo loader (a T64's files, which have no pulses, are read by LOAD from the tape).
 It needs no knowledge of the packer: it works for old and unknown crunchers as well as for known ones, and it reports
 what each layer did so that new packers can be recognised and named.
 
@@ -155,6 +155,18 @@ With a tape (a TAP image, given instead of the file or with `--tape`) a datasett
   and how far it played; pulses read count as loading for the parts a layer loaded and ran. The saved port is the
   program's: bit 4, which PLAY holds low, is left out.
 
+A T64 (the C64S emulator's tape archive, given instead of the file or with `--tape`) holds a tape's files, not its
+pulses: a 64-byte header (a signature line such as `C64S tape image file`, the version, the directory's room and the
+entries it says are used, the tape's name), then 32 bytes a directory entry (the C64S type, the 1541 file type, the
+start and end address, the offset of the file's bytes, the name). `t64Files` reads it as VICE does: every entry of type
+1 is a file, whatever the header says is used, and a file is as long as its end says only when its bytes are there and
+the end is not `$c3c6` (an old converter wrote that for every file), else up to the next file's bytes. In the datasette
+a T64 sends no pulses (no edges on the FLAG line, and no waiting for them counts as loading), the tape stands before a
+directory entry (`Datasette.t64`), and LOAD from the tape reads its files as above, each with a header as the KERNAL's
+would be (type 3, start, end, the name) in the tape buffer; a name not found from where the tape stands is searched for
+from the start again, as VICE does. The report's `Tape:` line says which file the tape stood before and stands before.
+Read on the 63 090 T64s of a collection (67 249 files) in 28 s, with the same files and bytes as Mimir's own reader.
+
 On the boot files of 98 commercial tapes (the first sides among the first 100 of a tape collection), 93 play the
 tape for more than 5 s and get to the game's code (Novaload, Cyberload and other turbo loaders, none known to Sindri;
 80 before the LOAD pointers were set, the 13 being budget tapes such as Mastertronic's, Codemasters' and
@@ -187,9 +199,9 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
 | option | |
 |---|---|
 | `-o FILE` | save here (default: `<name>.<start address>.prg` next to the file) |
-| `--file NAME` | the file on the D64, G64 or TAP to unpack (default: its first program; `*` and `?` as the DOS takes them) |
+| `--file NAME` | the file on the D64, G64, TAP or T64 to unpack (default: its first program; `*` and `?` as the DOS takes them) |
 | `--disk FILE` | put this D64 or G64 in the drive for a PRG given on its own |
-| `--tape FILE` | put this TAP in the datasette for a PRG given on its own |
+| `--tape FILE` | put this TAP or T64 in the datasette for a PRG given on its own |
 | `-e ADDR` | start with `SYS ADDR` instead of `RUN` |
 | `-l ADDR` | load the file at `ADDR` instead of its own load address |
 | `--layer N` | save layer N instead of the newest (the report lists them) |
@@ -374,7 +386,9 @@ load is saved as it started. A boot file that reads the drive's clock with `M-R`
 layers, stop and saved program in the first run in a process, which starts the C64 and the drive up, and in the next.
 The datasette tests build a tape (a KERNAL boot file with a loader in its header, then a program as turbo data) and run
 its boot file with the stand-ins and the ROMs, started through `$0302` and through the IRQ vector at `$029f`: its loader
-reads the program from the tape and starts it, with the pointers a tape LOAD leaves.
+reads the program from the tape and starts it, with the pointers a tape LOAD leaves. A T64's tests read a directory
+with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of text, and run a boot file that loads
+`PART2` with LOAD from the tape, once after it and once before it on the T64, with the stand-ins and the ROMs.
 
 ## Limits
 

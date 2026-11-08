@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, builtCartridge, makeD64, makePrg, makeTap, openCartridge, overwritesSystemArea, parseVsf, patchSnapshot, readTape, render, replaceTapeFile, verify } from '../src';
+import { analyze, builtCartridge, makeD64, makePrg, makeT64, makeTap, openCartridge, overwritesSystemArea, parseVsf, patchSnapshot, readTape, render, replaceTapeFile, verify, writeT64 } from '../src';
 import { DRIVE_INIT, findVice, prepareVice, viceArgv, viceMonitorScript } from '../src/node';
 import { fromSource } from './helpers/programs';
 import { readPng } from './helpers/png';
@@ -55,6 +55,9 @@ describe('VICE command line', () => {
     expect(viceArgv({ prgPath: 'p.prg', disk: 'd.d64', tape: 't.tap' }).slice(0, 6)).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-1', 't.tap']);
     // the tape's first file loads with the KERNAL: no drive to read the disk first
     expect(viceArgv({ prgPath: 'b.tap', labelsPath: 'p.vs', disk: 'd.d64' })).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-moncommands', 'p.vs', '-autostart', 'b.tap']);
+    // a T64 has no pulses: VICE reads it through its tape traps
+    expect(viceArgv({ prgPath: 'b.t64', disk: 'd.d64' })).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-trapdevice1', '-autostart', 'b.t64']);
+    expect(viceArgv({ prgPath: 'p.prg', tape: 't.T64' })).toEqual(['-trapdevice1', '-1', 't.T64', '-autostart', 'p.prg']);
   });
 
   it('attaches a cartridge (-cartcrt) instead of starting a program, with the labels and a disk', async () => {
@@ -151,6 +154,39 @@ describe.skipIf(!vice)(`real VICE (${vice ?? 'not found'})`, () => {
         const { argv } = await prepareVice({ args: headless(dir).map(a => (a === '40000000' ? '200000000' : a)), prgPath });
         expect(argv).toContain('-autostart');
         expect(spawnSync(vice!, argv, { timeout: 120_000, windowsHide: true }).status, name).toBe(0x42);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('autostarts a T64, and puts one in the datasette: LOAD from the tape finds its next file, one before it too', async () => {
+    // 10 SYS2061: LOAD"PART2",1,1 through the KERNAL, then jump to it; PART2 exits with $42 (13.5j)
+    const f = fromSource('t64boot.prg', '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n lda #5\n ldx #<name\n ldy #>name\n jsr $ffbd\n lda #1\n ldx #1\n ldy #1\n jsr $ffba\n lda #0\n jsr $ffd5\n bcs fail\n jmp $c000\nfail:\n lda #$ee\n sta $d7ff\n jmp *\nname: .byte $50,$41,$52,$54,$32');
+    const boot = { name: 'BOOT', load: 0x0801, data: f.bytes };
+    const part2 = { name: 'PART2', load: 0xc000, data: Uint8Array.from([0xa9, 0x42, 0x8d, 0xff, 0xd7, 0x4c, 0x05, 0xc0]) };
+    const junk = { name: 'JUNK', load: 0xc000, data: Uint8Array.from([0xa9, 0xee, 0x8d, 0xff, 0xd7, 0x4c, 0x05, 0xc0]) };
+    const after = makeT64({ name: 'MIMIR', files: [boot, junk, part2] }), before = makeT64({ name: 'MIMIR', files: [part2, junk, boot] });
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      // (in the datasette the program waits for PLAY, which the user presses: here the monitor does)
+      await writeFile(join(dir, 'play.mon'), 'tapectrl 1\n');
+      const status = async (o: { prgPath: string; tape?: string }) => {
+        const { argv } = await prepareVice({ args: [...headless(dir), ...(o.tape ? ['-moncommands', join(dir, 'play.mon')] : [])], ...o });
+        return spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status;
+      };
+      // (written: Build & Run's T64 of the project's first file and those after it, the file in front of it left out)
+      const written = writeT64(makeT64({ files: [junk, boot, junk, part2] }), new Map([[1, prgOf({ load: 0x0801, bytes: f.bytes })]]), 1);
+      for (const [name, t] of [['after.t64', after], ['written.t64', written]] as const) {
+        await writeFile(join(dir, name), t);
+        expect(await status({ prgPath: join(dir, name) }), name).toBe(0x42);
+      }
+      // the boot file run as a PRG, the T64 in the datasette (Build & Run's copy of it)
+      const prgPath = join(dir, 'boot.prg');
+      await writeFile(prgPath, prgOf({ load: 0x0801, bytes: f.bytes }));
+      for (const [name, t] of [['after.t64', after], ['before.t64', before]] as const) {
+        await writeFile(join(dir, name), t);
+        expect(await status({ prgPath, tape: join(dir, name) }), `${name} in the datasette`).toBe(0x42);
       }
     } finally {
       await rm(dir, { recursive: true, force: true });

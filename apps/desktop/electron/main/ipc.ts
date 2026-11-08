@@ -182,7 +182,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.tapeOpen, tapeOpenSchema, async (req, e) => {
     let path = req.path ? policy.assert(req.path, 'Tape image') : null;
     if (!path) {
-      [path] = await pick(e, 'tape', { title: 'Insert TAP tape image', properties: ['openFile'], filters: [{ name: 'C64 tape images', extensions: ['tap', 'TAP'] }, { name: 'All files', extensions: ['*'] }] });
+      [path] = await pick(e, 'tape', { title: 'Insert tape image (TAP, T64)', properties: ['openFile'], filters: [{ name: 'C64 tape images (TAP, T64)', extensions: ['tap', 'TAP', 't64', 'T64'] }, { name: 'All files', extensions: ['*'] }] });
       if (!path) return null;
       chose(dirname(path), 'tape');
     }
@@ -194,7 +194,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.fileSmart, smartAttachSchema, async (req, e): Promise<SmartAttachResult | null> => {
     const all = [...new Set(Object.values(SMART_EXTENSIONS).flat())];
     const paths = await pick(e, 'smart', { title: 'Smart attach', properties: ['openFile', 'multiSelections'], filters: [
-      { name: 'PRGs, snapshots, cartridges, D64 and G64 disks, TAP tapes, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
+      { name: 'PRGs, snapshots, cartridges, D64 and G64 disks, TAP and T64 tapes, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
       { name: 'All files', extensions: ['*'] },
     ] });
     if (!paths.length) return null;

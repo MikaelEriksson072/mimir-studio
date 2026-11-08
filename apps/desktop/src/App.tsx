@@ -7,7 +7,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
@@ -581,7 +581,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const img = readTape(bytes);
     setTape({ name, path, bytes, img });
     showSection('tape');
-    const LABEL: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold' };
+    // a T64 tape archive (13.5j): its directory's files, no pulses
+    if (img.t64) { toast(`Inserted ${name} (a T64${img.t64.name ? `, "${img.t64.name}"` : ''}): ${img.files.length} file${img.files.length === 1 ? '' : 's'}`, 'ok'); return; }
+    const LABEL: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', t64: 'T64' };
     const kinds = (Object.keys(LABEL) as TapeFile['format'][]).map(k => { const n = img.files.filter(f => f.format === k).length; return n ? `${n} ${LABEL[k]}` : ''; }).filter(Boolean).join(', ');
     toast(`Inserted ${name} (${Math.round(img.seconds)} s): ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kinds ? ` (${kinds})` : ''}${img.unknown.length ? `, and turbo data of a loader Sindri runs` : ''}`, 'ok');
   };
@@ -912,7 +914,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           continue;
         }
         if (/\.[dg]64$/i.test(f.name)) { mountBytes(f.name, null, buf); continue; }
-        if (/\.tap$/i.test(f.name)) { insertTapeBytes(f.name, null, buf); continue; }
+        if (/\.t(ap|64)$/i.test(f.name)) { insertTapeBytes(f.name, null, buf); continue; }
         // a cartridge image (known by its header): the chips of its boot bank, with the image
         if (isCrt(buf)) { const o = openCartridge(f.name, buf); prgs.push(...o.files.map(x => ({ ...withId(x), cart: o.cart }))); continue; }
         // a .prg, or a VICE snapshot (known by its header)
@@ -1649,12 +1651,31 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return w ? { path: `${w.dir}/${copy}`, wrote, skipped } : undefined;
   };
 
-  /** the tape in the datasette, as a copy in a build folder */
-  const tapeCopy = async (): Promise<string | undefined> => {
+  /** the project's files that came from the T64 in the datasette, as built, by their directory slot; `wrote`: the
+   *  names of those the build changed */
+  const t64Built = (built: (i: number) => Uint8Array | null): { slots: Map<number, Uint8Array>; wrote: string[] } => {
+    const slots = new Map<number, Uint8Array>(), wrote: string[] = [];
+    if (!tape?.img.t64) return { slots, wrote };
+    latest.current.project.files.forEach((pf, i) => {
+      const t = tapeOf.current.get(pf.id), prg = built(i);
+      if (!t || t.tap !== tape.bytes || !t.file.t64 || !prg || prg.length < 2) return;
+      const f = t.file, same = f.load === (prg[0] | (prg[1] << 8)) && f.data.length === prg.length - 2 && f.data.every((v, k) => v === prg[k + 2]);
+      slots.set(t.file.t64.slot, prg);
+      if (!same) wrote.push(f.name);
+    });
+    return { slots, wrote };
+  };
+
+  /** the tape in the datasette, as a copy in a build folder; a T64's with the project's files that came from it
+   *  written back as built (`wrote`), as diskCopy does it for a disk, so LOAD from the tape finds them */
+  const tapeCopy = async (built?: (i: number) => Uint8Array | null): Promise<{ path: string; wrote: string[] } | undefined> => {
     if (!tape || !kr) return undefined;
-    const copy = /\.tap$/i.test(tape.name) ? tape.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') : 'tape.tap'; // eslint-disable-line no-control-regex
-    const w = await kr.writeExport({ target: 'temp', name: 'tape', files: { [copy]: tape.bytes } });
-    return w ? `${w.dir}/${copy}` : undefined;
+    const ext = tape.img.t64 ? 't64' : 'tap';
+    const copy = new RegExp(`\\.${ext}$`, 'i').test(tape.name) ? tape.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') : `tape.${ext}`; // eslint-disable-line no-control-regex
+    let bytes = tape.bytes, wrote: string[] = [];
+    if (tape.img.t64 && built) { const b = t64Built(built); if (b.wrote.length) { bytes = writeT64(tape.bytes, b.slots); wrote = b.wrote; } }
+    const w = await kr.writeExport({ target: 'temp', name: 'tape', files: { [copy]: bytes } });
+    return w ? { path: `${w.dir}/${copy}`, wrote } : undefined;
   };
 
   const runBuild = async () => {
@@ -1730,6 +1751,24 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         toast(`VICE loads ${name}: ${what}`, 'ok');
         return;
       }
+      // a project whose first file came from the T64 in the datasette (13.5j): VICE autostarts a T64 of that file as
+      // built and the files after it on the tape, the project's other files from it written back as built, so LOAD
+      // from the tape finds them; a start the user set needs the program put in memory instead
+      if (t0?.file.t64 && tape?.img.t64 && t0.tap === tape.bytes && project.entryPoint == null) {
+        const b = t64Built(built), slot = t0.file.t64.slot;
+        if (!b.slots.get(slot)) throw new Error('nothing to run');
+        const name = `${R.fileNames[0]}.t64`;
+        const w = await kr.writeExport({ target: 'temp', name: 'run', files: { [name]: writeT64(tape.bytes, b.slots, slot) } });
+        if (!w) return;
+        const t64Path = `${w.dir}/${name}`, labels = res.kick?.compared[0]?.vsPath ?? undefined;
+        const { pid } = await kr.run({ prgPath: t64Path, labelsPath: labels, disk: diskPath });
+        const others = b.wrote.filter(n => n !== t0.file.name);
+        const after = tape.img.files.some(f => f.at > t0.file.at) ? `, then the files of ${tape.name} after "${t0.file.name}"${others.length ? ` (${others.join(', ')} as built)` : ''}` : '';
+        const what = `the built ${R.fileNames[0]} as its first file${after}`;
+        setBuild(x => x && { ...x, log: `${x.log}\n\n> VICE started (pid ${pid}): ${t64Path} autostarted, ${what}${labels ? `, labels from ${labels}` : ''}${drive}` });
+        toast(`VICE autostarts ${name}: ${what}`, 'ok');
+        return;
+      }
       // a project whose first file is the disk's first program (what LOAD"*",8,1 loads): VICE autostarts the disk's copy,
       // with the built files written back, so the disk's own boot runs them (a copy-protected G64's too); a start the
       // user set needs the program put in memory instead
@@ -1741,8 +1780,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         toast(`VICE autostarts ${disk.name} (a copy${back}): its boot loads "${first.name}"`, 'ok');
         return;
       }
-      const tapePath = await tapeCopy();
-      const datasette = tapePath && tape ? `, ${tape.name} in the datasette (press PLAY in VICE when the program asks)` : '';
+      const tc = await tapeCopy(built), tapePath = tc?.path;
+      const datasette = tapePath && tape ? `, ${tape.name} in the datasette${tc?.wrote.length ? ` (a copy with ${tc.wrote.join(', ')} written back as built)` : ''} (press PLAY in VICE when the program asks)` : '';
       let prgPath: string, labelsPath: string | undefined;
       if (res.kick?.compared[0]) { prgPath = res.kick.compared[0].prgPath; labelsPath = res.kick.compared[0].vsPath ?? undefined; }
       else {
@@ -2028,7 +2067,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'open-crt', label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
     { id: 'open-vsf', label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
     { id: 'mount', label: 'Mount disk image (D64, G64)…', run: () => void mountDisk() },
-    { id: 'tape', label: 'Insert TAP tape image in the datasette…', run: () => void insertTape() },
+    { id: 'tape', label: 'Insert tape image (TAP, T64) in the datasette…', run: () => void insertTape() },
     { id: 'quicksave', label: 'Open the VICE quicksave snapshot (Alt+F11 in VICE saves one)', key: 'F9', run: () => void openQuicksave() },
     { id: 'quicksave-follow', label: followQuicksave ? 'Stop opening each new VICE quicksave' : 'Open each new VICE quicksave (Alt+F11 in VICE) by itself', run: () => setUi({ followQuicksave: !followQuicksave }) },
     ...packing.flatMap((p, i) => (p ? [{ id: `unpack-${i}`, label: external ? `Unpack ${project.files[i]?.name} with ${unpackerName}` : `Unpack ${project.files[i]?.name}`, run: () => void unpackFile(i) }] : [])),
@@ -2499,7 +2538,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: 'Open a cartridge (.crt)…', run: () => void openPrgs(false, 'crt') },
       { label: 'Open a VICE snapshot (.vsf)…', run: () => void openPrgs(false, 'vsf') },
       { label: 'Mount disk image (D64, G64)…', run: () => void mountDisk() },
-      { label: 'Insert TAP tape image…', run: () => void insertTape() },
+      { label: 'Insert tape image (TAP, T64)…', run: () => void insertTape() },
       { sep: true },
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
@@ -2601,11 +2640,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {tab === 'listing' && !project.files.length && <div className="empty-project">
               <Icon name={home ? 'folder' : 'doc'} size={30} />
               <h2>{home ? `${home.name} has no files yet` : 'No files yet'}</h2>
-              <p>Open the program to re-assemble: a PRG, a VICE snapshot (.vsf) or a cartridge (.crt), or mount a D64 or G64 or insert a TAP and open its files.</p>
+              <p>Open the program to re-assemble: a PRG, a VICE snapshot (.vsf) or a cartridge (.crt), or mount a D64 or G64 or insert a TAP or T64 and open its files.</p>
               <div className="empty-actions">
                 <button className="btn primary" onClick={() => void openPrgs(false)}><Icon name="upload" size={14} />Open PRG…</button>
                 <button className="btn" onClick={() => void mountDisk()}><Icon name="disk" size={14} />Mount D64/G64…</button>
-                <button className="btn" onClick={() => void insertTape()}><Icon name="tape" size={14} />Insert TAP…</button>
+                <button className="btn" onClick={() => void insertTape()}><Icon name="tape" size={14} />Insert TAP/T64…</button>
                 <button className="btn" onClick={() => void openQuicksave()}>VICE quicksave <kbd>F9</kbd></button>
               </div>
               <p className="muted small">Or drop the files on the window.</p>
@@ -2710,7 +2749,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null} />
 
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
-      {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, a .d64 or .g64 to mount it or a .tap to put it in the datasette</p><small>Hold Shift to add them to the current project</small></div></div>}
+      {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, a .d64 or .g64 to mount it or a .tap or .t64 to put it in the datasette</p><small>Hold Shift to add them to the current project</small></div></div>}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />

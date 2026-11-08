@@ -10,6 +10,7 @@
 *.prg binary
 *.d64 binary
 *.tap binary
+*.t64 binary
 *.vsf binary
 *.sid binary
 *.bin binary

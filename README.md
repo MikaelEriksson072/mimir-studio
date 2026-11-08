@@ -6,7 +6,7 @@
 
 *Named after Mímir, who keeps the well of wisdom in Norse myth; the logo is his rune ᛗ glowing over the rings of his well.*
 
-Mimir Studio is a desktop IDE for re-assembling C64 software. Open a `.prg`, a `.d64` or `.g64` disk image, a `.tap` tape, a
+Mimir Studio is a desktop IDE for re-assembling C64 software. Open a `.prg`, a `.d64` or `.g64` disk image, a `.tap` tape or `.t64` tape archive, a
 VICE snapshot or a cartridge (`.crt`). The app traces the code, recognises graphics, music, tables and text, and names every hardware register
 and KERNAL routine. You can then rename, comment and re-type anything. It exports a
 [Kick Assembler](http://theweb.dk/KickAssembler/) project that assembles back to **exactly the same bytes**, and starts
@@ -100,6 +100,11 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     too; a TapeTool tape gets the TapeTool command lines that write it again (byte for byte for TapeTool's own example
     tape and the SEUCK Redux releases tried), and *Save files…* saves the files with them. Build & Run puts the re-assembled boot file back on the tape and
     VICE loads it, the rest of the tape after it;
+  - T64 tape archives (`.t64`, C64S's): the directory's files, read as VICE reads them (every entry of type 1 whatever
+    the header says is used; an end of `$c3c6`, or one the bytes are not there for, taken as far as the bytes go:
+    63 090 T64s of the reference archive read, 67 249 files), go in the datasette like a tape's. A file opens with the
+    T64 in Sindri's datasette, whose LOAD from the tape reads its files (from the start again after the last, as VICE
+    does), and Build & Run autostarts a T64 with the built files written back;
 - **A deep analysis that works the problems down.** Tick *Deep analysis* in the Problems tab. Every guess (a routine
   nothing traced reaches, a pointer-table target, an interrupt handler) is then traced on trial and kept only when it
   leads to no problem. Calls into ROM are not followed into the RAM below, and `$01` is followed through the stack.
@@ -205,9 +210,9 @@ start; *Save* (`Ctrl+S`) then creates a project and moves the work into its fold
 packed file.
 
 1. **Open a program.** Use the *File* menu: *Smart attach…* opens any of them, each file by its extension (`.prg`,
-   `.vsf`, `.crt`, `.d64`, `.g64`, `.tap`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG
-   files…* (`Ctrl+O`), a cartridge `.crt`, a VICE snapshot `.vsf`, *Mount disk image (D64, G64)…* for a disk or *Insert TAP
-   tape image…* for a tape. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
+   `.vsf`, `.crt`, `.d64`, `.g64`, `.tap`, `.t64`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG
+   files…* (`Ctrl+O`), a cartridge `.crt`, a VICE snapshot `.vsf`, *Mount disk image (D64, G64)…* for a disk or *Insert
+   tape image (TAP, T64)…* for a tape. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview. `G` goes to an address or label, `Ctrl+F` finds text (labels,
@@ -243,7 +248,7 @@ pnpm mimir analyse game.prg
 `analyse`, `verify [--kickass]`, `export -o <folder>` and `demo` take `.prg` files, a cartridge (`.crt`: every bank, or
 `--bank <n>` for one of them) or saved projects (`.mimir.json`).
 `--deep` runs the deep analysis. `unpack game.prg [-o unpacked.prg]` unpacks a packed program and prints its layers; `unpack demo.d64` takes the disk's
-first PRG (or `--file NAME`) with the disk in the drive, `unpack game.tap` the tape's first program with the tape in the
+first PRG (or `--file NAME`) with the disk in the drive, `unpack game.tap` (or `game.t64`) the tape's first program with the tape in the
 datasette (`--tape` puts a tape in it for a PRG). `measure <folder>` runs every program in it in Sindri and sets
 what the analysis made of each byte against what the program did with it (the code it ran, the data it read), and
 counts the problems by kind: run it with and without a setting (`--deep`, `--set codeIslands=false`) to see what the

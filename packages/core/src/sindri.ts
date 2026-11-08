@@ -12,8 +12,8 @@ export type { LayerReport, Roms } from '@mimir/sindri';
 /** A run of Sindri without its save() function, so that it can cross a worker boundary. */
 export type UnpackRun = Omit<UnpackResult, 'save'>;
 
-/** The tape a file came from (a TAP image) and, when it is not one of its KERNAL files, where the tape stands once the
- *  file has loaded (a pulse: TapeFile.to). */
+/** The tape a file came from (a TAP image, or a T64 tape archive) and, when it is not one of its KERNAL files, where
+ *  the tape stands once the file has loaded (a pulse: TapeFile.to; a T64's slot after the file). */
 export interface UnpackTape { tap: Uint8Array; at?: number | null }
 
 /**

@@ -1,4 +1,4 @@
-/* sindri <file.prg | disk.d64 | disk.g64 | tape.tap> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
+/* sindri <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
  * or newer runs the TypeScript as it is), or `pnpm unpack` in this folder. */
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
@@ -7,20 +7,21 @@ import { unpack, type LayerReport, type Saved, type UnpackOptions } from './sess
 import { findRoms, loadRoms } from './node.ts';
 import { d64File, d64Pick } from './d64.ts';
 import { g64ToD64, isG64 } from './g64.ts';
-import { tapeFiles, tapPulses } from './tape.ts';
+import { tapeImageFiles } from './tape.ts';
 import type { Range } from './analyze.ts';
 
-const HELP = `sindri <file.prg | disk.d64 | disk.g64 | tape.tap> [options]
+const HELP = `sindri <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64> [options]
 
 Runs the program in an emulated C64, follows it through its layers (coders, movers, decrunchers) and saves
 the unpacked program when it starts. With a disk (a D64 or G64, or --disk) a 1541 is on the serial bus, so the
 program can go on loading from it, with the KERNAL or a fast loader of its own. With a tape (a TAP, or --tape)
-the datasette plays it from after the file, PLAY held down, for the program's own tape loader and LOAD.
+the datasette plays it from after the file, PLAY held down, for the program's own tape loader and LOAD. A T64
+holds a tape's files without its pulses: LOAD from the tape reads them.
 
   -o FILE        save here (default: <name>.<start address>.prg next to the file)
-  --file NAME    the file on the D64, G64 or TAP to unpack (default: its first program; * and ? as the DOS takes them)
+  --file NAME    the file on the D64, G64, TAP or T64 to unpack (default: its first program; * and ? as the DOS takes them)
   --disk FILE    put this D64 or G64 in the drive for a PRG given on its own
-  --tape FILE    put this TAP in the datasette for a PRG given on its own
+  --tape FILE    put this TAP or T64 in the datasette for a PRG given on its own
   -e ADDR        start with SYS ADDR instead of RUN
   -l ADDR        load the file at ADDR instead of its own load address
   --layer N      save layer N instead of the newest (see the report)
@@ -138,13 +139,13 @@ function main(argv: string[]): number {
     o.disk = disk;
     shown = `${basename(path)}: "${entry.name}"`;
     base += `.${entry.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
-  } else if (/\.tap$/i.test(path)) {
+  } else if (/\.t(ap|64)$/i.test(path)) {
     // the tape's KERNAL programs (a relocatable one loads at the start of BASIC, as LOAD puts it); * ends the name, ?
     // is any character, as the DOS takes them
     const tape = file, want = fileName?.toUpperCase();
     const re = want ? new RegExp(`^${[...want].map(c => (c === '?' ? '.' : c === '*' ? '.*' : c.replace(/[.+^${}()|[\]\\]/g, m => `\\${m}`))).join('').replace(/\.\*.*$/, '.*')}${want.includes('*') ? '' : '$'}`) : null;
     const name = (h: Uint8Array) => String.fromCharCode(...h.subarray(5, 21)).replace(/[\s\xa0]+$/, '');
-    const f = tapeFiles(tapPulses(tape)).find(x => (x.type === 1 || x.type === 3) && x.data.length && (!re || re.test(name(x.header))));
+    const f = tapeImageFiles(tape).find(x => (x.type === 1 || x.type === 3) && x.data.length && (!re || re.test(name(x.header))));
     if (!f) throw new Error(fileName ? `no program named "${fileName}" on the tape` : 'no program on the tape');
     const at = f.type === 1 ? 0x0801 : f.start;
     file = new Uint8Array(2 + f.data.length);
@@ -152,7 +153,7 @@ function main(argv: string[]): number {
     o.tape = tape;
     shown = `${basename(path)}: "${name(f.header)}"`;
     base += `.${name(f.header).replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
-  } else if (fileName) throw new Error('--file picks a file on a D64, G64 or TAP');
+  } else if (fileName) throw new Error('--file picks a file on a D64, G64, TAP or T64');
   if (diskPath) o.disk = new Uint8Array(readFileSync(resolve(cwd, diskPath)));
   if (tapePath) o.tape = new Uint8Array(readFileSync(resolve(cwd, tapePath)));
   o.roms = roms === false ? null : roms ? loadRoms(resolve(cwd, roms)) : findRoms();

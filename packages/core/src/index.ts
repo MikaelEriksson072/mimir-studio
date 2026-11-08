@@ -30,6 +30,7 @@ export {
 export { d64FileName, diskSectors, isDiskImage, looseChains, makeD64, parseD64, petsciiName, readD64File, sectorsOnTrack, writeDiskFile, type D64File, type D64FileType, type D64Image, type LooseChain } from './c64/d64';
 export { PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, type PirateSlayerBoot, type PirateSlayerDisk, type PirateSlayerFile, type PirateSlayerKey, type PirateSlayerVersion } from './c64/pirateslayer';
 export { isTap, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, TAPE_CLOCK, type TapeFile, type TapeFileType, type TapeFormat, type TapeImage, type TapeUnknown, type TapPulses } from './c64/tap';
+export { isT64, makeT64, readT64, t64Info, writeT64, type T64Entry, type T64Info } from './c64/t64';
 export { readSpindleDisk, spinChunkName, spinScript, type SpindleChunk, type SpindleDisk, type SpindleJob } from './c64/spindle-disk';
 export { BOOZE_CRUNCHER, boozeFileList, boozeFileName, readBoozeDisk, unpackByteBoozer1, unpackByteBoozer2, type BoozeCruncher, type BoozeDisk, type BoozeFile, type BoozeUnpacked } from './c64/booze-disk';
 export { readSparkleDisk, sparkleBlockOrder, sparkleChunkName, sparkleChunkPrg, sparkleCount, sparkleScript, type SparkleBundle, type SparkleChunk, type SparkleCountCode, type SparkleDisk, type SparkleItems } from './c64/sparkle-disk';

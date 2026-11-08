@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative } from 'node:path';
-import { deserializeProject, isCrt, isTap, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
+import { deserializeProject, isCrt, isT64, isTap, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
 import type { OpenedPrg } from '../../shared/ipc';
 import { writeVfs } from '@mimir/core/node';
 import { serializedProjectSchema } from './schemas';
@@ -53,12 +53,13 @@ export async function readDiskImage(path: string): Promise<{ path: string; name:
   return { path, name: basename(path), bytes };
 }
 
-/** A .tap tape image (the renderer reads its files): up to 64 MB, known by its header. */
+/** A .tap tape image or a .t64 tape archive (the renderer reads its files): up to 64 MB, known by its header. */
 export async function readTapeImage(path: string): Promise<{ path: string; name: string; bytes: Uint8Array }> {
   const st = await stat(path);
-  if (!st.isFile() || st.size > 64 * 1024 * 1024) throw new Error(`${basename(path)} is not a .tap tape image (${st.size} bytes)`);
+  const what = /\.t64$/i.test(path) ? 'a .t64 tape archive' : 'a .tap tape image';
+  if (!st.isFile() || st.size > 64 * 1024 * 1024) throw new Error(`${basename(path)} is not ${what} (${st.size} bytes)`);
   const bytes = new Uint8Array(await readFile(path));
-  if (!isTap(bytes)) throw new Error(`${basename(path)} is not a .tap tape image: it does not start with C64-TAPE-RAW`);
+  if (!isTap(bytes) && !isT64(bytes)) throw new Error(`${basename(path)} is not ${what}: it starts neither with C64-TAPE-RAW (a TAP) nor with a T64's "C64S tape image file" or "C64 tape image file"`);
   return { path, name: basename(path), bytes };
 }
 

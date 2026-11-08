@@ -13,8 +13,8 @@
  * The run stops when the newest layer settles (writes no new memory for a while), loads a file, returns to BASIC,
  * crashes or runs out of time. With a disk, a 1541 is on the serial bus and loading goes on: the KERNAL's and fast
  * loaders' alike. With a tape, the datasette plays it from where the file ended: the program's own tape loader reads
- * it, and the KERNAL's LOAD from the tape reads on from there. Then the newest layer is the unpacked program. An intro
- * that waits before anything was unpacked gets keys pressed (space and fire first). */
+ * it, and the KERNAL's LOAD from the tape reads on from there (a T64's files only LOAD reads). Then the newest layer is
+ * the unpacked program. An intro that waits before anything was unpacked gets keys pressed (space and fire first). */
 import { BASIC, BOOT, C64, KERNAL, LOADED, ZP, type MachineState, type Roms } from './c64.ts';
 import { OP_IRQ, OP_NMI } from './cpu.ts';
 import { LEN } from './opcodes.ts';
@@ -25,7 +25,7 @@ import { Drive, type DriveState } from './drive.ts';
 import { d64ToDisk } from './gcr.ts';
 import { g64ToD64, g64ToDisk, isG64 } from './g64.ts';
 import { d64NameOf } from './d64.ts';
-import { Datasette, tapeFiles, tapeNameMatches, tapPulses, type TapeFile } from './tape.ts';
+import { Datasette, isT64, t64Files, tapeFiles, tapeNameMatches, tapPulses, type TapeFile } from './tape.ts';
 import { basicLines, evaluate, findSys, listLine, statements, T } from './basic.ts';
 
 export interface UnpackOptions {
@@ -38,11 +38,13 @@ export interface UnpackOptions {
   disk?: Uint8Array | null;
   /**
    * the tape the file came from (a TAP image): it is in the datasette with PLAY held down, wound to where the file
-   * ended, so the program's own loader reads on from there, and LOAD from the tape loads the next file
+   * ended, so the program's own loader reads on from there, and LOAD from the tape loads the next file. A T64 tape
+   * archive: LOAD from the tape loads its files (it has no pulses for a loader of the program's own)
    */
   tape?: Uint8Array | null;
-  /** where the tape stands when the program starts (a pulse); by default after the KERNAL file that holds the file's
-   *  bytes at its address (its header is in the tape buffer then, as LOAD left it), else at the start */
+  /** where the tape stands when the program starts (a pulse; a T64: a directory slot); by default after the KERNAL
+   *  file that holds the file's bytes at its address (its header is in the tape buffer then, as LOAD left it), else at
+   *  the start */
   tapeAt?: number;
   /** start the program here (SYS) instead of RUN */
   entry?: number;
@@ -398,11 +400,13 @@ class Session {
     this.driveNote = `1541 with "${disk.name}" ${disk.id}`;
   }
 
-  /** The datasette with the tape, PLAY held down, wound to where the file ended (or to tapeAt). */
+  /** The datasette with the tape, PLAY held down, wound to where the file ended (or to tapeAt). A T64 sends no
+   *  pulses: it stands before a file of its directory. */
   private attachTape(): void {
-    const pulses = tapPulses(this.o.tape!);
-    const d = new Datasette(pulses);
-    this.tapeKernal = tapeFiles(pulses);
+    const t64 = isT64(this.o.tape!);
+    const pulses = t64 ? new Uint32Array(0) : tapPulses(this.o.tape!);
+    this.tapeKernal = t64 ? t64Files(this.o.tape!) : tapeFiles(pulses);
+    const d = new Datasette(pulses, t64 ? Math.max(0, ...this.tapeKernal.map(f => f.to)) : null);
     // the KERNAL file that holds the file's bytes at its address (LOAD puts a relocatable one at the start of BASIC)
     const same = (f: TapeFile) => (f.type === 3 || f.type === 1) && (f.start === this.loadAt || (f.type === 1 && this.loadAt === 0x0801))
       && f.data.length >= this.data.length && this.data.every((v, i) => f.data[i] === v);
@@ -466,16 +470,18 @@ class Session {
   /**
    * LOAD from the tape (device 1), as the KERNAL does it: the next file from where the tape stands whose name starts
    * with the name asked for (any file without one), its header into the tape buffer; a program saved as relocatable
-   * (type 1) loads where LOAD asks with secondary address 0, else where it was saved. The tape stops after it.
+   * (type 1) loads where LOAD asks with secondary address 0, else where it was saved. The tape stops after it. A T64
+   * is searched on from the start after its last file, as VICE does it (its files are a directory, not a tape).
    */
   private loadFromTape(): boolean {
     const m = this.m, cpu = m.cpu, d = this.tape!;
     const len = m.ram[0xb7], at = m.ram[0xbb] | (m.ram[0xbc] << 8);
     const name = Uint8Array.from({ length: len }, (_, i) => m.peek((at + i) & 0xffff));
-    const f = this.tapeKernal.find(x => x.at >= d.pos && (x.type === 1 || x.type === 3) && tapeNameMatches(x.header, name));
+    const fits = (x: TapeFile) => (x.type === 1 || x.type === 3) && tapeNameMatches(x.header, name);
+    const f = this.tapeKernal.find(x => x.at >= d.pos && fits(x)) ?? (d.t64 != null ? this.tapeKernal.find(fits) : undefined);
     if (!f) {
       // the KERNAL would search the tape to its end: not found
-      d.seek(d.pulses.length);
+      d.seek(d.length);
       m.ram[0x90] = 0x40;
       cpu.a = 4; cpu.c = 1;
       this.trace(`loads "${this.fileName()}" from the tape: not there`);
@@ -492,8 +498,9 @@ class Session {
     m.ram[0x90] = 0;
     cpu.x = end & 0xff; cpu.y = end >> 8; cpu.c = 0;
     d.seek(f.to);
-    // what the motor would have read while it loaded counts as loading from the tape
-    d.edges += f.to - f.at;
+    // what the motor would have read while it loaded counts as loading from the tape (a T64's file: the pulses of a
+    // KERNAL tape's, 20 a byte, each block twice)
+    d.edges += d.t64 != null ? (192 + f.data.length) * 40 : f.to - f.at;
     this.trace(`loads "${this.fileName()}" from the tape: $${to.toString(16).padStart(4, '0')}-$${((to + f.data.length - 1) & 0xffff).toString(16).padStart(4, '0')}`);
     return this.rts(200);
   }
@@ -842,7 +849,7 @@ class Session {
     } else this.driveBusy = 0;
     // the tape plays: the program is loading (leaders and gaps between files take seconds), until a while after its end
     const t = this.tape;
-    if (t?.motor) {
+    if (t?.motor && t.t64 == null) {
       if (!t.atEnd) { this.progressAt = now; this.tapeEnded = 0; } else {
         if (!this.tapeEnded) this.tapeEnded = now;
         if (now - this.tapeEnded < TAPE_END_PATIENCE) this.progressAt = now;
@@ -1206,6 +1213,12 @@ class Session {
   /** the datasette: where the tape stood, how far it played, as seconds of tape */
   private tapeNote(): string {
     const t = this.tape!, p = t.pulses;
+    if (t.t64 != null) {
+      // a T64: which file it stood before, and before which it stands now
+      const at = (slot: number) => { const f = this.tapeKernal.find(x => x.at >= slot); return f ? `before file ${f.at + 1}` : 'at its end'; };
+      const from = this.tapeFile ? 'after the file' : this.o.tapeAt != null ? 'where asked' : 'at the start';
+      return `datasette: a T64 of ${this.tapeKernal.length} file${this.tapeKernal.length === 1 ? '' : 's'}, the tape stood ${from} (${at(this.tapeStart)}), now ${at(t.pos)}`;
+    }
     let before = 0, played = 0;
     for (let i = 0; i < this.tapeStart && i < p.length; i++) before += p[i];
     for (let i = this.tapeStart; i < t.pos && i < p.length; i++) played += p[i];

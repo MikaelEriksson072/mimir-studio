@@ -962,7 +962,7 @@ test('open a PRG, save and export through stubbed file dialogs', async ({ workDi
   await test.step('File → Open PRG files… opens a PRG; the File button closes its menu too', async () => {
     await file.click();
     await expect(file).toHaveAttribute('aria-expanded', 'true');
-    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount disk image (D64, G64)…', 'Insert TAP tape image…', 'Save: create a project from this work…Ctrl+S']);
+    await expect(menu.getByRole('menuitem')).toHaveText(['Smart attach…', 'Open PRG files…Ctrl+O', 'Open a cartridge (.crt)…', 'Open a VICE snapshot (.vsf)…', 'Mount disk image (D64, G64)…', 'Insert tape image (TAP, T64)…', 'Save: create a project from this work…Ctrl+S']);
     await file.click();
     await expect(menu).toBeHidden();
     await expect(file).toHaveAttribute('aria-expanded', 'false');
@@ -1107,7 +1107,7 @@ test('Smart attach opens each file as its extension says, and Brokkr packs a Kic
       const d = all[all.length - 1];
       return { title: d?.title, filters: d?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: d?.properties };
     });
-    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 and G64 disks, TAP tapes, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 g64 G64 tap TAP json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
+    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 and G64 disks, TAP and T64 tapes, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 g64 G64 tap TAP t64 T64 json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
   });
 
   await test.step('a VICE snapshot and a cartridge, each by its extension', async () => {
@@ -4887,7 +4887,7 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/mimir-demo.tap')] });
-  await fromFileMenu(page, 'Insert TAP tape image…');
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
   await expect(toast(page, /^Inserted mimir-demo\.tap \(\d+ s\): 4 files \(1 KERNAL, 3 TapeTool\)$/)).toBeVisible();
   const files = page.getByRole('list', { name: 'Files on mimir-demo.tap' });
 
@@ -4964,6 +4964,87 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
     await done.getByText('Layer report').click();
     await expect(done.locator('.unpack-log')).toContainText(/Tape: datasette: the tape stood after the file \([\d.]+ s\), played [\d.]+ s/);
     await expect(page.locator('.file-name')).toHaveText(['MIMIR TAPE-unpacked.prg', 'MIMIR TAPE-header.prg']);
+  });
+
+  await test.step('ejecting the tape takes the section and the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject tape' }).click();
+    await expect(files).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: /^Tape/ })).toHaveCount(0);
+  });
+});
+
+test('a T64 in the datasette: its directory in the Explorer and the Tape tab, Save files…, Build & Run writing it again and Sindri reading it', async ({ app, page, workDir }) => {
+  // fixtures/t64/mimir-demo.t64 (packages/core/test/t64.test.ts): a boot file at $0801 whose LOAD from the tape loads
+  // the raster demo and starts it, the demo, and a sine table whose directory entry ends at $c3c6. VICE is not
+  // started: a Windows program stands in for it
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  const demo = readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg'));
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/t64/mimir-demo.t64')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, 'Inserted mimir-demo.t64 (a T64, "MIMIR T64"): 3 files')).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on mimir-demo.t64' });
+
+  await test.step('the Explorer lists its directory, each file by its entry', async () => {
+    await expect(page.getByRole('region', { name: 'Tape' }).locator('.sec-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(files.getByRole('listitem')).toHaveText([/^1\s*"MIMIR BOOT"\s*PRG/, /^2\s*"MIMIR DEMO"\s*PRG/, /^3\s*"MIMIR SINE"\s*PRG/]);
+    await expect(files.getByRole('listitem').nth(2)).toHaveAttribute('title', /the directory's end \$c3c6 is wrong .*Open MIMIR SINE \(T64, \$4000-\$41ff\)/);
+    await expect(page.locator('.side-inner')).toContainText('3 files · T64 "MIMIR T64" · in the datasette on Build & Run');
+  });
+
+  await test.step('the Tape tab: the directory, a row a file', async () => {
+    await page.getByRole('tab', { name: /^Tape/ }).click();
+    const table = page.getByRole('table', { name: 'Tape files' });
+    await expect(page.locator('.xref-head').first()).toContainText('mimir-demo.t64 (a T64 "MIMIR T64", version $0101, C64S tape image file): 3 files');
+    await expect(table.locator('thead th').first()).toHaveText('Entry');
+    await expect(table.locator('tbody tr td:nth-child(1)')).toHaveText(['1', '2', '3']);
+    await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['T64 PRG', 'T64 PRG', 'T64 PRG']);
+    await expect(table.locator('tbody tr td:nth-child(4)')).toHaveText(['"MIMIR BOOT"', '"MIMIR DEMO"', '"MIMIR SINE"']);
+    await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText([/^\$0801–\$08[0-9a-f]{2}$/, '$0801–$37ff', '$4000–$41ff']);
+    await expect(table.locator('tbody tr').nth(2).locator('td').nth(6)).toContainText('the directory\'s end $c3c6 is wrong');
+  });
+
+  await test.step('Save files… saves every file as a PRG', async () => {
+    const out = join(workDir, 't64-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 3 files of mimir-demo\.t64 to /)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['MIMIR BOOT.prg', 'MIMIR DEMO.prg', 'MIMIR SINE.prg']);
+    expect(readFileSync(join(out, 'MIMIR DEMO.prg'))).toEqual(demo);
+  });
+
+  await test.step('Build & Run: VICE autostarts a T64 of the built boot file and the files after it', async () => {
+    await openSection(page, 'Tape');
+    await files.getByRole('listitem').filter({ hasText: 'MIMIR BOOT' }).click();
+    await expect(toast(page, 'Loaded MIMIR BOOT.prg at $0801')).toBeVisible();
+    await expect(page.locator('.file-name')).toHaveText(['MIMIR BOOT.prg']);
+    test.skip(!existsSync(standIn), 'needs where.exe');
+    await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+    await page.keyboard.press('F5');
+    await expect(toast(page, /^VICE autostarts .+\.t64: the built .+ as its first file, then the files of mimir-demo\.t64 after "MIMIR BOOT"$/)).toBeVisible({ timeout: 120_000 });
+    await page.getByRole('tab', { name: 'Build output' }).click();
+    const log = await page.locator('.build-log').innerText();
+    const started = /> VICE started \(pid -?\d+\): (.+?\.t64) autostarted/.exec(log);
+    expect(started, log.slice(-600)).toBeTruthy();
+    const t64 = readFileSync(started![1]);
+    expect(t64.subarray(0, 20).toString('latin1')).toBe('C64S tape image file');
+    // three entries, the demo's bytes as they were, the sine table's end set right ($4200)
+    expect(t64.readUInt16LE(0x24)).toBe(3);
+    expect(t64.indexOf(demo.subarray(2))).toBeGreaterThan(0);
+    expect(t64.readUInt16LE(0x40 + 2 * 32 + 4)).toBe(0x4200);
+  });
+
+  await test.step('Sindri runs the boot file with the T64 in its datasette: LOAD from the tape loads the demo, which Unpack takes', async () => {
+    const bar = page.locator('.pack-bar');
+    await expect(bar).toContainText('MIMIR BOOT.prg is packed.', { timeout: 60_000 });
+    await expect(bar).toContainText(/the program starts at \$0810/);
+    await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+    await expect(toast(page, /^Unpacked MIMIR BOOT\.prg: \d+ bytes at \$[0-9a-f]{4}-\$37ff$/)).toBeVisible({ timeout: 60_000 });
+    const done = page.locator('.unpack-bar');
+    await done.getByText('Layer report').click();
+    await expect(done.locator('.unpack-log')).toContainText('Tape: datasette: a T64 of 3 files, the tape stood after the file (before file 2), now before file 3');
   });
 
   await test.step('ejecting the tape takes the section and the tab away', async () => {

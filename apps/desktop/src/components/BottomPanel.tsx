@@ -363,28 +363,31 @@ export function PirateSlayerPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { d
 
 /** The Tape tab (spec 13.5e): what is on the tape in the datasette, in tape order: each file (KERNAL, TapeTool, Turbo
  *  Tape) with where it starts, and the stretches of turbo data no format here reads. A row opens the file, + adds it.
- *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them. */
+ *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them.
+ *  A T64 tape archive (13.5j): its directory, an entry a row. */
 export function TapePanel({ tape, onCopy, onOpenFile, onSaveFiles }: { tape: MountedTape; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onSaveFiles: () => void }) {
   const { img } = tape;
   const tt = tapeToolScript(img, tape.name);
-  const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold' };
+  const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', t64: 'T64' };
+  const t64 = img.t64;
   const time = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
   const notes = (f: TapeFile) => [
     f.format === 'cbm' && f.copies ? `header ${f.copies[0]}×, data ${f.copies[1]}×` : '',
     f.headerCode ? 'the header holds code (the tape buffer at $033c)' : '',
     f.tiny ? 'TinyHeader: the boot loader knows where it goes' : '',
     f.format === 'tapetool' && !f.tiny ? `name byte ${f.id}, ${f.blocks} block${f.blocks === 1 ? '' : 's'}${f.packed ? ` (${f.packed} RLE packed)` : ''}${f.shuffled ? ', in random order' : ''}${f.interleaved ? ', mixed with the file before' : ''}` : '',
+    f.t64 && f.load != null && f.t64.fileType !== 0x82 ? `1541 type $${f.t64.fileType.toString(16).padStart(2, '0')}` : '',
     f.note ?? '', ...f.errors,
   ].filter(Boolean).join(' · ');
   const rows = [...img.files.map(f => ({ at: f.at, f, u: null as TapeUnknown | null })), ...img.unknown.map(u => ({ at: u.at, f: null as TapeFile | null, u }))].sort((a, b) => a.at - b.at);
   return (
     <div className="xref spindle">
       <div className="xref-head spindle-head">
-        <span>{tape.name} (TAP version {img.version}, {time(img.seconds)}): {img.files.length} file{img.files.length === 1 ? '' : 's'}{img.unknown.length ? `, ${img.unknown.length} stretch${img.unknown.length === 1 ? '' : 'es'} of turbo data no format here reads` : ''} <span className="muted">· {[tt ? 'TapeTool’s command lines write the tape again from its files (Save files… saves them with the lines as build.bat)' : '', img.unknown.length ? 'an unknown loader’s data is read by Sindri, running the boot file with the tape in its datasette' : 'a file opens with the tape in Sindri’s datasette, after the file'].filter(Boolean).join('; ')}</span></span>
+        <span>{tape.name} ({t64 ? `a T64${t64.name ? ` "${t64.name}"` : ''}, version $${t64.version.toString(16).padStart(4, '0')}, ${t64.signature}` : `TAP version ${img.version}, ${time(img.seconds)}`}): {img.files.length} file{img.files.length === 1 ? '' : 's'}{img.unknown.length ? `, ${img.unknown.length} stretch${img.unknown.length === 1 ? '' : 'es'} of turbo data no format here reads` : ''} <span className="muted">· {[tt ? 'TapeTool’s command lines write the tape again from its files (Save files… saves them with the lines as build.bat)' : '', img.unknown.length ? 'an unknown loader’s data is read by Sindri, running the boot file with the tape in its datasette' : 'a file opens with the tape in Sindri’s datasette, after the file'].filter(Boolean).join('; ')}</span></span>
         {tt && <button className="btn small" onClick={() => onCopy(tt.script.join('\n'), 'Copied the TapeTool command lines')}><Icon name="copy" size={14} />Copy script</button>}
         <button className="btn small" onClick={onSaveFiles} title={tt ? 'Save every file of the tape, boot.bin and build.bat (TapeTool’s command lines) to a folder' : 'Save every file of the tape as a PRG to a folder'}><Icon name="download" size={14} />Save files…</button>
       </div>
-      <table className="tbl tape-table" aria-label="Tape files"><thead><tr><th>Time</th><th>Offset</th><th>Format</th><th>Name</th><th>Loads</th><th>Bytes</th><th>Notes</th><th /></tr></thead><tbody>
+      <table className="tbl tape-table" aria-label="Tape files"><thead><tr><th>{t64 ? 'Entry' : 'Time'}</th><th>Offset</th><th>Format</th><th>Name</th><th>Loads</th><th>Bytes</th><th>Notes</th><th /></tr></thead><tbody>
         {rows.map(({ f, u }, i) => {
           if (u) return (
             <tr key={`u${i}`} className="muted" title="Turbo data of a loader not known here: open the boot file, and Sindri reads it with the tape in its datasette">
@@ -395,9 +398,9 @@ export function TapePanel({ tape, onCopy, onOpenFile, onSaveFiles }: { tape: Mou
           const file = f!, can = file.load != null && file.data.length > 0 && file.type !== 'SEQ' && file.type !== 'END';
           return (
             <tr key={`f${i}`} className={can ? undefined : 'muted'} title={can ? `Open ${file.name}${file.headerCode ? ' and its header' : ''}` : undefined} onClick={() => { if (can) onOpenFile(file, false); }}>
-              <td className="mono">{time(file.seconds)}</td>
+              <td className="mono">{t64 ? file.id : time(file.seconds)}</td>
               <td className="mono">${file.offset.toString(16)}</td>
-              <td>{FORMAT[file.format]}{file.format === 'cbm' ? ` ${file.type}` : ''}</td>
+              <td>{FORMAT[file.format]}{file.format === 'cbm' ? ` ${file.type}` : file.format === 't64' ? ` ${file.load == null ? 'FRZ' : file.type}` : ''}</td>
               <td className="mono">{file.format === 'tapetool' ? file.name : `"${file.name}"`}</td>
               <td className="mono">{file.load != null ? `$${h4(file.load)}–$${h4((file.load + Math.max(1, file.data.length) - 1) & 0xffff)}` : <span className="muted">—</span>}</td>
               <td className="mono">{file.data.length}</td>

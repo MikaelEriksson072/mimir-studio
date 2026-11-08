@@ -2,13 +2,13 @@
  * extension says what it is opened as. The main process reads what is opened; the renderer puts it where it goes. */
 
 /** what a file is opened as: a PRG, a VICE snapshot or a cartridge (as Open PRG files… opens them), a disk image to
- *  mount (a .d64 or .g64), a tape image to put in the datasette, a Mimir project, or a Kick Assembler source that Brokkr packs (Pack a
- *  file) */
+ *  mount (a .d64 or .g64), a tape image to put in the datasette (a .tap or .t64), a Mimir project, or a Kick Assembler
+ *  source that Brokkr packs (Pack a file) */
 export type SmartKind = 'prg' | 'vsf' | 'crt' | 'd64' | 'tap' | 'project' | 'asm';
 
 /** each kind's extensions, as the dialog's filter shows them */
 export const SMART_EXTENSIONS: Record<SmartKind, string[]> = {
-  prg: ['prg'], vsf: ['vsf'], crt: ['crt'], d64: ['d64', 'g64'], tap: ['tap'], project: ['json'], asm: ['asm'],
+  prg: ['prg'], vsf: ['vsf'], crt: ['crt'], d64: ['d64', 'g64'], tap: ['tap', 't64'], project: ['json'], asm: ['asm'],
 };
 
 /** What `name` is opened as, by its extension. Any other file (none, `.bin`, `.p00`…) is read as a PRG, where a

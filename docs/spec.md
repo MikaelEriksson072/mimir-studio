@@ -2002,7 +2002,7 @@ får väljas) som visar allt Mimir öppnar, och varje fils **filändelse** avgö
 | `.vsf` | en VICE-snapshot (13.7) |
 | `.crt` | en cartridge, ett projekt för sig (13.9) |
 | `.d64` | en diskavbild som monteras (13.5) |
-| `.tap` | en bandavbild som läggs i datasetten (13.5e) |
+| `.tap`, `.t64` | en bandavbild (TAP) eller ett T64-arkiv som läggs i datasetten (13.5e, 13.5j) |
 | `.json` | ett Mimir-projekt (`.mimir.json`), som *Open project…* öppnar det (13.10) |
 | `.asm` | en Kick Assembler-källa som **Brokkr** packar: *Pack a file* (13.8b) öppnas över arbetet med källan vald och Brokkr som packare; KickAss.jar assemblerar den där den ligger och Brokkr packar PRG:n |
 | annan eller ingen | läses som en PRG (en snapshot eller cartridge känns ändå igen på huvudet, som när den släpps i fönstret) |
@@ -2295,7 +2295,7 @@ och en fil packad på plats.
 
 ### 13.5e Bandavbilder (.tap)
 
-**Insert TAP tape image…** (File-menyn, kommandopaletten, knappen *Insert TAP…* på den tomma startsidan, Smart attach,
+**Insert tape image (TAP, T64)…** (File-menyn, kommandopaletten, knappen *Insert TAP/T64…* på den tomma startsidan, Smart attach,
 eller dra och släpp en `.tap`) lägger ett band i datasetten. En C64 kan ha både en disk och ett band, så bandet är ett
 eget tillstånd bredvid den monterade disken, med en egen sektion *Tape* i Explorer (under *Disk*) och en egen
 utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
@@ -2576,6 +2576,66 @@ och hel byte, alla kopior (också från längre bort än 256 byte), nya adresser
 sista bundle som delar block, de äldsta sidornas slut, Memento Moris sektorordning och antal, All Hallows Eves antal,
 diskar utan katalog eller startprogram och andra loaders diskar. `fixtures/d64/sparkle-demo.d64` är en av diskarna:
 rasterdemot som första bundle, en bundle med en fil under I/O-området och en liten i blocket där den slutar.
+
+### 13.5j T64-arkiv (.t64)
+
+En T64 är emulatorn C64S:s bandarkiv: ett bands filer, inte dess pulser. Den läggs i datasetten som en TAP (13.5e):
+**Insert tape image (TAP, T64)…** (File-menyn, kommandopaletten, *Insert TAP/T64…* på den tomma startsidan, Smart
+attach, eller dra och släpp en `.t64`), och `readTape()` läser den med `readT64()` (`packages/core/src/c64/t64.ts`)
+när huvudet är en T64:s. En fil som heter `.t64` men är en TAP (`C64-TAPE-RAW`) läses som en TAP.
+
+- **Huvudet.** 64 byte: en signaturrad utfylld med nollor till 32 byte (`C64 tape image file`, `C64S tape file`, `C64S
+  tape image file`; den sista ibland med en egen rad efter, `*Conv 64*`), versionen (`$0100` eller `$0101`), hur
+  många poster katalogen har plats för och hur många den säger används, och bandets namn (24 byte PETSCII).
+- **Katalogen.** 32 byte per post: C64S-typen (0 ledig, 1 en bandfil, en annan utan 1541-typ en minnessnapshot från
+  C64S), 1541-filtypen (oftast `$82`; vilken som helst tas som ett program), start- och slutadress (slutet ett förbi,
+  som i ett bandhuvud), var filens byte börjar i T64:an och namnet (16 byte PETSCII, utfyllt med mellanslag). Datan
+  följer katalogen, varje fils byte utan laddadress.
+- **Som VICE läser dem.** Varje post av typ 1 är en fil, vad huvudet än säger används (89 av arkivets T64:or säger 0),
+  i katalogens ordning. Katalogen slutar där den första filens byte börjar. En fil är så lång som slutadressen säger bara
+  när dess byte finns där och slutet inte är `$c3c6` (som en gammal konverterare skrev för varje fil); annars är den
+  det som ligger fram till nästa fils byte (eller T64:ans slut), och en anmärkning säger det. En post vars byte skulle
+  börja efter T64:ans slut är ett fel. En snapshot listas (`FRZ`) men öppnas inte.
+
+Explorer listar filerna med postnumret där en TAP har tiden, namnet och typen (`PRG`), och under listan *N files · T64
+"namn"*. Tape-fliken har *Entry* i stället för tid, formatet `T64 PRG`, offset i T64:an och anmärkningarna (fel slut,
+en annan 1541-typ än `$82`); rubriken säger T64:ans namn, version och signatur. En fil öppnas, **+** lägger till den,
+och **Save files…** sparar varje fil som PRG.
+
+**Sindri.** En fil från en T64 körs med T64:an i datasetten. Den skickar inga pulser (FLAG-linjen får inga flanker, och
+den räknas inte som laddning: ett program som väntar på pulser vilar och stannar), bandet står före en post, och
+LOAD från bandet läser dess filer som från en TAP: nästa fil vars namn börjar med det som efterfrågas, huvudet (typ 3,
+start, slut, namnet) i bandbufferten, datan där filen sparades. Hittas inget från där bandet står söks från början igen,
+som VICE gör (prövat i VICE 3.10: `LOAD"PART2",1,1` hittar en fil före bootfilen). Lagerrapporten säger *datasette: a
+T64 of N files, the tape stood after the file (before file 2), now before file 3*. `t64Files()` i
+`packages/sindri/src/tape.ts` läser katalogen med samma regler som `readT64()`. `mimir unpack spel.t64 [--file NAMN]`
+och `sindri spel.t64` packar upp T64:ans första program (eller det namngivna) med T64:an i datasetten, och `--tape` tar
+en T64.
+
+**Build & Run** med en T64 i datasetten (`writeT64()`):
+- När projektets första fil kommer från T64:an (och ingen programstart är satt) skrivs en T64 med den byggda filen som
+  första post och T64:ans filer efter den, de av dem som är i projektet som de byggdes, och VICE autostartar den: dess
+  LOAD från bandet hittar de byggda filerna. Filerna före den tas inte med, och slutadresserna skrivs rätt.
+- Annars läggs en kopia av T64:an i VICE:s datasette (`-1 <kopia>.t64`) med projektets filer från den återskrivna som
+  de byggdes; PLAY trycks i VICE när programmet ber om det.
+- VICE läser en T64 bara genom sina bandfällor (den har inga pulser), som en standardkonfiguration har av: med en `.t64`
+  får VICE `-trapdevice1`.
+
+Mätt på användarens arkiv: 63 175 filer som heter `.t64` lästes på 28 s. 63 090 är T64:or (40 522 `C64 tape image
+file`, 22 288 `C64S tape file`, 278 `C64S tape image file`, 2 `C64 TAPE IMAGE`) med 67 249 filer (59 705 har en fil,
+19 fler än 5); 54 filer slutar vid `$c3c6`, 37 till där deras byte inte finns, 2 före sin start, och 3 poster pekar
+förbi slutet. De 85 andra är webbsidor, PRG:er och 8 TAP:ar med fel ändelse. Sindris `t64Files()` läser samma filer och
+byte som `readT64()` i alla.
+
+**Test:** `test/t64.test.ts` (huvudet, signaturerna, en TAP, en PRG och en webbsida som inte är T64:or; katalogen som
+`makeT64()` skriver; lediga poster, 30 platser, 0 använda, en post med text; `$c3c6`, ett slut efter nästa fil och före
+starten, ett slut före datans slut, en avkortad T64; en snapshot; Sindri läser detsamma; `writeT64()` med och utan byggda
+filer och från en post; fixturen `fixtures/t64/mimir-demo.t64` och Sindri med den). Fixturen (`test/helpers/t64-demo.ts`)
+är en egen bootfil vid `$0801` som kopierar en laddare till `$c000`, laddar `MIMIR DEMO` med `LOAD` från bandet och
+startar det, rasterdemot och en sinustabell vars post slutar vid `$c3c6`; VICE autostartar den och visar rasterdemot.
+Sindri: `packages/sindri/test/tape.test.ts` (katalogen, LOAD efter och före bootfilen med stand-ins och ROM:ar, inga
+pulser). `test/vice.integration.test.ts` autostartar T64:or i riktiga VICE och lägger en i datasetten.
+`packages/cli/test/cli.test.ts` och `e2e/app.spec.ts` (*a T64 in the datasette*) prövar CLI:t och appen.
 
 ### 13.6 Terminal
 

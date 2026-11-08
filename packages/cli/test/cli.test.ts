@@ -113,6 +113,22 @@ describe('mimir CLI', () => {
     expect(c.lines).toEqual(['ERR no program named "nothing" on mimir-demo.tap']);
   });
 
+  it('unpacks a T64\'s first program with the T64 in the datasette: its LOAD from the tape reads the next file', async () => {
+    const tape = join(__dirname, '../../../fixtures/t64/mimir-demo.t64');
+    const c = capture(dir);
+    expect(await main(['unpack', tape, '-o', 'from-t64.prg', '--no-roms'], c.io)).toBe(0);
+    const out = c.lines.join('\n');
+    expect(out).toMatch(/^mimir-demo\.t64: "MIMIR BOOT": \$0801-/);
+    expect(out).toContain('Tape: datasette: a T64 of 3 files, the tape stood after the file (before file 2), now before file 3');
+    // (the tape buffer at $033c holds the demo's header after LOAD, as a TAP's KERNAL LOAD leaves it too)
+    expect(out).toContain('saved layer 2: $033c-$37ff');
+    expect(c.lines.at(-1)).toBe(`Wrote ${join(dir, 'from-t64.prg')} (13510 bytes, start $0810)`);
+    c.lines.length = 0;
+    // a file picked by its name: the sine table is no program that starts
+    expect(await main(['unpack', tape, '--file', 'mimir s*', '-o', 'sine.prg', '--no-roms'], c.io)).toBe(1);
+    expect(c.lines[0]).toMatch(/^mimir-demo\.t64: "MIMIR SINE": \$4000-\$41ff/);
+  });
+
   it('measures the analysis against what the program did when it ran, and counts the problems by kind', async () => {
     let c = capture(dir);
     expect(await main(['measure', 'demo.prg', '--no-roms'], c.io)).toBe(0);

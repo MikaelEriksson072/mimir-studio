@@ -442,33 +442,35 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
 
 /** a time on the tape, as a datasette's counter would not show it but a player does: m:ss */
 export const tapeTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold' };
+const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', t64: 'T64' };
 
 /** The tape in the datasette (13.5e), its files in tape order with where each starts. A file opens with a click (a KERNAL
- *  file with loader code in its header opens with the header as a second file); + adds it to the project. */
+ *  file with loader code in its header opens with the header as a second file); + adds it to the project. A T64 tape
+ *  archive (13.5j) lists its directory, each file by its entry number. */
 function TapeSection({ tape, onEject, onOpenFromTape, onShowTape }: { tape: MountedTape; onEject: () => void; onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void }) {
   const { img } = tape;
   const tt = img.files.filter(f => f.format === 'tapetool').length;
+  const t64 = img.t64;
   return (
     <SideSection id="tape" title="Tape" summary={tape.name} actions={<button className="icon-btn" title={`Eject ${tape.name}`} aria-label="Eject tape" onClick={onEject}><Icon name="eject" size={14} /></button>}>
-      <div className="disk-head mono small" title={tape.path ?? tape.name}><Icon name="tape" size={13} /><span className="disk-title">{tape.name}</span><span className="muted">{tapeTime(img.seconds)}</span></div>
+      <div className="disk-head mono small" title={tape.path ?? tape.name}><Icon name="tape" size={13} /><span className="disk-title">{tape.name}</span><span className="muted">{t64 ? 'T64' : tapeTime(img.seconds)}</span></div>
       <div className="disk-list" role="list" aria-label={`Files on ${tape.name}`}>
         {img.files.map((f, i) => {
           const can = f.load != null && f.data.length > 0 && f.type !== 'SEQ' && f.type !== 'END';
           const where = f.load != null ? `$${h4(f.load)}-$${h4((f.load + Math.max(1, f.data.length) - 1) & 0xffff)}` : `${f.data.length} bytes`;
-          const why = !can ? (f.type === 'SEQ' ? 'A SEQ file: data, not a program' : f.type === 'END' ? 'The end-of-tape marker' : f.load == null ? 'Its load address is not on the tape: the boot loader knows it' : 'It holds no data') : '';
+          const why = !can ? (f.type === 'SEQ' ? 'A SEQ file: data, not a program' : f.type === 'END' ? 'The end-of-tape marker' : f.t64 && f.load == null ? 'A C64S memory snapshot, not a program' : f.load == null ? 'Its load address is not on the tape: the boot loader knows it' : 'It holds no data') : '';
           const title = `${f.errors.length ? `${f.errors.join('; ')}. ` : ''}${f.note ? `${f.note}. ` : ''}${can ? `Open ${f.name} (${TAPE_FORMAT[f.format]}, ${where}${f.headerCode ? ', with its header: the tape buffer at $033c holds code' : ''})` : why}`;
           return (
             <div key={i} role="listitem" className={cx('disk-row tape-row', !can && 'off', f.errors.length > 0 && 'bad')} title={title}
               tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (can && e.key === 'Enter') onOpenFromTape(f, false); }}>
-              <span className="mono small disk-blocks">{tapeTime(f.seconds)}</span>
+              <span className="mono small disk-blocks" title={t64 ? `Entry ${f.id} of the directory` : undefined}>{t64 ? f.id : tapeTime(f.seconds)}</span>
               <span className="mono disk-name">{f.format === 'tapetool' ? f.name : `"${f.name}"`}{f.headerCode ? <span className="muted"> +header</span> : null}</span>
-              <span className="mono small muted">{f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}</span>
+              <span className="mono small muted">{f.format === 't64' ? (f.load == null ? 'FRZ' : f.type) : f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}</span>
               {can ? <button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFromTape(f, true); }}><Icon name="plus" size={13} /></button> : <span />}
             </div>
           );
         })}
-        {!img.files.length && <div className="muted small">No files in a format known here (KERNAL, TapeTool, Turbo Tape, Freeload, US Gold).</div>}
+        {!img.files.length && <div className="muted small">{t64 ? 'No files in the T64’s directory.' : 'No files in a format known here (KERNAL, TapeTool, Turbo Tape, Freeload, US Gold).'}</div>}
       </div>
       {(img.unknown.length > 0 || tt > 0) && (
         <div className="disk-spindle">
@@ -477,7 +479,7 @@ function TapeSection({ tape, onEject, onOpenFromTape, onShowTape }: { tape: Moun
           <button className="btn small" onClick={onShowTape}>{tt ? 'TapeTool script' : 'Tape'}</button>
         </div>
       )}
-      <div className="side-hint">{img.files.length} file{img.files.length === 1 ? '' : 's'} · TAP v{img.version} · in the datasette on Build &amp; Run</div>
+      <div className="side-hint">{img.files.length} file{img.files.length === 1 ? '' : 's'} · {t64 ? `T64${t64.name ? ` "${t64.name}"` : ''}` : `TAP v${img.version}`} · in the datasette on Build &amp; Run</div>
     </SideSection>
   );
 }

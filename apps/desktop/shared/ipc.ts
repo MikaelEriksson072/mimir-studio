@@ -105,7 +105,7 @@ export type OpenedPrg = LoadedFile & { entries?: number[]; snapshot?: string; st
 /** A .d64 or .g64 disk image to mount. `path` given: read it (in a folder the user picked); otherwise a file dialog. */
 export interface DiskOpenRequest { path?: string }
 export interface DiskOpenResult { path: string; name: string; bytes: Uint8Array }
-/** A .tap tape image to put in the datasette, as disk:open does it for a disk. */
+/** A .tap tape image (or a .t64 tape archive) to put in the datasette, as disk:open does it for a disk. */
 export interface TapeOpenRequest { path?: string }
 export type TapeOpenResult = DiskOpenResult;
 
@@ -172,10 +172,10 @@ export interface BuildResult {
 /**
  * `start`: run with `sys <start>` after loading instead of autostarting (the program start set by the user).
  * `disk`: a .d64 or .g64 image (a copy of the mounted disk in a build folder) to put in drive 8.
- * `tape`: a .tap image (a copy of the tape in the datasette) to put in VICE's datasette.
+ * `tape`: a .tap or .t64 image (a copy of the tape in the datasette) to put in VICE's datasette.
  */
 /** `cart`: `prgPath` is a cartridge image (.crt), which VICE attaches (-cartcrt) and starts at reset; a `prgPath` that is
- *  a .tap is autostarted (VICE loads its first file from it) */
+ *  a .tap or .t64 is autostarted (VICE loads its first file from it) */
 export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; disk?: string; tape?: string; cart?: boolean }
 /** `via`: RUN, `sys <start>`, (a program over BASIC's work area $0002-$03ff) loaded and started from the monitor, or a
  *  cartridge attached */
@@ -320,7 +320,7 @@ export interface KrApi {
   openPrg(req?: PrgOpenRequest): Promise<OpenedPrg[]>;
   /** null: the dialog was cancelled */
   openDisk(req?: DiskOpenRequest): Promise<DiskOpenResult | null>;
-  /** a .tap tape image for the datasette; null: the dialog was cancelled */
+  /** a .tap tape image or .t64 tape archive for the datasette; null: the dialog was cancelled */
   openTape(req?: TapeOpenRequest): Promise<TapeOpenResult | null>;
   /** File → Smart attach…: any file Mimir opens, each opened by its extension; null: the dialog was cancelled */
   smartAttach(req?: SmartAttachRequest): Promise<SmartAttachResult | null>;

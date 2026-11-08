@@ -8,7 +8,9 @@
  * waves, two to a pulse). A KERNAL block: a leader of short pulses, each byte a long and a medium pulse and 9 bit pairs
  * (short + medium a 0, medium + short a 1, from the lowest bit, then odd parity), long + short at its end; the sync
  * bytes $89 … $81 (the repeat: $09 … $01), the bytes, their XOR. A file is a 192-byte header block (type, start, end,
- * name, the rest of the tape buffer) and a data block, each written twice. */
+ * name, the rest of the tape buffer) and a data block, each written twice.
+ *
+ * A T64 holds the files alone (t64Files): in the datasette it sends no pulses, and LOAD from the tape reads its files. */
 
 /** Each pulse's length in cycles. */
 export function tapPulses(tap: Uint8Array): Uint32Array {
@@ -33,6 +35,9 @@ export function tapPulses(tap: Uint8Array): Uint32Array {
 
 export class Datasette {
   readonly pulses: Uint32Array;
+  /** a T64 (its number of files): no pulses, the tape stands before a file (`pos` is its directory slot), and only
+   *  LOAD reads it */
+  readonly t64: number | null;
   /** the next pulse, and the cycles left until its edge */
   pos = 0;
   private left: number;
@@ -41,21 +46,26 @@ export class Datasette {
   /** edges that reached the FLAG line so far: the program loads while this grows */
   edges = 0;
 
-  constructor(pulses: Uint32Array) {
+  constructor(pulses: Uint32Array, t64: number | null = null) {
     this.pulses = pulses;
+    this.t64 = t64;
     this.left = pulses[0] ?? 0;
   }
 
+  /** where the tape ends: after its last pulse (a T64: after its last slot) */
+  get length(): number { return this.t64 ?? this.pulses.length; }
+
   /** Wind the tape to pulse `pos`. */
   seek(pos: number): void {
-    this.pos = Math.max(0, Math.min(pos, this.pulses.length));
+    this.pos = Math.max(0, Math.min(pos, this.length));
     this.left = this.pulses[this.pos] ?? 0;
   }
 
-  get atEnd(): boolean { return this.pos >= this.pulses.length; }
+  get atEnd(): boolean { return this.pos >= this.length; }
 
   /** Let n cycles pass with the motor on; returns how many pulses ended (each an edge on the FLAG line). */
   advance(n: number): number {
+    if (this.t64 != null) return 0;
     let e = 0;
     while (this.pos < this.pulses.length) {
       if (n < this.left) { this.left -= n; break; }
@@ -169,6 +179,57 @@ export function tapeFiles(pulses: Uint32Array): TapeFile[] {
     out.push({ header, data, type: header[0], start, end, at: hs[0].b.at, to });
   }
   return out;
+}
+
+/* A T64 (the C64S emulator's tape archive) holds a tape's files, not its pulses: a 64-byte header (a signature line,
+ * "C64S tape image file" mostly; the version; room in the directory and the entries used; the tape's name), then 32
+ * bytes a directory entry (the C64S type: 1 a tape file, another with no 1541 type a memory snapshot, anything else
+ * in a slot no entry at all: unused ones hold text and such; the 1541 file type; the
+ * start and end address; the offset of the file's bytes; the name, padded with spaces). An end the bytes are not there
+ * for (an old converter wrote $c3c6 for every file) gives way to the bytes up to the next file. */
+
+/** A .t64, known by its header: "C64" and "tape" in the signature line. */
+export function isT64(u8: Uint8Array): boolean {
+  if (u8.length < 0x60) return false;
+  const sig = String.fromCharCode(...u8.subarray(0, 32)).replace(/\0.*$/s, '');
+  return /^C64/.test(sig) && /tape/i.test(sig) && !sig.startsWith('C64-TAPE-RAW');
+}
+
+/** The files of a T64 as LOAD from the tape finds them, in directory order: each a header as the KERNAL's would be
+ *  (type 3, start, end, the name padded with spaces), its data; `at` its slot, `to` the slot after it. */
+export function t64Files(u8: Uint8Array): TapeFile[] {
+  const word = (at: number) => u8[at] | (u8[at + 1] << 8);
+  const long = (at: number) => (u8[at] | (u8[at + 1] << 8) | (u8[at + 2] << 16) | (u8[at + 3] << 24)) >>> 0;
+  // the directory: as many entries as the header has room for, up to where the first file's bytes start
+  const fit = Math.floor((u8.length - 0x40) / 32);
+  let n = Math.min(word(0x22) || fit, fit), first = u8.length;
+  for (let i = 0; i < n; i++) { const e = 0x40 + i * 32, off = long(e + 8); if (u8[e] === 1 && off >= 0x40) first = Math.min(first, off); }
+  n = Math.min(n, Math.max(1, Math.floor((first - 0x40) / 32)));
+  const es: { slot: number; start: number; end: number; offset: number; name: Uint8Array }[] = [], offsets: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const e = 0x40 + i * 32;
+    if (u8[e] !== 1 && !(u8[e] > 1 && u8[e + 1] === 0)) continue;
+    // (a file's bytes end where the next entry's start, a snapshot's too)
+    offsets.push(long(e + 8));
+    // a C64S memory snapshot, bytes not in the T64: no program
+    if (u8[e] !== 1 || long(e + 8) < 0x40 + n * 32 || long(e + 8) >= u8.length) continue;
+    es.push({ slot: i, start: word(e + 2), end: word(e + 4), offset: long(e + 8), name: u8.slice(e + 16, e + 32) });
+  }
+  offsets.sort((a, b) => a - b);
+  return es.map(e => {
+    const have = Math.min(offsets.find(o => o > e.offset) ?? u8.length, u8.length) - e.offset;
+    const said = e.end > e.start ? e.end - e.start : e.end === 0 ? 0x10000 - e.start : -1;
+    const len = said < 0 || said > have || (e.end === 0xc3c6 && said !== have) ? Math.min(have, 0x10000 - e.start) : said;
+    const header = new Uint8Array(192).fill(0x20), end = (e.start + len) & 0xffff;
+    header[0] = 3; header[1] = e.start & 0xff; header[2] = e.start >> 8; header[3] = end & 0xff; header[4] = end >> 8;
+    header.set(e.name.map(v => (v === 0 || v === 0xa0 ? 0x20 : v)), 5);
+    return { header, data: u8.slice(e.offset, e.offset + len), type: 3, start: e.start, end, at: e.slot, to: e.slot + 1 };
+  });
+}
+
+/** The KERNAL files of a tape image: a TAP's read from its pulses, a T64's from its directory. */
+export function tapeImageFiles(tape: Uint8Array): TapeFile[] {
+  return isT64(tape) ? t64Files(tape) : tapeFiles(tapPulses(tape));
 }
 
 /** The name in a header, as LOAD compares it: the bytes up to the name's length. */
