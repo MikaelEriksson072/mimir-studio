@@ -9,3 +9,8 @@ x64sc -config <a new, empty vice.ini> -default -console -sounddev dummy +confirm
 ```
 
 It holds RAM and device state only, no ROM images. `-config` keeps VICE away from your own settings.
+
+`packed-menu.vsf` is a snapshot of `fixtures/prg/packed-menu.prg` (the demo packed by `fakePack`, behind a wait for a key
+at `$07f8` packed by `fakePack` again) in x64sc 3.10, stopped at a breakpoint at `$07f8`, where the program waits for a
+key with the demo still packed at `$090e-$390c`. Sindri goes on from it, presses a key and unpacks the demo. It was made
+from the repository root with `-moncommands fixtures/vsf/make-packed-menu.mon` and otherwise the same command line.

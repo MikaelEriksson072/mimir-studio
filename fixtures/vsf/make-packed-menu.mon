@@ -1,0 +1,6 @@
+l "fixtures/prg/packed-menu.prg" 0
+break 07f8
+g 080d
+delete
+dump "fixtures/vsf/packed-menu.vsf"
+quit

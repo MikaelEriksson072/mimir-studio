@@ -1886,6 +1886,27 @@ test('a program that waits for a key in front of more packing: Unpack again runs
   await expect(bar).toHaveCount(0);
 });
 
+test('a VICE snapshot that still holds packed data: Sindri goes on from it, and Unpack gives the program', async ({ app, page }) => {
+  // fixtures/vsf/packed-menu.vsf (make-packed-menu.mon): fixtures/prg/packed-menu.prg in x64sc 3.10, stopped where it
+  // waits for a key at $07f8, in front of the demo packed by fakePack. Going on from there needs VICE's ROMs
+  test.skip(!process.env.C64_ROMS && !existsSync('C:\\C64\\VICE'), 'needs VICE\'s ROMs');
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  const bar = page.locator('.pack-bar');
+  const done = page.locator('.unpack-bar');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/packed-menu.vsf')] });
+  await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
+  await expect(toast(page, 'Loaded packed-menu.prg at $0200')).toBeVisible();
+  await expect(bar).toContainText('packed-menu.prg is packed.', { timeout: 30_000 });
+  await expect(bar).toContainText(/Going on from the snapshot \(the CPU at \$07f8\), Sindri peels off 2 layers: an unknown mover at \$07f8 .*, then an unknown decoder at \$0340 .*; the packed data was at \$090e-\$390c; the program starts at \$0810/);
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(toast(page, 'Unpacked packed-menu.prg: 65024 bytes at $0200-$ffff')).toBeVisible({ timeout: 30_000 });
+  await expect(done).toContainText('packed-menu-unpacked.prg, $0200-$ffff, starting at $0810 (set as the program start).');
+  await done.getByText('Layer report').click();
+  await expect(done.locator('.unpack-log')).toContainText('Snapshot: going on from where it was taken, the CPU at $07f8');
+  await expect(bar).toHaveCount(0);
+});
+
 test('a file opened from a mounted disk is unpacked with the disk in a 1541', async ({ app, page }) => {
   // fixtures/d64/kernal-load.d64: BOOT loads PART2 ($c000) with LOAD "PART2",8,1 through the KERNAL and jumps to it.
   // The 1541 needs VICE's DOS ROM, which a machine without VICE does not have.

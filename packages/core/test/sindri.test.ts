@@ -2,13 +2,13 @@
  * byte, with the stand-ins and with VICE's ROMs when VICE is installed; the layer report and the summary the packed
  * notice shows; VICE's ROMs found next to the x64sc in the settings; an Exomizer self-extracting file named by its
  * fingerprint when Exomizer is installed; and, with VICE's 1541 DOS ROM, a program that loads its next file from the
- * disk it came from. */
+ * disk it came from; and a VICE snapshot, which Sindri goes on from where it was taken. */
 import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, packerNames, parsePrg, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
+import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, openC64File, packedData, packerNames, parsePrg, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
 import { findC64Roms, findExomizer, runExomizer, viceRomFolders } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
 
@@ -140,5 +140,31 @@ describe('the fixture fixtures/prg/packed-menu.prg', () => {
     const path = join(__dirname, '../../../fixtures/prg/packed-menu.prg');
     if (process.env.WRITE_FIXTURES) writeFileSync(path, menuPacked);
     expect(new Uint8Array(readFileSync(path))).toEqual(menuPacked);
+  });
+});
+
+describe.skipIf(!roms)('Sindri going on from a VICE snapshot', () => {
+  const fixture = (name: string) => new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/vsf', name)));
+  const run = (vsf: Uint8Array) => { const f = openC64File('snap.vsf', vsf); return { f, run: unpackPrg(makePrg(f.load, f.bytes), roms, null, null, null, vsf) }; };
+
+  it('unpacks what was still packed: packed-menu.vsf, stopped where it waits for a key, gives the demo', () => {
+    // fixtures/vsf/packed-menu.vsf: fixtures/prg/packed-menu.prg in x64sc 3.10, stopped at $07f8 (make-packed-menu.mon)
+    const { f, run: r } = run(fixture('packed-menu.vsf'));
+    expect(r.snapshot).toBe(0x07f8);
+    expect(r.layers.map(l => [l.entry, l.kind])).toEqual([[0x07f8, 'mover'], [0x0340, 'decoder'], [0x0810, 'program']]);
+    expect(r.layers[0].presses.length).toBeGreaterThan(0);
+    expect(packedData(r)).toEqual([{ start: 0x090e, end: 0x390c }]);
+    expect(unpackSummary(r)).toMatch(/^Going on from the snapshot \(the CPU at \$07f8\), Sindri peels off 2 layers: an unknown mover at \$07f8 \(fingerprint [0-9a-f]{8}\), then an unknown decoder at \$0340 \(fingerprint [0-9a-f]{8}\); the packed data was at \$090e-\$390c; the program starts at \$0810$/);
+    expect(unpackLog(r, f.name, f.load, f.bytes.length).split('\n')[2]).toBe('Snapshot: going on from where it was taken, the CPU at $07f8 (its RAM, VIC-II and CIAs; not its 1541)');
+    const s = r.saved!, at = 0x0801 - s.start + 2, d = demo.subarray(2);
+    expect(s.entry).toBe(0x0810);
+    expect(s.prg.subarray(at, at + d.length)).toEqual(d);
+  });
+
+  it('finds nothing to unpack in the snapshot of the raster demo', () => {
+    const { run: r } = run(fixture('raster-demo.vsf'));
+    expect(r).toMatchObject({ unpacked: false, snapshot: 0x08c7 });
+    expect(packedData(r)).toEqual([]);
+    expect(unpackSummary(r)).toMatch(/^Going on from the snapshot \(the CPU at \$08c7\), Sindri peels off no layer \(it stopped: settled/);
   });
 });

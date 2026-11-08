@@ -975,8 +975,34 @@ därifrån (LINKPRG) och skriver länkpekare i det som ligger på `$0801`, vilke
 gör (över en fil som inte når dit länkar den om ett tomt program och ändrar inget, och får göra det som förut). Ett program
 som Sindri sparat kan ha kod där: Cybernoid II:s spel (`$0208-$ffff`, start `$1400`) körde in i en JAM på `$08e3`
 när Sindri körde det igen, och kommer nu förbi trainermenyn till spelet på `$0476`.
-En VICE-snapshots RAM körs inte alls, och får ingen packningsnotis: maskinen körde redan programmet när snapshoten
-togs, och från `$0200` har den programmets `SYS`-rad på `$0801`, så `RUN` skulle starta det från början.
+En VICE-snapshot laddas och startas inte: Sindri fortsätter från dess maskin (se *Snapshots* nedan). `RUN` skulle starta
+programmet från början, för från `$0200` har snapshoten programmets `SYS`-rad på `$0801`.
+
+**Snapshots.** En snapshot tagen i ett crackat spels intro eller trainermeny har ofta spelet kvar packat i minnet,
+bakom menyn. Sindri fortsätter därför från snapshotens maskin där den togs (`UnpackOptions.resume`, `vsfMachine()` i
+Sindris `src/vsf.ts`): RAM (allt räknas som laddat, också en uppackare i nollsidan och den packade datan), färg-RAM,
+CPU:ns register och port, VIC-II:ns register, rasterrad och rastercykel, jämförelserad och avbrottsflaggor, och båda
+CIA-kretsarna med portar, timrar, latchar, kontrollregister, avbrottsmask och flaggor (modulerna `C64MEM`, `MAINCPU`,
+`VIC-II` 1.3 och `CIA1`/`CIA2` 2.x som x64sc skriver dem; färg-RAM 761 byte in i VIC-II-modulen). Sedan kör den som
+vanligt: lager, och tangenter när programmet väntar innan något packats upp. Det kräver ROM:arna. Packningsnotisen
+gäller en snapshot bara när en decruncher eller decoder läste packad data (`packedData()`: det de läste i följder om
+minst 256 byte), inte när programmet bara flyttade kod, och den säger var datan låg: "Going on from the snapshot (the
+CPU at $07f8), Sindri peels off 2 layers: …; the packed data was at $090e-$390c; the program starts at $0810". Filens
+egna tecken (entropi, lite kod) räknas inte för en snapshot. *Unpack* ger programmet med sin start, som för en PRG; en
+snapshot packas inte upp av sig själv när den öppnas. Lagerrapporten har raden `Snapshot: going on from where it was
+taken, the CPU at $xxxx`, och `mimir unpack` och Sindris kommandorad tar en `.vsf` (känd på huvudet).
+
+Mätt på 270 snapshots som x64sc 3.10 tog av 60 spel och 30 demos ur CSDB:s topp-200 (första disken, autostart, efter
+ungefär 3, 8 och 20 sekunder i warp): 60 togs medan något laddades från disken, där fortsätter Sindri inte (1541:an tas
+inte ur snapshoten, och KERNAL står och väntar på den). Av de 125 spelsnapshots som togs i ett körande program får 73
+notisen (39 av 60 spel), med packarens namn i 44 (Exomizer, ByteBoozer), median 47 KB packad data. Filens egna tecken
+hade sagt *packad* i 9 av dem, *kanske* i 32 och ingenting i 32. För 14 spel jämfördes programmet med det som *Unpack*
+två gånger ger ur originalfilen: lika (95-100 % av byten, skillnaderna är variabler och skärm) i 10. Av 85
+demosnapshots får 2 notisen: trackmos laddar nästa del från disken medan en del kör, och utan 1541:ans tillstånd går
+laddaren fel (23 av 85 kör in i en JAM). En körning tar median 0,3 s, högst 1,9 s. Testerna: Sindris `test/vsf.test.ts`
+skriver en snapshot av en egen maskin och läser tillbaka den; `fixtures/vsf/packed-menu.vsf` är
+`fixtures/prg/packed-menu.prg` i x64sc, stoppad i tangentväntan på `$07f8` (`make-packed-menu.mon`), och ger demon
+tillbaka i core-testet och i e2e.
 
 **Vad Sindri sparar.** Det sparade programmet är minnet som det var när det nyaste lagret startade, från den första
 till den sista byte som hör till programmet (små delar långt från resten räknas inte): det som lagret före skrev och
@@ -2793,6 +2819,10 @@ läser den direkt. Ingångspunkter:
 Ligger BASIC-raden på `$0801` med en SYS in i RAM, blir SYS-adressen programstart (8.2) som analysen spårar från.
 Analysen hittar BASIC-raden också i en fil som börjar före `$0801`, men bara när dess SYS går in i samma fil. Toasten
 säger vad snapshoten är, varifrån analysen spårar och programstarten.
+
+**Packad data i snapshoten.** Sindri fortsätter från snapshotens maskin (RAM, CPU, VIC-II och CIA-kretsarna) och
+packar upp det som ännu var packat, till exempel ett spel bakom sin trainermeny; notisen säger var den packade datan
+låg, och *Unpack* ger programmet (8.11b, *Snapshots*).
 
 **Build & Run startar om snapshoten som den var.** Snapshoten sparas med filen (`LoadedFile.vsf`, i projektfilen som
 base64 under `files[].vsf`). Build & Run bygger och verifierar som vanligt. Sedan lägger det de byggda PRG-filerna i

@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -899,7 +899,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  as Build & Run starts it, else as LOAD leaves it. A program Unpack saved can start in the middle of its bytes (a
    *  cracked game's trainer menu at $2000 in $03dc-$f700, waiting for a key in front of the packed game). */
   const runStart = (f: LoadedFile): number | null => {
-    const e = project.entryPoint;
+    // (a snapshot goes on from where it was taken)
+    const e = f.vsf ? null : project.entryPoint;
     return e != null && e >= f.load && e < f.load + f.bytes.length ? e : null;
   };
   /** a run of `f` from where it starts now (another program start is another run) */
@@ -909,17 +910,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     let p = running.current.get(key);
     if (!p) {
       const t = tapeOf.current.get(f.id);
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f));
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f), f.vsf ?? null);
       running.current.set(key, p);
       p.then(r => setRuns(m => ({ ...m, [key]: r })), () => running.current.delete(key));
     }
     return p;
   };
   useEffect(() => {
-    // a cartridge's chip is not a program Sindri can load and run, nor is a tape file's header (the tape buffer), nor a
-    // snapshot's RAM: the machine was running it, and LOAD and RUN would start what its BASIC line says (a snapshot from
-    // $0200 has the program's SYS line at $0801), not the program as it was
-    if (!external) for (const f of project.files) if (f.chip == null && !f.vsf && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
+    // a cartridge's chip is not a program Sindri can load and run, nor is a tape file's header (the tape buffer). A
+    // snapshot's RAM is not loaded and started either: Sindri goes on from the snapshot's machine where it was taken
+    // (LOAD and RUN would start what its BASIC line says, not the program as it was)
+    if (!external) for (const f of project.files) if (f.chip == null && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
   }, [project.files, project.entryPoint, external]); // eslint-disable-line react-hooks/exhaustive-deps
   const [identified, setIdentified] = useState<Record<string, IdentifyResponse>>({});
   const asked = useRef(new Set<string>());
@@ -935,12 +936,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   }, [project.files, toolchain.unpackerPath]); // eslint-disable-line react-hooks/exhaustive-deps
   const packing = useMemo(() => A.files.map((af, i): PackingInfo | null => {
     const f = project.files[i];
-    // a cartridge's chip is no packed program (and is in a bank of its own), nor is a snapshot's RAM (what was packed
-    // was unpacked when it was taken; crunched data left in it is no reason to unpack it)
+    // a cartridge's chip is no packed program (and is in a bank of its own). A snapshot's RAM is judged by Sindri going
+    // on from it alone: the signs of a file miss what it still holds packed (9 of 73 games' snapshots), and crunched
+    // data it is done with is no reason to unpack it
     const h = f?.chip != null || f?.vsf ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
+    // a snapshot is packed when going on from it a decruncher or decoder read packed data, not when it only moved code
+    const run0 = f ? runs[runKey(f)] : undefined;
+    const run = f?.vsf && run0 && !packedData(run0).length ? undefined : run0;
     // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
-    if (!external && f && onlyRelocates(runs[runKey(f)], A)) return null;
-    return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, f ? runs[runKey(f)] : undefined, at);
+    if (!external && f && onlyRelocates(run, A)) return null;
+    return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, run, at);
   }), [A, identified, runs, project.files, project.entryPoint, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went. */
   const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined): string => {

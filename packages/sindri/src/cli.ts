@@ -1,4 +1,4 @@
-/* sindri <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
+/* sindri <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64 | snapshot.vsf> [options]: unpack a C64 program and report its layers. Run with `node src/cli.ts` (Node 22.18
  * or newer runs the TypeScript as it is), or `pnpm unpack` in this folder. */
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
@@ -8,15 +8,18 @@ import { findRoms, loadRoms } from './node.ts';
 import { d64File, d64Pick } from './d64.ts';
 import { g64ToD64, isG64 } from './g64.ts';
 import { tapeImageFiles } from './tape.ts';
+import { isVsf, vsfMachine } from './vsf.ts';
 import type { Range } from './analyze.ts';
 
-const HELP = `sindri <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64> [options]
+const HELP = `sindri <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64 | snapshot.vsf> [options]
 
 Runs the program in an emulated C64, follows it through its layers (coders, movers, decrunchers) and saves
 the unpacked program when it starts. With a disk (a D64 or G64, or --disk) a 1541 is on the serial bus, so the
 program can go on loading from it, with the KERNAL or a fast loader of its own. With a tape (a TAP, or --tape)
 the datasette plays it from after the file, PLAY held down, for the program's own tape loader and LOAD. A T64
-holds a tape's files without its pulses: LOAD from the tape reads them.
+holds a tape's files without its pulses: LOAD from the tape reads them. A VICE snapshot (.vsf, x64sc) goes on
+from where it was taken, with its RAM, CPU, VIC-II and CIAs: a game stopped in its intro or trainer menu
+unpacks on from there (the keys Sindri presses get past the menu). The 1541 is not taken from the snapshot.
 
   -o FILE        save here (default: <name>.<start address>.prg next to the file)
   --file NAME    the file on the D64, G64, TAP or T64 to unpack (default: its first program; * and ? as the DOS takes them)
@@ -132,7 +135,13 @@ function main(argv: string[]): number {
   const path = resolve(cwd, inputs[0]);
   let file = new Uint8Array(readFileSync(path));
   let base = join(dirname(path), basename(path, extname(path))), shown = basename(path);
-  if (/\.[dg]64$/i.test(path)) {
+  if (isVsf(file)) {
+    // a VICE snapshot (by its header, whatever its name): the run goes on from its machine; its RAM from $0200 is the
+    // file, as Mimir Studio opens a snapshot
+    o.resume = vsfMachine(file);
+    file = Uint8Array.from([0x00, 0x02, ...o.resume.ram.subarray(0x0200)]);
+    shown = `${basename(path)}: a snapshot, the CPU at ${hex4(o.resume.cpu.pc)}`;
+  } else if (/\.[dg]64$/i.test(path)) {
     const disk = file, sectors = isG64(disk) ? g64ToD64(disk) : disk, entry = d64Pick(sectors, fileName ?? undefined);
     if (!entry) throw new Error(fileName ? `no PRG named "${fileName}" on the disk` : 'no PRG on the disk');
     file = new Uint8Array(d64File(sectors, entry));

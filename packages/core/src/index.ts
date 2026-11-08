@@ -67,7 +67,7 @@ export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles,
 export { applyPatch, assemblePatch, patchAt, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, projectUnpatched, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';
 export { NOTES_FILE, NOTES_TEXT_FILE, notesDocument, notesExport, notesFile, notesFor, notesText, lineHtml } from './notes-doc';
 export { detectPacking, packerSignature, type PackingInfo } from './packing';
-export { conclusive, depackers, depackerText, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun, type UnpackTape } from './sindri';
+export { conclusive, depackers, depackerText, packedData, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun, type UnpackTape } from './sindri';
 export { driveCode, driveSymbol, runAddress, type DriveCode, type DriveCheck, type DriveSegment } from './drivecode';
 export { addDecisionChecks, addRunChecks, checkDecisions, checkRun, type DecisionCheck, type RunCheck } from './runcheck';
 export { brokkrArgs, brokkrCommands, brokkrCommandText, brokkrPlan, crunchHere, NO_ROOM, packDecruncher, packNeeds, packWithBrokkr, type BrokkrCrunch, type BrokkrPack, type BrokkrPlan, type PackedFile, type PackTried } from './brokkr';

@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
-  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, makeDemo, makePrg, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackLog, unpackPrg, verify,
-  type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackTape,
+  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackLog, unpackPrg, verify,
+  type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
 import { findC64Roms, findKickAssJar, findVice, runKickAssembler, splitArgs, writeVfs } from '@mimir/core/node';
 
@@ -330,11 +330,22 @@ export async function main(argv: string[], io: Io): Promise<number> {
           name = `${name}: "${f.name}"`;
           base = `${basename(path).replace(/\.t(ap|64)$/i, '')}-${f.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
         }
+        // a VICE snapshot (by its header): its RAM from $0200, as the app opens it, and Sindri goes on from the snapshot
+        let vsf: Uint8Array | null = null;
+        if (isVsf(prg)) {
+          vsf = prg;
+          const f = openC64File(basename(path), vsf);
+          prg = makePrg(f.load, f.bytes);
+          base = basename(path).replace(/\.vsf$/i, '');
+        }
         const diskFlag = flags.get('disk'), tapeFlag = flags.get('tape');
         if (typeof diskFlag === 'string') disk = new Uint8Array(readFileSync(resolve(io.cwd, diskFlag)));
         if (typeof tapeFlag === 'string') tape = { tap: new Uint8Array(readFileSync(resolve(io.cwd, tapeFlag))) };
         if (prg.length < 3) { io.err(`${path} is too short to be a PRG`); return 2; }
-        const run = unpackPrg(prg, flags.has('no-roms') ? null : findC64Roms(findVice() ?? ''), disk, null, tape);
+        let run: UnpackRun;
+        try {
+          run = unpackPrg(prg, flags.has('no-roms') ? null : findC64Roms(findVice() ?? ''), disk, null, tape, vsf);
+        } catch (e) { io.err(`${name}: ${e instanceof Error ? e.message : String(e)}`); return 2; }
         io.out(unpackLog(run, name, prg[0] | (prg[1] << 8), prg.length - 2));
         if (!run.unpacked || !run.saved) return 1;
         const out = flags.get('out');

@@ -175,6 +175,24 @@ game that reads its data with the KERNAL's own routines; 80 save a later layer t
 takes 2.1 s (median, 10.0 s at most) for 163 s of C64 time on average. Without the IRQ vector at `$029f/$02a0` and
 the motor interlock, only 14 of the first 25 got further than the boot file.
 
+## VICE snapshots
+
+A VICE snapshot (`.vsf`, as x64sc writes it; recognised by its header, whatever its name) is not loaded and started:
+Sindri goes on from the machine it holds, where it was taken (`vsfMachine()` in `src/vsf.ts`, the `resume` option).
+It reads the RAM (all of it counts as loaded, a depacker in the zero page and the data it has yet to unpack too), the
+colour RAM, the CPU's registers and port, the VIC-II's registers, raster line and cycle, compare line and interrupt
+flags, and both CIAs (ports, timers, latches, control registers, interrupt mask and flags), from the modules `C64MEM`,
+`MAINCPU`, `VIC-II` (1.3; `VIC-IISC` from 1.4) and `CIA1`/`CIA2` (2.x). The run then goes on as any other: layers, and
+keys when the program waits before anything was unpacked. The file is the snapshot's RAM from `$0200`, and the report
+says where the CPU was. It needs the ROMs.
+
+A snapshot taken in a cracked game's intro or trainer menu still holds the game packed behind it. Of 125 snapshots
+x64sc 3.10 took of 60 games from CSDB's top 200 while they ran (about 8 and 20 s after autostarting the first disk,
+in warp), Sindri unpacked packed data in 73 (39 games), naming the packer in 44 (Exomizer, ByteBoozer); in 10 of 14
+checked, the program was the one unpacking the original file twice gives (95-100% of the bytes). The 1541 is not taken
+from the snapshot: one taken while a program loads from disk stays in the KERNAL's wait for the drive (60 of 270), and
+trackmos that load their next part while a part runs go wrong (2 of 85 demo snapshots unpacked, 23 in a JAM).
+
 ## Use
 
 ```
@@ -216,7 +234,8 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
 | `--trace` | every layer change and key press as it happens |
 | `--learn NAME` | add the depackers' fingerprints to the signature list as `NAME` |
 
-`node src/cli.ts demo.d64` unpacks a disk's first PRG with the disk in the drive. Addresses can be written `$080d`,
+`node src/cli.ts demo.d64` unpacks a disk's first PRG with the disk in the drive. `node src/cli.ts game.vsf` goes on from a VICE
+snapshot. Addresses can be written `$080d`,
 `0x080d` or `2061`. In this folder, `pnpm unpack game.prg` does the same, and
 `pnpm --filter @mimir/sindri unpack game.prg` anywhere in the repository.
 

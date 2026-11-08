@@ -4,13 +4,14 @@
  * from, a 1541 is on the serial bus and the program goes on loading. Here: a run whose result can be posted from a
  * worker, the packers the layers' fingerprints name, and the layer report the app and the CLI show.
  * ===================================================================== */
-import { unpack, type LayerReport, type Roms, type UnpackResult } from '@mimir/sindri';
+import { unpack, vsfMachine, type LayerReport, type Roms, type UnpackResult } from '@mimir/sindri';
 import { h4 } from './util/hex';
 
 export type { LayerReport, Roms } from '@mimir/sindri';
 
-/** A run of Sindri without its save() function, so that it can cross a worker boundary. */
-export type UnpackRun = Omit<UnpackResult, 'save'>;
+/** A run of Sindri without its save() function, so that it can cross a worker boundary; `snapshot`: it went on from
+ *  a VICE snapshot whose CPU was there */
+export type UnpackRun = Omit<UnpackResult, 'save'> & { snapshot?: number };
 
 /** The tape a file came from (a TAP image, or a T64 tape archive) and, when it is not one of its KERNAL files, where
  *  the tape stands once the file has loaded (a pulse: TapeFile.to; a T64's slot after the file). */
@@ -20,11 +21,28 @@ export interface UnpackTape { tap: Uint8Array; at?: number | null }
  * Unpack a PRG (load address first); without ROMs Sindri runs with its stand-ins for the KERNAL and BASIC. With
  * the D64 it came from (and the 1541 DOS ROM in `roms`), the drive reads the disk for the program's loader; with the
  * tape it came from, the datasette plays it from after the file for the program's tape loader. `entry`: start it
- * there (SYS) instead of with RUN, as a program without a BASIC line needs.
+ * there (SYS) instead of with RUN, as a program without a BASIC line needs. `vsf`: the PRG is a VICE snapshot's RAM,
+ * and Sindri goes on from the snapshot's machine where it was taken instead (it needs the ROMs; throws when the
+ * snapshot is not one Sindri reads): a game stopped in its intro or trainer menu still holds the game packed.
  */
-export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null, tape: UnpackTape | null = null): UnpackRun {
-  const { save: _save, ...run } = unpack(prg, { roms, disk, ...(entry != null ? { entry } : {}), ...(tape ? { tape: tape.tap, ...(tape.at != null ? { tapeAt: tape.at } : {}) } : {}) });
-  return run;
+export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null, tape: UnpackTape | null = null, vsf: Uint8Array | null = null): UnpackRun {
+  const resume = vsf ? vsfMachine(vsf) : null;
+  const { save: _save, ...run } = unpack(prg, {
+    roms, disk, ...(resume ? { resume } : entry != null ? { entry } : {}),
+    ...(tape ? { tape: tape.tap, ...(tape.at != null ? { tapeAt: tape.at } : {}) } : {}),
+  });
+  return resume ? { ...run, snapshot: resume.cpu.pc } : run;
+}
+
+/**
+ * Where the packed data was: what the decrunchers and decoders read in runs of 256 bytes or more (a mover's source is
+ * the program itself, moved), merged. For a snapshot it is the part of its RAM that was still packed.
+ */
+export function packedData(run: Pick<UnpackRun, 'layers'>): { start: number; end: number }[] {
+  const rs = depackers(run).filter(l => l.kind === 'decruncher' || l.kind === 'decoder').flatMap(l => l.read).filter(r => r.end - r.start >= 255).sort((a, b) => a.start - b.start);
+  const out: { start: number; end: number }[] = [];
+  for (const r of rs) { const last = out.at(-1); if (last && r.start <= last.end + 1) last.end = Math.max(last.end, r.end); else out.push({ start: r.start, end: r.end }); }
+  return out;
 }
 
 /** The layers that unpacked something: neither the program nor a layer that only jumps on. */
@@ -43,10 +61,12 @@ export function depackerText(l: LayerReport): string {
 
 /** What a run found, in a sentence for the packed notice: the layers it peeled off and where the program starts. */
 export function unpackSummary(run: UnpackRun): string {
-  if (!run.unpacked) return `Sindri peels off no layer (it stopped: ${stopText(run)})`;
+  const from = run.snapshot != null ? `Going on from the snapshot (the CPU at $${h4(run.snapshot)}), ` : '';
+  if (!run.unpacked) return `${from}Sindri peels off no layer (it stopped: ${stopText(run)})`;
   const d = depackers(run);
   const prog = run.saved ? `; the program starts at $${h4(run.saved.entry)}` : '';
-  return `Sindri peels off ${d.length} layer${d.length === 1 ? '' : 's'}: ${d.map(depackerText).join(', then ')}${prog}`;
+  const data = run.snapshot != null && packedData(run).length ? `; the packed data was at ${rangesText(packedData(run))}` : '';
+  return `${from}Sindri peels off ${d.length} layer${d.length === 1 ? '' : 's'}: ${d.map(depackerText).join(', then ')}${data}${prog}`;
 }
 
 /** The run ended where a program normally ends up (it settled, or went back to BASIC), not on a limit or a load. */
@@ -79,6 +99,7 @@ function layerLines(l: LayerReport): string[] {
 /** The layer report of a run of `name` (a PRG of `size` bytes after its load address), as Sindri's command line prints it. */
 export function unpackLog(run: UnpackRun, name: string, load: number, size: number): string {
   const out = [`${name}: ${rangeText({ start: load, end: load + size - 1 })} (${kb(size)})${run.basic.length ? `, ${run.basic.slice(0, 2).join(' / ')}` : ''}`, `ROMs: ${run.roms}`];
+  if (run.snapshot != null) out.push(`Snapshot: going on from where it was taken, the CPU at ${hex(run.snapshot)} (its RAM, VIC-II and CIAs; not its 1541)`);
   if (run.drive) out.push(`Drive: ${run.drive}`);
   if (run.tape) out.push(`Tape: ${run.tape}`);
   for (const l of run.layers) out.push(...layerLines(l));

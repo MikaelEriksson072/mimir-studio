@@ -46,6 +46,12 @@ export interface UnpackOptions {
    *  file that holds the file's bytes at its address (its header is in the tape buffer then, as LOAD left it), else at
    *  the start */
   tapeAt?: number;
+  /**
+   * go on from this machine instead of loading the file and starting it: a VICE snapshot's (vsfMachine), whose RAM the
+   * file then holds (from $0200, say). Everything in RAM counts as loaded, and the program goes on where it was; the
+   * ROMs are needed
+   */
+  resume?: MachineState;
   /** start the program here (SYS) instead of RUN */
   entry?: number;
   /** load the file here instead of at its own load address */
@@ -365,10 +371,26 @@ class Session {
   run(): UnpackResult {
     const t0 = performance.now();
     if (this.o.tape) this.attachTape();
-    if (this.real) this.bootReal(); else this.bootStandIn();
-    if (this.o.disk) this.attachDrive();
+    if (this.o.resume) this.resumeFrom(this.o.resume);
+    else if (this.real) this.bootReal(); else this.bootStandIn();
+    if (this.o.disk && !this.stopped) this.attachDrive();
     if (!this.stopped) this.loop();
     return this.finish(performance.now() - t0);
+  }
+
+  /**
+   * A snapshot's machine, going on where it was: everything in RAM counts as loaded (the program, a depacker resident
+   * in the zero page, the packed data it has yet to unpack), and the first instruction it runs in RAM starts the
+   * first layer. A program that goes back to the READY prompt has ended: no SYS to where the file loads.
+   */
+  private resumeFrom(s: MachineState): void {
+    const m = this.m;
+    if (!this.real) { this.stop('needs-rom', 'going on from a snapshot needs the ROM files'); return; }
+    m.restore(s);
+    for (let a = 2; a < 0x10000; a++) { m.wid[a] = LOADED; m.wtime[a] = m.icount; }
+    for (const t of [m.firstOp, m.firstArg, m.firstRead, m.firstWrite]) t.fill(0);
+    this.triedSys = true;
+    this.setPhase('run');
   }
 
   /** The C64 started up a while ago, at the READY prompt: type LOAD. */
@@ -901,7 +923,12 @@ class Session {
         return;
       }
     }
-    if (!this.started) { this.stop('not-started', 'no machine code ran'); return; }
+    if (!this.started) {
+      // (a snapshot taken while the KERNAL loaded from a disk: the 1541 is not in it as it was)
+      const at = this.o.resume ? `: the snapshot was in the ROM at ${hex4(this.o.resume.cpu.pc)} and went on there` : '';
+      this.stop('not-started', `no machine code ran${at}`);
+      return;
+    }
     this.stop('settled', `waits at ${hex4(m.cpu.pc)}`);
   }
 
