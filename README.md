@@ -85,6 +85,13 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     no script file: the program's own code is the script (`lda #file / jsr $0200` loads a file, then it calls the
     part). The *Booze script* tab lists the disk's files and the loads, disk sides and calls of the code that calls the
     loader, each load with what its file unpacks to on the mounted disk, and *Copy script* copies them;
+  - the bundles of a Sparkle disk (Sparta's loader, 2019 on; Memento Mori, The Santas' Christmas Megademo, All Hallows
+    Eve, The Machine and over a hundred more): a bundle is the files one loader call loads, packed block by block back
+    to back and read in the drive's own sector order, so they are not files on the disk. Mimir unpacks every bundle as
+    the loader does, for each of Sparkle's kinds of blocks (2020 to Sparkle 3), so each of its files opens as a PRG at
+    its address. The *Sparkle script* tab lists them by the number a part loads them with (`lda #number / jsr $0160`),
+    *Copy script* copies the Sparkle loader script (`.sls`) rebuilt from the disk, and *Save files…* saves the files
+    with that script;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
     Gold's loader and Martin Piper's TapeTool (the TinyHeader file its boot loader reads, files in checksum blocks in
     any order, RLE packed blocks) are

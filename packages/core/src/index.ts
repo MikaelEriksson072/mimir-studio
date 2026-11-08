@@ -32,6 +32,7 @@ export { PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, pir
 export { isTap, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, TAPE_CLOCK, type TapeFile, type TapeFileType, type TapeFormat, type TapeImage, type TapeUnknown, type TapPulses } from './c64/tap';
 export { readSpindleDisk, spinChunkName, spinScript, type SpindleChunk, type SpindleDisk, type SpindleJob } from './c64/spindle-disk';
 export { BOOZE_CRUNCHER, boozeFileList, boozeFileName, readBoozeDisk, unpackByteBoozer1, unpackByteBoozer2, type BoozeCruncher, type BoozeDisk, type BoozeFile, type BoozeUnpacked } from './c64/booze-disk';
+export { readSparkleDisk, sparkleBlockOrder, sparkleChunkName, sparkleChunkPrg, sparkleCount, sparkleScript, type SparkleBundle, type SparkleChunk, type SparkleCountCode, type SparkleDisk, type SparkleItems } from './c64/sparkle-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
 export { sidPlayer, musicPlayData, type SidPlayer, type SidPlayerOptions, type MusicPlayData } from './c64/sidplayer';

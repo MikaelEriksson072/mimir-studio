@@ -624,6 +624,23 @@ the reference as a patch in `test/helpers/reference.ts`):
     file at `$8F1F`-`$97FF` (the drive sends it as soon as it has found the key; the `LDA #$17` boot call takes it
     without a command), 19/0 its main code at `$39BD`; Demon Stalkers' 3/0 loads at `$1800`, Yeager's at `$9700`. The
     Pirate Slayer tab lists them and opens one decoded; 3/0, 9/0, 19/0 and 23/0 of Arctic Fox re-assemble byte for byte.
+34. Sparkle disks (spec 13.5i) are new. `readSparkleDisk` (`packages/core/src/c64/sparkle-disk.ts`) reads the
+    bundles of a disk built with Sparkle (Sparta/OMG), read from Memento Mori (2020), All Hallows Eve (2022) and
+    5 Shades of Grey (2020) with Sindri probes on the C64's received blocks and the drive's zero page, and confirmed by
+    Sparkle's sources: the drive's sector walk (`sparkleBlockOrder`; the interleave from the drive's zero page in
+    18/14, where the walk's setup on track 18 takes it), three kinds of block items (`SparkleItems`: `f8`, `old`, `84`,
+    with copies from up to 64K above), three codings of the drive's counts in byte 1 (`SparkleCountCode`: `raw`,
+    `bits`, `eor`), and Memento Mori's directory in 18/17-18/18 that loading a bundle by number uses. That every bundle
+    ends in the block the counts say is the check that the walk, the items and the counts are right; the reader tries
+    the kinds and takes the one that unpacks to the end of the side. The Sparkle script tab lists the bundles' files
+    to open or add, copies the loader script (`sparkleScript`) and saves every file as a PRG with it. The loader is
+    also known by Memento Mori's loop (`ldy #$00`) and by both kinds of unpacker in a part saved from `$0200`. Checked
+    against the loader in Sindri (every write of its unpacker on nine disks of four kinds, nearly 1.7 million in all,
+    The Machine loading 83 bundles by number) and against each disk's own unpacker run on Sindri's 6502 with the blocks
+    in the reader's order (every bundle of 240 disks). Of 142 different disks with Sparkle's M-E in CSDB's
+    Year-top20, 133 are read to the end of the side (1 794 bundles, 4 459 files, 4 ms a disk); not read are Lethargy's
+    modified Median and Padawans Awakening and Sparkle 3's newest (Wavemode, Aloft). None is taken for another
+    loader's disk.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

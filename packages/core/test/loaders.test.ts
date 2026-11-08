@@ -273,6 +273,41 @@ describe('loaders', () => {
     expect(inside.parts.map(p => [p.start, p.role, !!p.outside])).toEqual([[0x0160, 'resident', false]]);
   });
 
+  it('know Sparkle by its loop and by its block unpacker at $0200, which a part saved from $0200 keeps alone', () => {
+    // Memento Mori's: inx, ldy #$00
+    expect(ids(SPARKLE.replace(' dex\n', ' inx\n').replace(' ldy #$c0\n', ' ldy #$00\n'))).toEqual(['sparkle']);
+    // the unpacker reads an item byte from the block at $0300: 0 ends the block, from $f8 a command, else a match
+    const unpacker = loaders(` jsr $0200
+ rts
+.pc = $0200
+item: lda $0300,x
+ beq next
+ cmp #$f8
+ bcs cmd
+ lsr
+ .byte $4b,$fe
+ tay
+ eor #$ff
+ adc $02
+next: rts
+cmd: rts
+`);
+    expect(unpacker.map(l => [l.id, l.sure, l.parts.map(p => p.what)])).toEqual([['sparkle', 'match', ['block unpacker (an item byte from the block at $0300: 0 ends the block, $f8 0 the bundle, $fc gives a new address)']]]);
+    // All Hallows Eve's: from $80 a near copy, its length in bits 2-6
+    const later = loaders(` jsr $0232
+ rts
+.pc = $0232
+ lda $0300,x
+ bpl done
+ sty $0255
+ .byte $4b,$7c
+ lsr
+ cmp #$02
+done: rts
+`);
+    expect(later.map(l => [l.id, l.parts.map(p => p.what)])).toEqual([['sparkle', ['block unpacker (an item byte from the block at $0300: 0 ends the block, from $80 a near copy, $84 0 the bundle, $80 a new address)']]]);
+  });
+
   it('know Bitfire, Sparkle and the Covert Bitops loader by their loops', () => {
     expect(ids(BITFIRE)).toEqual(['bitfire']);
     expect(ids(SPARKLE)).toEqual(['sparkle']);

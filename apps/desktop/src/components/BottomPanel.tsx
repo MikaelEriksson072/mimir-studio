@@ -1,9 +1,9 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
- * disk's files, the BoozeLoader script, Pirate Slayer on the mounted disk, the tape in the datasette, statistics,
- * build output. */
+ * disk's files, the BoozeLoader script, a Sparkle disk's bundles, Pirate Slayer on the mounted disk, the tape in the
+ * datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
-  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
 import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -255,6 +255,48 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
             </tr>
           );
         })}
+      </tbody></table>
+    </div>
+  );
+}
+
+/** The Sparkle script tab (spec 13.5i): a Sparkle disk's bundles, the files each loader call loads, a row per chunk
+ *  in the order they load; a row opens the chunk as a PRG at its address, + adds it. Copy script gives the loader
+ *  script rebuilt from the disk, Save files… every chunk as a PRG with that script. */
+export function SparklePanel({ disk, onCopy, onOpenChunk, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenChunk: (b: SparkleBundle, c: SparkleChunk, add: boolean) => void; onSaveFiles: () => void }) {
+  const d = disk.sparkle!;
+  const chunks = d.bundles.reduce((n, b) => n + b.chunks.length, 0);
+  const send = d.api?.send;
+  const how = d.api
+    ? `a part loads the next bundle with jsr $${h4(d.api.next)}${send == null ? '' : d.indexed ? `, or picks one by its number first (lda #number / jsr $${h4(send)}; the drive's directory in 18/17 has every bundle)` : `; lda #number / jsr $${h4(send)} first picks one from the drive's directory in 18/17`}`
+    : 'the loader loads them in this order';
+  const notes = (b: SparkleBundle, c: SparkleChunk, k: number) => [
+    k === 0 && `from ${b.track}/${b.sector}, ${b.blocks ? `${b.blocks} block${b.blocks === 1 ? '' : 's'}` : 'in the block before it'}`,
+    k === 0 && b.n === 0 && d.start != null && `the boot program goes to $${h4(d.start)} after it`,
+    c.io && 'under the I/O area',
+    k === 0 && b.missing > 0 && `${b.missing} bytes could not be unpacked`,
+  ].filter(Boolean).join(' · ');
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>Bundles of {disk.name} (Sparkle{d.side != null ? `, side ${d.side}` : ''}): {d.bundles.length} bundle{d.bundles.length === 1 ? '' : 's'}, {chunks} file{chunks === 1 ? '' : 's'} <span className="muted">· a bundle is a loader call: {how}; interleave {d.il.join(', ')}{d.next != null ? `; then side ${d.next}` : ''}{d.complete ? '' : '; the last bundle of the side did not unpack (its last block counts on one more, where the blocks are not Sparkle blocks)'}; the file names are not on the disk</span></span>
+        <button className="btn small" onClick={() => onCopy(sparkleScript(d, disk.name).join('\n'), 'Copied the loader script')}><Icon name="copy" size={14} />Copy script</button>
+        <button className="btn small" onClick={onSaveFiles} title="Save every bundle's files as PRGs to a folder, with the loader script that loads them"><Icon name="download" size={14} />Save files…</button>
+      </div>
+      <table className="tbl" aria-label="Sparkle bundles"><thead><tr><th>Bundle</th><th>Loads</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
+        {d.bundles.flatMap(b => b.chunks.map((c, k) => {
+          const name = sparkleChunkName(b, c);
+          return (
+            <tr key={`${b.n}-${c.start}`} className={cx(k === 0 && 'job-first')} title={`Open ${name} as a PRG at $${h4(c.start)}`} onClick={() => onOpenChunk(b, c, false)}>
+              <td className="mono">{k === 0 && `$${h2(b.n)}`}</td>
+              <td className="mono">${h4(c.start)}–${h4(c.end - 1)}</td>
+              <td className="mono">{c.end - c.start}</td>
+              <td className="mono">{name}</td>
+              <td className="muted">{notes(b, c, k)}</td>
+              <td><button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenChunk(b, c, true); }}><Icon name="plus" size={13} /></button></td>
+            </tr>
+          );
+        }))}
       </tbody></table>
     </div>
   );
@@ -572,4 +614,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

@@ -5043,6 +5043,66 @@ test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, a
   });
 });
 
+test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files open, the loader script copied and saved', async ({ workDir, app, page }) => {
+  // fixtures/d64/sparkle-demo.d64 (packages/core/test/sparkle-disk.test.ts): Memento Mori's layout with the raster demo as
+  // the first bundle, a bundle with a file under the I/O area, and a small one in the block where that one ends
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/sparkle-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted sparkle-demo.d64: "SPARKLE DEMO", 1 file, a Sparkle disk with 3 bundles of files (side 1)')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText('Sparkle disk: 3 bundles of files the loader reads, not in the directory');
+  const bundles = page.getByRole('table', { name: 'Sparkle bundles' });
+
+  await test.step('the Explorer opens the tab, a row per file of each bundle', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Sparkle script' }).click();
+    await expect(page.getByRole('tab', { name: /Sparkle script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /Sparkle script/ })).toContainText('3');
+    await expect(page.locator('.spindle-head').first()).toContainText('Bundles of sparkle-demo.d64 (Sparkle, side 1): 3 bundles, 4 files');
+    await expect(page.locator('.spindle-head').first()).toContainText('a part loads the next bundle with jsr $01f9, or picks one by its number first (lda #number / jsr $0160');
+    await expect(bundles.locator('tbody tr td:nth-child(1)')).toHaveText(['$00', '$01', '', '$02']);
+    await expect(bundles.locator('tbody tr td:nth-child(2)')).toHaveText(['$0801–$37ff', '$3000–$34af', '$d000–$d1f3', '$0400–$0427']);
+    await expect(bundles.locator('tbody tr td:nth-child(4)')).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle01_d000.prg', 'bundle02_0400.prg']);
+    await expect(bundles.locator('tbody tr td:nth-child(5)')).toHaveText([/^from 1\/0, \d+ blocks · the boot program goes to \$0810 after it$/, /^from 1\/\d+, \d+ blocks?$/, 'under the I/O area', /^from 1\/\d+, in the block before it$/]);
+  });
+
+  await test.step('a row opens its file as a PRG at its address; + adds one', async () => {
+    await bundles.getByRole('row', { name: /bundle00_0801/ }).click();
+    await expect(toast(page, 'Loaded bundle00_0801.prg at $0801')).toBeVisible();
+    // the raster demo, as it was before it was packed into the bundle
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await bundles.getByRole('button', { name: 'Add bundle01_3000.prg to this project' }).click();
+    await expect(page.locator('.file-name')).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg']);
+  });
+
+  await test.step('it copies the loader script: the disk\'s entries, a paragraph per bundle, * under the I/O area', async () => {
+    await page.getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, 'Copied the loader script')).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text[0]).toBe('# Sparkle loader script, rebuilt by Mimir Studio from sparkle-demo.d64 (Sparkle): 3 bundles, 4 files.');
+    expect(text).toContain('Start:\t0810');
+    expect(text).toContain('IL0:\t4');
+    expect(text.filter(l => l.startsWith('File:'))).toEqual(['File:\t"bundle00_0801.prg"', 'File:\t"bundle01_3000.prg"', 'File:\t"bundle01_d000.prg*"', 'File:\t"bundle02_0400.prg"']);
+  });
+
+  await test.step('Save files… saves every file as a PRG, with the loader script that loads them', async () => {
+    const out = join(workDir, 'sparkle-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 4 files of sparkle-demo\.d64's bundles to .*, and sparkle-demo\.sls, the loader script that loads them$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle01_d000.prg', 'bundle02_0400.prg', 'sparkle-demo.sls']);
+    expect(readFileSync(join(out, 'bundle00_0801.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+    expect(readFileSync(join(out, 'sparkle-demo.sls'), 'utf8').split('\r\n')).toContain('File:\t"bundle01_d000.prg*"');
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /Sparkle script/ })).toHaveCount(0);
+  });
+});
+
 test('the tab row fits a small window: the listing tools lose their labels, then move into the ⋯ menu', async ({ app, page }) => {
   await waitForListing(page);
   const row = page.locator('main.main > .tabs');

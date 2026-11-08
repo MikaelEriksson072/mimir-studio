@@ -1073,7 +1073,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Spindle 2 (lft) | `ldx $dd00 / sty $dd00 / eor tabell,x` (`AE 00 DD 8C 00 DD 5D`), de två fasta sidorna `$0c00–$0dff` (läst ur spin.exe i 2.3) |
 | Krill's loader (Krill/Plush) | `ora $dcc9,x / stx $dd02 / ror / ror / ldx #$3f / sax` och `adc $dd00 / stx $dd02 / iny / beq` (v194, hal-c64-c128.inc); installationen skickar `"M-E" $020b "KRILL."` |
 | Bitfire (Bitbreaker/Oxyron) | `adc $dd00 / stx $dd02 / lsr / lsr / dey / cpy #$01`, `ora $dd00 / stx $dd02 / ror / ror / ldx #$3f / sax` (resident.asm), och den äldre `ldy #$37 / lda $dcc9,y / sty $dd02` |
-| Sparkle (Sparta/OMG) | `lda $dd00 / sty $dd00 / lsr / lsr / dex / nop / ldy #$c0 / ora $dd00 / sty $dd00` och `and $dd00 / sta $dd00 / ora #0 / sta buffer,x / bvc` (sl.asm), i en senare version `inx` och `ora #1`; texten "sparkle" |
+| Sparkle (Sparta/OMG) | `lda $dd00 / sty $dd00 / lsr / lsr / dex / nop / ldy #$c0 / ora $dd00 / sty $dd00` och `and $dd00 / sta $dd00 / ora #0 / sta buffer,x / bvc` (sl.asm), i en senare version `inx` och `ora #1`, i Memento Mori `inx` och `ldy #$00`; blockuppackaren på `$0200` (`lda $0300,x / beq / cmp #$f8 / bcs / lsr / alr #$fe / tay / eor #$ff / adc`, och i All Hallows Eve och senare `lda $0300,x / bpl / sty / alr #$7c / lsr / cmp #2`), som en del sparad från `$0200` har utan mottagarloopen; texten "sparkle". En Sparkle-disks bundlar läses som 13.5i säger |
 | BoozeLoader (HCL/Booze Design) | mottagarloopen `dey / ldx #8 / lda $dd00 / stx $dd00 / lsr / lsr / iny / nop / ldx #0 / eor $dd00 / stx $dd00 / lsr / lsr`, där ATN skrivs till `$dd00` som klocka, och dess fjärde läsning `lda #$c0 / and $dd00 / sta $dd00 / ora #0 / sta buffer,y`; hur den skickar en bit av filnumret (`ldy #0 / bcc / ldy #$10 / lda #8 / sta $dd00 / bit $dd00 / bpl / sty $dd00 / rts`); ByteBoozer 1:s och 2:s offsettabeller, som bara räknas med loaderns egen kod; drivkommandot `"M-E" $020b` med sina egna byte, som låter DOS:en läsa drivkoden från 18/18, 18/15 och 18/12. Mönstren kommer ur Booze Designs demos 2008–2025 (källkoden är inte offentlig). Drivkoden finns aldrig i C64:ans minne, och skriptet i koden läses som 13.5d säger |
 | Pirate Slayer (Electronic Arts) | drivkodens nyckelkontroll `bvc * / clv / lda $1c01 / cmp #$d7 / bne / bvc * / clv / lda $1c01 / cmp #$d7 / beq / cmp #$eb / bne` (`50 FE B8 AD 01 1C C9 D7 D0 .. 50 FE B8 AD 01 1C C9 D7 F0 .. C9 EB D0`) och nyckelns 12 sista byte `55 AE 9B 55 AD 55 CB AE 6B AB AD AF`; drivens sändrutin `lda #1 / sta $1800 / bit $1800 / bne / stx $1800 / txa / asl / and #$0f / sta $1800`; C64:ans mottagarloop `sec / ldx $02 / lda $d012 / sbc #$32 / bcc / and #$07 / beq / stx $dd00` och stack-bootens handskakning `lda $dd00 / and #$07 / ora #$08 / sta $dd00 / lda $dd00 / bmi / dey / beq / bit $dd00 / bvs …`; texten `PIRATESLAYER`. Mönstren kommer ur drivkoden och laddarna som bootarna på fyra EA-skivor laddade upp och körde (Sindri med deras G64:or, 13.5h). Super Snapshot-kopierarens tecken `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c` (motor och lampa på) räknas nu bara med kopierarens egen kod: Pirate Slayers drivkod börjar likadant |
 | Covert Bitops loader (Cadaver) | badline-väntan `lda $d011 / clc / sbc $d012 / and #$07 / beq` följd av `lda #$10 / ora $dd00 / sta $dd00` (v3 loader.s), och `M-W` lagrat baklänges (`"W-M"`) |
@@ -2467,6 +2467,116 @@ arbete; se `docs/pirateslayer.md`. Laddaren känns igen i analysen (8.11c). `tes
 `test/g64.test.ts` gör egna skivor (bara nyckelns bytemönster, inget av EA:s kod); Sindris `test/g64.test.ts` provar
 läsningen bit för bit, timrarna, stegmotorn och LOAD-pekaren.
 
+### 13.5i Sparkle-diskar (Sparkles laddskript)
+
+Sparkle är Spartas (OMG) loader och diskbyggare för trackmos, från 2019. Diskbyggaren läser ett skript (`.sls`) där
+varje stycke är en *bundle*: filerna och bitarna av filer som ett anrop av loadern laddar. De är inga filer på disken.
+Sparkle packar bundlarna efter varandra i block om 256 byte, utan glapp (en bundle börjar i blocket där den förra
+slutar), och driven skickar en bundles block i den ordning de passerar huvudet. Varje block säger själv var dess byte
+ska, så C64:an packar upp varje block när det kommer. `readSparkleDisk()` (`packages/core/src/c64/sparkle-disk.ts`)
+läser en Sparkle-sidas bundlar (`SparkleDisk`, `SparkleBundle`, `SparkleChunk`), och `sparkleScript()` skriver
+laddskriptet igen. Formatet är läst ur *Memento Mori* (Genesis Project, 2020), *All Hallows Eve* (2022) och *5 Shades
+of Grey* (Lethargy, 2020), och kontrollerat mot loadern när den kör i Sindri och mot diskarnas egna uppackare.
+Skriptets syntax är den i Sparkles manual (3.4); Sparkles källkod (Sparkle2, SparkleCPP) bekräftar blockens layout,
+taggarna, interleaven och katalogen.
+
+**Disken:**
+- **Startprogrammet** (katalogens första post, på spår 18) kopierar den residenta delen till `$0160–$02ff` (den äldsta
+  till `$0180–$02ff`, i tre halvor) och skickar ett `M-E` som låter DOS:en läsa drivkoden från spår 18 (18/11–18/15,
+  eller 18/2, 6, 10, 14 och 18 i den äldsta). Det laddar första bundlen med `lda #>start-1 / pha / lda #<start-1 / pha
+  / jmp load`: skriptets *Start*. Den residenta delen ger också loaderns nollsida (`sta (zp),y`, skriptets *ZP*) och
+  dess anrop: nästa bundle (`jsr $01f9` i Memento Mori, `$01f6`, `$01fc` och `$0200` i andra versioner, `$0180` i den
+  äldsta), och `lda #nummer / jsr $0160` före väljer en annan ur drivens katalog (Memento Moris tredje sida startar sin
+  huvudkod från sista bundlen, `$33`; The Machine laddar 83 bundlar så).
+- **Drivens nollsida** är 18/14. Drivkoden hämtar varje hastighetszons interleave där (`ldx zp,y` med Y = sektorerna på
+  spåret, i de flesta versioner från `$4f` + Y) och skriver in den i sin sektorvandring: skriptets *IL0–IL3*. Läsaren
+  hittar inställningen på spår 18 (`ldx zp,y / stx / ldx #1 / stx / cpy #21 / beq / dex / stx`), annars tas `$4f`.
+- **Blocken** är spår 1 till 35 (40), förbi 18, och varje spårs sektorer i den ordning driven vandrar: vidare från där
+  vandringen på förra spåret slutade, en interleave i taget, nästa sektor när den är tagen. Förbi spårets sista sektor
+  går den tillbaka med spårets antal sektorer (och en till på ett spår med 21), och över spår 18 hoppar den två steg.
+  Första blocket är 1/0.
+- **Ett block** är byten som C64:an tar emot dem. Byte 0 är första byten med bitar, resten läses uppifrån och ned: vart
+  byten ska (låg, hög; en hög byte 0 betyder under I/O-området och följs av den riktiga), sedan poster. En bit 0 är en
+  literal på 1 byte, en bit 1 en längre, längd − 1 i en nibble (två per byte, den låga först; 0: en hel byte följer).
+  Efter en literal kommer en kopia; efter en kopia betyder bit 1 en kopia till och 0 en literal. En kopiebyte vars två
+  låga bitar inte är 0 kopierar `(b & 3) + 1` byte från `(b >> 2) + 1` ovanför. Bitarna tas uppifrån i en byte, vars
+  lägsta 1 markerar var de slutar; en ny byte läses när de tar slut. Kopior kommer från högre adresser, så en bundle
+  packas upp ovanifrån och ned. De andra posterna finns i tre slag (`SparkleItems`):
+  - **`f8`** (Memento Mori): `(b >> 2) + 1` byte från nästa byte + 1 ovanför; 0 avslutar blocket, `$f8 n` (n inte 0)
+    kopierar n + 1 byte, `$f8 0` avslutar bundlen (nästa börjar under: dess bitar, sedan vart den ska) och `$fc` ger en
+    ny adress.
+  - **`old`** (5 Shades of Grey, Gamertro, Fatzones demos till 2023): samma poster, men blockets byte 0 har 8 bitar (den
+    1 som avslutar dem läggs in när den första läses, `sec / rol`), och en bundle som börjar under slutet av en annan
+    fortsätter med dess bitar och nibble (`lda #bitar / ldx #plats` på `$0180` sparar dem).
+  - **`84`** (All Hallows Eve 2022 och senare, också Sparkle 3): längden i bit 2–6, avståndets höga byte först när bit 7
+    inte är satt: `1LLLLL00 o` kopierar L byte från o + 1 ovanför, `0LLLLL00 h o` från (h o) + 1. Med L = 1 följer en
+    byte med längden (`$84 n o`, `$04 h n o`; `$84 0` avslutar bundlen), med L = 0 (`$80`) en ny adress; 0 avslutar
+    blocket.
+- **Byte 1** i första blocket och i ett block där en bundle slutar är drivens: hur många block till nästa bundle som går
+  förbi blocket tar. Driven skickar 0 i dess ställe. Antalet är kodat (`SparkleCountCode`): `raw` som det är (de äldsta),
+  `bits` varje bit flyttad (bit i till 3, 1, 2, 0, 7, 5, 6, 4) och alla inverterade (Memento Mori), `eor` EOR `$7f` när
+  bit 0 och 3 är lika och annars `$76` (All Hallows Eve). Antalet 0 avslutar sidan; de äldsta sidorna slutar i stället
+  med 1, och blocket efter är tomt eller en fil i katalogen. Bundlar som slutar i samma block läses ändå. Samma kod i
+  BAM:ens byte `$ff` och `$fe` ger sidans nummer och nästa sidas (inte i de äldsta). **Att varje bundle slutar där
+  antalen säger är kontrollen** att vandringen, posterna och kodningen stämmer: läsaren prövar slagen och tar det som
+  packas upp till sidans slut.
+- **Drivens katalog** i 18/17–18/18 har 4 byte per bundle efter dess nummer (högst 128). I Memento Mori: spåret där den
+  börjar, var vandringen börjar på spåret, sektorerna kvar på spåret från dess block (alla tre kodade som antalet) och
+  var i blocket den börjar; `indexed` säger att den stämmer med varje bundle. Senare skript ger bara vissa bundlar ett
+  nummer (`DirIndex`), och deras katalog läses inte här.
+
+**En bundle** blir bitar (`SparkleChunk`): en per följd av adresser, med *io* när någon av dess byte i `$d000–$dfff`
+packades upp under I/O-området (Sparkle sätter `$01` ett block i taget, så en fils block utanför I/O-området säger det
+inte). `blocks` är hur många nya block driven läser för den; 0 är en bundle som låg helt i blocket där den förra slutade.
+`complete` är falskt om sidans sista bundle inte gick att packa upp (dess block räknar med block som inte är Sparkles);
+de bundlar som kontrollerats före den är då sidan.
+
+**Skriptet** (`sparkleScript`): kommentarsrader med vad disken är och vilken sida, sedan `Path`, `Header`, `ID` (de
+fem tecknen på `$a2–$a6` i BAM:en), `Name`, `Start`, `IL0–IL3` och `ZP`, och ett stycke per bundle efter en tom rad,
+med en `File:`-rad per bit (`File:` och en tabb, sedan `"bundle01_d000.prg*"`; `*` under I/O-området). Filerna är
+PRG:er med bitens adress, och namnen är påhittade av bundlen och adressen. Anteckningar står på egna rader, eftersom
+Sparkle läser text efter en `File:`-post som dess parametrar men hoppar över rader den inte känner igen.
+
+**I appen:**
+- Explorer säger om en monterad disk *Sparkle disk: N bundles of files the loader reads, not in the directory*, med
+  knappen **Sparkle script**; monteringen säger *a Sparkle disk with N bundles of files (side n)*.
+- Bottenpanelens flik **Sparkle script** finns när en sådan disk är monterad. Rubriken säger sidan, antalet bundlar och
+  filer, hur en del laddar (nästa bundle med dess anrop; `lda #nummer / jsr $0160` väljer en ur drivens katalog) och
+  interleaven.
+- En rad per bit: bundlens nummer (hex, som programmet anropar med), var den laddar, storlek, filnamnet och anmärkningar
+  (var bundlen börjar och hur många block, att startprogrammet går till Start efter den första, *under the I/O area*).
+  Ett klick öppnar biten som en PRG på sin adress, och **+** lägger till den.
+- **Copy script** kopierar laddskriptet. **Save files…** sparar alla bitar som PRG:er i en mapp man väljer, med
+  skriptet som `<disk>.sls` bredvid.
+- Analysen känner igen Sparkle i startprogrammet (mottagarloopen, också med `ldy #$00`) och i en del som sparats från
+  `$0200` (blockuppackaren, båda slagen av poster, 8.11c).
+
+**Mätt:**
+- Memento Moris tre sidor: 16, 17 och 52 bundlar i 635, 577 och 458 block, IL 5/4/3/3 (sida 3: 8/4/3/3), sidorna 1 → 2
+  → 3, katalogen stämmer för alla bundlar. Varje block som Sindri tog emot på sida 1 (420 block) är byte för byte en
+  sektor i den ordning läsaren räknar fram.
+- **Mot loadern i Sindri** (varje skrivning av uppackaren, med loaderns egna anrop för nästa bundle, slutet och
+  nummer): Memento Mori sida 1 och 3, The Santas' Christmas Megademo sida A och B, XXX sida 1, We Love to Party, All
+  Hallows Eve disk 1, The Machine och Gamertro sida 1: nästan 1,7 miljoner skrivningar, inga fel. The Machine laddade
+  84 av sina 85 bundlar hela, 83 av dem efter nummer.
+- **Mot diskens egen uppackare** (den residenta delen ur startprogrammet körd på Sindris 6502, matad med blocken i
+  läsarens ordning): på de 240 lästa diskarna med startprogram (E2IRA:s saknar ett) är varje bundle densamma som läsaren ger, utom The
+  Machines bundlar från 54, som skriver i nollsidan där emulatorn har andra värden än C64:an (Sindri ovan stämmer).
+- I CSDB:s Year-top20 (och mappen med nyare demos) har 264 diskar Sparkles `M-E`, 142 olika. 133 olika läses, alla till sidans slut: 62 `f8` med
+  `bits` (2020–2022), 13 `f8` med `eor` (2022), 9 `old` (2020–2023) och 49 `84` med `eor` (2022–2025, också Sparkle 3:s
+  Nightworks, Crimbo 1982 och Fünfzig 90%), sammanlagt 1 794 bundlar och 4 459 filer (16,9 MB), 4 ms per disk. Inte
+  lästa: Lethargys Median (fyra sidor) och Padawans Awakening, vars ändrade drivkod räknar annorlunda, och Sparkle 3:s
+  senaste (Wavemode, Aloft), som har drivkoden på ett annat sätt. Ingen av dem tas för en Spindle-, Bitfire-,
+  BoozeLoader- eller Pirate Slayer-disk.
+
+**Test:** `test/sparkle-disk.test.ts`, med diskar som `test/helpers/sparkle-disk.ts` skriver som Sparkle lägger ut dem
+(en egen enkel packare för alla tre slagen av poster, de tre kodningarna, drivens vandring, Memento Moris katalog och
+sidnummer; av drivkoden och startprogrammet bara de få byte som de känns igen på). Testerna täcker literaler med nibble
+och hel byte, alla kopior (också från längre bort än 256 byte), nya adresser, I/O-området, en bundle i blocket före, en
+sista bundle som delar block, de äldsta sidornas slut, Memento Moris sektorordning och antal, All Hallows Eves antal,
+diskar utan katalog eller startprogram och andra loaders diskar. `fixtures/d64/sparkle-demo.d64` är en av diskarna:
+rasterdemot som första bundle, en bundle med en fil under I/O-området och en liten i blocket där den slutar.
+
 ### 13.6 Terminal
 
 **Terminal** i titelraden (och kommandopaletten) öppnar ett terminalfönster i mappen du arbetar i: den senast
@@ -3141,7 +3251,7 @@ blir för lång.
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
-| Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Statistics, Build output |
+| Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Statistics, Build output |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, analystid, verifieringsstatus |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.

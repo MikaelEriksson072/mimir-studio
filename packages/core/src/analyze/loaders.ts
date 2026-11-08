@@ -76,11 +76,15 @@ const KNOWN: Known[] = [
     ],
   },
   {
-    id: 'sparkle', name: 'Sparkle (Sparta/OMG)', how: '2-bit + ATN; the resident part lives at $0160 and $0200',
+    id: 'sparkle', name: 'Sparkle (Sparta/OMG)', how: '2-bit + ATN; the resident part lives at $0160-$02ff (the oldest at $0180); a part loads the next bundle of files with jsr ($01f9 in Memento Mori, $0200 in All Hallows Eve), or sends the drive the number of the bundle to load first (lda #number / jsr $0160)',
     signs: [
-      // dex or inx, ora #$00 or #$01: the versions differ there
-      { pat: pat('AD 00 DD 8C 00 DD 4A 4A CA|E8 EA A0 C0 0D 00 DD 8C 00 DD 4A 4A'), role: 'resident', what: 'receive loop (lda $dd00 / sty $dd00)' },
-      { pat: pat('2D 00 DD 8D 00 DD 09 00|01 9D .. .. 50'), role: 'resident', what: 'receive loop (and $dd00 / sta $dd00 / sta buffer,x)' },
+      // dex or inx, ldy #$c0 or #$00, ora #$00 or #$01: the versions differ there (Memento Mori's: inx, #$00)
+      { pat: pat('AD 00 DD 8C 00 DD 4A 4A CA|E8 EA A0 C0|00 0D 00 DD 8C 00 DD 4A 4A'), role: 'resident', what: 'receive loop (lda $dd00 / sty $dd00)' },
+      { pat: pat('2D 00 DD 8D 00 DD 09 00|01 9D .. .. 50'), role: 'resident', what: 'receive loop (and $dd00 / sta buffer,x)' },
+      // the block unpacker at $0200, which a part saved from $0200 keeps without the receive loop at $0160: Memento
+      // Mori's (and the old one's) items, and All Hallows Eve's (Sparkle 3's too)
+      { pat: pat('BD 00 03 F0 .. C9 F8 B0 .. 4A 4B FE A8 49 FF 65'), role: 'resident', what: 'block unpacker (an item byte from the block at $0300: 0 ends the block, $f8 0 the bundle, $fc gives a new address)' },
+      { pat: pat('BD 00 03 10 .. 8C .. 02 4B 7C 4A C9 02'), role: 'resident', what: 'block unpacker (an item byte from the block at $0300: 0 ends the block, from $80 a near copy, $84 0 the bundle, $80 a new address)' },
     ],
     text: 'SPARKLE',
   },
