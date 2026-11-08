@@ -156,10 +156,21 @@ export function viceArgv(o: Omit<ViceLaunch, 'vice'>): string[] {
   return [...args, ...drive, ...(o.labelsPath ? ['-moncommands', o.labelsPath] : []), ...run];
 }
 
-/** Monitor commands that load the PRG at its own address (CPU view, as LOAD"…",8,1 does) and jump to start; labels first. */
-export function viceMonitorScript(o: { prgPath: string; start: number; labels?: string }): string {
+/**
+ * Monitor commands that load the PRG at its own address into RAM and jump to start; labels first. A PRG started from
+ * the monitor is a memory dump (a program Sindri saved, $0208-$ffff say): its bytes at $d000-$dfff are RAM the program
+ * put there under the I/O area, and loaded through the CPU's view (as LOAD"…",8,1 does) they went to the VIC, the SID,
+ * the CIAs and the colour RAM instead, and the program crashed. So the monitor loads into RAM (`bank ram`, under the
+ * ROMs too), as `-autoload` does for a PRG started with `sys`, and goes back to the CPU's view before `g`.
+ * With a disk in drive 8 (`disk`), the last device used ($ba) is 8 first, as loading the program from that disk
+ * leaves it (at READY after power on it is 0): a program that loads its next file from "the device it came from"
+ * takes it from there (Cybernoid II +17HDF's high scores, `lda $ba / tax / tay / jsr SETLFS`). A dump that holds
+ * $ba itself loads over it.
+ */
+export function viceMonitorScript(o: { prgPath: string; start: number; labels?: string; disk?: boolean }): string {
   const labels = o.labels ? o.labels.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n') : '';
-  return `${labels}l "${o.prgPath}" 0\ng ${(o.start & 0xffff).toString(16).padStart(4, '0')}\n`;
+  const device = o.disk ? '> C:00ba 08\n' : '';
+  return `${labels}${device}bank ram\nl "${o.prgPath}" 0\nbank cpu\ng ${(o.start & 0xffff).toString(16).padStart(4, '0')}\n`;
 }
 
 /**
@@ -173,7 +184,7 @@ export async function prepareVice(o: Omit<ViceLaunch, 'vice'>): Promise<{ argv: 
   if (!(prg.length > 2 && overwritesSystemArea(prg[0] | (prg[1] << 8), prg.length - 2))) return { argv: viceArgv({ ...o, via: 'sys' }), via: 'sys' };
   const scriptPath = o.prgPath.replace(/(\.prg)?$/i, '.start.mon');
   const labels = o.labelsPath && existsSync(o.labelsPath) ? await readFile(o.labelsPath, 'utf8') : '';
-  await writeFile(scriptPath, viceMonitorScript({ prgPath: o.prgPath, start: o.start, labels }));
+  await writeFile(scriptPath, viceMonitorScript({ prgPath: o.prgPath, start: o.start, labels, disk: !!o.disk }));
   return { argv: viceArgv({ ...o, via: 'monitor', scriptPath }), via: 'monitor' };
 }
 

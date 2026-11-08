@@ -247,7 +247,11 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   the PRG without RUN and types `sys <start>` (`-autoload … -keybuf "sys2150\n"`); without it (or after *Clear*) the PRG is autostarted as
   before. A PRG that overwrites BASIC's work area ($0002-$03ff, a memory dump say) leaves no BASIC to type into (nor
   to RUN it), so VICE stops at READY (`-initbreak ready`) and runs `out/<name>.start.mon` instead: the labels, then
-  `l "<prg>" 0` and `g <start>` in the monitor. Without a program start such a PRG gets a warning to set one.
+  `bank ram`, `l "<prg>" 0`, `bank cpu` and `g <start>` in the monitor. The PRG goes straight into RAM, under the I/O
+  area and the ROMs too, as `-autoload` puts it: a program Sindri saved can hold its data at `$d000-$dfff`, which a
+  load through the CPU's view wrote into the VIC, SID and CIAs (Cybernoid II +17HDF crashed). With a disk in drive 8,
+  `> C:00ba 08` first makes 8 the last device used, as loading from the disk leaves it. Without a program start such a
+  PRG gets a warning to set one.
   `packages/core/test/vice.integration.test.ts` checks all of this in the real x64sc when it is installed
   (headless, with its own config file, so nothing is written to your `vice.ini`).
 - **Patches.** `P` (or right-click) on selected lines opens the patch dialog (`components/Patch.tsx`) with their code.

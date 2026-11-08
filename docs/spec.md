@@ -2044,8 +2044,15 @@ Verifieringen är produktens kvalitetsgrind:
    En PRG som skriver över BASIC:s och KERNAL:s arbetsminne `$0002-$03ff` (zero page, stack, buffertar, vektorer;
    till exempel en minnesdump) lämnar inget BASIC att skriva `sys` i, och RUN fungerar inte heller. Då stannar VICE
    vid READY och kör monitorkommandon i stället: `x64sc -autostartprgmode 1 -moncommands out/main.start.mon -initbreak ready`,
-   där `main.start.mon` är etiketterna följda av `l "out/main.prg" 0` (laddar på PRG:ns adress genom CPU:ns vy, som
-   `LOAD"…",8,1`) och `g <start>`. Utan programstart varnar appen för en sådan PRG och ber användaren sätta en.
+   där `main.start.mon` är etiketterna följda av `bank ram`, `l "out/main.prg" 0`, `bank cpu` och `g <start>`. PRG:n
+   laddas på sin adress rakt in i RAM, också under I/O-området och ROM:arna, som `-autoload` gör för en PRG som startas
+   med `sys`. En minnesdump har RAM där: ett program som Sindri sparat (8.11b) kan gå till `$ffff` med programmets data
+   på `$d000-$dfff`. Förut laddades den genom CPU:ns vy, som `LOAD"…",8,1` gör, och de byten hamnade i VIC, SID, CIA och
+   färg-RAM i stället (Cybernoid II +17HDF, `$0208-$ffff` med start `$1400`, kraschade med lila skärm; nu visar den sin
+   trainermeny). Med en disk i station 8 sätts först den senast använda enheten `$ba` till 8, som när programmet laddats
+   från disken (vid READY efter start är den 0): ett program som laddar sin nästa fil från "enheten det kom ifrån" tar
+   den därifrån (Cybernoids high score-lista). En dump som själv har `$ba` laddas över den.
+   Utan programstart varnar appen för en sådan PRG och ber användaren sätta en.
    `test/vice.integration.test.ts` kör detta i riktiga VICE (`-console`, egen konfigurationsfil, debug-cartridgens `$d7ff` som avslutningskod).
 
 ### 13.3 VICE binary monitor (M3)

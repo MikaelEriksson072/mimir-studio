@@ -27,12 +27,14 @@ describe('VICE command line', () => {
     expect(viceArgv({ args: ['-autostartprgmode', '0'], prgPath: 'p.prg' })).toEqual(['-autostartprgmode', '0', '-autostart', 'p.prg']);
   });
 
-  it('starts from the monitor at READY: labels, load at the PRG address, go', () => {
+  it('starts from the monitor at READY: labels, load at the PRG address into RAM, go', () => {
     expect(viceArgv({ args: ['-autostartprgmode', '1'], prgPath: 'p.prg', start: 0x1000, via: 'monitor', scriptPath: 'p.start.mon' }))
       .toEqual(['-autostartprgmode', '1', '-moncommands', 'p.start.mon', '-initbreak', 'ready']);
     expect(viceMonitorScript({ prgPath: 'C:\\b uild\\test.prg', start: 0x1000, labels: 'al C:1000 .start\r\nal C:1010 .loop' }))
-      .toBe('al C:1000 .start\nal C:1010 .loop\nl "C:\\b uild\\test.prg" 0\ng 1000\n');
-    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x080d })).toBe('l "p.prg" 0\ng 080d\n');
+      .toBe('al C:1000 .start\nal C:1010 .loop\nbank ram\nl "C:\\b uild\\test.prg" 0\nbank cpu\ng 1000\n');
+    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x080d })).toBe('bank ram\nl "p.prg" 0\nbank cpu\ng 080d\n');
+    // with a disk in drive 8 the last device is 8, as loading from it leaves it
+    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x1400, disk: true })).toBe('> C:00ba 08\nbank ram\nl "p.prg" 0\nbank cpu\ng 1400\n');
   });
 
   it('puts a disk in drive 8, with the inject PRG mode (the disk image mode would replace it), and has the drive read it first', () => {
@@ -87,7 +89,7 @@ describe('VICE command line', () => {
       expect(await prepareVice({ prgPath: basic, start: 0x0801 })).toEqual({ argv: ['-autoload', basic, '-keybuf', 'sys2049\\n'], via: 'sys' });
       const m = await prepareVice({ prgPath: dump, labelsPath: vs, start: 0x0300 });
       expect(m).toEqual({ argv: ['-moncommands', join(dir, 'dump.start.mon'), '-initbreak', 'ready'], via: 'monitor' });
-      expect(await readFile(join(dir, 'dump.start.mon'), 'utf8')).toBe(`al C:0002 .zp\nl "${dump}" 0\ng 0300\n`);
+      expect(await readFile(join(dir, 'dump.start.mon'), 'utf8')).toBe(`al C:0002 .zp\nbank ram\nl "${dump}" 0\nbank cpu\ng 0300\n`);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -245,6 +247,47 @@ describe.skipIf(!vice)(`real VICE (${vice ?? 'not found'})`, () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('puts a PRG\'s bytes at $d000-$dfff in the RAM under the I/O area, from the monitor and with sys', async () => {
+    // a program Sindri saved can have its data there (Cybernoid II +17HDF, $0208-$ffff). The program reads RAM there
+    // ($01 = $34) and exits with $d000's byte, $ee when $dfff's is not the file's. Through the CPU's view the load
+    // wrote the file's 0 at $d7ff to the debug cartridge, which ended VICE with 0 before the program ran
+    const code = '.pc = $0c00\n sei\n lda #$34\n sta $01\n ldx $d000\n ldy $dfff\n lda #$37\n sta $01\n cpy #$24\n beq ok\n ldx #$ee\nok:\n stx $d7ff\n jmp *\n.pc = $d000\n.byte $42\n.pc = $dfff\n.byte $24';
+    const files: [string, ReturnType<typeof fromSource>, string][] = [
+      ['dump', fromSource('dump.prg', `.pc = $0002\n.byte $00\n.pc = $0314\n.byte $31,$ea,$66,$fe,$47,$fe\n${code}`), 'monitor'],
+      ['basic', fromSource('basic.prg', `.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n${code}`), 'sys'],
+    ];
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      for (const [name, f, how] of files) {
+        const prgPath = join(dir, `${name}.prg`);
+        await writeFile(prgPath, prgOf(f));
+        const { argv, via } = await prepareVice({ args: headless(dir), prgPath, start: 0x0c00 });
+        expect(via).toBe(how);
+        expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status, name).toBe(0x42);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('starts a memory dump from the monitor with the disk\'s drive as the last device used, as loading from it leaves it', async () => {
+    // the program exits with $ba, the device a program that loads "from where it came from" takes (0 at READY)
+    const f = fromSource('dump.prg', '.pc = $0200\n.byte $00\n.pc = $0c00\n lda $ba\n sta $d7ff\n jmp *');
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      const prgPath = join(dir, 'dump.prg'), disk = join(dir, 'disk.d64');
+      await writeFile(prgPath, prgOf(f));
+      await writeFile(disk, makeD64({ name: 'parts', files: [{ name: 'top10', data: Uint8Array.from([0x00, 0xc0, 0x60]) }] }));
+      for (const [d, device] of [[disk, 8], [null, 0]] as const) {
+        const { argv, via } = await prepareVice({ args: headless(dir), prgPath, start: 0x0c00, disk: d });
+        expect(via).toBe('monitor');
+        expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status, d ? 'with the disk' : 'without').toBe(device);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it('starts the cartridge rebuilt from its re-assembled boot bank: it switches bank 1 in and reads it', async () => {
     // fixtures/crt/mimir-demo.crt (crt.test.ts): a Magic Desk whose bank 0 copies bank 1's text to the screen and
