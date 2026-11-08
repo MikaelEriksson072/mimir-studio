@@ -1036,6 +1036,16 @@ class Session {
         if (this.started) this.cur!.printed += `{brk at ${hex4((m.peekWord(0x100 + ((cpu.s + 5) & 0xff)) - 2) & 0xffff)}}`;
         return false;
       });
+      // LOAD at the prompt relinks BASIC's lines from its start (LINKPRG, JSR $a533 after the load). Started at an
+      // address instead (SYS), a file that loads over that start is in memory as it has it, as VICE's -autoload and
+      // Build & Run put it: a program Sindri saved can have code at $0801, and relinking wrote link pointers into it
+      // (Cybernoid II's game, $0208-$ffff started at $1400, ran into a JAM at $08e3). Over anything else (an empty
+      // program) relinking changes nothing, and is left as it was
+      this.trap(0xa533, BASIC, () => {
+        if (this.phase !== 'loaded' || this.started || this.o.entry == null) return false;
+        const link = (m.ram[0x2b] | (m.ram[0x2c] << 8)) + 1;
+        return link >= this.loadAt && link < this.loadAt + this.data.length ? this.rts() : false;
+      });
       return;
     }
 

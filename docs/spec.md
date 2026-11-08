@@ -970,6 +970,11 @@ Sindri `SYS1464` och körde in i en JAM. Kör `RUN` ingen maskinkod provas `SYS`
 olika filer i arkivet som regeln gäller (första PRG:n på varje D64 och lösa PRG:er) packas 2030 upp, förut 451; ingen
 som packades upp förut slutar göra det, och där starten ändrades börjar unp64 på samma rad. Har projektet en
 programstart i filen (den som *Unpack* satte, eller användarens) startar Sindri den där med `SYS`, som Build & Run gör.
+Då står en fil som laddas över BASIC:s start i minnet som den är: BASIC:s LOAD vid prompten länkar annars om raderna
+därifrån (LINKPRG) och skriver länkpekare i det som ligger på `$0801`, vilket VICE:s `-autoload` och Build & Run inte
+gör (över en fil som inte når dit länkar den om ett tomt program och ändrar inget, och får göra det som förut). Ett program
+som Sindri sparat kan ha kod där: Cybernoid II:s spel (`$0208-$ffff`, start `$1400`) körde in i en JAM på `$08e3`
+när Sindri körde det igen, och kommer nu förbi trainermenyn till spelet på `$0476`.
 En VICE-snapshots RAM körs inte alls, och får ingen packningsnotis: maskinen körde redan programmet när snapshoten
 togs, och från `$0200` har den programmets `SYS`-rad på `$0801`, så `RUN` skulle starta det från början.
 

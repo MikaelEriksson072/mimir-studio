@@ -320,6 +320,26 @@ ${basic([[10, line]])}
       }
     });
 
+    it('leaves code at $0801 as the file has it when it starts the file at an address', () => {
+      // as a program Sindri saved: code at $0801 (JMP $1234, then a 0 at $0808), started at $0c00. LOAD's relinking
+      // would turn $0801-$0802 into a link to $0809 and the JMP into an ORA
+      const file = asm(`
+* = $0801
+       jmp loop
+       lda #1
+       sta 2
+       .byte 0
+* = $0c00
+       jmp $0801
+* = $1234
+loop:  inc $d020
+       jmp loop
+`);
+      const r = unpack(file.prg, { roms: mode === 'ROMs' ? roms : null, entry: 0x0c00 });
+      expect(r.stop.reason).toBe('settled');
+      expect(r.layers[0].code).toEqual([{ start: 0x0801, end: 0x0801 }, { start: 0x0c00, end: 0x0c00 }, { start: 0x1234, end: 0x1237 }]);
+    });
+
     it('fingerprints a depacker by the code it ran, also when it wipes that code before the program starts', () => {
       const r = go(WIPES_ITSELF);
       expect(r.layers.map(l => [l.entry, l.kind])).toEqual([[0x080d, 'jump'], [0x0040, 'mover'], [0x1000, 'program']]);
