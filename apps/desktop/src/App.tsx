@@ -11,7 +11,7 @@ import {
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
-  type Addr, type AnalysisResult, type Block, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
+  type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
@@ -57,6 +57,7 @@ import { QuickPack } from './components/QuickPack';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
+const DriveView = lazy(() => import('./components/DriveView').then(m => ({ default: m.DriveView })));
 
 const kr = window.kr;
 /** how long a block whose type changed stays framed (the .changed animation in app.css) */
@@ -1523,6 +1524,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (r) toast(`Patch "${p.name}" saved to ${r.path} (loads at $${h4(p.start)})`, 'ok');
     } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
+  /** the drive code's source (the Drive code tab), as a file of its own */
+  const saveDrive = async (D: DriveCode) => {
+    if (!kr) return needDesktop();
+    try {
+      const r = await kr.saveFile({ name: D.file, bytes: new TextEncoder().encode(D.text), title: 'Save the drive code' });
+      if (r) toast(`Drive code saved to ${r.path}`, 'ok');
+    } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+  };
   /** where music blocks play (Settings → Toolchain) */
   const musicPlayerName = toolchain.musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE';
   /** The music block at `at` in VICE: a PRG of its bytes (those the export's .sid holds) with a driver that puts them
@@ -2187,7 +2196,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
     { id: 'medium-next', label: 'Open the next program on the disk (or the tape)', key: 'Alt+↓', run: () => openNextFrom(1) },
     { id: 'medium-prev', label: 'Open the program before on the disk (or the tape)', key: 'Alt+↑', run: () => openNextFrom(-1) },
-    { id: 'find', label: tab === 'source' ? 'Find in the source' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' ? setSrcFind(n => n + 1) : openFind()) },
+    { id: 'find', label: tab === 'source' ? 'Find in the source' : tab === 'drive' ? 'Find in the drive code' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' || tab === 'drive' ? setSrcFind(n => n + 1) : openFind()) },
     { id: 'find-next', label: 'Find: the next line with a match', key: 'F3', run: () => (findOpen ? stepFind(1) : openFind()) },
     { id: 'find-prev', label: 'Find: the line with a match before', key: 'Shift+F3', run: () => (findOpen ? stepFind(-1) : openFind()) },
     { id: 'block-next', label: 'Go to the next block', key: 'Ctrl+↓', run: () => jumpBlock(1) },
@@ -2259,6 +2268,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'undo', label: `Undo${undoLabel ? ': ' + undoLabel : ''}`, key: 'Ctrl+Z', run: undo },
     { id: 'redo', label: 'Redo', key: 'Ctrl+Y', run: redo },
     { id: 'tab-listing', label: 'Show listing', run: () => setUi({ tab: 'listing' }) },
+    { id: 'tab-drive', label: 'Show the drive code: the code for the 1541 the program uploads, re-assembled where it runs in the drive', run: () => setUi({ tab: 'drive' }) },
     { id: 'cycles', label: cycles ? 'Listing: hide cycle counts' : 'Listing: show cycle counts (6510 cycles per instruction; select a range or block to count it)', run: () => setUi({ cycles: !cycles, tab: 'listing' }) },
     { id: 'gfx-pictures', label: gfxPictures ? 'Listing: show sprites, charsets and bitmaps as .byte rows' : 'Listing: show sprites, charsets and bitmaps as pictures', run: () => setUi({ gfxPictures: !gfxPictures, tab: 'listing' }) },
     { id: 'data-as-code', label: dataAsCode ? 'Listing: show data as classified' : 'Listing: show data as code (find code that is marked as data)', run: () => setUi({ dataAsCode: !dataAsCode, tab: 'listing' }) },
@@ -2302,8 +2312,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const run = (id: string) => { const c = k.commands.find(x => x.id === id); if (c) { e.preventDefault(); c.run(); } };
       if (ctrl && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setModal('palette'); return; }
       if (e.key === 'F1') { e.preventDefault(); setModal('palette'); return; }
-      // Ctrl+F finds in the listing, and in the source tab with Monaco's find (in the editor Monaco takes it itself)
-      if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source') run('find'); return; }
+      // Ctrl+F finds in the listing, and in the source and drive code tabs with Monaco's find (in the editor Monaco takes it itself)
+      if (ctrl && !typing && e.key.toLowerCase() === 'f') { if (k.tab === 'listing' || k.tab === 'source' || k.tab === 'drive') run('find'); return; }
       if (e.key === 'F3' && k.tab === 'listing' && !k.modal) return run(e.shiftKey ? 'find-prev' : 'find-next');
       // Ctrl+↓ / Ctrl+↑: from block to block
       if (ctrl && !e.shiftKey && !e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && !typing && !k.editing && !k.modal && k.tab === 'listing') return run(e.key === 'ArrowDown' ? 'block-next' : 'block-prev');
@@ -2655,7 +2665,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip', string][] =[['listing', 'list', 'Listing'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
@@ -2706,7 +2716,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             theirs, and on the narrowest the tools move into the ⋯ menu */}
         <div className="tabs main-tabs" role="tablist">
           {tabs.map(([k, ic, l]) => (
-            <button key={k} role="tab" aria-selected={tab === k} className={cx('tab', tab === k && 'on')} title={l} onClick={() => setUi({ tab: k })}><Icon name={ic} size={14} /><span className="tab-label">{l}</span></button>
+            <button key={k} role="tab" aria-selected={tab === k} className={cx('tab', `tab-${k}`, tab === k && 'on')} title={l} onClick={() => setUi({ tab: k })}><Icon name={ic} size={14} /><span className="tab-label">{l}</span></button>
           ))}
           <span className="grow" />
           {tab === 'listing' && <>
@@ -2796,6 +2806,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               </div>
             </>}
             <Suspense fallback={<div className="empty">Loading…</div>}>
+              {tab === 'drive' && <DriveView A={A} S={S} name={project.files.length === 1 ? project.files[0].name : project.name} theme={theme} onCopy={t => void copyText(t)} onSave={D => void saveDrive(D)}
+                onShow={a => navigate(a, { center: true, listing: true })} findReq={srcFind} />}
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}

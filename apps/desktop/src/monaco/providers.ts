@@ -1,6 +1,6 @@
 /* Hover (registers, labels, opcodes) and go-to-definition (Ctrl+click, F12) for Kick sources. */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { findBlock, h4, kindInfo, OPC, SYM, undocumentedText, type AnalysisResult, type RenderResult } from '@mimir/core';
+import { driveSymbol, findBlock, h4, kindInfo, OPC, SYM, undocumentedText, type AnalysisResult, type RenderResult } from '@mimir/core';
 import { KICKASS } from './kickass-language';
 
 /** The analysis shown in the editor; SourceView keeps it current. */
@@ -11,12 +11,16 @@ export function registerProviders(monaco: typeof Monaco): void {
     provideHover(model, pos) {
       const w = model.getWordAtPosition(pos); if (!w) return null;
       const name = w.word;
-      const sym = [...SYM.exact.values()].find(s => s.name === name);
-      const region = SYM.regions.find(r => r.name === name);
+      // the drive code (its own model): the 1541's registers, and none of the listing's labels
+      const drive = model.uri.scheme === 'drive';
+      const via = drive ? driveSymbol(name) : null;
+      if (via) return { contents: [{ value: `**${name}** — $${h4(via.addr)}` }, { value: `1541 VIA · ${via.desc}` }] };
+      const sym = drive ? undefined : [...SYM.exact.values()].find(s => s.name === name);
+      const region = drive ? undefined : SYM.regions.find(r => r.name === name);
       if (sym) return { contents: [{ value: `**${name}** — $${h4(sym.addr)}` }, { value: `${sym.cat} · ${sym.desc}` }] };
       if (region) return { contents: [{ value: `**${name}** — $${h4(region.start)}` }, { value: `${region.cat} · ${region.desc}` }] };
       const { R, A } = monacoContext;
-      if (R && A) for (const [a, l] of R.labels) if (l.name === name) {
+      if (R && A && !drive) for (const [a, l] of R.labels) if (l.name === name) {
         const xs = A.xrefs.get(a) || [];
         const b = findBlock(A.blocks, a);
         return { contents: [{ value: `**${name}** — $${h4(a)}` }, { value: `${b ? kindInfo(b.type).label : 'label'} · ${xs.length} reference${xs.length === 1 ? '' : 's'}${l.user ? ' · renamed by you' : ''}` }] };

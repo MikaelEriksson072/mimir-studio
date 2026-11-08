@@ -1568,6 +1568,63 @@ eftersom den provar färre kodöar och varven slutar tidigare.
 hittar varje instruktion), Sindris `test/unpack.test.ts` (byte som körs, läses, skrivs före körning och aldrig rörs) och
 CLI:ns test av `measure`.
 
+### 8.11i Drivkoden
+
+Fliken **Drive code**, bredvid Listing, visar drivkoden: koden för 1541:an (eller en 1581) som programmet har i C64:ans
+minne och laddar upp till driven. I listningen är den data, eftersom C64:an aldrig kör den. Här är den återassemblerad
+där den körs i driven: `driveCode()` (`packages/core/src/drivecode.ts`) skriver en Kick Assembler-källa där varje del står
+där den ligger i C64:ans minne (`.pc`), inuti `.pseudopc` på adressen där den körs i driven. Källan assembleras alltså till
+programmets egna byte igen. Fliken assemblerar den med Mimirs assembler och säger *Re-assembles to the same N bytes*, eller
+var den ger andra byte. Med KickAss 5.25 gav alla 15 program med drivkod i korpusen nedan programmets byte.
+
+**Delarna** är loadernas `drivecode`-delar (8.11c) och drivkommandona i och kring dem:
+
+- **Byten efter ett `M-W`** (`"M-W"` lo hi n och sedan de n byten, som installationen skickar dem) körs på lo hi. Det är
+  säkert. Ett kort `M-W` (högst 4 byte, som enhetsnumret på `$0077`) sätter ett värde, och dess byte följer kommandot.
+- **En känd loaders del** säger själv var den körs (*code for the 1541 at $0150*).
+- **Resten placeras efter sina hopp:** adressen där flest av delens `JMP` och `JSR` landar på kod i den (tre körbara
+  instruktioner i rad), prövad genom att koden spåras från målen. Ett mål vars kod når en byte som inte är en
+  instruktion räknas emot. En uppladdning går en sida i taget, så samma låga byte som i C64:an, en sidstart eller en
+  `M-W`/`M-E`-adress väger in. Hela delen måste rymmas i drivens RAM (2 KB i en 1541, 8 KB i en 1581, som känns på sin
+  CIA på `$4000`). Med för lite stöd (färre än tre poäng) står delen där den ligger, utan `.pseudopc`, och bara dess
+  grenar spåras. Fliken visar hur många delar som placerats efter sina hopp: de är en gissning.
+- Några byte mellan kommandona (utfyllnad efter ett `M-W`:s byte) är vanlig data.
+
+Delar som inte överlappar i drivens minne bildar en avbild, de säkraste först (`M-W`, kända loaders, sedan hoppen), så
+att ett första steg i flera `M-W` hänger ihop. En instruktion som fortsätter efter nästa drivkommando skrivs som byte.
+
+**Koden spåras** från `M-E`-adresserna och de kända loadernas adresser, och på prov (inget behålls om vägen når en byte
+som inte är en instruktion) från där varje uppladdning börjar, varje sidstart (DOS:en kör ett jobbs kod från buffertens
+början) och det som delens `JMP` och `JSR` landar på. Odokumenterade instruktioner som Kick Assembler skriver godtas.
+En gren direkt efter `lda #`/`ldx #`/`ldy #` eller `clc`/`sec` går bara åt det håll den alltid tar (`lda #$7f / bne`);
+`bvc` och `bvs` aldrig, eftersom byte-ready-linjen sätter V i 1541:an. En byte som koden själv skriver till (en `RTS`
+över en platshållare) avslutar vägen. En `BIT` vars operand är kod som spårats (`lda #8 / .byte $2c / lda #4`) skrivs
+`.byte $2c` med *bit abs: skips the next 2-byte instruction*. Det som inte nås är data.
+
+**Källan** har etiketter i Mimirs stil på drivadresserna (`entry_0700` för ett `M-E`, `sub_`, `l_`, `loop_`, `skip_`,
+`smc_`, `tbl_`, `var_`, `data_`), med `_2` och så vidare när delar överlappar i driven. 1541:ans VIA-register får namn
+(`VIA1_PB` serieporten på `$1800`, `VIA2_PB` huvudet och `VIA2_PA` GCR-byten på `$1c00`/`$1c01`) med `.label`-rader
+som beskriver bitarna, och några ROM-rutiner som snabbladdare anropar en kommentar (`$f50a` väntar på datablocket efter
+dess header, `$f556` på en SYNC, `$f5e9` datablockets kontrollsumma, `$f8e0` avkodar GCR-blocket, `$f969` avslutar
+jobbet med felkoden i A, `$eaa0` reset). Drivkommandona står som `.byte` med vad de gör.
+
+**Fliken.** Monaco, skrivskyddad, med Kick Assembler-färgning; dess modell är drivens egen, så hover visar VIA-registren
+och inte listningens etiketter. Verktygsraden har delarna (en vald del visar sin `.pseudopc`-rad), kontrollen, raden
+markören står på (*$0400 in the C64, $0700 in the drive*), **Show in listing** (radens byte i listningen), **Find**
+(Ctrl+F), **Copy file** och **Save…** (`<program>-drive.asm`). Ett program utan drivkod (ingen snabbladdare, KERNAL LOAD,
+eller en loader vars drive läser koden från disken, som BoozeLoader och Sparkle) får en förklaring. En cartridges
+banker skrivs inte här.
+
+**Mätt** på korpusen i 8.11h (första programmet på varje disk, uppackat): 14 av ~1 000 har drivkod i minnet, alla
+okända snabbladdare. Alla 15 (med `fixtures/prg/loader-demo.prg`) ger samma byte, med Mimirs assembler och med KickAss.
+Exempel: Game Pictures jobbkod hamnar på `$0700` (`jsr $f50a`, 256 GCR-byte till bufferten på `$0600`, `jsr $f8e0`,
+`jsr $f5e9`, `jmp $f969`), Wonderlands första steg i tre `M-W` på `$0706–$075f` startat med `M-E $0736`, och Baker
+Streets drivkod på `$007c–$04ca` (45 hopp) med 695 av 1 103 byte som kod.
+
+**Test:** `test/drivecode.test.ts` (ett program med ett första steg i ett `M-W` och huvudkoden placerad efter sina hopp,
+kommandona, etiketterna, VIA-namnen, en gren som alltid tas, `.byte $2c`, samma byte igen, raderna mot adresserna,
+`runAddress` och fixturen) och e2e-steget som öppnar `loader-demo.prg` och fliken.
+
 ## 9. Symboldatabas
 
 | Kategori | Område | Namnexempel |
@@ -3398,17 +3455,20 @@ hjulet tillbaka, visar hela kartan igen. Geometrin står i `apps/desktop/src/lib
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:
-- **Under 1300 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.
-- **Under 1210 px:** listningens verktyg (bakåt, framåt, föregående och nästa block, *Go to*, *Find*, *Data as code*,
+- **Under 1410 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.
+- **Under 1325 px:** listningens verktyg (bakåt, framåt, föregående och nästa block, *Go to*, *Find*, *Data as code*,
   *Offset*, *Cycles*, vänsterkolumnen *Adr*/*Line*) visar bara sina ikoner. Namnen finns kvar för skärmläsare och i
   verktygstipsen.
-- **Under 960 px:** flikarna blir smalare, och knapparna för föregående och nästa block lämnar raden (`Ctrl+↑` / `Ctrl+↓`
-  och kommandopaletten finns kvar).
+- **Under 1060 px:** flikarna blir smalare, och knapparna för föregående och nästa block lämnar raden (`Ctrl+↑` / `Ctrl+↓`
+  och kommandopaletten finns kvar). SPEC.md visar bara sin ikon (aktivitetsfältet öppnar den också) och källfliken
+  början av sitt namn.
 - **Under 820 px:** verktygen flyttar in i menyn **⋯** (*Listing tools*). Där är *Data as code*, *Cycles* och
   vänsterkolumnens val bockade när de är på, och samma knapp stänger menyn.
 
-Gränserna är mätta med demons flikar och lite marginal för ett längre filnamn. Standardfönstret (1480 px, editorn 824 px)
-har verktygen i raden, och raden får plats utan att något kapas i varje fönsterbredd (ett e2e-test går igenom 2000–1100 px).
+Gränserna är mätta med demons flikar och lite marginal för ett längre filnamn. När fliken *Drive code* (8.11i) kom till
+flyttades de tre översta upp med dess bredd och de smala flikarna gav plats åt den: raden har minst 24 px över i varje
+editorbredd från 440 till 1420 px. Standardfönstret (1480 px, editorn 824–840 px) har verktygen i raden, och raden får
+plats utan att något kapas i varje fönsterbredd (ett e2e-test går igenom 2000–1100 px).
 - **Under 520 px:** de andra flikarna än den valda visar bara sin ikon, med namnet som verktygstips.
 
 Källflikens filnamn kortas med "…" (högst 12 em, 8 em på smal rad). Verktygen syns därmed också i smala fönster, där

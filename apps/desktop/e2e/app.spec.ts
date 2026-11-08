@@ -1079,6 +1079,13 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'true');
   });
 
+  await test.step('the Drive code tab, beside the listing: the drive code re-assembled, the same bytes again', async () => {
+    await page.getByRole('tab', { name: 'Drive code' }).click();
+    await expect(page.locator('.drive-check')).toHaveText('Re-assembles to the same 45 bytes');
+    await expect(page.locator('.drive .monaco-editor')).toContainText('loader-demo.prg: the drive code, re-assembled');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+  });
+
   await test.step('a program without a start of its own: Program start stays closed (the load address is no start)', async () => {
     await elsewhere();
     await choose('Open PRG files…', join(repoDir, 'fixtures/prg/spindle-demo.prg'));

@@ -5,7 +5,7 @@ import { store } from '../lib/util';
 import { bitmapRowsOf, spriteColsOf } from '../lib/gfxview';
 
 export type Theme = 'dark' | 'light';
-export type EditorTab = 'listing' | 'source' | 'spec' | 'gfx' | 'mem';
+export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem';
 export type BottomTab = 'log' | 'messages' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'pirateslayer' | 'tape' | 'stats' | 'build';
 export type Activity = 'explorer' | 'blocks' | 'symbols' | 'bookmarks' | 'pack';
 export interface Sizes { side: number; insp: number; bottom: number }
