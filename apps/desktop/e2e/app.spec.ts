@@ -3845,7 +3845,7 @@ test('the Demo button opens the showcase: every block type and a guided tour in 
   });
 });
 
-test('a music block plays in VICE: from its right-click menu, the inspector and the command palette', async ({ page }) => {
+test('a music block plays in VICE: from its right-click menu, the inspector, the command palette and the Blocks view', async ({ page }) => {
   // VICE itself is not started: a Windows program that ends at once stands in for it (the player's PRG playing in the
   // real VICE is tested in packages/core/test/sidplayer.test.ts)
   const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
@@ -3894,6 +3894,26 @@ test('a music block plays in VICE: from its right-click menu, the inspector and 
     await expect(toast(page, played)).toHaveCount(3);
     seen.push(newest());
   });
+
+  await test.step('and the play button beside the block in the Blocks view, wherever the cursor is', async () => {
+    await listing(page).click();
+    await goTo(page, '0801');
+    await expect(statusBar(page)).not.toContainText('Music (SID)');
+    await page.locator('nav.activity').getByRole('button', { name: 'Blocks' }).click();
+    const folder = page.getByRole('list', { name: 'Block types' }).locator('.blk-folder-head').filter({ hasText: 'Music (SID)' });
+    if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
+    const play = page.getByRole('group', { name: 'Music (SID) blocks' }).getByRole('button', { name: 'Play music_1800 in VICE' });
+    await expect(play).toHaveAttribute('title', /^Play music_1800 in VICE: init with song \$00, then play each frame\. Settings → Toolchain picks VICE or DeepSID$/);
+    // the toasts before it go first, so the one it brings is its own
+    await expect(toast(page, played)).toHaveCount(0, { timeout: 15_000 });
+    const before = newest();
+    await play.click();
+    await expect(toast(page, played)).toBeVisible();
+    await expect.poll(newest).not.toBe(before);
+    seen.push(newest());
+    // the cursor stays where it was
+    await expect(statusBar(page)).not.toContainText('Music (SID)');
+  });
   for (const d of new Set(seen)) rmSync(d, { recursive: true, force: true });
 });
 
@@ -3939,6 +3959,19 @@ test('with DeepSID chosen in Settings, a music block plays there: its .sid goes 
   await test.step('the inspector\'s button says DeepSID and plays it in the same window', async () => {
     await page.locator('aside.insp-col').getByRole('button', { name: 'Play in DeepSID' }).click();
     await expect(toast(page, /^DeepSID plays music_1800/)).toHaveCount(2, { timeout: 30_000 });
+    expect(await app.evaluate(({ BrowserWindow }, url) => BrowserWindow.getAllWindows().filter(w => w.webContents.getURL() === url).length, standIn)).toBe(1);
+  });
+
+  await test.step('the Blocks view\'s play button beside the block says DeepSID too, and plays it there', async () => {
+    await page.locator('nav.activity').getByRole('button', { name: 'Blocks' }).click();
+    const folder = page.getByRole('list', { name: 'Block types' }).locator('.blk-folder-head').filter({ hasText: 'Music (SID)' });
+    if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
+    const play = page.getByRole('group', { name: 'Music (SID) blocks' }).getByRole('button', { name: 'Play music_1800 in DeepSID' });
+    await expect(play).toHaveAttribute('title', /^Play music_1800 in DeepSID: the \.sid the export writes, in DeepSID's window\. Settings → Toolchain picks VICE or DeepSID$/);
+    // the toasts before it go first, so the one it brings is its own
+    await expect(toast(page, /^DeepSID plays music_1800/)).toHaveCount(0, { timeout: 15_000 });
+    await play.click();
+    await expect(toast(page, /^DeepSID plays music_1800/)).toBeVisible({ timeout: 30_000 });
     expect(await app.evaluate(({ BrowserWindow }, url) => BrowserWindow.getAllWindows().filter(w => w.webContents.getURL() === url).length, standIn)).toBe(1);
   });
 

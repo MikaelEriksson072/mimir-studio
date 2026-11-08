@@ -215,6 +215,16 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .side-search input { flex: 1; min-width: 0; border: 0; background: none; outline: none; color: var(--fg); }
 .blk-list { flex: 1; overflow: auto; padding: 0 6px 10px; display: flex; flex-direction: column; gap: 1px; }
 .blk-row { padding: 5px 6px; }
+/* a music block's row: the block, and its play button at the end (in VICE or DeepSID, Settings → Toolchain) */
+.blk-row-play { display: flex; align-items: center; gap: 2px; padding-right: 3px; border-radius: 5px; }
+.blk-row-play > .blk-row { flex: 1; min-width: 0; }
+.blk-row-play:hover { background: var(--row-hover); }
+.blk-row-play.on { background: var(--sel); }
+.blk-row-play > .blk-row:hover, .blk-row-play > .blk-row.on { background: none; }
+.blk-row-play:hover > .blk-row { color: var(--fg); }
+.icon-btn.blk-play { width: 22px; height: 22px; border-radius: 50%; color: var(--g-music); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--g-music) 45%, transparent); }
+.icon-btn.blk-play:hover { background: var(--g-music); color: #fff; }
+.icon-btn.blk-play svg { margin-left: 1px; }
 .blk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .blk-name { color: var(--fg); font-family: var(--font-code); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .blk-type { font-size: 11px; color: var(--fg-3); display: inline-flex; gap: 3px; align-items: center; white-space: nowrap; }

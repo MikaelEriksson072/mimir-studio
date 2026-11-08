@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type BlockKind, type Crt, type D64File, type LoaderPart, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef, type TapeFile } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef, type TapeFile } from '@mimir/core';
 import { blockFolders } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -62,6 +62,10 @@ interface SidebarProps {
   quicksave: QuicksaveProps;
   /** the user's patches (spec 10.2) */
   patches: PatchesProps;
+  /** play the music block that starts at `start` (the Blocks view's play button), in VICE or DeepSID as `musicPlayer`
+   *  says (Settings → Toolchain) */
+  onPlayMusic?: (start: Addr) => void;
+  musicPlayer?: MusicPlayer;
 }
 
 interface PatchesProps {
@@ -84,7 +88,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, onPlayMusic, musicPlayer = 'vice' }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -139,7 +143,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
   }
   if (view === 'bookmarks') return <BookmarksView A={A} editing={bmEditing} bookmarks={project.bookmarks} R={R} cursor={cursor} selected={bmSel} onSelect={onBmSelect} onGo={onBmGo} onAdd={onBmAdd} onEdit={onBmEdit} onDelete={onBmDelete} />;
   if (view === 'pack') return <PackView {...pack} />;
-  if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} />;
+  if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} onPlayMusic={onPlayMusic} musicPlayer={musicPlayer} />;
   // symbols
   const ql = q.toLowerCase();
   const labels = [...R.labels.entries()].filter(([, l]) => !ql || l.name.toLowerCase().includes(ql)).sort((x, y) => x[0] - y[0]);
@@ -171,8 +175,11 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * or folds it up (closed when the app starts, the user's choice kept for the run), on a block goes to it; the folder
  * with the block at the cursor is marked while it is closed. While the filter has text, only the folders with blocks it
  * keeps are there, open (one folded up stays so until the text changes), with how many of their blocks it keeps.
+ * A music block has a play button at the end of its row: it plays the block in VICE or DeepSID, as Settings → Toolchain
+ * says, without moving the cursor.
  */
-function BlocksView({ A, R, cursor, q, setQ, onNavigate }: Pick<SidebarProps, 'A' | 'R' | 'cursor' | 'onNavigate'> & { q: string; setQ: (q: string) => void }) {
+function BlocksView({ A, R, cursor, q, setQ, onNavigate, onPlayMusic, musicPlayer = 'vice' }: Pick<SidebarProps, 'A' | 'R' | 'cursor' | 'onNavigate' | 'onPlayMusic' | 'musicPlayer'> & { q: string; setQ: (q: string) => void }) {
+  const playerName = musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE';
   const opened = useUi(s => s.blkOpen), setUi = useUi(s => s.set);
   const ql = q.trim().toLowerCase();
   // the folders folded up while the filter has this text
@@ -216,11 +223,22 @@ function BlocksView({ A, R, cursor, q, setQ, onNavigate }: Pick<SidebarProps, 'A
                 <span className="blk-folder-n">{ql ? `${f.blocks.length}/${f.total}` : f.total}</span>
               </button>
               {open && <div className="blk-folder-body" role="group" aria-label={`${f.label} blocks`}>
-                {f.blocks.map(b => { const l = R.labels.get(b.start); return (
-                  <button key={b.id} className={cx('blk-row', at === b && 'on')} onClick={() => onNavigate(b.start)}>
-                    <span className="blk-main"><span className="blk-name">{l ? l.name : f.label}</span><span className="muted mono small">{bankAdr(A, b.start)} · {b.end - b.start} B</span></span>
-                    {b.user && <span className="blk-type" title="Its type is set by you"><Icon name="pencil" size={11} /></span>}
-                  </button>); })}
+                {f.blocks.map(b => {
+                  const l = R.labels.get(b.start);
+                  const row = (
+                    <button key={b.id} className={cx('blk-row', at === b && 'on')} onClick={() => onNavigate(b.start)}>
+                      <span className="blk-main"><span className="blk-name">{l ? l.name : f.label}</span><span className="muted mono small">{bankAdr(A, b.start)} · {b.end - b.start} B</span></span>
+                      {b.user && <span className="blk-type" title="Its type is set by you"><Icon name="pencil" size={11} /></span>}
+                    </button>);
+                  if (b.type !== 'music' || !onPlayMusic) return row;
+                  const name = l?.name ?? `music_${h4(b.start)}`;
+                  return (
+                    <div key={b.id} className={cx('blk-row-play', at === b && 'on')}>
+                      {row}
+                      <button className="icon-btn blk-play" aria-label={`Play ${name} in ${playerName}`} onClick={() => onPlayMusic(b.start)}
+                        title={`Play ${name} in ${playerName}${musicPlayer === 'deepsid' ? ': the .sid the export writes, in DeepSID\'s window' : ': init with song $00, then play each frame'}. Settings → Toolchain picks VICE or DeepSID`}>
+                        <Icon name="play" size={12} /></button>
+                    </div>); })}
               </div>}
             </div>
           );
