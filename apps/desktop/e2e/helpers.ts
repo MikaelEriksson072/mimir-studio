@@ -71,6 +71,15 @@ export async function openSection(page: Page, name: string): Promise<Locator> {
   return section;
 }
 
+/** The files in the Explorer's Files section, which is opened for it: a load folds it up (spec 14.1), so it is opened
+ *  again until the names are there (a load still on its way folds it once more). */
+export async function expectFiles(page: Page, names: (string | RegExp)[]): Promise<void> {
+  await expect(async () => {
+    await openSection(page, 'Files');
+    await expect(page.locator('.file-name')).toHaveText(names, { timeout: 1000 });
+  }).toPass({ timeout: 30_000 });
+}
+
 /** G opens "Go to address, label or range"; Enter jumps there, or selects the range ("$2000-$27ff"). */
 export async function goTo(page: Page, target: string): Promise<void> {
   await page.keyboard.press('g');

@@ -468,7 +468,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (cart && ownCart) {
       const files: LoadedFile[] = opened.map(({ id, name, load, bytes, chip, cart: c }) => ({ id, name, load, bytes, ...(c === cart && chip != null ? { chip } : {}) }));
       replace(createProject({ files, settings: newProjectSettings(project.settings), cart }), undoLabel); resetView();
-      if (opts.show) showSection('cart');
+      // however it was opened, the Explorer shows the cartridge's banks
+      showSection('cart');
+      afterLoad(files.map(f => f.id), false);
       let what = '';
       try { what = `: ${describeCrt(parseCrt(cart.crt, cart.name))}`; } catch { /* the files say enough */ }
       const chips = files.filter(f => f.chip != null);
@@ -484,7 +486,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // an empty project's nothing comes back with Ctrl+Z
     else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: newProjectSettings(project.settings) }), entries, entryPoint: start ?? null }, undoLabel); resetView(); }
     if (opts.gfx) setGfxGo({ id: files[0].id, n: Date.now() });
-    if (opts.show) showSection('files');
+    if (opts.show) setUi({ activity: 'explorer', sidePanel: true });
+    afterLoad(files.map(f => f.id), add);
     if (note) { toast(note, 'ok'); return; }
     toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}${leftNote}`, 'ok');
   };
@@ -499,6 +502,35 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const open = useUi.getState().sideOpen;
     setUi({ activity: 'explorer', sidePanel: true, ...(open.includes(id) ? {} : { sideOpen: [...open, id] }) });
   };
+  /** the files just loaded, by their ids, and whether they were added to a project; a newer load takes its place */
+  const loaded = useRef<{ ids: string[]; add: boolean; n: number } | null>(null);
+  /** after a load (14.1): the Explorer's Files section folds up at once; once the analysis is of the files loaded,
+   *  Loaders opens when they hold a loader and Program start when the start is known. The other sections stay as they
+   *  are, and the Explorer is shown only where the load shows it */
+  const afterLoad = (ids: string[], add: boolean) => {
+    const open = useUi.getState().sideOpen;
+    if (open.includes('files')) setUi({ sideOpen: open.filter(x => x !== 'files') });
+    loaded.current = { ids, add, n: Date.now() };
+  };
+  useEffect(() => {
+    const l = loaded.current;
+    // the analysis of the project the files went into, not the one before
+    if (!l || rProject !== project) return;
+    loaded.current = null;
+    if (Date.now() - l.n > 60000) return;
+    const mine = new Set(l.ids.map(id => project.files.findIndex(f => f.id === id)).filter(i => i >= 0));
+    if (!mine.size) return;
+    // files added to a project: only what is in them counts, not the project's other files
+    const ours = (a: Addr) => !l.add || mine.has(A.owner[a]);
+    const loader = A.loaders.some(x => !l.add || x.parts.some(p => !p.outside && ours(p.start)));
+    // known: set (by you or by a snapshot's BASIC SYS), a BASIC SYS, a cartridge's vectors; not the load address taken
+    // for want of one
+    const e = A.entry;
+    const start = e != null && ours(e) && (e !== A.files[0]?.load || project.entryPoint === e || A.basics.some(b => b.sys === e));
+    const show = [loader && 'loaders', start && 'start'].filter((x): x is string => !!x);
+    const now = useUi.getState().sideOpen;
+    if (show.some(x => !now.includes(x))) setUi({ sideOpen: [...new Set([...now, ...show])] });
+  }, [A, rProject, project, setUi]);
   /* ---- VICE's quicksave snapshot: Alt+F11 in VICE writes it, F9 here opens it, and each new one opens by itself ---- */
   const openQuicksave = async () => {
     if (!kr) return needDesktop();

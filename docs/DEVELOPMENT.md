@@ -324,6 +324,13 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   and puts it in the top row at once or as it opens, ahead of `start`, then reports the view, which clears `gfxGo`.
   The address the tab puts at the top itself (`pin`) stays `topAt` while its row is at the top, so another view has
   that address in its top row rather than the start of the row it was in.
+- **The Explorer after a load** (spec 14.1). `addFiles` calls `afterLoad` with the ids of the files loaded: it folds
+  *Files* up (`sideOpen`) and keeps them in `loaded`. An effect waits for the analysis of that project
+  (`rProject === project`) and opens *Loaders* when a loader has a part in them (any loader when they make a new
+  project) and *Program start* when `A.entry` is known: the start set, a BASIC SYS or a cartridge's vectors, not the
+  first file's load address taken for want of one. A cartridge always shows the Explorer with *Cartridge*
+  (`showSection('cart')`). The e2e tests read the Files section with `expectFiles` (`e2e/helpers.ts`), which opens it
+  again until the names are there.
 - **All banks in Graphics and Memory** (spec 13.9b). With *All banks in one .asm* (`settings.cartOneSource`) and more
   than one bank, the two tabs get the merged `AnalysisResult` at bank addresses instead of `spaceView`'s 64 KB:
   `MemoryDump` puts a line over each bank (`spaces`), `MemoryGfx` lays out only the banks' loaded memory

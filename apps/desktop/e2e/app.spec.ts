@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Locator, Page } from '@playwright/test';
 import { expect, repoDir, test } from './fixtures';
-import { dialogOptions, fromFileMenu, fromSubmenu, goTo, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
+import { dialogOptions, fromFileMenu, fromSubmenu, goTo, expectFiles, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
 
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
@@ -1030,7 +1030,8 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
    *  start of the one before */
   const elsewhere = async () => {
     await expect(statusBar(page)).not.toContainText('analysing');
-    for (const t of await page.locator('.side-sec .sec-toggle[aria-expanded="true"]').all()) await t.click();
+    const open = page.locator('.side-sec .sec-toggle[aria-expanded="true"]');
+    while (await open.count()) await open.first().click();
     await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Blocks' }).click();
     await expect(explorer).toHaveAttribute('aria-pressed', 'false');
   };
@@ -1050,23 +1051,54 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     await expect(page.getByRole('list', { name: 'Files on mimir-demo.d64' }).getByRole('listitem')).toHaveCount(3);
   });
 
-  await test.step('Open PRG files…: PRGs, several at once, and the files open', async () => {
+  await test.step('Open PRG files…: PRGs, several at once; Files folds up, and Program start opens for its BASIC SYS', async () => {
     await elsewhere();
     await choose('Open PRG files…', join(repoDir, 'fixtures/prg/raster-demo.prg'));
     await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
     expect(await lastDialog()).toEqual({ title: 'Open PRG files', filters: ['C64 programs: prg PRG', 'All files: *'], properties: ['openFile', 'multiSelections'] });
     await expect(explorer).toHaveAttribute('aria-pressed', 'true');
-    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('.file-name')).toHaveText(['raster-demo.prg']);
+    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'false');
+    await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('region', { name: 'Program start' })).toContainText('BASIC SYS');
+    // no loader in it: Loaders stays as it was
+    await expect(statusBar(page)).not.toContainText('analysing');
+    await expect(expanded('Loaders')).toHaveAttribute('aria-expanded', 'false');
+    await expectFiles(page, ['raster-demo.prg']);
   });
 
-  await test.step('Open a VICE snapshot (.vsf)…: one snapshot, and the files open', async () => {
+  await test.step('a file with a loader: Loaders opens, and Program start; one opened while Files is open folds it up', async () => {
     await elsewhere();
+    // Files open in the Explorer, the other view left for it
+    await explorer.click();
+    await openSection(page, 'Files');
+    await choose('Open PRG files…', join(repoDir, 'fixtures/prg/loader-demo.prg'));
+    await expect(toast(page, 'Loaded loader-demo.prg at $0801')).toBeVisible();
+    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'false');
+    await expect(expanded('Loaders')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('region', { name: 'Loaders' }).getByLabel('Spindle (lft)')).toBeVisible();
+    await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  await test.step('a program without a start of its own: Program start stays closed (the load address is no start)', async () => {
+    await elsewhere();
+    await choose('Open PRG files…', join(repoDir, 'fixtures/prg/spindle-demo.prg'));
+    await expect(toast(page, 'Loaded spindle-demo.prg at $0400')).toBeVisible();
+    await expect(statusBar(page)).not.toContainText('analysing');
+    await expect(page.getByRole('region', { name: 'Program start' })).toContainText('$0400');
+    await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  await test.step('Open a VICE snapshot (.vsf)…: one snapshot; Files folds up, and Program start opens for its SYS', async () => {
+    await elsewhere();
+    // Files open in the Explorer, the other view left for it
+    await explorer.click();
+    await openSection(page, 'Files');
     await choose('Open a VICE snapshot (.vsf)…', join(repoDir, 'fixtures/vsf/raster-demo.vsf'));
     await expect(toast(page, /Loaded raster-demo\.prg at \$0200 from a VICE/)).toBeVisible();
     expect(await lastDialog()).toEqual({ title: 'Open a VICE snapshot', filters: ['VICE snapshots: vsf VSF', 'All files: *'], properties: ['openFile'] });
     await expect(explorer).toHaveAttribute('aria-pressed', 'true');
-    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'true');
+    await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'false');
+    await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'true');
   });
 
   await test.step('Open a cartridge (.crt)…: one cartridge, and its banks open', async () => {
@@ -1078,6 +1110,8 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     await expect(expanded('Cartridge')).toHaveAttribute('aria-expanded', 'true');
     await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByRole('list', { name: 'Banks of mimir-demo.crt' }).getByRole('listitem')).toHaveCount(2);
+    // its vectors are a start
+    await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'true');
   });
 
   await test.step('Ctrl+O still asks for any of them, and leaves the side panel as it is', async () => {
@@ -1088,19 +1122,28 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     expect((await lastDialog()).filters).toEqual(['C64 programs, VICE snapshots and cartridges: prg PRG vsf VSF crt CRT', 'All files: *']);
     await expect(explorer).toHaveAttribute('aria-pressed', 'false');
   });
+
+  await test.step('a cartridge opened with Ctrl+O shows the Explorer too, with its banks', async () => {
+    await elsewhere();
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/crt/mimir-demo.crt')] });
+    await page.keyboard.press('Control+o');
+    // (the toast of the cartridge opened before may still be there)
+    await expect(statusBar(page)).toContainText('bank 0 · $8009 · start');
+    await expect(explorer).toHaveAttribute('aria-pressed', 'true');
+    await expect(expanded('Cartridge')).toHaveAttribute('aria-expanded', 'true');
+  });
 });
 
 test('Smart attach opens each file as its extension says, and Brokkr packs a Kick Assembler source', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   const kickJar = (await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<{ kickJar: string }> } }).kr.getSettings())).kickJar;
   const smart = async (...paths: string[]) => { await stubDialogs(app, { open: paths }); await fromFileMenu(page, 'Smart attach…'); };
-  const files = page.locator('.file-name');
 
   await test.step('a PRG and a D64 from one dialog: the PRG opens and the disk is mounted', async () => {
     await smart(join(repoDir, 'fixtures/prg/raster-demo.prg'), join(repoDir, 'fixtures/d64/mimir-demo.d64'));
     await expect(toast(page, 'Mounted mimir-demo.d64')).toBeVisible();
     await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
-    await expect(files).toHaveText(['raster-demo.prg']);
+    await expectFiles(page, ['raster-demo.prg']);
     await expect(page.getByRole('list', { name: 'Files on mimir-demo.d64' }).getByRole('listitem')).toHaveCount(3);
     const o = await app.evaluate(() => {
       const all = (globalThis as unknown as { dialogOptions?: { title?: string; filters?: { name: string; extensions: string[] }[]; properties?: string[] }[] }).dialogOptions ?? [];
@@ -1117,7 +1160,7 @@ test('Smart attach opens each file as its extension says, and Brokkr packs a Kic
     await expect(statusBar(page)).not.toContainText('analysing');
     await smart(join(repoDir, 'fixtures/crt/mimir-demo.crt'));
     await expect(toast(page, 'Opened the cartridge mimir-demo.crt')).toBeVisible();
-    await expect(files).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+    await expectFiles(page, ['bank00_8000.prg', 'bank01_8000.prg']);
   });
 
   await test.step('a Kick Assembler source goes to Brokkr: Pack a file over the work, which stays as it was', async () => {
@@ -1142,7 +1185,7 @@ test('Smart attach opens each file as its extension says, and Brokkr packs a Kic
     await expect(page.getByRole('dialog', { name: 'Go to address, label or range' })).toHaveCount(0);
     await over.getByRole('button', { name: 'Back to the work' }).click();
     await expect(over).toBeHidden();
-    await expect(files).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+    await expectFiles(page, ['bank00_8000.prg', 'bank01_8000.prg']);
   });
 
   await test.step('a project file opens the project, by itself', async () => {
@@ -1155,7 +1198,7 @@ test('Smart attach opens each file as its extension says, and Brokkr packs a Kic
     await expect(toast(page, 'Not opened: raster-demo.prg (a project opens by itself)')).toBeVisible();
     await expect(toast(page, `Opened the project copy (${work})`)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Project copy' })).toBeVisible();
-    await expect(files).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+    await expectFiles(page, ['bank00_8000.prg', 'bank01_8000.prg']);
   });
 });
 
@@ -1184,7 +1227,7 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
     await expect(toast(page, 'Loaded RASTER DEMO.prg at $0801')).toBeVisible();
     await page.getByRole('button', { name: 'Add SPRITE to this project' }).click();
     await expect(toast(page, 'Loaded SPRITE.prg at $c000')).toBeVisible();
-    await expect(page.locator('.file-name')).toHaveText(['RASTER DEMO.prg', 'SPRITE.prg']);
+    await expectFiles(page, ['RASTER DEMO.prg', 'SPRITE.prg']);
     // a SEQ file is listed but not opened
     await files.getByRole('listitem').filter({ hasText: 'NOTES' }).click();
     await expect(page.locator('.file-name')).toHaveCount(2);
@@ -1195,7 +1238,7 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   await test.step('eject', async () => {
     await page.getByRole('button', { name: 'Eject disk' }).click();
     await expect(files).toHaveCount(0);
-    await expect(page.locator('.file-name')).toHaveText(['RASTER DEMO.prg', 'SPRITE.prg']);
+    await expectFiles(page, ['RASTER DEMO.prg', 'SPRITE.prg']);
   });
 });
 
@@ -1211,11 +1254,11 @@ test('Add PRG file… in the Explorer adds PRGs beside the open ones; the File m
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/spindle-demo.prg')] });
   await section.getByRole('button', { name: 'Add PRG file…' }).click();
   await expect(toast(page, 'Loaded spindle-demo.prg at $0400')).toBeVisible();
-  await expect(page.locator('.file-name')).toHaveText(['raster-demo.prg', 'spindle-demo.prg']);
+  await expectFiles(page, ['raster-demo.prg', 'spindle-demo.prg']);
   expect((await dialogOptions(app)).at(-1)?.title).toBe('Add PRG files to the project');
   // Ctrl+Z takes the added file out again
   await page.keyboard.press('Control+z');
-  await expect(page.locator('.file-name')).toHaveText(['raster-demo.prg']);
+  await expectFiles(page, ['raster-demo.prg']);
 });
 
 test('open a cartridge: every bank is in the listing, one after the other, and the .crt is rebuilt', async ({ workDir: work, app, page }) => {
@@ -1231,7 +1274,7 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     await fromFileMenu(page, 'Open a cartridge (.crt)…');
     await expect(toast(page, 'Opened the cartridge mimir-demo.crt: Magic Desk (Domark, HES Australia), 2 banks of 8 KB (16 KB), 8K mode; bank00_8000.prg at $8000, bank01_8000.prg at $8000')).toBeVisible();
     await openSection(page, 'Cartridge');
-    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+    await expectFiles(page, ['bank00_8000.prg', 'bank01_8000.prg']);
     await expect(banks.getByRole('listitem')).toHaveText([/0\s*\$8000 · start\s*8 KB/, /1\s*\$8000\s*8 KB/]);
     for (const row of await banks.getByRole('listitem').all()) await expect(row).toHaveClass(/on/);
     await expect(page.locator('.disk-head').first()).toContainText('"MIMIR DEMO"');
@@ -1287,11 +1330,11 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
   await test.step('× leaves a bank out of the project, + adds it again', async () => {
     await banks.getByRole('listitem').nth(1).hover();
     await page.getByRole('button', { name: 'Leave bank 1 out of the project' }).click();
-    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg']);
+    await expectFiles(page, ['bank00_8000.prg']);
     await expect(banks.getByRole('listitem').nth(1)).toHaveClass(/out/);
     await page.getByRole('button', { name: 'Add bank 1 to this project' }).click();
     await expect(toast(page, 'Added bank 1 of mimir-demo.crt: bank01_8000.prg at $8000')).toBeVisible();
-    await expect(page.locator('.file-name')).toHaveText(['bank00_8000.prg', 'bank01_8000.prg']);
+    await expectFiles(page, ['bank00_8000.prg', 'bank01_8000.prg']);
     // the name given in bank 1 is still there
     expect((await listingRows(page)).some(r => /^bank1_text:/.test(r.text.trim()))).toBe(true);
   });
@@ -1676,6 +1719,7 @@ test('a packed PRG is reported and unpacked with Sindri, or an external unpacker
     await expect(bar).toContainText('The listing shows the decruncher at $080d and the packed data, not the program.');
     // Sindri runs every file opened and reports what it peeled off
     await expect(bar).toContainText(/Sindri peels off 2 layers: an unknown mover at \$080d \(fingerprint [0-9a-f]{8}\), then an unknown decoder at \$0340 \(fingerprint [0-9a-f]{8}\); the program starts at \$0810/, { timeout: 30_000 });
+    await openSection(page, 'Files');
     await expect(page.locator('.file-row', { hasText: 'packed-demo.prg' }).locator('.pill.pack')).toHaveText('packed');
     await page.keyboard.press('Control+j');
     await page.getByRole('tab', { name: /Problems/ }).click();
@@ -1692,7 +1736,7 @@ test('a packed PRG is reported and unpacked with Sindri, or an external unpacker
     await expect(done.locator('.unpack-log')).toContainText('layer 1  $0340  jmp from $0839  decoder');
     await expect(done.locator('.unpack-log')).toContainText('saved layer 2: $0801-$37ff (12.0 KB), start with SYS 2064 = $0810');
     await expect(bar).toHaveCount(0);
-    await expect(page.locator('.file-name')).toHaveText(['packed-demo-unpacked.prg']);
+    await expectFiles(page, ['packed-demo-unpacked.prg']);
     await expect(page.locator('.side-sec', { hasText: 'Program start' })).toContainText('set by you');
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
@@ -1712,7 +1756,7 @@ test('a packed PRG is reported and unpacked with Sindri, or an external unpacker
     await done.getByText('node output').click();
     await expect(done.locator('.unpack-log')).toContainText('return to mem: $0810');
     await expect(done.locator('.unpack-log')).toContainText('saved $0801-$37ff as packed-demo.prg.0810');
-    await expect(page.locator('.file-name')).toHaveText(['packed-demo-unpacked.prg']);
+    await expectFiles(page, ['packed-demo-unpacked.prg']);
   });
 });
 
@@ -1737,7 +1781,7 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
   await expect(done).toContainText('BOOT-unpacked.prg, $c000-$c260, starting at $c000 (set as the program start).');
   await done.getByText('Layer report').click();
   await expect(done.locator('.unpack-log')).toContainText(/Drive: 1541 with "LOADER DISK" LD, \d+ bytes read/);
-  await expect(page.locator('.file-name')).toHaveText(['BOOT-unpacked.prg']);
+  await expectFiles(page, ['BOOT-unpacked.prg']);
 });
 
 test('file dialogs open in the folder they were last used in', async ({ app, page, userData }) => {
@@ -2293,7 +2337,7 @@ test('the installed app unpacks with Sindri: no unp64 comes with it', async ({ a
     const done = page.locator('.unpack-bar');
     await expect(done).toContainText('starting at $0810 (set as the program start).');
     await expect(done.locator('.unpack-log')).toContainText('saved layer 2: $0801-$37ff (12.0 KB), start with SYS 2064 = $0810');
-    await expect(page.locator('.file-name')).toHaveText(['packed-demo-unpacked.prg']);
+    await expectFiles(page, ['packed-demo-unpacked.prg']);
   });
 });
 
@@ -2528,6 +2572,7 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
   await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
   await expect(toast(page, 'Loaded raster-demo.prg at $0200 from a VICE 3.10 snapshot of a C64SC, PC $08c7, $01 = $37; traced from $08c7, $08b7; program start $0810')).toBeVisible();
+  await openSection(page, 'Files');
   await expect(page.locator('.file-row', { hasText: 'raster-demo.prg' })).toContainText('$0200–$ffff');
   // the BASIC stub inside the RAM is the program start the analysis traces from; Build & Run restarts the snapshot
   const start = await openSection(page, 'Program start');
@@ -2549,6 +2594,7 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
     await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
     await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
     await expect(toast(page, 'Loaded raster-demo.prg at $0002 from a VICE 3.10 snapshot')).toBeVisible();
+    await openSection(page, 'Files');
     await expect(page.locator('.file-row', { hasText: 'raster-demo.prg' })).toContainText('$0002–$ffff');
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
@@ -3678,7 +3724,7 @@ test('the Demo button opens the showcase: every block type and a guided tour in 
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
     await page.locator('nav.activity').getByRole('button', { name: 'Explorer' }).click();
     await openSection(page, 'Files');
-    await expect(page.locator('.file-name')).toHaveText(['mimir-showcase.prg']);
+    await expectFiles(page, ['mimir-showcase.prg']);
   });
 });
 
@@ -3787,7 +3833,6 @@ test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctr
   await waitForListing(page);
   // a file of its own instead of VICE's settings folder: the user's quicksaves are never touched
   const qs = join(work, 'C64SC.vsf'), snapshot = join(repoDir, 'fixtures/vsf/raster-demo.vsf');
-  const files = page.locator('.file-name');
   await openSection(page, 'Files');
   const section = await openSection(page, 'VICE quicksave');
   const status = section.getByRole('status', { name: 'Latest VICE quicksave' });
@@ -3812,7 +3857,7 @@ test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctr
     // as VICE does: a new file, saved now
     writeFileSync(qs, readFileSync(snapshot));
     await expect(toast(page, /^Opened the VICE quicksave from .+: VICE 3\.10 snapshot of a C64SC.*, traced from \$08c7, \$08b7\. Ctrl\+Z goes back to the project before$/)).toBeVisible({ timeout: 15_000 });
-    await expect(files).toHaveText(['quicksave.prg']);
+    await expectFiles(page, ['quicksave.prg']);
     await expect(status).toContainText(/^Latest: today \d{1,2}[:.]\d{2}[:.]\d{2}.* C64SC\.vsf$/);
     await expect(open).toBeEnabled();
   });
@@ -3820,9 +3865,9 @@ test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctr
   await test.step('Ctrl+Z brings the project before back, Ctrl+Y the quicksave', async () => {
     await listing(page).click();
     await page.keyboard.press('Control+z');
-    await expect(files).toHaveText(['raster-demo.prg']);
+    await expectFiles(page, ['raster-demo.prg']);
     await page.keyboard.press('Control+y');
-    await expect(files).toHaveText(['quicksave.prg']);
+    await expectFiles(page, ['quicksave.prg']);
   });
 
   await test.step('with following off a new quicksave is only announced, and F9 opens it', async () => {
@@ -3858,7 +3903,7 @@ test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctr
     expect((await dialogOptions(app)).pop()).toMatchObject({ title: 'Save the quicksave "intro"', defaultPath: expect.stringMatching(/intro\.vsf$/) });
     await kept.nth(1).getByRole('button', { name: new RegExp(`^${older.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) }).click();
     await expect(toast(page, `Opened the quicksave "${older}": VICE 3.10 snapshot of a C64SC`)).toBeVisible();
-    await expect(files).toHaveText([`${older.replace(/:/g, '-')}.prg`]);
+    await expectFiles(page, [`${older.replace(/:/g, '-')}.prg`]);
   });
 
   await test.step('the star makes one a favourite, in a list of its own above the newest, and takes it back', async () => {
@@ -3878,7 +3923,7 @@ test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctr
     // it opens, is named and saved there as well
     await favourites.getByRole('button', { name: /^intro/ }).click();
     await expect(toast(page, 'Opened the quicksave "intro": VICE 3.10 snapshot of a C64SC')).toBeVisible();
-    await expect(files).toHaveText(['intro.prg']);
+    await expectFiles(page, ['intro.prg']);
     const off = section.getByRole('button', { name: 'Remove the quicksave intro from the favourites' });
     await expect(off).toHaveAttribute('aria-pressed', 'true');
     await off.click();
@@ -4754,7 +4799,7 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
     await table.getByRole('row', { name: /job01_0800/ }).click();
     await expect(toast(page, 'Loaded job01_0800.prg at $0800')).toBeVisible();
     await table.getByRole('button', { name: 'Add job02_4000.bin to this project' }).click();
-    await expect(page.locator('.file-name')).toHaveText(['job01_0800.prg', 'job02_4000.prg']);
+    await expectFiles(page, ['job01_0800.prg', 'job02_4000.prg']);
     await expect(listing(page).locator('.row', { hasText: 'sta VIC_BORDER_COLOR' }).first()).toBeVisible();
   });
 
@@ -4802,7 +4847,7 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
     await expect(listing(page).locator('.row', { hasText: 'jsr music.init' }).first()).toBeVisible();
     await table.getByRole('button', { name: 'Add file01_4000.lz to this project' }).click();
-    await expect(page.locator('.file-name')).toHaveText(['file00_0801.prg', 'file01_4000.prg']);
+    await expectFiles(page, ['file00_0801.prg', 'file01_4000.prg']);
   });
 
   await test.step('it copies d64write\'s command line, each file in a comment above it', async () => {
@@ -4851,7 +4896,7 @@ test('a mounted Pirate Slayer disk: the files outside its directory in the Pirat
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
     await expect(listing(page).locator('.row', { hasText: 'jsr music.init' }).first()).toBeVisible();
     await table.getByRole('button', { name: 'Add t9s0_4000.prg to this project' }).click();
-    await expect(page.locator('.file-name')).toHaveText(['t3s0_0801.prg', 't9s0_4000.prg']);
+    await expectFiles(page, ['t3s0_0801.prg', 't9s0_4000.prg']);
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
   });
@@ -4935,7 +4980,7 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
     await openSection(page, 'Tape');
     await files.getByRole('listitem').filter({ hasText: 'MIMIR TAPE' }).click();
     await expect(toast(page, "MIMIR TAPE's header holds code: it is in the project too, as MIMIR TAPE-header.prg at $033c-$03fb (the tape buffer)")).toBeVisible();
-    await expect(page.locator('.file-name')).toHaveText(['MIMIR TAPE.prg', 'MIMIR TAPE-header.prg']);
+    await expectFiles(page, ['MIMIR TAPE.prg', 'MIMIR TAPE-header.prg']);
   });
 
   await test.step('Build & Run: VICE loads the tape with the built boot file and its header on it', async () => {
@@ -4963,7 +5008,7 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
     const done = page.locator('.unpack-bar');
     await done.getByText('Layer report').click();
     await expect(done.locator('.unpack-log')).toContainText(/Tape: datasette: the tape stood after the file \([\d.]+ s\), played [\d.]+ s/);
-    await expect(page.locator('.file-name')).toHaveText(['MIMIR TAPE-unpacked.prg', 'MIMIR TAPE-header.prg']);
+    await expectFiles(page, ['MIMIR TAPE-unpacked.prg', 'MIMIR TAPE-header.prg']);
   });
 
   await test.step('ejecting the tape takes the section and the tab away', async () => {
@@ -5019,7 +5064,7 @@ test('a T64 in the datasette: its directory in the Explorer and the Tape tab, Sa
     await openSection(page, 'Tape');
     await files.getByRole('listitem').filter({ hasText: 'MIMIR BOOT' }).click();
     await expect(toast(page, 'Loaded MIMIR BOOT.prg at $0801')).toBeVisible();
-    await expect(page.locator('.file-name')).toHaveText(['MIMIR BOOT.prg']);
+    await expectFiles(page, ['MIMIR BOOT.prg']);
     test.skip(!existsSync(standIn), 'needs where.exe');
     await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
     await page.keyboard.press('F5');
@@ -5116,7 +5161,7 @@ test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, a
 
   await test.step('ejecting the disk takes its files away; the program\'s script stays', async () => {
     await page.getByRole('list', { name: 'Files on booze-demo.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
-    await expect(page.locator('.file-name')).toHaveText(['BOOT.prg']);
+    await expectFiles(page, ['BOOT.prg']);
     await page.getByRole('button', { name: 'Eject disk' }).click();
     await expect(files).toHaveCount(0);
     await expect(script.locator('tbody tr td:nth-child(3)')).toHaveText(['—', '—', '—', '—', '—', '—']);
@@ -5154,7 +5199,7 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
     // the raster demo, as it was before it was packed into the bundle
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
     await bundles.getByRole('button', { name: 'Add bundle01_3000.prg to this project' }).click();
-    await expect(page.locator('.file-name')).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg']);
+    await expectFiles(page, ['bundle00_0801.prg', 'bundle01_3000.prg']);
   });
 
   await test.step('Graphics opens at the start of the file opened last, in every view; one opened while it is open goes there at once', async () => {
@@ -5176,7 +5221,7 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
     await expect.poll(top).toBe('2f80');
     // with Graphics open: a file added from the script is at the top at once ($0400 is in the row from $03c0)
     await bundles.getByRole('button', { name: 'Add bundle02_0400.prg to this project' }).click();
-    await expect(page.locator('.file-name')).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle02_0400.prg']);
+    await expectFiles(page, ['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle02_0400.prg']);
     await expect.poll(top).toBe('03c0');
     await mode('Screens');
     await expect.poll(top).toBe('0400');

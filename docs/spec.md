@@ -3316,6 +3316,15 @@ blir för lång.
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.
 
+**Explorer efter en laddning:** när en fil har laddats, hur den än öppnades eller lades till (File-menyn, Ctrl+O, Smart
+attach, ett drag in i fönstret, Disk, Tape, ett laddskript, Pirate Slayer, en VICE-quicksave), fälls *Files* ihop direkt.
+När analysen av den har kommit öppnas *Loaders* om den har en loader och *Program start* om starten är känd: satt (av
+användaren eller som en snapshots BASIC `SYS`), en BASIC-stubs `SYS` eller en cartridges vektorer, inte laddadressen som
+tas när ingen start finns. En fil som läggs till i ett projekt räknas för sig: bara en loader med en del i den, och bara
+en start i den, öppnar sektionerna. De andra sektionerna står som de stod, och Explorer visas bara där laddningen visar
+den (File-menyns val, Smart attach). En cartridge visar alltid Explorer med *Cartridge* öppen, hur den än öppnades
+(`afterLoad` i `App.tsx`).
+
 **Fälla ihop panelerna:** sidopanelen fälls ihop och visas igen med `Ctrl+Shift+B` (`Ctrl+B` visar bokmärkena), knappen
 till höger på vyns rubrik (*Collapse side panel*), knappen för vyn som visas i aktivitetsraden och *Toggle side panel*
 i kommandopaletten. Ihopfälld försvinner panelen och dess dragkant, och editorn med listningen får deras bredd (276 px
