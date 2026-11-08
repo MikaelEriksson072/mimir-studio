@@ -27,15 +27,15 @@ import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
-import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, MountedDisk, MountedTape, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
+import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, Message, MountedDisk, MountedTape, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
 import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, tapeOpens } from './components/Sidebar';
 import { Listing, type ListingFind } from './components/Listing';
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
-import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, LogList, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
+import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, LogList, MessagesPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
@@ -157,6 +157,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [editing, setEditing] = useState<Editing | null>(null);
   const [labelError, setLabelError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  /** every toast of this run, for the Messages tab (the last 200) */
+  const [messages, setMessages] = useState<Message[]>([]);
   const [build, setBuild] = useState<BuildState | null>(null);
   const [buildBusy, setBuildBusy] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
@@ -240,7 +242,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const fileAddr = (i: number): Addr => (A.spaces?.find(x => x.files.includes(i))?.space ?? 0) * SPACE + (project.files[i]?.load ?? 0);
   useEffect(() => { if (cursor == null && A.entry != null) { setCursor(A.entry); setScrollReq({ addr: A.entry, center: true, n: Date.now() }); } }, [A]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toast = useCallback((msg: string, kind: ToastKind = 'info') => { const id = uid(); setToasts(t => [...t.slice(-3), { id, msg, kind }]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); }, []);
+  /** a notice in the corner, kept in the Messages tab: an error stays until it is dismissed (or four newer ones push it
+   *  out), the others go after 4.2 s, a long one after up to 9 s, so there is time to read it */
+  const toast = useCallback((msg: string, kind: ToastKind = 'info') => {
+    const id = uid();
+    setToasts(t => [...t.slice(-3), { id, msg, kind }]);
+    setMessages(m => [...m.slice(-199), { id, msg, kind, at: Date.now() }]);
+    if (kind !== 'err') setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), Math.min(9000, Math.max(4200, msg.length * 40)));
+  }, []);
+  const dismissToast = (id: string) => setToasts(t => t.filter(x => x.id !== id));
   const needDesktop = () => { toast('This needs the desktop app (file system and toolchain access go through the Electron main process).', 'warn'); };
   const noted = useRef(0);
   useEffect(() => { if (note && note.n !== noted.current) { noted.current = note.n; toast(note.text, 'ok'); } }, [note, toast]);
@@ -504,13 +514,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** the files just loaded, by their ids, and whether they were added to a project; a newer load takes its place */
   const loaded = useRef<{ ids: string[]; add: boolean; n: number } | null>(null);
+  /** files loaded while *Unpack packed files when they are opened* is on (Settings → General): each is unpacked once
+   *  its unpacker says it is packed (see `unpackFile`), or left as it is */
+  const toUnpack = useRef(new Set<string>());
   /** after a load (14.1): the Explorer's Files section folds up at once; once the analysis is of the files loaded,
    *  Loaders opens when they hold a loader and Program start when the start is known. The other sections stay as they
-   *  are, and the Explorer is shown only where the load shows it */
-  const afterLoad = (ids: string[], add: boolean) => {
+   *  are, and the Explorer is shown only where the load shows it. Unpack's result is a load too (`unpacked`: it is not
+   *  unpacked again) */
+  const afterLoad = (ids: string[], add: boolean, unpacked = false) => {
     const open = useUi.getState().sideOpen;
     if (open.includes('files')) setUi({ sideOpen: open.filter(x => x !== 'files') });
     loaded.current = { ids, add, n: Date.now() };
+    if (!unpacked && useUi.getState().autoUnpack) for (const id of ids) toUnpack.current.add(id);
   };
   useEffect(() => {
     const l = loaded.current;
@@ -636,6 +651,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  $033c, as a second file (where many tape loaders keep their code) */
   const openFromTape = (f: TapeFile, add: boolean) => {
     if (!tape || f.load == null) return;
+    lastFrom.current = { kind: 'tape', f };
     try {
       const base = tapeFileName(f).replace(/\.\w+$/, '');
       const file = withId(parsePrg(`${base}.prg`, makePrg(f.load, f.data)));
@@ -689,6 +705,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const diskFileOf = useRef(new Map<string, D64File>());
   const openFromDisk = (f: D64File, add: boolean) => {
     if (!disk) return;
+    lastFrom.current = { kind: 'disk', f };
     try {
       const file = withId(parsePrg(d64FileName(f), readD64File(disk.bytes, f)));
       diskOf.current.set(file.id, disk.bytes);
@@ -696,6 +713,30 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       addFiles([file], add);
     } catch (e) { toast(`"${f.name}": ${errorText(e)}`, 'err'); }
   };
+  /** the file of the disk or the tape opened (or added) last: Alt+↓ and Alt+↑ go on from it */
+  const lastFrom = useRef<{ kind: 'disk'; f: D64File } | { kind: 'tape'; f: TapeFile } | null>(null);
+  /** Alt+↓ / Alt+↑: the next program on the disk or the tape the last one came from (or the one before) opens, as a
+   *  click on it does; with none opened yet, the first (or last) on the mounted disk, else on the tape */
+  const openNextFrom = (dir: 1 | -1) => {
+    const l = lastFrom.current;
+    const kind = l && (l.kind === 'disk' ? disk : tape) ? l.kind : disk ? 'disk' : tape ? 'tape' : null;
+    if (!kind) { toast('No disk or tape: Alt+↓ and Alt+↑ open the next program on a mounted disk or the tape, and the one before', 'info'); return; }
+    const step = <T,>(files: readonly T[], from: T | undefined, can: (f: T) => boolean): T | null => {
+      let i = from === undefined ? -1 : files.indexOf(from);
+      if (i < 0) i = dir > 0 ? -1 : files.length;
+      do i += dir; while (i >= 0 && i < files.length && !can(files[i]));
+      return files[i] ?? null;
+    };
+    const name = kind === 'disk' ? disk!.name : tape!.name;
+    const next = kind === 'disk'
+      ? step(disk!.img.files, l?.kind === 'disk' ? l.f : undefined, f => f.type === 'PRG')
+      : step(tape!.img.files, l?.kind === 'tape' ? l.f : undefined, tapeOpens);
+    if (!next) { toast(dir > 0 ? `That was the last program on ${name}` : `That was the first program on ${name}`, 'info'); return; }
+    if (kind === 'disk') openFromDisk(next as D64File, false); else openFromTape(next as TapeFile, false);
+  };
+  /** the files of the mounted disk and the tape that are in the project: the Explorer marks them */
+  const diskOpen = new Set(project.files.map(f => diskFileOf.current.get(f.id)).filter((f): f is D64File => !!f));
+  const tapeOpen = new Set(project.files.map(f => tapeOf.current.get(f.id)?.file).filter((f): f is TapeFile => !!f));
   /** a chunk of a Spindle disk's job, as a PRG at its address */
   const openChunk = (j: SpindleJob, c: SpindleChunk, add: boolean) => {
     try { addFiles([withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
@@ -898,13 +939,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       d.files[i] = out;
       d.patches = d.patches.filter(p => !(p.start >= was.load && patchEnd(p) <= was.load + was.bytes.length));
     });
+    // the program the packer hid is loaded now: its loader and its start show in the Explorer as a load's do (14.1)
+    afterLoad([out.id], project.files.length > 1, true);
     const at = `$${h4(out.load)}-$${h4(out.load + out.bytes.length - 1)}`;
     toast(`Unpacked ${f.name}: ${out.bytes.length} bytes at ${at}`, 'ok');
     return `${out.name}, ${at}${entry != null ? `, starting at $${h4(entry)}${project.files.length === 1 ? ' (set as the program start)' : ''}` : ''}`;
   };
-  const unpackFile = async (i: number) => {
+  /** `auto`: the file was just opened, with *Unpack packed files when they are opened* on */
+  const unpackFile = async (i: number, auto = false) => {
     const f = project.files[i];
     if (!f) return;
+    const when = auto ? ' as it was opened (Settings → General)' : '';
     if (!external) {
       setBuildBusy('Unpacking');
       try {
@@ -918,7 +963,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const names = packerNames(run);
         // a BASIC program starts with RUN: the analysis finds its SYS line itself
         const where = takeUnpacked(i, f, run.saved.prg, run.saved.basic ? null : run.saved.entry);
-        setUnpacked({ ok: true, title: `Unpacked ${f.name}${names ? ` (${names})` : ''}: ${where}.`, output, label: 'Layer report' });
+        setUnpacked({ ok: true, title: `Unpacked ${f.name}${names ? ` (${names})` : ''}${when}: ${where}.`, output, label: 'Layer report' });
       } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
       return;
     }
@@ -934,9 +979,27 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         return;
       }
       const where = takeUnpacked(i, f, r.prg, r.entry);
-      setUnpacked({ ok: true, title: `Unpacked ${f.name} with ${unpackerName}${r.packer ? ` (${r.packer})` : ''}: ${where}.`, output: `${output}\n\nKept ${r.name} from ${r.dir}`, label });
+      setUnpacked({ ok: true, title: `Unpacked ${f.name} with ${unpackerName}${r.packer ? ` (${r.packer})` : ''}${when}: ${where}.`, output: `${output}\n\nKept ${r.name} from ${r.dir}`, label });
     } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
   };
+  // Unpack packed files when they are opened: one at a time, once the analysis is of the project they are in and Sindri
+  // has run them (an external unpacker goes by the analysis and what it identified); a file Sindri cannot unpack, or one
+  // that is not packed, stays as it was opened
+  const unpacking = useRef(false);
+  useEffect(() => {
+    if (!toUnpack.current.size || unpacking.current || rProject !== project) return;
+    for (const id of [...toUnpack.current]) {
+      const i = project.files.findIndex(f => f.id === id), f = project.files[i];
+      if (!f || f.chip != null || tapeOf.current.get(id)?.header) { toUnpack.current.delete(id); continue; }
+      const run = runs[id];
+      if (!external && !run) continue;
+      toUnpack.current.delete(id);
+      if (packing[i]?.verdict !== 'packed' || (!external && !(run?.unpacked && run.saved))) continue;
+      unpacking.current = true;
+      void unpackFile(i, true).finally(() => { unpacking.current = false; });
+      return;
+    }
+  }, [rProject, project, runs, packing, external]); // eslint-disable-line react-hooks/exhaustive-deps
   /** `path`: the project file to open (Smart attach picked it), else a dialog asks */
   const openProject = async (path?: string) => {
     if (!kr) return needDesktop();
@@ -2122,6 +2185,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ...(tape ? [{ id: 'eject-tape', label: `Eject the tape ${tape.name}`, run: ejectTape }] : []),
     { id: 'demo', label: 'Load the showcase demo (every block type, with a guided tour)', run: () => loadDemo() },
     { id: 'goto', label: 'Go to address, label or range…', key: 'G', run: () => setModal('goto') },
+    { id: 'medium-next', label: 'Open the next program on the disk (or the tape)', key: 'Alt+↓', run: () => openNextFrom(1) },
+    { id: 'medium-prev', label: 'Open the program before on the disk (or the tape)', key: 'Alt+↑', run: () => openNextFrom(-1) },
     { id: 'find', label: tab === 'source' ? 'Find in the source' : 'Find text in the listing…', key: 'Ctrl+F', run: () => (tab === 'source' ? setSrcFind(n => n + 1) : openFind()) },
     { id: 'find-next', label: 'Find: the next line with a match', key: 'F3', run: () => (findOpen ? stepFind(1) : openFind()) },
     { id: 'find-prev', label: 'Find: the line with a match before', key: 'Shift+F3', run: () => (findOpen ? stepFind(-1) : openFind()) },
@@ -2252,11 +2317,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (e.key === 'F5') return run('build');
       if (e.key === 'F9') return run('quicksave');
       if (e.key === 'F7') return run('verify');
-      if (typing || k.editing || k.modal || ctrl || (e.altKey && !['ArrowLeft', 'ArrowRight'].includes(e.key))) return;
+      if (typing || k.editing || k.modal || ctrl || (e.altKey && !['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'].includes(e.key))) return;
       // the inspector opened from its strip (or a narrow window's drawer): Esc folds it in, and only that
       if (e.key === 'Escape' && k.drawer === 'insp') { e.preventDefault(); k.closeInspector(); return; }
       if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goBack(); return; }
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goFwd(); return; }
+      // the next program on the disk or the tape, and the one before
+      if (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) return run(e.key === 'ArrowDown' ? 'medium-next' : 'medium-prev');
       if (e.key === 'F2') return run(e.shiftKey ? 'bookmark-prev' : 'bookmark-next');
       if (k.tab !== 'listing') return;
       const lines = k.lines;
@@ -2619,7 +2686,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }}
-          disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }}
+          disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
           tape={tape} onEjectTape={ejectTape} onShowTape={() => setUi({ bottom: 'tape', panelOpen: true })} onOpenFromTape={(f, add) => { openFromTape(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
@@ -2749,13 +2816,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         {tab !== 'spec' && panelOpen && <Splitter dir="h" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, bottom: Math.max(120, Math.min(520, useUi.getState().sizes.bottom - d)) } })} />}
         {tab !== 'spec' && <section className={cx('bottom', !panelOpen && 'collapsed')} aria-label="Panels">
           <div className="tabs small" role="tablist">
-            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : k === 'sparkle' ? (disk?.sparkle?.bundles.length ?? 0) : k === 'tape' ? (tape?.img.files.length ?? 0) : null; return (
+            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'messages' ? messages.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : k === 'sparkle' ? (disk?.sparkle?.bundles.length ?? 0) : k === 'tape' ? (tape?.img.files.length ?? 0) : null; return (
               <button key={k} role="tab" aria-selected={shownBottom === k} className={cx('tab', shownBottom === k && 'on')} onClick={() => setUi({ bottom: k, panelOpen: true })}>{l}{n != null && <span className={cx('count', k === 'problems' && problems.some(p => p.lvl === 'err') && 'bad')}>{n}</span>}</button>); })}
             <span className="grow" />
             <button className="icon-btn panel-toggle" onClick={() => setUi({ panelOpen: !panelOpen })} aria-label={panelOpen ? 'Collapse panel' : 'Expand panel'} title={panelOpen ? 'Collapse panel' : 'Expand panel'}><Icon name="down" size={14} className={panelOpen ? '' : 'flip'} /></button>
           </div>
           <div className="bottom-body"><ErrorBoundary>
             {shownBottom === 'log' && <LogList items={A.log} onNavigate={nav} empty="No analysis messages." />}
+            {shownBottom === 'messages' && <MessagesPanel items={messages} onClear={() => setMessages([])} />}
             {shownBottom === 'problems' && <ProblemsPanel items={problems} onNavigate={nav} deep={A.deep} on={!!project.settings.deepAnalysis} busy={busy} deepBusy={deepBusy} onDeep={on => update(on ? 'Deep analysis on' : 'Deep analysis off', d => { d.settings.deepAnalysis = on; })} />}
             {shownBottom === 'xrefs' && <XrefPanel A={A} R={R} cursor={cursor} onNavigate={nav} S={S} />}
             {shownBottom === 'irqs' && <RasterPanel A={A} R={R} onNavigate={nav} />}
@@ -2791,7 +2859,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         title={drawer === 'insp' ? 'Fold in the inspector (a click outside it or Esc does too)' : 'Open the inspector: the memory map, the block at the cursor and its preview'}><Icon name="panel" size={16} /><span>Inspector</span></button>}
 
       <StatusBar A={A} fileCount={project.files.length} cursor={cursor} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} deepBusy={deepBusy} cycles={path && path.instructions ? path.total : null}
-        verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null} />
+        verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null}
+        messages={{ count: messages.length, errors: messages.filter(m => m.kind === 'err').length }}
+        actions={{ onFiles: () => showSection('files'), onGoto: () => setModal('goto'), onLog: () => setUi({ bottom: 'log', panelOpen: true }),
+          onMessages: () => setUi({ bottom: 'messages', panelOpen: true }), onVerify: () => void runVerify(), onSettings: () => setModal('settings') }} />
 
       {drawer && <div className="drawer-back" onClick={() => setDrawer(null)} />}
       {dropping && <div className="drop"><div><Icon name="upload" size={28} /><p>Drop .prg files, VICE snapshots (.vsf) or a cartridge (.crt) to open them, a .d64 or .g64 to mount it or a .tap or .t64 to put it in the datasette</p><small>Hold Shift to add them to the current project</small></div></div>}
@@ -2799,7 +2870,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />
       </div>}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
@@ -2814,7 +2885,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {closeAsk?.kind === 'save' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project, then close Mimir" onCreate={saveThenClose} onClose={() => setCloseAsk(null)} />}
       {closeAsk?.kind === 'failed' && <CloseNotSavedModal name={closeAsk.home.name} file={closeAsk.home.file} error={closeAsk.error} onRetry={() => { setCloseAsk(null); void tryClose(); }} onClose={closeUnsaved} onCancel={() => setCloseAsk(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}
-      <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} />{t.msg}</div>)}</div>
+      <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} /><span className="toast-msg">{t.msg}</span>
+        {t.kind === 'err' && <button className="icon-btn toast-x" aria-label="Dismiss the message" title="Dismiss (the Messages tab keeps it)" onClick={() => dismissToast(t.id)}><Icon name="x" size={13} /></button>}</div>)}</div>
     </div>
   );
 }

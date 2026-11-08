@@ -330,7 +330,20 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   project) and *Program start* when `A.entry` is known: the start set, a BASIC SYS or a cartridge's vectors, not the
   first file's load address taken for want of one. A cartridge always shows the Explorer with *Cartridge*
   (`showSection('cart')`). The e2e tests read the Files section with `expectFiles` (`e2e/helpers.ts`), which opens it
-  again until the names are there.
+  again until the names are there. `takeUnpacked` calls `afterLoad` too, with `unpacked` so the result is not unpacked
+  again.
+- **Unpack on open** (spec 8.11b). With `autoUnpack` (the UI store, Settings → General) `afterLoad` puts the ids in
+  `toUnpack`; an effect takes them one at a time once the analysis is of the project (`rProject === project`) and
+  Sindri's run is in `runs`, and calls `unpackFile(i, true)` when `packing[i]` says *packed* and the run saved a
+  program (an external unpacker: the verdict alone). `unpacking` keeps a second one from starting meanwhile.
+- **Messages and the status bar** (spec 14.1). `toast` also appends to `messages` (the last 200), which the Messages
+  bottom tab (`MessagesPanel`) lists; an `err` toast has no timeout and a dismiss button, the only part of `.toasts`
+  that takes clicks. `StatusBar` gets `actions` (files, Go to, log, messages, Verify, Settings) and renders those items
+  as `.sb-btn` buttons with the old text, so the e2e tests' status bar texts still match.
+- **Disk and tape lists** (spec 13.5). `listKeys` in `Sidebar.tsx` moves the focus between the rows that open and stops
+  the event, so the window's key handler does not move the listing's cursor too. `diskOpen` / `tapeOpen` (the
+  `diskFileOf` / `tapeOf` entries of the project's files) mark the rows; `lastFrom` remembers the file opened last
+  from either, and `openNextFrom` (Alt+↓ / Alt+↑, commands `medium-next` / `medium-prev`) steps from it.
 - **All banks in Graphics and Memory** (spec 13.9b). With *All banks in one .asm* (`settings.cartOneSource`) and more
   than one bank, the two tabs get the merged `AnalysisResult` at bank addresses instead of `spaceView`'s 64 KB:
   `MemoryDump` puts a line over each bank (`spaces`), `MemoryGfx` lays out only the banks' loaded memory

@@ -1041,7 +1041,17 @@ ur filnamnet (unp64 skriver `namn.prg.xxxx` där xxxx är JMP-adressen, efter fl
 `return to mem: $xxxx`, annars `jmp`/`start`/`sys $xxxx` i utdata. unp64:s `Entry point:` är den packade filens start och
 används inte. Packarens namn tas ur raden `<packare>, unpacker=$xxxx`. Ett projekt med en fil
 ersätts av den uppackade filen med startadressen som programstart (8.2); i ett projekt med flera filer byts bara filen ut,
-och det går att ångra. Verktygets kommandorad och utdata visas i en rad över listningen.
+och det går att ångra. Verktygets kommandorad och utdata visas i en rad över listningen. Den uppackade filen räknas som
+en laddning (14.1): *Files* fälls ihop, och *Loaders* och *Program start* öppnas när programmet som packaren gömde har
+en loader eller en känd start.
+
+**Packa upp när filen öppnas.** Med Settings → General → *Unpack packed files when they are opened* (av från början,
+sparas per användare, `autoUnpack`) packas en fil som öppnas eller läggs till upp direkt, som *Unpack* gör, när den är
+packad: Sindri har kört den och skalat av ett lager (med en extern uppackare: när analysen och verktygets
+identifiering säger *packed*). En fil Sindri inte kan packa upp, och en som inte är packad, står kvar som den öppnades.
+Raden över listningen säger *as it was opened (Settings → General)*. I ett projekt tar Ctrl+Z tillbaka den packade
+filen, som då inte packas upp igen (i arbete utan projekt går uppackningen inte att ångra, som med knappen). Den uppackade
+filen packas inte upp en gång till. Flera filer packas upp en i taget.
 
 Testerna packar demon med `fakePack()` (`test/helpers/fake-packer.ts`). Det är en liten men riktig packare: en
 uppackare i 6502-kod kopierar sin loop till `$0340` och avkodar programmet (xor en 16-bitars LFSR-nyckelström, ungefär
@@ -2037,6 +2047,13 @@ Ett klick på en PRG öppnar den som ett nytt projekt, och **+** lägger till de
 sektorkedjan (en kedja som går i cirkel eller pekar utanför disken ger ett fel i stället för att hänga), och
 filnamnet blir namnet med de tecken Windows inte tillåter bytta mot `_`, plus `.prg`. SEQ-, USR-, REL- och DEL-filer
 listas men öppnas inte. Disken stannar monterad tills den matas ut, även när ett nytt projekt öppnas.
+
+Filerna som finns i projektet är markerade i listan (en linje till vänster, `aria-current`). Med fokus i listan flyttar
+`↑` och `↓` (och `Home`, `End`) mellan filerna som går att öppna, utan att listningens markör flyttar sig, och `Enter`
+öppnar filen. **Alt+↓** och **Alt+↑** (även i kommandopaletten) öppnar nästa program på disken efter det som öppnades
+sist därifrån, eller programmet före, som ett klick gör; är inget öppnat än börjar de med det första (eller sista). Efter
+det sista säger en toast *That was the last program on …*. Bandet (13.5e) fungerar likadant, och Alt-pilarna går på
+den disk eller det band som filen som öppnades sist kom från (utan någon: disken, annars bandet).
 
 Vid **Build & Run** läggs en kopia av den monterade disken i VICE:s drive 8 (`-8 <kopia>.d64` eller `.g64`, i en ny
 byggmapp), så ett program som laddar fler delar från disken hittar dem, och ett program som sparar ändrar inte
@@ -3311,8 +3328,8 @@ blir för lång.
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
-| Bottenpanel | Analysis log, Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Statistics, Build output |
-| Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, analystid, verifieringsstatus |
+| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Statistics, Build output |
+| Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, antal meddelanden, analystid, verifieringsstatus. Det som går att göra något med är knappar (se nedan) |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.
 
@@ -3323,7 +3340,18 @@ användaren eller som en snapshots BASIC `SYS`), en BASIC-stubs `SYS` eller en c
 tas när ingen start finns. En fil som läggs till i ett projekt räknas för sig: bara en loader med en del i den, och bara
 en start i den, öppnar sektionerna. De andra sektionerna står som de stod, och Explorer visas bara där laddningen visar
 den (File-menyns val, Smart attach). En cartridge visar alltid Explorer med *Cartridge* öppen, hur den än öppnades
-(`afterLoad` i `App.tsx`).
+(`afterLoad` i `App.tsx`). Uppackningen räknas som en laddning (8.11b).
+
+**Meddelanden:** en toast i hörnet går efter 4,2 s, en lång efter upp till 9 s (40 ms per tecken), så att den hinner
+läsas. Ett fel stannar tills det stängs med sitt kryss (*Dismiss the message*) eller fyra nyare trycker undan det.
+Toasterna tar inga andra klick: det under dem går att klicka på. Allt som toasterna sagt under körningen (de senaste 200)
+finns i bottenpanelens flik **Messages**, det nyaste först med tiden, och *Clear* tömmer den. Statusraden visar hur
+många meddelanden det är (fetstilt med en felikon när ett fel finns bland dem), och ett klick öppnar fliken.
+
+**Statusraden gör det den visar:** antalet filer visar *Files* i Explorer, markörens adress öppnar *Go to*, antalet
+meddelanden fliken Messages, analystiden fliken Analysis log, verifieringsstatusen kör Verify (som F7) och *Kick
+Assembler 5.x* öppnar Settings. Processorn, `$01` och markeringen är bara text. Knapparna ser ut som resten av raden och
+lyser upp under pekaren (`StatusBar.tsx`).
 
 **Fälla ihop panelerna:** sidopanelen fälls ihop och visas igen med `Ctrl+Shift+B` (`Ctrl+B` visar bokmärkena), knappen
 till höger på vyns rubrik (*Collapse side panel*), knappen för vyn som visas i aktivitetsraden och *Toggle side panel*

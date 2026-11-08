@@ -8,7 +8,7 @@ import {
 import { Icon, LVL_ICON } from '../lib/icons';
 import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
 import type { BottomTab } from '../store/ui';
-import type { BuildState, MountedDisk, MountedTape, UiProblem } from '../lib/types';
+import type { BuildState, Message, MountedDisk, MountedTape, UiProblem } from '../lib/types';
 import type { TypeGroup } from '@mimir/core';
 
 export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNavigate: (a: Addr) => void; empty: string }) {
@@ -25,6 +25,26 @@ export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNa
         </div>
       ))}
     </div>
+  );
+}
+
+/** The Messages tab: what the toasts said, the newest first, with the time. A toast goes after a few seconds (an error
+ *  when it is dismissed); this keeps them for the rest of the run. */
+export function MessagesPanel({ items, onClear }: { items: Message[]; onClear: () => void }) {
+  if (!items.length) return <div className="empty">No messages yet. What the notices in the corner say is kept here for the rest of the run.</div>;
+  return (
+    <>
+      <div className="problems-head"><span className="muted small">{items.length} message{items.length === 1 ? '' : 's'} in this run, the newest first</span><span className="grow" /><button className="btn small" onClick={onClear}>Clear</button></div>
+      <div className="loglist" role="list" aria-label="Messages">
+        {items.slice().reverse().map(m => (
+          <div key={m.id} role="listitem" className={cx('logrow', `lvl-${m.kind}`)}>
+            <Icon name={LVL_ICON[m.kind] || 'info'} size={14} className="lvl-icon" />
+            <span className="log-cat mono">{new Date(m.at).toLocaleTimeString()}</span>
+            <span className="log-msg">{m.msg}</span>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -617,4 +637,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

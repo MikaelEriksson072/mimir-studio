@@ -1,7 +1,7 @@
 /* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, the tape in the datasette, program start, memory map), Blocks (a folder per type, with how many; filterable), Symbols (labels, hardware registers), Bookmarks, Pack.
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type BlockKind, type Crt, type D64File, type LoaderPart, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef, type TapeFile } from '@mimir/core';
 import { blockFolders } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
@@ -28,6 +28,8 @@ interface SidebarProps {
   tape: MountedTape | null; onEjectTape: () => void;
   /** open a file from the tape (`add`: add it to the project), and the Tape tab (every block, the TapeTool script) */
   onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void;
+  /** the disk's and the tape's files that are in the project: marked in their lists */
+  diskOpen: ReadonlySet<D64File>; tapeOpen: ReadonlySet<TapeFile>;
   /** the project's cartridge, read (spec 13.9): a bank in the project is gone to with a click, one out of it added
    *  (`leave`: taken out) */
   cart: Crt | null; onOpenBank: (bank: number, leave?: boolean) => void;
@@ -82,7 +84,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -115,8 +117,8 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowPirateSlayer={onShowPirateSlayer} />}
-        {tape && <TapeSection tape={tape} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
+        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowPirateSlayer={onShowPirateSlayer} />}
+        {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
         <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
@@ -384,8 +386,10 @@ const bankAdr = (A: Pick<AnalysisResult, 'spaces'>, a: Addr): string => {
   return `${s ? `${s.bank}:` : ''}$${h4(a)}`;
 };
 
-/** The mounted .d64 or .g64, listed the way the 1541 lists it. A PRG opens with a click; + adds it to the project. */
-function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer }: { disk: MountedDisk; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowPirateSlayer: () => void }) {
+/** The mounted .d64 or .g64, listed the way the 1541 lists it. A PRG opens with a click or Enter; + adds it to the
+ *  project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
+ *  ("The work is not saved" → Save as a project…) */
+function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowPirateSlayer: () => void }) {
   const { img } = disk;
   return (
     <SideSection id="disk" title="Disk" summary={`"${img.name}"`} actions={<button className="icon-btn" title={`Eject ${disk.name}`} aria-label="Eject disk" onClick={onEject}><Icon name="eject" size={14} /></button>}>
@@ -394,8 +398,9 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
         {img.files.map((f, i) => {
           const prg = f.type === 'PRG', kind = `${f.closed ? '' : '*'}${f.type}${f.locked ? '<' : ''}`;
           return (
-            <div key={i} role="listitem" className={cx('disk-row', !prg && 'off')} title={prg ? `Open ${f.name} (${f.blocks} blocks)` : 'Only PRG files can be opened'}
-              tabIndex={prg ? 0 : -1} onClick={() => { if (prg) onOpenFromDisk(f, false); }} onKeyDown={e => { if (prg && e.key === 'Enter') onOpenFromDisk(f, false); }}>
+            <div key={i} role="listitem" className={cx('disk-row', !prg && 'off', open.has(f) && 'on')} aria-current={open.has(f) || undefined}
+              title={prg ? `Open ${f.name} (${f.blocks} blocks)${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : 'Only PRG files can be opened'}
+              tabIndex={prg ? 0 : -1} onClick={() => { if (prg) onOpenFromDisk(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (prg && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromDisk(f, false); } }}>
               <span className="mono small disk-blocks">{f.blocks}</span>
               <span className="mono disk-name">"{f.name}"</span>
               <span className="mono small muted">{kind}</span>
@@ -440,6 +445,20 @@ function DiskSection({ disk, onEject, onOpenFromDisk, onShowSpindle, onShowBitfi
   );
 }
 
+/** ↑ ↓ Home End in a list of files to open (the disk's, the tape's): the focus goes to the next one that opens, and the
+ *  listing does not move its cursor as well. True when the key was one of them */
+function listKeys(e: KeyboardEvent<HTMLElement>): boolean {
+  if (e.altKey || e.ctrlKey || e.metaKey || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return false;
+  e.preventDefault(); e.stopPropagation();
+  const rows = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role=listitem][tabindex="0"]') ?? [])];
+  const i = rows.indexOf(e.currentTarget);
+  (e.key === 'ArrowDown' ? rows[i + 1] : e.key === 'ArrowUp' ? rows[i - 1] : e.key === 'Home' ? rows[0] : rows[rows.length - 1])?.focus();
+  return true;
+}
+
+/** a file of the tape that opens: one with its load address and data, not a SEQ file or the end-of-tape marker */
+export const tapeOpens = (f: TapeFile): boolean => f.load != null && f.data.length > 0 && f.type !== 'SEQ' && f.type !== 'END';
+
 /** a time on the tape, as a datasette's counter would not show it but a player does: m:ss */
 export const tapeTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', t64: 'T64' };
@@ -447,7 +466,7 @@ const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetoo
 /** The tape in the datasette (13.5e), its files in tape order with where each starts. A file opens with a click (a KERNAL
  *  file with loader code in its header opens with the header as a second file); + adds it to the project. A T64 tape
  *  archive (13.5j) lists its directory, each file by its entry number. */
-function TapeSection({ tape, onEject, onOpenFromTape, onShowTape }: { tape: MountedTape; onEject: () => void; onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void }) {
+function TapeSection({ tape, open, onEject, onOpenFromTape, onShowTape }: { tape: MountedTape; open: ReadonlySet<TapeFile>; onEject: () => void; onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void }) {
   const { img } = tape;
   const tt = img.files.filter(f => f.format === 'tapetool').length;
   const t64 = img.t64;
@@ -456,13 +475,13 @@ function TapeSection({ tape, onEject, onOpenFromTape, onShowTape }: { tape: Moun
       <div className="disk-head mono small" title={tape.path ?? tape.name}><Icon name="tape" size={13} /><span className="disk-title">{tape.name}</span><span className="muted">{t64 ? 'T64' : tapeTime(img.seconds)}</span></div>
       <div className="disk-list" role="list" aria-label={`Files on ${tape.name}`}>
         {img.files.map((f, i) => {
-          const can = f.load != null && f.data.length > 0 && f.type !== 'SEQ' && f.type !== 'END';
+          const can = tapeOpens(f);
           const where = f.load != null ? `$${h4(f.load)}-$${h4((f.load + Math.max(1, f.data.length) - 1) & 0xffff)}` : `${f.data.length} bytes`;
           const why = !can ? (f.type === 'SEQ' ? 'A SEQ file: data, not a program' : f.type === 'END' ? 'The end-of-tape marker' : f.t64 && f.load == null ? 'A C64S memory snapshot, not a program' : f.load == null ? 'Its load address is not on the tape: the boot loader knows it' : 'It holds no data') : '';
-          const title = `${f.errors.length ? `${f.errors.join('; ')}. ` : ''}${f.note ? `${f.note}. ` : ''}${can ? `Open ${f.name} (${TAPE_FORMAT[f.format]}, ${where}${f.headerCode ? ', with its header: the tape buffer at $033c holds code' : ''})` : why}`;
+          const title = `${f.errors.length ? `${f.errors.join('; ')}. ` : ''}${f.note ? `${f.note}. ` : ''}${can ? `Open ${f.name} (${TAPE_FORMAT[f.format]}, ${where}${f.headerCode ? ', with its header: the tape buffer at $033c holds code' : ''})${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : why}`;
           return (
-            <div key={i} role="listitem" className={cx('disk-row tape-row', !can && 'off', f.errors.length > 0 && 'bad')} title={title}
-              tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (can && e.key === 'Enter') onOpenFromTape(f, false); }}>
+            <div key={i} role="listitem" className={cx('disk-row tape-row', !can && 'off', f.errors.length > 0 && 'bad', open.has(f) && 'on')} aria-current={open.has(f) || undefined} title={title}
+              tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (can && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromTape(f, false); } }}>
               <span className="mono small disk-blocks" title={t64 ? `Entry ${f.id} of the directory` : undefined}>{t64 ? f.id : tapeTime(f.seconds)}</span>
               <span className="mono disk-name">{f.format === 'tapetool' ? f.name : `"${f.name}"`}{f.headerCode ? <span className="muted"> +header</span> : null}</span>
               <span className="mono small muted">{f.format === 't64' ? (f.load == null ? 'FRZ' : f.type) : f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}</span>

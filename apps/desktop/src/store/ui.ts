@@ -6,7 +6,7 @@ import { bitmapRowsOf, spriteColsOf } from '../lib/gfxview';
 
 export type Theme = 'dark' | 'light';
 export type EditorTab = 'listing' | 'source' | 'spec' | 'gfx' | 'mem';
-export type BottomTab = 'log' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'pirateslayer' | 'tape' | 'stats' | 'build';
+export type BottomTab = 'log' | 'messages' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'pirateslayer' | 'tape' | 'stats' | 'build';
 export type Activity = 'explorer' | 'blocks' | 'symbols' | 'bookmarks' | 'pack';
 export interface Sizes { side: number; insp: number; bottom: number }
 /** the inspector (the panel on the right): always open, or folded into a strip at the right edge that opens it over the
@@ -66,6 +66,8 @@ interface UiState {
   offsets: boolean;
   /** listing: sprites, charsets and bitmaps drawn as they look instead of their .byte rows (Settings → General) */
   gfxPictures: boolean;
+  /** a packed file is unpacked as it is opened, when its unpacker says it is packed (Settings → General) */
+  autoUnpack: boolean;
   /** a new VICE quicksave (Alt+F11 in VICE) is opened when it is written */
   followQuicksave: boolean;
   /** the start screen is shown when the app starts; off: it goes on with what was worked on last */
@@ -90,7 +92,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'gfxPictures', 'followQuicksave', 'startScreen', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -107,6 +109,7 @@ export const useUi = create<UiState>((set) => ({
   cycles: store.get('kr.cycles', false),
   offsets: store.get('kr.offsets', true),
   gfxPictures: store.get('kr.gfxPictures', true),
+  autoUnpack: store.get('kr.autoUnpack', false),
   followQuicksave: store.get('kr.followQuicksave', true),
   startScreen: store.get('kr.startScreen', true),
   quickPack: { ...DEFAULT_PACK, ...store.get<Partial<PackPrefs>>('kr.quickPack', {}) },

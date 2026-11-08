@@ -38,6 +38,8 @@ export interface Editing { kind: 'label' | 'comment' | 'note'; addr: Addr; value
 export interface NavOptions { center?: boolean; listing?: boolean; noHistory?: boolean; keepSel?: boolean; fromSource?: boolean; end?: Addr }
 export type ToastKind = 'info' | 'ok' | 'warn' | 'err';
 export interface Toast { id: string; msg: string; kind: ToastKind }
+/** what a toast said, kept for the run in the Messages tab: when it was said */
+export interface Message extends Toast { at: number }
 
 /** One row in the log / problems lists. */
 export interface UiProblem {

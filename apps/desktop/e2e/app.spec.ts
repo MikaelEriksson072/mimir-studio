@@ -1235,10 +1235,79 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
   });
 
+  await test.step('the files in the project are marked; ↑ ↓ go from file to file, Enter opens one, Alt+↓ / Alt+↑ the next and the one before', async () => {
+    const row = (name: string) => files.getByRole('listitem').filter({ hasText: name });
+    await expect(row('RASTER DEMO')).toHaveAttribute('aria-current', 'true');
+    await expect(row('SPRITE')).toHaveAttribute('aria-current', 'true');
+    await row('RASTER DEMO').focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(row('SPRITE')).toBeFocused();
+    // NOTES (SEQ) does not open: the focus stays on SPRITE, and the listing's cursor does not move
+    const at = await statusBar(page).textContent();
+    await page.keyboard.press('ArrowDown');
+    await expect(row('SPRITE')).toBeFocused();
+    expect(await statusBar(page).textContent()).toBe(at);
+    await page.keyboard.press('ArrowUp');
+    await expect(row('RASTER DEMO')).toBeFocused();
+    await page.keyboard.press('Enter');
+    // SPRITE was added to the work, a change in no project: opening a file in its place asks first
+    await page.getByRole('dialog', { name: 'The work is not saved' }).getByRole('button', { name: 'Do not save' }).click();
+    await expectFiles(page, ['RASTER DEMO.prg']);
+    await expect(row('SPRITE')).not.toHaveAttribute('aria-current', 'true');
+    // the next program on the disk, past its end, and back
+    await page.keyboard.press('Alt+ArrowDown');
+    await expectFiles(page, ['SPRITE.prg']);
+    await expect(row('SPRITE')).toHaveAttribute('aria-current', 'true');
+    await expect(row('RASTER DEMO')).not.toHaveAttribute('aria-current', 'true');
+    await page.keyboard.press('Alt+ArrowDown');
+    await expect(toast(page, 'That was the last program on mimir-demo.d64')).toBeVisible();
+    await page.keyboard.press('Alt+ArrowUp');
+    await expectFiles(page, ['RASTER DEMO.prg']);
+  });
+
   await test.step('eject', async () => {
     await page.getByRole('button', { name: 'Eject disk' }).click();
     await expect(files).toHaveCount(0);
-    await expectFiles(page, ['RASTER DEMO.prg', 'SPRITE.prg']);
+    await expectFiles(page, ['RASTER DEMO.prg']);
+  });
+});
+
+test('an error stays until it is dismissed, the Messages tab keeps what the toasts said, and the status bar\'s items do what they show', async ({ workDir: work, app, page }) => {
+  await waitForListing(page);
+  const selected = page.getByRole('region', { name: 'Panels' }).getByRole('tab', { selected: true });
+  const item = (title: RegExp) => statusBar(page).getByTitle(title);
+
+  await test.step('an error stays until it is dismissed; the status bar counts it and opens the Messages tab', async () => {
+    const bad = join(work, 'broken.prg');
+    writeFileSync(bad, Buffer.from([0x01]));
+    await stubDialogs(app, { open: [bad] });
+    await fromFileMenu(page, 'Open PRG files…');
+    const err = toast(page, 'broken.prg: too short to be a PRG');
+    await expect(err).toBeVisible();
+    // past the 4.2 s the others stay
+    await page.waitForTimeout(5000);
+    await expect(err).toBeVisible();
+    await err.getByRole('button', { name: 'Dismiss the message' }).click();
+    await expect(err).toHaveCount(0);
+    await item(/^Show the messages of this run \(\d+, 1 error\)/).click();
+    await expect(selected).toHaveText(/^Messages\d+$/);
+    await expect(page.getByRole('list', { name: 'Messages' }).getByRole('listitem').first()).toContainText('broken.prg: too short to be a PRG');
+  });
+
+  await test.step('the status bar: the analysis opens its log, the files the Explorer, the cursor Go to, the assembler Settings, the round-trip Verify', async () => {
+    await item(/^Show the Analysis log/).click();
+    await expect(selected).toHaveText(/^Analysis log\d+$/);
+    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Blocks' }).click();
+    await item(/^Show the files in the Explorer/).click();
+    await expect(page.getByRole('region', { name: 'Files', exact: true }).locator('.sec-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await item(/^Go to an address/).click();
+    await expect(page.getByRole('dialog', { name: 'Go to address, label or range' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await item(/^Settings: the toolchain/).click();
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Cancel' }).click();
+    await item(/^Verify the round-trip/).click();
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
   });
 });
 
@@ -1742,6 +1811,33 @@ test('a packed PRG is reported and unpacked with Sindri, or an external unpacker
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
   });
 
+  await test.step('with Unpack packed files when they are opened, it is unpacked as it opens; a program that is not packed opens as it is', async () => {
+    await page.getByRole('button', { name: 'Dismiss the unpacker result' }).click();
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await settings.getByLabel('Unpack packed files when they are opened').check();
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/packed-demo.prg')] });
+    await page.keyboard.press('Control+o');
+    await expect(done).toContainText('Unpacked packed-demo.prg as it was opened (Settings → General): packed-demo-unpacked.prg, $0801-$37ff, starting at $0810', { timeout: 30_000 });
+    await expect(bar).toHaveCount(0);
+    await expectFiles(page, ['packed-demo-unpacked.prg']);
+    // a program that is not packed opens as it is
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+    await page.keyboard.press('Control+o');
+    await expect(statusBar(page)).toContainText('$0810 · start');
+    await expect(statusBar(page)).not.toContainText('analysing');
+    await expectFiles(page, ['raster-demo.prg']);
+    // off again for the external unpacker below
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await settings.getByLabel('Unpack packed files when they are opened').uncheck();
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+  });
+
   await test.step('an external unpacker set in Settings runs instead', async () => {
     await page.getByRole('button', { name: 'Dismiss the unpacker result' }).click();
     await page.getByRole('button', { name: 'Settings' }).click();
@@ -1775,12 +1871,26 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
   const bar = page.locator('.pack-bar');
   await expect(bar).toContainText('BOOT.prg is packed.', { timeout: 30_000 });
   await expect(bar).toContainText(/Sindri peels off 1 layer: an unknown decruncher at \$080d \(fingerprint [0-9a-f]{8}\); the program starts at \$c000/);
+  // BOOT holds the KERNAL LOAD (jsr $ffd5 at $0821): opening it opened Loaders, and Program start for its SYS
+  const expanded = (name: string) => page.getByRole('region', { name, exact: true }).locator('.sec-toggle');
+  await expect(expanded('Loaders')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('region', { name: 'Loaders', exact: true }).getByLabel('KERNAL LOAD')).toBeVisible();
+  await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'true');
+  // folded up, to see what the unpacked program opens
+  await expanded('Loaders').click();
+  await expanded('Program start').click();
   await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
   await expect(toast(page, 'Unpacked BOOT.prg: 609 bytes at $c000-$c260')).toBeVisible({ timeout: 30_000 });
   const done = page.locator('.unpack-bar');
   await expect(done).toContainText('BOOT-unpacked.prg, $c000-$c260, starting at $c000 (set as the program start).');
   await done.getByText('Layer report').click();
   await expect(done.locator('.unpack-log')).toContainText(/Drive: 1541 with "LOADER DISK" LD, \d+ bytes read/);
+  // the unpacked program (PART2's loop at $c000) is a load: the start Sindri set opens Program start, and Loaders stays
+  // folded up, for it has no loader
+  await expect(expanded('Files')).toHaveAttribute('aria-expanded', 'false');
+  await expect(expanded('Program start')).toHaveAttribute('aria-expanded', 'true');
+  await expect(statusBar(page)).not.toContainText('analysing');
+  await expect(expanded('Loaders')).toHaveAttribute('aria-expanded', 'false');
   await expectFiles(page, ['BOOT-unpacked.prg']);
 });
 
