@@ -605,6 +605,18 @@ fils byte.
 minnet, som spelarens PRG har dem, i 150 bildrutor. Stannar körningen (kod utanför blocket, BRK, init som inte
 återvänder) säger appen varför i en varning när blocket spelas, i stället för att spelaren i VICE kraschar utan förklaring.
 
+**I DeepSID** (`electron/main/deepsid.ts`) går `.sid`-filen till sidans Load SID, och när den listats klickas dess rad. DeepSID
+hämtar sin mapplista med jQuery-anrop när sidan öppnas, och ett klick på en rad spelar `browser.songs[rad − subFolders]`.
+En mapplista som kommer fram efter att Load SID börjat sätter tillbaka mappens antal undermappar (160 i roten): klicket
+spelar då ingenting (DeepSID kastar ett fel i `onClickRow`, efter att ha vridit ner volymen), och det blev tyst för
+låtar som spelades direkt efter att fönstret öppnats, fast filen var rätt (Comaland sida 1, 2026-11-08: alla tre låtarna
+spelar i DeepSID med WebSid och Hermits emulator när de klickas i rätt läge). Därför lämnas filen över först när inget
+jQuery-anrop är ute på 400 ms, raden klickas när inget är ute igen, och en Load SID-lista (som inte har några mappar)
+med ett överblivet `subFolders` får 0, som DeepSID:s egen hanterare ger det. Efter klicket frågas DeepSID:s spelare om
+den spelar (`SID.isPlaying()` och en speltid över 0 inom 8 s); gör den inte det säger appen det och var filen finns för
+Load SID för hand, i stället för att säga att den spelar. E2e-testets ersättningssida har samma kapplöpning: med den
+gamla överlämningen kom filen fram men spelades inte.
+
 **En snapshots spelare** har redan kört, och init startar inte alltid om låten: The Labs första spelare skriver om sitt
 play-anrop vid första anropet, och init går sedan genom det. För den spelare som blir block körs låten därför en minut
 med init och en minut utan, med play från där den var. Startar init färre än 30 toner på en minut och play utan init

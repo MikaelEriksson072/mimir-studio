@@ -1,6 +1,7 @@
 /* DeepSID (deepsid.chordian.net), the online SID player, in a window of its own: a music block's .sid goes to its
  * Load SID (the L key: "temporary emulator testing"), which sends the file to DeepSID's server, keeps it there under
- * its name (temp/test/<name>) and lists it; the row is then clicked, which plays it. The page is DeepSID's own,
+ * its name (temp/test/<name>) and lists it; the row is then clicked, which plays it, once DeepSID is done loading
+ * (see handOver), and its player is asked whether it plays. The page is DeepSID's own,
  * sandboxed, without Mimir's preload, in a session of its own (DeepSID keeps its settings there, the emulator chosen
  * say). Links to other sites open in the browser. When DeepSID does not take the file by itself (its page changed),
  * the window stays open for Load SID by hand, and the file is in a build folder. */
@@ -84,22 +85,56 @@ const READY = `(() => {
   return !!(events && events.change);
 })()`;
 
-/** The file into DeepSID's Load SID input, as picking it would; then its row, once listed, is clicked. */
+/**
+ * The file into DeepSID's Load SID input, as picking it would; then its row, once listed, is clicked, and DeepSID's
+ * player is asked whether it plays. DeepSID loads its folder list with jQuery requests when it opens (and when the
+ * user browses), and a click on a row plays `browser.songs[row - browser.subFolders]`: a folder list that comes in
+ * after Load SID has started sets subFolders back to that folder's count (160 for the root), and the click then plays
+ * nothing (DeepSID throws in onClickRow, after it has turned its volume down). So the file goes in once no request is
+ * out, the row is clicked once none is out again, and a Load SID list (which has no folders, as DeepSID's own handler
+ * says) with subFolders left over gets 0. The tests' stand-in page has the same race.
+ */
 const handOver = (name: string, base64: string) => `(async () => {
   const input = document.getElementById('upload-test');
   if (!input) return 'DeepSID has no Load SID input (#upload-test) any more';
-  const bytes = Uint8Array.from(atob(${JSON.stringify(base64)}), c => c.charCodeAt(0));
-  const files = new DataTransfer();
-  files.items.add(new File([bytes], ${JSON.stringify(name)}, { type: 'application/octet-stream' }));
-  input.files = files.files;
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-  const want = encodeURIComponent(${JSON.stringify(name)});
-  for (let i = 0; i < 100; i++) {
-    await new Promise(r => setTimeout(r, 200));
-    const row = [...document.querySelectorAll('#songs .entry.file')].find(e => e.getAttribute('data-name') === want);
-    if (row) { row.click(); return ''; }
+  const $ = window.jQuery;
+  // no jQuery request out for 400 ms (or 10 s gone by)
+  const idle = async () => { for (let t = 0, quiet = 0; t < 10000 && quiet < 4; t += 100) { await new Promise(r => setTimeout(r, 100)); quiet = $ && $.active ? 0 : quiet + 1; } };
+  const errors = [];
+  const onError = e => { errors.push(String((e && (e.message || e.error)) || e)); };
+  window.addEventListener('error', onError);
+  try {
+    await idle();
+    const bytes = Uint8Array.from(atob(${JSON.stringify(base64)}), c => c.charCodeAt(0));
+    const files = new DataTransfer();
+    files.items.add(new File([bytes], ${JSON.stringify(name)}, { type: 'application/octet-stream' }));
+    input.files = files.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    const want = encodeURIComponent(${JSON.stringify(name)});
+    let row = null;
+    for (let i = 0; i < 100 && !row; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      row = [...document.querySelectorAll('#songs .entry.file')].find(e => e.getAttribute('data-name') === want) || null;
+    }
+    if (!row) return 'DeepSID did not list the file within 20 seconds';
+    await idle();
+    const b = window.browser, tr = row.closest('tr');
+    if (b && Array.isArray(b.songs) && b.subFolders && tr) {
+      const i = [...tr.parentNode.children].indexOf(tr);
+      if (!b.songs[i - b.subFolders] && b.songs[i]) b.subFolders = 0;
+    }
+    row.click();
+    // DeepSID's player plays when its time runs (an emulator that cannot play in the window, say, does not start)
+    const S = window.SID;
+    if (!S || typeof S.isPlaying !== 'function') return errors.length ? 'its page failed when the file was clicked (' + errors[errors.length - 1] + ')' : '';
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      try { if (S.isPlaying() && S.getCurrentPlaytime() > 0) return ''; } catch (e) { /* not ready yet */ }
+    }
+    return 'DeepSID listed the file but did not start playing it' + (errors.length ? ' (its page: ' + errors[errors.length - 1] + ')' : ' (is an emulator that plays in the browser chosen there?)');
+  } finally {
+    window.removeEventListener('error', onError);
   }
-  return 'DeepSID did not list the file within 20 seconds';
 })()`;
 
 /** Play the .sid in DeepSID (see the file head). */
@@ -124,6 +159,7 @@ export async function playInDeepSid(req: DeepSidPlayRequest): Promise<DeepSidPla
     if (i >= 150) return { played: false, path, url, problem: 'DeepSID\'s page did not get ready for Load SID within 30 seconds' };
     await pause(200);
   }
-  const problem = await inPage(w, handOver(req.name, Buffer.from(req.sid).toString('base64')), 25_000, 'the page did not take the file');
+  // (waits for DeepSID to be idle twice, lists the file and checks that it plays: up to about 50 seconds)
+  const problem = await inPage(w, handOver(req.name, Buffer.from(req.sid).toString('base64')), 60_000, 'the page did not take the file');
   return problem ? { played: false, path, url, problem } : { played: true, path, url };
 }

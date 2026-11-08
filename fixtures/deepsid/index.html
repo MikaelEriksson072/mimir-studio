@@ -2,7 +2,11 @@
 <!-- A stand-in for DeepSID (deepsid.chordian.net) in the e2e tests: its Load SID input (#upload-test) and its list of
      songs (#songs), as DeepSID has them. A file put in the input is listed a moment later (DeepSID sends it to its
      server first), as a row whose .entry.file has the file name in data-name; a click on the row plays it. What came
-     and what was played are kept in window.received and window.played. -->
+     and what was played are kept in window.received and window.played.
+     Like DeepSID's own page (main.js and browser.js), it loads its root folder list when it opens (a jQuery request,
+     counted in jQuery.active), which sets browser.subFolders to the root's 160 folders; Load SID sets it to 0 and lists
+     the file in browser.songs; a click on a row plays browser.songs[row - subFolders]. A folder list that comes in
+     after Load SID has started puts 160 back, and the click then plays nothing (DeepSID throws in onClickRow). -->
 <html>
 <head><meta charset="utf-8"><title>DeepSID stand-in</title></head>
 <body>
@@ -11,7 +15,11 @@
   <script>
     window.received = null;
     window.played = null;
-    document.getElementById('upload-test').addEventListener('change', async e => {
+    window.browser = { subFolders: 0, songs: [] };
+    const input = document.getElementById('upload-test');
+    const change = async e => {
+      window.browser.subFolders = 0;
+      window.browser.songs = [];
       const file = e.target.files[0];
       const b = new Uint8Array(await file.arrayBuffer());
       const be = o => (b[o] << 8) | b[o + 1];
@@ -21,16 +29,30 @@
         load: be(8) || (b[off] | (b[off + 1] << 8)), init: be(0x0a), play: be(0x0c), songs: be(0x0e),
         title: String.fromCharCode(...b.subarray(0x16, 0x36)).replace(/\0.*$/, ''),
       };
+      jQuery.active++;
       setTimeout(() => {
+        jQuery.active--;
+        window.browser.songs.push({ filename: file.name, startsubtune: 0 });
         document.querySelector('#songs table').innerHTML =
           '<tr><td class="sid temp"><div class="block-wrap"><div class="block"><div class="entry name file" data-name="' +
           encodeURIComponent(file.name) + '" data-type="PSID">' + file.name + '</div></div></div></td><td></td></tr>';
-      }, 300);
-    });
+      }, 600);
+    };
+    input.addEventListener('change', change);
+    // jQuery as far as Mimir asks it: the requests out, and the input's change handler
+    window.jQuery = { active: 0, _data: el => (el === input ? { change: [change] } : undefined) };
+    // the root folder list, out for 400 ms after the page opens
+    jQuery.active++;
+    setTimeout(() => { jQuery.active--; window.browser.subFolders = 160; }, 400);
     document.getElementById('songs').addEventListener('click', e => {
       const row = e.target.closest('tr');
-      if (row) window.played = row.querySelector('.entry').getAttribute('data-name');
+      if (!row) return;
+      const song = window.browser.songs[[...row.parentNode.children].indexOf(row) - window.browser.subFolders];
+      if (!song) throw new TypeError("Cannot read properties of undefined (reading 'startsubtune')");
+      window.played = row.querySelector('.entry').getAttribute('data-name');
     });
+    // DeepSID's player: it plays the file clicked
+    window.SID = { isPlaying: () => !!window.played, getCurrentPlaytime: () => (window.played ? 1 : 0) };
   </script>
 </body>
 </html>
