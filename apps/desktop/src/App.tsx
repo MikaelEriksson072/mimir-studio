@@ -906,8 +906,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return p;
   };
   useEffect(() => {
-    // a cartridge's chip is not a program Sindri can load and run, nor is a tape file's header (the tape buffer)
-    if (!external) for (const f of project.files) if (f.chip == null && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
+    // a cartridge's chip is not a program Sindri can load and run, nor is a tape file's header (the tape buffer), nor a
+    // snapshot's RAM: the machine was running it, and LOAD and RUN would start what its BASIC line says (a snapshot from
+    // $0200 has the program's SYS line at $0801), not the program as it was
+    if (!external) for (const f of project.files) if (f.chip == null && !f.vsf && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
   }, [project.files, external]); // eslint-disable-line react-hooks/exhaustive-deps
   const [identified, setIdentified] = useState<Record<string, IdentifyResponse>>({});
   const asked = useRef(new Set<string>());
@@ -923,8 +925,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   }, [project.files, toolchain.unpackerPath]); // eslint-disable-line react-hooks/exhaustive-deps
   const packing = useMemo(() => A.files.map((af, i): PackingInfo | null => {
     const f = project.files[i];
-    // a cartridge's chip is no packed program (and is in a bank of its own)
-    const h = f?.chip != null ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
+    // a cartridge's chip is no packed program (and is in a bank of its own), nor is a snapshot's RAM (what was packed
+    // was unpacked when it was taken; crunched data left in it is no reason to unpack it)
+    const h = f?.chip != null || f?.vsf ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
     // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
     if (!external && f && onlyRelocates(runs[f.id], A)) return null;
     return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, f ? runs[f.id] : undefined, at);
@@ -991,7 +994,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!toUnpack.current.size || unpacking.current || rProject !== project) return;
     for (const id of [...toUnpack.current]) {
       const i = project.files.findIndex(f => f.id === id), f = project.files[i];
-      if (!f || f.chip != null || tapeOf.current.get(id)?.header) { toUnpack.current.delete(id); continue; }
+      if (!f || f.chip != null || f.vsf || tapeOf.current.get(id)?.header) { toUnpack.current.delete(id); continue; }
       const run = runs[id];
       if (!external && !run) continue;
       toUnpack.current.delete(id);
