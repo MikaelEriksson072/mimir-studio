@@ -516,6 +516,9 @@ test('set the program start by hand', async ({ page }) => {
   await waitForListing(page);
   const section = await openSection(page, 'Program start');
   const input = page.getByLabel('Program start address');
+  // The Explorer and the toast show an edit at once, the listing only when the analysis worker's result lands a moment
+  // later: a row is waited for. (listingRows reads the listing a screen at a time, so a result landing while it reads
+  // gives new rows further down and old ones above them: the BASIC line still old, the header of $0810 already new.)
   const hasRow = async (text: string) => (await listingRows(page)).some(r => r.text.startsWith(text));
   await expect(section).toContainText('$0810');
   await expect(section).toContainText('BASIC SYS');
@@ -531,7 +534,7 @@ test('set the program start by hand', async ({ page }) => {
     await expect(section).toContainText('Build & Run: VICE loads it and types sys 2150');
     await expect(statusBar(page)).toContainText('$0866 · start');
     // the BASIC stub still SYSes $0810, which keeps its code under its own name
-    expect(await hasRow('BasicUpstart2(entry_0810)')).toBe(true);
+    await expect.poll(() => hasRow('BasicUpstart2(entry_0810)')).toBe(true);
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
   });
@@ -548,7 +551,7 @@ test('set the program start by hand', async ({ page }) => {
     await expect(section).toContainText('BASIC SYS');
     await expect(section).toContainText('Build & Run: VICE starts it with RUN, no start address');
     await expect(section.getByRole('button', { name: 'Clear' })).toHaveCount(0);
-    expect(await hasRow('BasicUpstart2(start)')).toBe(true);
+    await expect.poll(() => hasRow('BasicUpstart2(start)')).toBe(true);
     await page.keyboard.press('Control+j');
     await goTo(page, 'sub_0866');
     const row = listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: /^0866$/ }) });
