@@ -275,17 +275,18 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .main-tabs .tab-tools kbd { margin-left: 2px; }
 .main-tabs .tab-more { display: none; align-self: center; margin: 0 4px; color: var(--fg); }
 .seg-short { display: none; }
-@container editor (max-width: 1410px) {
+@container editor (max-width: 1505px) {
   .main-tabs .tab-tools kbd { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-@container editor (max-width: 1325px) {
+@container editor (max-width: 1395px) {
   .main-tabs .tool-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .main-tabs .tab-tools .btn.small { padding: 0 6px; }
   .main-tabs .seg-long { display: none; }
   .main-tabs .seg-short { display: inline; }
 }
-@container editor (max-width: 1060px) {
-  .main-tabs .tab { padding: 0 8px; }
+@container editor (max-width: 1090px) {
+  .main-tabs .tab { padding: 0 6px; }
+  .main-tabs .tab-tools .btn.small { padding: 0 4px; }
   .main-tabs .tool-block { display: none; }
   .main-tabs .tab-label { max-width: 8em; }
   .main-tabs .tab-source .tab-label { max-width: 5em; }
@@ -331,10 +332,10 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 /* the peek (Ctrl over a line): its block the other way than the listing shows it, right under the line; placed (and
    made visible) once its size is known. A click on a byte, a character or an instruction picks it in the listing */
 .peek { position: fixed; z-index: 60; visibility: hidden; max-width: min(560px, calc(100vw - 16px)); padding: 5px 0; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); overflow: hidden; font: 12px/18px var(--font-code); color: var(--fg); font-variant-ligatures: none; user-select: none; }
-.peek [data-a] { cursor: pointer; border-radius: 2px; }
-.peek .p-hex [data-a]:hover, .peek .p-txt [data-a]:hover { box-shadow: inset 0 -1px 0 var(--accent-hi); }
-.peek .peek-row[data-a]:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.peek .picked { outline: 1px solid var(--accent-hi); outline-offset: -1px; }
+:is(.peek, .peek-pane) [data-a] { cursor: pointer; border-radius: 2px; }
+:is(.peek, .peek-pane) :is(.p-hex, .p-txt) [data-a]:hover { box-shadow: inset 0 -1px 0 var(--accent-hi); }
+:is(.peek, .peek-pane) .peek-row[data-a]:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+:is(.peek, .peek-pane) .picked { outline: 1px solid var(--accent-hi); outline-offset: -1px; }
 .peek-head { display: flex; align-items: center; gap: 8px; padding: 0 10px 5px; margin-bottom: 3px; border-bottom: 1px solid var(--line); font: 11.5px/18px var(--font-ui); color: var(--fg-2); white-space: nowrap; }
 .peek-head .mono { font-family: var(--font-code); }
 .peek-as { margin-left: auto; padding-left: 14px; font-weight: 600; color: var(--accent-hi); }
@@ -343,23 +344,48 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .peek-row.cols { height: 16px; }
 .peek-row.cols b { font: 10.5px/16px var(--font-ui); color: var(--fg-3); }
 .peek-row.on { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 2px 0 var(--accent); }
-.peek .p-adr { width: 4ch; flex: none; color: var(--fg-3); }
-.peek .p-hex { width: 23ch; flex: none; color: var(--fg-2); }
+:is(.peek, .peek-pane) .p-adr { width: 4ch; flex: none; color: var(--fg-3); }
+:is(.peek, .peek-pane) .p-hex { width: 23ch; flex: none; color: var(--fg-2); }
 .peek.code .p-hex { width: 8ch; }
-.peek .p-txt { width: 8ch; flex: none; }
+:is(.peek, .peek-pane) .p-txt { width: 8ch; flex: none; }
 /* as code an instruction is three bytes at most: as wide as the column's name */
 .peek.code .p-txt { width: 6ch; }
-.peek .p-txt .dot { color: var(--fg-3); }
-.peek .p-txt .inv { background: var(--fg); color: var(--panel-2); }
-.peek .p-hex .on, .peek .p-txt .on { color: var(--fg); background: color-mix(in srgb, var(--accent) 32%, transparent); border-radius: 2px; }
-.peek .p-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.peek .ind { display: none; }
+:is(.peek, .peek-pane) .p-txt .dot { color: var(--fg-3); }
+:is(.peek, .peek-pane) .p-txt .inv { background: var(--fg); color: var(--panel-2); }
+:is(.peek, .peek-pane) :is(.p-hex, .p-txt) .on { color: var(--fg); background: color-mix(in srgb, var(--accent) 32%, transparent); border-radius: 2px; }
+:is(.peek, .peek-pane) .p-src { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:is(.peek, .peek-pane) .ind { display: none; }
 .peek-more { padding: 3px 10px 0; font: 11px/16px var(--font-ui); color: var(--fg-3); }
 .peek-more.before { padding: 0 10px 3px; }
 /* where another block starts in the peek: its type, name and addresses; a click goes to its first byte */
 .peek-blk { display: flex; align-items: center; gap: 8px; height: 18px; margin-top: 2px; padding: 0 10px; border-top: 1px dashed var(--line-2); font: 11px/17px var(--font-ui); color: var(--fg-2); white-space: nowrap; }
 .peek-blk .mono { font-family: var(--font-code); }
-.peek .peek-blk:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+:is(.peek, .peek-pane) .peek-blk:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+/* the pane beside the listing (V): the listing's blocks the other way, each row of a line level with it; its head
+   names the block of the top row and picks how the blocks are shown. Rows are as tall as the listing's */
+.listing-split { flex: 1; min-height: 0; display: flex; }
+.listing-split > .listing { min-width: 0; }
+.splitter.peek-split { width: 4px; flex: none; }
+.peek-pane { flex: none; min-width: 0; max-width: 55%; display: flex; flex-direction: column; overflow: hidden; background: var(--editor); color: var(--fg); font: 12px/20px var(--font-code); font-variant-ligatures: none; user-select: none; }
+.peek-pane-head { flex: none; box-sizing: border-box; display: flex; flex-direction: column; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.peek-pane-top { height: 26px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 2px 0 10px; font: 11.5px/18px var(--font-ui); color: var(--fg-2); white-space: nowrap; }
+.peek-pane-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.peek-pane-name .mono { font-family: var(--font-code); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.peek-pane-head .icon-btn { width: 24px; height: 24px; }
+.peek-pane-body { flex: 1; min-height: 0; overflow: hidden; }
+.peek-pane .peek-row { height: 20px; gap: 10px; }
+.peek-pane .peek-row.cols { height: 17px; align-items: center; }
+.peek-pane .peek-blk { height: 20px; box-sizing: border-box; margin-top: 0; line-height: 19px; }
+/* every row an instruction: its bytes, the code (as wide as the pane leaves it), then the bytes as text, so the text
+   columns stand in line at the right */
+.peek-pane :is(.r-code, .cols) .p-hex { width: 8ch; }
+.peek-pane :is(.r-code, .cols) .p-src { flex: 1 1 0; min-width: 8ch; white-space: pre; }
+.peek-pane :is(.r-code, .cols) .p-txt { width: 6ch; }
+/* the selection, shaded: the instructions it takes in whole, and its bytes and characters */
+.peek-pane .peek-row.sel { background: var(--sel); }
+.peek-pane .picked { outline: 0; background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.peek-pane .peek-row.sel .picked { background: transparent; }
+.peek-pane-empty { padding: 12px; font: 12px var(--font-ui); color: var(--fg-3); }
 /* a block whose type just changed: framed in the accent colour with what it became; the fill fades first, then the
    frame (--since: how long ago the change was, negative, so a listing shown again goes on where it was) */
 .changed { position: absolute; left: 0; right: 0; z-index: 2; pointer-events: none; border-radius: 3px; box-shadow: inset 0 0 0 2px var(--accent); animation: changed-out 4s ease-in var(--since, 0ms) forwards; }
@@ -369,6 +395,8 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 @keyframes changed-out { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
 /* find in the listing (Ctrl+F): the widget at its top right, the matches marked in the text, the line shown framed */
 .listing-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+/* the pane beside the listing open: the find widget stays over the listing */
+.listing-wrap.with-peek .find-bar { right: min(calc(var(--peek-w) + 22px), calc(55% + 22px)); }
 .find-bar { position: absolute; top: 0; right: 18px; z-index: 6; display: flex; align-items: center; gap: 2px; max-width: calc(100% - 28px); padding: 4px 4px 4px 6px; border: 1px solid var(--line-2); border-top: 0; border-radius: 0 0 8px 8px; background: var(--panel-2); box-shadow: var(--shadow); font-family: var(--font-ui); }
 .find-q { width: 220px; min-width: 70px; flex: 0 1 220px; height: 24px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--editor); color: var(--fg); padding: 0 6px; font-size: 12px; outline: none; }
 .find-q:focus { border-color: var(--accent); }
