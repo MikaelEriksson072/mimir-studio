@@ -2783,6 +2783,94 @@ Sindri: `packages/sindri/test/tape.test.ts` (katalogen, LOAD efter och före boo
 pulser). `test/vice.integration.test.ts` autostartar T64:or i riktiga VICE och lägger en i datasetten.
 `packages/cli/test/cli.test.ts` och `e2e/app.spec.ts` (*a T64 in the datasette*) prövar CLI:t och appen.
 
+### 13.5k Diskar för Krills loader (cc1541:s kommandorad)
+
+Krills loader (Krill/Plush) laddar vanliga filer i diskens katalog, var och en en kedja av länkade sektorer med
+laddadressen först. En del laddar en fil efter dess namn (`ldx #<namn / ldy #>namn / jsr load`, namnets byte fram till en
+0) eller, med ett tomt namn (bara en 0), nästa fil i katalogen. Loadern har inget laddskript: katalogen är ordningen, och
+namnen är ofta rader i en dir-art. Det som liknar ett skript mest är kommandoraden till cc1541, diskbyggaren som följer
+med loadern: den skriver filerna i den ordningen och med de namnen. `readKrillDisk()`
+(`packages/core/src/c64/krill-disk.ts`) läser katalogen och filerna (`KrillDisk`, `KrillEntry`, `KrillFile`), och
+`cc1541Script()` skriver kommandoraden.
+
+Loadern packar upp en fil medan den laddas, med den uppackare den byggdes med. Här läses filer packade med dess ZX0,
+som Artline Designs *Nightfall* (2024) har dem. Formatet är läst ur den residenta delen av demots loader (`$0200–$03f8`:
+anropet på `$0200` skickar namnet, uppackaren börjar på `$0300`), och anropen ur Sindri: först `"----------------"`
+efter namn, sedan tomma namn som laddar nästa fil i katalogen (fil 2–6 i katalogens ordning).
+
+**ZX0 i Krills loader** (`unpackKrillZx0()`):
+- Först vart filen packas upp (2 byte, den höga först), sedan en zx0-ström. Det är dalis ström (Bitfire 1.x, 13.5c) med
+  bitarna åt andra hållet i en byte och adressen åt andra hållet.
+- Först en literal: en Elias-gamma-längd, sedan byten. Efter en literal kommer en kopia med förra offseten (0) eller en
+  ny (1). Efter en kopia kommer en literal (0) eller en ny kopia (1).
+- Talen är sammanflätad Elias-gamma: en 0 före varje bit, en 1 sist. Från 256 kommer de 8 låga bitarna först. Bitarna
+  läses nedifrån i en byte (`lsr`), som hämtas när den behövs.
+- En ny offset är ett tal (dess höga del + 1) och en byte: de 7 låga bitarna, sedan 1 för längd 2. Annars följer
+  längden − 1 utan sin första 0. Talet 256 avslutar strömmen.
+- En fil packad på plats har inget slut. Den slutar där skrivningen når läsningen efter en kopia, och resten är byten
+  som de är. Bara några få byte får vara kvar så: mindre än en fjärdedel av filen. Andra byte vars två första säger
+  att de packas upp strax ovanför där de laddas slutar efter några få byte och lämnar nästan allt (gamla diskar som
+  Underground, 1989, och Pac Runner har sådana filer).
+
+**Disken:**
+- En disk räknas när minst två av dess filer packas upp så, och dubbelt så många som filerna som varken packas upp eller
+  är BASIC-program på `$0801` (startprogrammet laddas med LOAD). En disk packad på annat sätt har då och då en fil som
+  råkar packas upp.
+- En katalogpost utan sektorer (spår 0, eller 18/0, BAM:en) är en rad i en dir-art. En post som börjar där en tidigare
+  gör är samma fil (en loop-fil).
+- Byggen av loadern med andra uppackare (Exomizer och andra, som Still Standing och Meetro 2024) läses inte här, och
+  inte heller diskar som laddar efter spår och sektor.
+
+**Skriptet** (`cc1541Script`): först kommentarsrader om vad disken är och hur loadern laddar, och en rad per katalogpost
+(filnamnet, var den laddas, vart den packas upp; en rad utan fil, samma fil som en tidigare). Sedan cc1541:s kommandorad:
+- `-n` och `-i`: rubriken och id:ts fem tecken (`$a2`–`$a6` i BAM:en), och `-S` när interleaven inte är cc1541:s 10.
+- Per post `-f` med namnet, `-B` när katalogen visar ett annat antal block än filen har (en dir-art visar ofta 0), `-T`
+  för annat än PRG, och `-w` med filen, `-l` för en loop-fil eller `-L` för en rad utan fil.
+- Namnen skrivs som cc1541 tar dem: bokstäver (`$41`–`$5a`) med små bokstäver, siffror, mellanslag och skiljetecken som
+  de är, och alla andra byte som `#` och två hexsiffror (också `"`, `#`, `$` och `!`, som ett skal läser). Det är
+  cc1541:s egen syntax (`-f "start#a0,8,1"`; källan, version 4.2, gör om små bokstäver till `$41`–`$5a`).
+- Filerna heter `file01_0fa0.zx0`: posten och vart den packas upp (`.prg` när den inte är packad). Det är filen som den
+  är på disken, som cc1541 skriver den.
+
+**I appen:**
+- Explorer säger om en monterad disk *Krill's loader: N files in the directory packed with its ZX0, loaded in the
+  directory's order*, med knappen **Krill script**. Monteringen säger *a disk for Krill's loader with N files packed
+  with its ZX0*.
+- Bottenpanelens flik **Krill script** har en rad per fil i katalogens ordning: posten, namnet som 1541:an listar det,
+  var den laddas, vart den packas upp, storlek (packad → uppackad), filnamnet och anmärkningar (*packed with its ZX0,
+  in place* eller *with an end*, *a BASIC program: loaded with LOAD and RUN*, var den börjar, *the directory shows 0
+  blocks (16)*).
+- Ett klick på raden öppnar filen som en PRG: uppackad där den packas upp, annars som den laddas. **+** lägger till den.
+- **Copy script** kopierar cc1541:s kommandorad. **Save files…** sparar varje fil som den är på disken (`.zx0`) och
+  uppackad (`.prg`) i en mapp man väljer, med kommandoraden som `<disk>-cc1541.sh`.
+
+**Mätt:**
+- *Nightfall* (100 %-versionen): 27 filer, startprogrammet och 26 packade på plats (den största, `$0a`, från 10 914 till
+  49 118 byte). Katalogen visar 0 block för alla, och två rader dir-art har ingen fil. Demot i Sindri laddade 6 filer
+  på 86 s, och var och en är byte för byte vad läsaren packar upp.
+- **Mot loaderns egen uppackare:** den residenta delen ur Nightfalls minne (`$0200–$03ff`) körd på Sindris 6502, med
+  hela filen i minnet (blockväntan ersatt med `sec / rts`), packar upp varje fil som läsaren gör: alla 150 filer på de 11
+  olika diskarna i Year-top20 (2,9 MB). 34 av Fishbomb sida B:s 38 filer säger själva att de packas upp från `$0000`; de
+  kördes `$4000` högre, eftersom de annars skriver över uppackaren (strömmen är densamma: offseten är relativa).
+- **Hela referensarkivet** (276 937 diskar på 8 minuter): 100 diskar läses, 28 olika, med 513 filer, varav 472 packade
+  (323 på plats) som packas upp till 5,2 MB. Alla 472 är byte för byte vad Nightfalls uppackare ger på Sindris 6502.
+  Demona är Nightfall, Morph, Eroismo, X2023 (Creators), Fishbomb, Orangi24, Innerverse, Assembly 2003 Memories
+  (Hedelmae), Norwegian Arm och Tunnel Vision; spelen Shadows tre FablePhobia +3DS och Sanapyramidis preview; och
+  IDE64-versionerna av Attitude 7–13, Naturality, Perfect Way och Samar Music Disk 1. Filerna som inte packas upp är
+  startprogrammen och några få andra (Fishbomb sida A:s autostart på `$0326`). I Year-top20 och mappen med nyare demos:
+  19 diskar, 11 olika. Ingen disk tas av en annan läsare (Spindle, Bitfire, BoozeLoader, Sparkle).
+- Utan regeln om en fjärdedel gav arkivet 134 diskar: 33 till var gamla diskar (Underground från 1989, Pac Runner,
+  TigerDisk, Dasher …) vars filer slutade på plats efter 2–36 byte och lämnade 90–100 % av sig själva. Utan regeln om
+  BASIC-program gav Kings Size två BASIC-program som packades upp med slut.
+
+**Test:** `test/krill-disk.test.ts`, med filer och diskar som `test/helpers/krill-disk.ts` skriver (en egen enkel packare
+med loaderns ZX0, ingen kod från loadern): bitarnas ordning och adressen mot en ström skriven för hand, literaler och
+kopior (också 16-bitars längder, långa offset och en upprepad offset), filer packade på plats och med slut, byte som inte
+är en sådan fil (också byte som slutar på plats efter några få och lämnar resten), katalogen med BASIC-program, dir-art-namn, en rad utan fil och en loop-fil,
+filnamnen, PRG:erna, cc1541-namnen och kommandoraden, och andra loaders diskar. `fixtures/d64/krill-demo.d64` är en av
+diskarna: ett BASIC-startprogram, rasterdemot packat med slut, en fil packad på plats under ett dir-art-namn och en rad
+dir-art. `e2e/app.spec.ts` (*a mounted disk for Krill's loader*) monterar den.
+
 ### 13.6 Terminal
 
 **Terminal** i titelraden (och kommandopaletten) öppnar ett terminalfönster i mappen du arbetar i: den senast

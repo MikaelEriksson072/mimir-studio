@@ -5506,6 +5506,70 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
   });
 });
 
+test("a mounted disk for Krill's loader: its files in the Krill script tab, unpacked, cc1541's command line copied and saved", async ({ workDir, app, page }) => {
+  // fixtures/d64/krill-demo.d64 (packages/core/test/krill-disk.test.ts): a BASIC boot program, the raster demo packed
+  // with the loader's ZX0 (with an end), a file packed in place under a dirart name, and a line of the dirart
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/krill-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted krill-demo.d64: "KRILL DEMO", 4 files, a disk for Krill\'s loader with 2 files packed with its ZX0')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText("Krill's loader: 2 files in the directory packed with its ZX0, loaded in the directory's order");
+  const files = page.getByRole('table', { name: 'Krill files' });
+
+  await test.step('the Explorer opens the tab, a row per file in the directory\'s order', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Krill script' }).click();
+    await expect(page.getByRole('tab', { name: /Krill script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /Krill script/ })).toContainText('3');
+    await expect(page.locator('.spindle-head').first()).toContainText("Files of krill-demo.d64 (Krill's loader, its ZX0): 3 files, 2 unpacked");
+    await expect(page.locator('.spindle-head').first()).toContainText('a part loads a file by its name, or the next file in the directory with an empty name');
+    await expect(files.locator('tbody tr td:nth-child(1)')).toHaveText(['$00', '$01', '$02']);
+    await expect(files.locator('tbody tr td:nth-child(2)')).toHaveText(['"KRILL DEMO"', '"----------------"', '"mn·· Aa#"@[]"']);
+    await expect(files.locator('tbody tr td:nth-child(3)')).toHaveText(['$0801–$080d', '$597b–$5fff', '$cdc2–$cfff']);
+    await expect(files.locator('tbody tr td:nth-child(4)')).toHaveText(['—', '$0801–$37ff', '$c830–$cfff']);
+    await expect(files.locator('tbody tr td:nth-child(6)')).toHaveText(['file00_0801.prg', 'file01_0801.zx0', 'file02_c830.zx0']);
+    await expect(files.locator('tbody tr td:nth-child(7)')).toHaveText([
+      'a BASIC program: loaded with LOAD and RUN · from 1/0 · the directory shows 0 blocks (1)', 'packed with its ZX0, with an end · from 1/1 · the directory shows 0 blocks (7)', 'packed with its ZX0, in place · from 1/8 · the directory shows 0 blocks (3)',
+    ]);
+  });
+
+  await test.step('a row opens its file unpacked, as a PRG at where it unpacks to; + adds one', async () => {
+    await files.getByRole('row', { name: /file01_0801/ }).click();
+    await expect(toast(page, 'Loaded file01_0801.prg at $0801')).toBeVisible();
+    // the raster demo, as it was before it was packed
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await files.getByRole('button', { name: 'Add file02_c830.zx0 to this project' }).click();
+    await expectFiles(page, ['file01_0801.prg', 'file02_c830.prg']);
+  });
+
+  await test.step("it copies cc1541's command line: the directory in order, with its names, blocks and dirart line", async () => {
+    await page.getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, 'Copied the cc1541 command line')).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text[0]).toBe("# cc1541 command line, rebuilt by Mimir Studio from krill-demo.d64 (Krill's loader, its ZX0): 3 files, 2 of them packed.");
+    expect(text.slice(text.indexOf(''))).toEqual(['', 'cc1541 -n "krill demo" -i "24#a02a" -S 1 \\', '  -f "krill demo" -B 0 -w file00_0801.prg \\', '  -f "----------------" -B 0 -w file01_0801.zx0 \\',
+      '  -f "#6d#6e#bb#9f a#c1#23#22#40#5b#5d" -B 0 -w file02_c830.zx0 \\', '  -T DEL -f "#60#60#60#60" -L \\', '  krill-demo.d64']);
+  });
+
+  await test.step('Save files… saves every file as it is on the disk and unpacked, with the command line', async () => {
+    const out = join(workDir, 'krill-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 3 files of krill-demo\.d64 to .* \(2 of them unpacked as well\), and krill-demo-cc1541\.sh, cc1541's command line that writes the disk again$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['file00_0801.prg', 'file01_0801.prg', 'file01_0801.zx0', 'file02_c830.prg', 'file02_c830.zx0', 'krill-demo-cc1541.sh']);
+    expect(readFileSync(join(out, 'file01_0801.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+    expect([...readFileSync(join(out, 'file01_0801.zx0')).subarray(0, 4)]).toEqual([0x7b, 0x59, 0x08, 0x01]);
+    expect(readFileSync(join(out, 'krill-demo-cc1541.sh'), 'utf8').split('\n')).toContain('  -f "----------------" -B 0 -w file01_0801.zx0 \\');
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /Krill script/ })).toHaveCount(0);
+  });
+});
+
 test('the tab row fits a small window: the listing tools lose their labels, then move into the ⋯ menu', async ({ app, page }) => {
   await waitForListing(page);
   const row = page.locator('main.main > .tabs');

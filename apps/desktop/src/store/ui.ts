@@ -6,7 +6,7 @@ import { bitmapRowsOf, spriteColsOf } from '../lib/gfxview';
 
 export type Theme = 'dark' | 'light';
 export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem';
-export type BottomTab = 'log' | 'messages' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'pirateslayer' | 'tape' | 'stats' | 'build';
+export type BottomTab = 'log' | 'messages' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'krill' | 'pirateslayer' | 'tape' | 'stats' | 'build';
 export type Activity = 'explorer' | 'blocks' | 'symbols' | 'bookmarks' | 'pack';
 export interface Sizes { side: number; insp: number; bottom: number }
 /** the inspector (the panel on the right): always open, or folded into a strip at the right edge that opens it over the

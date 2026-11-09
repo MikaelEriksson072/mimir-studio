@@ -116,7 +116,7 @@ describe('BoozeLoader disks', () => {
 
   it('is no BoozeLoader disk for other disks', () => {
     expect(readBoozeDisk(makeD64({ name: 'PLAIN', files: [{ name: 'A', data: Uint8Array.from([0x01, 0x08, 0x60]) }] }))).toBeNull();
-    for (const name of ['bitfire-demo.d64', 'spindle-demo.d64', 'mimir-demo.d64', 'kernal-load.d64']) {
+    for (const name of ['bitfire-demo.d64', 'spindle-demo.d64', 'mimir-demo.d64', 'kernal-load.d64', 'krill-demo.d64']) {
       const img = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/d64', name)));
       expect(readBoozeDisk(img), name).toBeNull();
     }

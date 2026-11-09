@@ -46,6 +46,8 @@ interface SidebarProps {
   onShowBooze: () => void;
   /** open the Sparkle script tab (a Sparkle disk's bundles) */
   onShowSparkle: () => void;
+  /** open the Krill script tab (a disk for Krill's loader: its files, cc1541's command line) */
+  onShowKrill: () => void;
   onShowPirateSlayer: () => void;
   /** per file: packed (or maybe packed), else null */
   packing: (PackingInfo | null)[];
@@ -88,7 +90,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, onPlayMusic, musicPlayer = 'vice' }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, onPlayMusic, musicPlayer = 'vice' }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -121,7 +123,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowPirateSlayer={onShowPirateSlayer} />}
+        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowPirateSlayer={onShowPirateSlayer} />}
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
@@ -401,7 +403,7 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
 /** The mounted .d64 or .g64, listed the way the 1541 lists it. A PRG opens with a click or Enter; + adds it to the
  *  project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
  *  ("The work is not saved" → Save as a project…) */
-function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowPirateSlayer: () => void }) {
+function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowPirateSlayer: () => void }) {
   const { img } = disk;
   return (
     <SideSection id="disk" title="Disk" summary={`"${img.name}"`} actions={<button className="icon-btn" title={`Eject ${disk.name}`} aria-label="Eject disk" onClick={onEject}><Icon name="eject" size={14} /></button>}>
@@ -444,6 +446,12 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
         <div className="disk-spindle">
           <span><b>Sparkle disk:</b> {disk.sparkle.bundles.length} bundle{disk.sparkle.bundles.length === 1 ? '' : 's'} of files the loader reads, not in the directory</span>
           <button className="btn small" onClick={onShowSparkle}>Sparkle script</button>
+        </div>
+      )}
+      {disk.krill && (
+        <div className="disk-spindle">
+          <span><b>Krill's loader:</b> {disk.krill.files.filter(f => f.unpacked).length} files in the directory packed with its ZX0, loaded in the directory's order</span>
+          <button className="btn small" onClick={onShowKrill}>Krill script</button>
         </div>
       )}
       {disk.pirateslayer && (

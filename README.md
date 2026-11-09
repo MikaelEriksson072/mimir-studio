@@ -92,6 +92,12 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     its address. The *Sparkle script* tab lists them by the number a part loads them with (`lda #number / jsr $0160`),
     *Copy script* copies the Sparkle loader script (`.sls`) rebuilt from the disk, and *Save files…* saves the files
     with that script;
+  - the files of a disk for Krill's loader packed with its ZX0 (Artline Designs' Nightfall and Morph, Offence's Tunnel
+    Vision, Extend's Fishbomb and more): the loader has no load script, as a part loads a file by its name or the next
+    one in the directory, so the directory is the order, often under a dirart. The *Krill script* tab lists the files
+    in that order, unpacked as the loader unpacks them while it loads; *Copy script* copies the cc1541 command line that
+    writes the disk again (the names as PETSCII bytes, the blocks the directory shows, the dirart's lines), and *Save
+    files…* saves every file as it is on the disk and unpacked, with that command line;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
     Gold's loader and Martin Piper's TapeTool (the TinyHeader file its boot loader reads, files in checksum blocks in
     any order, RLE packed blocks) are
@@ -236,7 +242,7 @@ packed file.
    **Build & Run** it in VICE (`F5`).
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
-the Spindle, Bitfire and Booze scripts and Pirate Slayer (when there is one), statistics and the build output. With a
+the Spindle, Bitfire, Booze, Sparkle and Krill scripts and Pirate Slayer (when there is one), statistics and the build output. With a
 disk mounted, Build & Run writes the files the project opened from it back into a copy of the disk as they were built
 (a G64's sectors encoded again in place, its copy protection untouched), and autostarts that copy when the project
 starts with the disk's first program, so the disk's own boot loads them.

@@ -209,7 +209,8 @@ apps/desktop     Electron app
   electron-builder.yml  Windows packaging (NSIS installer + portable exe)
 docs/spec.md     technical specification
 fixtures/prg     test programs (raster-demo.prg, and the loader, packed and Spindle demos)
-fixtures/d64     disk images (mimir-demo.d64, spindle-demo.d64, a Spindle 3 disk, and bitfire-demo.d64, a Bitfire one)
+fixtures/d64     disk images (mimir-demo.d64, spindle-demo.d64, a Spindle 3 disk, bitfire-demo.d64, a Bitfire one,
+                 krill-demo.d64, one for Krill's loader, and others)
 fixtures/tap     mimir-demo.tap: a boot file whose own loader reads the raster demo in TapeTool's TinyHeader format, and
                  TapeTool files in blocks (written by packages/core/test/helpers/tapetool-tape.ts)
 fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from source (packages/core/test/crt.test.ts)
@@ -692,6 +693,20 @@ the reference as a patch in `test/helpers/reference.ts`):
     with the built files in VICE's datasette, with `-trapdevice1` (a default VICE configuration has the tape traps off,
     and a T64 has nothing else to read). `fixtures/t64/mimir-demo.t64` is ours: a boot file that loads the raster demo
     with LOAD from the tape and starts it, the demo, and a sine table whose entry ends at `$c3c6`.
+36. Disks for Krill's loader (spec 13.5k) are new. `readKrillDisk` (`packages/core/src/c64/krill-disk.ts`) reads a disk
+    whose directory files are packed with the ZX0 of Krill's loader, as Artline Designs' Nightfall has them: the format
+    was read from the loader's resident part in Nightfall's memory (Sindri probes on its calls: the first file by name,
+    then empty names for the next file in the directory), and is dali's stream with the bits taken from the bottom of a
+    byte and the address high byte first (`unpackKrillZx0`). A file packed in place must leave less than a quarter of
+    itself as it is: without that rule the whole archive gave old disks whose files "unpack" in place after a few bytes
+    (Underground, Pac Runner), and BASIC programs at `$0801` are not tried (Kings Size has two whose bytes unpack with
+    an end). There is no load script, so the Krill script tab lists the files in the
+    directory's order (the order the loader loads them in), opens them unpacked, copies cc1541's command line
+    (`cc1541Script`: names as PETSCII with `#xx`, `-B` for the blocks a dirart shows, `-L` for its lines, `-l` for loop
+    files) and saves every file packed and unpacked with it. In the whole reference archive 100 disks are read (28
+    different, 472 packed files, 5.2 MB unpacked), and every file is byte for byte what Nightfall's own unpacker gives
+    when it runs on Sindri's 6502. Builds of the loader with other unpackers (Exomizer: Still Standing, Meetro 2024) are
+    not read.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

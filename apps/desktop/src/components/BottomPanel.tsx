@@ -1,8 +1,8 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
- * disk's files, the BoozeLoader script, a Sparkle disk's bundles, Pirate Slayer on the mounted disk, the tape in the
- * datasette, statistics, build output. */
+ * disk's files, the BoozeLoader script, a Sparkle disk's bundles, the files of a disk for Krill's loader, Pirate Slayer
+ * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, krillFileName, type KrillFile, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -317,6 +317,49 @@ export function SparklePanel({ disk, onCopy, onOpenChunk, onSaveFiles }: { disk:
             </tr>
           );
         }))}
+      </tbody></table>
+    </div>
+  );
+}
+
+/** The Krill script tab (spec 13.5k): a disk for Krill's loader, its directory's files a row each in the directory's
+ *  order (the order the loader loads them in); a row opens the file as a PRG, unpacked when it is packed with the
+ *  loader's ZX0, + adds it. Copy script gives cc1541's command line that writes the disk again, Save files… every file as
+ *  it is on the disk and unpacked, with that command line. */
+export function KrillPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
+  const d = disk.krill!;
+  const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length;
+  const notes = (f: KrillFile) => {
+    const e = d.entries[f.entry], u = f.unpacked;
+    return [
+      u ? `packed with its ZX0, ${u.inplace ? 'in place' : 'with an end'}` : f.basic ? 'a BASIC program: loaded with LOAD and RUN' : 'not packed with its ZX0: as it is on the disk',
+      `from ${f.sectors[0][0]}/${f.sectors[0][1]}`,
+      e.blocks !== f.sectors.length && `the directory shows ${e.blocks} block${e.blocks === 1 ? '' : 's'} (${f.sectors.length})`,
+    ].filter(Boolean).join(' · ');
+  };
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>Files of {disk.name} (Krill's loader, its ZX0): {n} file{n === 1 ? '' : 's'}, {unpacked} unpacked <span className="muted">· Krill's loader has no load script: a part loads a file by its name, or the next file in the directory with an empty name, so the directory is the order they load in; cc1541's command line rebuilds the disk{lines ? `; ${lines} more line${lines === 1 ? '' : 's'} of the directory without a file of ${lines === 1 ? 'its' : 'their'} own` : ''}</span></span>
+        <button className="btn small" onClick={() => onCopy(cc1541Script(d, disk.name).join('\n'), 'Copied the cc1541 command line')}><Icon name="copy" size={14} />Copy script</button>
+        <button className="btn small" onClick={onSaveFiles} title="Save every file as it is on the disk and unpacked to a folder, with cc1541's command line that writes the disk again"><Icon name="download" size={14} />Save files…</button>
+      </div>
+      <table className="tbl" aria-label="Krill files"><thead><tr><th>Entry</th><th>Name</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
+        {d.files.map(f => {
+          const name = krillFileName(f), u = f.unpacked;
+          return (
+            <tr key={f.entry} title={u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
+              <td className="mono">${h2(f.entry)}</td>
+              <td className="mono">"{d.entries[f.entry].name}"</td>
+              <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
+              <td className="mono">{u ? `$${h4(u.start)}–$${h4(u.end - 1)}` : <span className="muted">—</span>}</td>
+              <td className="mono">{u ? `${f.bytes.length} → ${u.end - u.start}` : f.bytes.length}</td>
+              <td className="mono">{name}</td>
+              <td className="muted">{notes(f)}</td>
+              <td><button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(f, true); }}><Icon name="plus" size={13} /></button></td>
+            </tr>
+          );
+        })}
       </tbody></table>
     </div>
   );
@@ -637,4 +680,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
