@@ -268,6 +268,36 @@ export interface Patch {
   at?: Addr;
 }
 
+/** The language a user script is written in (spec 10.3); Kick Assembler so far. */
+export type ScriptLang = 'kickass';
+
+/**
+ * A scratchpad of a user script: memory of the script's own at an address, cleared to `fill` before each run, whose
+ * name (and `name_end`, the address after it) the script uses as labels. What the last run left in it is kept.
+ */
+export interface ScriptPad {
+  name: string;
+  start: Addr;
+  size: number;
+  /** the byte it holds when a run starts (0 when missing) */
+  fill?: number;
+  /** what the last run left in it (missing: it has not run) */
+  bytes?: Uint8Array;
+}
+
+/**
+ * A script the user writes in Mimir to work on the program's bytes (spec 10.3): assembled with the program's names
+ * at hand and run on a copy of the program's memory in an emulated 6510, never in the export or Build & Run.
+ */
+export interface UserScript {
+  id: string;
+  /** unique in the project */
+  name: string;
+  lang: ScriptLang;
+  source: string;
+  pads: ScriptPad[];
+}
+
 export interface Project {
   format: 'mimir-project';
   version: 1;
@@ -296,6 +326,8 @@ export interface Project {
   pack?: PackPrefs | null;
   /** code the user wrote over the loaded bytes, in the order written; `files` holds those that are on */
   patches: Patch[];
+  /** the user's scripts (spec 10.3), in the order made (missing: none) */
+  userScripts?: UserScript[];
   /** the cartridge the project was opened from (missing or null: none) */
   cart?: Cartridge | null;
   settings: Settings;
@@ -381,6 +413,8 @@ export interface SerializedProject {
   pack?: PackPrefs | null;
   /** `bytes` and `old` as base64; missing in project files from before patches */
   patches?: (Omit<Patch, 'id' | 'bytes' | 'old'> & { bytes: string; old: string })[];
+  /** the user's scripts, a scratchpad's bytes as base64; missing in project files from before scripts, and without one */
+  userScripts?: (Omit<UserScript, 'id' | 'pads'> & { pads: (Omit<ScriptPad, 'bytes'> & { bytes?: string })[] })[];
   /** the cartridge image as base64; missing in project files from before cartridges, and without one */
   cart?: { name: string; data: string };
   settings: Partial<Settings>;
@@ -873,6 +907,10 @@ export interface AssembleResult {
   prg: Uint8Array | null;
   blocks: AsmBlock[];
   symbols: Map<string, unknown>;
+  /** what `.print` printed in the final pass, in order */
+  prints: string[];
+  /** where the first byte of the code went (in the order of the code, not of memory); -1: it has none */
+  first: number;
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {

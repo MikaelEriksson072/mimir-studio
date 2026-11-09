@@ -337,6 +337,21 @@ describe('schemas', () => {
     expect(projectSchema.safeParse({ ...p, notes: { 0x0810: 'not a note' } }).success).toBe(false);
   });
 
+  it('reads the user scripts with what their scratchpads hold, and older files without them', () => {
+    const script = { id: 's1', name: 'decrypt', lang: 'kickass' as const, source: '* = $c000\nstart: rts', pads: [{ name: 'pad1', start: 0xc800, size: 4, bytes: new Uint8Array([1, 2, 3, 4]) }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] };
+    const p = { ...demoProject(), userScripts: [script] };
+    const json = JSON.parse(JSON.stringify(serializeProject(p)));
+    const back = deserializeProject(serializedProjectSchema.parse(json) as SerializedProject);
+    expect(back.userScripts?.[0]).toMatchObject({ name: 'decrypt', lang: 'kickass', source: script.source, pads: [{ name: 'pad1', start: 0xc800, size: 4 }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] });
+    expect([...back.userScripts![0].pads[0].bytes!]).toEqual([1, 2, 3, 4]);
+    delete json.userScripts;
+    expect(serializedProjectSchema.parse(json).userScripts).toBeUndefined();
+    expect(projectSchema.safeParse(p).success).toBe(true);
+    // a scratchpad past $ffff, or bytes not as many as it holds
+    expect(projectSchema.safeParse({ ...p, userScripts: [{ ...script, pads: [{ name: 'x', start: 0xfff0, size: 0x20 }] }] }).success).toBe(false);
+    expect(projectSchema.safeParse({ ...p, userScripts: [{ ...script, pads: [{ name: 'x', start: 0xc000, size: 8, bytes: new Uint8Array(4) }] }] }).success).toBe(false);
+  });
+
   it('reads the empty lines the user inserted, and older files without them', () => {
     const p = { ...demoProject(), blanks: { 0x0810: 2, 0x0900: 1 } };
     const json = JSON.parse(JSON.stringify(serializeProject(p)));

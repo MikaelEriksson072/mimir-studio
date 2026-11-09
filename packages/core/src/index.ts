@@ -54,7 +54,7 @@ export { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';
 export type { LineTextSettings } from './render/lines';
 export { hardwareInclude } from './render/include';
 
-export { assemble } from './verify/kick-subset-assembler';
+export { assemble, type AssembleOptions } from './verify/kick-subset-assembler';
 export { comparePrg } from './verify/verify';
 export { parseKickOutput } from './verify/kick-output';
 
@@ -66,7 +66,8 @@ export { addReloc, codeWhereLoaded, loadAddress, loadRange, moveKeys, moveReloc,
 export { FORMATTABLE, formatOverride, keepCutTypes, lineMove, markIdOf, mergeOverride, mergeRange, moveBlockKeys, moveBytes, moveFrom, resizeBlock, splitBlock, type BlockMerge, type BlockResize, type BlockSplit, type ByteMove, type RangeMerge } from './edit';
 export { createProject, demoProject, serializeProject, deserializeProject, projectNameFor, withId, newId, b64enc, b64dec } from './project';
 export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles, expectedCartridge, readme, projectScripts, projectTextFiles, exportFiles, type CartBuild } from './export';
-export { applyPatch, assemblePatch, patchAt, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, projectUnpatched, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';
+export { byteLines, checkScript, disassembleBytes, freePlace, loadedMask, maskRanges, newScript, padName, rangeText, runScript, SCRIPT_LIMIT, scriptEndText, scriptEnv, scriptName, scriptNames, type PadInstruction, type ScriptChange, type ScriptCheck, type ScriptEnd, type ScriptEnv, type ScriptProblem, type ScriptRange, type ScriptRun } from './script';
+export { applyPatch, assemblePatch, programNames, patchAt, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, projectUnpatched, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';
 export { NOTES_FILE, NOTES_TEXT_FILE, notesDocument, notesExport, notesFile, notesFor, notesText, lineHtml } from './notes-doc';
 export { detectPacking, packerSignature, type PackingInfo } from './packing';
 export { conclusive, depackers, depackerText, packedData, packerNames, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackRun, type UnpackTape } from './sindri';

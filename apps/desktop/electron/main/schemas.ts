@@ -117,6 +117,12 @@ const serializedPatch = z.object({ ...patchFields, bytes: base64, old: base64 })
   .refine(p => p.bytes.length === p.old.length && p.bytes.length > 0, 'the bytes written and the bytes written over differ in length');
 const patch = z.object({ ...patchFields, id: z.string().max(64), bytes: z.instanceof(Uint8Array), old: z.instanceof(Uint8Array) })
   .refine(p => p.bytes.length === p.old.length && p.bytes.length > 0 && p.start + p.bytes.length <= 0x10000, 'the bytes written and the bytes written over differ in length');
+/** a user script (spec 10.3): its code and its scratchpads, what a pad holds after the last run as many bytes as it is big */
+const padFields = { name: z.string().min(1).max(64), start: z.number().int().min(0).max(0xffff), size: z.number().int().min(1).max(0x10000), fill: z.number().int().min(0).max(255).optional() };
+const padFits = (p: { start: number; size: number }) => p.start + p.size <= 0x10000;
+const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144) };
+const serializedScript = z.object({ ...scriptFields, pads: z.array(z.object({ ...padFields, bytes: z.string().max(0x16000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
+const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.array(z.object({ ...padFields, bytes: z.instanceof(Uint8Array).optional() }).refine(p => padFits(p) && (!p.bytes || p.bytes.length === p.size), 'a scratchpad past $ffff, or its bytes not as many as it holds')).max(64) });
 /** memory configuration / VIC bank the code in a range runs with (null: back to detection) */
 const bankZone = z.object({ start: at, end: at, port: z.number().int().min(0).max(255).nullable().optional(), vicBank: z.number().int().min(0).max(3).nullable().optional() });
 /** bytes the program copies elsewhere to run there (spec 8.1b): loaded at start-end (end excluded), run at `to` */
@@ -151,6 +157,8 @@ export const serializedProjectSchema = z.object({
   pack: packPrefsSchema.nullable().default(null),
   // project files from before patches have none
   patches: z.array(serializedPatch).max(4096).default([]),
+  // project files from before user scripts, and those without one, have none
+  userScripts: z.array(serializedScript).max(256).optional(),
   bankZones: z.array(bankZone).max(100000).default([]),
   // project files from before blocks could be relocated have none
   relocs: z.array(reloc).max(4096).default([]),
@@ -182,6 +190,7 @@ export const projectSchema = z.object({
   scripts,
   pack: packPrefsSchema.nullable().optional(),
   patches: z.array(patch).max(4096),
+  userScripts: z.array(userScript).max(256).optional(),
   bankZones: z.array(bankZone).max(100000),
   relocs: z.array(reloc).max(4096),
   excluded: z.array(at).max(65536),

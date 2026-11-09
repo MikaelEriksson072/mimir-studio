@@ -6049,3 +6049,85 @@ test('graphics as pictures in the listing: characters to click, how many sprites
     await expect(listing(page).locator('.row .src', { hasText: /^\s*\.byte %[01]{8}, %[01]{8}, %[01]{8}/ }).first()).toBeVisible();
   });
 });
+
+test('scripts: Kick Assembler that runs in Mimir on a copy of the program, checked first, its scratchpad shown, a change written as a patch', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  const check = page.locator('.scr-check');
+  const run = page.getByRole('button', { name: /^Run/ });
+  const editor = page.locator('.scr-editor');
+  /** the script's code replaced, as if pasted */
+  const code = async (text: string) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(text);
+  };
+
+  await test.step('a script from a block of the listing: its code, in free memory, with a scratchpad', async () => {
+    await goTo(page, 'fx_091e');
+    await listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: /^091e$/ }) }).click({ button: 'right' });
+    await fromSubmenu(page, 'Program', 'New script from block (runs in Mimir on a copy of the program)');
+    await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('option', { name: 'script' })).toHaveAttribute('aria-selected', 'true');
+    await expect(editor.locator('.view-lines')).toContainText('* = $c000 "script"');
+    await expect(editor.locator('.view-lines')).toContainText('lda SID_OSC3');
+    await expect(page.getByLabel('Scratchpad address')).toHaveValue('$c800');
+    // the program's labels and the hardware names are known: it checks out
+    await expect(check).toContainText('Ready:');
+    await expect(check).toContainText('starts at $c000');
+  });
+
+  await test.step('an unknown name is an error on its line, and the script cannot run', async () => {
+    await code('        * = $c000\nstart:  lda no_such_label\n        rts\n');
+    await expect(check).toHaveText('1 error: line 2: Unknown symbol "no_such_label"');
+    await expect(run).toBeDisabled();
+    await expect(page.locator('.scr-problems')).toContainText('Line 2');
+  });
+
+  await test.step('a run copies the program\'s text to the scratchpad and changes a byte of its copy', async () => {
+    await code([
+      '        * = $c000 "copy"',
+      'start:  ldx #20',
+      '!:      lda txt_0949,x       // the program\'s text',
+      '        sta pad1,x',
+      '        dex',
+      '        bpl !-',
+      '        inc colors_0939',
+      '        rts',
+    ].join('\n'));
+    await expect(check).toContainText('Ready: 15 bytes at $c000-$c00e');
+    await expect(run).toBeEnabled();
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText('Returned (RTS at $c00e)');
+    await expect(page.locator('.scr-view-title')).toHaveText('pad1 · $c800-$c8ff · 256 bytes');
+    await page.getByRole('button', { name: 'Text', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'PETSCII', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.scr-dump')).toContainText('MIMIR STUDIO DEMO');
+    // the project's files are as they were: the change is listed
+    await expect(page.locator('.scr-change')).toHaveText(['$0939 · 1 byte']);
+  });
+
+  await test.step('the change is written over the program as a patch, through the patch dialog', async () => {
+    await page.locator('.scr-change').click();
+    await page.getByRole('button', { name: 'Write as patch…' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveAccessibleName(/^Patch \$0939/);
+    await expect(dialog.locator('#patch-code')).toHaveValue(/^\s*\.byte \$/);
+    await page.keyboard.press('Control+Enter');
+    await expect(toast(page, /Patch "script_0939" written over/)).toBeVisible();
+  });
+
+  await test.step('the scratchpad is kept: another tab and back, and a deleted script comes back with Ctrl+Z', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await page.locator('.pad-row:not(.pad-head)').first().click({ position: { x: 4, y: 4 } });
+    await expect(page.locator('.scr-dump')).toContainText('MIMIR STUDIO DEMO');
+    await page.getByRole('button', { name: 'Delete script' }).click();
+    await expect(page.getByText('No scripts yet')).toBeVisible();
+    await page.keyboard.press('Control+z');
+    await expect(page.getByRole('option', { name: 'script' })).toBeVisible();
+    await expect(page.locator('.scr-dump')).toContainText('MIMIR STUDIO DEMO');
+  });
+});

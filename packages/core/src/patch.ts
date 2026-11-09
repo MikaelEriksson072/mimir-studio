@@ -156,7 +156,7 @@ function ownNames(source: string): Set<string> {
 
 /** the names code may use: the hardware symbols, and the program's labels and zero-page variables as the listing
  *  names them */
-function namesFor(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>): Map<string, Addr> {
+export function programNames(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>): Map<string, Addr> {
   const out = new Map<string, Addr>();
   for (const m of hardwareInclude(settings).matchAll(/^\.label\s+(\w+)\s*=\s*\$([0-9a-f]+)/gim)) out.set(m[1], parseInt(m[2], 16));
   for (const [a, l] of R.labels) if (!out.has(l.name)) out.set(l.name, a);
@@ -180,7 +180,7 @@ const lineLabel = (i: number) => `__mimir_line_${i}`;
  */
 export function assemblePatch(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, start: Addr, source: string): PatchCode & { error?: string; line?: number } {
   const own = ownNames(source);
-  const names = [...namesFor(R, settings)].filter(([n]) => !own.has(n)).map(([n, a]) => `.label ${n} = $${h4(a)}`);
+  const names = [...programNames(R, settings)].filter(([n]) => !own.has(n)).map(([n, a]) => `.label ${n} = $${h4(a)}`);
   // each line of the code after a label of its own: the label's value is where the line goes
   const user = source.split('\n');
   const head = ['#import "names.asm"', `.pc = $${h4(start)} "patch"`];
@@ -320,7 +320,7 @@ export function patchSource(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pi
   const now = assemblePatch(R, settings, p.start, p.source), n = now.code.length;
   const same = !now.error && n <= p.bytes.length && now.code.every((b, i) => b === p.bytes[i]) && p.bytes.subarray(n).every(b => b === NOP);
   if (same) {
-    const all = namesFor(R, settings), own = ownNames(p.source);
+    const all = programNames(R, settings), own = ownNames(p.source);
     const defs = [...usedNames(p.source)].filter(u => all.has(u) && !own.has(u)).sort().map(u => `.label ${u} = $${h4(all.get(u)!)}`);
     const indent = /^([ \t]+)\S/m.exec(p.source)?.[1] ?? '        ', rest = p.bytes.length - n;
     return [...head, ...(defs.length ? ['// the names the code uses, from the program and the C64 hardware', ...defs, ''] : []), pc,

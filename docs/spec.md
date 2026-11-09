@@ -171,6 +171,7 @@ mimir-studio/
 │  │               vic.ts, classify.ts, labels.ts, diagnostics.ts, index.ts}
 │  ├─ src/render/{lines.ts, kick.ts, include.ts}
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
+│  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -202,7 +203,22 @@ interface Project {
   relocs: Reloc[];                        // byte som programmet kopierar till en annan adress och kör där (8.1b)
   excluded: Addr[];                       // starten på block som lämnas utanför bygget (11.5)
   binary: Addr[];                         // starten på block som sparas som binärfil (11.6)
+  userScripts?: UserScript[];             // användarens skript, som körs i Mimir och aldrig exporteras (10.3)
   settings: Settings;
+}
+
+interface UserScript {                    // se 10.3
+  id: string; name: string;               // namnet är unikt i projektet
+  lang: 'kickass';                        // Kick Assembler; fler språk (Python) kan komma
+  source: string;
+  pads: ScriptPad[];                      // skriptets egna scratchpads
+}
+
+interface ScriptPad {
+  name: string;                           // en etikett i koden; name_end är adressen efter den
+  start: Addr; size: number;              // där den ligger medan skriptet körs, och hur stor den är
+  fill?: number;                          // byten den har när en körning börjar (saknas: 0)
+  bytes?: Uint8Array;                     // vad senaste körningen lämnade i den (base64 i .mimir.json)
 }
 
 interface Note {
@@ -1865,6 +1881,64 @@ En patch är ny kod som användaren skriver över ett intervall av de laddade by
   `out/` har de påslagna patcharna i sig.
 - En fil som tas bort ur projektet, eller packas upp, tar sina patchar med sig.
 
+### 10.3 Skript
+
+Ett skript är Kick Assembler-kod som användaren skriver i Mimir för att arbeta med programmets byte, till exempel
+för att köra en dekrypteringsloop över ett block (`packages/core/src/script.ts`). Skriptet körs i Mimir på en kopia
+av programmets minne, aldrig i exporten eller i Build & Run, och sparas i projektet (`Project.userScripts`).
+
+- **Fliken Scripts** ligger bland huvudflikarna mellan Memory och källkoden. Till vänster står projektets skript och
+  knappen *New script*, i mitten skriptets namn, kontrollen, *Run* och papperskorgen, sedan editorn och under den
+  utdata: problemen, scratchpadsen, `.print`, senaste körningen med dess ändringar, och till höger en scratchpad eller
+  en ändring som hex, kod eller text. Gränsen mellan editorn och utdata kan dras. Utan skript visar fliken vad ett
+  skript är och knappen *New script*.
+- **Nytt skript:** *New script* i fliken och i kommandopaletten (med markeringen, när det finns en), eller högerklick i
+  listningen → *Program* → *New script from selection / block*, som börjar skriptet med markeringens eller blockets
+  rader som listningen skriver dem: så klipper man ut en loop ur programmet. Skriptet heter `script`, `script2`, …,
+  dess kod står vid `* = $c000` (annars i det största fria området, från `$1000` när det får plats; `freePlace`) och
+  det får scratchpaden `pad1` på 256 byte efter koden. Koden börjar med en kommentar om var skriptet körs.
+- **Editorn** är Monaco med Kick Assembler-färgningen (också `!`-etiketter, `.for`, `.while`, `.eval`, `.print`,
+  `else` och funktionerna). Den kompletterar programmets etiketter och nollsidevariabler, hårdvarunamnen,
+  scratchpadsen (först), mnemonics och direktiv, och visar en scratchpads adress och storlek när pekaren står på
+  namnet. `Enter` tar ett förslag bara när det ändrar texten. Det man skriver sparas i projektet en halv sekund efter
+  sista tangenten (ett steg att ångra) och kontrolleras direkt.
+- **Kontrollen** (`checkScript`) assemblerar koden med den inbyggda assemblern med programmets namn (som listningen
+  skriver dem), hårdvarunamnen och scratchpadsen (`pad1` och `pad1_end`) till hands. Ett namn koden själv definierar
+  vinner. Fel och varningar står som markeringar på raderna, i listan *Problems* (ett klick går till raden) och i
+  toolbarens bricka: *Ready: N bytes at $c000-$c00e · starts at $c000* eller *1 error: line 2: Unknown symbol "x"*.
+  Fel är assemblerns, att koden saknas och scratchpads utan giltigt namn, med samma namn, utanför minnet eller över
+  varandra. Varningar är en scratchpad eller kod över programmets byte (de är skriptets medan det körs) eller i
+  stacken. **Run går bara när kontrollen inte har något fel.**
+- **Körningen** (`runScript`, i en egen worker; *Stop* avslutar den) sker i Sindris 6510 på 64 KB vanlig RAM, utan
+  ROM, I/O och avbrott: filerna som LOAD lägger dem (med påslagna patchar; en cartridges filer i banken C64:an startar
+  i), scratchpadsen fyllda med sin `fill`, och skriptets byte över dem. Skriptet anropas som med SYS: stacken har en
+  returadress, och körningen börjar vid etiketten `start`, annars vid kodens första byte. Den slutar vid RTS:en som
+  återvänder därifrån, vid en BRK, vid en JAM eller efter 200 miljoner instruktioner (omkring 1,5 s). Skriptet kan
+  anropa programmets egna rutiner (`jsr decrypt`) eller köra en loop som klistrats in.
+- **Resultatet:** vad scratchpadsen håller sparas i projektet (ett steg att ångra, *Run script "x"*). Projektets filer
+  ändras aldrig av en körning. *Last run* säger hur den slutade (*Returned (RTS at $c00e) after N instructions, M
+  cycles*), registren och tiden, och listar programmets byte som körningen ändrade utanför scratchpadsen och sin egen
+  kod (ändringar högst 8 byte isär blir ett intervall), och hur många byte som ändrades någon annanstans. Står koden
+  inte längre som när den kördes säger rubriken *code changed since*.
+- **Visningen:** en scratchpad (klick på raden) eller en ändring visas som *Hex* (16 byte en rad, 8 när det är smalt),
+  *Code* (disassemblerad vid sin adress, med programmets namn) eller *Text* (32 tecken en rad), texten som PETSCII
+  eller skärmkoder. Byten kopieras som `.byte`-rader eller sparas som `.bin` eller `.prg` (med adressen som
+  laddadress). *Write as patch…* skriver en ändring över programmet där den är, och en scratchpad vid en adress eller
+  etikett man anger: patchdialogen (10.2) öppnas med byten som `.byte`-rader och *Fill the rest with* the bytes that
+  are there, så att resten av arbetet (kontroll, av och på, ta bort) är patchens. Högst 12 000 byte.
+- **Scratchpads** redigeras i tabellen: namn, adress, storlek och fill (`$100` eller `256`), och läggs till med *Add*
+  (efter den sista, i fritt minne) eller tas bort. Flyttas eller ändras storleken på en scratchpad glöms vad den höll.
+- **Assemblern** (`verify/kick-subset-assembler.ts`, samma som verifieringen och patcharna använder) kan utöver det
+  generatorn skriver: multi-etiketter (`!loop:`, `!:`, `bne !-`, `jmp !loop+`), scopes (`{ }`, `name: { }` som läses
+  `name.label` utanför), `.if`/`else`/`else .if`, `.for`, `.while`, `.var` och `.eval` (`=`, `++`, `--`, `+=`, `-=`,
+  `*=`, `/=`), `.print`, `.error`, jämförelser, `&&`, `||`, `!`, `~`, `? :`, `[ ]` som parenteser, teckenlitteraler
+  (`'a'` i den aktuella kodningen), flyttal och funktionerna (`round`, `floor`, `sin`, `toRadians`, `mod`, `min`,
+  `max`, `pow`, … och strängarnas `.size()`, `.charAt()`). Mätt mot KickAss 5.25: `<` och `>` tar hela uttrycket
+  efter sig (`<label+1` är låga byten av label+1), `{ }` till `.if`, `.for`, `.while` och ett eget block öppnar ett
+  scope vars etiketter koden utanför inte ser (varje varv i `.for` och `.while` sitt eget), medan `.pseudopc { }`
+  inte gör det, `else` står på raden efter en `.if` utan block, och ett villkor måste vara sant eller falskt. Ett
+  okänt namn är ett fel på raden som använder det. Testerna assemblerar samma kod med KickAss.jar och jämför byten.
+
 ## 11. Kick Assembler-generatorn
 
 ### 11.1 Filens struktur
@@ -2184,6 +2258,35 @@ sist därifrån, eller programmet före, som ett klick gör; är inget öppnat �
 det sista säger en toast *That was the last program on …*. Bandet (13.5e) fungerar likadant, och Alt-pilarna går på
 den disk eller det band som filen som öppnades sist kom från (utan någon: disken, annars bandet).
 
+**Disken som på en C64.** Settings → General → *The disk in the Explorer* väljer mellan *Mimir's list* (förvalt, som
+ovan) och *As on a C64*: katalogen visas då som skärmen en C64 visar efter `LOAD"$",8` och `LIST`, ljusblått på blått
+inom den ljusblå ramen, med VICE:s teckensnitts-ROM (Toolchain → VICE; utan den Mimirs egna bokstäver och siffror,
+utan grafik, och det sägs under skärmen) och markören som blinkar efter `READY.`. Bilden ritas pixel för pixel när
+panelen är minst lika bred som C64:ans pixlar, annars utjämnad. `packages/core/src/c64/dirlist.ts` bygger raderna som
+1541:ans ROM gör (`directoryProgram`), länkar om dem som LOAD gör, listar dem som BASIC:s LIST och skriver ut dem genom
+en efterbildad skärmeditor (`directoryScreen`):
+
+- Diskens rad: RVS ON, namnet inom citattecken, id och DOS-typ; shiftade mellanslag (`$a0`) blir mellanslag, inget annat
+  ändras, så ett citattecken i namnet avslutar BASIC:s citat och byte från `$80` efter det listas som nyckelord.
+- En fils rad: blocken som radnummer, mellanslag så att citattecknet står i kolumn 5, namnet där det första shiftade
+  mellanslaget eller citattecknet blir det avslutande citattecknet (efter den 16:e byten om inget finns) och byten
+  efter det tappar bit 7; `*`, typen och `<`. Typ 5–7 läser vidare i 1541:ans tabeller (typ 6 och 7 har en nolla som
+  avslutar raden, och LOAD gör nya rader av resten).
+- Skärmeditorn: citatläge (kontrollkoder inom citattecken visas inverterade, RETURN och DEL verkar ändå), RVS ON till
+  RETURN, färgkoderna (färgen gäller rad efter rad), markörrörelser, DEL, INST och teckenuppsättningen (`$0e`).
+
+Rader som samma del av listningen skrev ut är ett element över bilden: en fils öppnar den med klick eller `Enter`, **+**
+lägger till den, `↑` `↓` och markeringen av filerna i projektet fungerar som i listan; diskens rad, andra typer än PRG,
+`BLOCKS FREE.` och `READY.` går inte att öppna. En fil som katalogens egna koder skrivit över (HOME, DEL) listas under
+skärmen. **Aa** bredvid utmatningsknappen byter teckenuppsättning som Commodore+Shift. *Mimir's list* eller *Restore
+defaults* visar disken som förut.
+
+**Test:** `test/dirlist.test.ts` jämför skärmen cell för cell (skärmkod och färg) med x64sc 3.10:s, med äkta
+drivemulering (1541:ans egen ROM), för diskar med udda namn, typ 5–7 och ett disknamn med citattecken och kontrollkoder;
+mot VICE stämmer också varje synlig rad på 14 diskar ur CSDB:s topp 200 (*The Lab*, *1337*, *The Hat*, *Aloft*, *Edge
+of Disgrace* …). `e2e/app.spec.ts` (*the disk as a C64 lists it*): inställningen, raderna, öppna, lägga till, piltangenter,
+Aa och tillbaka till listan.
+
 Vid **Build & Run** läggs en kopia av den monterade disken i VICE:s drive 8 (`-8 <kopia>.d64` eller `.g64`, i en ny
 byggmapp), så ett program som laddar fler delar från disken hittar dem, och ett program som sparar ändrar inte
 originalet. Projektets filer som öppnats från disken skrivs tillbaka i kopian som de byggdes, i sina egna sektorer
@@ -2258,35 +2361,6 @@ Bitfire, Bitbreakers loader, har med flit inget laddskript: varje del laddar nä
 fil efter dess nummer. Det som liknar ett skript mest är kommandoraden till d64write, Bitfires diskbyggare. Den listar
 filerna i den ordning de laddas (`-b`), startprogrammet (`--boot`), sidan (`--side`), dir-arten (`-a`) och vanliga filer
 (`-s`). Bitfire lägger sina filer utanför diskens katalog, i en egen katalog på spår 18, med varje fils laddadress och
-**Disken som på en C64.** Settings → General → *The disk in the Explorer* väljer mellan *Mimir's list* (förvalt, som
-ovan) och *As on a C64*: katalogen visas då som skärmen en C64 visar efter `LOAD"$",8` och `LIST`, ljusblått på blått
-inom den ljusblå ramen, med VICE:s teckensnitts-ROM (Toolchain → VICE; utan den Mimirs egna bokstäver och siffror,
-utan grafik, och det sägs under skärmen) och markören som blinkar efter `READY.`. Bilden ritas pixel för pixel när
-panelen är minst lika bred som C64:ans pixlar, annars utjämnad. `packages/core/src/c64/dirlist.ts` bygger raderna som
-1541:ans ROM gör (`directoryProgram`), länkar om dem som LOAD gör, listar dem som BASIC:s LIST och skriver ut dem genom
-en efterbildad skärmeditor (`directoryScreen`):
-
-- Diskens rad: RVS ON, namnet inom citattecken, id och DOS-typ; shiftade mellanslag (`$a0`) blir mellanslag, inget annat
-  ändras, så ett citattecken i namnet avslutar BASIC:s citat och byte från `$80` efter det listas som nyckelord.
-- En fils rad: blocken som radnummer, mellanslag så att citattecknet står i kolumn 5, namnet där det första shiftade
-  mellanslaget eller citattecknet blir det avslutande citattecknet (efter den 16:e byten om inget finns) och byten
-  efter det tappar bit 7; `*`, typen och `<`. Typ 5–7 läser vidare i 1541:ans tabeller (typ 6 och 7 har en nolla som
-  avslutar raden, och LOAD gör nya rader av resten).
-- Skärmeditorn: citatläge (kontrollkoder inom citattecken visas inverterade, RETURN och DEL verkar ändå), RVS ON till
-  RETURN, färgkoderna (färgen gäller rad efter rad), markörrörelser, DEL, INST och teckenuppsättningen (`$0e`).
-
-Rader som samma del av listningen skrev ut är ett element över bilden: en fils öppnar den med klick eller `Enter`, **+**
-lägger till den, `↑` `↓` och markeringen av filerna i projektet fungerar som i listan; diskens rad, andra typer än PRG,
-`BLOCKS FREE.` och `READY.` går inte att öppna. En fil som katalogens egna koder skrivit över (HOME, DEL) listas under
-skärmen. **Aa** bredvid utmatningsknappen byter teckenuppsättning som Commodore+Shift. *Mimir's list* eller *Restore
-defaults* visar disken som förut.
-
-**Test:** `test/dirlist.test.ts` jämför skärmen cell för cell (skärmkod och färg) med x64sc 3.10:s, med äkta
-drivemulering (1541:ans egen ROM), för diskar med udda namn, typ 5–7 och ett disknamn med citattecken och kontrollkoder;
-mot VICE stämmer också varje synlig rad på 14 diskar ur CSDB:s topp 200 (*The Lab*, *1337*, *The Hat*, *Aloft*, *Edge
-of Disgrace* …). `e2e/app.spec.ts` (*the disk as a C64 lists it*): inställningen, raderna, öppna, lägga till, piltangenter,
-Aa och tillbaka till listan.
-
 längd. `readBitfireDisk()` (`packages/core/src/c64/bitfire-disk.ts`) läser den och sektorerna i den ordning d64write
 fyller dem. En fil som är packad med Bitfires packare, bitnax (0.x) eller dali (1.x), packas upp. Filnamnen finns inte
 på disken.
@@ -3636,20 +3710,23 @@ hjulet tillbaka, visar hela kartan igen. Geometrin står i `apps/desktop/src/lib
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:
-- **Under 1410 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.
-- **Under 1325 px:** listningens verktyg (bakåt, framåt, föregående och nästa block, *Go to*, *Find*, *Data as code*,
+- **Under 1585 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.
+- **Under 1475 px:** listningens verktyg (bakåt, framåt, föregående och nästa block, *Go to*, *Find*, *Data as code*,
   *Offset*, *Cycles*, vänsterkolumnen *Adr*/*Line*) visar bara sina ikoner. Namnen finns kvar för skärmläsare och i
   verktygstipsen.
-- **Under 1060 px:** flikarna blir smalare, och knapparna för föregående och nästa block lämnar raden (`Ctrl+↑` / `Ctrl+↓`
-  och kommandopaletten finns kvar). SPEC.md visar bara sin ikon (aktivitetsfältet öppnar den också) och källfliken
-  början av sitt namn.
+- **Under 1180 px:** flikarna blir smalare, och knapparna för föregående och nästa block lämnar raden (`Ctrl+↑` / `Ctrl+↓`
+  och kommandopaletten finns kvar). SPEC.md visar bara sin ikon (aktivitetsfältet öppnar den också), Scripts likaså när
+  den inte är vald, och källfliken början av sitt namn.
 - **Under 820 px:** verktygen flyttar in i menyn **⋯** (*Listing tools*). Där är *Data as code*, *Cycles* och
   vänsterkolumnens val bockade när de är på, och samma knapp stänger menyn.
 
 Gränserna är mätta med demons flikar och lite marginal för ett längre filnamn. När fliken *Drive code* (8.11i) kom till
 flyttades de tre översta upp med dess bredd och de smala flikarna gav plats åt den: raden har minst 24 px över i varje
 editorbredd från 440 till 1420 px. Standardfönstret (1480 px, editorn 824–840 px) har verktygen i raden, och raden får
-plats utan att något kapas i varje fönsterbredd (ett e2e-test går igenom 2000–1100 px).
+plats utan att något kapas i varje fönsterbredd (ett e2e-test går igenom 2000–1100 px). Fliken *Scripts* (10.3) flyttade
+gränserna igen (1505, 1395 och 1090 px blev 1585, 1475 och 1180 px); 820 px står kvar, eftersom standardfönstret ska ha
+verktygen i raden, och Scripts visar i stället bara sin ikon i det smala läget när den inte är vald. Raden har minst
+16 px över i varje editorbredd från 380 till 2000 px (24 px vid 825 px, 39 px i standardfönstret).
 - **Under 520 px:** de andra flikarna än den valda visar bara sin ikon, med namnet som verktygstips.
 
 Källflikens filnamn kortas med "…" (högst 12 em, 8 em på smal rad). Verktygen syns därmed också i smala fönster, där

@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { analyze, bankFiles, comparePrg, createProject, exportFiles, formatOverride, h4, makeDemo, makePrg, OPC, openC64File, openCartridge, parsePrg, planPatch, render, showcaseProject, withPatch, type ProjectInput } from '../src';
+import { analyze, assemble, bankFiles, comparePrg, createProject, exportFiles, formatOverride, h4, makeDemo, makePrg, OPC, openC64File, openCartridge, parsePrg, planPatch, render, showcaseProject, withPatch, type ProjectInput } from '../src';
 import { findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
 import { allOpcodesProgram, fromSource, randomPrg, relocProgram, seededProject, SETTING_VARIANTS, zeroPageProgram } from './helpers/programs';
 
@@ -185,6 +185,39 @@ describe.skipIf(!available)(`real Kick Assembler (${jar ?? 'not found'})`, () =>
       // the labels of every bank, for VICE's monitor
       expect(run.vsPath).toBe(join(dir, 'out', 'mimir-demo.crt.vs'));
       expect(readFileSync(run.vsPath!, 'utf8')).toMatch(/al C:8009 \.start/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+/** the code of patches and scripts beyond the generated subset: the built-in assembler writes what KickAss.jar does */
+const BEYOND = [
+  ['!loop: dex', ' bne !loop-', ' beq !+', ' nop', '!: inx', '!: bne !-', ' jmp !loop-'],
+  ['.for (var i=0; i<3; i++) {', 'bar: .byte i*i', '}', '.var t = 0', '.while (t < 2) { .byte 9', '.eval t++ }'],
+  ['.const C = 5', '.if (C > 3) .byte 1', 'else .byte 2', '.if (C < 3) {', ' .byte 3', '} else .if (C == 5) {', ' .byte 4', '} else {', ' .byte 5', '}'],
+  ['lab: {', ' inner: nop', '}', ' jmp lab.inner', '.for (var i=0; i<2; i++) {', ' ldx #0', '!: dex', ' bne !-', '}'],
+  ['.var v = 3', '.eval v = v + 1', '.eval v++', '.eval v *= 2', ' .byte v', '.var s = "a"', '.eval s += "b"', ' .byte s.size()'],
+  [' lda #<$12ff+1', ' lda #>$12ff+1', ' .byte <$12ff+1, >$12ff+$101, >$1234 & $ff, >$1234 - $100, 2 + >$1234, -$12 + 1'],
+  [' .byte 1+2*3, (2 | 1) == 3 ? 9 : 8, -7/2 & $ff, 7/2*2, [3+4]*2, round(2.6), floor(2.6), mod(10,3), ~1 & $ff, <(-1)'],
+  [` .byte 'A', 'a', 1==1 ? 1 : 0, 3 < 4 ? 1 : 0, !true ? 1 : 0, "ab".size(), 5 >= 5 && 1 != 2 ? 1 : 0`],
+  ['.fill 16, round(127.5 + 127.5 * sin(toRadians(i * 360 / 16)))', ' .word abs(-300), max(3, 9), pow(2, 10)'],
+  [' * = $1100 "two"', 'start: lda #0', '!: sta $0400,x', ' inx', ' bne !-', ' rts'],
+].map(l => l.join('\n'));
+
+describe.skipIf(!available)(`the built-in assembler beyond the generated subset, against ${jar ?? 'KickAss.jar'}`, () => {
+  it('writes the same bytes as Kick Assembler', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-beyond-'));
+    try {
+      for (const [i, src] of BEYOND.entries()) {
+        const text = `.pc = $1000\n${src}\n`;
+        const own = assemble({ 'a.asm': text }, 'a.asm');
+        expect(own.errors, src).toEqual([]);
+        await writeVfs(dir, { [`b${i}.asm`]: text });
+        const run = await runKickAssembler({ java, jar: jar!, cwd: dir, entry: `b${i}.asm`, outDir: 'out' });
+        expect(run.ok, `${src}: ${run.output.split('\n').slice(-4).join(' / ')}`).toBe(true);
+        expect([...own.prg!], src).toEqual([...run.prg!]);
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

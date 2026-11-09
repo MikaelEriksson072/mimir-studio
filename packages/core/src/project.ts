@@ -44,6 +44,7 @@ export function serializeProject(p: Project): SerializedProject {
     ...(p.zpPairs && Object.keys(p.zpPairs).length ? { zpPairs: p.zpPairs } : {}),
     ...(p.blanks && Object.keys(p.blanks).length ? { blanks: p.blanks } : {}),
     ...(p.patches?.length ? { patches: p.patches.map(({ id: _, bytes, old, ...q }) => ({ ...q, bytes: b64enc(bytes), old: b64enc(old) })) } : {}),
+    ...(p.userScripts?.length ? { userScripts: p.userScripts.map(({ id: _, pads, ...u }) => ({ ...u, pads: pads.map(({ bytes, ...d }) => ({ ...d, ...(bytes ? { bytes: b64enc(bytes) } : {}) })) })) } : {}),
     ...(p.cart ? { cart: { name: p.cart.name, data: b64enc(p.cart.crt) } } : {}),
     settings: p.settings,
   };
@@ -59,6 +60,7 @@ export function deserializeProject(o: SerializedProject): Project {
     ...(o.zpPairs && Object.keys(o.zpPairs).length ? { zpPairs: o.zpPairs } : {}),
     ...(o.blanks && Object.keys(o.blanks).length ? { blanks: o.blanks } : {}),
     patches: (o.patches || []).map(q => ({ ...q, id: newId(), bytes: b64dec(q.bytes), old: b64dec(q.old) })),
+    ...(o.userScripts?.length ? { userScripts: o.userScripts.map(u => ({ ...u, id: newId(), pads: u.pads.map(({ bytes, ...d }) => ({ ...d, ...(bytes != null ? { bytes: b64dec(bytes) } : {}) })) })) } : {}),
     cart: o.cart ? { name: o.cart.name, crt: b64dec(o.cart.data) } : null,
     settings: Object.assign({}, DEFAULT_SETTINGS, o.settings || {}),
   };

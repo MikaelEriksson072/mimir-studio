@@ -10,12 +10,14 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
+  byteLines, newId, newScript, scriptEnv, type ScriptRun, type UserScript,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
+import { useScripts } from './store/scripts';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
@@ -60,6 +62,7 @@ import { GFX_KIND } from './lib/overview';
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
 const DriveView = lazy(() => import('./components/DriveView').then(m => ({ default: m.DriveView })));
+const ScriptsView = lazy(() => import('./components/ScriptsView').then(m => ({ default: m.ScriptsView })));
 
 const kr = window.kr;
 /** how long a block whose type changed stays framed (the .changed animation in app.css) */
@@ -1576,6 +1579,49 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (r) toast(`Patch "${p.name}" saved to ${r.path} (loads at $${h4(p.start)})`, 'ok');
     } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
+
+  /* ---- user scripts (spec 10.3): Kick Assembler code that runs in Mimir on a copy of the program's memory ---- */
+  const userScripts = project.userScripts ?? [];
+  const scriptsEnv = useMemo(() => scriptEnv(project, R, S), [project.files, project.cart, R, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** a new script in the Scripts tab; `lines`: code of the listing it starts with (the selection) */
+  const newUserScript = (lines: string[] = []) => {
+    const s = newScript(scriptsEnv.files, userScripts, lines, newId());
+    update(`New script "${s.name}"`, d => { d.userScripts = [...(d.userScripts ?? []), s]; });
+    useScripts.getState().set({ selected: s.id, shown: { kind: 'pad', i: 0 } });
+    setUi({ tab: 'scripts' });
+    toast(`Script "${s.name}" made: its code is at ${s.source.match(/\* = (\$[0-9a-f]{4})/i)?.[1] ?? 'free memory'}, scratchpad pad1 at $${h4(s.pads[0].start)}. Ctrl+Enter runs it`, 'ok');
+  };
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads'>>, label: string) =>
+    update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
+  const removeUserScript = (id: string) => {
+    const s = userScripts.find(x => x.id === id); if (!s) return;
+    update(`Delete script "${s.name}"`, d => { d.userScripts = (d.userScripts ?? []).filter(x => x.id !== id); });
+    toast(`Script "${s.name}" deleted (Ctrl+Z brings it back)`, 'ok');
+  };
+  /** a run's scratchpads into the project: what each holds now */
+  const ranUserScript = (id: string, run: ScriptRun) => {
+    const s = useProject.getState().present.userScripts?.find(x => x.id === id); if (!s) return;
+    update(`Run script "${s.name}"`, d => {
+      const t = d.userScripts?.find(x => x.id === id); if (!t) return;
+      for (const p of t.pads) { const b = run.pads.find(x => x.name === p.name); if (b && b.bytes.length === p.size) p.bytes = b.bytes; }
+    });
+  };
+  /** bytes a script made, written over the program as a patch: the patch dialog opens with them as .byte lines */
+  const writeScriptPatch = (name: string, start: Addr, bytes: Uint8Array) => {
+    if (A.owner[start] < 0) { toast(`$${h4(start)} is not part of any loaded file: a patch is written over the program's bytes`, 'warn'); return; }
+    if (bytes.length > 12000) { toast(`${bytes.length} bytes are more than a patch of .byte lines can hold (12000): save them as a .bin and load that instead`, 'warn'); return; }
+    let n = name, k = 2;
+    while (project.patches.some(p => p.name.toLowerCase() === n.toLowerCase())) n = `${name}_${k++}`;
+    setPatchDraft({ start, end: start + bytes.length, name: n, source: byteLines(bytes).join('\n'), fill: 'keep', over: false, cycles: false });
+    setModal('patch');
+  };
+  const saveScriptBytes = async (name: string, bytes: Uint8Array, prg: boolean, load: Addr) => {
+    if (!kr) return needDesktop();
+    try {
+      const r = await kr.saveFile({ name, bytes: prg ? makePrg(load, bytes) : bytes, title: prg ? 'Save as PRG' : 'Save as a binary file' });
+      if (r) toast(`Saved ${r.path} (${bytes.length} bytes${prg ? `, loads at $${h4(load)}` : ''})`, 'ok');
+    } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
+  };
   /** the drive code's source (the Drive code tab), as a file of its own */
   const saveDrive = async (D: DriveCode) => {
     if (!kr) return needDesktop();
@@ -2330,6 +2376,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-source', label: 'Show generated Kick Assembler source', run: () => setUi({ tab: 'source' }) },
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
+    { id: 'tab-scripts', label: 'Show the scripts: Kick Assembler code that runs in Mimir on a copy of the program', run: () => setUi({ tab: 'scripts' }) },
+    { id: 'script-new', label: sel && sel.multi && sel.end > sel.start ? 'New script from the selection (runs in Mimir on a copy of the program)' : 'New script (Kick Assembler code that runs in Mimir on a copy of the program)', run: () => newUserScript(sel && sel.multi && sel.end > sel.start ? rangeLines(sel.start, sel.end) : []) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
     { id: 'overview', label: 'Show the analysis overview: what the analysis found, with links to each part', run: () => setModal('overview') },
   ];
@@ -2567,6 +2615,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         return r && !p ? [{ label: inSel ? 'Patch selection with new code…' : l.k === 'hdr' ? 'Patch block with new code…' : 'Patch line with new code…', key: 'P', run: () => startPatch(r) }] : [];
       })(),
       ...((): MenuItem[] => {
+        // a script (spec 10.3) that starts with the selection's code, or the block's: a loop to run in Mimir
+        const r = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
+        return r ? [{ label: `New script from ${inSel ? 'selection' : 'block'} (runs in Mimir on a copy of the program)`, run: () => newUserScript(rangeLines(r.start, r.end)) }] : [];
+      })(),
+      ...((): MenuItem[] => {
         // on a relocated block (where it is loaded or runs): where it runs, or not; else relocate the selection or the block
         const rl = l.a != null ? (relocLoadedAt(A, l.a) ?? (inSel ? undefined : relocAt(A, l.a))) : undefined;
         if (rl) return [
@@ -2756,7 +2809,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'prompt', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'prompt', 'Scripts'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
@@ -2904,6 +2957,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}
+              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} theme={theme} onNew={() => newUserScript()} onEdit={editUserScript} onRemove={removeUserScript} onRan={ranUserScript}
+                onWritePatch={writeScriptPatch} onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
+                onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} toast={toast} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
