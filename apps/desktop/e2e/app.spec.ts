@@ -3596,11 +3596,17 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await expect(peek.locator('.peek-head')).toContainText('fx_091e · $091e–$0926');
     await expect(peek.locator('.p-hex').nth(1)).toHaveText('ad 1b d4 29 0f 8d e7 db');
     await expect(peek.locator('.p-hex').nth(2)).toHaveText('60');
-    // the line's bytes are marked; the box is beside the line, not over it
+    // the line's bytes are marked; the box is beside the line, from its top, right of the pointer and of the code of
+    // the lines it lies over, so that code stays in sight
     await expect(peek.locator('.p-hex .on')).toHaveText(['ad', ' 1b', ' d4']);
     const box = (await peek.boundingBox())!;
-    expect(box.y >= at.y + at.height || box.y + box.height <= at.y).toBe(true);
-    // with Ctrl held it follows the pointer onto the lines beside the box (straight down the pointer goes into it)
+    expect(Math.abs(box.y - at.y)).toBeLessThanOrEqual(1);
+    expect(box.x).toBeGreaterThan(at.x + 60);
+    for (const adr of ['091e', '0921', '0923', '0926']) {
+      const cp = (await row(adr).locator('.src > .cp').boundingBox())!;
+      expect(box.x, `the code of ${adr}`).toBeGreaterThanOrEqual(cp.x + cp.width);
+    }
+    // with Ctrl held it follows the pointer onto the lines under it, and on its way right into the box it stays
     const adr = (await row('0921').locator('.adr').boundingBox())!;
     await page.mouse.move(adr.x + adr.width / 2, adr.y + adr.height / 2);
     await expect(peek.locator('.p-hex').nth(1)).toHaveText('29 0f 8d e7 db 60');
@@ -3769,111 +3775,45 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
   });
 });
 
-test('V opens a pane beside the listing with every block as code, its bytes and its text; it goes along with the listing and selects', async ({ page }) => {
+test('V shows each line\'s bytes as PETSCII and as screen codes at its right; with Data as code every block is code with its text', async ({ page }) => {
   await waitForListing(page);
-  const pane = page.locator('.peek-pane');
   const row = (adr: string) => listing(page).locator('.row', { has: page.locator('.adr', { hasText: new RegExp(`^${adr}$`) }) }).last();
-  const at = (a: number) => pane.locator(`.peek-row[data-a="${a}"]`);
-  const press = async (target: Locator, opts: { shift?: boolean } = {}) => {
-    const b = (await target.boundingBox())!;
-    if (opts.shift) await page.keyboard.down('Shift');
-    await page.mouse.click(b.x + Math.min(8, b.width / 2), b.y + b.height / 2);
-    if (opts.shift) await page.keyboard.up('Shift');
-  };
 
-  await test.step('V opens it beside the listing: every block as code, a row each with the bytes, the code, PETSCII and screen codes', async () => {
-    await expect(pane).toHaveCount(0);
+  await test.step('V turns the Text columns on: a code line has a character for each of its bytes, a text line its text', async () => {
+    await expect(listing(page).locator('.tcol')).toHaveCount(0);
     await page.keyboard.press('v');
-    await expect(pane).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Peek/ })).toHaveAttribute('aria-pressed', 'true');
-    await expect(pane.locator('.peek-pane-head .cols')).toHaveText(/bytes\s*code\s*PETSCII\s*screen/);
-    // code: fx_091e lda SID_OSC3, its bytes marked as the cursor's line
+    await expect(page.getByRole('button', { name: /^Text/ })).toHaveAttribute('aria-pressed', 'true');
+    // fx_091e: lda SID_OSC3, three bytes
     await goTo(page, 'fx_091e');
-    const lda = at(0x091e);
-    await expect(lda.locator('.p-hex')).toHaveText('ad 1b d4');
-    await expect(lda.locator('.p-src')).toContainText('lda');
-    await expect(lda).toHaveClass(/\bon\b/);
-    await expect(lda.locator(':scope > span')).toHaveClass([/p-adr/, /p-hex/, /p-src/, /p-txt/, /p-txt/]);
-    // data is code too: "HELLO …" in screen codes, H is php
+    await expect(row('091e').locator('.tcol')).toHaveCount(2);
+    await expect(row('091e').locator('.tcol-pet > span')).toHaveCount(3);
+    await expect(row('091e').locator('.tcol-scr > span')).toHaveCount(3);
+    // "HELLO FROM THE MIMIR STUDIO DEMO!" in screen codes: the first ten, the rest in the tooltip
     await goTo(page, '$0985');
-    await expect(at(0x0985).locator('.p-src')).toHaveText('php');
-    await expect(at(0x0985).locator('.p-txt').nth(1)).toHaveText('H');
-    await expect(pane.locator('.peek-row.r-bytes')).toHaveCount(0);
-    const box = (await pane.boundingBox())!, list = (await listing(page).boundingBox())!;
-    expect(box.x).toBeGreaterThanOrEqual(list.x + list.width);
+    await expect(row('0985').locator('.tcol-scr')).toHaveText('HELLO FROM…');
+    await expect(row('0985').locator('.tcol-scr')).toHaveAttribute('title', /HELLO FROM THE MIMIR STUDIO DEMO!/);
+    await expect(row('0985').locator('.tcol-pet')).toHaveAttribute('title', /^As PETSCII, \$0985-/);
   });
 
-  await test.step('it goes along with the listing: scrolled a few pixels at a time, no row of it ever goes back down', async () => {
-    const back = await page.evaluate(async () => {
-      const el = document.querySelector('.listing')!, frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const rows = () => [...document.querySelectorAll<HTMLElement>('.peek-pane-body .peek-row[data-a]')].map(r => [Number(r.dataset.a), r.getBoundingClientRect().top] as const);
-      let prev = rows(), back = 0;
-      for (let t = 0; t <= 900; t += 5) {
-        el.scrollTop = t; await frame();
-        const now = rows();
-        for (const [a, y] of prev.slice(1, 4)) { const m = now.find(x => x[0] === a); if (m && m[1] > y + 0.5) back++; }
-        prev = now;
-      }
-      return back;
-    });
-    expect(back).toBe(0);
+  await test.step('with Data as code every block is code, each instruction with its text', async () => {
+    await page.getByRole('button', { name: 'Data as code' }).click();
+    await expect(row('0985').locator('.src')).toContainText('php');
+    await expect(row('0985').locator('.tcol-scr')).toHaveText('H');
+    await expect(row('0986').locator('.src')).toContainText('ora $0c');
+    await expect(row('0986').locator('.tcol-scr')).toHaveText('EL');
+    await page.getByRole('button', { name: 'Data as code' }).click();
+    await expect(row('0985').locator('.tcol-scr')).toHaveText('HELLO FROM…');
   });
 
-  await test.step('Ctrl over a line puts that line\'s row level with it, and shows no box', async () => {
-    await goTo(page, 'fx_091e');
-    const sta = row('0923'), b = (await sta.locator('.src').boundingBox())!;
-    await page.mouse.move(b.x + 60, b.y + b.height / 2);
-    await page.keyboard.down('Control');
-    const r = at(0x0923);
-    await expect(r).toHaveClass(/\bon\b/);
-    const [x, y] = [(await sta.boundingBox())!, (await r.boundingBox())!];
-    expect(Math.abs(x.y - y.y)).toBeLessThanOrEqual(1);
-    await expect(page.locator('.peek')).toHaveCount(0);
-    await page.keyboard.up('Control');
-  });
-
-  await test.step('a click picks a byte or an instruction, a drag picks from one to another, and the type is set from there', async () => {
-    await goTo(page, 'fx_091e');
-    await press(pane.locator('.p-hex [data-a="2339"]')); // $0923, the 8d of sta
-    await expect(statusBar(page)).toContainText('sel $0923–$0923 (1 B)');
-    await press(at(0x091e).locator('.p-src'));
-    await expect(statusBar(page)).toContainText('sel $091e–$0920 (3 B)');
-    await press(at(0x0921).locator('.p-src'), { shift: true });
-    await expect(statusBar(page)).toContainText('sel $091e–$0922 (5 B)');
-    // a drag from lda to sta: the whole of both
-    const from = (await at(0x091e).locator('.p-src').boundingBox())!, to = (await at(0x0923).locator('.p-src').boundingBox())!;
-    await page.mouse.move(from.x + 8, from.y + from.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(to.x + 8, to.y + to.height / 2, { steps: 5 });
-    await page.mouse.up();
-    await expect(statusBar(page)).toContainText('sel $091e–$0925 (8 B)');
-    await expect(pane.locator('.peek-row.sel')).toHaveCount(3);
-    // a right-click in it: the listing's menu, for the selection
-    await at(0x0921).locator('.p-src').click({ button: 'right' });
-    await expect(page.getByRole('menuitem', { name: /Mark selection as/ })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(statusBar(page)).toContainText('sel $091e–$0925 (8 B)');
-    await listing(page).focus();
-    await page.keyboard.press('d');
-    await expect(toast(page, /\$091e–\$0925 marked as/)).toBeVisible();
-    await page.keyboard.press('Control+z');
-  });
-
-  await test.step('the wheel over it scrolls the listing; V closes it and Ctrl shows the box again', async () => {
-    const top = () => page.evaluate(() => document.querySelector('.listing')!.scrollTop);
-    const was = await top(), b = (await pane.locator('.peek-pane-body').boundingBox())!;
-    await page.mouse.move(b.x + 40, b.y + 60);
-    await page.mouse.wheel(0, 200);
-    await expect.poll(top).toBeGreaterThan(was);
+  await test.step('a selection of part of a data line marks its characters; V turns the columns off', async () => {
+    await goTo(page, 'colors_0939');
+    await row('0939').locator('.cell[data-a="2363"]').click(); // $093b, the third byte
+    await expect(statusBar(page)).toContainText('sel $093b–$093b (1 B)');
+    await expect(row('0939').locator('.tcol-scr .on')).toHaveCount(1);
+    await expect(row('0939').locator('.tcol-pet .on')).toHaveCount(1);
     await listing(page).focus();
     await page.keyboard.press('v');
-    await expect(pane).toHaveCount(0);
-    await goTo(page, 'fx_091e');
-    const r = (await row('091e').locator('.src').boundingBox())!;
-    await page.mouse.move(r.x + 60, r.y + r.height / 2);
-    await page.keyboard.down('Control');
-    await expect(page.locator('.peek')).toBeVisible();
-    await page.keyboard.up('Control');
+    await expect(listing(page).locator('.tcol')).toHaveCount(0);
   });
 });
 

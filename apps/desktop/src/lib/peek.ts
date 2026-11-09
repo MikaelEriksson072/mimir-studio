@@ -58,14 +58,18 @@ function sweep(A: AnalysisResult, b: Block): Int32Array {
   return s;
 }
 
-/** The file's rows, block after block in `blocks`: a block `asCode` gives as code, an instruction a row (swept from
- *  its start), the others as bytes eight a row from `gridAt` (above it the block's first row has its first bytes, as
- *  many as are left). Rows are counted from the file's first; `rowOf` is the row an address of a block is in. */
-function fileRows(A: AnalysisResult, names: PeekNames, blocks: readonly Block[], asCode: (k: Block) => boolean, gridAt: (k: Block) => Addr) {
+/** the peek at `from` in block `b` of the blocks `order` (peekOrder; `b` is put in it if it is missing); `asCode`: the
+ *  block is shown as bytes in the listing, so the box shows the file as code. `n`: how many bytes the line at `from`
+ *  has (they are marked); `off`: the rows it is scrolled (kept within the file) */
+export function peekOf(A: AnalysisResult, names: PeekNames, order: readonly Block[], b: Block, from: Addr, n: number, asCode: boolean, off = 0): Peek {
+  const mark = n > 0 ? { start: from, end: Math.min(b.end, from + n) } : null;
+  const blocks = order.includes(b) ? order : [b];
+  // each block's rows: as bytes eight a row from its start, the pointer's block from the pointer's byte (above it the
+  // first row is the block's first bytes, as many as are left); as code an instruction a row
   const parts = blocks.map(k => {
-    if (asCode(k)) { const s = sweep(A, k); return { b: k, head: 0, at: k.start, starts: s as Int32Array | null, count: s.length }; }
-    const at = gridAt(k), head = Math.ceil((at - k.start) / PEEK_ROW);
-    return { b: k, head, at, starts: null as Int32Array | null, count: head + Math.ceil((k.end - at) / PEEK_ROW) };
+    if (asCode) { const s = sweep(A, k); return { b: k, head: 0, at: k.start, starts: s, count: s.length }; }
+    const at = k === b ? from : k.start, head = Math.ceil((at - k.start) / PEEK_ROW);
+    return { b: k, head, at, starts: null, count: head + Math.ceil((k.end - at) / PEEK_ROW) };
   });
   const first: number[] = [];
   let total = 0;
@@ -88,24 +92,12 @@ function fileRows(A: AnalysisResult, names: PeekNames, blocks: readonly Block[],
   };
   /** a block starts at row `g`: a divider above it, unless it is the top row */
   const starts = (g: number) => locate(g).j === 0;
-  /** the row of address `a` of block `b`: the row of its byte, or the instruction it is in */
-  const rowOf = (b: Block, a: Addr) => {
-    const ab = blocks.indexOf(b), pb = parts[ab];
-    if (pb.starts) { let lo = 0, hi = pb.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (pb.starts[m] <= a) lo = m; else hi = m - 1; } return first[ab] + lo; }
-    return first[ab] + Math.max(0, Math.min(pb.count - 1, pb.head + Math.floor((a - pb.at) / PEEK_ROW)));
-  };
-  return { total, locate, row, starts, rowOf };
-}
 
-/** the peek at `from` in block `b` of the blocks `order` (peekOrder; `b` is put in it if it is missing); `asCode`: the
- *  block is shown as bytes in the listing, so the box shows the file as code. `n`: how many bytes the line at `from`
- *  has (they are marked); `off`: the rows it is scrolled (kept within the file) */
-export function peekOf(A: AnalysisResult, names: PeekNames, order: readonly Block[], b: Block, from: Addr, n: number, asCode: boolean, off = 0): Peek {
-  const mark = n > 0 ? { start: from, end: Math.min(b.end, from + n) } : null;
-  const blocks = order.includes(b) ? order : [b];
-  // as bytes the pointer's block is in rows from the pointer's byte, the others from their start
-  const { total, locate, row, starts, rowOf } = fileRows(A, names, blocks, () => asCode, k => (k === b ? from : k.start));
-  const at = rowOf(b, from);
+  // the pointer's row: the row of its byte, or the instruction its byte is in
+  const ab = blocks.indexOf(b), pb = parts[ab];
+  let jf = pb.head;
+  if (pb.starts) { let lo = 0, hi = pb.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (pb.starts[m] <= from) lo = m; else hi = m - 1; } jf = lo; }
+  const at = first[ab] + jf;
   // the top row that has the file's last byte in the bottom row, the dividers counted
   let last = total - 1;
   for (let rows = 1; last > 0;) { const more = 1 + (starts(last) ? 1 : 0); if (rows + more > PEEK_ROWS) break; rows += more; last--; }
@@ -119,42 +111,6 @@ export function peekOf(A: AnalysisResult, names: PeekNames, order: readonly Bloc
   }
   const t0 = row(top), t1 = row(g - 1), head = locate(top).p.b, tail = locate(g - 1).p.b;
   return { as: asCode ? 'code' : 'bytes', from, mark, head, before: t0.a - head.start, tail, rest: tail.end - (t1.a + t1.n), off: top - at, min, max, items };
-}
-
-/** What the pane beside the listing shows. `pad`: empty rows above the first item (the file starts lower down);
- *  `items`: the rows from the top, dividers counted; the anchor's row is item `above - pad`, and `at` is that row.
- *  `head`: the block of the first item. `off`: how many rows the anchor's row is scrolled from the anchor's byte, and
- *  how far it goes each way (`min` puts the file's first row there, `max` its last). */
-export type PeekPane = { pad: number; items: PeekItem[]; at: PeekLine; head: Block; off: number; min: number; max: number };
-
-/** The pane beside the listing (spec 10, "Titta åt andra hållet bredvid listningen"): the file block after block in
- *  `order`, every block as code, an instruction a row swept from the block's start (a byte that is no instruction a
- *  `.byte` row), the same whatever the listing makes of the block. The row of `from` (in block `b`), or the row `off`
- *  rows from it, has `above` items over it (fewer than none: it is that many items above the top); `count` items in
- *  all. */
-export function peekPane(A: AnalysisResult, names: PeekNames, order: readonly Block[], b: Block, from: Addr, above: number, count: number, off = 0): PeekPane {
-  const blocks = order.includes(b) ? order : [b];
-  const { total, locate, row, starts, rowOf } = fileRows(A, names, blocks, () => true, k => k.start);
-  const g0 = rowOf(b, from), min = -g0, max = total - 1 - g0;
-  const o = Math.max(min, Math.min(max, off)), ga = g0 + o;
-  // up from the anchor's row: each row there, and the divider over a block's first row
-  let g = ga, n = 0, lead = false;
-  while (n < above && g > 0) {
-    const need = 1 + (starts(g) ? 1 : 0);
-    if (n + need > above) { lead = true; n++; break; }
-    n += need; g--;
-  }
-  // down from the top (an anchor above the top: its items over the top are left out)
-  const skip = Math.max(0, -above), pad = Math.max(0, above - n), want = count - pad + skip;
-  // each item with the block it is of (the head names the first one's)
-  const all: { it: PeekItem; b: Block }[] = [];
-  for (let r = g; r < total && all.length < want; r++) {
-    const k = locate(r).p.b;
-    if ((r > g || lead) && starts(r)) all.push({ it: { k: 'blk', b: k }, b: k });
-    if (all.length < want) all.push({ it: row(r), b: k });
-  }
-  const shown = all.slice(skip);
-  return { pad, items: shown.map(x => x.it), at: row(ga) as PeekLine, head: shown[0]?.b ?? locate(ga).p.b, off: o, min, max };
 }
 
 const hex = (A: AnalysisResult, v: number, w: 2 | 4) => { const s = w === 2 ? h2(v & 0xff) : h4(v & 0xffff); return '$' + (A.S.hexCase === 'upper' ? s.toUpperCase() : s); };

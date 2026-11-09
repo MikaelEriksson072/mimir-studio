@@ -144,7 +144,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     tick();
   });
   const ui = useUi();
-  const { theme, tab, bottom, activity, sidePanel, panelOpen, inspector, welcome, sizes, gutter, dataAsCode, cycles, offsets, peekPane, followQuicksave, gfxPictures } = ui;
+  const { theme, tab, bottom, activity, sidePanel, panelOpen, inspector, welcome, sizes, gutter, dataAsCode, cycles, offsets, textCols, followQuicksave, gfxPictures } = ui;
   const setUi = ui.set;
 
   const [srcPath, setSrcPath] = useState<string | null>(null);
@@ -2300,7 +2300,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'gfx-pictures', label: gfxPictures ? 'Listing: show sprites, charsets and bitmaps as .byte rows' : 'Listing: show sprites, charsets and bitmaps as pictures', run: () => setUi({ gfxPictures: !gfxPictures, tab: 'listing' }) },
     { id: 'data-as-code', label: dataAsCode ? 'Listing: show data as classified' : 'Listing: show data as code (find code that is marked as data)', run: () => setUi({ dataAsCode: !dataAsCode, tab: 'listing' }) },
     { id: 'offsets', label: offsets ? 'Listing: hide the offset in the file' : 'Listing: show the offset in the file (as SourceGen)', run: () => setUi({ offsets: !offsets }) },
-    { id: 'peek-pane', label: peekPane ? 'Listing: close the peek pane' : 'Listing: show every block as code in a pane beside it, with its bytes and text, to select and set types', key: 'V', run: () => setUi({ peekPane: !peekPane, tab: 'listing' }) },
+    { id: 'text-cols', label: textCols ? 'Listing: hide the Text columns' : 'Listing: show each line\'s bytes as PETSCII and as screen codes (Text columns; with Data as code, every block as code with its text)', key: 'V', run: () => setUi({ textCols: !textCols, tab: 'listing' }) },
     { id: 'gutter', label: gutter === 'line' ? 'Listing: show memory addresses' : 'Listing: show line numbers (as in the .asm file)', run: () => setUi({ gutter: gutter === 'line' ? 'addr' : 'line' }) },
     { id: 'tab-source', label: 'Show generated Kick Assembler source', run: () => setUi({ tab: 'source' }) },
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
@@ -2413,7 +2413,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text', S: 'split', J: e.shiftKey ? 'join-prev' : 'join-next', L: 'block-size', V: 'peek-pane' };
+      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text', S: 'split', J: e.shiftKey ? 'join-prev' : 'join-next', L: 'block-size', V: 'text-cols' };
       if (single[key]) run(single[key]);
     };
     window.addEventListener('keydown', onKey);
@@ -2796,12 +2796,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               <button className={cx('btn ghost small', dataAsCode && 'on')} aria-pressed={dataAsCode} onClick={() => setUi({ dataAsCode: !dataAsCode })} title="Data as code: show every block that is not code disassembled, to find code that is marked as data. The export does not change."><Icon name="code" size={14} /><span className="tool-label">Data as code</span></button>
               <button className={cx('btn ghost small', offsets && 'on')} aria-pressed={offsets} onClick={() => setUi({ offsets: !offsets })} title="Offset: show where each byte is in the file it was opened from (+000050), left of the address, as SourceGen does: a PRG's after its load address, a cartridge's in the .crt, a snapshot's in the .vsf"><Icon name="rows" size={14} /><span className="tool-label">Offset</span></button>
               <button className={cx('btn ghost small', cycles && 'on')} aria-pressed={cycles} onClick={() => setUi({ cycles: !cycles })} title="Cycles: show the 6510 cycles of every instruction. Select a range, or click a block header, to count it; click a branch's cycles to mark it taken."><Icon name="clock" size={14} /><span className="tool-label">Cycles</span></button>
-              <button className={cx('btn ghost small', peekPane && 'on')} aria-pressed={peekPane} onClick={() => { setUi({ peekPane: !peekPane }); listRef.current?.focus(); }} title="Peek: a pane beside the listing with every block as code, each instruction with its bytes, its code and the bytes as PETSCII and screen codes, going along with the listing; click or drag there to select, right-click to set the type (V)"><Icon name="panel" size={14} /><span className="tool-label">Peek</span><kbd>V</kbd></button>
+              <button className={cx('btn ghost small', textCols && 'on')} aria-pressed={textCols} onClick={() => { setUi({ textCols: !textCols }); listRef.current?.focus(); }} title="Text: each line's bytes as PETSCII and as screen codes, in two columns at its right, so text among code (or code among text) shows on the line. With Data as code on, every block is code with its bytes and text (V)"><Icon name="screen" size={14} /><span className="tool-label">Text</span><kbd>V</kbd></button>
               <div className="seg" role="group" aria-label="Left column" title="Left column of the listing: memory address or line number in the .asm file">
                 {([['addr', 'Address', 'Adr'], ['line', 'Line', 'Line']] as const).map(([k, l, s]) => <button key={k} className={cx(gutter === k && 'on')} aria-pressed={gutter === k} aria-label={l} onClick={() => setUi({ gutter: k })}><span className="seg-long">{l}</span><span className="seg-short">{s}</span></button>)}
               </div>
             </div>
-            <button className="icon-btn tab-more" aria-label="Listing tools" aria-haspopup="menu" aria-expanded={menu?.owner === 'tools'} title="Back, forward, the next and previous block, Go to, Find, Data as code, Cycles, the peek pane and the left column"
+            <button className="icon-btn tab-more" aria-label="Listing tools" aria-haspopup="menu" aria-expanded={menu?.owner === 'tools'} title="Back, forward, the next and previous block, Go to, Find, Data as code, Cycles, the Text columns and the left column"
               onMouseDown={e => e.stopPropagation()}
               onClick={e => {
                 if (menu?.owner === 'tools') { setMenu(null); return; }
@@ -2817,7 +2817,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                   { label: 'Data as code', checked: dataAsCode, run: () => setUi({ dataAsCode: !dataAsCode }) },
                   { label: 'Cycles', checked: cycles, run: () => setUi({ cycles: !cycles }) },
                   { label: 'Offset in the file', checked: offsets, run: () => setUi({ offsets: !offsets }) },
-                  { label: 'Peek pane: every block as code, with its bytes and text', key: 'V', checked: peekPane, run: () => setUi({ peekPane: !peekPane }) },
+                  { label: 'Text columns (PETSCII and screen codes)', key: 'V', checked: textCols, run: () => setUi({ textCols: !textCols }) },
                   { sep: true },
                   { label: 'Left column: address', checked: gutter === 'addr', run: () => setUi({ gutter: 'addr' }) },
                   { label: 'Left column: line in the .asm', checked: gutter === 'line', run: () => setUi({ gutter: 'line' }) },
@@ -2842,7 +2842,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {tab === 'listing' && project.files.length > 0 && <>
               {welcome && <div className="welcome">
                 <div><b>{project.cart && A.spaces ? `${project.cart.name} (${A.spaces.length} banks)` : project.files.map(f => f.name).join(', ')}</b> is analysed: {A.blocks.length} blocks, {A.labels.size} labels, {A.music.length ? 'SID music, ' : ''}{A.gfx.length ? `${A.gfx.length} graphics block${A.gfx.length > 1 ? 's' : ''}, ` : ''}{A.stats.illegal} undocumented opcodes.</div>
-                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>Shift+Enter</kbd> empty line <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range <kbd>Ctrl+F</kbd> find <kbd>Ctrl+↓</kbd><kbd>Ctrl+↑</kbd> next/previous block <kbd>Ctrl</kbd> held over a line shows its block as bytes or as code <kbd>V</kbd> beside the listing · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
+                <div className="welcome-keys"><kbd>N</kbd> rename <kbd>;</kbd> comment <kbd>/</kbd><kbd>*</kbd> comment line/block above <kbd>Shift+Enter</kbd> empty line <kbd>B</kbd> bookmark<kbd>C</kbd><kbd>D</kbd><kbd>W</kbd><kbd>T</kbd> mark as code/bytes/words/text <kbd>G</kbd> go to or select a range <kbd>Ctrl+F</kbd> find <kbd>Ctrl+↓</kbd><kbd>Ctrl+↑</kbd> next/previous block <kbd>Ctrl</kbd> held over a line shows its block as bytes or as code <kbd>V</kbd> bytes as text · drag or <kbd>Shift</kbd>+click to select <kbd>X</kbd> xrefs <kbd>F</kbd> fold <kbd>F7</kbd> verify <kbd>F5</kbd> build &amp; run · right-click for more</div>
                 <button className="icon-btn" aria-label="Dismiss" onClick={() => setUi({ welcome: false })}><Icon name="x" size={14} /></button>
               </div>}
               {packing.map((p, i) => p && !packHidden.has(project.files[i]?.id ?? String(i)) && <div key={`pack-${i}`} className="welcome preview-bar pack-bar" role="status">
@@ -2858,13 +2858,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 <div><b>Data as code:</b> blocks that are not code are shown disassembled from their start. Select the instructions that are real code and press <kbd>C</kbd> (or right-click → Mark selection as → Code). The export is unchanged.</div>
                 <button className="btn small" onClick={() => setUi({ dataAsCode: false })}>Show as classified</button>
               </div>}
-              <div className={cx('listing-wrap', peekPane && 'with-peek')} style={peekPane ? { '--peek-w': `${sizes.peek}px` } as React.CSSProperties : undefined}>
+              <div className="listing-wrap">
               <Listing lines={view.lines} lineNo={view.lineNo} folded={folded} hidden={view.hidden} onToggleFold={toggleFold} excluded={excludedSet} A={A} lineOf={lineOf} cursor={cursor} picked={pickedLine} sel={sel} onClickLine={onClickLine} onDragTo={l => { if (extendTo(l)) setCursor(l.a); }} onDragCells={dragCells} onMove={moveInto} onToken={onToken} onContext={onContext}
-                onPeekPick={(a, extend, n = 1) => {
+                onPeekPick={(a, extend) => {
                   // into another block: a folded one is unfolded, and the jump goes in the history (Esc goes back)
                   const b = findBlock(A.blocks, a), far = !extend && cursor != null && b !== findBlock(A.blocks, cursor);
                   unfold([...(b && a !== b.start ? [b.start] : []), ...relocsAround(a)]);
-                  pickCell({ a, n }, extend, far); listRef.current?.focus();
+                  pickCell({ a, n: 1 }, extend, far); listRef.current?.focus();
                 }}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}

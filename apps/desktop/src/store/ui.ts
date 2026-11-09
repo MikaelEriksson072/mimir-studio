@@ -8,8 +8,7 @@ export type Theme = 'dark' | 'light';
 export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem';
 export type BottomTab = 'log' | 'messages' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'pirateslayer' | 'tape' | 'stats' | 'build';
 export type Activity = 'explorer' | 'blocks' | 'symbols' | 'bookmarks' | 'pack';
-/** `peek`: the width of the pane beside the listing that shows its blocks as code */
-export interface Sizes { side: number; insp: number; bottom: number; peek: number }
+export interface Sizes { side: number; insp: number; bottom: number }
 /** the inspector (the panel on the right): always open, or folded into a strip at the right edge that opens it over the
  *  editor when it is needed and folds it in again at a click outside it */
 export type InspectorMode = 'open' | 'auto';
@@ -65,8 +64,8 @@ interface UiState {
   cycles: boolean;
   /** listing: the offset column, where each byte is in the file it was opened from (as in SourceGen) */
   offsets: boolean;
-  /** listing: the pane beside it that shows its blocks as code, with their bytes and text (V) */
-  peekPane: boolean;
+  /** listing: each line's bytes as PETSCII and as screen codes, in two columns at its right (V) */
+  textCols: boolean;
   /** listing: sprites, charsets and bitmaps drawn as they look instead of their .byte rows (Settings → General) */
   gfxPictures: boolean;
   /** a packed file is unpacked as it is opened, when its unpacker says it is packed (Settings → General) */
@@ -97,7 +96,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'peekPane', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'textCols', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -113,7 +112,7 @@ export const useUi = create<UiState>((set) => ({
   dataAsCode: false,
   cycles: store.get('kr.cycles', false),
   offsets: store.get('kr.offsets', true),
-  peekPane: store.get('kr.peekPane', false),
+  textCols: store.get('kr.textCols', false),
   gfxPictures: store.get('kr.gfxPictures', true),
   autoUnpack: store.get('kr.autoUnpack', false),
   followQuicksave: store.get('kr.followQuicksave', true),
@@ -125,7 +124,7 @@ export const useUi = create<UiState>((set) => ({
   bmColors: bmColorsOf(store.get<unknown>('kr.bmColors', [])),
   gfx: gfxPrefs(store.get<Partial<GfxPrefs>>('kr.gfx', {})),
   mon: { ...MON_DEFAULTS, ...store.get<Partial<MonPrefs>>('kr.mon', {}) },
-  sizes: { side: 272, insp: 312, bottom: 230, peek: 420, ...store.get<Partial<Sizes>>('kr.sizes', {}) },
+  sizes: store.get<Sizes>('kr.sizes', { side: 272, insp: 312, bottom: 230 }),
   set: patch => set(patch),
 }));
 
