@@ -203,11 +203,16 @@ export function Heatmap({ A, mode, cursor, sel, onNavigate, onSelect, colors, fi
     }
   }, [A, mode, colors, heat, span, pixels, V, size, dpr, sel, cursor, labels, base]);
 
+  // The pointer's handlers go by the view as the last move or wheel left it (`live.current.V`), not the one this render
+  // drew: on a busy machine React renders a move later than the next event comes, and the byte under the pointer let go
+  // after a right-drag was then read on the view a move before (a byte or a row off)
+  /** the view `v` as the handlers' own, until the render that draws it */
+  const keep = (v: HeatView) => { live.current = { ...live.current, V: v }; setView(v); };
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 && e.button !== 2) return;
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* a pointer that is not down any more */ }
-    const p = point(e.clientX, e.clientY);
-    press.current = { btn: e.button, a: heatAt(V, span, size, p.x, p.y), x: e.clientX, y: e.clientY, v: V, moved: false };
+    const p = point(e.clientX, e.clientY), v = live.current.V;
+    press.current = { btn: e.button, a: heatAt(v, span, size, p.x, p.y), x: e.clientX, y: e.clientY, v, moved: false };
   };
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     lastPointer.current = { x: e.clientX, y: e.clientY };
@@ -216,17 +221,19 @@ export function Heatmap({ A, mode, cursor, sel, onNavigate, onSelect, colors, fi
       const dx = e.clientX - held.x, dy = e.clientY - held.y;
       if (!held.moved && Math.hypot(dx, dy) < 4) return;
       if (!held.moved) { held.moved = true; setPanning(true); setHover(null); }
-      setView(heatPan(held.v, span, size, dx, dy));
+      keep(heatPan(held.v, span, size, dx, dy));
       return;
     }
-    const a = heatAt(V, span, size, p.x, p.y);
+    const a = heatAt(live.current.V, span, size, p.x, p.y);
     setHover({ a, ...p });
     if (held?.btn === 0) onSelect(Math.min(held.a, a), Math.max(held.a, a) + 1);
   };
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const held = press.current; press.current = null; setPanning(false);
     if (!held) return;
-    const p = point(e.clientX, e.clientY), a = heatAt(V, span, size, p.x, p.y);
+    // a right-drag ends where the pointer is let go (a move after the last one handled may not have come)
+    if (held.btn === 2 && held.moved) keep(heatPan(held.v, span, size, e.clientX - held.x, e.clientY - held.y));
+    const p = point(e.clientX, e.clientY), a = heatAt(live.current.V, span, size, p.x, p.y);
     // a click jumps there, with either button; the right one that moved the map does not
     if (held.btn === 0 ? held.a === a : !held.moved) onNavigate(a);
     if (held.moved) setHover({ a, ...p });

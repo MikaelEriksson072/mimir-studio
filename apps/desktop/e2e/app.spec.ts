@@ -4826,11 +4826,16 @@ test('the memory map zooms with the wheel around the pointer, a right-drag moves
     expect(rows[0] & 255).toBe((await shown())!.first & 255);
   });
 
-  await test.step('a right-drag moves the map with the pointer and does not jump', async () => {
+  await test.step('a right-drag moves the map with the pointer and does not jump, on a slow machine too', async () => {
     const before = (await shown())!, p = at(0.5, 0.5), a = await under(p);
+    // a slow CPU: React renders a move after the next event has come, and the byte let go over was read on the view a
+    // move before (a byte or a row off, on a busy machine in the full run only)
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 });
     await page.mouse.down({ button: 'right' });
     await page.mouse.move(p.x - 70, p.y - 40, { steps: 5 });
     await page.mouse.up({ button: 'right' });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
     // the byte grabbed is under the pointer where it was let go: the map moved two or three bytes left and a row up
     await expect(tip).toHaveText(a);
     const after = (await shown())!;
