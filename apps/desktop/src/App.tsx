@@ -10,14 +10,14 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  byteLines, newId, newScript, scriptEnv, type ScriptRun, type UserScript,
+  newId, newScript, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
-import { useScripts } from './store/scripts';
+import { useScripts, type LibraryScript } from './store/scripts';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
@@ -1580,40 +1580,67 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
 
-  /* ---- user scripts (spec 10.3): Kick Assembler code that runs in Mimir on a copy of the program's memory ---- */
+  /* ---- user scripts (spec 10.3): Kick Assembler code that runs in Mimir; what a run changes in the program's bytes
+   * goes into the program as the script's patches, the script's code never ---- */
   const userScripts = project.userScripts ?? [];
   const scriptsEnv = useMemo(() => scriptEnv(project, R, S), [project.files, project.cart, R, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** a new script in the Scripts tab; `lines`: code of the listing it starts with (the selection) */
-  const newUserScript = (lines: string[] = []) => {
-    const s = newScript(scriptsEnv.files, userScripts, lines, newId());
-    update(`New script "${s.name}"`, d => { d.userScripts = [...(d.userScripts ?? []), s]; });
+  /** what a script runs on: the program without what its earlier runs changed (a decryption runs on the bytes as they
+   *  were, not on what it decrypted the last time) */
+  const scriptEnvFor = (id: string) => { const { project: p, R: r, S: s } = latest.current; return scriptEnv({ ...p, ...withoutScriptPatches(p, id) }, r, s); };
+  /** a script in the project (made, or copied from the library), shown in the Scripts tab */
+  const addUserScript = (s: UserScript, what: string) => {
+    update(`${what} "${s.name}"`, d => { d.userScripts = [...(d.userScripts ?? []), s]; });
     useScripts.getState().set({ selected: s.id, shown: { kind: 'pad', i: 0 } });
     setUi({ tab: 'scripts' });
-    toast(`Script "${s.name}" made: its code is at ${s.source.match(/\* = (\$[0-9a-f]{4})/i)?.[1] ?? 'free memory'}, scratchpad pad1 at $${h4(s.pads[0].start)}. Ctrl+Enter runs it`, 'ok');
+  };
+  /** a new script; `lines`: code of the listing it starts with (the selection) */
+  const newUserScript = (lines: string[] = []) => {
+    const s = newScript(userScripts, lines, newId());
+    addUserScript(s, 'New script');
+    toast(`Script "${s.name}" made. Write its code and press Ctrl+Enter: what it changes in the program goes into the program and its .asm`, 'ok');
+  };
+  /** a copy of a library script, under a name of its own in the project */
+  const addLibraryScript = (l: LibraryScript) => {
+    const name = userScripts.some(s => s.name.toLowerCase() === l.name.toLowerCase()) ? scriptName(userScripts, l.name) : l.name;
+    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })) }, 'Add script from the library');
+    toast(`"${name}" added from the library: Ctrl+Enter runs it on this program`, 'ok');
   };
   const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
+  /** the script goes, and what it changed goes out of the program with it */
   const removeUserScript = (id: string) => {
     const s = userScripts.find(x => x.id === id); if (!s) return;
-    update(`Delete script "${s.name}"`, d => { d.userScripts = (d.userScripts ?? []).filter(x => x.id !== id); });
-    toast(`Script "${s.name}" deleted (Ctrl+Z brings it back)`, 'ok');
+    const n = scriptPatches(project.patches, id).length, w = withoutScriptPatches(project, id);
+    update(`Delete script "${s.name}"`, d => { d.userScripts = (d.userScripts ?? []).filter(x => x.id !== id); d.files = w.files; d.patches = w.patches; });
+    toast(`Script "${s.name}" deleted${n ? ', and what it changed taken out of the program' : ''} (Ctrl+Z brings it back)`, 'ok');
   };
-  /** a run's scratchpads into the project: what each holds now */
+  /** what the script changed taken out of the program (the script stays) */
+  const takeOutScript = (id: string) => {
+    const s = userScripts.find(x => x.id === id); if (!s) return;
+    const w = withoutScriptPatches(project, id);
+    update(`Take out what "${s.name}" changed`, d => { d.files = w.files; d.patches = w.patches; });
+    toast(`What "${s.name}" changed is out of the program: the original bytes are back (Ctrl+Z puts it back; Run writes it again)`, 'ok');
+  };
+  /** a run ended: what it changed goes into the program as the script's patches (in place of its earlier ones, a change
+   *  the user switched off staying off), what its scratchpads hold into the project, as one step */
   const ranUserScript = (id: string, run: ScriptRun) => {
-    const s = useProject.getState().present.userScripts?.find(x => x.id === id); if (!s) return;
+    const { A: a, R: r, project: p, S: st } = latest.current;
+    const s = p.userScripts?.find(x => x.id === id); if (!s) return null;
+    const base = { ...p, ...withoutScriptPatches(p, id), settings: st };
+    const w = writeScriptRun(a, r, base, s, run, scriptPatches(p.patches, id));
     update(`Run script "${s.name}"`, d => {
+      d.files = w.files; d.patches = w.patches;
       const t = d.userScripts?.find(x => x.id === id); if (!t) return;
-      for (const p of t.pads) { const b = run.pads.find(x => x.name === p.name); if (b && b.bytes.length === p.size) p.bytes = b.bytes; }
+      for (const pad of t.pads) { const b = run.pads.find(x => x.name === pad.name); if (b && b.bytes.length === pad.size) pad.bytes = b.bytes; }
     });
+    return { written: w.written, failed: w.failed };
   };
-  /** bytes a script made, written over the program as a patch: the patch dialog opens with them as .byte lines */
-  const writeScriptPatch = (name: string, start: Addr, bytes: Uint8Array) => {
-    if (A.owner[start] < 0) { toast(`$${h4(start)} is not part of any loaded file: a patch is written over the program's bytes`, 'warn'); return; }
-    if (bytes.length > 12000) { toast(`${bytes.length} bytes are more than a patch of .byte lines can hold (12000): save them as a .bin and load that instead`, 'warn'); return; }
-    let n = name, k = 2;
-    while (project.patches.some(p => p.name.toLowerCase() === n.toLowerCase())) n = `${name}_${k++}`;
-    setPatchDraft({ start, end: start + bytes.length, name: n, source: byteLines(bytes).join('\n'), fill: 'keep', over: false, cycles: false });
-    setModal('patch');
+  const saveScriptText = async (name: string, text: string) => {
+    if (!kr) return needDesktop();
+    try {
+      const r = await kr.saveFile({ name, bytes: new TextEncoder().encode(text), title: 'Save as a text file' });
+      if (r) toast(`Saved ${r.path}`, 'ok');
+    } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
   const saveScriptBytes = async (name: string, bytes: Uint8Array, prg: boolean, load: Addr) => {
     if (!kr) return needDesktop();
@@ -2957,9 +2984,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}
-              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} theme={theme} onNew={() => newUserScript()} onEdit={editUserScript} onRemove={removeUserScript} onRan={ranUserScript}
-                onWritePatch={writeScriptPatch} onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
-                onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} toast={toast} />}
+              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} onNew={() => newUserScript()} onAdd={addLibraryScript}
+                onEdit={editUserScript} onRemove={removeUserScript} onRan={ranUserScript} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
+                onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
+                onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}

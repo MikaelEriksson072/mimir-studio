@@ -6050,7 +6050,7 @@ test('graphics as pictures in the listing: characters to click, how many sprites
   });
 });
 
-test('scripts: Kick Assembler that runs in Mimir on a copy of the program, checked first, its scratchpad shown, a change written as a patch', async ({ app, page }) => {
+test('scripts: Kick Assembler that runs in Mimir; what it changes goes into the program, its code does not; a scratchpad saved as a log; the library', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
   await page.keyboard.press('Control+o');
@@ -6058,76 +6058,107 @@ test('scripts: Kick Assembler that runs in Mimir on a copy of the program, check
   const check = page.locator('.scr-check');
   const run = page.getByRole('button', { name: /^Run/ });
   const editor = page.locator('.scr-editor');
+  const changes = page.getByRole('list', { name: 'Changed in the program' });
+  const tag = listing(page).locator('.patch-tag', { hasText: 'script brighter' });
   /** the script's code replaced, as if pasted */
   const code = async (text: string) => {
     await editor.locator('.view-lines').click();
     await page.keyboard.press('Control+a');
     await page.keyboard.insertText(text);
   };
+  const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); await expect(page.locator('.scr-end')).toContainText('Returned'); };
 
-  await test.step('a script from a block of the listing: its code, in free memory, with a scratchpad', async () => {
+  await test.step('a script from a block of the listing: its code in free memory, no scratchpad', async () => {
     await goTo(page, 'fx_091e');
     await listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: /^091e$/ }) }).click({ button: 'right' });
     await fromSubmenu(page, 'Program', 'New script from block (runs in Mimir on a copy of the program)');
     await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('option', { name: 'script' })).toHaveAttribute('aria-selected', 'true');
-    await expect(editor.locator('.view-lines')).toContainText('* = $c000 "script"');
     await expect(editor.locator('.view-lines')).toContainText('lda SID_OSC3');
-    await expect(page.getByLabel('Scratchpad address')).toHaveValue('$c800');
-    // the program's labels and the hardware names are known: it checks out
-    await expect(check).toContainText('Ready:');
-    await expect(check).toContainText('starts at $c000');
+    await expect(editor.locator('.view-lines')).not.toContainText('* =');
+    await expect(page.getByText('None. Add one to keep data outside the program')).toBeVisible();
+    // plain words: it can run, and what Run does
+    await expect(check).toHaveText('Ready to run');
+    await expect(page.getByRole('note')).toContainText('What it changes in the program\'s bytes goes into the program and its .asm');
   });
 
   await test.step('an unknown name is an error on its line, and the script cannot run', async () => {
-    await code('        * = $c000\nstart:  lda no_such_label\n        rts\n');
-    await expect(check).toHaveText('1 error: line 2: Unknown symbol "no_such_label"');
+    await code('        lda no_such_label\n        rts\n');
+    await expect(check).toHaveText('Line 1: Unknown symbol "no_such_label"');
     await expect(run).toBeDisabled();
-    await expect(page.locator('.scr-problems')).toContainText('Line 2');
   });
 
-  await test.step('a run copies the program\'s text to the scratchpad and changes a byte of its copy', async () => {
-    await code([
-      '        * = $c000 "copy"',
-      'start:  ldx #20',
-      '!:      lda txt_0949,x       // the program\'s text',
-      '        sta pad1,x',
-      '        dex',
-      '        bpl !-',
-      '        inc colors_0939',
-      '        rts',
-    ].join('\n'));
-    await expect(check).toContainText('Ready: 15 bytes at $c000-$c00e');
-    await expect(run).toBeEnabled();
-    await page.keyboard.press('Control+Enter');
-    await expect(page.locator('.scr-end')).toContainText('Returned (RTS at $c00e)');
-    await expect(page.locator('.scr-view-title')).toHaveText('pad1 · $c800-$c8ff · 256 bytes');
-    await page.getByRole('button', { name: 'Text', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'PETSCII', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('.scr-dump')).toContainText('MIMIR STUDIO DEMO');
-    // the project's files are as they were: the change is listed
-    await expect(page.locator('.scr-change')).toHaveText(['$0939 · 1 byte']);
+  let after = '';
+  await test.step('a run changes a table of the program: the change is in the program, the listing marks it', async () => {
+    const name = page.getByLabel('Script name');
+    await name.fill('brighter');
+    await name.press('Enter');
+    await code(['        ldx #3', '!:      inc colors_0939,x      // the table of the program', '        dex', '        bpl !-', '        rts'].join('\n'));
+    await expect(check).toHaveText('Ready to run');
+    // Mimir found the code a place the program does not use
+    await expect(check).toHaveAttribute('title', /Its code: 9 bytes at \$c000-\$c008, in memory the program does not use/);
+    await runIt();
+    await expect(page.getByRole('note')).toHaveCount(0);
+    await expect(changes.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+    await expect(changes.getByRole('switch')).toBeChecked();
+    await changes.getByRole('button').click();
+    await expect(page.locator('.scr-view-title')).toHaveText('brighter · $0939-$093c · 4 bytes');
+    await expect(page.locator('.scr-view-head')).toContainText('4 differ from the original');
+    after = (await page.locator('.scr-dump').textContent()) ?? '';
+    await page.getByRole('button', { name: 'Show in listing' }).click();
+    await expect(tag).toBeVisible();
+    await expect(statusBar(page)).toContainText('sel $0939–$093c (4 B)');
   });
 
-  await test.step('the change is written over the program as a patch, through the patch dialog', async () => {
-    await page.locator('.scr-change').click();
-    await page.getByRole('button', { name: 'Write as patch…' }).click();
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toHaveAccessibleName(/^Patch \$0939/);
-    await expect(dialog.locator('#patch-code')).toHaveValue(/^\s*\.byte \$/);
-    await page.keyboard.press('Control+Enter');
-    await expect(toast(page, /Patch "script_0939" written over/)).toBeVisible();
-  });
-
-  await test.step('the scratchpad is kept: another tab and back, and a deleted script comes back with Ctrl+Z', async () => {
-    await page.getByRole('tab', { name: 'Listing' }).click();
+  await test.step('a run again starts from the program as it was: the same bytes, not one more', async () => {
     await page.getByRole('tab', { name: 'Scripts' }).click();
+    await runIt();
+    await expect(changes.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+    await changes.getByRole('button').click();
+    await expect(page.locator('.scr-dump')).toHaveText(after);
+  });
+
+  await test.step('a change switched off is left out, and stays out when the script runs again', async () => {
+    await changes.getByRole('switch').uncheck();
+    await runIt();
+    await expect(changes.getByRole('switch')).not.toBeChecked();
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'colors_0939');
+    await expect(tag).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await changes.getByRole('switch').check();
+  });
+
+  await test.step('a scratchpad keeps a log outside the program, saved as a text file', async () => {
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(page.getByLabel('Scratchpad name')).toHaveValue('pad1');
+    await code(['        ldx #3', '!:      inc colors_0939,x', '        lda msg,x', '        sta pad1,x', '        dex', '        bpl !-', '        rts', 'msg:    .byte $48, $49, $21, $0d'].join('\n'));
+    await runIt();
     await page.locator('.pad-row:not(.pad-head)').first().click({ position: { x: 4, y: 4 } });
-    await expect(page.locator('.scr-dump')).toContainText('MIMIR STUDIO DEMO');
+    await page.getByRole('button', { name: 'Text', exact: true }).click();
+    await expect(page.locator('.scr-dump')).toContainText('HI!');
+    const log = join(work, 'brighter_pad1.txt');
+    await stubDialogs(app, { save: log });
+    await page.getByRole('button', { name: 'Save .txt…' }).click();
+    await expect(toast(page, `Saved ${log}`)).toBeVisible();
+    expect(readFileSync(log, 'utf8')).toBe('HI!\n');
+  });
+
+  await test.step('the library keeps the script for every project; deleted, the script takes its change out of the program', async () => {
+    await page.getByRole('button', { name: 'Save to library' }).click();
+    await expect(toast(page, '"brighter" saved in the library')).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Library' })).toContainText('brighter');
     await page.getByRole('button', { name: 'Delete script' }).click();
     await expect(page.getByText('No scripts yet')).toBeVisible();
-    await page.keyboard.press('Control+z');
-    await expect(page.getByRole('option', { name: 'script' })).toBeVisible();
-    await expect(page.locator('.scr-dump')).toContainText('MIMIR STUDIO DEMO');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'colors_0939');
+    await expect(tag).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await page.getByRole('button', { name: 'Add brighter to the project' }).click();
+    await expect(page.getByRole('option', { name: 'brighter' })).toHaveAttribute('aria-selected', 'true');
+    await expect(editor.locator('.view-lines')).toContainText('inc colors_0939,x');
+    await expect(page.getByLabel('Scratchpad name')).toHaveValue('pad1');
+    await page.getByRole('button', { name: 'Remove brighter from the library' }).click();
+    await expect(page.getByRole('list', { name: 'Library' })).not.toContainText('brighter');
   });
 });

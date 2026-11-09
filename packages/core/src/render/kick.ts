@@ -154,9 +154,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     markAt(loaderStarts, r.start, `==== BoozeLoader script: ${n} load${n === 1 ? '' : 's'} from here to ${n4(r.end - 1)}${r.traced ? '' : ' (not traced)'} ====`);
   }
   // the user's patches that are on (10.2): where each starts and where it ends
+  // (a user script's changes, 10.3, are its patches: they say so)
   for (const p of (project.patches ?? []).filter(x => !x.off)) {
-    markAt(loaderStarts, p.start, `==== patch "${p.name}": ${n4(p.start)}-${n4(p.start + p.bytes.length - 1)}, ${p.bytes.length} byte${p.bytes.length === 1 ? '' : 's'} written over the original ====`);
-    markAt(loaderEnds, p.start + p.bytes.length, `==== end of patch "${p.name}" ====`);
+    const n = `${n4(p.start)}-${n4(p.start + p.bytes.length - 1)}, ${p.bytes.length} byte${p.bytes.length === 1 ? '' : 's'}`;
+    markAt(loaderStarts, p.start, p.script ? `==== changed by the script "${p.name}": ${n} ====` : `==== patch "${p.name}": ${n} written over the original ====`);
+    markAt(loaderEnds, p.start + p.bytes.length, p.script ? `==== end of the script "${p.name}"'s change ====` : `==== end of patch "${p.name}" ====`);
   }
   const marked = (a: Addr) => loaderStarts.has(a) || loaderEnds.has(a);
   /** data and text rows break at notes, empty lines and loader marks like at labels */

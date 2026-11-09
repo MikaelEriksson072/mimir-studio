@@ -364,6 +364,9 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     LoadSid: (path: string) => { const u = vfs[path]; if (!(u instanceof Uint8Array)) throw new Error(`LoadSid: can't open "${path}"`); const sid = parsePsid(u); return Object.assign({}, sid, { getData: (i: number) => sid.data[i] }); },
   };
   const names = opts.names;
+  /** the statement being assembled, and the names from outside (`names`) the code used, with the first line using each */
+  let curStmt: Stmt | null = null;
+  const external = new Map<string, number>();
   // multi-labels in the order the pass defines them (`!name` as name, `!` as ''), and the last pass's
   let ml: { name: string; v: number }[] = [], mlPrev: { name: string; v: number }[] = [];
   const root: Scope = { key: '', vars: new Map(), parent: null };
@@ -378,6 +381,8 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     }
     if (name in builtins) return builtins[name];
     const ext = names?.get(name);
+    // the names from outside the code uses in the final pass, and the first line that does
+    if (ext !== undefined && pass === 'final' && curStmt && !external.has(name)) external.set(name, curStmt.line);
     return ext;
   };
   /** `a.b.c` of a node made of names and member accesses, or null */
@@ -545,6 +550,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     const report = (st: Stmt) => { if (final && unresolved.length) { for (const u of new Set(unresolved)) E(`Unknown symbol "${u}"`, st); unresolved = []; } };
     const block = (b: Extract<Tree, { k: 'blk' }>) => {
       const st = b.st;
+      curStmt = st;
       try {
         label(st);
         const key = `${cur.key}>${b.id}`;
@@ -568,6 +574,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
             for (const a of splitArgs(parts[0])) assign(a, loop, st);
             report(st);
             for (let n = 0; ; n++) {
+              curStmt = st;
               const c = parts[1] ? evb(parts[1], loop) : true;
               report(st);
               if (c !== true) break;
@@ -583,6 +590,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
       } catch (err) { E((err as Error).message, st); report(st); }
     };
     const stmt = (st: Stmt) => {
+      curStmt = st;
       try {
         label(st);
         const s = st.body;
@@ -678,5 +686,5 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   // an error a loop met in each round is said once
   const said = new Set<string>();
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external };
 }

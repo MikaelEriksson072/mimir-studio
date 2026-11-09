@@ -346,7 +346,7 @@ function PatchesSection({ list, onGo, onEdit, onSave, onRemove, onSwitch }: Patc
             <input type="checkbox" role="switch" className="switch" checked={!p.off} aria-label={`Patch ${p.name} on`}
               title={p.off ? 'Off: the original bytes are there. Switch it on' : 'On: written over the original bytes. Switch it off'}
               onClick={e => e.stopPropagation()} onChange={e => onSwitch(p, e.target.checked)} />
-            <div className="file-meta"><div className="file-name">{p.name}</div><div className="muted mono small">${h4(p.start)}–${h4(patchEnd(p) - 1)}</div></div>
+            <div className="file-meta"><div className="file-name">{p.name}</div><div className="muted mono small">${h4(p.start)}–${h4(patchEnd(p) - 1)}{p.script ? ' · script' : ''}</div></div>
             <button className="icon-btn" title={`Edit the patch "${p.name}" (P)`} aria-label={`Edit patch ${p.name}`} onClick={e => { e.stopPropagation(); onEdit(p); }}><Icon name="pencil" size={13} /></button>
             <button className="icon-btn" title={`Save as ${patchFileName(p.name)}, loading at $${h4(p.start)}`} aria-label={`Save patch ${p.name} as PRG`} onClick={e => { e.stopPropagation(); onSave(p); }}><Icon name="download" size={13} /></button>
             <button className="icon-btn" title={`Remove the patch${p.off ? '' : `: $${h4(p.start)}–$${h4(patchEnd(p) - 1)} gets its original bytes back`}`} aria-label={`Remove patch ${p.name}`} onClick={e => { e.stopPropagation(); onRemove(p); }}><Icon name="x" size={13} /></button>

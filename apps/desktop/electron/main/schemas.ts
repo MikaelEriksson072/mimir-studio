@@ -111,7 +111,7 @@ const chip = z.number().int().min(0).max(4095);
 /** a cartridge image: at most 16 MB (the largest VICE emulates are 16 MB) */
 const crtBytes = z.instanceof(Uint8Array).refine(b => b.length >= 0x40 && b.length <= 16 * 1024 * 1024 + 0x10000, 'not a cartridge image');
 /** code the user wrote over the loaded bytes (spec 10.2): what it wrote and what was there, as many bytes */
-const patchFields = { name: z.string().min(1).max(64), start: at, end: at, source: z.string().max(65536), fill: z.enum(['nop', 'keep']), over: z.boolean(), off: z.boolean().optional(), cycles: z.boolean().optional(), at: at.optional() };
+const patchFields = { name: z.string().min(1).max(64), start: at, end: at, source: z.string().max(400000), fill: z.enum(['nop', 'keep']), over: z.boolean(), off: z.boolean().optional(), cycles: z.boolean().optional(), at: at.optional(), script: z.string().max(64).optional() };
 const base64 = z.string().max(0x20000).regex(/^[A-Za-z0-9+/]*={0,2}$/);
 const serializedPatch = z.object({ ...patchFields, bytes: base64, old: base64 })
   .refine(p => p.bytes.length === p.old.length && p.bytes.length > 0, 'the bytes written and the bytes written over differ in length');
@@ -121,7 +121,7 @@ const patch = z.object({ ...patchFields, id: z.string().max(64), bytes: z.instan
 const padFields = { name: z.string().min(1).max(64), start: z.number().int().min(0).max(0xffff), size: z.number().int().min(1).max(0x10000), fill: z.number().int().min(0).max(255).optional() };
 const padFits = (p: { start: number; size: number }) => p.start + p.size <= 0x10000;
 const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144) };
-const serializedScript = z.object({ ...scriptFields, pads: z.array(z.object({ ...padFields, bytes: z.string().max(0x16000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
+const serializedScript = z.object({ ...scriptFields, id: z.string().max(64).optional(), pads: z.array(z.object({ ...padFields, bytes: z.string().max(0x16000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
 const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.array(z.object({ ...padFields, bytes: z.instanceof(Uint8Array).optional() }).refine(p => padFits(p) && (!p.bytes || p.bytes.length === p.size), 'a scratchpad past $ffff, or its bytes not as many as it holds')).max(64) });
 /** memory configuration / VIC bank the code in a range runs with (null: back to detection) */
 const bankZone = z.object({ start: at, end: at, port: z.number().int().min(0).max(255).nullable().optional(), vicBank: z.number().int().min(0).max(3).nullable().optional() });

@@ -1,49 +1,67 @@
-/* The Scripts tab (spec 10.3): the project's scripts, Kick Assembler code that runs in Mimir on a copy of the
- * program's memory (never in the export or Build & Run). The code is written in Monaco with the Kick Assembler
- * highlighting; it is checked as it is typed (assembled with the program's names and the scratchpads at hand) and
- * runs only when it checks out. A run's scratchpads are kept in the project and shown as hex, code or text; what it
- * changed in the program's bytes is listed and can be written over them as a patch. */
+/* The Scripts tab (spec 10.3): the project's scripts, Kick Assembler code that runs in Mimir on the program's bytes.
+ * The code is written in Monaco with the Kick Assembler highlighting; it is checked as it is typed (assembled with
+ * the program's names and the scratchpads at hand) and runs only when it checks out. What a run changes in the
+ * program's bytes goes into the program as the script's patches (the listing, the source, the export and Build & Run
+ * have the new bytes; the script's code is never in them); its scratchpads keep data outside the program, which can
+ * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { byteLines, checkScript, disassembleBytes, freePlace, h2, h4, monitorChar, padName, rangeText, scriptEndText, scriptNames, type Addr, type ScriptCheck, type ScriptEnv, type ScriptPad, type ScriptRun, type UserScript } from '@mimir/core';
+import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptPad, type ScriptRun, type ScriptWriteFailure, type UserScript } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
 import { runScriptInWorker, stopScript } from '../lib/scriptrun';
-import { useScripts, type PadMode } from '../store/scripts';
+import { useScripts, type LibraryScript, type PadMode, type ScriptRunKept } from '../store/scripts';
 import { Splitter } from './Splitter';
 
 type MonacoNs = typeof Monaco;
 
 interface ScriptsViewProps {
   scripts: readonly UserScript[];
+  /** what the scripts are checked with (the program's names, its loaded bytes) */
   env: ScriptEnv;
+  /** what a script runs on: the program without what its earlier runs changed */
+  envFor: (id: string) => ScriptEnv;
+  /** the project's patches: a script's changes to the program are among them */
+  patches: readonly Patch[];
   theme: string;
   onNew: () => void;
+  /** a copy of a library script in the project */
+  onAdd: (s: LibraryScript) => void;
   onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads'>>, label: string) => void;
   onRemove: (id: string) => void;
-  /** a run ended: its scratchpads go into the project */
-  onRan: (id: string, run: ScriptRun) => void;
-  /** write bytes over the program as a patch (the patch dialog opens with them) */
-  onWritePatch: (name: string, start: Addr, bytes: Uint8Array) => void;
+  /** a run ended: its changes go into the program, its scratchpads into the project; what was written, what not */
+  onRan: (id: string, run: ScriptRun) => { written: Patch[]; failed: ScriptWriteFailure[] } | null;
+  /** the script's changes taken out of the program */
+  onTakeOut: (id: string) => void;
+  onSwitchPatch: (p: Patch, on: boolean) => void;
   onShow: (start: Addr, end: Addr) => void;
   onCopy: (text: string, what?: string) => void;
   onSave: (name: string, bytes: Uint8Array, prg: boolean, load: Addr) => void;
+  onSaveText: (name: string, text: string) => void;
   toast: (msg: string, kind: 'ok' | 'info' | 'warn' | 'err') => void;
 }
 
 const $ = (a: number) => '$' + h4(a);
-/** `$c000`, `c000`, `49152` or a name the script may use */
-function parseAddr(text: string, names: ReadonlyMap<string, number>): number | null {
-  const t = text.trim();
-  if (!t) return null;
-  if (/^\$[0-9a-f]{1,5}$/i.test(t)) return parseInt(t.slice(1), 16);
-  if (/^[0-9]+$/.test(t)) return parseInt(t, 10);
-  if (/^[0-9a-f]{1,4}$/i.test(t)) return parseInt(t, 16);
-  return names.get(t) ?? null;
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+/** A scratchpad's bytes as the text of a log: the fill after the last byte written left out; PETSCII with RETURN
+ *  ($0d) as the end of a line, or screen codes 40 to a line as on the screen. */
+export function logText(bytes: Uint8Array, fill: number, screen: boolean): string {
+  let n = bytes.length;
+  while (n > 0 && bytes[n - 1] === fill) n--;
+  const ch = (b: number) => monitorChar(b, screen)?.ch ?? '.';
+  if (screen) {
+    const rows: string[] = [];
+    for (let i = 0; i < n; i += 40) rows.push(Array.from(bytes.subarray(i, Math.min(n, i + 40)), ch).join('').replace(/\s+$/, ''));
+    return rows.join('\n') + '\n';
+  }
+  let out = '';
+  for (let i = 0; i < n; i++) out += bytes[i] === 0x0d ? '\n' : ch(bytes[i]);
+  return out.endsWith('\n') ? out : out + '\n';
 }
 
-export function ScriptsView({ scripts, env, theme, onNew, onEdit, onRemove, onRan, onWritePatch, onShow, onCopy, onSave, toast }: ScriptsViewProps) {
-  const { selected, runs, running, shown, mode, screen, outH, set } = useScripts();
+export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd, onEdit, onRemove, onRan, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
+  const { selected, runs, running, shown, mode, screen, outH, library, set, saveToLibrary, removeFromLibrary } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
@@ -150,12 +168,14 @@ export function ScriptsView({ scripts, env, theme, onNew, onEdit, onRemove, onRa
     if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
     set({ running: s.id });
     try {
-      const r = await runScriptInWorker(env, { source: text, pads: s.pads });
-      set({ runs: { ...useScripts.getState().runs, [s.id]: { run: r, source: text, at: Date.now() } }, running: null });
-      onRan(s.id, r);
+      const r = await runScriptInWorker(envFor(s.id), { source: text, pads: s.pads });
+      const w = onRan(s.id, r);
+      set({ runs: { ...useScripts.getState().runs, [s.id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [] } }, running: null });
+      const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
       const sh = useScripts.getState().shown;
-      if (sh.kind === 'change' && sh.i >= r.changes.length) set({ shown: { kind: 'pad', i: 0 } });
-      toast(`${s.name}: ${scriptEndText(r)}${r.changes.length ? ` It changed the program's bytes in ${r.changes.length} place${r.changes.length === 1 ? '' : 's'} (only in its copy).` : ''}`, r.end === 'rts' || r.end === 'brk' ? 'ok' : 'warn');
+      if (sh.kind === 'patch' || !s.pads.length) set({ shown: w?.written.length ? { kind: 'patch', id: w.written[0].id } : { kind: 'pad', i: 0 } });
+      const what = w?.written.length ? ` It changed ${plural(bytes, 'byte')} of the program in ${plural(on.length, 'place')}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
+      toast(`${s.name}: ${scriptEndText(r)}${what}${w?.failed.length ? ` ${plural(w.failed.length, 'change')} could not be written (see Last run).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length ? 'warn' : 'ok') : 'warn');
     } catch (e) {
       set({ running: null });
       const msg = errorText(e);
@@ -164,62 +184,96 @@ export function ScriptsView({ scripts, env, theme, onNew, onEdit, onRemove, onRa
   };
   runRef.current = () => void run();
 
+  const libraryList = <LibraryList library={library} onAdd={onAdd} onRemove={name => { removeFromLibrary(name); toast(`"${name}" removed from the library`, 'ok'); }} />;
+
   if (!scripts.length) return (
-    <div className="empty-project scripts-empty">
-      <Icon name="prompt" size={30} />
-      <h2>No scripts yet</h2>
-      <p>A script is Kick Assembler code that runs here in Mimir on a copy of the program's memory, never in the export or in Build &amp; Run. Use the program's labels, variables and tables in it, call its routines or paste its code (a decryption loop, say), and let it leave its results in its scratchpads.</p>
-      <div className="empty-actions"><button className="btn primary" onClick={onNew}><Icon name="plus" size={14} />New script</button></div>
-      <p className="muted small">Or select lines in the listing, right-click and pick <b>New script from selection</b>.</p>
+    <div className="scripts">
+      <div className="scr-list">{libraryList}</div>
+      <div className="empty-project scripts-empty">
+        <Icon name="prompt" size={30} />
+        <h2>No scripts yet</h2>
+        <p>A script is Kick Assembler code that runs here in Mimir on the program's bytes. Use the program's labels, variables and tables in it, call its routines or paste its code (a decryption loop, say): what it changes in the program's bytes goes into the program and the source, while the script's own code stays out of the export and Build &amp; Run.</p>
+        <div className="empty-actions"><button className="btn primary" onClick={onNew}><Icon name="plus" size={14} />New script</button></div>
+        <p className="muted small">Or select lines in the listing, right-click and pick <b>Program → New script from selection</b>, or add one from the library.</p>
+      </div>
     </div>
   );
 
   const kept = cur ? runs[cur.id] : undefined;
   const isRunning = !!cur && running === cur.id;
+  const mine = cur ? scriptPatches(patches, cur.id) : [];
   const errors = check?.problems.filter(p => p.level === 'error') ?? [], warnings = check?.problems.filter(p => p.level === 'warning') ?? [];
+  // the status says only whether it can run, and what is wrong; where its code is goes in the tooltip
   const chip = !check ? '' : check.ok
-    ? `Ready: ${check.bytes} byte${check.bytes === 1 ? '' : 's'} at ${check.code.slice(0, 3).map(rangeText).join(', ')}${check.code.length > 3 ? ', …' : ''} · starts at ${$(check.entry!)}${warnings.length ? ` · ${warnings.length} warning${warnings.length === 1 ? '' : 's'}` : ''}`
-    : `${errors.length} error${errors.length === 1 ? '' : 's'}: ${errors[0]?.line ? `line ${errors[0].line}: ` : ''}${errors[0]?.msg}`;
+    ? `Ready to run${warnings.length ? ` · ${plural(warnings.length, 'warning')}` : ''}`
+    : `${errors.length > 1 ? `${plural(errors.length, 'error')} · ` : ''}${errors[0]?.line ? `Line ${errors[0].line}: ` : ''}${errors[0]?.msg}`;
+  const where = !check || !check.code.length ? '' : `Its code: ${plural(check.bytes, 'byte')} at ${check.code.slice(0, 3).map(rangeText).join(', ')}${check.code.length > 3 ? ', …' : ''}${check.place === 'free' ? ', in memory the program does not use' : check.place === 'program' ? ' (the program fills memory: Mimir put the code where the program has a long run of one value). It is memory of the script\'s own: the program never sees it' : ', where its * = puts it: memory of the script\'s own, which the program never sees'}. It runs from ${$(check.entry ?? 0)}.`;
+  // until it has done something, a line says what Run does
+  const howTo = !kept && !mine.length;
+  const inLibrary = !!cur && library.some(l => l.name.toLowerCase() === cur.name.toLowerCase());
 
   return (
     <div className="scripts">
-      <div className="scr-list" role="listbox" aria-label="Scripts">
-        <div className="scr-list-head"><span>Scripts</span><span className="grow" />
+      <div className="scr-list">
+        <div className="scr-list-head"><span>Project</span><span className="grow" />
           <button className="icon-btn" onClick={onNew} aria-label="New script" title="New script: Kick Assembler code that runs in Mimir"><Icon name="plus" size={15} /></button></div>
-        {scripts.map(s => (
-          <button key={s.id} role="option" aria-selected={s.id === cur?.id} className={cx('scr-item', s.id === cur?.id && 'on')} onClick={() => { flush(); set({ selected: s.id, shown: { kind: 'pad', i: 0 } }); }}
-            title={`${s.name}: ${s.pads.length} scratchpad${s.pads.length === 1 ? '' : 's'}${runs[s.id] ? ` · last run: ${scriptEndText(runs[s.id].run)}` : ''}`}>
-            <Icon name="prompt" size={13} /><span className="scr-item-name">{s.name}</span>{running === s.id && <span className="scr-busy" aria-label="running" />}
-          </button>
-        ))}
+        <div role="listbox" aria-label="Scripts">
+          {scripts.map(s => (
+            <button key={s.id} role="option" aria-selected={s.id === cur?.id} className={cx('scr-item', s.id === cur?.id && 'on')} onClick={() => { flush(); set({ selected: s.id, shown: { kind: 'pad', i: 0 } }); }}
+              title={`${s.name}${runs[s.id] ? ` · last run: ${scriptEndText(runs[s.id].run)}` : ''}`}>
+              <Icon name="prompt" size={13} /><span className="scr-item-name">{s.name}</span>{running === s.id && <span className="scr-busy" aria-label="running" />}
+            </button>
+          ))}
+        </div>
+        {libraryList}
       </div>
       {cur && check && <div className="scr-main">
         <div className="toolbar">
           <NameField key={cur.id} value={cur.name} taken={scripts.filter(s => s.id !== cur.id).map(s => s.name)} onCommit={n => onEdit(cur.id, { name: n }, `Rename script "${cur.name}" to "${n}"`)} toast={toast} />
-          <span className={cx('pill scr-check', check.ok ? (warnings.length ? 'mid' : 'hi') : 'lo')} role="status" title={check.problems.map(p => `${p.level === 'error' ? 'Error' : 'Warning'}${p.line ? ` (line ${p.line})` : ''}: ${p.msg}`).join('\n') || 'The script assembles with the program\'s names and its scratchpads, and has code to run'}
+          <span className={cx('pill scr-check', check.ok ? (warnings.length ? 'mid' : 'hi') : 'lo')} role="status" title={[...check.problems.map(p => `${p.level === 'error' ? 'Error' : 'Warning'}${p.line ? ` (line ${p.line})` : ''}: ${p.msg}`), check.ok ? 'The script assembles with the program\'s names and has code to run.' : 'Fix it, and Run can be used.', where].filter(Boolean).join('\n')}
             onClick={() => { const p = check.problems.find(x => x.line); if (p?.line) goLine(p.line); }}>
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}
           </span>
           <span className="grow" />
           {isRunning
             ? <button className="btn" onClick={() => stopScript()} title="Stop the run"><Icon name="x" />Stop</button>
-            : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={() => void run()} title={check.ok ? 'Run the script on a copy of the program\'s memory (Ctrl+Enter in the editor). The project\'s files do not change; the scratchpads keep what it leaves there' : 'The script must check out before it can run: see the errors'}>
+            : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={() => void run()} title={check.ok ? 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program' : 'The script must check out before it can run: see the errors'}>
               <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
-          <button className="icon-btn" aria-label="Delete script" title={`Delete the script "${cur.name}" (Ctrl+Z brings it back)`} onClick={() => { flush(); onRemove(cur.id); }}><Icon name="trash" size={15} /></button>
+          <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
+            title={inLibrary ? 'Save the script in the library again, in place of the one of the same name there' : 'Save a copy of the script in the library, so that other projects can add it'}><Icon name="bookmark" />{inLibrary ? 'Update library' : 'Save to library'}</button>
+          <button className="icon-btn" aria-label="Delete script" title={`Delete the script "${cur.name}"${mine.length ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`} onClick={() => { flush(); onRemove(cur.id); }}><Icon name="trash" size={15} /></button>
         </div>
+        {howTo && <p className="scr-howto" role="note"><Icon name="info" size={13} /><span><b>Run</b> (Ctrl+Enter) runs the code here in Mimir. What it changes in the program's bytes goes into the program and its .asm, listed under <i>In the program</i>; the script's own code never does.</span></p>}
         <div className="scr-body">
           <div className="mon-host scr-editor" ref={host} style={{ display: state === 'ready' ? 'block' : 'none' }} />
           {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
           <Splitter dir="h" onDrag={d => set({ outH: Math.max(140, Math.min(window.innerHeight - 260, useScripts.getState().outH - d)) })} />
           <div className="scr-out" style={{ height: outH }}>
-            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} env={env} onGoLine={goLine} onEdit={onEdit} />
-            <PadView script={cur} kept={kept} names={names} mode={mode} screen={screen} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
-              onWritePatch={onWritePatch} onShow={onShow} onCopy={onCopy} onSave={onSave} toast={toast} />
+            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} />
+            <PadView script={cur} mine={mine} names={names} mode={mode} screen={screen} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
+              onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} />
           </div>
         </div>
       </div>}
     </div>
   );
+}
+
+/** The library's scripts: each can be added to the project, or removed from the library. */
+function LibraryList({ library, onAdd, onRemove }: { library: LibraryScript[]; onAdd: (s: LibraryScript) => void; onRemove: (name: string) => void }) {
+  return <>
+    <div className="scr-list-head scr-lib-head" title="Scripts kept by Mimir for every project: Save to library puts one here"><span>Library</span><span className="grow" /><span className="scr-lib-n">{library.length || ''}</span></div>
+    {!library.length && <p className="scr-lib-empty">Save to library keeps a script here for every project.</p>}
+    <div role="list" aria-label="Library">
+      {library.map(l => (
+        <div key={l.name} role="listitem" className="scr-lib-item" title={`${l.name}, saved ${new Date(l.saved).toLocaleString()}\n\n${l.source.split('\n').slice(0, 12).join('\n')}`}>
+          <span className="scr-item-name">{l.name}</span>
+          <button className="icon-btn" aria-label={`Add ${l.name} to the project`} title="Add a copy to this project" onClick={() => onAdd(l)}><Icon name="plus" size={13} /></button>
+          <button className="icon-btn" aria-label={`Remove ${l.name} from the library`} title="Remove it from the library (the projects keep their copies)" onClick={() => onRemove(l.name)}><Icon name="x" size={13} /></button>
+        </div>
+      ))}
+    </div>
+  </>;
 }
 
 function NameField({ value, taken, onCommit, toast }: { value: string; taken: string[]; onCommit: (n: string) => void; toast: ScriptsViewProps['toast'] }) {
@@ -235,19 +289,24 @@ function NameField({ value, taken, onCommit, toast }: { value: string; taken: st
   return <input className="scr-name" aria-label="Script name" value={v} maxLength={64} onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setV(value); (e.target as HTMLInputElement).blur(); } }} />;
 }
 
-/** The left of the output: the problems, the scratchpads (edited here) and the last run with its changes. */
-function ScriptSide({ script, check, kept, stale, env, onGoLine, onEdit }: { script: UserScript; check: ScriptCheck; kept?: { run: ScriptRun }; stale: boolean; env: ScriptEnv; onGoLine: (n: number) => void; onEdit: ScriptsViewProps['onEdit'] }) {
+/** The left of the output: the problems, what the script changed in the program, the scratchpads (edited here) and
+ *  the last run. */
+function ScriptSide({ script, check, kept, stale, mine, env, onGoLine, onEdit, onTakeOut, onSwitchPatch }: {
+  script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; onGoLine: (n: number) => void;
+  onEdit: ScriptsViewProps['onEdit']; onTakeOut: ScriptsViewProps['onTakeOut']; onSwitchPatch: ScriptsViewProps['onSwitchPatch'];
+}) {
   const { shown, set } = useScripts();
   const setPads = (pads: ScriptPad[], label: string) => onEdit(script.id, { pads }, label);
   const addPad = () => {
     const taken = [...check.code, ...script.pads.map(p => ({ start: p.start, end: p.start + p.size }))];
     const last = script.pads[script.pads.length - 1];
-    const start = freePlace(env.files, 0x100, taken, last ? last.start + last.size : undefined) ?? 0xc000;
+    const start = scriptPlace(env.files, 0x100, taken, last ? last.start + last.size : undefined)?.at ?? 0xc000;
     const name = padName(script.pads);
     setPads([...script.pads, { name, start, size: 0x100 }], `Add scratchpad ${name} to "${script.name}"`);
     set({ shown: { kind: 'pad', i: script.pads.length } });
   };
   const run = kept?.run;
+  const sorted = [...mine].sort((a, b) => a.start - b.start);
   return (
     <div className="scr-side">
       {check.problems.length > 0 && <section className="scr-sec">
@@ -259,8 +318,18 @@ function ScriptSide({ script, check, kept, stale, env, onGoLine, onEdit }: { scr
           </li>))}</ul>
       </section>}
       <section className="scr-sec">
-        <h4>Scratchpads<span className="grow" /><button className="btn ghost small" onClick={addPad} title="A scratchpad of this script's own: memory at an address the script writes its results to, cleared before each run; its name (and name_end) are labels in the code"><Icon name="plus" size={13} />Add</button></h4>
-        {!script.pads.length && <p className="muted small">None: the script can only leave its results in the program's bytes.</p>}
+        <h4>In the program{stale && <span className="pill mid" title="The code has changed since this run: run it again to update the program">code changed since</span>}<span className="grow" />
+          {mine.length > 0 && <button className="btn ghost small" onClick={() => onTakeOut(script.id)} title="Take what the script changed out of the program: the original bytes come back (Ctrl+Z puts it back)"><Icon name="undo" size={13} />Take out</button>}</h4>
+        {!mine.length && <p className="muted small">Nothing yet. What a run changes in the program's bytes goes in here and into the program: the listing, the source, the export and Build &amp; Run have it.</p>}
+        <ul className="scr-changes" aria-label="Changed in the program">{sorted.map(p => (
+          <li key={p.id} className={cx('scr-change-row', p.off && 'off')}>
+            <input type="checkbox" role="switch" className="switch" checked={!p.off} aria-label={`${p.name} in the program`} title={p.off ? 'Left out: the original bytes are there. Switch it on to write the change' : 'Written into the program. Switch it off to leave it out (runs keep it out)'} onChange={e => onSwitchPatch(p, e.target.checked)} />
+            <button className={cx('scr-change', shown.kind === 'patch' && shown.id === p.id && 'on')} onClick={() => set({ shown: { kind: 'patch', id: p.id } })}>{rangeText({ start: p.start, end: patchEnd(p) })} · {plural(p.bytes.length, 'byte')}</button>
+          </li>))}</ul>
+      </section>
+      <section className="scr-sec">
+        <h4>Scratchpads<span className="grow" /><button className="btn ghost small" onClick={addPad} title="A scratchpad: memory of the script's own at an address, for data kept outside the program (a log, say) that can be saved as a file. It is cleared before each run; its name (and name_end) are labels in the code"><Icon name="plus" size={13} />Add</button></h4>
+        {!script.pads.length && <p className="muted small">None. Add one to keep data outside the program, a log the script writes, say, and save it as a file.</p>}
         <div className="pad-table" role="table" aria-label="Scratchpads">
           {script.pads.length > 0 && <div className="pad-row pad-head" role="row"><span>Name</span><span>Address</span><span>Size</span><span>Fill</span><span /></div>}
           {script.pads.map((p, i) => (
@@ -273,15 +342,11 @@ function ScriptSide({ script, check, kept, stale, env, onGoLine, onEdit }: { scr
       </section>
       {check.prints.length > 0 && <section className="scr-sec"><h4>.print</h4><pre className="scr-prints">{check.prints.join('\n')}</pre></section>}
       {run && <section className="scr-sec scr-run-sec">
-        <h4>Last run{stale && <span className="pill mid" title="The code has changed since this run: run it again to see what it does now">code changed since</span>}</h4>
+        <h4>Last run</h4>
         <p className={cx('scr-end', run.end === 'jam' || run.end === 'limit' ? 'warn' : 'ok')}>{scriptEndText(run)}</p>
         <p className="scr-regs mono">A=${h2(run.regs.a)} X=${h2(run.regs.x)} Y=${h2(run.regs.y)} S=${h2(run.regs.s)} P=${h2(run.regs.p)} · {run.ms} ms</p>
-        {run.changes.length > 0
-          ? <><p className="small">It changed the program's bytes (in its copy; the project's files are as they were):</p>
-            <ul className="scr-changes">{run.changes.map((c, i) => (
-              <li key={i}><button className={cx('scr-change', shown.kind === 'change' && shown.i === i && 'on')} onClick={() => set({ shown: { kind: 'change', i } })}>{rangeText(c)} · {c.end - c.start} byte{c.end - c.start === 1 ? '' : 's'}</button></li>))}</ul></>
-          : <p className="small muted">It changed none of the program's bytes.</p>}
-        {run.other > 0 && <p className="small muted">{run.other} byte{run.other === 1 ? '' : 's'} changed elsewhere (the zero page, the stack, …).</p>}
+        {kept!.failed.map((f, i) => <p key={i} className="small scr-failed"><Icon name="warn" size={13} />Not written into the program, {rangeText(f)}: {f.error}</p>)}
+        {run.other > 0 && <p className="small muted">{plural(run.other, 'byte')} changed outside the program and the scratchpads (the zero page, the stack, …): not kept.</p>}
       </section>}
     </div>
   );
@@ -311,14 +376,13 @@ function PadRow({ pad, on, bad, warn, onShow, onChange, onRemove }: { pad: Scrip
   );
 }
 
-/** The right of the output: a scratchpad's bytes, or a change the run made, as hex, code or text, with what can be
- *  done with them. */
-function PadView({ script, kept, names, mode, screen, onMode, onScreen, onWritePatch, onShow, onCopy, onSave, toast }: {
-  script: UserScript; kept?: { run: ScriptRun }; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
-  onWritePatch: ScriptsViewProps['onWritePatch']; onShow: ScriptsViewProps['onShow']; onCopy: ScriptsViewProps['onCopy']; onSave: ScriptsViewProps['onSave']; toast: ScriptsViewProps['toast'];
+/** The right of the output: a scratchpad's bytes, or a change the script made in the program, as hex, code or text,
+ *  with what can be done with them. */
+function PadView({ script, mine, names, mode, screen, onMode, onScreen, onShow, onCopy, onSave, onSaveText }: {
+  script: UserScript; mine: Patch[]; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
+  onShow: ScriptsViewProps['onShow']; onCopy: ScriptsViewProps['onCopy']; onSave: ScriptsViewProps['onSave']; onSaveText: ScriptsViewProps['onSaveText'];
 }) {
   const { shown } = useScripts();
-  const [target, setTarget] = useState('');
   // 16 bytes a hex row where they fit, else 8
   const [wide, setWide] = useState(true);
   const [view, setView] = useState<HTMLDivElement | null>(null);
@@ -327,10 +391,10 @@ function PadView({ script, kept, names, mode, screen, onMode, onScreen, onWriteP
     const ro = new ResizeObserver(() => setWide(view.clientWidth >= 560)); ro.observe(view); setWide(view.clientWidth >= 560);
     return () => ro.disconnect();
   }, [view]);
-  const change = shown.kind === 'change' ? kept?.run.changes[shown.i] : undefined;
-  const pad = shown.kind === 'pad' ? script.pads[shown.i] ?? script.pads[0] : undefined;
-  const bytes = change ? change.bytes : pad?.bytes && pad.bytes.length === pad.size ? pad.bytes : null;
-  const at = change ? change.start : pad?.start ?? 0;
+  const patch = shown.kind === 'patch' ? mine.find(p => p.id === shown.id) : undefined;
+  const pad = !patch ? (shown.kind === 'pad' ? script.pads[shown.i] : undefined) ?? script.pads[0] : undefined;
+  const bytes = patch ? patch.bytes : pad?.bytes && pad.bytes.length === pad.size ? pad.bytes : null;
+  const at = patch ? patch.start : pad?.start ?? 0;
   const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a)) m.set(a, n); return m; }, [names]);
   const text = useMemo(() => {
     if (!bytes) return '';
@@ -346,21 +410,15 @@ function PadView({ script, kept, names, mode, screen, onMode, onScreen, onWriteP
     }
     return out.join('\n');
   }, [bytes, at, mode, screen, byAddr, wide]);
-  if (!pad && !change) return <div className="scr-view" ref={setView}><div className="empty small">Add a scratchpad: the script writes its results there.</div></div>;
-  const title = change ? `Changed ${rangeText(change)}` : `${pad!.name} · ${rangeText({ start: pad!.start, end: pad!.start + pad!.size })} · ${pad!.size} bytes`;
-  const fileName = `${script.name}_${change ? h4(change.start) : pad!.name}`.replace(/[^A-Za-z0-9_.-]+/g, '_');
-  const writeAt = () => {
-    if (!bytes) return;
-    const a = change ? change.start : parseAddr(target, names);
-    if (a == null) { toast('Write where? Give an address ($3000) or a label of the program', 'info'); return; }
-    if (a + bytes.length > 0x10000) { toast(`${bytes.length} bytes from $${h4(a)} run past $ffff`, 'warn'); return; }
-    onWritePatch(fileName, a, bytes);
-  };
+  if (!pad && !patch) return <div className="scr-view" ref={setView}><div className="empty small">Run the script: what it changes in the program shows here. A scratchpad (Add) keeps data outside the program.</div></div>;
+  const title = patch ? `${patch.name} · ${rangeText({ start: patch.start, end: patchEnd(patch) })} · ${plural(patch.bytes.length, 'byte')}${patch.off ? ' · left out' : ''}` : `${pad!.name} · ${rangeText({ start: pad!.start, end: pad!.start + pad!.size })} · ${pad!.size} bytes`;
+  const fileName = `${script.name}_${patch ? h4(patch.start) : pad!.name}`.replace(/[^A-Za-z0-9_.-]+/g, '_');
+  const differ = patch ? patch.bytes.reduce((n, b, i) => n + (b !== patch.old[i] ? 1 : 0), 0) : 0;
   return (
     <div className="scr-view" ref={setView}>
       <div className="scr-view-head">
         <b className="scr-view-title">{title}</b>
-        {change && <span className="muted small">{change.bytes.reduce((n, b, i) => n + (b !== change.old[i] ? 1 : 0), 0)} of them differ from the program's</span>}
+        {patch && <span className="muted small" title={`The program had: ${Array.from(patch.old.subarray(0, 64), b => h2(b)).join(' ')}${patch.old.length > 64 ? ' …' : ''}`}>{differ} differ from the original</span>}
         <span className="grow" />
         <div className="seg" role="group" aria-label="Show as">
           {(['hex', 'code', 'text'] as const).map(m => <button key={m} className={cx(mode === m && 'on')} aria-pressed={mode === m} onClick={() => onMode(m)}>{m === 'hex' ? 'Hex' : m === 'code' ? 'Code' : 'Text'}</button>)}
@@ -368,19 +426,17 @@ function PadView({ script, kept, names, mode, screen, onMode, onScreen, onWriteP
         {mode !== 'code' && <div className="seg" role="group" aria-label="Text as"><button className={cx(!screen && 'on')} aria-pressed={!screen} onClick={() => onScreen(false)} title="The bytes as PETSCII">PETSCII</button><button className={cx(screen && 'on')} aria-pressed={screen} onClick={() => onScreen(true)} title="The bytes as screen codes">Screen</button></div>}
       </div>
       {bytes ? <pre className="scr-dump mono" aria-label={`${title} as ${mode}`}>{text}</pre>
-        : <div className="empty small">{change ? '' : 'Empty until the script runs: Run fills it.'}</div>}
+        : <div className="empty small">Empty until the script runs: Run fills it.</div>}
       {bytes && <div className="scr-view-actions">
         <button className="btn small" onClick={() => onCopy(byteLines(bytes).join('\n'), `${bytes.length} bytes as .byte lines`)} title="Copy the bytes as Kick Assembler .byte lines"><Icon name="copy" size={13} /><span className="lbl">Copy as .byte</span></button>
-        <button className="btn small" onClick={() => onSave(`${fileName}.bin`, bytes, false, at)} title="Save the bytes as a binary file"><Icon name="download" size={13} /><span className="lbl">Save </span>.bin…</button>
-        <button className="btn small" onClick={() => onSave(`${fileName}.prg`, bytes, true, at)} title={`Save the bytes as a PRG that loads at $${h4(at)}`}><Icon name="download" size={13} /><span className="lbl">Save </span>.prg…</button>
-        <span className="grow" />
-        {change ? <>
-          <button className="btn small" onClick={() => onShow(change.start, change.end)} title="Select these bytes in the listing"><Icon name="target" size={13} /><span className="lbl">Show in listing</span></button>
-          <button className="btn small primary" onClick={writeAt} title="Write the bytes the run left here over the program, as a patch (it can be switched off and removed again)"><Icon name="pencil" size={13} />Write as patch…</button>
+        {patch ? <>
+          <span className="grow" />
+          <button className="btn small" onClick={() => onShow(patch.start, patchEnd(patch))} title="Select these bytes in the listing"><Icon name="target" size={13} /><span className="lbl">Show in listing</span></button>
         </> : <>
-          <label className="small muted" htmlFor="scr-target">Write at</label>
-          <input id="scr-target" className="mono scr-target" placeholder="$3000 or a label" value={target} onChange={e => setTarget(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') writeAt(); }} />
-          <button className="btn small primary" onClick={writeAt} title="Write the scratchpad's bytes over the program at that address, as a patch (it can be switched off and removed again)"><Icon name="pencil" size={13} />as patch…</button>
+          <button className="btn small" onClick={() => onSaveText(`${fileName}.txt`, mode === 'text' ? logText(bytes, pad!.fill ?? 0, screen) : text + '\n')}
+            title={mode === 'text' ? `Save the text as a log file: ${screen ? 'screen codes, 40 to a line' : 'PETSCII, a line to each RETURN ($0d)'}, without the fill after it` : `Save what is shown (${mode === 'hex' ? 'the hex dump' : 'the code'}) as a text file`}><Icon name="download" size={13} /><span className="lbl">Save </span>.txt…</button>
+          <button className="btn small" onClick={() => onSave(`${fileName}.bin`, bytes, false, at)} title="Save the bytes as a binary file"><Icon name="download" size={13} /><span className="lbl">Save </span>.bin…</button>
+          <button className="btn small" onClick={() => onSave(`${fileName}.prg`, bytes, true, at)} title={`Save the bytes as a PRG that loads at $${h4(at)}`}><Icon name="download" size={13} /><span className="lbl">Save </span>.prg…</button>
         </>}
       </div>}
     </div>

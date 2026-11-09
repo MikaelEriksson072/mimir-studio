@@ -339,10 +339,13 @@ describe('schemas', () => {
 
   it('reads the user scripts with what their scratchpads hold, and older files without them', () => {
     const script = { id: 's1', name: 'decrypt', lang: 'kickass' as const, source: '* = $c000\nstart: rts', pads: [{ name: 'pad1', start: 0xc800, size: 4, bytes: new Uint8Array([1, 2, 3, 4]) }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] };
-    const p = { ...demoProject(), userScripts: [script] };
+    // what a run changed in the program: a patch that names the script
+    const patch = { id: 'p1', name: 'decrypt', start: 0x0900, end: 0x0902, source: '.byte $01, $02', fill: 'keep' as const, over: false, bytes: new Uint8Array([1, 2]), old: new Uint8Array([3, 4]), script: 's1' };
+    const p = { ...demoProject(), userScripts: [script], patches: [patch] };
     const json = JSON.parse(JSON.stringify(serializeProject(p)));
     const back = deserializeProject(serializedProjectSchema.parse(json) as SerializedProject);
-    expect(back.userScripts?.[0]).toMatchObject({ name: 'decrypt', lang: 'kickass', source: script.source, pads: [{ name: 'pad1', start: 0xc800, size: 4 }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] });
+    expect(back.userScripts?.[0]).toMatchObject({ id: 's1', name: 'decrypt', lang: 'kickass', source: script.source, pads: [{ name: 'pad1', start: 0xc800, size: 4 }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] });
+    expect(back.patches[0]).toMatchObject({ name: 'decrypt', script: 's1' });
     expect([...back.userScripts![0].pads[0].bytes!]).toEqual([1, 2, 3, 4]);
     delete json.userScripts;
     expect(serializedProjectSchema.parse(json).userScripts).toBeUndefined();

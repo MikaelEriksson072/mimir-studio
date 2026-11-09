@@ -203,7 +203,7 @@ interface Project {
   relocs: Reloc[];                        // byte som programmet kopierar till en annan adress och kör där (8.1b)
   excluded: Addr[];                       // starten på block som lämnas utanför bygget (11.5)
   binary: Addr[];                         // starten på block som sparas som binärfil (11.6)
-  userScripts?: UserScript[];             // användarens skript, som körs i Mimir och aldrig exporteras (10.3)
+  userScripts?: UserScript[];             // användarens skript: koden exporteras aldrig, det de ändrar blir patchar (10.3)
   settings: Settings;
 }
 
@@ -211,7 +211,11 @@ interface UserScript {                    // se 10.3
   id: string; name: string;               // namnet är unikt i projektet
   lang: 'kickass';                        // Kick Assembler; fler språk (Python) kan komma
   source: string;
-  pads: ScriptPad[];                      // skriptets egna scratchpads
+  pads: ScriptPad[];                      // skriptets egna scratchpads (data utanför programmet, t.ex. en logg)
+}                                         // id sparas i .mimir.json: patcharna med Patch.script pekar på det
+
+interface Patch {                         // som i 10.2, och:
+  script?: string;                        // id för skriptet vars körning skrev byten (10.3); saknas: användarens patch
 }
 
 interface ScriptPad {
@@ -1884,50 +1888,83 @@ En patch är ny kod som användaren skriver över ett intervall av de laddade by
 ### 10.3 Skript
 
 Ett skript är Kick Assembler-kod som användaren skriver i Mimir för att arbeta med programmets byte, till exempel
-för att köra en dekrypteringsloop över ett block (`packages/core/src/script.ts`). Skriptet körs i Mimir på en kopia
-av programmets minne, aldrig i exporten eller i Build & Run, och sparas i projektet (`Project.userScripts`).
+för att ändra en tabell eller köra en dekrypteringsloop över ett block (`packages/core/src/script.ts`). Skriptet
+sparas i projektet (`Project.userScripts`) och körs i Mimir. **Det skriptet ändrar i programmets byte går in i
+programmet:** listningen, källkoden, exporten och Build & Run har de nya byten. **Skriptets egen kod går aldrig in i
+dem.** Med `my_table: .byte $01,$02,$03,$04` i källkoden och ett skript som dubblar tabellen står `.byte $02, $04,
+$06, $08` i `.asm`-filen efter en körning.
 
-- **Fliken Scripts** ligger bland huvudflikarna mellan Memory och källkoden. Till vänster står projektets skript och
-  knappen *New script*, i mitten skriptets namn, kontrollen, *Run* och papperskorgen, sedan editorn och under den
-  utdata: problemen, scratchpadsen, `.print`, senaste körningen med dess ändringar, och till höger en scratchpad eller
-  en ändring som hex, kod eller text. Gränsen mellan editorn och utdata kan dras. Utan skript visar fliken vad ett
-  skript är och knappen *New script*.
+- **Fliken Scripts** ligger bland huvudflikarna mellan Memory och källkoden. Till vänster står projektets skript
+  (*Project*, med *New script*) och biblioteket (*Library*). I mitten står skriptets namn, kontrollen, *Run*, *Save to
+  library* och papperskorgen, sedan editorn och under den utdata: problemen, *In the program*, scratchpadsen,
+  `.print` och senaste körningen, och till höger en ändring eller en scratchpad som hex, kod eller text. Gränsen
+  mellan editorn och utdata kan dras. Utan skript visar fliken vad ett skript är, *New script* och biblioteket.
 - **Nytt skript:** *New script* i fliken och i kommandopaletten (med markeringen, när det finns en), eller högerklick i
   listningen → *Program* → *New script from selection / block*, som börjar skriptet med markeringens eller blockets
   rader som listningen skriver dem: så klipper man ut en loop ur programmet. Skriptet heter `script`, `script2`, …,
-  dess kod står vid `* = $c000` (annars i det största fria området, från `$1000` när det får plats; `freePlace`) och
-  det får scratchpaden `pad1` på 256 byte efter koden. Koden börjar med en kommentar om var skriptet körs.
+  har ingen `* =` och ingen scratchpad, och börjar med en kommentar: det körs från första raden till sista RTS, det
+  det ändrar i programmets byte går in i programmet och dess `.asm`, koden själv aldrig.
 - **Editorn** är Monaco med Kick Assembler-färgningen (också `!`-etiketter, `.for`, `.while`, `.eval`, `.print`,
-  `else` och funktionerna). Den kompletterar programmets etiketter och nollsidevariabler, hårdvarunamnen,
-  scratchpadsen (först), mnemonics och direktiv, och visar en scratchpads adress och storlek när pekaren står på
-  namnet. `Enter` tar ett förslag bara när det ändrar texten. Det man skriver sparas i projektet en halv sekund efter
-  sista tangenten (ett steg att ångra) och kontrolleras direkt.
+  `else` och funktionerna). Den kompletterar programmets etiketter, nollsidevariabler och tabeller, hårdvarunamnen,
+  scratchpadsen (först), mnemonics och direktiv, och visar ett namns adress när pekaren står på det. `Enter` tar ett
+  förslag bara när det ändrar texten. Det man skriver sparas i projektet en halv sekund efter sista tangenten (ett
+  steg att ångra) och kontrolleras direkt.
+- **Skriptets eget minne:** skriptets kod och scratchpads är minne för sig. Adresserna namnger bara byten för
+  skriptet: programmets kod (en rutin skriptet anropar) ser alltid sina egna byte, också där skriptets kod har sin
+  adress, och skriptet läser och skriver programmets byte överallt där det inte självt har byte. Nollsidan och stacken
+  delar de. Därför **väljer Mimir adressen** när skriptets första kodrad inte är en `* =`: först minne som programmet
+  inte använder (`$c000` när det är ledigt, annars det största lediga området, från `$1000` när det får plats;
+  `freePlace`), och när programmet fyller minnet bland programmets byte, där programmet har en och samma byte längst
+  (troligen oanvänt), men aldrig där ett av programmets namn som skriptet använder ligger (`scriptPlace`). En egen
+  `* =` gäller som den står.
 - **Kontrollen** (`checkScript`) assemblerar koden med den inbyggda assemblern med programmets namn (som listningen
   skriver dem), hårdvarunamnen och scratchpadsen (`pad1` och `pad1_end`) till hands. Ett namn koden själv definierar
-  vinner. Fel och varningar står som markeringar på raderna, i listan *Problems* (ett klick går till raden) och i
-  toolbarens bricka: *Ready: N bytes at $c000-$c00e · starts at $c000* eller *1 error: line 2: Unknown symbol "x"*.
-  Fel är assemblerns, att koden saknas och scratchpads utan giltigt namn, med samma namn, utanför minnet eller över
-  varandra. Varningar är en scratchpad eller kod över programmets byte (de är skriptets medan det körs) eller i
-  stacken. **Run går bara när kontrollen inte har något fel.**
-- **Körningen** (`runScript`, i en egen worker; *Stop* avslutar den) sker i Sindris 6510 på 64 KB vanlig RAM, utan
-  ROM, I/O och avbrott: filerna som LOAD lägger dem (med påslagna patchar; en cartridges filer i banken C64:an startar
-  i), scratchpadsen fyllda med sin `fill`, och skriptets byte över dem. Skriptet anropas som med SYS: stacken har en
-  returadress, och körningen börjar vid etiketten `start`, annars vid kodens första byte. Den slutar vid RTS:en som
+  vinner. Toolbarens bricka säger bara om skriptet kan köras, *Ready to run*, eller vad som är fel, *Line 2: Unknown
+  symbol "x"* (*2 errors · …* när de är fler); var koden ligger och varifrån den körs står i verktygstipset. Felen
+  står också som markeringar på raderna och i listan *Problems* (ett klick går till raden). Fel är assemblerns, att
+  koden saknas, kod eller scratchpad i nollsidan eller stacken (`$0000–$01ff`, som skriptet delar med programmet),
+  scratchpads utan giltigt namn, med samma namn, utanför minnet eller över varandra, och **ett av programmets namn som
+  skriptet använder där skriptets egen kod eller en scratchpad ligger** (skriptet skulle läsa sig självt där), på
+  raden som använder namnet. **Run går bara när kontrollen inte har något fel.** Tills skriptet har gjort något säger
+  en rad under toolbaren vad *Run* gör.
+- **Körningen** (`runScript`, i en egen worker; *Stop* avslutar den) sker i Sindris 6510 utan ROM, I/O och avbrott,
+  med två minnen: programmets, filerna som LOAD lägger dem (med påslagna patchar; en cartridges filer i banken C64:an
+  startar i) **utan det skriptets tidigare körningar ändrade**, så att en körning till ger samma resultat (en XOR-loop
+  dekrypterar inte tillbaka), och skriptets eget, med koden och scratchpadsen fyllda med sin `fill`. Vems kod som kör
+  följer hoppen: en JSR, JMP eller branch från skriptet till en av dess egna adresser stannar i skriptet, allt annat
+  går till programmet, och en RTS går tillbaka till den som gjorde JSR:en. Skriptet anropas som med SYS: stacken har
+  en returadress, och körningen börjar vid etiketten `start`, annars vid kodens första byte. Den slutar vid RTS:en som
   återvänder därifrån, vid en BRK, vid en JAM eller efter 200 miljoner instruktioner (omkring 1,5 s). Skriptet kan
   anropa programmets egna rutiner (`jsr decrypt`) eller köra en loop som klistrats in.
-- **Resultatet:** vad scratchpadsen håller sparas i projektet (ett steg att ångra, *Run script "x"*). Projektets filer
-  ändras aldrig av en körning. *Last run* säger hur den slutade (*Returned (RTS at $c00e) after N instructions, M
-  cycles*), registren och tiden, och listar programmets byte som körningen ändrade utanför scratchpadsen och sin egen
-  kod (ändringar högst 8 byte isär blir ett intervall), och hur många byte som ändrades någon annanstans. Står koden
-  inte längre som när den kördes säger rubriken *code changed since*.
-- **Visningen:** en scratchpad (klick på raden) eller en ändring visas som *Hex* (16 byte en rad, 8 när det är smalt),
+- **Resultatet** (`writeScriptRun`): de byte i programmets minne som körningen ändrade, utom nollsidan och stacken
+  (processorns arbetsminne), skrivs in i programmet som skriptets patchar (10.2, `Patch.script` säger vilket skript),
+  en per ändring (ändringar högst 8 byte isär och i samma fil blir en), med namnet `skript` eller `skript_xxxx` när de
+  är flera och byten som `.byte`-rader. De ersätter skriptets tidigare patchar. Listningen märker dem *script namn*,
+  källkoden `// ==== changed by the script "namn": $0939-$093c, 4 bytes ====` och Explorer → Patches *· script*. Allt
+  i en körning är ett steg att ångra (*Run script "x"*), också vad scratchpadsen håller.
+- **In the program** listar skriptets ändringar med var sin på/av-knapp och ett klick visar byten. En ändring som
+  stängs av lämnas utanför programmet och förblir avstängd när skriptet körs igen (så länge den har samma intervall).
+  *Take out* tar alla ut (originalbyten kommer tillbaka) och skriptet står kvar; tas skriptet bort följer dess
+  ändringar med ut. En ändring som inte kan bli en patch (i en av användarens patchar, över kanten på ett relokerat
+  block) skrivs inte in, och *Last run* säger varför. Står koden inte längre som när den kördes säger rubriken *code
+  changed since*.
+- **Last run** säger hur körningen slutade (*Returned (RTS at $c008) after N instructions, M cycles*), registren och
+  tiden, och hur många byte som ändrades utanför programmets byte eller i nollsidan och stacken (de sparas inte).
+- **Scratchpads** används bara när man vill ha data utanför programmet, till exempel en logg: *Add* lägger till en
+  (efter den sista, placerad som koden; den är skriptets eget minne). De redigeras i tabellen: namn, adress, storlek
+  och fill (`$100` eller `256`). Flyttas eller ändras storleken på en glöms vad den höll. Vad en körning lämnar i dem
+  sparas med skriptet.
+- **Visningen:** en ändring eller en scratchpad (klick på raden) visas som *Hex* (16 byte en rad, 8 när det är smalt),
   *Code* (disassemblerad vid sin adress, med programmets namn) eller *Text* (32 tecken en rad), texten som PETSCII
-  eller skärmkoder. Byten kopieras som `.byte`-rader eller sparas som `.bin` eller `.prg` (med adressen som
-  laddadress). *Write as patch…* skriver en ändring över programmet där den är, och en scratchpad vid en adress eller
-  etikett man anger: patchdialogen (10.2) öppnas med byten som `.byte`-rader och *Fill the rest with* the bytes that
-  are there, så att resten av arbetet (kontroll, av och på, ta bort) är patchens. Högst 12 000 byte.
-- **Scratchpads** redigeras i tabellen: namn, adress, storlek och fill (`$100` eller `256`), och läggs till med *Add*
-  (efter den sista, i fritt minne) eller tas bort. Flyttas eller ändras storleken på en scratchpad glöms vad den höll.
+  eller skärmkoder. En ändring säger hur många byte som skiljer sig från originalet (originalet i verktygstipset) och
+  har *Show in listing*. Byten kopieras som `.byte`-rader. En scratchpad sparas som `.bin`, `.prg` (med adressen som
+  laddadress) eller **som loggfil**, *Save .txt…*: i Text-läget tecknen utan adresser, utan fyllnaden efter det sista
+  som skrevs, PETSCII med en rad per RETURN (`$0d`) eller skärmkoder 40 tecken en rad; i de andra lägena det som
+  visas.
+- **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
+  av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
+  när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett
+  likadant) och `×` tar bort det ur biblioteket; projekten behåller sina kopior.
 - **Assemblern** (`verify/kick-subset-assembler.ts`, samma som verifieringen och patcharna använder) kan utöver det
   generatorn skriver: multi-etiketter (`!loop:`, `!:`, `bne !-`, `jmp !loop+`), scopes (`{ }`, `name: { }` som läses
   `name.label` utanför), `.if`/`else`/`else .if`, `.for`, `.while`, `.var` och `.eval` (`=`, `++`, `--`, `+=`, `-=`,

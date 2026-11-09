@@ -596,7 +596,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const mv = blk && n > 0 && (l.a === blk.start || l.a + n === blk.end) ? movesOf(A, l) : null, tip = mv ? moveTip(mv) : undefined;
     // bytes a patch wrote over (the first of its lines names it)
     const pt = n > 0 && patches.length ? patchAt(patches, l.a) : undefined;
-    const ptTip = pt && `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`;
+    const ptTip = pt && (pt.script ? `Changed by the script "${pt.name}" when it ran: $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} (the Scripts tab runs it again or takes it out)` : `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`);
     rows.push(
       <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
@@ -604,7 +604,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno')} title={tip ?? runTip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
         <span className="hex" title={pt ? [ptTip, tip].filter(Boolean).join('\n\n') : tip}>{bytes}</span>
         {cycles && <CycleCell l={l} A={A} step={steps.get(l.a)} taken={cycles.taken} onToggle={cycles.onToggle} />}
-        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>patch {pt.name}</span>}</span>
+        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>{pt.script ? 'script' : 'patch'} {pt.name}</span>}</span>
         {textCols && n > 0 && !(l.k === 'dir' && l.reloc) && <TextCols A={A} a={l.a} n={n} lower={lower} sel={sel && !isSel && sel.start < l.a + n && sel.end > l.a ? sel : null} />}
       </div>);
   }

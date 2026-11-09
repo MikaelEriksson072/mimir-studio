@@ -266,6 +266,9 @@ export interface Patch {
   /** where its bytes are in the file, when that is not `start`: a patch in a relocated block (`Reloc`) is assembled
    *  where the code runs and written where the file has those bytes */
   at?: Addr;
+  /** what a user script (its id) changed in the program's bytes when it ran (spec 10.3): its next run takes it out
+   *  first and writes its new changes. Missing: a patch the user wrote */
+  script?: string;
 }
 
 /** The language a user script is written in (spec 10.3); Kick Assembler so far. */
@@ -273,7 +276,8 @@ export type ScriptLang = 'kickass';
 
 /**
  * A scratchpad of a user script: memory of the script's own at an address, cleared to `fill` before each run, whose
- * name (and `name_end`, the address after it) the script uses as labels. What the last run left in it is kept.
+ * name (and `name_end`, the address after it) the script uses as labels; for data kept outside the program (a log,
+ * say), which can be saved as a file. What the last run left in it is kept.
  */
 export interface ScriptPad {
   name: string;
@@ -287,7 +291,8 @@ export interface ScriptPad {
 
 /**
  * A script the user writes in Mimir to work on the program's bytes (spec 10.3): assembled with the program's names
- * at hand and run on a copy of the program's memory in an emulated 6510, never in the export or Build & Run.
+ * at hand and run on a copy of the program's memory in an emulated 6510. Its code is never in the export or Build &
+ * Run; what a run changes in the program's bytes is written into the program as its patches (Patch.script).
  */
 export interface UserScript {
   id: string;
@@ -360,7 +365,7 @@ export interface ProjectInput {
   zpPairs?: Record<Addr, boolean>;
   scripts?: Partial<Record<BuildScript, string>>;
   /** the patches (those that are on are in `files`): the source marks where each one that is on is */
-  patches?: Pick<Patch, 'name' | 'start' | 'bytes' | 'off'>[];
+  patches?: Pick<Patch, 'name' | 'start' | 'bytes' | 'off' | 'script'>[];
   /** the cartridge the files' chips are of: its memory map, start vectors and the image the export rebuilds */
   cart?: Cartridge | null;
   /** a bank of the cartridge analysed as a space of its own (spec 13.9b), other than the one the C64 starts in: its
@@ -414,7 +419,7 @@ export interface SerializedProject {
   /** `bytes` and `old` as base64; missing in project files from before patches */
   patches?: (Omit<Patch, 'id' | 'bytes' | 'old'> & { bytes: string; old: string })[];
   /** the user's scripts, a scratchpad's bytes as base64; missing in project files from before scripts, and without one */
-  userScripts?: (Omit<UserScript, 'id' | 'pads'> & { pads: (Omit<ScriptPad, 'bytes'> & { bytes?: string })[] })[];
+  userScripts?: (Omit<UserScript, 'id' | 'pads'> & { id?: string; pads: (Omit<ScriptPad, 'bytes'> & { bytes?: string })[] })[];
   /** the cartridge image as base64; missing in project files from before cartridges, and without one */
   cart?: { name: string; data: string };
   settings: Partial<Settings>;
@@ -911,6 +916,8 @@ export interface AssembleResult {
   prints: string[];
   /** where the first byte of the code went (in the order of the code, not of memory); -1: it has none */
   first: number;
+  /** the names from outside the code (AssembleOptions.names) it used, each with the first line that uses it */
+  external: Map<string, number>;
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {
