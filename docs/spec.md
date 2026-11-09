@@ -2258,6 +2258,35 @@ Bitfire, Bitbreakers loader, har med flit inget laddskript: varje del laddar nä
 fil efter dess nummer. Det som liknar ett skript mest är kommandoraden till d64write, Bitfires diskbyggare. Den listar
 filerna i den ordning de laddas (`-b`), startprogrammet (`--boot`), sidan (`--side`), dir-arten (`-a`) och vanliga filer
 (`-s`). Bitfire lägger sina filer utanför diskens katalog, i en egen katalog på spår 18, med varje fils laddadress och
+**Disken som på en C64.** Settings → General → *The disk in the Explorer* väljer mellan *Mimir's list* (förvalt, som
+ovan) och *As on a C64*: katalogen visas då som skärmen en C64 visar efter `LOAD"$",8` och `LIST`, ljusblått på blått
+inom den ljusblå ramen, med VICE:s teckensnitts-ROM (Toolchain → VICE; utan den Mimirs egna bokstäver och siffror,
+utan grafik, och det sägs under skärmen) och markören som blinkar efter `READY.`. Bilden ritas pixel för pixel när
+panelen är minst lika bred som C64:ans pixlar, annars utjämnad. `packages/core/src/c64/dirlist.ts` bygger raderna som
+1541:ans ROM gör (`directoryProgram`), länkar om dem som LOAD gör, listar dem som BASIC:s LIST och skriver ut dem genom
+en efterbildad skärmeditor (`directoryScreen`):
+
+- Diskens rad: RVS ON, namnet inom citattecken, id och DOS-typ; shiftade mellanslag (`$a0`) blir mellanslag, inget annat
+  ändras, så ett citattecken i namnet avslutar BASIC:s citat och byte från `$80` efter det listas som nyckelord.
+- En fils rad: blocken som radnummer, mellanslag så att citattecknet står i kolumn 5, namnet där det första shiftade
+  mellanslaget eller citattecknet blir det avslutande citattecknet (efter den 16:e byten om inget finns) och byten
+  efter det tappar bit 7; `*`, typen och `<`. Typ 5–7 läser vidare i 1541:ans tabeller (typ 6 och 7 har en nolla som
+  avslutar raden, och LOAD gör nya rader av resten).
+- Skärmeditorn: citatläge (kontrollkoder inom citattecken visas inverterade, RETURN och DEL verkar ändå), RVS ON till
+  RETURN, färgkoderna (färgen gäller rad efter rad), markörrörelser, DEL, INST och teckenuppsättningen (`$0e`).
+
+Rader som samma del av listningen skrev ut är ett element över bilden: en fils öppnar den med klick eller `Enter`, **+**
+lägger till den, `↑` `↓` och markeringen av filerna i projektet fungerar som i listan; diskens rad, andra typer än PRG,
+`BLOCKS FREE.` och `READY.` går inte att öppna. En fil som katalogens egna koder skrivit över (HOME, DEL) listas under
+skärmen. **Aa** bredvid utmatningsknappen byter teckenuppsättning som Commodore+Shift. *Mimir's list* eller *Restore
+defaults* visar disken som förut.
+
+**Test:** `test/dirlist.test.ts` jämför skärmen cell för cell (skärmkod och färg) med x64sc 3.10:s, med äkta
+drivemulering (1541:ans egen ROM), för diskar med udda namn, typ 5–7 och ett disknamn med citattecken och kontrollkoder;
+mot VICE stämmer också varje synlig rad på 14 diskar ur CSDB:s topp 200 (*The Lab*, *1337*, *The Hat*, *Aloft*, *Edge
+of Disgrace* …). `e2e/app.spec.ts` (*the disk as a C64 lists it*): inställningen, raderna, öppna, lägga till, piltangenter,
+Aa och tillbaka till listan.
+
 längd. `readBitfireDisk()` (`packages/core/src/c64/bitfire-disk.ts`) läser den och sektorerna i den ordning d64write
 fyller dem. En fil som är packad med Bitfires packare, bitnax (0.x) eller dali (1.x), packas upp. Filnamnen finns inte
 på disken.

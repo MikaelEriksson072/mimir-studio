@@ -11,6 +11,7 @@ import type { MountedDisk, MountedTape } from '../lib/types';
 import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
 import { useUi, type Activity } from '../store/ui';
 import { BookmarksView, type BookmarkEditing } from './Bookmarks';
+import { DiskScreen } from './DiskScreen';
 import { MemoryStrip, type CanvasColors } from './Heatmap';
 import { PackView, type PackViewProps } from './Pack';
 import { SideSection } from './SideSection';
@@ -400,30 +401,46 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
   );
 }
 
-/** The mounted .d64 or .g64, listed the way the 1541 lists it. A PRG opens with a click or Enter; + adds it to the
- *  project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
+/** The mounted .d64 or .g64, listed the way the 1541 lists it, in Mimir's list or (Settings → General) as the C64's
+ *  screen after LOAD"$",8 and LIST, where Aa switches the character set. A PRG opens with a click or Enter; + adds it
+ *  to the project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
  *  ("The work is not saved" → Save as a project…) */
 function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowPirateSlayer: () => void }) {
   const { img } = disk;
+  // Settings → General: the directory as a C64 lists it, and its character set switched as Commodore+Shift does (for
+  // this disk; null: as the listing leaves it)
+  const c64 = useUi(s => s.diskLook) === 'c64';
+  const [lower, setLower] = useState<{ bytes: Uint8Array; lower: boolean } | null>(null);
+  const lowerNow = lower?.bytes === disk.bytes ? lower.lower : null;
+  const kindOf = (f: D64File) => `${f.closed ? '' : '*'}${f.type}${f.locked ? '<' : ''}`;
+  const titleOf = (f: D64File) => (f.type === 'PRG' ? `Open ${f.name} (${f.blocks} blocks)${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : 'Only PRG files can be opened');
+  const actions = <>
+    {c64 && <button className={cx('icon-btn c64-case', lowerNow && 'on')} aria-pressed={!!lowerNow}
+      title={lowerNow ? 'Upper case and graphics, as Commodore+Shift switches the C64 back' : 'Lower and upper case, as Commodore+Shift switches the C64'}
+      aria-label="Lower case character set" onClick={() => setLower({ bytes: disk.bytes, lower: !(lowerNow ?? false) })}>Aa</button>}
+    <button className="icon-btn" title={`Eject ${disk.name}`} aria-label="Eject disk" onClick={onEject}><Icon name="eject" size={14} /></button>
+  </>;
   return (
-    <SideSection id="disk" title="Disk" summary={`"${img.name}"`} actions={<button className="icon-btn" title={`Eject ${disk.name}`} aria-label="Eject disk" onClick={onEject}><Icon name="eject" size={14} /></button>}>
+    <SideSection id="disk" title="Disk" summary={`"${img.name}"`} actions={actions}>
+      {c64 ? <DiskScreen disk={disk} open={open} lower={lowerNow} onOpenFromDisk={onOpenFromDisk} listKeys={listKeys} titleOf={titleOf} kindOf={kindOf} /> : <>
       <div className="disk-head mono small" title={disk.path ?? disk.name}><Icon name="disk" size={13} /><span className="disk-title">"{img.name}"</span><span className="muted">{img.id} {img.dosType}</span></div>
       <div className="disk-list" role="list" aria-label={`Files on ${disk.name}`}>
         {img.files.map((f, i) => {
-          const prg = f.type === 'PRG', kind = `${f.closed ? '' : '*'}${f.type}${f.locked ? '<' : ''}`;
+          const prg = f.type === 'PRG';
           return (
             <div key={i} role="listitem" className={cx('disk-row', !prg && 'off', open.has(f) && 'on')} aria-current={open.has(f) || undefined}
-              title={prg ? `Open ${f.name} (${f.blocks} blocks)${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : 'Only PRG files can be opened'}
+              title={titleOf(f)}
               tabIndex={prg ? 0 : -1} onClick={() => { if (prg) onOpenFromDisk(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (prg && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromDisk(f, false); } }}>
               <span className="mono small disk-blocks">{f.blocks}</span>
               <span className="mono disk-name">"{f.name}"</span>
-              <span className="mono small muted">{kind}</span>
+              <span className="mono small muted">{kindOf(f)}</span>
               {prg ? <button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFromDisk(f, true); }}><Icon name="plus" size={13} /></button> : <span />}
             </div>
           );
         })}
         {!img.files.length && <div className="muted small">No files on this disk.</div>}
       </div>
+      </>}
       {disk.spindle && (
         <div className="disk-spindle">
           <span><b>Spindle 3 disk:</b> {disk.spindle.jobs.length} job{disk.spindle.jobs.length === 1 ? '' : 's'} the loader reads, not files</span>
@@ -460,7 +477,7 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
           <button className="btn small" onClick={onShowPirateSlayer}>Pirate Slayer</button>
         </div>
       )}
-      <div className="side-hint">{img.freeBlocks} blocks free{img.tracks !== 35 ? ` · ${img.tracks} tracks` : ''}{img.format === 'G64' ? ' · G64 (GCR tracks)' : ''} · in drive 8 on Build &amp; Run</div>
+      <div className="side-hint">{c64 ? '' : `${img.freeBlocks} blocks free · `}{img.tracks !== 35 ? `${img.tracks} tracks · ` : ''}{img.format === 'G64' ? 'G64 (GCR tracks) · ' : ''}in drive 8 on Build &amp; Run</div>
     </SideSection>
   );
 }

@@ -12,6 +12,9 @@ export interface Sizes { side: number; insp: number; bottom: number }
 /** the inspector (the panel on the right): always open, or folded into a strip at the right edge that opens it over the
  *  editor when it is needed and folds it in again at a click outside it */
 export type InspectorMode = 'open' | 'auto';
+/** how the Explorer lists the mounted disk: Mimir's own list, or the C64's screen after LOAD"$",8 and LIST (its font,
+ *  PETSCII and colours) */
+export type DiskLook = 'mimir' | 'c64';
 /** what the listing's left column shows: the memory address of the line, or its line number in the .asm file */
 export type Gutter = 'addr' | 'line';
 /** the Graphics tab: memory as characters, sprites or bitmaps, and how it is drawn */
@@ -76,6 +79,8 @@ interface UiState {
   startScreen: boolean;
   /** the overview of the analysis opens once the analysis of a file just opened is in (Settings → General, 14.1b) */
   overview: boolean;
+  /** the mounted disk's directory as Mimir lists it or as a C64 does (Settings → General) */
+  diskLook: DiskLook;
   /** how Pack on the start screen packs a file without a project (the packer, format, kind of file …), for the next time */
   quickPack: PackPrefs;
   /** the side panel's sections opened in this run (by id); not persisted: every section is closed when the app starts */
@@ -96,7 +101,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'textCols', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'textCols', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'diskLook', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -118,6 +123,7 @@ export const useUi = create<UiState>((set) => ({
   followQuicksave: store.get('kr.followQuicksave', true),
   startScreen: store.get('kr.startScreen', true),
   overview: store.get('kr.overview', true),
+  diskLook: store.get<DiskLook>('kr.diskLook', 'mimir') === 'c64' ? 'c64' : 'mimir',
   quickPack: { ...DEFAULT_PACK, ...store.get<Partial<PackPrefs>>('kr.quickPack', {}) },
   sideOpen: [],
   blkOpen: [],

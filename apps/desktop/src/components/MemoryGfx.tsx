@@ -19,6 +19,7 @@ import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
 import { useUi, type GfxPrefs } from '../store/ui';
 import type { CharRomResult } from '../../shared/ipc';
+import { charRom } from '../lib/charrom';
 
 const GFX_MODES: ViewMode<GfxKind>[] = [
   { key: 'chars', label: 'Characters', icon: 'grid', sub: '8×8', title: 'Memory as characters: 8 bytes, 8 × 8 pixels each' },
@@ -50,12 +51,6 @@ const MARKS: Record<GfxKind, [string, string][]> = {
 /** a font per row: the blocks the screen codes can be picked from, the kinds they are most likely in first, code last */
 const CODE_KINDS: BlockKind[] = ['screen', 'text', 'data', 'table', 'words', 'lohi', 'fill', 'charset', 'bitmap', 'sprite', 'music', 'basic', 'code'];
 
-/** VICE's character ROM, asked for once; a ROM that was not found is asked for again the next time screens are shown */
-let romAsked: Promise<CharRomResult | null> | null = null;
-const charRom = () => {
-  romAsked ??= (window.kr ? window.kr.charRom().catch(() => null) : Promise.resolve(null)).then(r => { if (!r?.found) romAsked = null; return r; });
-  return romAsked;
-};
 
 interface MemoryGfxProps {
   A: AnalysisResult; R: RenderResult; cursor: Addr | null; sel: Sel | null;

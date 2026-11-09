@@ -1282,6 +1282,70 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   });
 });
 
+test('the disk as a C64 lists it (Settings → General), and Mimir\'s list again', async ({ app, page }) => {
+  // fixtures/d64/mimir-demo.d64: "RASTER DEMO" (49 blocks), "SPRITE", "NOTES" (SEQ); LIST of it on a C64 is checked
+  // cell by cell against VICE in packages/core/test/dirlist.test.ts
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted mimir-demo.d64: "MIMIR DEMO", 3 files')).toBeVisible();
+  await openSection(page, 'Disk');
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  const look = async (value: 'c64' | 'mimir') => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await settings.getByLabel('The disk in the Explorer').selectOption(value);
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+  };
+  const screen = page.getByRole('list', { name: 'Files on mimir-demo.d64, as a C64 lists them' });
+  const item = (name: string) => screen.locator(`[role=listitem][aria-label*='"${name}"']`);
+
+  await test.step('LOAD"$",8 and LIST: the C64\'s screen, a part of the listing per item', async () => {
+    await look('c64');
+    await expect(page.locator('.disk-row')).toHaveCount(0);
+    await expect(page.locator('.disk-head')).toHaveCount(0);
+    await expect.poll(() => screen.getByRole('listitem').evaluateAll(l => l.map(e => e.getAttribute('aria-label'))))
+      .toEqual(['0 "MIMIR DEMO      " KR 2A', '49 "RASTER DEMO" PRG', '1 "SPRITE" PRG', '1    "NOTES"            SEQ', '613 BLOCKS FREE.', 'READY.']);
+    // 27 columns of 8 pixels, a row of 8 for each line and the cursor's
+    expect(await page.locator('.c64-screen canvas').evaluate((c: HTMLCanvasElement) => [c.width, c.height])).toEqual([216, 56]);
+    // blocks free is on the screen, not under it
+    await expect(page.locator('.side-inner')).not.toContainText('613 blocks free');
+  });
+
+  await test.step('a file\'s rows open it, + adds it, ↑ ↓ go from file to file; Aa switches the character set', async () => {
+    await item('RASTER DEMO').click();
+    await expect(toast(page, 'Loaded RASTER DEMO.prg at $0801')).toBeVisible();
+    await page.getByRole('button', { name: 'Add SPRITE to this project' }).click();
+    await expect(toast(page, 'Loaded SPRITE.prg at $c000')).toBeVisible();
+    await expectFiles(page, ['RASTER DEMO.prg', 'SPRITE.prg']);
+    await expect(item('RASTER DEMO')).toHaveAttribute('aria-current', 'true');
+    await expect(item('SPRITE')).toHaveAttribute('aria-current', 'true');
+    // NOTES (SEQ) is on the screen but does not open
+    await expect(item('NOTES')).not.toHaveAttribute('tabindex', '0');
+    await item('RASTER DEMO').focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(item('SPRITE')).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(item('SPRITE')).toBeFocused();
+    const aa = page.getByRole('button', { name: 'Lower case character set' });
+    await aa.click();
+    await expect(aa).toHaveAttribute('aria-pressed', 'true');
+    await aa.click();
+    await expect(aa).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  await test.step('Mimir\'s list again', async () => {
+    await look('mimir');
+    await expect(screen).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Lower case character set' })).toHaveCount(0);
+    await expect(page.getByRole('list', { name: 'Files on mimir-demo.d64', exact: true }).getByRole('listitem'))
+      .toHaveText([/49\s*"RASTER DEMO"\s*PRG/, /1\s*"SPRITE"\s*PRG/, /1\s*"NOTES"\s*SEQ/]);
+    await expect(page.locator('.side-inner')).toContainText('613 blocks free');
+  });
+});
+
 test('an error stays until it is dismissed, the Messages tab keeps what the toasts said, and the status bar\'s items do what they show', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   const selected = page.getByRole('region', { name: 'Panels' }).getByRole('tab', { selected: true });

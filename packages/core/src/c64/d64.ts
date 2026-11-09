@@ -85,14 +85,21 @@ export function petsciiName(raw: Uint8Array): string {
   return s;
 }
 
-/** Read the directory of a .d64 image (or a .g64's, through its decoded sectors). */
-export function parseD64(image: Uint8Array): D64Image {
-  const u8 = diskSectors(image);
-  const { tracks, errorInfo } = sizeInfo(u8);
+/** The disk's BAM sector (18/0) and the blocks free as the 1541 counts them (tracks 1-35 without the directory track). */
+export function diskBam(u8: Uint8Array): { bam: Uint8Array; freeBlocks: number } {
+  const { tracks } = sizeInfo(u8);
   const bam = u8.subarray(sectorOffset(DIR_TRACK, 0, tracks), sectorOffset(DIR_TRACK, 0, tracks) + 256);
   let freeBlocks = 0;
   for (let t = 1; t <= 35; t++) if (t !== DIR_TRACK) freeBlocks += bam[4 * t];
-  const files: D64File[] = [];
+  return { bam, freeBlocks };
+}
+
+/** Where the directory's entries are in the image (D64 sectors), in their order: every entry that is not empty or
+ *  scratched (its type byte not 0), as a directory listing has them. */
+export function directoryEntries(u8: Uint8Array): number[] {
+  const { tracks } = sizeInfo(u8);
+  const { bam } = diskBam(u8);
+  const entries: number[] = [];
   const seen = new Set<number>();
   // the BAM points at the first directory sector; 18/1 when the link is broken
   let t = bam[0] === DIR_TRACK ? bam[0] : DIR_TRACK, s = bam[0] === DIR_TRACK && bam[1] < sectorsOnTrack(DIR_TRACK) ? bam[1] : 1;
@@ -100,18 +107,28 @@ export function parseD64(image: Uint8Array): D64Image {
     const off = sectorOffset(t, s, tracks);
     if (seen.has(off)) break; // a loop in the directory chain
     seen.add(off);
-    for (let e = 0; e < 8; e++) {
-      const p = off + e * 32, kind = u8[p + 2];
-      if (kind === 0) continue; // an empty or scratched entry
-      const type = TYPES[kind & 7];
-      if (!type) continue;
-      const raw = u8.slice(p + 5, p + 21);
-      files.push({ name: petsciiName(raw), raw, type, closed: !!(kind & 0x80), locked: !!(kind & 0x40), blocks: u8[p + 30] | (u8[p + 31] << 8), track: u8[p + 3], sector: u8[p + 4] });
-    }
+    for (let e = 0; e < 8; e++) if (u8[off + e * 32 + 2] !== 0) entries.push(off + e * 32);
     [t, s] = [u8[off], u8[off + 1]];
     if (t !== 0 && (t > tracks || s >= sectorsOnTrack(t))) break; // a broken link ends the listing
   }
-  const text = (a: number, n: number) => petsciiName(u8.subarray(sectorOffset(DIR_TRACK, 0, tracks) + a, sectorOffset(DIR_TRACK, 0, tracks) + a + n));
+  return entries;
+}
+
+/** The file a directory entry is: null for a type the 1541 has no name for (5-7). */
+export function directoryFile(u8: Uint8Array, p: number): D64File | null {
+  const kind = u8[p + 2], type = TYPES[kind & 7];
+  if (!type) return null;
+  const raw = u8.slice(p + 5, p + 21);
+  return { name: petsciiName(raw), raw, type, closed: !!(kind & 0x80), locked: !!(kind & 0x40), blocks: u8[p + 30] | (u8[p + 31] << 8), track: u8[p + 3], sector: u8[p + 4] };
+}
+
+/** Read the directory of a .d64 image (or a .g64's, through its decoded sectors). */
+export function parseD64(image: Uint8Array): D64Image {
+  const u8 = diskSectors(image);
+  const { tracks, errorInfo } = sizeInfo(u8);
+  const { bam, freeBlocks } = diskBam(u8);
+  const files = directoryEntries(u8).map(p => directoryFile(u8, p)).filter((f): f is D64File => f != null);
+  const text = (a: number, n: number) => petsciiName(bam.subarray(a, a + n));
   return { name: text(0x90, 16), id: text(0xa2, 2), dosType: text(0xa5, 2), format: u8 === image ? 'D64' : 'G64', tracks, errorInfo, freeBlocks, files };
 }
 

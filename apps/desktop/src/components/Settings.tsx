@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
-import type { InspectorMode } from '../store/ui';
+import type { DiskLook, InspectorMode } from '../store/ui';
 import type { EditorInfo, LocateKey } from '../../shared/ipc';
 import { Modal } from './Modal';
 
@@ -23,8 +23,10 @@ export interface AppPrefs {
   autoUnpack: boolean;
   /** the overview of the analysis opens when a file is opened and analysed */
   overview: boolean;
+  /** the mounted disk's directory in the Explorer: Mimir's list or the C64's screen */
+  diskLook: DiskLook;
 }
-const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true };
+const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true, diskLook: 'mimir' };
 
 /** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them) */
 export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
@@ -121,6 +123,12 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
             <small className="muted">Folded in, the inspector is a strip at the right edge and the listing gets its room. A click on the strip, or on the start of a block (its header in the listing), opens the inspector over the editor; a click outside it or Esc folds it in again. The button at the top of the inspector switches between the two.</small></label>
           <label className="check"><input id="set-gfxPictures" type="checkbox" checked={prefs.gfxPictures} onChange={e => setPrefs(p => ({ ...p, gfxPictures: e.target.checked }))} />
             <span>Show graphics as pictures in the listing<small className="muted"> — sprites, charsets and bitmaps are drawn as they look (in the colours of the Graphics tab, multicolour as the VIC registers say or as set for the block) instead of as .byte rows. Click a character, a sprite or a bitmap cell to select its bytes. The source and the export still write .byte</small></span></label>
+          <label className="field"><span>The disk in the Explorer</span>
+            <select id="set-diskLook" value={prefs.diskLook} onChange={e => setPrefs(p => ({ ...p, diskLook: e.target.value as DiskLook }))}>
+              <option value="mimir">Mimir's list: blocks, name and type in Mimir's font</option>
+              <option value="c64">As on a C64: LOAD"$",8 and LIST, in the C64's font and colours</option>
+            </select>
+            <small className="muted">As on a C64, the directory is the screen a C64 shows after LOAD"$",8 and LIST: light blue on blue, the names in PETSCII with their graphics, and whatever their control codes do (colours, RETURN, DEL), as the 1541 and BASIC list them. Its letters come from VICE's character ROM (Toolchain → VICE); without it, from Mimir's own C64 letters, with no graphics. A click on a file opens it as in Mimir's list; Aa beside the eject button switches the character set, as Commodore+Shift does. The screen is as wide as the side panel: drag its edge to see it larger. Mimir's list, or Restore defaults, shows the disk as before.</small></label>
           <label className="check"><input id="set-autoUnpack" type="checkbox" checked={prefs.autoUnpack} onChange={e => setPrefs(p => ({ ...p, autoUnpack: e.target.checked }))} />
             <span>Unpack packed files when they are opened<small className="muted"> — when Sindri (or the external unpacker in Toolchain) finds a file you open packed, it is unpacked at once, as Unpack does, without the click (in a project, Ctrl+Z brings the packed file back). A file Sindri cannot unpack stays as it was opened</small></span></label>
           <p className="muted small">{desktop ? 'Kept by the app (not in the project).' : 'Running outside the desktop app: there is no start screen.'}</p>
