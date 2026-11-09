@@ -1905,10 +1905,12 @@ $06, $08` i `.asm`-filen efter en körning.
   har ingen `* =` och ingen scratchpad, och börjar med en kommentar: det körs från första raden till sista RTS, det
   det ändrar i programmets byte går in i programmet och dess `.asm`, koden själv aldrig.
 - **Editorn** är Monaco med Kick Assembler-färgningen (också `!`-etiketter, `.for`, `.while`, `.eval`, `.print`,
-  `else` och funktionerna). Den kompletterar programmets etiketter, nollsidevariabler och tabeller, hårdvarunamnen,
-  scratchpadsen (först), mnemonics och direktiv, och visar ett namns adress när pekaren står på det. `Enter` tar ett
-  förslag bara när det ändrar texten. Det man skriver sparas i projektet en halv sekund efter sista tangenten (ett
-  steg att ångra) och kontrolleras direkt.
+  `else` och funktionerna), och visar ett namns adress när pekaren står på det. Den föreslår ord som **börjar** med
+  det som skrivits och är längre än det (`scriptSuggestions` i `monaco/providers.ts`): först på en rad mnemonics,
+  efter en punkt där direktiven, i en operand programmets etiketter, nollsidevariabler och tabeller, hårdvarunamnen,
+  scratchpadsen (först) och funktionerna, och **ingenting efter en instruktions kommatecken** (`,x` och `,y` är
+  indexregister) eller i en kommentar. **`Enter` gör alltid en ny rad; `Tab` tar ett förslag.** Det man skriver
+  sparas i projektet en halv sekund efter sista tangenten (ett steg att ångra) och kontrolleras direkt.
 - **Skriptets eget minne:** skriptets kod och scratchpads är minne för sig. Adresserna namnger bara byten för
   skriptet: programmets kod (en rutin skriptet anropar) ser alltid sina egna byte, också där skriptets kod har sin
   adress, och skriptet läser och skriver programmets byte överallt där det inte självt har byte. Nollsidan och stacken

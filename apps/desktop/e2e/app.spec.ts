@@ -6082,6 +6082,23 @@ test('scripts: Kick Assembler that runs in Mimir; what it changes goes into the 
     await expect(page.getByRole('note')).toContainText('What it changes in the program\'s bytes goes into the program and its .asm');
   });
 
+  await test.step('typing: no suggestion for the index register, names that start with what is typed, Enter ends the line', async () => {
+    const suggest = page.locator('.suggest-widget.visible');
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('        lda colors_0939,x');
+    await expect(suggest).toHaveCount(0);
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('sta col');
+    await expect(suggest).toContainText('colors_0939');
+    await expect(suggest).not.toContainText('SID_POT_X');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('rts');
+    await expect.poll(async () => (await editor.locator('.view-lines').innerText()).replace(/ /g, ' ')).toMatch(/lda colors_0939,x\n\s*sta col\n\s*rts/);
+    await expect(editor.locator('.view-lines')).not.toContainText('SID_POT_X');
+  });
+
   await test.step('an unknown name is an error on its line, and the script cannot run', async () => {
     await code('        lda no_such_label\n        rts\n');
     await expect(check).toHaveText('Line 1: Unknown symbol "no_such_label"');

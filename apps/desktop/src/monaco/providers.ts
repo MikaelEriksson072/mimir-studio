@@ -13,23 +13,46 @@ export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly
 const SCRIPT_WORDS = ['.byte', '.word', '.text', '.fill', '.const', '.var', '.label', '.eval', '.for', '.while', '.if', 'else', '.print', '.error', '.encoding', '.align', '.pseudopc',
   'round', 'floor', 'ceil', 'abs', 'min', 'max', 'mod', 'pow', 'sqrt', 'sin', 'cos', 'tan', 'toRadians', 'toDegrees', 'toIntString', 'toHexString', 'toBinaryString', 'PI', 'true', 'false'];
 
+/** the start of a line up to where an instruction's mnemonic goes: nothing, or a label (`loop:`, `!:`) */
+const AT_MNEMONIC = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?$/;
+/** an instruction's operand after a comma: `,x` or `,y` (the index register), never a name */
+const AT_INDEX = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?[A-Za-z]{3}(?:\.[A-Za-z]+)?\s+[^/]*,\s*$/;
+
+/**
+ * What a script's code may write where the cursor is, among the words that start with what is typed (not words that
+ * merely hold its letters, so `x` after `lda table,` is not SID_POT_X): first on a line the mnemonics and directives,
+ * in an operand the program's labels and variables, the hardware names, the scratchpads and the functions; after
+ * an instruction's comma nothing (the index register).
+ */
+export function scriptSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[]): { label: string; kind: 'pad' | 'name' | 'mnemonic' | 'word'; detail?: string }[] {
+  if (/\/\//.test(before) || AT_INDEX.test(before)) return [];
+  const dot = before.endsWith('.');
+  // a word that starts with what is typed and is more than it (a word typed in full needs no box)
+  const starts = (s: string) => { const t = (dot ? '.' : '') + typed.toLowerCase(), l = s.toLowerCase(); return l.startsWith(t) && l !== t; };
+  // a directive where a mnemonic goes (not `music.init` or a number)
+  if (dot) return AT_MNEMONIC.test(before.slice(0, -1)) ? SCRIPT_WORDS.filter(x => x[0] === '.' && starts(x)).map(label => ({ label, kind: 'word' as const })) : [];
+  if (!typed) return [];
+  if (AT_MNEMONIC.test(before)) return [...new Set(OPC.filter(o => !o.ill).map(o => o.mn.toLowerCase()))].filter(starts).map(label => ({ label, kind: 'mnemonic' as const }));
+  const own = new Set(pads.flatMap(p => [p.name, `${p.name}_end`]));
+  const out: { label: string; kind: 'pad' | 'name' | 'mnemonic' | 'word'; detail?: string }[] = [];
+  for (const [n, a] of names) if (starts(n)) out.push({ label: n, kind: own.has(n) ? 'pad' : 'name', detail: `$${h4(a)}${own.has(n) ? ' · scratchpad' : ''}` });
+  for (const x of SCRIPT_WORDS) if (x[0] !== '.' && starts(x)) out.push({ label: x, kind: 'word' });
+  return out;
+}
+
 export function registerProviders(monaco: typeof Monaco): void {
-  // a script's code: the program's labels and variables, the hardware names, the scratchpads, mnemonics and directives
+  // a script's code: what fits where the cursor is (scriptSuggestions); Tab takes one, Enter always ends the line
   monaco.languages.registerCompletionItemProvider(KICKASS, {
     triggerCharacters: ['.'],
     provideCompletionItems(model, pos) {
       if (model.uri.scheme !== 'script') return { suggestions: [] };
       const w = model.getWordUntilPosition(pos), line = model.getLineContent(pos.lineNumber);
-      const dot = line[w.startColumn - 2] === '.';
+      const before = line.slice(0, w.startColumn - 1), dot = before.endsWith('.');
       const range = new monaco.Range(pos.lineNumber, w.startColumn - (dot ? 1 : 0), pos.lineNumber, w.endColumn);
       const K = monaco.languages.CompletionItemKind;
-      if (dot) return { suggestions: SCRIPT_WORDS.filter(x => x[0] === '.').map(x => ({ label: x, kind: K.Keyword, insertText: x, range })) };
-      const pads = new Set(scriptContext.pads.flatMap(p => [p.name, `${p.name}_end`]));
-      const out: Monaco.languages.CompletionItem[] = [];
-      for (const [n, a] of scriptContext.names) out.push({ label: n, kind: pads.has(n) ? K.Struct : K.Variable, detail: `$${h4(a)}${pads.has(n) ? ' · scratchpad' : ''}`, insertText: n, range, sortText: (pads.has(n) ? '0' : '1') + n });
-      for (const m of new Set(OPC.filter(o => !o.ill).map(o => o.mn.toLowerCase()))) out.push({ label: m, kind: K.Keyword, insertText: m, range, sortText: '2' + m });
-      for (const x of SCRIPT_WORDS.filter(x => x[0] !== '.')) out.push({ label: x, kind: K.Function, insertText: x, range, sortText: '3' + x });
-      return { suggestions: out };
+      const kind = { pad: K.Struct, name: K.Variable, mnemonic: K.Keyword, word: K.Function } as const;
+      const order = { pad: '0', name: '1', mnemonic: '2', word: '3' } as const;
+      return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
     },
   });
   monaco.languages.registerHoverProvider(KICKASS, {
