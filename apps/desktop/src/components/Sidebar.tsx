@@ -6,7 +6,7 @@ import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeNam
 import { blockFolders } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
-import { cx, fmtBytes, groupOfKind } from '../lib/util';
+import { bankAdr, cx, fmtBytes, groupOfKind } from '../lib/util';
 import type { MountedDisk, MountedTape } from '../lib/types';
 import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
 import { useUi, type Activity } from '../store/ui';
@@ -397,12 +397,6 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
     </SideSection>
   );
 }
-
-/** `$8000`, or with a cartridge's banks `3:$8000` (the bank, then the address in it; 13.9b) */
-const bankAdr = (A: Pick<AnalysisResult, 'spaces'>, a: Addr): string => {
-  const s = A.spaces?.find(x => x.space === Math.floor(a / 0x10000));
-  return `${s ? `${s.bank}:` : ''}$${h4(a)}`;
-};
 
 /** The mounted .d64 or .g64, listed the way the 1541 lists it. A PRG opens with a click or Enter; + adds it to the
  *  project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused

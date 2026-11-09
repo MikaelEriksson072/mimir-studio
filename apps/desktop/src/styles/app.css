@@ -1150,3 +1150,53 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .qp-log pre { margin: 8px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .qp-settings { min-width: 0; padding: 8px 0; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); }
 .qp-settings > .seg.wide.pack-seg { margin: 0 10px 8px; }
+
+/* the overview of the analysis (Overview.tsx, spec 14.1b): what the analysis found, a card per part, with links */
+.modal.overview { width: min(980px, 100%); }
+.ov-body { padding-top: 2px; }
+.ov-files { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 12.5px; color: var(--fg-2); }
+.ov-files b { color: var(--fg); font-weight: 600; }
+.ov-map { display: flex; height: 16px; margin: 10px 0 0; border-radius: 4px; overflow: hidden; background: var(--map-empty); }
+.ov-map > button { flex: 0 1 0; min-width: 0; padding: 0; border: 0; cursor: pointer; }
+.ov-map > button:hover { filter: brightness(1.35); box-shadow: inset 0 0 0 1px var(--fg); }
+.ov-map > .ov-gap { flex: none; width: 3px; background: var(--panel); }
+.ov-open { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 0; }
+.ov-open-label { margin-right: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); }
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; margin: 12px 0 4px; }
+.ov-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); font-size: 12.5px; }
+.ov-card.wide { grid-column: 1 / -1; }
+.ov-card h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-2); }
+.ov-card h3 .ov-n { margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-3); }
+.ov-card p { margin: 0; }
+.ov-packed { border-color: color-mix(in srgb, var(--warn) 55%, transparent); background: color-mix(in srgb, var(--warn) 7%, var(--panel-2)); }
+.ov-packed h3 { color: var(--warn); }
+.ov-link { padding: 0; border: 0; background: none; color: var(--accent-hi); font: inherit; text-align: left; cursor: pointer; }
+.ov-link:hover { text-decoration: underline; }
+.ov-big { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 20px; font-weight: 600; }
+.ov-big .ov-label { font-size: 13px; font-weight: 400; color: var(--syn-label); }
+.ov-basic { padding: 3px 8px; border-radius: 5px; background: var(--editor); color: var(--fg-2); overflow-wrap: anywhere; }
+.ov-more { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: auto; padding-top: 4px; font-size: 12px; }
+.ov-loader + .ov-loader { padding-top: 6px; border-top: 1px solid var(--line); }
+.ov-loader-name { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.ov-loader-name .pill { margin-left: 0; }
+.ov-how { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 2px 0 !important; font-size: 12px; }
+.ov-parts { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; }
+.ov-rows { display: flex; flex-direction: column; }
+.ov-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 6px; margin: 0 -6px; border: 0; border-radius: 5px; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.ov-row:hover { background: var(--row-hover); }
+.ov-dot { flex: none; width: 9px; height: 9px; border-radius: 2px; }
+.ov-prob.lvl-err svg { color: var(--err); }
+.ov-prob.lvl-warn svg { color: var(--warn); }
+.ov-prob.lvl-hint svg { color: var(--hint); }
+.ov-types { columns: 2 300px; column-gap: 24px; }
+.ov-types .ov-type { width: calc(100% + 12px); break-inside: avoid; }
+.ov-type-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-type-n { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+.ov-type-b { min-width: 7ch; text-align: right; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.ov-share { flex: none; width: 70px; height: 6px; border-radius: 3px; background: var(--map-empty); overflow: hidden; }
+.ov-share i { display: block; height: 100%; border-radius: 3px; }
+.ov-music { flex-wrap: wrap; gap: 2px 8px; }
+.ov-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; margin: 0; }
+.ov-facts dt { color: var(--fg-2); }
+.ov-facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.ov-auto { margin: 0; }

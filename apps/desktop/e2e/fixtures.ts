@@ -105,6 +105,14 @@ export const test = base.extend<Fixtures & Options>({
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(String(e.stack ?? e)));
     await page.waitForLoadState('domcontentloaded');
+    // the overview of the analysis after a load (Settings → General, spec 14.1b) is off: it would cover the window
+    // each time a test opens a file. The settings are read as the window loads, so it loads again with it off; the
+    // overview's own test turns it on
+    if (await page.evaluate(() => localStorage.getItem('kr.overview')) == null) {
+      await page.evaluate(() => localStorage.setItem('kr.overview', 'false'));
+      await page.reload();
+      await page.waitForLoadState('domcontentloaded');
+    }
     if (start === 'without') await page.getByRole('button', { name: 'Without a project' }).click();
     await use(page);
     if (testInfo.status !== testInfo.expectedStatus) {

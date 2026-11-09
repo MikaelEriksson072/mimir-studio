@@ -1,4 +1,4 @@
-import { kindInfo, typeInfo, type BlockKind, type RenderResult } from '@mimir/core';
+import { h4, kindInfo, typeInfo, type Addr, type AnalysisResult, type BlockKind, type RenderResult } from '@mimir/core';
 import type { TypeGroup } from '@mimir/core';
 
 export const ROW = 20;
@@ -22,6 +22,11 @@ export const uid = (): string => Math.random().toString(36).slice(2, 9);
 export const cx = (...a: (string | false | null | undefined)[]): string => a.filter(Boolean).join(' ');
 export const cssVar = (n: string): string => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#888';
 export const fmtBytes = (n: number): string => n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`;
+/** `$8000`, or with a cartridge's banks `3:$8000` (the bank, then the address in it; 13.9b) */
+export const bankAdr = (A: Pick<AnalysisResult, 'spaces'>, a: Addr): string => {
+  const s = A.spaces?.find(x => x.space === Math.floor(a / 0x10000));
+  return `${s ? `${s.bank}:` : ''}$${h4(a)}`;
+};
 
 /** Cheap fingerprint of the generated files: tells whether a verification result is stale. */
 export const filesKey = (R: RenderResult): string => Object.entries(R.files).map(([k, v]) => {

@@ -21,8 +21,10 @@ export interface AppPrefs {
   gfxPictures: boolean;
   /** a packed file is unpacked as it is opened */
   autoUnpack: boolean;
+  /** the overview of the analysis opens when a file is opened and analysed */
+  overview: boolean;
 }
-const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false };
+const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true };
 
 /** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them) */
 export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
@@ -109,6 +111,8 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
         {tab === 'general' && <>
           <label className="check"><input id="set-startScreen" type="checkbox" checked={prefs.startScreen} onChange={e => setPrefs(p => ({ ...p, startScreen: e.target.checked }))} />
             <span>Show the start screen when Mimir starts<small className="muted"> — continue, a new project, open one, or work without a project. Off: Mimir goes on with what you worked on last (the start screen still comes when that project is gone). The project button in the title bar shows it at any time</small></span></label>
+          <label className="check"><input id="set-overview" type="checkbox" checked={prefs.overview} onChange={e => setPrefs(p => ({ ...p, overview: e.target.checked }))} />
+            <span>Show an overview of the analysis when a file is opened<small className="muted"> — once the analysis is done, a window in the middle says what it found (the program start, packing, loaders, problems, the blocks by type, code, graphics and music), with links to each part and to the listing, the .asm source, Graphics and Memory. A link, a click outside it or Esc closes it. The command palette shows it at any time</small></span></label>
           <label className="field"><span>Inspector (the panel on the right)</span>
             <select id="set-inspector" value={prefs.inspector} onChange={e => setPrefs(p => ({ ...p, inspector: e.target.value as InspectorMode }))}>
               <option value="open">Always open</option>

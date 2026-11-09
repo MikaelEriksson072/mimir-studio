@@ -3537,6 +3537,52 @@ plats utan att något kapas i varje fönsterbredd (ett e2e-test går igenom 2000
 Källflikens filnamn kortas med "…" (högst 12 em, 8 em på smal rad). Verktygen syns därmed också i smala fönster, där
 de tidigare var dolda.
 
+### 14.1b Översikten av analysen
+
+När en fil har laddats, hur den än öppnades (File-menyn, Ctrl+O, Smart attach, ett drag in i fönstret, Disk, Tape, ett
+laddskript, en VICE-quicksave) eller lades till, öppnas ett fönster mitt i appen, **Analysis overview**, som säger vad
+analysen hittade. Det kommer när analysen av de laddade filerna är klar (den djupa när den är på, 5.17), inte innan. Med
+*Unpack packed files when they are opened* på väntar det på uppackningen och visar det uppackade programmet; den packade
+filen får ingen översikt (som längst 30 s, sedan visas den som den är). Uppackningen räknas som en laddning (8.11b):
+*Unpack* i översikten stänger den, och översikten kommer igen för det uppackade programmet. Ett projekt som öppnas,
+demon och ett omladdat fönster ger ingen översikt, och den kommer inte över en annan dialog.
+
+Överst står filerna (namn, intervall, storlek, *VICE snapshot*; en cartridge med antal chips och banker) och hur lång tid
+analysen tog, och under dem en **blockkarta**: blocken i adressordning som en stapel, där block av samma typgrupp
+bredvid varandra blir ett stycke i gruppens färg (14.2) och ett mellanrum står där de laddade byten tar slut. Ett klick
+på ett stycke går dit i listningen. Raden **Open** har snabblänkar till flikarna: *Listing*, `.asm`-källan, *Graphics*
+(vid det första grafikblocket när det finns ett), *Memory* och *Drive code* när programmet laddar upp kod till 1541:an.
+
+Sedan kommer analysens delar, ett kort var:
+- **Packed** (bara när en fil är packad eller kan vara det, över hela bredden): vad packningsanalysen säger och knappen
+  *Unpack* (eller *Unpack with …*), och en länk till dekrunchern.
+- **Program start**: startadressen och dess etikett (en länk till listningen), hur analysen vet den (satt av dig,
+  snapshotens BASIC SYS, där uppackaren lämnade programmet, SYS i BASIC-raden, cartridgens startvektor eller
+  laddadressen när ingen SYS finns), BASIC-raden med SYS och länken *Program start in the Explorer*.
+- **Loaders**: varje loader (högst tre) med namn, om den hittades på sin egen kod eller sina drag, hur den fungerar och
+  upp till fyra av dess delar som länkar; *Loaders in the Explorer* öppnar sektionen vid den första delen, och flikarna
+  för ett laddskript eller bandet (Spindle, Bitfire, Booze, Sparkle, Pirate Slayer, Tape) har var sin länk.
+- **Problems**: fel, varningar och tips (länkar till fliken Problems), vad den djupa analysen gjorde (eller att den är
+  av) och *Analysis log*.
+- **Blocks** (över hela bredden): varje blocktyp med antal block, byte och andel av de laddade byten. Ett klick visar
+  Blocks-vyn med typens mapp öppen och går till dess första block.
+- **Code**: instruktioner, kodbyte, rutiner, etiketter, korsreferenser, odokumenterade opkoder (en länk till den
+  första), självmodifierande skrivningar, avbrottsrutiner och tidskod, och länkar till Raster IRQs, Relocated, Drive code
+  och Statistics när de har något.
+- **Graphics**: sprites, teckenset, bitmappar och skärmar med antal och den första adressen. Ett klick öppnar Graphics
+  vid typens första block, markerat och ritat som den typen (sprites, chars, bitmap, screens); därunder VIC-banken,
+  bitmappsläge, multicolor och spritepekare.
+- **Music**: musikblocken (högst tre) med intervall, init och play (länkar till listningen) och vad körningen av dem
+  spelade (5.8).
+
+Varje länk stänger fönstret och går sedan dit den säger. Ett klick utanför fönstret, `Esc`, krysset och *Close* stänger
+det också. Settings → General → *Show an overview of the analysis when a file is opened* (på från början, sparas per
+användare som `overview` i `apps/desktop/src/store/ui.ts`) slår av och på det, liksom rutan *Show this overview when a
+file is opened* i fönstrets fot. Kommandopaletten har *Show the analysis overview*, som visar det när som helst, även
+när det är avslaget. Vad korten säger räknas fram i `apps/desktop/src/lib/overview.ts` och läggs ut i
+`components/Overview.tsx`. E2E-testerna börjar med översikten av (fixturen sätter valet och laddar om fönstret), så att
+den inte täcker fönstret när de öppnar filer; dess eget test slår på den.
+
 ### 14.2 Visuellt språk
 
 Mörkt, grafitgrått tema med en accent hämtad från C64:ans ljusblå (`#8b80f9` i mörkt läge). Blocktyper har fasta färger i alla vyer (gutter i listningen, heatmap, chips, legender): kod blå, grafik orange, musik turkos, tabeller gul, text magenta, BASIC violett, data och fyllnad neutrala. Typsnitt: IBM Plex Sans för gränssnittet, JetBrains Mono för kod, Silkscreen för logotypen.

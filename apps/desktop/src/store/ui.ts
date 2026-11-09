@@ -72,6 +72,8 @@ interface UiState {
   followQuicksave: boolean;
   /** the start screen is shown when the app starts; off: it goes on with what was worked on last */
   startScreen: boolean;
+  /** the overview of the analysis opens once the analysis of a file just opened is in (Settings → General, 14.1b) */
+  overview: boolean;
   /** how Pack on the start screen packs a file without a project (the packer, format, kind of file …), for the next time */
   quickPack: PackPrefs;
   /** the side panel's sections opened in this run (by id); not persisted: every section is closed when the app starts */
@@ -92,7 +94,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -112,6 +114,7 @@ export const useUi = create<UiState>((set) => ({
   autoUnpack: store.get('kr.autoUnpack', false),
   followQuicksave: store.get('kr.followQuicksave', true),
   startScreen: store.get('kr.startScreen', true),
+  overview: store.get('kr.overview', true),
   quickPack: { ...DEFAULT_PACK, ...store.get<Partial<PackPrefs>>('kr.quickPack', {}) },
   sideOpen: [],
   blkOpen: [],

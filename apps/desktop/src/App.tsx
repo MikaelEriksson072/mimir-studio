@@ -15,7 +15,7 @@ import {
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
-import { useUi, type Activity, type InspectorMode } from './store/ui';
+import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
@@ -54,6 +54,8 @@ import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, StartScreen,
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
+import { AnalysisOverview, type OverviewLinks } from './components/Overview';
+import { GFX_KIND } from './lib/overview';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
@@ -80,6 +82,9 @@ function extendSel(s: Sel | null, from: Range | null, r: Range): Sel {
   const a1 = s?.anchor != null ? (s.anchorEnd ?? a0 + 1) : (from?.end ?? a0 + 1);
   return { start: Math.min(a0, r.start), end: Math.max(a1, r.end), multi: true, anchor: a0, anchorEnd: a1 };
 }
+
+/** the bottom panel's tabs of a loader's script or the tape, which the analysis overview links to */
+const SCRIPT_TABS: readonly BottomTab[] = ['spindle', 'bitfire', 'booze', 'sparkle', 'pirateslayer', 'tape'];
 
 /** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
 type Note = { text: string; n: number };
@@ -147,7 +152,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'overview' | null>(null);
   /** the block the Block size dialog changes (its start when the dialog opened) */
   const [sizeAt, setSizeAt] = useState<Addr | null>(null);
   /** the patch dialog's range and code */
@@ -518,6 +523,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** files loaded while *Unpack packed files when they are opened* is on (Settings → General): each is unpacked once
    *  its unpacker says it is packed (see `unpackFile`), or left as it is */
   const toUnpack = useRef(new Set<string>());
+  /** the files the overview of the analysis waits for (Settings → General), and when they were loaded */
+  const overviewFor = useRef<{ ids: string[]; n: number } | null>(null);
   /** after a load (14.1): the Explorer's Files section folds up at once; once the analysis is of the files loaded,
    *  Loaders opens when they hold a loader and Program start when the start is known. The other sections stay as they
    *  are, and the Explorer is shown only where the load shows it. Unpack's result is a load too (`unpacked`: it is not
@@ -527,6 +534,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (open.includes('files')) setUi({ sideOpen: open.filter(x => x !== 'files') });
     loaded.current = { ids, add, n: Date.now() };
     if (!unpacked && useUi.getState().autoUnpack) for (const id of ids) toUnpack.current.add(id);
+    // the overview of the analysis opens once it is in (14.1b); an unpack's result takes the place of the packed file's
+    overviewFor.current = useUi.getState().overview ? { ids, n: Date.now() } : null;
   };
   useEffect(() => {
     const l = loaded.current;
@@ -2296,11 +2305,27 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
+    { id: 'overview', label: 'Show the analysis overview: what the analysis found, with links to each part', run: () => setModal('overview') },
   ];
   // the dialogs of "The work is not saved" hold the keys too
   const dialog = modal ?? (unsavedAsk || saveFirst || closeAsk ? 'project' : null);
   /** Pack a file over the work (Smart attach gave it a source): the work's keys wait until it goes back */
   const overWork = !!packSource;
+  /* ---- the overview of the analysis (14.1b): it opens once the analysis of the files just loaded is in (the deep one
+     when that is on) and the unpack they wait for (Unpack packed files when they are opened) is done, or 30 s have gone
+     by; not over another dialog, nor for files the work no longer has ---- */
+  const [overviewTick, setOverviewTick] = useState(0);
+  useEffect(() => {
+    const o = overviewFor.current;
+    if (!o || rProject !== project || !final) return;
+    if (Date.now() - o.n < 30000 && (unpacking.current || o.ids.some(id => toUnpack.current.has(id)))) {
+      const t = setTimeout(() => setOverviewTick(n => n + 1), 250);
+      return () => clearTimeout(t);
+    }
+    overviewFor.current = null;
+    if (dialog || overWork || !useUi.getState().overview || !project.files.some(f => o.ids.includes(f.id))) return;
+    setModal('overview');
+  }, [A, rProject, project, final, overviewTick, dialog, overWork]);
   /** ← / →: the byte before or after the cursor's, on to the line before or after; from a line picked whole, its first
    *  (→) or last (←) byte. A line without bytes of its own as cells (an instruction) is picked whole. */
   const stepCell = (dirn: 1 | -1, extend: boolean) => {
@@ -2642,6 +2667,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return () => window.removeEventListener('pointerdown', down, true);
   }, [inspOut]);
   const nav = (a: Addr) => navigate(a, { center: true, listing: true });
+  /** where the links of the analysis overview go, once it has closed (14.1b) */
+  const overviewLinks: OverviewLinks = {
+    addr: nav,
+    tab: (t, b) => {
+      // a graphics block: Graphics opens at it, selected, and draws it as its type is
+      if (t === 'gfx' && b) {
+        navigate(b.start, { keepSel: true });
+        setSel({ start: b.start, end: b.end, multi: true, anchor: b.start, anchorEnd: b.end });
+        const kind = GFX_KIND[b.type];
+        if (kind) setUi({ gfx: { ...useUi.getState().gfx, kind } });
+      }
+      setUi({ tab: t });
+    },
+    blocks: (kind, first) => {
+      const open = useUi.getState().blkOpen;
+      setUi({ activity: 'blocks', sidePanel: true, ...(open.includes(kind) ? {} : { blkOpen: [...open, kind] }) });
+      nav(first);
+    },
+    section: (id, at) => { showSection(id); if (at != null) nav(at); },
+    bottom: t => setUi({ bottom: t, panelOpen: true }),
+    unpack: i => void unpackFile(i),
+  };
   /** "Go to" with a range: select its loaded part as one anchor, like a block header */
   const selectRange = (s: Addr, e: Addr) => {
     let a = s, b = Math.min(e, 0x10000);
@@ -2900,7 +2947,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />
       </div>}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} packing={packing} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
+        scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} links={overviewLinks} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
