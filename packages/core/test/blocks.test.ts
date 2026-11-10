@@ -2,7 +2,7 @@
  * neighbouring block, giving a block a new range, and marking bytes inside a line (the rest keeps its type). */
 import { describe, expect, it } from 'vitest';
 import {
-  analyze, findBlock, keepCutTypes, makeDemo, moveBlockKeys, moveFrom, parsePrg, render, resizeBlock, splitBlock, verify,
+  analyze, findBlock, keepCutTypes, makeDemo, markOverride, moveBlockKeys, moveFrom, parsePrg, render, resizeBlock, splitBlock, verify,
   type AnalysisResult, type Override, type ProjectInput,
 } from '../src';
 import { fromSource } from './helpers/programs';
@@ -91,9 +91,87 @@ describe('the user\'s program', () => {
   });
 });
 
+/** a main routine and the two subroutines it calls, one after the other: a code block each */
+const SUBS = `
+.pc = $1000 "Code"
+start:  jsr sub1
+        jsr sub2
+        rts
+sub1:   lda #$01
+        sta $d020
+        rts
+sub2:   lda #$02
+        sta $d021
+        rts
+`;
+const SUB1 = 0x1007, SUB2 = 0x100d, SUBS_END = 0x1013;
+
+describe('Auto merge: marking takes in the blocks of that type next to it', () => {
+  const p: ProjectInput = { name: 'subs', files: [fromSource('subs.prg', SUBS)], overrides: [], labels: {}, comments: {}, settings: {} };
+  const A0 = analyze(p);
+
+  it('has a code block per routine', () => {
+    expect(spans(A0, 0x1000, SUBS_END)).toEqual([[0x1000, SUB1, 'code'], [SUB1, SUB2, 'code'], [SUB2, SUBS_END, 'code']]);
+  });
+
+  it('merges a code block marked as code with the code blocks before and after it into one block', () => {
+    const m = markOverride(A0, SUB1, SUB2, 'code');
+    expect([m.prev?.start, m.next?.start]).toEqual([0x1000, SUB2]);
+    expect(m.override).toEqual({ start: 0x1000, end: SUBS_END, type: 'code', props: { one: true } });
+    const { A, R } = withOverrides(p, [m.override]);
+    expect(spans(A, 0x1000, SUBS_END)).toEqual([[0x1000, SUBS_END, 'code']]);
+    // the subroutines keep their names and their code
+    expect(R.labels.get(SUB1)?.name).toBeTruthy();
+    expect(R.lines.filter(l => l.k === 'ins').length).toBe(9);
+  });
+
+  it('merges with the one neighbour there is, and not at all when it is off', () => {
+    const m = markOverride(A0, 0x1000, SUB1, 'code');
+    expect([m.prev, m.next?.start]).toEqual([null, SUB1]);
+    expect(spans(withOverrides(p, [m.override]).A, 0x1000, SUBS_END)).toEqual([[0x1000, SUB2, 'code'], [SUB2, SUBS_END, 'code']]);
+    const off = markOverride(A0, SUB1, SUB2, 'code', false);
+    expect(off).toEqual({ override: { start: SUB1, end: SUB2, type: 'code' }, prev: null, next: null });
+  });
+
+  it('keeps merged code one block when it is marked as code again, and when it is split', () => {
+    const merged = withOverrides(p, [markOverride(A0, SUB1, SUB2, 'code').override]).A;
+    const again = markOverride(merged, 0x1000, SUBS_END, 'code');
+    expect(again.override).toEqual({ start: 0x1000, end: SUBS_END, type: 'code', props: { one: true } });
+    const s = splitBlock(merged, SUB1);
+    if ('error' in s) throw new Error(s.error);
+    expect(s.overrides).toEqual([{ start: SUB1, end: SUBS_END, type: 'code', props: { one: true } }]);
+    const ov = [markOverride(A0, SUB1, SUB2, 'code').override, ...s.overrides];
+    expect(spans(withOverrides(p, ov).A, 0x1000, SUBS_END)).toEqual([[0x1000, SUB1, 'code'], [SUB1, SUBS_END, 'code']]);
+  });
+
+  it('does not take in a block of the same type in another file', () => {
+    const two = analyze({ name: 't', files: [{ name: 'a.prg', load: 0x1000, bytes: new Uint8Array(16).fill(1) }, { name: 'b.prg', load: 0x1010, bytes: new Uint8Array(16).fill(2) }],
+      overrides: [{ start: 0x1000, end: 0x1010, type: 'data' }, { start: 0x1010, end: 0x1020, type: 'data' }] });
+    expect(spans(two, 0x1000, 0x1020)).toEqual([[0x1000, 0x1010, 'data'], [0x1010, 0x1020, 'data']]);
+    expect(markOverride(two, 0x1000, 0x1010, 'bytes').next).toBeNull();
+  });
+});
+
 describe('the showcase', () => {
   const p = demoInput();
   const A0 = analyze(p);
+
+  it('merges a text marked as text with the text of that encoding after it', () => {
+    const m = markOverride(A0, 0x0949, 0x0960, 'text');
+    expect([m.prev, m.next?.start]).toEqual([null, 0x0960]);
+    expect(m.override).toEqual({ start: 0x0949, end: 0x0985, type: 'text', props: { enc: 'petscii' } });
+    expect(spans(withOverrides(p, [m.override]).A, 0x0939, 0x0985)).toEqual([[0x0939, 0x0949, 'table'], [0x0949, 0x0985, 'text']]);
+    // screen codes are another type of text, and bytes are not a table
+    expect(markOverride(A0, 0x0949, 0x0960, 'textsc').override).toEqual({ start: 0x0949, end: 0x0960, type: 'text', props: { enc: 'screen' } });
+    expect(markOverride(A0, 0x0949, 0x0960, 'bytes').override).toEqual({ start: 0x0949, end: 0x0960, type: 'data' });
+  });
+
+  it('merges with the table before it, which gives its kind', () => {
+    const m = markOverride(A0, 0x0949, 0x0960, 'table');
+    expect(m.override).toEqual({ start: 0x0939, end: 0x0960, type: 'table', props: { sub: 'colors' } });
+    const { A } = withOverrides(p, [m.override]);
+    expect(findBlock(A.blocks, 0x0950)).toMatchObject({ start: 0x0939, end: 0x0960, type: 'table' });
+  });
   // the color table $0939-$0948, then the texts $0949-$095f and $0960-$0984
   it('has the blocks the tests use', () => {
     expect(spans(A0, 0x0939, 0x0985)).toEqual([[0x0939, 0x0949, 'table'], [0x0949, 0x0960, 'text'], [0x0960, 0x0985, 'text']]);

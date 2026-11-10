@@ -61,6 +61,8 @@ export interface OverrideProps {
   /** sprites, a charset or a bitmap: drawn multicolour (true) or hires (false) in the listing's pictures; missing:
    *  as the VIC evidence says ($d01c for sprites, $d016 for the others) */
   mc?: boolean;
+  /** code: one block over the whole range, not split per routine (code blocks merged when marking, Auto merge) */
+  one?: boolean;
 }
 
 export interface Override {
@@ -443,6 +445,8 @@ export interface BlockProps {
   to?: Addr;
   /** graphics drawn multicolour or hires (OverrideProps.mc) */
   mc?: boolean;
+  /** code merged into one block, not split per routine (OverrideProps.one) */
+  one?: boolean;
 }
 
 export interface Block {

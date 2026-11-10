@@ -31,7 +31,7 @@ export function findBlock(blocks: readonly Block[], addr: Addr): Block | null {
 type NewBlock = Omit<Block, 'id' | 'user' | 'entropy'> & Partial<Pick<Block, 'id' | 'user' | 'entropy'>>;
 
 export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg: MemConfigInfo | null = null): Classification {
-  const { S, mem, owner, insLen, codeOwner, basics, ov, ovProps, xrefs, entryKind, ijumps, lohiTabs, loaded, L } = ctx;
+  const { S, mem, owner, insLen, codeOwner, basics, ov, ovProps, joined, xrefs, entryKind, ijumps, lohiTabs, loaded, L } = ctx;
   const { ptrTargets, textPtrs, strings, wordPtrs, dataEv } = ctx.ev;
 
   // ---- 5.10 classification map ----
@@ -201,7 +201,8 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
     let e = a + 1;
     const fileA = owner[a];
     if (t === T.CODE) {
-      while (e < 0x10000 && tm[e] === T.CODE && owner[e] === fileA && !(insLen[e] && routineKinds.has(entryKind.get(e)))) e++;
+      // a block per routine, except in code the user merged into one block
+      while (e < 0x10000 && tm[e] === T.CODE && owner[e] === fileA && !(insLen[e] && routineKinds.has(entryKind.get(e)) && !joined[e])) e++;
       const k = entryKind.get(a);
       pushBlock(a, e, T.CODE, {}, k === 'guess' ? 0.6 : 1, k === 'guess' ? 'nothing traced reaches it, but it decodes as a routine' : k ? `entry: ${k}` : 'reached by code flow');
     } else if (t === T.DATA && ov[a] === T.DATA) {

@@ -176,8 +176,9 @@ test('select large ranges and merge the blocks inside them into one', async ({ p
     await page.mouse.up();
     await expect(statusBar(page)).toContainText('sel $0949–$096f (39 B)');
     await page.keyboard.press('t');
-    await expect(toast(page, '$0949–$096f marked as Text (PETSCII), merging 3 blocks into one')).toBeVisible();
-    expect(headersIn(await listingRows(page), 0x0949, 0x0970)).toEqual([expect.objectContaining({ adr: '0949', chip: 'Text', user: true })]);
+    // Auto merge: the PETSCII text that starts where the selection ends joins it
+    await expect(toast(page, '$0949–$096f marked as Text (PETSCII) and merged with the Text (PETSCII) block after it: one block $0949–$0984 (4 blocks)')).toBeVisible();
+    expect(headersIn(await listingRows(page), 0x0949, 0x0985)).toEqual([expect.objectContaining({ adr: '0949', chip: 'Text', user: true })]);
   });
 
   await test.step('dragging past the bottom edge scrolls the listing and keeps extending the selection', async () => {

@@ -3,6 +3,7 @@ import type { Addr, AnalysisResult, Block, BlockKind, ListingLine, NumberFormat,
 import { findBlock } from './analyze/classify';
 import { MARK_AS, MARK_TYPE } from './model';
 import { h4 } from './util/hex';
+import { relocAt } from './relocs';
 
 export interface BlockMerge {
   /** append it to `project.overrides` */
@@ -46,6 +47,7 @@ function overrideLike(b: Block, start: Addr, end: Addr): Override {
   if (type === 'data' || type === 'table' || type === 'words') { if (p.fmt) props.fmt = p.fmt; if (p.row) props.row = p.row; }
   if (type === 'music') { if (p.init != null) props.init = p.init; if (p.play != null) props.play = p.play; }
   if ((type === 'sprite' || type === 'charset' || type === 'bitmap') && p.mc != null) props.mc = p.mc;
+  if (type === 'code' && p.one) props.one = true;
   return { start, end, type, ...(Object.keys(props).length ? { props } : {}) };
 }
 
@@ -169,7 +171,8 @@ export function splitBlock(A: AnalysisResult, at: Addr): BlockSplit | { error: s
   const fixed = fixedBlock(b); if (fixed) return { error: fixed };
   if (at === b.start) return { error: `$${h4(at)} is the start of its block already` };
   const inside = insideInstruction(A, b, at); if (inside) return { error: inside };
-  const overrides = b.type === 'code' ? [{ start: at, end: b.end, type: 'code' as const }] : [overrideLike(b, b.start, at), overrideLike(b, at, b.end)];
+  // code merged into one block: the part from `at` stays one block too
+  const overrides = b.type === 'code' ? [{ start: at, end: b.end, type: 'code' as const, ...(b.props.one ? { props: { one: true } } : {}) }] : [overrideLike(b, b.start, at), overrideLike(b, at, b.end)];
   return { overrides, block: b, at };
 }
 
@@ -281,6 +284,37 @@ const KIND_MARK: Partial<Record<BlockKind, string>> = { code: 'code', data: 'byt
 /** The "Mark as" id (MARK_AS) that gives a block of this type, text encoding included; detected-only kinds are Bytes. */
 export function markIdOf(b: Pick<Block, 'type' | 'props'>): string {
   return b.type === 'text' ? TEXT_MARK[b.props.enc ?? 'petscii'] ?? 'text' : KIND_MARK[b.type] ?? 'bytes';
+}
+
+export interface MarkMerge {
+  /** append it to `project.overrides` (after the overrides that keep the types of the blocks it cuts) */
+  override: Override;
+  /** the blocks of the type marked right before and right after the range that the mark takes in */
+  prev: Block | null; next: Block | null;
+}
+
+/** a block is of the type a "Mark as" id gives (text of its encoding); detected-only kinds (a lo/hi table, BASIC) are not */
+const ofMark = (b: Block, id: string) => b.type === MARK_TYPE[id] && markIdOf(b) === id;
+
+/**
+ * The override that marks `start`..`end` (end excluded) as `id` (a MARK_AS id). Auto merge (`merge`): the block that
+ * ends where the range starts and the block that starts where it ends are taken in when they are of that type (text of
+ * that encoding) and in the same file, outside or inside the same relocated block; settings such as the number format,
+ * row length, table kind and music init/play come from the block taken in. Code merged so is one block, not split per
+ * routine (`one`), and code marked inside a block merged so stays one block.
+ */
+export function markOverride(A: AnalysisResult, start: Addr, end: Addr, id: string, merge = true): MarkMerge {
+  const m = MARK_AS.find(x => x.id === id), type = MARK_TYPE[id] ?? 'data';
+  const file = A.owner[start], run = relocAt(A, start);
+  const take = (b: Block | null, edge: Addr) => (b && (b.end === edge || b.start === edge) && ofMark(b, id) && b.file === file && relocAt(A, b.start) === run ? b : null);
+  const prev = merge && start > 0 ? take(findBlock(A.blocks, start - 1), start) : null;
+  const next = merge && end < 0x10000 ? take(findBlock(A.blocks, end), end) : null;
+  // the block it takes in gives its settings (a table's kind, a music's init and play)
+  const from = prev ?? next;
+  const props: OverrideProps = { ...(m?.props ?? {}), ...(from ? overrideLike(from, start, end).props : {}) };
+  if (type === 'code' && (prev || next || A.blocks.some(b => b.type === 'code' && b.props.one && b.start < end && start < b.end))) props.one = true;
+  const s = prev ? prev.start : start, e = next ? next.end : end;
+  return { override: { start: s, end: e, type, ...(Object.keys(props).length ? { props } : {}) }, prev, next };
 }
 
 export interface RangeMerge {

@@ -63,6 +63,8 @@ export interface Ctx {
   ov: Uint8Array;
   ovList: Override[];
   ovProps: Map<Addr, Override>;
+  /** inside a code override that is one block (`one`), after its start: no routine starts a code block here */
+  joined: Uint8Array;
   forcedData: (a: Addr) => boolean;
   /** the memory map of the cartridge the files are chips of ('none': no cartridge) */
   cart: CartMode;
@@ -158,7 +160,7 @@ export function createContext(project: ProjectInput, deep: Deep | null = null): 
   const ov = new Uint8Array(0x10000);
   const ctx = {
     project, S, files: project.files, mem, owner, log: [], logged: new Set(), loaded, relocs: [],
-    ov, ovList: [], ovProps: new Map(), forcedData: (a: Addr) => ov[a] !== 0 && ov[a] !== T.CODE,
+    ov, ovList: [], ovProps: new Map(), joined: new Uint8Array(0x10000), forcedData: (a: Addr) => ov[a] !== 0 && ov[a] !== T.CODE,
     cart: projectCartMode(project.cart, project.files), cartStart: null,
     basics: [], insLen: new Uint8Array(0x10000), codeOwner: new Int32Array(0x10000).fill(-1), skip: new Set(), xrefs: new Map(),
     entryKind: new Map(), queue: [],

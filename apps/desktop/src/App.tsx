@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, MARK_TYPE, MAX_BLANKS, moveBlockKeys, resizeBlock,
+  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
@@ -1181,19 +1181,24 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const one = !!s?.bytes && s.anchor === r0.start && s.anchorEnd === r0.end, b0 = findBlock(A.blocks, r0.start);
     const r = one && id === 'code' && b0 ? { start: r0.start, end: Math.max(r0.end, b0.end) }
       : one && id === 'words' && r0.end - r0.start === 1 && A.owner[r0.start + 1] === A.owner[r0.start] ? { start: r0.start, end: r0.start + 2 } : r0;
-    const keep = s?.bytes ? keepCutTypes(A, r.start, r.end) : [];
     const rl = A.relocs.find(x => x.start < r.end && r.start < x.end);
     if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside .pseudopc`, 'warn'); return; }
-    const m = MARK_AS.find(x => x.id === id), enc = m?.props?.enc;
-    const name = opts?.name && enc && !R.labels.get(r.start)?.user ? textLabel(A.mem, r.start, r.end, enc.startsWith('screen'), enc.endsWith('mixed'), n => nameTaken(n, r.start)) : null;
-    // the analysis merges every block (and earlier override) inside the range into the new one; code stays split per routine
-    const merged = id === 'code' ? 0 : A.blocks.filter(b => b.start < r.end && b.end > r.start).length;
-    update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${m ? m.label : id}${name ? ` named ${name}` : ''}`, d => {
-      d.overrides.push(...keep, { start: r.start, end: r.end, type: MARK_TYPE[id], ...(m?.props ? { props: { ...m.props } } : {}) });
+    // Auto merge (Settings → General): the blocks of that type right before and after the range join it
+    const mo = markOverride(A, r.start, r.end, id, useUi.getState().autoMerge), o = mo.override;
+    const keep = s?.bytes ? keepCutTypes(A, o.start, o.end) : [];
+    const m = MARK_AS.find(x => x.id === id), enc = m?.props?.enc, what = m ? m.label : id;
+    const name = opts?.name && enc && !mo.prev && !R.labels.get(r.start)?.user ? textLabel(A.mem, r.start, r.end, enc.startsWith('screen'), enc.endsWith('mixed'), n => nameTaken(n, r.start)) : null;
+    // the analysis merges every block (and earlier override) inside the range into the new one; code stays split per
+    // routine unless it is merged with the code next to it
+    const merged = id === 'code' && !o.props?.one ? 0 : A.blocks.filter(b => b.start < o.end && b.end > o.start).length;
+    const side = mo.prev && mo.next ? 'blocks before and after it' : mo.prev ? 'block before it' : mo.next ? 'block after it' : '';
+    update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${what}${side ? ` with the ${what} ${side}` : ''}${name ? ` named ${name}` : ''}`, d => {
+      d.overrides.push(...keep, o);
       if (name) d.labels[r.start] = name;
     });
-    toast(`$${h4(r.start)}–$${h4(r.end - 1)} marked as ${m ? m.label : id}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
-    showChanged(r.start, r.end, `Marked as ${m ? m.label : id}`);
+    toast(side ? `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what} and merged with the ${what} ${side}: one block $${h4(o.start)}–$${h4(o.end - 1)}${merged > 1 ? ` (${merged} blocks)` : ''}`
+      : `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
+    showChanged(o.start, o.end, side ? `Marked as ${what} and merged` : `Marked as ${what}`);
   };
   /** a data, table or word block's number format and items a row (an override like the block, with them) */
   const setFormat = (b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }) => {
@@ -3062,7 +3067,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       </div>}
       {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} packing={packing} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} links={overviewLinks} onClose={() => setModal(null)} />}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}

@@ -25,8 +25,10 @@ export interface AppPrefs {
   overview: boolean;
   /** the mounted disk's directory in the Explorer: Mimir's list or the C64's screen */
   diskLook: DiskLook;
+  /** marking a range merges it with the blocks of that type next to it */
+  autoMerge: boolean;
 }
-const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true, diskLook: 'mimir' };
+const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true, diskLook: 'mimir', autoMerge: true };
 
 /** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them) */
 export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
@@ -115,6 +117,8 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
             <span>Show the start screen when Mimir starts<small className="muted"> — continue, a new project, open one, or work without a project. Off: Mimir goes on with what you worked on last (the start screen still comes when that project is gone). The project button in the title bar shows it at any time</small></span></label>
           <label className="check"><input id="set-overview" type="checkbox" checked={prefs.overview} onChange={e => setPrefs(p => ({ ...p, overview: e.target.checked }))} />
             <span>Show an overview of the analysis when a file is opened<small className="muted"> — once the analysis is done, a window in the middle says what it found (the program start, packing, loaders, problems, the blocks by type, code, graphics and music), with links to each part and to the listing, the .asm source, Graphics and Memory. A link, a click outside it or Esc closes it. The command palette shows it at any time</small></span></label>
+          <label className="check"><input id="set-autoMerge" type="checkbox" checked={prefs.autoMerge} onChange={e => setPrefs(p => ({ ...p, autoMerge: e.target.checked }))} />
+            <span>Auto merge when marking blocks<small className="muted"> — marking a selection or a block as a type (C Code, D Bytes, W Words, T Text and the others in Mark as) merges it with the block right before and the block right after it when they are of that type (text in the same encoding) and in the same file: one block. Code merged so is one block, not a block per routine. Off: the marked range is a block of its own. Ctrl+Z takes a merge back</small></span></label>
           <label className="field"><span>Inspector (the panel on the right)</span>
             <select id="set-inspector" value={prefs.inspector} onChange={e => setPrefs(p => ({ ...p, inspector: e.target.value as InspectorMode }))}>
               <option value="open">Always open</option>

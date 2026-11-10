@@ -63,7 +63,7 @@ export type { DemoProgram } from './demo';
 export { makeShowcase, showcaseProject, type ShowcaseProgram } from './showcase';
 // bytes the program copies elsewhere to run there (8.1b)
 export { addReloc, codeWhereLoaded, loadAddress, loadRange, moveKeys, moveReloc, relocAt, relocLoadedAt, relocProblem, removeReloc, type RelocKeys } from './relocs';
-export { FORMATTABLE, formatOverride, keepCutTypes, lineMove, markIdOf, mergeOverride, mergeRange, moveBlockKeys, moveBytes, moveFrom, resizeBlock, splitBlock, type BlockMerge, type BlockResize, type BlockSplit, type ByteMove, type RangeMerge } from './edit';
+export { FORMATTABLE, formatOverride, keepCutTypes, lineMove, markIdOf, markOverride, mergeOverride, mergeRange, moveBlockKeys, moveBytes, moveFrom, resizeBlock, splitBlock, type BlockMerge, type BlockResize, type BlockSplit, type ByteMove, type MarkMerge, type RangeMerge } from './edit';
 export { createProject, demoProject, serializeProject, deserializeProject, projectNameFor, withId, newId, b64enc, b64dec } from './project';
 export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles, expectedCartridge, readme, projectScripts, projectTextFiles, exportFiles, type CartBuild } from './export';
 export { byteLines, checkScript, disassembleBytes, freePlace, loadedMask, maskRanges, newScript, padName, scriptPlace, rangeText, runScript, SCRIPT_LIMIT, scriptEndText, scriptEnv, scriptName, scriptNames, scriptPatches, withoutScriptPatches, writeScriptRun, type PadInstruction, type ScriptChange, type ScriptCheck, type ScriptEnd, type ScriptEnv, type ScriptProblem, type ScriptRange, type ScriptRun, type ScriptWriteFailure } from './script';

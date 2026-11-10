@@ -81,7 +81,7 @@ export function fileOwners(ctx: Ctx, ...lists: { file: number }[][]): Int16Array
  * Only what still wins counts: an override that later ones cover completely leaves no block boundary, props,
  * entry point or code sweep behind, so marking a range merges the overrides inside it into the new block. */
 export function applyOverrides(ctx: Ctx): void {
-  const { project, ov, ovProps } = ctx;
+  const { project, ov, ovProps, joined } = ctx;
   const list = project.overrides || [];
   const win = new Int32Array(0x10000).fill(-1);
   list.forEach((o, i) => {
@@ -91,10 +91,16 @@ export function applyOverrides(ctx: Ctx): void {
   });
   // a block boundary (with that override's props) wherever the winning override changes
   const live = new Set<number>();
-  for (let a = 0; a < 0x10000; a++) { const i = win[a]; if (i >= 0) { live.add(i); if (a === 0 || win[a - 1] !== i) ovProps.set(a, list[i]); } }
+  for (let a = 0; a < 0x10000; a++) {
+    const i = win[a]; if (i < 0) continue;
+    live.add(i);
+    if (a === 0 || win[a - 1] !== i) ovProps.set(a, list[i]);
+    // code merged into one block: past where the override's part starts, no routine starts a block of its own
+    else if (list[i].type === 'code' && list[i].props?.one) joined[a] = 1;
+  }
   // 8.1b: where a relocated block is loaded it is that block, whatever was marked there: its bytes are marked where
   // they run
-  for (const r of ctx.relocs) for (let a = r.start; a < r.end; a++) { ov[a] = T.RELOC; ovProps.delete(a); }
+  for (const r of ctx.relocs) for (let a = r.start; a < r.end; a++) { ov[a] = T.RELOC; ovProps.delete(a); joined[a] = 0; }
   ctx.ovList = list.filter((o, i) => live.has(i) && !ctx.relocs.some(r => o.start >= r.start && o.start < r.end));
 }
 
