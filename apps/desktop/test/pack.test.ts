@@ -1,12 +1,12 @@
 /* The Pack view's command and warnings with Pack from: the whole build but for the bytes before an address. */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PACK, type PackPrefs } from '@mimir/core';
+import { DEFAULT_PACK, type BasicInfo, type PackPrefs } from '@mimir/core';
 import { packCommand, packWarning } from '../src/lib/pack';
 
 const P = (o: Partial<PackPrefs> = {}): PackPrefs => ({ ...DEFAULT_PACK, ...o });
-// a snapshot's RAM from $0200, its BASIC line at $0801 with SYS 2064
+// a snapshot's RAM from $0200, its BASIC line at $0801 with SYS 2064 (Pack reads only where the program and its SYS are)
 const snap = [{ load: 0x0200, bytes: new Uint8Array(0xfe00) }];
-const basics = [{ start: 0x0801, end: 0x080d, sys: 2064, file: 0 }];
+const basics: BasicInfo[] = [{ start: 0x0801, end: 0x080d, lines: [], sys: 2064, sysLine: null, upstart: false, file: 0 }];
 
 describe('Pack from', () => {
   it('packs the build from the address on, in the command Brokkr and Exomizer run', () => {
