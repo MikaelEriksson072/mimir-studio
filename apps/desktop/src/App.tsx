@@ -22,7 +22,9 @@ import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
 import { closeWindow, holdClose, whenClosing } from './lib/closing';
-import { gfxColsFor, gfxListing } from './lib/gfxlines';
+import { blockMc, gfxColsFor, gfxListing } from './lib/gfxlines';
+import { gfxLayout } from './lib/gfxview';
+import { blockView } from './lib/blockfolders';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
@@ -215,7 +217,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const seeAt = (v: ViewAt, shows: Addr = v.addr) => { viewAt.current = v; const s = spaceOf(shows); setViewSpace(x => (x === s ? x : s)); };
   /** a file just opened from a loader's script or the tape: Graphics shows its first byte in the top row, now when the
    *  tab is open, else when it opens; once it has, the tab says where it is, as when it is scrolled */
-  const [gfxGo, setGfxGo] = useState<{ id: string; n: number } | null>(null);
+  // where Graphics goes to: the start of a file just opened from a loader (`id`), or a block shown from the Blocks view
+  // (`addr`); where Memory goes to: a block shown from the Blocks view
+  const [gfxGo, setGfxGo] = useState<{ id: string; n: number } | { addr: Addr; n: number } | null>(null);
+  const [memGo, setMemGo] = useState<{ addr: Addr; n: number } | null>(null);
   /* ---- a cartridge's banks are spaces of their own (13.9b): the listing shows them all, one after the other, at bank
      addresses (space * $10000 + address); the 64 KB views (Graphics, Memory, the heatmap) show the bank of the cursor,
      and Graphics and Memory the bank the editor is in ---- */
@@ -383,7 +388,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** the relocated blocks the bytes at `a` run in, the innermost first (where each one is loaded) */
   const relocsAround = (a: Addr): Addr[] => { const out: Addr[] = []; for (let r = relocAt(A, a); r && out.length < 64; r = relocAt(A, r.start)) out.push(r.start); return out; };
   const unfold = (starts: Addr[]) => { const shut = starts.filter(s => folded.has(s)); if (shut.length) setFolded(f => { const n = new Set(f); for (const s of shut) n.delete(s); return n; }); };
-  const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; viewAt.current = null; setViewSpace(null); setGfxGo(null); };
+  const resetView = () => { setCursor(null); setBuild(null); setSel(null); setFolded(new Set()); navHist.current = { back: [], fwd: [] }; viewAt.current = null; setViewSpace(null); setGfxGo(null); setMemGo(null); };
   /** fold or unfold the block that starts at (or contains) `a` */
   const toggleFold = (a: Addr) => { const b = findBlock(A.blocks, a); if (!b) return; setFolded(f => { const n = new Set(f); if (n.has(b.start)) n.delete(b.start); else n.add(b.start); return n; }); if (cursor != null && cursor > b.start && cursor < b.end) setCursor(b.start); };
   // a relocated block holds code too: it is no block of data to fold
@@ -905,14 +910,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const seeIn = (all: boolean) => (top: Addr, end: Addr) => (all
     ? seeAt({ addr: top, end, n: Date.now() }, cursor != null && cursor >= top && cursor < end ? cursor : top)
     : seeAt({ addr: inBank(top), end: inBank(end), n: Date.now() }));
-  /** the start of the file just opened from a loader's script or the tape, for Graphics: in the bank it shows (or
-   *  anywhere, with every bank); null once Graphics has shown it, or when the file is gone */
-  const gfxFile = gfxGo ? project.files.findIndex(f => f.id === gfxGo.id) : -1;
-  const goIn = (all: boolean) => {
-    if (!gfxGo || gfxFile < 0) return null;
-    const a = fileAddr(gfxFile);
-    return all ? { addr: a, n: gfxGo.n } : spaceOf(a) === space ? { addr: a - base, n: gfxGo.n } : null;
-  };
+  /** the start of the file just opened from a loader's script or the tape, or of the block shown from the Blocks view,
+   *  for Graphics (and the block for Memory): in the bank it shows (or anywhere, with every bank); null once the tab
+   *  has shown it, or when the file is gone */
+  const gfxFile = gfxGo && 'id' in gfxGo ? project.files.findIndex(f => f.id === gfxGo.id) : -1;
+  const goAt = (all: boolean, a: Addr, n: number) => (all ? { addr: a, n } : spaceOf(a) === space ? { addr: a - base, n } : null);
+  const goIn = (all: boolean) => (!gfxGo ? null : 'addr' in gfxGo ? goAt(all, gfxGo.addr, gfxGo.n) : gfxFile < 0 ? null : goAt(all, fileAddr(gfxFile), gfxGo.n));
+  const memGoIn = (all: boolean) => (memGo ? goAt(all, memGo.addr, memGo.n) : null);
   // one bank in the project is analysed without spaces: it is the one shown
   const bankPick = bankChoices && {
     banks: bankChoices, all: (A.spaces?.length ?? 0) > 1,
@@ -2809,6 +2813,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     navigate(a, { center: true, listing: true, keepSel: true });
     setSel({ start: a, end: b, multi: true, anchor: a, anchorEnd: b });
   };
+  /** Shift+click on a block in the Blocks view: the block selected in its type's own view (lib/blockfolders
+   *  `blockView`), the cursor on its first byte. Graphics draws it as its type (multicolour as the block is, a bitmap as
+   *  high as it is, the grid moved so that a cell starts at it) and Memory as the text or the bytes it is, each with its
+   *  first byte in the top row, also when the tab is open already */
+  const showBlock = (b: Block) => {
+    const v = blockView(b), n = Date.now(), listing = v.tab === 'listing';
+    navigate(b.start, { keepSel: true, center: listing, listing });
+    setSel({ start: b.start, end: b.end, multi: true, anchor: b.start, anchorEnd: b.end });
+    if (v.tab === 'gfx') {
+      // (a screen's characters are drawn as they are set: its multicolour is the charset's)
+      setUi({ tab: 'gfx', gfx: { ...useUi.getState().gfx, kind: v.kind, offset: b.start % gfxLayout(v.kind, 1).unit, ...(v.kind !== 'screens' ? { mc: blockMc(A, b) } : {}), ...(v.rows ? { bitmapRows: v.rows } : {}) } });
+      setGfxGo({ addr: b.start, n });
+    } else if (v.tab === 'mem') {
+      setUi({ tab: 'mem', mon: { ...useUi.getState().mon, mode: v.mode, ...(v.lower != null ? { lower: v.lower } : {}) } });
+      setMemGo({ addr: b.start, n });
+    }
+  };
   /** the title bar's project button: what can be done with the project, or with the work without one */
   const projectMenu = (e: ReactMouseEvent<HTMLElement>) => {
     if (menu?.owner === 'project') { setMenu(null); return; }
@@ -2871,7 +2892,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
-          onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
+          onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onShowBlock={b => { showBlock(b); setDrawer(null); }}
           disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
           tape={tape} onEjectTape={ejectTape} onShowTape={() => setUi({ bottom: 'tape', panelOpen: true })} onOpenFromTape={(f, add) => { openFromTape(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
@@ -2999,7 +3020,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />)(allGfx ? (a: Addr) => a : inBank)}
-              {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} onView={seeIn(allBanks)}
+              {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
                 spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
                 onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}

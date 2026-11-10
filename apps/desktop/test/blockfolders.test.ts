@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Block, BlockKind } from '@mimir/core';
-import { blockFolders } from '../src/lib/blockfolders';
+import { blockFolders, blockView } from '../src/lib/blockfolders';
 
 let id = 0;
 const blk = (type: BlockKind, start: number, len = 16): Block =>
@@ -33,5 +33,33 @@ describe('Blocks view folders', () => {
 
   it('has no folders without blocks', () => {
     expect(blockFolders([])).toEqual([]);
+  });
+});
+
+describe('where Shift+click in the Blocks view shows a block', () => {
+  const text = (enc?: 'petscii' | 'screen' | 'petscii-mixed' | 'screen-mixed') => ({ ...blk('text', 0x0a00), props: enc ? { enc } : {} });
+
+  it('draws graphics in Graphics as their type, a bitmap as high as it is', () => {
+    expect(blockView(blk('sprite', 0x2000, 64))).toEqual({ tab: 'gfx', kind: 'sprites' });
+    expect(blockView(blk('charset', 0x3000, 0x800))).toEqual({ tab: 'gfx', kind: 'chars' });
+    expect(blockView(blk('screen', 0x0400, 1000))).toEqual({ tab: 'gfx', kind: 'screens' });
+    expect(blockView(blk('bitmap', 0x2000, 8000))).toEqual({ tab: 'gfx', kind: 'bitmap', rows: 25 });
+    // a logo of 8 character rows, a bitmap with more than a picture, a sliver
+    expect(blockView(blk('bitmap', 0x4000, 2560))).toMatchObject({ rows: 8 });
+    expect(blockView(blk('bitmap', 0x4000, 0x2000))).toMatchObject({ rows: 25 });
+    expect(blockView(blk('bitmap', 0x4000, 100))).toMatchObject({ rows: 1 });
+  });
+
+  it('shows text in Memory as PETSCII or screen codes, in the lower case set for mixed case', () => {
+    expect(blockView(text())).toEqual({ tab: 'mem', mode: 'i', lower: false });
+    expect(blockView(text('petscii'))).toEqual({ tab: 'mem', mode: 'i', lower: false });
+    expect(blockView(text('screen'))).toEqual({ tab: 'mem', mode: 'ii', lower: false });
+    expect(blockView(text('petscii-mixed'))).toEqual({ tab: 'mem', mode: 'i', lower: true });
+    expect(blockView(text('screen-mixed'))).toEqual({ tab: 'mem', mode: 'ii', lower: true });
+  });
+
+  it('selects code in the listing and shows other data in Memory as hex and text, in the case it has', () => {
+    for (const k of ['code', 'basic', 'reloc'] as const) expect(blockView(blk(k, 0x0810)), k).toEqual({ tab: 'listing' });
+    for (const k of ['data', 'words', 'table', 'lohi', 'music', 'fill'] as const) expect(blockView(blk(k, 0x0900)), k).toEqual({ tab: 'mem', mode: 'm', lower: null });
   });
 });

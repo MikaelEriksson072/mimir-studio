@@ -1,7 +1,7 @@
 /* What the overview of the analysis says (spec 14.1b), part by part: worked out from the analysis and the project
  * alone, so the window (components/Overview.tsx) only lays it out and links each part to where it is. */
 // (no DOM here, nor the store: the unit tests type-check it for Node)
-import { kindInfo, type Addr, type AnalysisResult, type Block, type BlockKind, type Project, type TypeGroup } from '@mimir/core';
+import { kindInfo, type Addr, type AnalysisResult, type Block, type Project, type TypeGroup } from '@mimir/core';
 import { blockFolders, type BlockFolder } from './blockfolders';
 import type { UiProblem } from './types';
 
@@ -49,8 +49,7 @@ export function typeRows(blocks: readonly Block[]): TypeRow[] {
   return blockFolders(blocks).map(f => ({ ...f, bytes: f.blocks.reduce((n, b) => n + b.end - b.start, 0), first: f.blocks[0] }));
 }
 
-/** the way the Graphics tab draws a block of this type (its `GfxPrefs.kind`; none: not graphics) */
-export const GFX_KIND: Partial<Record<BlockKind, 'sprites' | 'chars' | 'bitmap' | 'screens'>> = { sprite: 'sprites', charset: 'chars', bitmap: 'bitmap', screen: 'screens' };
+export { GFX_KIND } from './blockfolders';
 
 /** the routines (JSR targets) and the interrupt handlers (IRQ, NMI, BRK) the code was traced from */
 export function routinesOf(A: AnalysisResult): { subs: number; handlers: number } {

@@ -4005,6 +4005,83 @@ test('the Demo button opens the showcase: every block type and a guided tour in 
   });
 });
 
+test('Shift+click on a block in the Blocks view shows it, selected, in its type\'s own view', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, 'Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop')).toBeVisible();
+  await waitForListing(page);
+  await page.locator('nav.activity').getByRole('button', { name: 'Blocks' }).click();
+  const types = page.getByRole('list', { name: 'Block types' });
+  /** the row of block `name` in the folder of `type` (the folder opened) */
+  const block = async (type: string, name: string) => {
+    const head = types.locator('.blk-folder-head').filter({ has: page.locator('.blk-folder-name', { hasText: new RegExp(`^${type.replace(/[()]/g, '\\$&')}$`) }) });
+    if (await head.getAttribute('aria-expanded') !== 'true') await head.click();
+    return page.getByRole('group', { name: `${type} blocks` }).locator('.blk-row', { hasText: name });
+  };
+  const shiftClick = async (type: string, name: string) => (await block(type, name)).click({ modifiers: ['Shift'] });
+  const tab = (name: string) => page.getByRole('tab', { name, exact: true });
+  const gfx = page.getByLabel('Memory as graphics'), gfxScroll = gfx.locator('.gfxv-scroll');
+  // the address of the gutter row at the top of the picture, and of the dump's row at the top
+  const gfxTop = () => gfxScroll.evaluate(el => [...el.querySelectorAll<HTMLElement>('.gfxv-row')].find(r => r.offsetTop <= el.scrollTop + 1 && r.offsetTop + r.offsetHeight > el.scrollTop + 1)?.dataset.addr ?? null);
+  const dump = page.getByLabel('Memory dump');
+  const dumpTop = () => dump.evaluate(el => {
+    const row = [...el.querySelectorAll<HTMLElement>('.mon-row')].find(r => parseFloat(r.style.top) <= el.scrollTop + 1 && parseFloat(r.style.top) + 20 > el.scrollTop + 1);
+    return row?.textContent?.slice(0, 7) ?? null;
+  });
+  const mem = page.getByLabel('Memory as the VICE monitor shows it');
+
+  await test.step('a row\'s tip says where Shift+click shows it', async () => {
+    await expect(await block('Bitmap', 'bitmap_4000')).toHaveAttribute('title', 'Go to it in the listing.\nShift+click: show it in Graphics, drawn as a bitmap');
+    await expect(await block('Text', 'txt_0f95')).toHaveAttribute('title', 'Go to it in the listing.\nShift+click: show it in Memory as screen codes (ii)');
+    await expect(await block('Code', 'setup_screen')).toHaveAttribute('title', 'Go to it in the listing.\nShift+click: select it in the listing');
+  });
+
+  await test.step('a bitmap opens Graphics as a multicolour bitmap, selected, at the top', async () => {
+    await shiftClick('Bitmap', 'bitmap_4000');
+    await expect(tab('Graphics')).toHaveAttribute('aria-selected', 'true');
+    await expect(gfx.getByRole('button', { name: 'Bitmaps', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(gfx.getByRole('checkbox', { name: 'Multicolor' })).toBeChecked();
+    await expect(gfx.getByRole('status')).toContainText('$4000–$5f3f (8000 bytes) · Bitmap bitmap_4000');
+    await expect.poll(gfxTop).toBe('4000');
+    await expect(statusBar(page)).toContainText('sel $4000–$5f3f');
+  });
+
+  await test.step('with Graphics open, the sprites are drawn as sprites there', async () => {
+    await shiftClick('Sprites', 'spr_2000');
+    await expect(gfx.getByRole('button', { name: 'Sprites', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(gfx.getByRole('status')).toContainText('$2000–$20ff (256 bytes) · Sprites spr_2000');
+    await expect.poll(gfxTop).toBe('2000');
+    await shiftClick('Charset', 'charset_2800');
+    await expect(gfx.getByRole('button', { name: 'Characters', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(gfx.getByRole('status')).toContainText('$2800–$2fff (2048 bytes) · Charset charset_2800');
+  });
+
+  await test.step('a text opens Memory as screen codes or PETSCII, its rows starting at it', async () => {
+    await shiftClick('Text', 'txt_0f95');
+    await expect(tab('Memory')).toHaveAttribute('aria-selected', 'true');
+    await expect(mem.getByRole('button', { name: 'Screen codes (ii)' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(dumpTop).toBe('*C:0f95');
+    await expect(mem.locator('.gfxv-sel')).toContainText('$0f95–$0fbc (40 bytes) · Text txt_0f95');
+    await shiftClick('Text', 'txt_0f51');
+    await expect(mem.getByRole('button', { name: 'PETSCII (i)' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(dumpTop).toBe('>C:0f51');
+    // other data as hex and text
+    await shiftClick('Word table', 'fx_table');
+    await expect(mem.getByRole('button', { name: 'Hex and text (m)' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(dumpTop).toBe('>C:0b5a');
+  });
+
+  await test.step('code is selected in the listing; a plain click still only goes to a block', async () => {
+    await shiftClick('Code', 'setup_screen');
+    await expect(tab('Listing')).toHaveAttribute('aria-selected', 'true');
+    await expect(statusBar(page)).toContainText('sel $087d–$0902');
+    await (await block('Bitmap', 'bitmap_4000')).click();
+    await expect(tab('Listing')).toHaveAttribute('aria-selected', 'true');
+    await expect(statusBar(page)).toContainText('$4000');
+    await expect(statusBar(page)).not.toContainText('sel $');
+  });
+});
+
 test('a music block plays in VICE: from its right-click menu, the inspector, the command palette and the Blocks view', async ({ page }) => {
   // VICE itself is not started: a Windows program that ends at once stands in for it (the player's PRG playing in the
   // real VICE is tested in packages/core/test/sidplayer.test.ts)

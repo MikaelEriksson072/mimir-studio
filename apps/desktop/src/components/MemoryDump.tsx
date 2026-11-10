@@ -49,6 +49,10 @@ interface MemoryDumpProps {
   bank?: BankPickProps | null;
   /** where the editor was in memory (14.6b): the tab opens with it in the top row (null: at the cursor) */
   start?: { addr: Addr; end: Addr } | null;
+  /** a block shown from the Blocks view (Shift+click): the rows start at its first byte, as a command for it would
+   *  start them, with that row at the top, at once when the tab is open, else as it opens (before `start`). A new `n`
+   *  goes there again */
+  goTo?: { addr: Addr; n: number } | null;
   /** scrolled: the addresses at the top and the bottom of the dump */
   onView?: (top: Addr, end: Addr) => void;
   /** every bank at once (13.9b): A and R at bank addresses, and the bank of each space (null: 64 KB) */
@@ -63,7 +67,7 @@ const plainAddr = (a: Addr) => `$${h4(a)}`;
 /** the line over a bank's rows: `bank 1 · $8000–$9fff` */
 const bankLine = (bank: number, start: Addr, end: Addr) => `bank ${bank} · $${h4(start & 0xffff)}–$${h4((end - 1) & 0xffff)}`;
 
-export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, onView, spaces, fmt = plainAddr, resolve }: MemoryDumpProps) {
+export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, goTo, onView, spaces, fmt = plainAddr, resolve }: MemoryDumpProps) {
   const prefs = useUi(s => s.mon), setUi = useUi(s => s.set);
   const set = (p: Partial<MonPrefs>) => setUi({ mon: { ...useUi.getState().mon, ...p } });
   const { mode, lower, colors } = prefs;
@@ -127,10 +131,12 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     onView('row' in t ? t.row.a : t.gap.start, 'row' in b ? b.row.a + b.row.n : b.gap.end);
   };
   // opening the tab shows where the editor was (that address in the top row, and the cursor on screen when the view it
-  // is from had it), else the cursor (or the selection); another layout shows the cursor
+  // is from had it), else the cursor (or the selection); another layout shows the cursor. A block shown from the
+  // Blocks view comes first (the effect after this one)
   useEffect(() => {
     const first = !opened.current; opened.current = true;
     const el = scroller.current;
+    if (first && goTo) return;
     if (first && start && el) {
       quietly(() => { el.scrollTop = indexOf(start.addr) * ROW; if (cursor != null && cursor >= start.addr && cursor < start.end && !onScreen(cursor)) scrollTo(cursor); });
       return;
@@ -138,9 +144,31 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     const a = sel?.multi ? sel.start : cursor;
     if (a != null) { if (first) quietly(() => scrollTo(a)); else scrollTo(a); }
   }, [mode, perRow]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** an address a command goes to: scrolled to once the rows of its mode are rendered */
-  const pending = useRef<Addr | null>(null);
-  useEffect(() => { if (pending.current != null) { scrollTo(pending.current); pending.current = null; } });
+  /** a row's address in the top row, said to the other tabs: it is where you went */
+  const toTop = (a: Addr) => {
+    const el = scroller.current; if (!el) return;
+    el.scrollTop = indexOf(a) * ROW;
+    own.current = null;
+    report(el);
+  };
+  /** an address a command goes to (or a block, to the top row): scrolled to once the rows of its mode are rendered */
+  const pending = useRef<{ a: Addr; top?: boolean } | null>(null);
+  useEffect(() => {
+    const p = pending.current;
+    // (a block waits for the rows that start at it)
+    if (!p || (p.top && origin !== p.a)) return;
+    pending.current = null;
+    if (p.top) toTop(p.a); else scrollTo(p.a);
+  });
+  // a block shown from the Blocks view: the rows start at it, and once they do it is put in the top row (by the effect
+  // above, after the render with those rows)
+  const goneTo = useRef<number | null>(null);
+  useEffect(() => {
+    if (!goTo || goTo.n === goneTo.current) return;
+    goneTo.current = goTo.n;
+    if (origin === goTo.addr) toTop(goTo.addr);
+    else { setOrigin(goTo.addr); pending.current = { a: goTo.addr, top: true }; }
+  }, [goTo?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   // another bank keeps the rows in view, unless the cursor went off screen in it (the bank does not have its address)
   const seen = useRef({ bank: bank?.value, cursor });
   useEffect(() => {
@@ -280,7 +308,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     anchor.current = first;
     setOrigin(first);
     if (c.end != null) onSelect(first, c.end); else onCursor(first);
-    pending.current = first;
+    pending.current = { a: first };
   };
   const copyRanges = () => (range ? clipRanges(ranges, range.start, range.end) : ranges);
   // with every bank: each bank's rows under its line, as the dump shows them

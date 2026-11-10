@@ -2,8 +2,8 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef, type TapeFile } from '@mimir/core';
-import { blockFolders } from '../lib/blockfolders';
+import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef, type TapeFile } from '@mimir/core';
+import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
 import { bankAdr, cx, fmtBytes, groupOfKind } from '../lib/util';
@@ -69,6 +69,9 @@ interface SidebarProps {
    *  says (Settings → Toolchain) */
   onPlayMusic?: (start: Addr) => void;
   musicPlayer?: MusicPlayer;
+  /** Shift+click on a block in the Blocks view: the block, selected, in its type's own view (lib/blockfolders
+   *  `blockView`: graphics in Graphics, text and data in Memory, code in the listing) */
+  onShowBlock?: (b: Block) => void;
 }
 
 interface PatchesProps {
@@ -91,7 +94,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, onPlayMusic, musicPlayer = 'vice' }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -146,7 +149,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
   }
   if (view === 'bookmarks') return <BookmarksView A={A} editing={bmEditing} bookmarks={project.bookmarks} R={R} cursor={cursor} selected={bmSel} onSelect={onBmSelect} onGo={onBmGo} onAdd={onBmAdd} onEdit={onBmEdit} onDelete={onBmDelete} />;
   if (view === 'pack') return <PackView {...pack} />;
-  if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} onPlayMusic={onPlayMusic} musicPlayer={musicPlayer} />;
+  if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} onPlayMusic={onPlayMusic} musicPlayer={musicPlayer} onShowBlock={onShowBlock} />;
   // symbols
   const ql = q.toLowerCase();
   const labels = [...R.labels.entries()].filter(([, l]) => !ql || l.name.toLowerCase().includes(ql)).sort((x, y) => x[0] - y[0]);
@@ -173,15 +176,22 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+const GFX_AS = { sprites: 'sprites', chars: 'characters', bitmap: 'a bitmap', screens: 'a screen' } as const;
+const MEM_AS = { m: 'hex and text (m)', i: 'PETSCII text (i)', ii: 'screen codes (ii)' } as const;
+/** where Shift+click on a block shows it (a row's tip) */
+const showsIn = (v: BlockView) => (v.tab === 'gfx' ? `show it in Graphics, drawn as ${GFX_AS[v.kind]}`
+  : v.tab === 'mem' ? `show it in Memory as ${MEM_AS[v.mode]}${v.lower ? ', lower case' : ''}` : 'select it in the listing');
+
 /**
  * The Blocks view: a folder for each type of block, with how many blocks of it there are. A click on a folder opens it
  * or folds it up (closed when the app starts, the user's choice kept for the run), on a block goes to it; the folder
  * with the block at the cursor is marked while it is closed. While the filter has text, only the folders with blocks it
  * keeps are there, open (one folded up stays so until the text changes), with how many of their blocks it keeps.
  * A music block has a play button at the end of its row: it plays the block in VICE or DeepSID, as Settings → Toolchain
- * says, without moving the cursor.
+ * says, without moving the cursor. Shift+click on a block shows it, selected, in its type's own view (`blockView`):
+ * a bitmap in Graphics as a bitmap, a text in Memory as PETSCII or screen codes, and so on; each row's tip says where.
  */
-function BlocksView({ A, R, cursor, q, setQ, onNavigate, onPlayMusic, musicPlayer = 'vice' }: Pick<SidebarProps, 'A' | 'R' | 'cursor' | 'onNavigate' | 'onPlayMusic' | 'musicPlayer'> & { q: string; setQ: (q: string) => void }) {
+function BlocksView({ A, R, cursor, q, setQ, onNavigate, onPlayMusic, musicPlayer = 'vice', onShowBlock }: Pick<SidebarProps, 'A' | 'R' | 'cursor' | 'onNavigate' | 'onPlayMusic' | 'musicPlayer' | 'onShowBlock'> & { q: string; setQ: (q: string) => void }) {
   const playerName = musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE';
   const opened = useUi(s => s.blkOpen), setUi = useUi(s => s.set);
   const ql = q.trim().toLowerCase();
@@ -229,7 +239,9 @@ function BlocksView({ A, R, cursor, q, setQ, onNavigate, onPlayMusic, musicPlaye
                 {f.blocks.map(b => {
                   const l = R.labels.get(b.start);
                   const row = (
-                    <button key={b.id} className={cx('blk-row', at === b && 'on')} onClick={() => onNavigate(b.start)}>
+                    <button key={b.id} className={cx('blk-row', at === b && 'on')} title={onShowBlock ? `Go to it in the listing.\nShift+click: ${showsIn(blockView(b))}` : undefined}
+                      onMouseDown={e => { if (e.shiftKey) e.preventDefault(); }}
+                      onClick={e => { if (e.shiftKey && onShowBlock) onShowBlock(b); else onNavigate(b.start); }}>
                       <span className="blk-main"><span className="blk-name">{l ? l.name : f.label}</span><span className="muted mono small">{bankAdr(A, b.start)} · {b.end - b.start} B</span></span>
                       {b.user && <span className="blk-type" title="Its type is set by you"><Icon name="pencil" size={11} /></span>}
                     </button>);
