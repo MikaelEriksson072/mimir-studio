@@ -6257,3 +6257,70 @@ test('scripts: Kick Assembler that runs in Mimir; what it changes goes into the 
     await expect(page.getByRole('list', { name: 'Library' })).not.toContainText('brighter');
   });
 });
+
+test('scripts: the debugger goes an instruction at a time with the registers and the stack, stops at a breakpoint, and at the end is a run', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  await editor.locator('.view-lines').click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.insertText(['        ldx #1', '!:      lda colors_0939,x', '        jsr twice', '        sta colors_0939,x', '        dex', '        bpl !-', '        rts', 'twice:  asl', '        rts'].join('\n'));
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  const panel = page.getByRole('complementary', { name: 'Debugger' });
+  const where = panel.getByRole('status');
+  const regs = panel.getByRole('table', { name: 'Registers' });
+  const stack = panel.getByRole('table', { name: 'Stack' });
+
+  await test.step('Debug stops before the first instruction: its line, the registers, the stack with the return of the SYS', async () => {
+    await page.getByRole('button', { name: /^Debug/ }).click();
+    await expect(where).toHaveText('Line 1 ($c000)');
+    await expect(regs.locator('tr').first()).toContainText('$c000');
+    await expect(stack).toContainText('the end of the run (the return of its SYS)');
+    await expect(page.getByRole('group', { name: 'Debugging' })).toBeVisible();
+    await expect(page.getByRole('note')).toContainText('the code cannot be changed until you stop');
+  });
+
+  await test.step('F8 steps: X changes and is marked, a JSR puts its return address on the stack', async () => {
+    await page.keyboard.press('F8');
+    await expect(where).toHaveText('Line 2 ($c002)');
+    await expect(regs.locator('tr.chg', { hasText: /^X/ })).toContainText('$01');
+    await page.keyboard.press('F8');
+    await page.keyboard.press('F8');
+    await expect(where).toHaveText('Line 8 ($c00f)');
+    await expect(regs.locator('tr').first()).toContainText('twice');
+    await expect(stack).toContainText('return to line 4 ($c008), from the script');
+  });
+
+  await test.step('Shift+F6 steps out of the routine, back to the line after the JSR', async () => {
+    await page.keyboard.press('Shift+F6');
+    await expect(where).toHaveText('Line 4 ($c008)');
+    await expect(stack).not.toContainText('return to line 4');
+  });
+
+  await test.step('a click left of a line number sets a breakpoint; Continue stops there', async () => {
+    const box = await editor.locator('.line-numbers', { hasText: /^5$/ }).boundingBox();
+    const glyph = await editor.locator('.glyph-margin').boundingBox();
+    await page.mouse.click(glyph!.x + glyph!.width / 2, box!.y + box!.height / 2);
+    await expect(editor.locator('.scr-bp')).toHaveCount(1);
+    await page.getByRole('button', { name: /^Continue/ }).click();
+    await expect(where).toHaveText('Line 5 ($c00b)');
+    // the loop comes round to it once more
+    await page.getByRole('button', { name: /^Continue/ }).click();
+    await expect(where).toHaveText('Line 5 ($c00b)');
+    await expect(regs.locator('tr', { hasText: /^X/ })).toContainText('$00');
+  });
+
+  await test.step('at the end it is a run: the debugger closes and the changes are in the program', async () => {
+    await page.getByRole('button', { name: /^Continue/ }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await expect(page.getByRole('list', { name: 'Changed in the program' }).getByRole('button')).toHaveText(['$0939-$093a · 2 bytes']);
+    // the breakpoint stays, and the code can be changed again
+    await expect(editor.locator('.scr-bp')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: /^Debug/ })).toBeEnabled();
+  });
+});

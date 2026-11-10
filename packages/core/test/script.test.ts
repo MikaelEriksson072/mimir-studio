@@ -1,6 +1,6 @@
 /* User scripts (spec 10.3): checked with the program's names, run on a copy of its memory, scratchpads kept. */
 import { describe, expect, it } from 'vitest';
-import { analyze, checkScript, createProject, deserializeProject, disassembleBytes, freePlace, newScript, planPatch, render, runScript, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
+import { analyze, checkScript, createProject, deserializeProject, disassembleBytes, freePlace, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
 import { fromSource } from './helpers/programs';
 
 const KEY = 0x5a;
@@ -198,6 +198,41 @@ describe('user scripts', () => {
     const four = runOn({ ...p, ...withPatch(p, mine.patch) });
     expect(four.w.written).toEqual([]);
     expect(four.w.failed[0].error).toMatch(/write over the patch "mine"/);
+  });
+
+  it('go an instruction at a time: the registers, the line, and the stack with the return addresses said', () => {
+    const s = script(['* = $c000', 'start: ldx #2', ' jsr sub', ' rts', 'sub: lda data,x', ' pha', ' pla', ' rts'].join('\n'), []);
+    const m = new ScriptMachine(env, s);
+    expect(m.lineAt()).toBe(2);
+    // the script's own labels, for the debugger's names
+    expect([...m.check.labels]).toEqual([[0xc000, 'start'], [0xc006, 'sub']]);
+    expect(m.stack()).toEqual([{ addr: 0x1ff, value: 0xff, ret: { to: 0x0000, by: 'start' } }, { addr: 0x1fe, value: 0xff, low: true }]);
+    m.step();
+    expect([m.cpu.x, m.cpu.pc, m.lineAt()]).toEqual([2, 0xc002, 3]);
+    m.step();
+    expect([m.cpu.pc, m.lineAt(), m.cpu.s]).toEqual([0xc006, 5, 0xfb]);
+    expect(m.stack()[2]).toMatchObject({ addr: 0x1fd, ret: { to: 0xc005, by: 'script' } });
+    m.step();
+    expect(m.cpu.a).toBe(PLAIN[2] ^ KEY);
+    m.step();
+    expect(m.stack().at(-1)).toEqual({ addr: 0x1fb, value: PLAIN[2] ^ KEY });
+    // on to a line, then to the end: the same as a run in one go
+    expect(m.runUntil(x => x.lineAt() === 4)).toBe('stopped');
+    expect(m.cpu.pc).toBe(0xc005);
+    expect(m.runUntil(null)).toBe('ended');
+    expect(m.result()).toMatchObject({ end: 'rts', instructions: 7, changes: [] });
+    expect(m.step()).toBe(false);
+  });
+
+  it('say, while the program\'s code runs for the script, which line of the script called it', () => {
+    const m = new ScriptMachine(env, script('* = $c000\nstart: jsr decrypt\n rts', []));
+    m.step();
+    expect([m.inScript, m.lineAt(), m.callLine(), m.cpu.pc]).toEqual([false, null, 2, 0x0810]);
+    expect(m.stack()[2]).toMatchObject({ ret: { to: 0xc003, by: 'script' } });
+    // the program's own JSR, inside it: its frame is the program's
+    expect(m.peek(0x0810)).toBe(0xa2);
+    m.runUntil(x => x.inScript);
+    expect([m.cpu.pc, m.lineAt()]).toEqual([0xc003, 3]);
   });
 
   it('disassemble a scratchpad with the program\'s names', () => {

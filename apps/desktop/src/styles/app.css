@@ -1240,7 +1240,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .scr-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-code); font-size: 12px; }
 .scr-busy { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; animation: scr-pulse 0.9s ease-in-out infinite alternate; }
 @keyframes scr-pulse { from { opacity: 0.35; } to { opacity: 1; } }
-.scr-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.scr-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; container: scrmain / inline-size; }
 .scr-main .toolbar { flex-wrap: nowrap; }
 .scr-name { width: 14em; min-width: 6em; height: 28px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 8px; font: 12.5px var(--font-code); }
 .scr-check { margin-left: 0; display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; font-size: 11.5px; padding: 2px 9px; }
@@ -1303,3 +1303,41 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .scr-failed .icon { flex: none; position: relative; top: 2px; }
 .scr-howto { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--hint) 8%, var(--panel)); color: var(--fg-2); font-size: 12px; line-height: 1.45; }
 .scr-howto .icon { flex: none; color: var(--hint); position: relative; top: 2px; }
+/* the script debugger (10.3): the code and, beside it, the registers, the next instructions and the stack */
+.scr-edit-row { flex: 1; min-height: 0; display: flex; }
+.scr-edit-row .scr-editor { flex: 1; min-width: 0; min-height: 0; }
+.scr-edit-row .scr-fallback { flex: 1; min-width: 0; }
+.scr-dbg-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+@container scrmain (max-width: 980px) {
+  .scr-main .toolbar kbd { display: none; }
+  .scr-main .toolbar .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+.scr-debug { width: 300px; flex: none; overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 8px 10px 12px; font-size: 12px; }
+.scr-debug h4 { display: flex; align-items: baseline; gap: 6px; margin: 8px 0 3px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
+.scr-debug h4 .muted { text-transform: none; letter-spacing: 0; }
+.dbg-where { font-weight: 600; color: var(--fg); line-height: 1.4; }
+.dbg-count { margin: 2px 0 8px; }
+.dbg-regs, .dbg-stack { border-collapse: collapse; width: 100%; }
+.dbg-regs th { width: 2.2em; text-align: left; font: 600 12px var(--font-code); color: var(--fg-2); padding: 1px 4px 1px 0; }
+.dbg-regs td { padding: 1px 6px 1px 0; white-space: nowrap; }
+.dbg-regs tr.chg td, .dbg-regs tr.chg th { color: var(--warn); }
+.scr-debug .dim { color: var(--fg-3); }
+.dbg-flags { display: flex; gap: 2px; }
+.dbg-flag { display: inline-grid; place-items: center; width: 15px; height: 17px; border-radius: 3px; font: 600 11px var(--font-code); color: var(--fg-3); background: var(--bg); border: 1px solid var(--line); }
+.dbg-flag.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.dbg-flag.chg { box-shadow: 0 0 0 1px var(--warn); }
+.dbg-next { list-style: none; margin: 0; padding: 0; font-size: 12px; line-height: 18px; }
+.dbg-next li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dbg-next li.cur { color: var(--fg); font-weight: 600; background: var(--sel); border-radius: 3px; }
+.dbg-pc { display: inline-block; width: 1.3em; color: var(--accent-hi); }
+.dbg-stack td { padding: 1px 6px 1px 0; vertical-align: top; }
+.dbg-stack tr.ret td:first-child, .dbg-stack tr.ret td:nth-child(2) { color: var(--syn-label); }
+.dbg-stack tr.top td { border-bottom: 1px dashed var(--accent); }
+.dbg-note { color: var(--fg-2); }
+.dbg-sp { margin-left: 6px; color: var(--accent-hi); font-family: var(--font-code); }
+/* in the editor: a breakpoint (a red dot left of the line number), the line about to run, the line whose JSR runs */
+.monaco-editor .scr-bp::before { content: ''; display: block; width: 10px; height: 10px; margin: 5px 0 0 5px; border-radius: 50%; background: var(--err); }
+.monaco-editor .scr-pc-line { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.monaco-editor .scr-pc-glyph::after, .monaco-editor .scr-call-glyph::after { content: '▶'; display: block; margin: 1px 0 0 5px; font-size: 12px; line-height: 18px; color: var(--accent-hi); }
+.monaco-editor .scr-call-line { background: color-mix(in srgb, var(--hint) 14%, transparent); }
+.monaco-editor .scr-call-glyph::after { content: '↳'; color: var(--hint); }

@@ -1936,8 +1936,28 @@ $06, $08` i `.asm`-filen efter en körning.
   följer hoppen: en JSR, JMP eller branch från skriptet till en av dess egna adresser stannar i skriptet, allt annat
   går till programmet, och en RTS går tillbaka till den som gjorde JSR:en. Skriptet anropas som med SYS: stacken har
   en returadress, och körningen börjar vid etiketten `start`, annars vid kodens första byte. Den slutar vid RTS:en som
-  återvänder därifrån, vid en BRK, vid en JAM eller efter 200 miljoner instruktioner (omkring 1,5 s). Skriptet kan
-  anropa programmets egna rutiner (`jsr decrypt`) eller köra en loop som klistrats in.
+  återvänder därifrån, vid en BRK, vid en JAM eller efter 200 miljoner instruktioner (omkring 2,5 s; en körning går
+  omkring 80 miljoner instruktioner i sekunden). Skriptet kan anropa programmets egna rutiner (`jsr decrypt`) eller
+  köra en loop som klistrats in. Körningen är en `ScriptMachine`, som också går en instruktion i taget (felsökaren).
+  Stacken (`$0100–$01ff`) är densamma för skriptet och programmet: körningen börjar med SYS-returen på `$01fe–$01ff`
+  och S = `$fd`, och vid varje JSR antecknas vem som gjorde den (med stackpekaren som nyckel), så att ett RTS går
+  tillbaka till skriptets eller programmets kod.
+- **Felsökaren:** *Debug* (eller `F8`) startar körningen och stannar före första instruktionen. Verktygsraden har då
+  *Continue* (`Ctrl+Enter`: vidare till slutet eller nästa brytpunkt), *Step* (`F8`: en instruktion, in i en JSR),
+  *Over* (`F6`: en JSR körs tills den återvänder), *Out* (`Shift+F6`: tills rutinen den är i återvänder; överst till
+  slutet) och *Stop* (`F10` och `F11` tar Windows meny och helskärmen). Medan något körs i flera delar (Continue,
+  Over, Out) står *Pause* där. Editorn markerar raden som körs härnäst (en pil i marginalen och ett band), och när
+  programmets kod kör den rad vars JSR den kör för. En brytpunkt sätts och tas bort med ett klick till vänster om
+  radnumret (en röd prick); brytpunkterna följer raderna när koden ändras och finns kvar när fliken öppnas igen.
+  Koden kan inte ändras medan man felsöker (en rad under verktygsraden säger det). Panelen till höger om koden
+  visar var körningen är (*Line 11 ($c011)*, eller *In the program at decrypt ($0810), called from line 3*),
+  antalet instruktioner och cykler, registren PC, A, X, Y (hex, decimalt och binärt), S (och vilka byte stacken
+  håller) och P med flaggorna N V - B D I Z C (de som är satta lysta); det senaste steget ändrade är markerade. Under
+  dem står stacken från `$01ff` ned till S: en returadress står som *↩ return to line 4 ($c008), from the script*
+  (eller *from the program*, eller *the end of the run* för SYS-returen), och raden överst har *← S*. Sist står de
+  fyra nästa instruktionerna (med skriptets egna etiketter i dess kod och programmets namn annars). När körningen når
+  slutet är den en körning som Run (dess ändringar går in i programmet); *Stop* skriver ingenting. Medan man
+  felsöker är utdataytan lägre (egen höjd, kan dras).
 - **Resultatet** (`writeScriptRun`): de byte i programmets minne som körningen ändrade, utom nollsidan och stacken
   (processorns arbetsminne), skrivs in i programmet som skriptets patchar (10.2, `Patch.script` säger vilket skript),
   en per ändring (ändringar högst 8 byte isär och i samma fil blir en), med namnet `skript` eller `skript_xxxx` när de

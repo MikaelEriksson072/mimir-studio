@@ -922,6 +922,10 @@ export interface AssembleResult {
   first: number;
   /** the names from outside the code (AssembleOptions.names) it used, each with the first line that uses it */
   external: Map<string, number>;
+  /** the line of the entry file each byte comes from (0: none, or another file) */
+  lines: Int32Array;
+  /** 1 where a statement's bytes start (an instruction's first byte), in the entry file */
+  starts: Uint8Array;
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {

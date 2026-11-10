@@ -482,12 +482,18 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   // how far pc is from where the next byte goes, and `outer` the offsets of the .pseudopc blocks around
   let off = 0, outer: number[] = [], first = -1;
   const prints: string[] = [];
+  // in the final pass, the line of the entry file each byte comes from, and where each statement's bytes start (an
+  // instruction's first byte: a debugger's line, a breakpoint's address)
+  const lines = new Int32Array(0x10000), starts = new Uint8Array(0x10000);
+  let fresh = false;
   const emit = (b: number, st: Stmt) => {
     b &= 0xff;
     const a = pc - off;
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
     if (written[a] && pass === 'final') E(`memory at $${h4(a)} written twice`, st);
     if (first < 0) first = a;
+    if (pass === 'final' && st.file === entryPath) { lines[a] = st.line; if (fresh) starts[a] = 1; }
+    fresh = false;
     mem[a] = b; written[a] = 1; pc++;
   };
 
@@ -591,6 +597,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     };
     const stmt = (st: Stmt) => {
       curStmt = st;
+      fresh = true;
       try {
         label(st);
         const s = st.body;
@@ -686,5 +693,5 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   // an error a loop met in each round is said once
   const said = new Set<string>();
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts };
 }

@@ -6,12 +6,18 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptPad, type ScriptRun, type ScriptWriteFailure, type UserScript } from '@mimir/core';
+import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptPad, type ScriptRun, type ScriptWriteFailure, type UserScript } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
 import { runScriptInWorker, stopScript } from '../lib/scriptrun';
 import { useScripts, type LibraryScript, type PadMode, type ScriptRunKept } from '../store/scripts';
 import { Splitter } from './Splitter';
+import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
+
+/** a script being debugged: its machine, the code it was assembled from, the registers before the last step */
+interface Debugging { id: string; m: ScriptMachine; source: string; prev: DebugRegs | null }
+/** instructions the debugger runs before it lets the window draw (Continue, Step over and Step out go on in parts) */
+const DEBUG_SLICE = 400_000;
 
 type MonacoNs = typeof Monaco;
 
@@ -61,7 +67,7 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
 }
 
 export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd, onEdit, onRemove, onRan, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
-  const { selected, runs, running, shown, mode, screen, outH, library, set, saveToLibrary, removeFromLibrary } = useScripts();
+  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, library, set, saveToLibrary, removeFromLibrary } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
@@ -76,6 +82,16 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
   const scriptsRef = useRef(scripts); scriptsRef.current = scripts;
   const onEditRef = useRef(onEdit); onEditRef.current = onEdit;
   const runRef = useRef<() => void>(() => { });
+  // the debugger: the run going an instruction at a time, a counter that draws it again, whether it is going on
+  const [dbg, setDbg] = useState<Debugging | null>(null);
+  const [, setTick] = useState(0);
+  const [dbgBusy, setDbgBusy] = useState(false);
+  const pauseReq = useRef(false);
+  const dbgRef = useRef(dbg); dbgRef.current = dbg;
+  /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
+  const keys = useRef({ step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { } });
+  /** the breakpoints of each model, as decorations (they move with the lines as the code is edited) */
+  const bpIds = useRef<Record<string, string[]>>({});
 
   const flush = () => {
     const p = pending.current; if (!p) return;
@@ -100,6 +116,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
         fontSize: 13, lineHeight: 20, minimap: { enabled: false }, scrollBeyondLastLine: false, renderLineHighlight: 'all',
         smoothScrolling: true, padding: { top: 8 }, guides: { indentation: false }, stickyScroll: { enabled: false }, mouseWheelZoom: true,
         tabSize: 8, insertSpaces: true, quickSuggestions: { other: true, comments: false, strings: false }, wordBasedSuggestions: 'off', acceptSuggestionOnEnter: 'off', tabCompletion: 'off', suggestOnTriggerCharacters: true,
+        glyphMargin: true,
       });
       ed.current = editor;
       editor.onDidChangeModelContent(() => {
@@ -111,12 +128,65 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
         if (pending.current) clearTimeout(pending.current.timer);
         pending.current = { id: s.id, timer: setTimeout(flush, 500) };
       });
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { editor.trigger('run', 'hideSuggestWidget', null); runRef.current(); });
+      // Ctrl+Enter runs, or (debugging) goes on; F8 steps (and starts debugging), F6 steps over a JSR, Shift+F6 out of one
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { editor.trigger('run', 'hideSuggestWidget', null); if (dbgRef.current) keys.current.cont(); else runRef.current(); });
+      editor.addCommand(monaco.KeyCode.F8, () => keys.current.step());
+      editor.addCommand(monaco.KeyCode.F6, () => keys.current.over());
+      editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F6, () => keys.current.out());
+      // a click in the gutter left of the line numbers sets or clears a breakpoint
+      editor.onMouseDown(ev => {
+        if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && ev.target.position) keys.current.toggleBp(ev.target.position.lineNumber);
+      });
       if (document.fonts?.ready) void document.fonts.ready.then(() => monaco.editor.remeasureFonts());
       setState('ready');
     }).catch(() => { if (alive) setState('fallback'); });
-    return () => { alive = false; flush(); ed.current?.dispose(); ed.current = null; Object.values(models.current).forEach(m => m.dispose()); models.current = {}; };
+    return () => {
+      alive = false; flush();
+      // the breakpoints where their lines are now, for the next time the tab opens
+      for (const [id, m] of Object.entries(models.current)) useScripts.getState().setBps(id, (bpIds.current[id] ?? []).map(d => m.getDecorationRange(d)?.startLineNumber).filter((n): n is number => !!n));
+      bpIds.current = {};
+      ed.current?.dispose(); ed.current = null; pcDeco.current = null; Object.values(models.current).forEach(m => m.dispose()); models.current = {};
+    };
   }, [any]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the debugger's line: the script's line the program counter is at, or the line whose JSR the program's code runs for
+  const pcDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  useEffect(() => {
+    const monaco = monacoRef.current, e = ed.current;
+    if (state !== 'ready' || !monaco || !e) return;
+    if (!pcDeco.current) pcDeco.current = e.createDecorationsCollection();
+    const d = dbg && !dbgBusy ? dbg.m : null;
+    const line = d?.lineAt() ?? null, call = d && !line ? d.callLine() : null;
+    if (!d || (!line && !call)) { pcDeco.current.clear(); return; }
+    pcDeco.current.set([{ range: new monaco.Range(line ?? call!, 1, line ?? call!, 1), options: { isWholeLine: true, className: line ? 'scr-pc-line' : 'scr-call-line', glyphMarginClassName: line ? 'scr-pc-glyph' : 'scr-call-glyph' } }]);
+  });
+  // the code cannot change while it is being debugged
+  useEffect(() => { ed.current?.updateOptions({ readOnly: !!dbg }); }, [dbg, state]);
+  // starting and stopping change the editor's size at once (the note above it, the panel beside it, the output below
+  // it), and so does the note going after the first run: laid out again once they are drawn, or the line numbers stay a line off the lines; then the line is shown
+  const debugging = !!dbg, noteShown = !!cur && !runs[cur.id] && !patches.some(p => p.script === cur.id);
+  useEffect(() => {
+    const e = ed.current; if (!e) return;
+    const id = requestAnimationFrame(() => {
+      e.layout();
+      const d = dbgRef.current, line = d ? d.m.lineAt() ?? d.m.callLine() : null;
+      if (line) e.revealLineInCenterIfOutsideViewport(line);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [debugging, noteShown, state]);
+  // another script shown, or the tab left: the debugging stops
+  useEffect(() => { if (dbgRef.current && dbgRef.current.id !== cur?.id) stopDbg(true); }, [cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { pauseReq.current = true; }, []);
+  // F8, F6 and Shift+F6 outside the editor too (in it, its commands take them)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.closest?.('.monaco-editor, input, textarea, select') || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key === 'F8') { e.preventDefault(); keys.current.step(); }
+      else if (e.key === 'F6') { e.preventDefault(); if (e.shiftKey) keys.current.out(); else keys.current.over(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     const monaco = monacoRef.current;
@@ -131,7 +201,11 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
     if (!cur) { e.setModel(null); return; }
     if (pending.current && pending.current.id !== cur.id) flush();
     let m = models.current[cur.id];
-    if (!m) { m = monaco.editor.createModel(cur.source, 'kickass', monaco.Uri.parse(`script:///${cur.id}.asm`)); models.current[cur.id] = m; }
+    if (!m) {
+      m = monaco.editor.createModel(cur.source, 'kickass', monaco.Uri.parse(`script:///${cur.id}.asm`)); models.current[cur.id] = m;
+      // the breakpoints it had when the tab was last open
+      bpIds.current[cur.id] = []; setBps(cur.id, useScripts.getState().bps[cur.id] ?? []);
+    }
     else if (m.getValue() !== cur.source && pending.current?.id !== cur.id) {
       const vs = e.getModel() === m ? e.saveViewState() : null; applying.current = true; m.setValue(cur.source); applying.current = false; if (vs) e.restoreViewState(vs);
       setLive(l => { const { [cur.id]: _, ...rest } = l; return rest; });
@@ -142,6 +216,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
   const source = cur ? live[cur.id] ?? cur.source : '';
   const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, pads: cur.pads }) : null, [env, source, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
   const names = useMemo(() => cur ? scriptNames(env, cur.pads) : new Map<string, number>(), [env, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** a name for an address (the first of the names the script may use that has it) */
+  const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a)) m.set(a, n); return m; }, [names]);
   // the names the editor completes and the hovers show, for this script
   useEffect(() => {
     void import('../monaco/providers').then(({ scriptContext }) => { scriptContext.names = names; scriptContext.pads = cur?.pads ?? []; });
@@ -169,20 +245,121 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
     set({ running: s.id });
     try {
       const r = await runScriptInWorker(envFor(s.id), { source: text, pads: s.pads });
-      const w = onRan(s.id, r);
-      set({ runs: { ...useScripts.getState().runs, [s.id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [] } }, running: null });
-      const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
-      const sh = useScripts.getState().shown;
-      if (sh.kind === 'patch' || !s.pads.length) set({ shown: w?.written.length ? { kind: 'patch', id: w.written[0].id } : { kind: 'pad', i: 0 } });
-      const what = w?.written.length ? ` It changed ${plural(bytes, 'byte')} of the program in ${plural(on.length, 'place')}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
-      toast(`${s.name}: ${scriptEndText(r)}${what}${w?.failed.length ? ` ${plural(w.failed.length, 'change')} could not be written (see Last run).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length ? 'warn' : 'ok') : 'warn');
+      set({ running: null });
+      ran(s, r, text);
     } catch (e) {
       set({ running: null });
       const msg = errorText(e);
       toast(msg === 'stopped' ? `${s.name} stopped` : `${s.name} did not run: ${msg}`, msg === 'stopped' ? 'info' : 'err');
     }
   };
+  /** a run has ended (Run, or debugging to its end): its changes into the program, what it did shown and said */
+  const ran = (s: UserScript, r: ScriptRun, text: string) => {
+    const w = onRan(s.id, r);
+    set({ runs: { ...useScripts.getState().runs, [s.id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [] } } });
+    const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
+    const sh = useScripts.getState().shown;
+    if (sh.kind === 'patch' || !s.pads.length) set({ shown: w?.written.length ? { kind: 'patch', id: w.written[0].id } : { kind: 'pad', i: 0 } });
+    const what = w?.written.length ? ` It changed ${plural(bytes, 'byte')} of the program in ${plural(on.length, 'place')}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
+    toast(`${s.name}: ${scriptEndText(r)}${what}${w?.failed.length ? ` ${plural(w.failed.length, 'change')} could not be written (see Last run).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length ? 'warn' : 'ok') : 'warn');
+  };
   runRef.current = () => void run();
+
+  /* ---- the debugger (spec 10.3): the run an instruction at a time, on the program as Run has it ---- */
+  /** the breakpoints of a script: the lines of its model's breakpoint decorations (they move as lines are edited) */
+  const bpLines = (id: string): number[] => {
+    const m = models.current[id];
+    if (!m) return useScripts.getState().bps[id] ?? [];
+    return (bpIds.current[id] ?? []).map(d => m.getDecorationRange(d)?.startLineNumber).filter((n): n is number => !!n);
+  };
+  const setBps = (id: string, lines: number[]) => {
+    const monaco = monacoRef.current, m = models.current[id];
+    if (!monaco || !m) return;
+    const at = [...new Set(lines)].filter(l => l >= 1 && l <= m.getLineCount()).sort((a, b) => a - b);
+    bpIds.current[id] = m.deltaDecorations(bpIds.current[id] ?? [], at.map(l => ({
+      range: new monaco.Range(l, 1, l, 1),
+      options: { glyphMarginClassName: 'scr-bp', glyphMarginHoverMessage: { value: 'Breakpoint: debugging stops before this line runs (a click takes it away)' }, stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
+    })));
+    useScripts.getState().setBps(id, at);
+  };
+  const toggleBp = (line: number) => {
+    const s = curRef.current; if (!s) return;
+    const now = bpLines(s.id);
+    setBps(s.id, now.includes(line) ? now.filter(l => l !== line) : [...now, line]);
+    setTick(t => t + 1);
+  };
+  const busyRef = useRef(false);
+  /** the debugger stopped somewhere: drawn there, and the line shown; at the end of the run, it is a run */
+  const stopped = (d: Debugging) => {
+    if (dbgRef.current !== d) return;
+    if (d.m.end) {
+      setDbg(null); dbgRef.current = null;
+      const s = scriptsRef.current.find(x => x.id === d.id);
+      if (s) ran(s, d.m.result(), d.source);
+      return;
+    }
+    setTick(t => t + 1);
+    const line = d.m.lineAt() ?? d.m.callLine();
+    if (line) ed.current?.revealLineInCenterIfOutsideViewport(line);
+  };
+  /** start debugging: the run set up, stopped before its first instruction */
+  const startDebug = () => {
+    const s = curRef.current; if (!s || running || dbgRef.current) return;
+    flush();
+    const text = models.current[s.id]?.getValue() ?? s.source;
+    const e = envFor(s.id), c = checkScript(e, { source: text, pads: s.pads });
+    if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
+    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads }, c), source: text, prev: null };
+    setDbg(d); dbgRef.current = d;
+    stopped(d);
+  };
+  /** go on until `stop` holds, a breakpoint's line is next, or the run ends; in parts, so the window keeps drawing */
+  const go = (stop: ((m: ScriptMachine) => boolean) | null, keepPrev = false) => {
+    const d = dbgRef.current; if (!d || busyRef.current) return;
+    const lines = new Set(bpLines(d.id)), { starts, lines: lineOf } = d.m.check;
+    const at = (m: ScriptMachine) => (stop ? stop(m) : false) || (lines.size > 0 && m.inScript && starts[m.cpu.pc] === 1 && lines.has(lineOf[m.cpu.pc]));
+    if (!keepPrev) d.prev = regsOf(d.m);
+    pauseReq.current = false; busyRef.current = true; setDbgBusy(true);
+    const part = () => {
+      if (dbgRef.current !== d) return;
+      const r = pauseReq.current ? 'stopped' : d.m.runUntil(at, DEBUG_SLICE);
+      if (r === 'more') { setTick(t => t + 1); setTimeout(part, 0); return; }
+      busyRef.current = false; setDbgBusy(false);
+      stopped(d);
+    };
+    setTimeout(part, 0);
+  };
+  const stepDbg = () => {
+    const d = dbgRef.current; if (!d) { startDebug(); return; }
+    if (busyRef.current) return;
+    d.prev = regsOf(d.m); d.m.step(); stopped(d);
+  };
+  /** a JSR runs until it returns (to the instruction after it, the stack as it was); anything else is a step */
+  const overDbg = () => {
+    const d = dbgRef.current; if (!d) { startDebug(); return; }
+    if (busyRef.current) return;
+    const m = d.m;
+    if (m.peek(m.cpu.pc) !== 0x20) { stepDbg(); return; }
+    const s0 = m.cpu.s, back = (m.cpu.pc + 3) & 0xffff;
+    d.prev = regsOf(m); m.step();
+    if (m.end || (m.cpu.s === s0 && m.cpu.pc === back)) { stopped(d); return; }
+    go(x => x.cpu.s === s0 && x.cpu.pc === back, true);
+  };
+  /** on until an RTS goes back past where the stack is now: out of the routine (at the top, to the end of the run) */
+  const outDbg = () => {
+    const d = dbgRef.current; if (!d || busyRef.current) return;
+    const s0 = d.m.cpu.s;
+    go(x => x.cpu.lastOp === 0x60 && x.cpu.s > s0);
+  };
+  const contDbg = () => { if (!dbgRef.current) startDebug(); else go(null); };
+  /** stop debugging where it is: nothing goes into the program */
+  const stopDbg = (quiet = false) => {
+    pauseReq.current = true;
+    if (!dbgRef.current) return;
+    setDbg(null); dbgRef.current = null; busyRef.current = false; setDbgBusy(false);
+    if (!quiet) toast('Debugging stopped: nothing went into the program (Run, or debugging to the end, writes the changes)', 'info');
+  };
+  keys.current = { step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp };
 
   const libraryList = <LibraryList library={library} onAdd={onAdd} onRemove={name => { removeFromLibrary(name); toast(`"${name}" removed from the library`, 'ok'); }} />;
 
@@ -235,20 +412,35 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}
           </span>
           <span className="grow" />
-          {isRunning
-            ? <button className="btn" onClick={() => stopScript()} title="Stop the run"><Icon name="x" />Stop</button>
-            : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={() => void run()} title={check.ok ? 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program' : 'The script must check out before it can run: see the errors'}>
-              <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
-          <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
-            title={inLibrary ? 'Save the script in the library again, in place of the one of the same name there' : 'Save a copy of the script in the library, so that other projects can add it'}><Icon name="bookmark" />{inLibrary ? 'Update library' : 'Save to library'}</button>
-          <button className="icon-btn" aria-label="Delete script" title={`Delete the script "${cur.name}"${mine.length ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`} onClick={() => { flush(); onRemove(cur.id); }}><Icon name="trash" size={15} /></button>
+          {dbg ? <div className="scr-dbg-tools" role="group" aria-label="Debugging">
+            {dbgBusy
+              ? <button className="btn" onClick={() => { pauseReq.current = true; }} title="Stop where it is now, and go on debugging from there">Pause</button>
+              : <button className="btn primary" onClick={contDbg} title="Go on to the end of the run, or to the next breakpoint (Ctrl+Enter). At the end it is a run: its changes go into the program"><Icon name="play" />Continue<kbd>Ctrl+Enter</kbd></button>}
+            <button className="btn" disabled={dbgBusy} onClick={stepDbg} title="Run the next instruction; into a JSR (F8)">Step<kbd>F8</kbd></button>
+            <button className="btn" disabled={dbgBusy} onClick={overDbg} title="Run the next instruction; a JSR runs until it returns (F6)">Over<kbd>F6</kbd></button>
+            <button className="btn" disabled={dbgBusy} onClick={outDbg} title="Run until the routine it is in returns; at the top, to the end of the run (Shift+F6)">Out<kbd>Shift+F6</kbd></button>
+            <button className="btn" onClick={() => stopDbg()} title="Stop debugging where it is: nothing goes into the program"><Icon name="x" />Stop</button>
+          </div> : <>
+            {isRunning
+              ? <button className="btn" onClick={() => stopScript()} title="Stop the run"><Icon name="x" />Stop</button>
+              : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={() => void run()} title={check.ok ? 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program' : 'The script must check out before it can run: see the errors'}>
+                <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
+            <button className="btn scr-debug-btn" disabled={!check.ok || !!running} onClick={startDebug} title={check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
+            <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
+              title={inLibrary ? 'Save the script in the library again, in place of the one of the same name there' : 'Save a copy of the script in the library, so that other projects can add it'}><Icon name="bookmark" /><span className="lbl">{inLibrary ? 'Update library' : 'Save to library'}</span></button>
+            <button className="icon-btn" aria-label="Delete script" title={`Delete the script "${cur.name}"${mine.length ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`} onClick={() => { flush(); onRemove(cur.id); }}><Icon name="trash" size={15} /></button>
+          </>}
         </div>
-        {howTo && <p className="scr-howto" role="note"><Icon name="info" size={13} /><span><b>Run</b> (Ctrl+Enter) runs the code here in Mimir. What it changes in the program's bytes goes into the program and its .asm, listed under <i>In the program</i>; the script's own code never does.</span></p>}
+        {howTo && !dbg && <p className="scr-howto" role="note"><Icon name="info" size={13} /><span><b>Run</b> (Ctrl+Enter) runs the code here in Mimir. What it changes in the program's bytes goes into the program and its .asm, listed under <i>In the program</i>; the script's own code never does. <b>Debug</b> (F8) goes through it an instruction at a time.</span></p>}
+        {dbg && <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. Reaching the end, it is a run: its changes go into the program.</span></p>}
         <div className="scr-body">
-          <div className="mon-host scr-editor" ref={host} style={{ display: state === 'ready' ? 'block' : 'none' }} />
-          {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
-          <Splitter dir="h" onDrag={d => set({ outH: Math.max(140, Math.min(window.innerHeight - 260, useScripts.getState().outH - d)) })} />
-          <div className="scr-out" style={{ height: outH }}>
+          <div className="scr-edit-row">
+            <div className="mon-host scr-editor" ref={host} style={{ display: state === 'ready' ? 'block' : 'none' }} />
+            {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} readOnly={!!dbg} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
+            {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} />}
+          </div>
+          <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />
+          <div className="scr-out" style={{ height: dbg ? dbgOutH : outH }}>
             <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} />
             <PadView script={cur} mine={mine} names={names} mode={mode} screen={screen} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
               onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} />

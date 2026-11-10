@@ -164,6 +164,11 @@ export interface ScriptCheck {
   /** the assembled bytes, and which addresses they are at */
   mem: Uint8Array;
   written: Uint8Array;
+  /** the line of the code each byte comes from (0: none), and where each line's bytes start (a debugger's line) */
+  lines: Int32Array;
+  starts: Uint8Array;
+  /** the script's own labels at its own addresses (its code and data), by address: the first one at each */
+  labels: Map<Addr, string>;
 }
 
 const PAD_NAME = /^[A-Za-z_]\w*$/;
@@ -232,7 +237,9 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
       if (pad >= 0) err(`${u.name} ($${h4(u.at)}) is inside the scratchpad ${script.pads[pad].name}, so the script would read the scratchpad there, not the program: give the scratchpad another address.`, u.line, pad);
     }
   }
-  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written };
+  const labels = new Map<Addr, string>();
+  for (const [k, v] of asm.symbols) if (typeof v === 'number' && /^[A-Za-z_]\w*$/.test(k) && v >= 0 && v < 0x10000 && asm.written[v] && !labels.has(v)) labels.set(v, k);
+  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written, lines: asm.lines, starts: asm.starts, labels };
 }
 
 /** how a run ended: the RTS that returns from the script, a BRK, a JAM opcode, or the instruction limit */
@@ -259,76 +266,198 @@ export interface ScriptRun {
   ms: number;
 }
 
-/** instructions a run may take before it is stopped (about 1.5 s; the 6510 runs some 140 million a second) */
+/** instructions a run may take before it is stopped (about 2.5 s; a run goes some 80 million a second) */
 export const SCRIPT_LIMIT = 200_000_000;
 
 /** where the RTS that ends the script returns to: the run pushes $ffff, so it lands at $0000 with the stack empty */
 const DONE = 0x0000;
 
+/** A byte of the stack, from the top ($01ff) down to the stack pointer: a return address a JSR (or the start of the
+ *  run, called like SYS) put there is said, with who made the JSR and where it goes back to. */
+export interface StackEntry {
+  addr: Addr;
+  value: number;
+  /** the high byte of a return address (the low byte is the entry after it): where an RTS goes and who it goes to */
+  ret?: { to: Addr; by: 'start' | 'script' | 'program' };
+  /** the low byte of a return address */
+  low?: boolean;
+}
+
 /**
- * Run a script that checked ok. Two memories: the program's, as LOAD leaves it, and the script's own, with its code
- * and its scratchpads (filled). The script's code reads and writes its own memory at its own addresses and the
- * program's everywhere else; the program's code (a routine the script calls) only ever sees the program's memory,
- * even at the addresses of the script's code. Whose code runs follows the jumps: a JSR, JMP or branch from the
- * script to an address of its own stays in the script, anything else goes to the program, and an RTS goes back to
- * whoever made the JSR. The zero page and the stack are shared. The 6510 starts at the entry with the stack holding
- * the return address of a SYS, and goes until the script returns, a BRK or JAM, or `limit` instructions.
+ * A script's run as a machine that goes an instruction at a time (spec 10.3, the debugger), or on until something
+ * holds. Two memories: the program's, as LOAD leaves it, and the script's own, with its code and its scratchpads
+ * (filled). The script's code reads and writes its own memory at its own addresses and the program's everywhere else;
+ * the program's code (a routine the script calls) only ever sees the program's memory, even at the addresses of the
+ * script's code. Whose code runs follows the jumps: a JSR, JMP or branch from the script to an address of its own
+ * stays in the script, anything else goes to the program, and an RTS goes back to whoever made the JSR. The zero page
+ * and the stack are shared. The 6510 starts at the entry with the stack holding the return address of a SYS, and goes
+ * until the script returns, a BRK or JAM, or `limit` instructions.
  */
-export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT): ScriptRun {
-  if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
-  const t0 = Date.now();
-  const mem = new Uint8Array(0x10000), loaded = loadedMask(env.files);
-  for (const f of env.files) mem.set(f.bytes.subarray(0, Math.max(0, 0x10000 - f.load)), f.load);
-  // the script's own memory, and which addresses are in it
-  const own = new Uint8Array(0x10000), mine = new Uint8Array(0x10000);
-  for (const p of script.pads) { own.fill((p.fill ?? 0) & 0xff, p.start, p.start + p.size); mine.fill(1, p.start, p.start + p.size); }
-  for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
-  let inScript = !!mine[check.entry];
-  const bus: Bus = {
-    read: a => (inScript && mine[a] ? own[a] : mem[a]),
-    write: (a, v) => { if (inScript && mine[a]) own[a] = v; else mem[a] = v; },
-    fetch: a => (inScript && mine[a] ? own[a] : mem[a]),
-  };
-  const cpu = new Cpu(bus);
-  // called like SYS: the return address on the stack, interrupts off
-  mem[0x1ff] = (DONE - 1) >> 8 & 0xff; mem[0x1fe] = (DONE - 1) & 0xff; cpu.s = 0xfd; cpu.pc = check.entry; cpu.i = 1;
-  const before = mem.slice();
+/** The bus of a script's run: the script's own memory where its code reads and writes its own addresses, the program's
+ *  memory everywhere else. A class, so that every run's bus has the same methods and the CPU's calls stay fast. */
+class ScriptBus implements Bus {
+  constructor(private readonly mem: Uint8Array, private readonly own: Uint8Array, private readonly mine: Uint8Array, private readonly ctx: { script: boolean }) { }
+  read(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
+  write(a: number, v: number): void { if (this.ctx.script && this.mine[a]) this.own[a] = v; else this.mem[a] = v; }
+  fetch(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
+}
+
+export class ScriptMachine {
+  readonly cpu: Cpu;
+  /** the program's memory, and the script's own (and which addresses are the script's) */
+  readonly mem = new Uint8Array(0x10000);
+  readonly own = new Uint8Array(0x10000);
+  readonly mine = new Uint8Array(0x10000);
+  /** whether the code running is the script's */
+  // (kept in an object of its own: the bus reads it at every byte)
+  private readonly ctx = { script: false };
+  get inScript(): boolean { return this.ctx.script; }
+  set inScript(v: boolean) { this.ctx.script = v; }
+  instructions = 0;
+  cycles = 0;
+  /** how it ended (null: it goes on) */
+  end: ScriptEnd | null = null;
+  /** the address of the instruction run last */
+  at: Addr;
+  private readonly before: Uint8Array;
+  private readonly loaded: Uint8Array;
   /** who made each JSR whose return address is on the stack, by the stack pointer before it: the script or not */
-  const frames = new Map<number, boolean>();
-  let n = 0, cycles = 0, end: ScriptEnd = 'limit', at = cpu.pc;
-  while (n < limit) {
-    at = cpu.pc;
-    const s0 = cpu.s, was = inScript;
-    cycles += cpu.step(); n++;
-    if (cpu.jammed) { end = 'jam'; break; }
+  private readonly frames = new Map<number, boolean>();
+  private readonly t0 = Date.now();
+
+  constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads'>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
+    if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
+    const { mem, own, mine, ctx } = this;
+    this.loaded = loadedMask(env.files);
+    for (const f of env.files) mem.set(f.bytes.subarray(0, Math.max(0, 0x10000 - f.load)), f.load);
+    for (const p of script.pads) { own.fill((p.fill ?? 0) & 0xff, p.start, p.start + p.size); mine.fill(1, p.start, p.start + p.size); }
+    for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
+    this.inScript = !!mine[check.entry];
+    const bus = new ScriptBus(mem, own, mine, ctx);
+    const cpu = this.cpu = new Cpu(bus);
+    // called like SYS: the return address on the stack, interrupts off
+    mem[0x1ff] = (DONE - 1) >> 8 & 0xff; mem[0x1fe] = (DONE - 1) & 0xff; cpu.s = 0xfd; cpu.pc = check.entry; cpu.i = 1;
+    this.at = cpu.pc;
+    this.before = mem.slice();
+  }
+
+  /** Run one instruction; false once the run has ended. */
+  step(): boolean {
+    if (this.end) return false;
+    if (this.instructions >= this.limit) { this.end = 'limit'; this.at = this.cpu.pc; return false; }
+    const cpu = this.cpu, mine = this.mine;
+    this.at = cpu.pc;
+    const s0 = cpu.s, was = this.inScript;
+    this.cycles += cpu.step(); this.instructions++;
+    if (cpu.jammed) { this.end = 'jam'; return false; }
     const op = cpu.lastOp;
-    if (op === 0x00) { end = 'brk'; break; }
-    if (op === 0x60 && cpu.s === 0xff && cpu.pc === DONE) { end = 'rts'; break; }
-    if (op === 0x20) { frames.set(s0, was); inScript = was && !!mine[cpu.pc]; }
-    else if (op === 0x60) { const back = frames.get(cpu.s); frames.delete(cpu.s); inScript = back ?? (was && !!mine[cpu.pc]); }
-    else if (was) inScript = !!mine[cpu.pc];
+    if (op === 0x00) { this.end = 'brk'; return false; }
+    if (op === 0x60 && cpu.s === 0xff && cpu.pc === DONE) { this.end = 'rts'; return false; }
+    if (op === 0x20) { this.frames.set(s0, was); this.inScript = was && !!mine[cpu.pc]; }
+    else if (op === 0x60) { const back = this.frames.get(cpu.s); this.frames.delete(cpu.s); this.inScript = back ?? (was && !!mine[cpu.pc]); }
+    else if (was) this.inScript = !!mine[cpu.pc];
+    return true;
   }
-  if (end === 'limit') at = cpu.pc;
-  // what changed in the program's bytes (not its zero page and stack: the CPU's work area), nearby changes taken
-  // together, in one file (the file a byte is in is the last one LOAD put there)
-  const file = new Int16Array(0x10000).fill(-1);
-  env.files.forEach((f, i) => file.fill(i, f.load, Math.min(0x10000, f.load + f.bytes.length)));
-  const changes: ScriptChange[] = [];
-  let other = 0;
-  const GAP = 8;
-  for (let a = 0; a < 0x10000; a++) {
-    if (mem[a] === before[a]) continue;
-    if (a < 0x200 || !loaded[a]) { other++; continue; }
-    const last = changes[changes.length - 1];
-    if (last && a - last.end <= GAP && file[last.start] === file[a] && [...Array(a - last.end).keys()].every(k => file[last.end + k] === file[a])) last.end = a + 1;
-    else changes.push({ start: a, end: a + 1, bytes: new Uint8Array(0), old: new Uint8Array(0) });
+
+  /**
+   * Run on until `stop` holds after an instruction, the run ends, or `max` instructions have run: 'stopped', 'ended'
+   * or 'more' (call again to go on).
+   */
+  runUntil(stop: ((m: ScriptMachine) => boolean) | null, max = Infinity): 'stopped' | 'ended' | 'more' {
+    if (stop) {
+      for (let n = 0; n < max; n++) {
+        if (!this.step()) return 'ended';
+        if (stop(this)) return 'stopped';
+      }
+      return this.end ? 'ended' : 'more';
+    }
+    // nothing to stop at: step()'s work in a loop of its own, the hot fields in locals (twice as fast)
+    if (this.end) return 'ended';
+    const cpu = this.cpu, mine = this.mine, frames = this.frames, ctx = this.ctx;
+    const until = Math.min(this.limit, this.instructions + max);
+    let n = this.instructions, cycles = this.cycles, end: ScriptEnd | null = null, at = this.at;
+    while (n < until) {
+      at = cpu.pc;
+      const s0 = cpu.s, was = ctx.script;
+      cycles += cpu.step(); n++;
+      if (cpu.jammed) { end = 'jam'; break; }
+      const op = cpu.lastOp;
+      if (op === 0x00) { end = 'brk'; break; }
+      if (op === 0x60) {
+        if (cpu.s === 0xff && cpu.pc === DONE) { end = 'rts'; break; }
+        const back = frames.get(cpu.s); frames.delete(cpu.s); ctx.script = back ?? (was && !!mine[cpu.pc]);
+      } else if (op === 0x20) { frames.set(s0, was); ctx.script = was && !!mine[cpu.pc]; }
+      else if (was) ctx.script = !!mine[cpu.pc];
+    }
+    this.instructions = n; this.cycles = cycles; this.at = at;
+    if (end) { this.end = end; return 'ended'; }
+    if (n >= this.limit) { this.end = 'limit'; this.at = cpu.pc; return 'ended'; }
+    return 'more';
   }
-  for (const c of changes) { c.bytes = mem.slice(c.start, c.end); c.old = before.slice(c.start, c.end); }
-  return {
-    end, at, instructions: n, cycles, regs: { a: cpu.a, x: cpu.x, y: cpu.y, s: cpu.s, p: cpu.p, pc: cpu.pc },
-    pads: script.pads.map(p => ({ name: p.name, bytes: own.slice(p.start, p.start + p.size) })),
-    changes, other, mem, ms: Date.now() - t0,
-  };
+
+  /** a byte as the code running now sees it (or as the script's code or the program's does) */
+  peek(a: Addr, script = this.inScript): number { return script && this.mine[a & 0xffff] ? this.own[a & 0xffff] : this.mem[a & 0xffff]; }
+
+  /** the line of the script's code at `pc` (null: not the script's code, or no line) */
+  lineAt(pc: Addr = this.cpu.pc): number | null { return this.mine[pc] && this.check.lines[pc] ? this.check.lines[pc] : null; }
+
+  /** the line of the script's JSR the program's code is running for (the innermost), when the program's code runs */
+  callLine(): number | null {
+    if (this.inScript) return null;
+    for (let s = this.cpu.s + 1; s < 0xff; s++) if (this.frames.get(s) === true) {
+      const back = ((this.mem[0x100 + s] << 8) | this.mem[0x100 + s - 1]) + 1;
+      return this.lineAt((back - 3) & 0xffff);
+    }
+    return null;
+  }
+
+  /** the stack from its top ($01ff) down to the stack pointer, with the return addresses said */
+  stack(): StackEntry[] {
+    const out: StackEntry[] = [];
+    for (let s = 0xff; s > this.cpu.s; s--) {
+      const value = this.mem[0x100 + s];
+      const by = s === 0xff ? 'start' : this.frames.has(s) ? (this.frames.get(s) ? 'script' : 'program') : null;
+      if (by && s - 1 > this.cpu.s) {
+        out.push({ addr: 0x100 + s, value, ret: { to: (((value << 8) | this.mem[0x100 + s - 1]) + 1) & 0xffff, by } });
+        out.push({ addr: 0x100 + s - 1, value: this.mem[0x100 + s - 1], low: true });
+        s--;
+      } else out.push({ addr: 0x100 + s, value });
+    }
+    return out;
+  }
+
+  /** the run as it stands (once it has ended: its result): what it changed in the program, what its pads hold */
+  result(): ScriptRun {
+    const { mem, before, loaded, cpu, env } = this;
+    // what changed in the program's bytes (not its zero page and stack: the CPU's work area), nearby changes taken
+    // together, in one file (the file a byte is in is the last one LOAD put there)
+    const file = new Int16Array(0x10000).fill(-1);
+    env.files.forEach((f, i) => file.fill(i, f.load, Math.min(0x10000, f.load + f.bytes.length)));
+    const changes: ScriptChange[] = [];
+    let other = 0;
+    const GAP = 8;
+    for (let a = 0; a < 0x10000; a++) {
+      if (mem[a] === before[a]) continue;
+      if (a < 0x200 || !loaded[a]) { other++; continue; }
+      const last = changes[changes.length - 1];
+      if (last && a - last.end <= GAP && file[last.start] === file[a] && [...Array(a - last.end).keys()].every(k => file[last.end + k] === file[a])) last.end = a + 1;
+      else changes.push({ start: a, end: a + 1, bytes: new Uint8Array(0), old: new Uint8Array(0) });
+    }
+    for (const c of changes) { c.bytes = mem.slice(c.start, c.end); c.old = before.slice(c.start, c.end); }
+    return {
+      end: this.end ?? 'limit', at: this.end ? this.at : cpu.pc, instructions: this.instructions, cycles: this.cycles,
+      regs: { a: cpu.a, x: cpu.x, y: cpu.y, s: cpu.s, p: cpu.p, pc: cpu.pc },
+      pads: this.script.pads.map(p => ({ name: p.name, bytes: this.own.slice(p.start, p.start + p.size) })),
+      changes, other, mem, ms: Date.now() - this.t0,
+    };
+  }
+}
+
+/** Run a script that checked ok to its end (ScriptMachine), in one go. */
+export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT): ScriptRun {
+  const m = new ScriptMachine(env, script, check, limit);
+  m.runUntil(null);
+  return m.result();
 }
 
 /** How a run ended, in a sentence. */
