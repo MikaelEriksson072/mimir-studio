@@ -3,10 +3,10 @@
  * project keeps the user's version and the export writes it. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { BUILD_SCRIPTS, lineText, type Addr, type AnalysisResult, type BuildScript, type KickProblem, type RenderResult, type Settings, type Vfs } from '@mimir/core';
+import { BUILD_SCRIPTS, lineText, type Addr, type AnalysisResult, type BuildScript, type KickProblem, type Line, type RenderResult, type Settings, type Vfs } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { Changed, NavOptions } from '../lib/types';
-import { LineBody } from './Listing';
+import { LineBody, lineScriptMarks, scriptMarkTip, type ScriptMark } from './Listing';
 
 type MonacoNs = typeof Monaco;
 
@@ -20,13 +20,35 @@ interface SourceViewProps {
   changed?: Changed | null;
   /** a new value opens Monaco's find (Ctrl+F outside the editor) */
   findReq?: number;
+  /** the scripts at each address (spec 10.3), marked after their lines; a click on a mark opens its script */
+  scriptMarks?: ReadonlyMap<Addr, ScriptMark[]>;
+  onScriptMark?: (id: string, line?: number) => void;
+  /** a right-click's "Link to a script": the menu that links address `a` to a script, at the pointer */
+  onLinkMenu?: (a: Addr, x: number, y: number) => void;
 }
 
 const isScript = (p: string): p is BuildScript => (BUILD_SCRIPTS as readonly string[]).includes(p);
 
 const languageOf = (p: string) => p.endsWith('.asm') ? 'kickass' : p.endsWith('.md') ? 'markdown' : p.endsWith('.sh') ? 'shell' : p.endsWith('.bat') ? 'bat' : 'plaintext';
 
-export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed, findReq = 0 }: SourceViewProps) {
+/** the address a script can be linked to at a place in a source file: the name under the pointer when it is one of the
+ *  program's (a label, a zero-page variable), else the line's (its label, its .label line's, its first byte) */
+function linkAddrAt(R: RenderResult, line: Line | undefined, word: string | null): Addr | null {
+  if (word) {
+    for (const [a, l] of R.labels) if (l.name === word) return a;
+    for (const [a, z] of R.zp) if (!z.off && z.name === word) return a;
+  }
+  if (!line) return null;
+  if (line.k === 'dir' && line.tok[0]?.s === '.label') {
+    if (line.zp != null) return line.zp;
+    const def = line.tok.find(t => t.t === 'def');
+    if (def) for (const [a, l] of R.labels) if (l.name === def.s) return a;
+    return null;
+  }
+  return line.k === 'lbl' || ('n' in line && line.n > 0) ? line.a : null;
+}
+
+export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed, findReq = 0, scriptMarks, onScriptMark, onLinkMenu }: SourceViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
   const ed = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -44,6 +66,12 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
   const suppress = useRef(false);
   const onNavigateRef = useRef(onNavigate); onNavigateRef.current = onNavigate;
   const rRef = useRef(R); rRef.current = R;
+  const linkRef = useRef(onLinkMenu); linkRef.current = onLinkMenu;
+  const markRef = useRef(onScriptMark); markRef.current = onScriptMark;
+  const ctxAt = useRef<{ x: number; y: number } | null>(null);
+  /** the scripts marked after each line of the file shown (by line number) */
+  const markLines = useRef(new Map<number, ScriptMark[]>());
+  const marksDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   // typing in a build script is kept in the project a moment after the last key, and at once on leaving the file
   const onEditRef = useRef(onEditScript); onEditRef.current = onEditScript;
   const pending = useRef<{ path: BuildScript; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -74,6 +102,28 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
         const lines = rRef.current.fileLines[edPath.current];
         const l = lines && lines[ev.position.lineNumber - 1];
         if (l && l.a != null && (('n' in l && l.n > 0) || l.k === 'lbl')) onNavigateRef.current(l.a, { fromSource: true });
+      });
+      // a right-click's Link to a script (spec 10.3): the name under the pointer, else the line's; the menu opens where
+      // the editor's menu was
+      editor.onContextMenu(ev => { ctxAt.current = { x: ev.event.posx, y: ev.event.posy }; });
+      editor.addAction({
+        id: 'mimir.link-script', label: 'Link to a script…', contextMenuGroupId: 'navigation', contextMenuOrder: 0,
+        run: e => {
+          const pos = e.getPosition(), m = e.getModel(); if (!pos || !m) return;
+          const a = linkAddrAt(rRef.current, rRef.current.fileLines[edPath.current]?.[pos.lineNumber - 1], m.getWordAtPosition(pos)?.word ?? null);
+          if (a == null) return;
+          let at = ctxAt.current;
+          if (!at) { const v = e.getScrolledVisiblePosition(pos), r = e.getDomNode()?.getBoundingClientRect(); at = { x: (r?.left ?? 0) + (v?.left ?? 0), y: (r?.top ?? 0) + (v?.top ?? 0) + 20 }; }
+          ctxAt.current = null;
+          linkRef.current?.(a, at.x, at.y);
+        },
+      });
+      // a click on a script's mark after a line opens the script
+      editor.onMouseDown(ev => {
+        const el = ev.target.element as HTMLElement | null, n = ev.target.position?.lineNumber;
+        if (!el?.closest?.('.mon-script-tag') || !n || !ev.event.leftButton) return;
+        const ms = markLines.current.get(n);
+        if (ms) { ev.event.preventDefault(); markRef.current?.(ms[0].id, ms[0].line); }
       });
       editor.onDidChangeModelContent(() => {
         const p = edPath.current;
@@ -130,8 +180,31 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     const idx = lines.findIndex(l => 'n' in l && l.n > 0 && cursor >= l.a && cursor < l.a + l.n);
     if (idx < 0) return;
     deco.current?.set([{ range: new monaco.Range(idx + 1, 1, idx + 1, 1), options: { isWholeLine: true, className: 'mon-cur', linesDecorationsClassName: 'mon-cur-gut' } }]);
-    suppress.current = true; e.revealLineInCenterIfOutsideViewport(idx + 1); suppress.current = false;
+    // the editor just shown has no size until its observer measures it, a frame later: measured now, so the line is
+    // shown at once (and without the smooth scroll, which needs the window to draw frames)
+    if (!e.getLayoutInfo().height) e.layout();
+    suppress.current = true; e.revealLineInCenterIfOutsideViewport(idx + 1, monaco.editor.ScrollType.Immediate); suppress.current = false;
   }, [state, cursor, cur?.path, R]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the scripts at the file's lines (spec 10.3): their name after the line, what each does with it in the hover
+  useEffect(() => {
+    const monaco = monacoRef.current, e = ed.current;
+    if (state !== 'ready' || !cur || !monaco || !e) return;
+    if (!marksDeco.current) marksDeco.current = e.createDecorationsCollection();
+    const lines = scriptMarks?.size ? R.fileLines[cur.path] : undefined;
+    const by = new Map<number, ScriptMark[]>();
+    if (lines) for (let i = 0; i < lines.length; i++) { const ms = lineScriptMarks(lines, i, scriptMarks!, R.labels); if (ms) by.set(i + 1, ms); }
+    markLines.current = by;
+    const m = e.getModel(); if (!m) return;
+    // the name goes after the line's text (Monaco draws no text injected at an empty range, so the range is the text)
+    marksDeco.current.set([...by].filter(([n]) => n <= m.getLineCount() && m.getLineMaxColumn(n) > 1).map(([n, ms]) => {
+      const end = m.getLineMaxColumn(n);
+      return {
+        range: new monaco.Range(n, 1, n, end),
+        options: { hoverMessage: { value: scriptMarkTip(ms).replace(/\n/g, '  \n') }, after: { content: `  ⟩_ ${ms[0].name}${ms.length > 1 ? ` +${ms.length - 1}` : ''}`, inlineClassName: 'mon-script-tag', cursorStops: monaco.editor.InjectedTextCursorStops.None } },
+      };
+    }));
+  }, [state, scriptMarks, cur?.path, cur?.text, R]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ctrl+F outside the editor (or the Find button): Monaco's find widget, once the editor is there
   const findDone = useRef(findReq);

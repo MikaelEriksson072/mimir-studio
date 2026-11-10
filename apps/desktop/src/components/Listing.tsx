@@ -1,7 +1,7 @@
 /* Listing — virtualized, interactive view of the shared line model (spec 6, "one line model, two views"). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, SPACE, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Block, type Bookmark, type ByteMove, type ListingLine, type Patch, type Token } from '@mimir/core';
+import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, SPACE, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Block, type Bookmark, type ByteMove, type Line, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { cellParts, type Cell } from '../lib/cells';
 import { Icon } from '../lib/icons';
@@ -179,6 +179,9 @@ interface ListingProps {
   onSprites?: (b: Block, n: number) => void;
   /** the listing's width changed (how many characters and sprites its pictures put on a row follows it) */
   onWidth?: (w: number) => void;
+  /** the scripts at each address (spec 10.3): linked to it, or their code uses its name; a click opens one */
+  scriptMarks?: ReadonlyMap<Addr, ScriptMark[]>;
+  onScriptMark?: (id: string, line?: number) => void;
 }
 
 /** the line of the last loaded byte of `start`..`end` (a bookmark's area), -1 when it has none */
@@ -188,7 +191,43 @@ const lastLine = (lineOf: Int32Array, start: Addr, end: Addr): number => {
   return e >= start ? lineOf[e] : -1;
 };
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth }: ListingProps) {
+/** A script at an address of the program: linked to it (UserScript.links), or its code uses the name there (first on
+ *  `line`). */
+export interface ScriptMark { id: string; name: string; linked: boolean; line?: number }
+
+/** the scripts at line `i` of `lines` (the listing's, or a source file's): at its label, at its .label line's name, or
+ *  at a byte of it with no label line of its own */
+export function lineScriptMarks(lines: readonly (Line | ListingLine)[], i: number, marks: ReadonlyMap<Addr, ScriptMark[]>, labels: PeekNames['labels']): ScriptMark[] | null {
+  const l = lines[i];
+  if (l.k === 'lbl') return marks.get(l.a) ?? null;
+  if (l.k === 'dir' && l.tok[0]?.s === '.label') {
+    if (l.zp != null) return marks.get(l.zp) ?? null;
+    const def = l.tok.find(t => t.t === 'def');
+    if (def) for (const [a, x] of labels) if (x.name === def.s) return marks.get(a) ?? null;
+    return null;
+  }
+  const n = 'n' in l ? l.n : 0;
+  if (n <= 0 || l.k === 'hdr') return null;
+  const out: ScriptMark[] = [];
+  // the first byte's own label line is above it, maybe with lines of no bytes between (.encoding, comments)
+  let labelled = false;
+  for (let j = i - 1; j >= 0 && lines[j].a === l.a && !labelled; j--) labelled = lines[j].k === 'lbl';
+  for (let a = l.a + (labelled ? 1 : 0); a < l.a + n; a++) for (const m of marks.get(a) ?? []) if (!out.some(x => x.id === m.id)) out.push(m);
+  return out.length ? out : null;
+}
+
+/** what a script mark's tooltip says: what each script does with the name */
+export const scriptMarkTip = (marks: readonly ScriptMark[]) => marks.map(m => `${m.linked ? `Linked to the script "${m.name}"` : `The script "${m.name}"`}${m.line ? `${m.linked ? ', which uses it' : ' uses it'} on line ${m.line}` : ''}`).join('\n') + '\n\nA click opens it in the Scripts tab';
+
+/** The mark of the scripts at an address: the first one's name (and how many more), what each does with it in the
+ *  tooltip; a click opens the first in the Scripts tab, at the line that uses the name. */
+function ScriptTag({ marks, onOpen }: { marks: ScriptMark[]; onOpen?: (id: string, line?: number) => void }) {
+  return <span className="zp-tag script-tag" role="button" title={scriptMarkTip(marks)} aria-label={`Script ${marks.map(m => m.name).join(', ')}`}
+    onMouseDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onOpen?.(marks[0].id, marks[0].line); }}>
+    <Icon name="prompt" size={11} />{marks[0].name}{marks.length > 1 ? ` +${marks.length - 1}` : ''}</span>;
+}
+
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth, scriptMarks, onScriptMark }: ListingProps) {
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -533,6 +572,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   const byLine = gutter === 'line' && !lines.some(l => 'preview' in l && l.preview);
   // a picture above the rows in view whose room reaches into them is drawn too
   const first = gfxHead(lines, Math.max(0, Math.floor(top / ROW) - 10)), last = Math.min(lines.length, Math.ceil((top + height) / ROW) + 10);
+  const marksOf = (l: ListingLine, i: number) => (scriptMarks?.size ? lineScriptMarks(lines, i, scriptMarks, names.labels) : null);
   const rows = [];
   for (let i = first; i < last; i++) {
     const l = lines[i];
@@ -596,6 +636,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const mv = blk && n > 0 && (l.a === blk.start || l.a + n === blk.end) ? movesOf(A, l) : null, tip = mv ? moveTip(mv) : undefined;
     // bytes a patch wrote over (the first of its lines names it)
     const pt = n > 0 && patches.length ? patchAt(patches, l.a) : undefined;
+    const sm = marksOf(l, i);
     const ptTip = pt && (pt.script ? `Changed by the script "${pt.name}" when it ran: $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} (the Scripts tab runs it again or takes it out)` : `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`);
     rows.push(
       <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, ...tint(i) }}
@@ -604,7 +645,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno')} title={tip ?? runTip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
         <span className="hex" title={pt ? [ptTip, tip].filter(Boolean).join('\n\n') : tip}>{bytes}</span>
         {cycles && <CycleCell l={l} A={A} step={steps.get(l.a)} taken={cycles.taken} onToggle={cycles.onToggle} />}
-        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>{pt.script ? 'script' : 'patch'} {pt.name}</span>}</span>
+        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>{pt.script ? 'script' : 'patch'} {pt.name}</span>}{sm && <ScriptTag marks={sm} onOpen={onScriptMark} />}</span>
         {textCols && n > 0 && !(l.k === 'dir' && l.reloc) && <TextCols A={A} a={l.a} n={n} lower={lower} sel={sel && !isSel && sel.start < l.a + n && sel.end > l.a ? sel : null} />}
       </div>);
   }

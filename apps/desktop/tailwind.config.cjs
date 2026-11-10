@@ -4,6 +4,9 @@ const path = require('node:path');
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [path.join(__dirname, 'src/**/*.{ts,tsx,html}')],
+  // Monaco's own class names that are also Tailwind utilities (its suggestion rows' .contents): never generated, or
+  // they would change Monaco's layout (the suggestions came out as an empty box)
+  blocklist: ['contents'],
   // the ported component stylesheet brings its own base styles
   corePlugins: { preflight: false },
   theme: {

@@ -6,37 +6,56 @@ import { KICKASS } from './kickass-language';
 /** The analysis shown in the editor; SourceView keeps it current. */
 export const monacoContext: { A: AnalysisResult | null; R: RenderResult | null } = { A: null, R: null };
 
-/** The script shown in the Scripts tab (models of the `script:` scheme): the names its code may use and its scratchpads. */
-export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly ScriptPad[] } = { names: new Map(), pads: [] };
+/** The script shown in the Scripts tab (models of the `script:` scheme): the names its code may use, its scratchpads,
+ *  the names of its links (UserScript.links) and what kind of block each of the program's labels is on. */
+export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly ScriptPad[]; links: ReadonlySet<string>; kinds: ReadonlyMap<string, string> } = { names: new Map(), pads: [], links: new Set(), kinds: new Map() };
 
 /** what a script's code may write besides names: Kick Assembler's directives and functions */
 const SCRIPT_WORDS = ['.byte', '.word', '.text', '.fill', '.const', '.var', '.label', '.eval', '.for', '.while', '.if', 'else', '.print', '.error', '.encoding', '.align', '.pseudopc',
   'round', 'floor', 'ceil', 'abs', 'min', 'max', 'mod', 'pow', 'sqrt', 'sin', 'cos', 'tan', 'toRadians', 'toDegrees', 'toIntString', 'toHexString', 'toBinaryString', 'PI', 'true', 'false'];
+
+/** the hardware's names (the include file's): they come after the program's own */
+let HW: Set<string> | null = null;
+const isHardware = (n: string) => (HW ??= new Set([...[...SYM.exact.values()].map(s => s.name), ...SYM.regions.map(r => r.name)])).has(n);
 
 /** the start of a line up to where an instruction's mnemonic goes: nothing, or a label (`loop:`, `!:`) */
 const AT_MNEMONIC = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?$/;
 /** an instruction's operand after a comma: `,x` or `,y` (the index register), never a name */
 const AT_INDEX = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?[A-Za-z]{3}(?:\.[A-Za-z]+)?\s+[^/]*,\s*$/;
 
+export interface ScriptSuggestion { label: string; kind: 'link' | 'pad' | 'name' | 'hardware' | 'mnemonic' | 'word'; detail?: string }
+
 /**
- * What a script's code may write where the cursor is, among the words that start with what is typed (not words that
- * merely hold its letters, so `x` after `lda table,` is not SID_POT_X): first on a line the mnemonics and directives,
- * in an operand the program's labels and variables, the hardware names, the scratchpads and the functions; after
- * an instruction's comma nothing (the index register).
+ * What a script's code may write where the cursor is. First on a line the mnemonics and directives that start with
+ * what is typed; in an operand the names: the script's links first, then its scratchpads, the program's labels and
+ * variables, the hardware's names and the functions, each that starts with what is typed or, from two letters on, has
+ * a part (after a `_`) that does (`tab` finds my_table); with nothing typed (Ctrl+Space) all of them. After an
+ * instruction's comma nothing (the index register: `x` is not SID_POT_X), nor in a comment.
  */
-export function scriptSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[]): { label: string; kind: 'pad' | 'name' | 'mnemonic' | 'word'; detail?: string }[] {
+export function scriptSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[], more: { links?: ReadonlySet<string>; kinds?: ReadonlyMap<string, string> } = {}): ScriptSuggestion[] {
   if (/\/\//.test(before) || AT_INDEX.test(before)) return [];
   const dot = before.endsWith('.');
+  const t = (dot ? '.' : '') + typed.toLowerCase();
   // a word that starts with what is typed and is more than it (a word typed in full needs no box)
-  const starts = (s: string) => { const t = (dot ? '.' : '') + typed.toLowerCase(), l = s.toLowerCase(); return l.startsWith(t) && l !== t; };
+  const starts = (s: string) => { const l = s.toLowerCase(); return l.startsWith(t) && l !== t; };
+  // a part of a name after a `_` that starts with what is typed (two letters at least: `x` finds no SID_POT_X)
+  const inPart = (s: string) => t.length >= 2 && /^[a-z_]/.test(t) && s.toLowerCase().split('_').slice(1).some(p => p.startsWith(t));
   // a directive where a mnemonic goes (not `music.init` or a number)
   if (dot) return AT_MNEMONIC.test(before.slice(0, -1)) ? SCRIPT_WORDS.filter(x => x[0] === '.' && starts(x)).map(label => ({ label, kind: 'word' as const })) : [];
-  if (!typed) return [];
-  if (AT_MNEMONIC.test(before)) return [...new Set(OPC.filter(o => !o.ill).map(o => o.mn.toLowerCase()))].filter(starts).map(label => ({ label, kind: 'mnemonic' as const }));
+  if (AT_MNEMONIC.test(before)) return typed ? [...new Set(OPC.filter(o => !o.ill).map(o => o.mn.toLowerCase()))].filter(starts).map(label => ({ label, kind: 'mnemonic' as const })) : [];
+  const fits = (s: string) => !typed || starts(s) || inPart(s);
   const own = new Set(pads.flatMap(p => [p.name, `${p.name}_end`]));
-  const out: { label: string; kind: 'pad' | 'name' | 'mnemonic' | 'word'; detail?: string }[] = [];
-  for (const [n, a] of names) if (starts(n)) out.push({ label: n, kind: own.has(n) ? 'pad' : 'name', detail: `$${h4(a)}${own.has(n) ? ' · scratchpad' : ''}` });
-  for (const x of SCRIPT_WORDS) if (x[0] !== '.' && starts(x)) out.push({ label: x, kind: 'word' });
+  const out: ScriptSuggestion[] = [];
+  for (const n of more.links ?? []) if (fits(n)) {
+    const base = n.replace(/\+\d+$/, ''), a = names.get(base), off = n === base ? 0 : +n.slice(base.length + 1);
+    out.push({ label: n, kind: 'link', detail: `${a != null ? `$${h4(a + off)} · ` : ''}linked${more.kinds?.get(base) ? ` · ${more.kinds.get(base)}` : ''}` });
+  }
+  for (const [n, a] of names) {
+    if (more.links?.has(n) || !fits(n)) continue;
+    const kind = own.has(n) ? 'pad' : isHardware(n) ? 'hardware' : 'name';
+    out.push({ label: n, kind, detail: `$${h4(a)} · ${kind === 'pad' ? 'scratchpad' : kind === 'hardware' ? 'hardware' : more.kinds?.get(n) ?? 'label'}` });
+  }
+  for (const x of SCRIPT_WORDS) if (x[0] !== '.' && fits(x)) out.push({ label: x, kind: 'word' });
   return out;
 }
 
@@ -50,9 +69,9 @@ export function registerProviders(monaco: typeof Monaco): void {
       const before = line.slice(0, w.startColumn - 1), dot = before.endsWith('.');
       const range = new monaco.Range(pos.lineNumber, w.startColumn - (dot ? 1 : 0), pos.lineNumber, w.endColumn);
       const K = monaco.languages.CompletionItemKind;
-      const kind = { pad: K.Struct, name: K.Variable, mnemonic: K.Keyword, word: K.Function } as const;
-      const order = { pad: '0', name: '1', mnemonic: '2', word: '3' } as const;
-      return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
+      const kind = { link: K.Reference, pad: K.Struct, name: K.Variable, hardware: K.Constant, mnemonic: K.Keyword, word: K.Function } as const;
+      const order = { link: '0', pad: '1', name: '2', hardware: '3', mnemonic: '4', word: '5' } as const;
+      return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads, scriptContext).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
     },
   });
   monaco.languages.registerHoverProvider(KICKASS, {

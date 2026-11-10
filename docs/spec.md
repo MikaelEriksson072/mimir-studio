@@ -212,6 +212,7 @@ interface UserScript {                    // se 10.3
   lang: 'kickass';                        // Kick Assembler; fler språk (Python) kan komma
   source: string;
   pads: ScriptPad[];                      // skriptets egna scratchpads (data utanför programmet, t.ex. en logg)
+  links?: Addr[];                         // adresser i programmet länkade till skriptet (högerklick i .asm); visas med namnet (linkName)
 }                                         // id sparas i .mimir.json: patcharna med Patch.script pekar på det
 
 interface Patch {                         // som i 10.2, och:
@@ -1916,10 +1917,29 @@ $06, $08` i `.asm`-filen efter en körning.
 - **Editorn** är Monaco med Kick Assembler-färgningen (också `!`-etiketter, `.for`, `.while`, `.eval`, `.print`,
   `else` och funktionerna), och visar ett namns adress när pekaren står på det. Den föreslår ord som **börjar** med
   det som skrivits och är längre än det (`scriptSuggestions` i `monaco/providers.ts`): först på en rad mnemonics,
-  efter en punkt där direktiven, i en operand programmets etiketter, nollsidevariabler och tabeller, hårdvarunamnen,
-  scratchpadsen (först) och funktionerna, och **ingenting efter en instruktions kommatecken** (`,x` och `,y` är
+  efter en punkt där direktiven, i en operand namnen: **skriptets länkar först**, sedan scratchpadsen, programmets
+  etiketter, nollsidevariabler och tabeller, hårdvarunamnen och funktionerna. Ett namn föreslås också när en del av det
+  efter ett `_` börjar med det som skrivits, från två bokstäver (`po` hittar `SID_POT_X`, `x` gör det inte), och utan
+  något skrivet (`Ctrl+Space`) föreslås alla. Varje förslag säger adressen och vad det är (*$0939 · table*, *linked*,
+  *hardware*, *scratchpad*). **Ingenting föreslås efter en instruktions kommatecken** (`,x` och `,y` är
   indexregister) eller i en kommentar. **`Enter` gör alltid en ny rad; `Tab` tar ett förslag.** Det man skriver
-  sparas i projektet en halv sekund efter sista tangenten (ett steg att ångra) och kontrolleras direkt.
+  sparas i projektet en halv sekund efter sista tangenten (ett steg att ångra) och kontrolleras direkt. (Förslagsrutan
+  var tom tills 2026-11-10: Tailwinds `.contents` och appens `.main` träffade Monacos egna klasser i förslagsraderna,
+  så texten fick bredden noll; `contents` genereras inte längre och appens regel gäller bara `main.main`.)
+- **Länkar:** högerklick i listningen eller källkoden → *Link … to a script* länkar ett av programmets namn till ett
+  skript (eller *New script with …*, ett nytt skript med länken). I listningen är det radens etikett (en
+  `.label`-rads variabel, en byte i en datarad, och på en instruktion också namnet operanden använder); i källkoden
+  (Monacos meny, *Link to a script…*) namnet under pekaren, annars radens. Skriptet sparar adressen
+  (`UserScript.links`) och visar den med namnet koden skriver för den (`linkName`): etiketten, etiketten före i blocket
+  och avståndet (`colors_0939+2`), nollsidevariabeln, hårdvaruregistret, annars adressen, så att en omdöpt etikett
+  följer med. Länkarna står i en rad (*Links*) ovanför editorn: **ett klick skriver namnet där markören står** (i
+  stället för det markerade), `Shift`+klick visar det i listningen och × tar bort länken (koden behåller det den
+  skrev). Utan länkar säger raden hur man länkar.
+- **Märken i .asm:** listningen och källkoden märker var ett skript hör till programmet: efter etikettraden (en
+  `.label`-rad, eller raden som har den länkade byten) står skriptets namn (*⟩_ script*, *+1* när de är fler), både för
+  länkar och för de av programmets namn som koden använder (`ScriptCheck.uses`). Verktygstipset säger *Linked to the
+  script "x"* och *uses it on line 2*; ett klick öppnar skriptet på den raden. Källkoden öppnas vid listningens
+  markör, direkt (utan mjuk rullning).
 - **Skriptets eget minne:** skriptets kod och scratchpads är minne för sig. Adresserna namnger bara byten för
   skriptet: programmets kod (en rutin skriptet anropar) ser alltid sina egna byte, också där skriptets kod har sin
   adress, och skriptet läser och skriver programmets byte överallt där det inte självt har byte. Nollsidan och stacken
@@ -1966,7 +1986,8 @@ $06, $08` i `.asm`-filen efter en körning.
   (eller *from the program*, eller *the end of the run* för SYS-returen), och raden överst har *← S*. Sist står de
   fyra nästa instruktionerna (med skriptets egna etiketter i dess kod och programmets namn annars). När körningen når
   slutet är den en körning som Run (dess ändringar går in i programmet); *Stop* skriver ingenting. Medan man
-  felsöker är utdataytan lägre (egen höjd, kan dras).
+  felsöker är utdataytan lägre (egen höjd, kan dras), och **scratchpaden som visas är körningens som den är nu**
+  (*now, as the run has it*): den följer varje steg, och i hex är de byte det senaste steget ändrade markerade.
 - **Resultatet** (`writeScriptRun`): de byte i programmets minne som körningen ändrade, utom nollsidan och stacken
   (processorns arbetsminne), skrivs in i programmet som skriptets patchar (10.2, `Patch.script` säger vilket skript),
   en per ändring (ändringar högst 8 byte isär och i samma fil blir en), med namnet `skript` eller `skript_xxxx` när de

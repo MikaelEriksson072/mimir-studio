@@ -37,4 +37,28 @@ describe('script suggestions', () => {
   it('give names in a directive\'s list after its commas', () => {
     expect(labels('        .word loop_0870, ', 'te')).toEqual(['text_out']);
   });
+
+  it('give the script\'s links first, the program\'s names before the hardware\'s, and say what each is', () => {
+    const more = { links: new Set(['tabell', 'text_out+3']), kinds: new Map([['tabell', 'table'], ['text_out', 'text']]) };
+    const got = scriptSuggestions('        lda ', 't', names, pads, more);
+    expect(got.filter(s => s.kind === 'link')).toEqual([
+      { label: 'tabell', kind: 'link', detail: '$0939 · linked · table' },
+      { label: 'text_out+3', kind: 'link', detail: '$2003 · linked · text' },
+    ]);
+    // a linked name is not given twice
+    expect(got.filter(s => s.label === 'tabell')).toHaveLength(1);
+    expect(scriptSuggestions('        lda ', 'te', names, pads, more).find(s => s.label === 'text_out')).toEqual({ label: 'text_out', kind: 'name', detail: '$2000 · text' });
+    expect(scriptSuggestions('        lda ', 'SID', names, pads)).toEqual([{ label: 'SID_POT_X', kind: 'hardware', detail: '$d419 · hardware' }]);
+  });
+
+  it('find a name by a part of it after a _ from two letters on, and give them all on Ctrl+Space', () => {
+    expect(labels('        lda ', 'po')).toEqual(['SID_POT_X', 'pow']);
+    expect(labels('        lda ', 'ou')).toEqual(['text_out']);
+    // one letter, or a digit, finds no part
+    expect(labels('        lda ', 'o')).toEqual([]);
+    expect(labels('        lda ', '08')).toEqual([]);
+    // nothing typed in an operand (Ctrl+Space): every name and function; still nothing after an index comma
+    expect(labels('        lda ', '')).toEqual(expect.arrayContaining(['tabell', 'SID_POT_X', 'pad1', 'loop_0870', 'sin']));
+    expect(labels('        lda tabell,', '')).toEqual([]);
+  });
 });

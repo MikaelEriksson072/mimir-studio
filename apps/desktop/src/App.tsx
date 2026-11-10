@@ -10,7 +10,7 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  checkScript, newId, newScript, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, linkName, newId, newScript, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
@@ -37,7 +37,7 @@ import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
 import { Sidebar, tapeOpens } from './components/Sidebar';
-import { Listing, type ListingFind } from './components/Listing';
+import { Listing, type ListingFind, type ScriptMark } from './components/Listing';
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
 import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, KrillPanel, LogList, MessagesPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
@@ -1603,9 +1603,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     useScripts.getState().set({ selected: s.id, shown: { kind: 'pad', i: 0 } });
     setUi({ tab: 'scripts' });
   };
-  /** a new script; `lines`: code of the listing it starts with (the selection) */
-  const newUserScript = (lines: string[] = []) => {
-    const s = newScript(userScripts, lines, newId());
+  /** a new script; `lines`: code of the listing it starts with (the selection); `links`: addresses linked to it */
+  const newUserScript = (lines: string[] = [], links: Addr[] = []) => {
+    const s: UserScript = { ...newScript(userScripts, lines, newId()), ...(links.length ? { links } : {}) };
     addUserScript(s, 'New script');
     toast(`Script "${s.name}" made. Write its code and press Ctrl+Enter: what it changes in the program goes into the program and its .asm`, 'ok');
   };
@@ -1615,7 +1615,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })) }, 'Add script from the library');
     toast(`"${name}" added from the library: Ctrl+Enter runs it on this program`, 'ok');
   };
-  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads'>>, label: string) =>
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** the script goes, and what it changed goes out of the program with it */
   const removeUserScript = (id: string) => {
@@ -1677,8 +1677,52 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** each script checked as the project has it, for the Explorer: whether it can run, and what is wrong */
   const scriptChecks = useMemo(() => new Map(userScripts.map(s => [s.id, checkScript(scriptsEnv, s)])), [userScripts, scriptsEnv]);
-  /** a script in the Scripts tab */
-  const openUserScript = (id: string) => { useScripts.getState().set({ selected: id, shown: { kind: 'pad', i: 0 } }); setUi({ tab: 'scripts' }); };
+  /** a script in the Scripts tab; `line`: the line of its code to show */
+  const openUserScript = (id: string, line?: number) => { useScripts.getState().set({ selected: id, shown: { kind: 'pad', i: 0 }, gotoLine: line ?? null }); setUi({ tab: 'scripts' }); };
+  /** the name a script's code writes for an address of the program (a link's): as the listing names it */
+  const scriptLinkOf = (a: Addr) => linkName(R, A, a);
+  /** what kind of block each of the program's labels is on (the script editor's suggestions say it) */
+  const scriptKinds = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [a, l] of R.labels) { const b = findBlock(A.blocks, a); m.set(l.name, b ? kindInfo(b.type).label.toLowerCase() : 'label'); }
+    for (const z of R.zp.values()) if (!z.off) m.set(z.name, 'zero-page variable');
+    return m;
+  }, [R, A]);
+  /** the scripts at each address of the program: linked to it, or their code uses its name (the listing marks them) */
+  const scriptMarks = useMemo(() => {
+    const m = new Map<Addr, ScriptMark[]>();
+    const add = (a: Addr, k: ScriptMark) => {
+      const l = m.get(a), o = l?.find(x => x.id === k.id);
+      if (!l) m.set(a, [k]); else if (!o) l.push(k); else { o.linked ||= k.linked; o.line ??= k.line; }
+    };
+    for (const s of userScripts) {
+      for (const a of s.links ?? []) add(a, { id: s.id, name: s.name, linked: true });
+      for (const u of scriptChecks.get(s.id)?.uses ?? []) add(u.at, { id: s.id, name: s.name, linked: false, line: u.line });
+    }
+    return m;
+  }, [userScripts, scriptChecks]);
+  /** link an address of the program to a script: the script editor shows its name, and a click writes it in the code */
+  const linkToScript = (id: string, a: Addr) => {
+    const s = userScripts.find(x => x.id === id); if (!s || s.links?.includes(a)) return;
+    const k = scriptLinkOf(a);
+    update(`Link ${k.name} to "${s.name}"`, d => { const t = d.userScripts?.find(x => x.id === id); if (t) t.links = [...(t.links ?? []), a]; });
+    toast(`${k.name} is linked to the script "${s.name}": in the Scripts tab a click on it writes it in the code`, 'ok');
+  };
+  const unlinkFromScript = (id: string, a: Addr) => {
+    const s = userScripts.find(x => x.id === id); if (!s) return;
+    update(`Unlink ${scriptLinkOf(a).name} from "${s.name}"`, d => { const t = d.userScripts?.find(x => x.id === id); if (t) t.links = (t.links ?? []).filter(x => x !== a); });
+  };
+  /** the menu item that links an address to a script: one of the project's (or unlinks it from one), or a new one */
+  const linkMenu = (a: Addr): MenuItem => {
+    const k = scriptLinkOf(a);
+    return { label: `Link ${k.name} to a script`, icon: 'prompt', children: [
+      ...userScripts.map((s): MenuItem => ((s.links ?? []).includes(a)
+        ? { label: `Unlink from "${s.name}"`, run: () => unlinkFromScript(s.id, a) }
+        : { label: `"${s.name}"`, run: () => linkToScript(s.id, a) })),
+      ...(userScripts.length ? [{ sep: true }] satisfies MenuItem[] : []),
+      { label: `New script with ${k.name}`, run: () => newUserScript([], [a]) },
+    ] };
+  };
   const saveScriptText = async (name: string, text: string) => {
     if (!kr) return needDesktop();
     try {
@@ -2648,6 +2692,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const hasBm = bmAt != null && !!project.bookmarks[bmAt];
     // in the selection: all its lines; the line itself as well
     const nLines = inSel ? selectedLines().length : 0;
+    // what a script can be linked to here (spec 10.3): the line's label (a .label line's, a byte's of a data line), and
+    // what an instruction's operand names
+    const linkAt: Addr[] = [];
+    const linkPush = (a: Addr | null | undefined) => { if (a != null && !linkAt.includes(a)) linkAt.push(a); };
+    if (def) linkPush(def.addr);
+    else if (l.k === 'lbl' || l.k === 'hdr') linkPush(l.a);
+    else if (cell) linkPush(cell.a);
+    else if (l.k === 'dat') linkPush(l.a);
+    else if (l.k === 'ins') {
+      if (R.labels.has(l.a)) linkPush(l.a);
+      const d = decode(A.mem, l.a), m = d.info.mode;
+      linkPush(l.tok.find(t => t.to != null)?.to ?? (d.v != null && m !== 'imm' && m !== 'rel' ? d.v : null));
+    }
     /** Block: fold it, change where it starts and ends, and whether it is built */
     const blockItems: MenuItem[] = [
       { label: folded.has(b?.start ?? -1) ? 'Unfold block' : 'Fold block', key: 'F', run: () => toggleFold(l.a) },
@@ -2761,6 +2818,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         ] },
         { label: hasBm ? 'Edit bookmark…' : 'Add bookmark…', key: 'B', icon: 'bookmark', run: () => startBookmark(l.a, area) },
         ...(hasBm ? [{ label: 'Remove bookmark', run: () => deleteBookmark(bmAt!) }] : []),
+        ...linkAt.map(linkMenu),
         { sep: true },
         { label: oneByte && cs ? `Mark ${span(cs.start, cs.end)} as` : inSel ? 'Mark selection as' : 'Mark from here as', icon: 'tag', children: [
           ...MARK_AS.map(m => ({ label: m.label, key: m.key, run: () => { if (range) mark(m.id, range, { bytes: inSel && cs?.bytes ? cs : null }); } })),
@@ -3035,7 +3093,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 }}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
-                patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} holdView={swaps} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R}
+                patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} holdView={swaps} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R} scriptMarks={scriptMarks} onScriptMark={openUserScript}
                 startAt={viewAt.current} onView={seeAt} />
               {findOpen && <FindBar q={findQ} opts={findOpts} onQuery={setFindQ} onOpts={setFindOpts} count={findHits.length} at={findAt >= 0 ? findAt + 1 : null} onStep={stepFind} onClose={closeFind} focusKey={findFocus} />}
               </div>
@@ -3044,9 +3102,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'drive' && <DriveView A={A} S={S} name={project.files.length === 1 ? project.files[0].name : project.name} theme={theme} onCopy={t => void copyText(t)} onSave={D => void saveDrive(D)}
                 onShow={a => navigate(a, { center: true, listing: true })} findReq={srcFind} />}
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
-                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
+                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} scriptMarks={scriptMarks} onScriptMark={openUserScript} onLinkMenu={(a, x, y) => { const m = linkMenu(a); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }} />}
               {tab === 'spec' && <SpecView />}
-              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} onNew={() => newUserScript()} onAdd={addLibraryScript}
+              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} />}

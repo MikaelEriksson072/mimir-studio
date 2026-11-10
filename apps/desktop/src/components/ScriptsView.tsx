@@ -6,7 +6,7 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptPad, type ScriptRun, type UserScript } from '@mimir/core';
+import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptPad, type ScriptRun, type UserScript } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
 import { stopScript } from '../lib/scriptrun';
@@ -14,8 +14,9 @@ import { useScripts, type LibraryScript, type PadMode, type ScriptRunKept } from
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 
-/** a script being debugged: its machine, the code it was assembled from, the registers before the last step */
-interface Debugging { id: string; m: ScriptMachine; source: string; prev: DebugRegs | null }
+/** a script being debugged: its machine, the code it was assembled from, the registers and its scratchpads' bytes
+ *  before the last step (what the step changed is marked) */
+interface Debugging { id: string; m: ScriptMachine; source: string; prev: DebugRegs | null; padsBefore: Uint8Array[] | null }
 /** instructions the debugger runs before it lets the window draw (Continue, Step over and Step out go on in parts) */
 const DEBUG_SLICE = 400_000;
 
@@ -30,10 +31,14 @@ interface ScriptsViewProps {
   /** the project's patches: a script's changes to the program are among them */
   patches: readonly Patch[];
   theme: string;
+  /** the name a script's code writes for a linked address (a label, `table+5`, a variable, a register or the address) */
+  linkOf: (a: Addr) => ScriptLink;
+  /** what kind of block each of the program's labels is on (the suggestions say it) */
+  kinds: ReadonlyMap<string, string>;
   onNew: () => void;
   /** a copy of a library script in the project */
   onAdd: (s: LibraryScript) => void;
-  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads'>>, label: string) => void;
+  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program (App runUserScript) */
   onRun: (id: string, text: string) => Promise<void>;
@@ -68,8 +73,8 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
   return out.endsWith('\n') ? out : out + '\n';
 }
 
-export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd, onEdit, onRemove, onRun, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
-  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, library, set, saveToLibrary, removeFromLibrary } = useScripts();
+export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
+  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, library, gotoLine, set, saveToLibrary, removeFromLibrary } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
@@ -220,10 +225,13 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
   const names = useMemo(() => cur ? scriptNames(env, cur.pads) : new Map<string, number>(), [env, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
   /** a name for an address (the first of the names the script may use that has it) */
   const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a)) m.set(a, n); return m; }, [names]);
-  // the names the editor completes and the hovers show, for this script
+  /** the script's links (UserScript.links), by the names its code writes for them */
+  const links = useMemo(() => (cur?.links ?? []).map(linkOf), [cur?.links, linkOf]);
+  const linkNames = useMemo(() => new Set(links.map(k => k.name)), [links]);
+  // the names the editor completes and the hovers show, for this script: its links first
   useEffect(() => {
-    void import('../monaco/providers').then(({ scriptContext }) => { scriptContext.names = names; scriptContext.pads = cur?.pads ?? []; });
-  }, [names, cur?.pads]);
+    void import('../monaco/providers').then(({ scriptContext }) => { scriptContext.names = names; scriptContext.pads = cur?.pads ?? []; scriptContext.links = linkNames; scriptContext.kinds = kinds; });
+  }, [names, cur?.pads, linkNames, kinds]);
 
   // the check's problems as markers on their lines
   useEffect(() => {
@@ -237,6 +245,25 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
   }, [check, state, cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const goLine = (n: number) => { const e = ed.current; if (!e) return; e.revealLineInCenter(n); e.setPosition({ lineNumber: n, column: 1 }); e.focus(); };
+  // a line asked for from outside (a script's mark in the listing): shown once the script is in the editor
+  useEffect(() => {
+    const e = ed.current, m = cur ? models.current[cur.id] : null;
+    if (gotoLine == null || state !== 'ready' || !e || !m || e.getModel() !== m) return;
+    set({ gotoLine: null });
+    const n = Math.min(gotoLine, m.getLineCount());
+    requestAnimationFrame(() => { e.revealLineInCenter(n); e.setSelection({ startLineNumber: n, startColumn: 1, endLineNumber: n, endColumn: m.getLineMaxColumn(n) }); e.focus(); });
+  });
+
+  /** a link's name written in the code where the cursor is (in place of what is selected) */
+  const insertLink = (name: string) => {
+    const e = ed.current, monaco = monacoRef.current, s = curRef.current;
+    if (!s || dbgRef.current) return;
+    if (!e || !monaco) { const t = (live[s.id] ?? s.source) + name; setLive(l => ({ ...l, [s.id]: t })); onEdit(s.id, { source: t }, `Edit script "${s.name}"`); return; }
+    const sel = e.getSelection() ?? new monaco.Selection(1, 1, 1, 1);
+    const end = sel.getStartPosition().delta(0, name.length);
+    e.executeEdits('link', [{ range: sel, text: name, forceMoveMarkers: true }], [new monaco.Selection(end.lineNumber, end.column, end.lineNumber, end.column)]);
+    e.pushUndoStop(); e.focus();
+  };
 
   /** Run: the code as the editor has it, in the worker (App's runUserScript, the same as the Explorer's Run) */
   const run = () => {
@@ -270,6 +297,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
     setTick(t => t + 1);
   };
   const busyRef = useRef(false);
+  /** the registers and the scratchpads before a step (the panel and the scratchpad mark what it changed) */
+  const keepBefore = (d: Debugging) => { d.prev = regsOf(d.m); d.padsBefore = d.m.script.pads.map(p => d.m.own.slice(p.start, p.start + p.size)); };
   /** the debugger stopped somewhere: drawn there, and the line shown; at the end of the run, it is a run */
   const stopped = (d: Debugging) => {
     if (dbgRef.current !== d) return;
@@ -289,7 +318,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
     const text = models.current[s.id]?.getValue() ?? s.source;
     const e = envFor(s.id), c = checkScript(e, { source: text, pads: s.pads });
     if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
-    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads }, c), source: text, prev: null };
+    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads }, c), source: text, prev: null, padsBefore: null };
     setDbg(d); dbgRef.current = d;
     stopped(d);
   };
@@ -298,7 +327,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
     const d = dbgRef.current; if (!d || busyRef.current) return;
     const lines = new Set(bpLines(d.id)), { starts, lines: lineOf } = d.m.check;
     const at = (m: ScriptMachine) => (stop ? stop(m) : false) || (lines.size > 0 && m.inScript && starts[m.cpu.pc] === 1 && lines.has(lineOf[m.cpu.pc]));
-    if (!keepPrev) d.prev = regsOf(d.m);
+    if (!keepPrev) keepBefore(d);
     pauseReq.current = false; busyRef.current = true; setDbgBusy(true);
     const part = () => {
       if (dbgRef.current !== d) return;
@@ -312,7 +341,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
   const stepDbg = () => {
     const d = dbgRef.current; if (!d) { startDebug(); return; }
     if (busyRef.current) return;
-    d.prev = regsOf(d.m); d.m.step(); stopped(d);
+    keepBefore(d); d.m.step(); stopped(d);
   };
   /** a JSR runs until it returns (to the instruction after it, the stack as it was); anything else is a step */
   const overDbg = () => {
@@ -321,7 +350,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
     const m = d.m;
     if (m.peek(m.cpu.pc) !== 0x20) { stepDbg(); return; }
     const s0 = m.cpu.s, back = (m.cpu.pc + 3) & 0xffff;
-    d.prev = regsOf(m); m.step();
+    keepBefore(d); m.step();
     if (m.end || (m.cpu.s === s0 && m.cpu.pc === back)) { stopped(d); return; }
     go(x => x.cpu.s === s0 && x.cpu.pc === back, true);
   };
@@ -368,6 +397,12 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
   // until it has done something, a line says what Run does
   const howTo = !kept && !mine.length;
   const inLibrary = !!cur && library.some(l => l.name.toLowerCase() === cur.name.toLowerCase());
+  // while debugging, the scratchpad shown is the run's as it is now, with what the last step changed
+  const livePad: LivePad | null = (() => {
+    if (!dbg || shown.kind !== 'pad') return null;
+    const ps = dbg.m.script.pads, p = ps[shown.i] ?? ps[0]; if (!p) return null;
+    return { name: p.name, bytes: dbg.m.own.slice(p.start, p.start + p.size), before: dbg.padsBefore?.[ps.indexOf(p)] ?? null };
+  })();
 
   return (
     <div className="scripts">
@@ -413,6 +448,16 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
         </div>
         {howTo && !dbg && <p className="scr-howto" role="note"><Icon name="info" size={13} /><span><b>Run</b> (Ctrl+Enter) runs the code here in Mimir. What it changes in the program's bytes goes into the program and its .asm, listed under <i>In the program</i>; the script's own code never does. <b>Debug</b> (F8) goes through it an instruction at a time.</span></p>}
         {dbg && <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. Reaching the end, it is a run: its changes go into the program.</span></p>}
+        <div className="scr-links" role="list" aria-label="Links">
+          <span className="scr-links-head" title="Names of the program linked to the script: right-click a label (a byte of a table, an instruction) in the listing or the source and pick Link to a script. A click writes the name in the code where the cursor is; Shift+click shows it in the listing">Links</span>
+          {links.length ? links.map(k => (
+            <span key={k.at} role="listitem" className={cx('scr-link', `scr-link-${k.what}`)}>
+              <button className="scr-link-name" onClick={e => { if (e.shiftKey) onShow(k.at, k.at + 1); else if (dbg) toast('The code cannot be changed while it is being debugged: stop first', 'info'); else insertLink(k.name); }}
+                title={`${k.name} = $${h4(k.at)} · ${k.what === 'label' ? 'a label of the program' : k.what === 'variable' ? 'a zero-page variable' : k.what === 'hardware' ? 'a hardware register' : 'an address with no name'}\nClick: write it in the code where the cursor is · Shift+click: show it in the listing`}>{k.name}</button>
+              <button className="scr-link-x" aria-label={`Unlink ${k.name}`} title="Unlink it (the code keeps what it wrote)" onClick={() => onEdit(cur.id, { links: (cur.links ?? []).filter(x => x !== k.at) }, `Unlink ${k.name} from "${cur.name}"`)}><Icon name="x" size={11} /></button>
+            </span>))
+            : <span className="scr-links-empty">Right-click a label in the listing or the source and pick <b>Link to a script</b>: it comes here, and a click on it writes it in the code.</span>}
+        </div>
         <div className="scr-body">
           <div className="scr-edit-row">
             <div className="mon-host scr-editor" ref={host} style={{ display: state === 'ready' ? 'block' : 'none' }} />
@@ -422,7 +467,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
           <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />
           <div className="scr-out" style={{ height: dbg ? dbgOutH : outH }}>
             <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} />
-            <PadView script={cur} mine={mine} names={names} mode={mode} screen={screen} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
+            <PadView script={cur} mine={mine} names={names} mode={mode} screen={screen} live={livePad} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
               onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} />
           </div>
         </div>
@@ -548,10 +593,14 @@ function PadRow({ pad, on, bad, warn, onShow, onChange, onRemove }: { pad: Scrip
   );
 }
 
+/** a scratchpad while the script is debugged: its bytes as the run has them now, and before the last step */
+interface LivePad { name: string; bytes: Uint8Array; before: Uint8Array | null }
+
 /** The right of the output: a scratchpad's bytes, or a change the script made in the program, as hex, code or text,
- *  with what can be done with them. */
-function PadView({ script, mine, names, mode, screen, onMode, onScreen, onShow, onCopy, onSave, onSaveText }: {
-  script: UserScript; mine: Patch[]; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
+ *  with what can be done with them. While debugging, the scratchpad as the run has it now (`live`), the bytes the last
+ *  step changed marked in the hex. */
+function PadView({ script, mine, names, mode, screen, live, onMode, onScreen, onShow, onCopy, onSave, onSaveText }: {
+  script: UserScript; mine: Patch[]; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; live: LivePad | null; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
   onShow: ScriptsViewProps['onShow']; onCopy: ScriptsViewProps['onCopy']; onSave: ScriptsViewProps['onSave']; onSaveText: ScriptsViewProps['onSaveText'];
 }) {
   const { shown } = useScripts();
@@ -565,9 +614,22 @@ function PadView({ script, mine, names, mode, screen, onMode, onScreen, onShow, 
   }, [view]);
   const patch = shown.kind === 'patch' ? mine.find(p => p.id === shown.id) : undefined;
   const pad = !patch ? (shown.kind === 'pad' ? script.pads[shown.i] : undefined) ?? script.pads[0] : undefined;
-  const bytes = patch ? patch.bytes : pad?.bytes && pad.bytes.length === pad.size ? pad.bytes : null;
+  const now = !patch && pad && live && live.name === pad.name && live.bytes.length === pad.size ? live : null;
+  const bytes = patch ? patch.bytes : now ? now.bytes : pad?.bytes && pad.bytes.length === pad.size ? pad.bytes : null;
   const at = patch ? patch.start : pad?.start ?? 0;
   const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a)) m.set(a, n); return m; }, [names]);
+  // the bytes the last step changed: their rows of the hex written with the bytes marked
+  const before = now?.before && now.before.length === now.bytes.length ? now.before : null;
+  const marked = useMemo(() => {
+    if (!bytes || !before || mode !== 'hex' || !bytes.some((b, i) => b !== before[i])) return null;
+    const per = wide ? 16 : 8, out: React.ReactNode[] = [];
+    for (let i = 0; i < bytes.length; i += per) {
+      const row = Array.from(bytes.subarray(i, i + per)), chars = row.map(b => monitorChar(b, screen)?.ch ?? '.').join('');
+      if (!row.some((b, j) => b !== before[i + j])) { out.push(`${$(at + i)}  ${row.map(b => h2(b)).join(' ').padEnd(per * 3 - 1)}  ${chars}\n`); continue; }
+      out.push(<span key={i}>{`${$(at + i)}  `}{row.flatMap((b, j) => [j ? ' ' : '', <span key={j} className={b !== before[i + j] ? 'pad-chg' : undefined}>{h2(b)}</span>])}{' '.repeat(per * 3 - 1 - (row.length * 3 - 1))}{`  ${chars}\n`}</span>);
+    }
+    return out;
+  }, [bytes, before, at, mode, screen, wide]);
   const text = useMemo(() => {
     if (!bytes) return '';
     const out: string[] = [];
@@ -590,6 +652,7 @@ function PadView({ script, mine, names, mode, screen, onMode, onScreen, onShow, 
     <div className="scr-view" ref={setView}>
       <div className="scr-view-head">
         <b className="scr-view-title">{title}</b>
+        {now && <span className="pill mid scr-live" title="Debugging: the scratchpad as the run has it now; what the last step changed is marked in the hex">now, as the run has it</span>}
         {patch && <span className="muted small" title={`The program had: ${Array.from(patch.old.subarray(0, 64), b => h2(b)).join(' ')}${patch.old.length > 64 ? ' …' : ''}`}>{differ} differ from the original</span>}
         <span className="grow" />
         <div className="seg" role="group" aria-label="Show as">
@@ -597,7 +660,7 @@ function PadView({ script, mine, names, mode, screen, onMode, onScreen, onShow, 
         </div>
         {mode !== 'code' && <div className="seg" role="group" aria-label="Text as"><button className={cx(!screen && 'on')} aria-pressed={!screen} onClick={() => onScreen(false)} title="The bytes as PETSCII">PETSCII</button><button className={cx(screen && 'on')} aria-pressed={screen} onClick={() => onScreen(true)} title="The bytes as screen codes">Screen</button></div>}
       </div>
-      {bytes ? <pre className="scr-dump mono" aria-label={`${title} as ${mode}`}>{text}</pre>
+      {bytes ? <pre className="scr-dump mono" aria-label={`${title} as ${mode}`}>{marked ?? text}</pre>
         : <div className="empty small">Empty until the script runs: Run fills it.</div>}
       {bytes && <div className="scr-view-actions">
         <button className="btn small" onClick={() => onCopy(byteLines(bytes).join('\n'), `${bytes.length} bytes as .byte lines`)} title="Copy the bytes as Kick Assembler .byte lines"><Icon name="copy" size={13} /><span className="lbl">Copy as .byte</span></button>

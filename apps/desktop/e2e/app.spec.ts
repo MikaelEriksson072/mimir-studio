@@ -1654,6 +1654,9 @@ test('a cartridge with every bank in one .asm: the listing, the source, verify a
   await test.step('the source tab shows the one .asm', async () => {
     await page.getByRole('tab', { name: 'mimir-demo.crt.asm' }).click();
     await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 30_000 });
+    // the source opens at the listing's cursor: its head is at the top
+    await page.locator('.monaco-editor .view-lines').first().click();
+    await page.keyboard.press('Control+Home');
     await expect(page.locator('.monaco-editor .view-lines').first()).toContainText('every bank of the cartridge in one source');
     await page.getByRole('tab', { name: 'Listing' }).click();
   });
@@ -3601,6 +3604,9 @@ test('comment a zero-page variable on its .label line, with the keys, the menu a
     await expect(editor.locator('textarea')).toHaveValue('set by the raster irq\nread by the scroller');
     await editor.locator('textarea').press('Escape');
     await page.getByRole('tab', { name: 'raster-demo.asm' }).click();
+    // the source opens at the listing's cursor: the file's head (its .label lines) is at the top
+    await page.locator('.mon-host .view-lines').click();
+    await page.keyboard.press('Control+Home');
     await expect(page.locator('.mon-host .view-lines')).toContainText('.label ptr_fb = $fb');
     await page.getByRole('tab', { name: 'Listing' }).click();
     await page.keyboard.press('F7');
@@ -6383,5 +6389,109 @@ test('scripts in the Explorer: made, run, shown with what they changed or what i
     await page.keyboard.press('Control+z');
     await expect(rows).toHaveCount(2);
     await expect(rows.first()).toContainText('4 bytes changed in the program');
+  });
+});
+
+test('scripts: names linked from the listing and the source, marked there, written in the code with a click; the editor suggests the program\'s names; the scratchpad follows the debugger', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  const labelRow = (name: string) => listing(page).locator('.row.k-lbl', { has: page.locator('.syn-label', { hasText: new RegExp(`^${name}:$`) }) });
+  const links = page.getByRole('list', { name: 'Links' }).getByRole('listitem');
+  const editor = page.locator('.scr-editor');
+
+  await test.step('a right-click on a label links it to a new script, which the listing marks', async () => {
+    await goTo(page, 'colors_0939');
+    await labelRow('colors_0939').click({ button: 'right' });
+    await fromSubmenu(page, 'Link colors_0939 to a script', 'New script with colors_0939');
+    await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
+    await expect(links).toHaveText(['colors_0939']);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    const tag = labelRow('colors_0939').locator('.script-tag');
+    await expect(tag).toHaveText('script');
+    await expect(tag).toHaveAttribute('title', /^Linked to the script "script"\n/);
+  });
+
+  await test.step('a byte of a table links as the label and how far on', async () => {
+    await goTo(page, 'colors_0939');
+    await listing(page).locator(`.cell[data-a="${0x093b}"]`).click({ button: 'right' });
+    await fromSubmenu(page, 'Link colors_0939+2 to a script', '"script"');
+    await expect(toast(page, 'colors_0939+2 is linked to the script "script"')).toBeVisible();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(links).toHaveText(['colors_0939', 'colors_0939+2']);
+  });
+
+  await test.step('a click on a link writes it in the code where the cursor is', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText('        ldx #3\n!:      lda ');
+    await page.getByRole('list', { name: 'Links' }).getByRole('button', { name: 'colors_0939', exact: true }).click();
+    await page.keyboard.insertText(',x\n        sta pad1,x\n        dex\n        bpl !-\n        rts');
+    await expect(editor.locator('.view-lines')).toContainText('lda colors_0939,x');
+    await page.locator('.scr-sec h4').getByRole('button', { name: 'Add' }).click();
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+
+  await test.step('typing a name suggests the program\'s names that start with it, the links first, written out (no empty box)', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('        lda col');
+    const rows = editor.locator('.suggest-widget .monaco-list-row');
+    await expect(rows.first()).toContainText('colors_0939');
+    const name = await rows.first().locator('.label-name').boundingBox();
+    expect(name!.width).toBeGreaterThan(40);
+    await expect(rows.first()).toContainText('linked');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+Shift+k');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+
+  await test.step('the listing says which line uses the name; a click on the mark opens the script there', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'colors_0939');
+    const tag = labelRow('colors_0939').locator('.script-tag');
+    await expect(tag).toHaveAttribute('title', /^Linked to the script "script", which uses it on line 2\n/);
+    await tag.click();
+    await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
+    await expect(editor.locator('.line-numbers.active-line-number')).toHaveText('2');
+  });
+
+  await test.step('the source marks the linked lines too, and its right-click links the name under the pointer', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'colors_0939');
+    await page.locator('.tab.tab-source').click();
+    const src = page.locator('.source');
+    // the source opens at the listing's cursor: the table's first line holds colors_0939+2, which is linked
+    await expect(src.locator('.view-line', { hasText: '.byte $06, $0e, $03' })).toContainText('⟩_ script');
+    await expect(src.locator('.view-line', { hasText: /^txt_0949:/ })).not.toContainText('⟩_');
+    await src.locator('.view-line', { hasText: /^txt_0949:/ }).locator('span', { hasText: 'txt_0949' }).first().click({ button: 'right' });
+    // Monaco's menu takes no click in its first moments (the right-click's own release would choose an item)
+    const item = page.getByRole('menuitem', { name: 'Link to a script…' });
+    await expect(item).toBeVisible();
+    await page.waitForTimeout(400);
+    await item.click();
+    await expect(page.locator('.ctx')).toContainText('Link txt_0949 to a script');
+    await page.locator('.ctx').getByRole('menuitem', { name: '"script"' }).click();
+    await expect(toast(page, 'txt_0949 is linked to the script "script"')).toBeVisible();
+    await expect(src.locator('.view-line', { hasText: /^txt_0949:/ })).toContainText('⟩_ script');
+  });
+
+  await test.step('stepping in the debugger shows the scratchpad as the run has it, the byte a step wrote marked', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(links).toHaveText(['colors_0939', 'colors_0939+2', 'txt_0949']);
+    await page.getByRole('button', { name: /^Debug/ }).click();
+    const dump = page.locator('.scr-dump');
+    await expect(page.locator('.scr-live')).toBeVisible();
+    await expect(dump.locator('.pad-chg')).toHaveCount(0);
+    for (let i = 0; i < 3; i++) await page.keyboard.press('F8');
+    await expect(page.getByRole('complementary', { name: 'Debugger' }).getByRole('status')).toHaveText(/^Line 4 /);
+    await expect(dump.locator('.pad-chg')).toHaveCount(1);
+    // a step that writes nothing there marks nothing
+    await page.keyboard.press('F8');
+    await expect(dump.locator('.pad-chg')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(page.locator('.scr-live')).toHaveCount(0);
   });
 });

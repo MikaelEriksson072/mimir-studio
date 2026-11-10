@@ -34,6 +34,8 @@ interface ScriptsState {
   /** the output's height while debugging (lower: the code and the debugger's panel need the room) */
   dbgOutH: number;
   library: LibraryScript[];
+  /** a line of the shown script to go to once its editor is there (a click on a script's mark in the listing) */
+  gotoLine: number | null;
   /** each script's breakpoints, by line (the editor keeps them while it is open; this while it is not) */
   bps: Record<string, number[]>;
   setBps: (id: string, lines: number[]) => void;
@@ -44,7 +46,7 @@ interface ScriptsState {
 }
 
 export const useScripts = create<ScriptsState>((set, get) => ({
-  selected: null, runs: {}, running: null, shown: { kind: 'pad', i: 0 }, mode: 'hex', screen: false, outH: 300, dbgOutH: 170,
+  selected: null, runs: {}, running: null, gotoLine: null, shown: { kind: 'pad', i: 0 }, mode: 'hex', screen: false, outH: 300, dbgOutH: 170,
   library: readLibrary(),
   bps: {},
   setBps: (id, lines) => set(s => ({ bps: { ...s.bps, [id]: lines } })),

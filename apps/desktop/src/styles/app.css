@@ -31,7 +31,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .titlebar { grid-area: title; }
 .activity { grid-area: act; }
 .sidebar { grid-area: side; }
-.main { grid-area: main; }
+main.main { grid-area: main; }
 .insp-col { grid-area: insp; }
 .statusbar { grid-area: status; }
 .side-split { grid-area: side-split; }
@@ -273,7 +273,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .seg.wide button { flex: 1; }
 
 /* ---------- main / tabs ---------- */
-.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--editor); }
+main.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--editor); }
 .tabs { display: flex; align-items: stretch; height: 34px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; flex: none; scrollbar-width: none; }
 .tabs.small { height: 30px; }
 .tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; border: 0; border-right: 1px solid var(--line); background: none; color: var(--fg-3); cursor: pointer; white-space: nowrap; position: relative; font-size: 12.5px; }
@@ -291,7 +291,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
    tabs (Drive code among them) and a little more for a longer name; the default window (1480 px) has the tools in the
    row, as the narrow tabs make room for them: SPEC.md shows its icon (the activity bar opens it too), the source its
    name's start */
-.main { container: editor / inline-size; }
+main.main { container: editor / inline-size; }
 .main-tabs .tab-label { overflow: hidden; text-overflow: ellipsis; max-width: 12em; }
 .main-tabs .tab-tools kbd { margin-left: 2px; }
 .main-tabs .tab-more { display: none; align-self: center; margin: 0 4px; color: var(--fg); }
@@ -1303,6 +1303,25 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .scr-failed .icon { flex: none; position: relative; top: 2px; }
 .scr-howto { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--hint) 8%, var(--panel)); color: var(--fg-2); font-size: 12px; line-height: 1.45; }
 .scr-howto .icon { flex: none; color: var(--hint); position: relative; top: 2px; }
+/* a script's links (10.3): names of the program linked from the listing or the source; a click writes one in the code */
+.scr-links { display: flex; align-items: center; gap: 6px; flex: none; min-height: 30px; padding: 3px 12px; border-bottom: 1px solid var(--line); background: var(--panel); overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
+.scr-links-head { flex: none; font: 600 10.5px/1 var(--font-ui); text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-3); cursor: help; }
+.scr-links-empty { color: var(--fg-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.scr-link { flex: none; display: inline-flex; align-items: stretch; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--line-2); background: var(--panel-2); }
+.scr-link-name { border: 0; background: none; padding: 2px 4px 2px 8px; font: 12px/18px var(--font-code); color: var(--syn-label); cursor: pointer; border-radius: 5px 0 0 5px; }
+.scr-link-hardware .scr-link-name { color: var(--syn-hw); }
+.scr-link-address .scr-link-name { color: var(--syn-num); }
+.scr-link-name:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.scr-link-x { border: 0; background: none; padding: 0 5px; color: var(--fg-3); cursor: pointer; display: inline-flex; align-items: center; border-radius: 0 5px 5px 0; }
+.scr-link-x:hover { color: var(--fg); background: color-mix(in srgb, var(--err) 18%, transparent); }
+/* the scripts at an address of the program: after its label in the listing, and after its line in the source */
+.zp-tag.script-tag { display: inline-flex; align-items: center; gap: 3px; text-transform: none; letter-spacing: 0; color: var(--accent-hi); cursor: pointer; }
+.zp-tag.script-tag:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.mon-script-tag { color: var(--accent-hi) !important; font-style: italic; cursor: pointer; opacity: 0.85; }
+.mon-script-tag:hover { opacity: 1; text-decoration: underline; }
+/* while debugging: the scratchpad as the run has it, the bytes the last step changed marked */
+.scr-live { flex: none; }
+.pad-chg { color: var(--accent-ink); background: var(--accent-hi); border-radius: 2px; }
 /* the script debugger (10.3): the code and, beside it, the registers, the next instructions and the stack */
 .scr-edit-row { flex: 1; min-height: 0; display: flex; }
 .scr-edit-row .scr-editor { flex: 1; min-width: 0; min-height: 0; }

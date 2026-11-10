@@ -1,6 +1,6 @@
 /* User scripts (spec 10.3): checked with the program's names, run on a copy of its memory, scratchpads kept. */
 import { describe, expect, it } from 'vitest';
-import { analyze, checkScript, createProject, deserializeProject, disassembleBytes, freePlace, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
+import { analyze, checkScript, createProject, deserializeProject, disassembleBytes, freePlace, linkName, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
 import { fromSource } from './helpers/programs';
 
 const KEY = 0x5a;
@@ -235,6 +235,25 @@ describe('user scripts', () => {
     expect([m.cpu.pc, m.lineAt()]).toEqual([0xc003, 3]);
   });
 
+  it('name a linked address as the listing does, say which of the program\'s names the code uses, and keep the links in the project', () => {
+    const p = createProject({ name: 'crypt', files: [program] });
+    const A = analyze(p), R = render(A, p);
+    const data = [...R.labels].find(([a]) => a === 0x0830)?.[1].name;
+    expect(data).toBeTruthy();
+    expect(linkName(R, A, 0x0830)).toEqual({ at: 0x0830, name: data, what: 'label' });
+    // a byte inside the block: the label before it and how far on
+    expect(linkName(R, A, 0x0835)).toEqual({ at: 0x0835, name: `${data}+5`, what: 'label' });
+    expect(linkName(R, A, 0xd020)).toMatchObject({ what: 'hardware' });
+    expect(linkName(R, A, 0xe123)).toEqual({ at: 0xe123, name: '$e123', what: 'address' });
+    const zp = { ...R, zp: new Map([[0xfb, { name: 'ptr' }], [0xfc, { name: 'ptr', off: 1 }]]) };
+    expect(linkName(zp, A, 0xfb)).toMatchObject({ name: 'ptr', what: 'variable' });
+    expect(linkName(zp, A, 0xfc)).toMatchObject({ name: 'ptr+1', what: 'variable' });
+    // the program's names the code uses, with the line they are first used on (not the scratchpads')
+    expect(checkScript(env, script(['        lda data', '        sta pad1', '        jsr decrypt', '        lda data+1', '        rts'].join('\n'))).uses)
+      .toEqual([{ name: 'data', line: 1, at: 0x0830 }, { name: 'decrypt', line: 3, at: 0x0810 }]);
+    const s: UserScript = { ...newScript([]), id: 'x', links: [0x0830, 0x0835] };
+    expect(deserializeProject(JSON.parse(JSON.stringify(serializeProject({ ...p, userScripts: [s] })))).userScripts![0].links).toEqual([0x0830, 0x0835]);
+  });
   it('disassemble a scratchpad with the program\'s names', () => {
     const d = disassembleBytes([0xad, 0x30, 0x08, 0xd0, 0xfb, 0x02, 0xa9], 0xc000, new Map([[0x0830, 'data']]));
     expect(d.map(l => l.text)).toEqual(['lda data', 'bne $c000', 'jam', '.byte $a9']);

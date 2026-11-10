@@ -303,6 +303,9 @@ export interface UserScript {
   lang: ScriptLang;
   source: string;
   pads: ScriptPad[];
+  /** addresses of the program linked to the script from the listing or the source (a right-click): the editor shows
+   *  each by the name the code writes for it (linkName), and the listing marks them */
+  links?: Addr[];
 }
 
 export interface Project {

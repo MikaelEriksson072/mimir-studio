@@ -15,6 +15,8 @@ import { assemble } from './verify/kick-subset-assembler';
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
 import { fileSpaces } from './spaces';
 import { OPC } from './cpu/opcodes';
+import { SYM } from './c64/symbols';
+import { findBlock } from './analyze/classify';
 import { h2, h4 } from './util/hex';
 
 export interface ScriptRange { start: Addr; end: Addr }
@@ -169,6 +171,8 @@ export interface ScriptCheck {
   starts: Uint8Array;
   /** the script's own labels at its own addresses (its code and data), by address: the first one at each */
   labels: Map<Addr, string>;
+  /** the program's names the code uses (not its scratchpads'): each with the line it is first used on and its address */
+  uses: { name: string; line: number; at: Addr }[];
 }
 
 const PAD_NAME = /^[A-Za-z_]\w*$/;
@@ -239,7 +243,26 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
   }
   const labels = new Map<Addr, string>();
   for (const [k, v] of asm.symbols) if (typeof v === 'number' && /^[A-Za-z_]\w*$/.test(k) && v >= 0 && v < 0x10000 && asm.written[v] && !labels.has(v)) labels.set(v, k);
-  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written, lines: asm.lines, starts: asm.starts, labels };
+  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written, lines: asm.lines, starts: asm.starts, labels, uses: used };
+}
+
+/** An address of the program linked to a script (UserScript.links), with the name its code writes for it and what that
+ *  name is: a label, the label before it in its block and how far on (`table+5`), a zero-page variable, a hardware
+ *  register, else the address itself. */
+export interface ScriptLink { at: Addr; name: string; what: 'label' | 'variable' | 'hardware' | 'address' }
+
+/** The name a script's code writes for an address of the program (a link's): as the listing names it. */
+export function linkName(R: Pick<RenderResult, 'labels' | 'zp'>, A: Pick<AnalysisResult, 'blocks'>, at: Addr): ScriptLink {
+  const l = R.labels.get(at);
+  if (l) return { at, name: l.name, what: 'label' };
+  const z = at < 0x100 ? R.zp.get(at) : undefined;
+  if (z) return { at, name: z.off ? `${z.name}+${z.off}` : z.name, what: 'variable' };
+  const hw = SYM.exact.get(at);
+  if (hw && !hw.name.includes('+')) return { at, name: hw.name, what: 'hardware' };
+  // inside a block: the label before it there (a byte of a table)
+  const b = findBlock(A.blocks, at);
+  if (b) for (let p = at - 1; p >= b.start && at - p < 0x1000; p--) { const q = R.labels.get(p); if (q) return { at, name: `${q.name}+${at - p}`, what: 'label' }; }
+  return { at, name: '$' + h4(at), what: 'address' };
 }
 
 /** how a run ended: the RTS that returns from the script, a BRK, a JAM opcode, or the instruction limit */

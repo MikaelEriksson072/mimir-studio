@@ -120,7 +120,7 @@ const patch = z.object({ ...patchFields, id: z.string().max(64), bytes: z.instan
 /** a user script (spec 10.3): its code and its scratchpads, what a pad holds after the last run as many bytes as it is big */
 const padFields = { name: z.string().min(1).max(64), start: z.number().int().min(0).max(0xffff), size: z.number().int().min(1).max(0x10000), fill: z.number().int().min(0).max(255).optional() };
 const padFits = (p: { start: number; size: number }) => p.start + p.size <= 0x10000;
-const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144) };
+const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144), links: z.array(at).max(256).optional() };
 const serializedScript = z.object({ ...scriptFields, id: z.string().max(64).optional(), pads: z.array(z.object({ ...padFields, bytes: z.string().max(0x16000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
 const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.array(z.object({ ...padFields, bytes: z.instanceof(Uint8Array).optional() }).refine(p => padFits(p) && (!p.bytes || p.bytes.length === p.size), 'a scratchpad past $ffff, or its bytes not as many as it holds')).max(64) });
 /** memory configuration / VIC bank the code in a range runs with (null: back to detection) */
