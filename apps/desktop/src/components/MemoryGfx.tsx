@@ -93,7 +93,8 @@ const plainAddr = (a: Addr) => `$${h4(a)}`;
 
 export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
-  const set = (p: Partial<GfxPrefs>) => setUi({ gfx: { ...useUi.getState().gfx, ...p } });
+  // a scroll just made is taken before the view changes (its event may not have come yet)
+  const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
   const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows } = prefs;
   // bitmaps of fewer rows than a screen: the mode's button says the size of a cell
   const modes = useMemo(() => GFX_MODES.map(m => (m.key === 'bitmap' && bitmapRows !== BITMAP_ROWS ? { ...m, sub: `320×${bitmapRows * 8}`, title: `Memory as bitmaps: the first ${bitmapRows} character rows (${bitmapRows * BITMAP_ROW_BYTES} bytes, 320 × ${bitmapRows * 8} pixels) of each 8 KB` } : m)), [bitmapRows]);
@@ -160,7 +161,12 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   // the address at the top of the picture, where you scrolled to: another view, other columns or another zoom keep it
   // at the top (a font per row has fonts for rows and leaves it). It only follows your scrolling, so going through
   // bitmaps (8 KB a row) and back finds the same row again
-  const topAt = useRef<Addr | null>(null), restoring = useRef(false), opened = useRef(false);
+  const topAt = useRef<Addr | null>(null), opened = useRef(false);
+  // the scroll position another view put the address at the top at: its scroll event is not where you went, so the
+  // address stays. Told by the position, not by time, so a scroll of yours right after the view changed is taken
+  const restored = useRef<number | null>(null);
+  /** the scroll position the address at the top was last taken from */
+  const seenY = useRef(0);
   // an address the tab put at the top itself (where the editor was, a file just opened) stays the one at the top while
   // its row is, so every view has it in the row at the top, not the start of the row it was in
   const pin = useRef<Addr | null>(null);
@@ -172,8 +178,11 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   const viewEnd = (el: HTMLElement) => Math.min(L.size, rowAddr(L, rowOf(el.scrollTop + el.clientHeight) + 1));
   const onScroll = () => {
     const el = scroller.current;
-    if (!el || restoring.current || kind === 'fontrows') return;
+    if (!el || kind === 'fontrows') return;
+    seenY.current = el.scrollTop;
     fitBand();
+    if (restored.current != null && Math.abs(el.scrollTop - restored.current) < 1) return;
+    restored.current = null;
     const r = rowOf(el.scrollTop), t = Math.min(L.size - 1, rowAddr(L, r)), p = pin.current;
     if (p != null && p >= t && p < rowAddr(L, r + 1)) topAt.current = p;
     else { pin.current = null; topAt.current = t; }
@@ -181,6 +190,9 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     own.current = null;
     onView?.(topAt.current, viewEnd(el));
   };
+  /** a view changed right after a scroll, before its scroll event has come: the scroll is taken first, so the address
+   *  at the top is the one you scrolled to and not the one before */
+  const keepTop = () => { const el = scroller.current; if (el && Math.abs(el.scrollTop - seenY.current) >= 1) onScroll(); };
   /** opening the tab where the editor was (14.6b): that address in the top row, and the cursor on screen when the view
    *  it is from had it */
   const showFrom = (v: { addr: Addr; end: Addr }) => {
@@ -202,6 +214,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   };
   useLayoutEffect(() => {
     const el = scroller.current, top = topAt.current;
+    restored.current = null;
     // opening the tab shows where the editor was, else the cursor (or the selection)
     if (!opened.current || top == null || kind === 'fontrows') {
       const first = !opened.current;
@@ -215,10 +228,9 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     }
     const c = cellOf(L, top);
     if (!c || !el) return;
-    restoring.current = true;
     el.scrollTop = c.y * zoom;
-    // the scroll event this sets off is not yours
-    requestAnimationFrame(() => requestAnimationFrame(() => { restoring.current = false; }));
+    // the scroll event this sets off is not yours (read back: the browser may have stopped it at the end)
+    restored.current = el.scrollTop;
   }, [kind, cols, zoom, bitmapRows]); // eslint-disable-line react-hooks/exhaustive-deps
   // a file opened from a loader while the tab is open: it goes there
   useLayoutEffect(() => { if (goTo && goTo.n !== goneTo.current) showGoTo(goTo); }, [goTo?.n]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -332,9 +344,9 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   const takeWhole = () => {
     if (!wholeOf) return;
     if (kind === 'bitmap' && bitmapRows < BITMAP_ROWS) {
-      // drawn whole: the bitmap at the top of the picture
-      topAt.current = wholeOf.start;
       set({ bitmapRows: BITMAP_ROWS });
+      // drawn whole: the bitmap at the top of the picture (after `set`, which takes a scroll just made first)
+      topAt.current = wholeOf.start;
     }
     anchor.current = wholeOf.start; onSelect(wholeOf.start, wholeOf.end);
   };
