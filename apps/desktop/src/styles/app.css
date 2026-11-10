@@ -1341,3 +1341,10 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .monaco-editor .scr-pc-glyph::after, .monaco-editor .scr-call-glyph::after { content: '▶'; display: block; margin: 1px 0 0 5px; font-size: 12px; line-height: 18px; color: var(--accent-hi); }
 .monaco-editor .scr-call-line { background: color-mix(in srgb, var(--hint) 14%, transparent); }
 .monaco-editor .scr-call-glyph::after { content: '↳'; color: var(--hint); }
+/* the Explorer's Scripts section (10.3) */
+.side-sub { margin: 8px 0 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
+.script-lib { display: flex; flex-wrap: wrap; gap: 4px; }
+.script-lib .btn { font-family: var(--font-code); }
+.script-row .script-bad { color: var(--err); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.script-row.running .file-name::after { content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--accent); vertical-align: middle; animation: scr-pulse 0.9s ease-in-out infinite alternate; }
+.script-row .icon-btn:disabled { opacity: 0.35; cursor: default; }

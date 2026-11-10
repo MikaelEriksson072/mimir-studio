@@ -1230,7 +1230,7 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
     await expect(page.locator('.side-inner')).toContainText('613 blocks free');
     // the disk comes right under Files, and the VICE quicksave under the disk
     await expect.poll(() => page.locator('.side-sec').evaluateAll(s => s.map(e => e.getAttribute('aria-label'))))
-      .toEqual(['Files', 'Disk', 'VICE quicksave', 'Loaders', 'Program start', 'Memory map']);
+      .toEqual(['Files', 'Disk', 'VICE quicksave', 'Scripts', 'Loaders', 'Program start', 'Memory map']);
   });
 
   await test.step('a click opens a PRG, + adds one to the project', async () => {
@@ -1423,7 +1423,7 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     for (const row of await banks.getByRole('listitem').all()) await expect(row).toHaveClass(/on/);
     await expect(page.locator('.disk-head').first()).toContainText('"MIMIR DEMO"');
     await expect.poll(() => page.locator('.side-sec').evaluateAll(s => s.map(e => e.getAttribute('aria-label'))))
-      .toEqual(['Files', 'Cartridge', 'VICE quicksave', 'Loaders', 'Program start', 'Memory map']);
+      .toEqual(['Files', 'Cartridge', 'VICE quicksave', 'Scripts', 'Loaders', 'Program start', 'Memory map']);
     // both banks in the listing, each under its own file bar; bank 0's vectors and signature, and the code they start
     // (read once the analysis is done: on a slow machine, a laptop on battery say, it is still running here)
     await expect(statusBar(page)).not.toContainText('analysing');
@@ -4771,8 +4771,8 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await expect(page.getByRole('region', { name: 'Files' }).locator('.sec-sum')).toHaveText('1 file');
   await expect(loaders.locator('.sec-sum')).toHaveText('none found');
   await expect(page.getByRole('region', { name: 'Program start' }).locator('.sec-sum')).toHaveText('$0810');
-  // Files, VICE quicksave, Loaders, Program start and Memory map
-  await allClosed(5);
+  // Files, VICE quicksave, Scripts, Loaders, Program start and Memory map
+  await allClosed(6);
   await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
 
   await toggle.click();
@@ -4799,7 +4799,7 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await page.reload();
   await waitForListing(page);
-  await allClosed(5);
+  await allClosed(6);
   await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
   await views.getByRole('button', { name: 'Pack' }).click();
   await allClosed(5);
@@ -6322,5 +6322,66 @@ test('scripts: the debugger goes an instruction at a time with the registers and
     // the breakpoint stays, and the code can be changed again
     await expect(editor.locator('.scr-bp')).toHaveCount(1);
     await expect(page.getByRole('button', { name: /^Debug/ })).toBeEnabled();
+  });
+});
+
+test('scripts in the Explorer: made, run, shown with what they changed or what is wrong, opened in the Scripts tab, deleted', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  const section = page.getByRole('region', { name: 'Scripts' });
+  await section.getByRole('button', { name: 'Scripts' }).click();
+  const rows = section.getByRole('list', { name: 'Scripts in the project' }).getByRole('listitem');
+  const editor = page.locator('.scr-editor');
+  const code = async (text: string) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(text);
+  };
+
+  await test.step('+ makes a script and opens it in the Scripts tab', async () => {
+    await expect(section).toContainText('none');
+    await section.getByRole('button', { name: 'New script' }).first().click();
+    await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
+    await code(['        ldx #3', '!:      inc colors_0939,x', '        dex', '        bpl !-', '        rts'].join('\n'));
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText('script');
+    await expect(rows.first()).toContainText('ready to run');
+  });
+
+  await test.step('Run in the Explorer: the change goes into the program, and the row says so', async () => {
+    await rows.first().getByRole('button', { name: 'Run script' }).click();
+    await expect(toast(page, /script: Returned .* It changed 4 bytes of the program in 1 place/)).toBeVisible();
+    await expect(rows.first()).toContainText('4 bytes changed in the program');
+    await expect(page.getByRole('tab', { name: 'Listing' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  await test.step('a script that does not check out says why, and cannot run from here', async () => {
+    await section.getByRole('button', { name: 'New script' }).first().click();
+    await code('        lda no_such_label\n        rts\n');
+    await expect(page.locator('.scr-check')).toContainText('Unknown symbol');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(1)).toContainText('Line 1: Unknown symbol "no_such_label"');
+    await expect(rows.nth(1).getByRole('button', { name: 'Run script2' })).toBeDisabled();
+  });
+
+  await test.step('a click on a row opens it in the Scripts tab', async () => {
+    await rows.first().click();
+    await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('option', { name: 'script', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+  });
+
+  await test.step('delete takes the script and its change out of the program; Ctrl+Z brings both back', async () => {
+    await rows.first().getByRole('button', { name: 'Delete script' }).click();
+    await expect(toast(page, 'Script "script" deleted, and what it changed taken out of the program')).toBeVisible();
+    await expect(rows).toHaveCount(1);
+    await page.keyboard.press('Control+z');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText('4 bytes changed in the program');
   });
 });

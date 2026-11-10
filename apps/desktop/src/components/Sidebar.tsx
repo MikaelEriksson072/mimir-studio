@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type SymbolRef, type TapeFile } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, scriptEndText, scriptPatches, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -10,6 +10,7 @@ import { bankAdr, cx, fmtBytes, groupOfKind } from '../lib/util';
 import type { MountedDisk, MountedTape } from '../lib/types';
 import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
 import { useUi, type Activity } from '../store/ui';
+import { useScripts, type LibraryScript } from '../store/scripts';
 import { BookmarksView, type BookmarkEditing } from './Bookmarks';
 import { DiskScreen } from './DiskScreen';
 import { MemoryStrip, type CanvasColors } from './Heatmap';
@@ -65,6 +66,8 @@ interface SidebarProps {
   quicksave: QuicksaveProps;
   /** the user's patches (spec 10.2) */
   patches: PatchesProps;
+  /** the user's scripts (spec 10.3) */
+  scripts: ScriptsProps;
   /** play the music block that starts at `start` (the Blocks view's play button), in VICE or DeepSID as `musicPlayer`
    *  says (Settings → Toolchain) */
   onPlayMusic?: (start: Addr) => void;
@@ -72,6 +75,21 @@ interface SidebarProps {
   /** Shift+click on a block in the Blocks view: the block, selected, in its type's own view (lib/blockfolders
    *  `blockView`: graphics in Graphics, text and data in Memory, code in the listing) */
   onShowBlock?: (b: Block) => void;
+}
+
+interface ScriptsProps {
+  list: readonly UserScript[];
+  /** each script checked as the project has its code: whether it can run, and what is wrong */
+  checks: ReadonlyMap<string, ScriptCheck>;
+  /** the project's patches: a script's changes to the program are among them */
+  patches: readonly Patch[];
+  onNew: () => void;
+  /** the script in the Scripts tab */
+  onOpen: (id: string) => void;
+  onRun: (id: string) => void;
+  onRemove: (id: string) => void;
+  /** a copy of a library script in the project */
+  onAdd: (l: LibraryScript) => void;
 }
 
 interface PatchesProps {
@@ -94,7 +112,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -131,6 +149,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
+        <ScriptsSection {...scripts} />
         <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
         <ProgramStart A={A} R={R} project={project} onNavigate={onNavigate} onSetStart={onSetStart} />
         <SideSection id="map" title="Memory map" summary={`${segs.length} block${segs.length === 1 ? '' : 's'}`}>
@@ -340,6 +359,53 @@ function QuicksaveSection({ info, follow, onOpen, onFollow, ...kept }: Quicksave
         <span>Open new quicksaves automatically</span>
       </label>
       {kept.kept.length > 0 && <KeptQuicksaves {...kept} />}
+    </SideSection>
+  );
+}
+
+/** The project's scripts (spec 10.3): each runs from here (its changes go into the program), opens in the Scripts tab
+ *  or is deleted; + makes a new one, and the library's can be added. */
+function ScriptsSection({ list, checks, patches, onNew, onOpen, onRun, onRemove, onAdd }: ScriptsProps) {
+  const running = useScripts(s => s.running), runs = useScripts(s => s.runs), library = useScripts(s => s.library);
+  const status = (sc: UserScript): { text: string; bad?: boolean } => {
+    if (running === sc.id) return { text: 'running…' };
+    const c = checks.get(sc.id), e = c?.problems.find(p => p.level === 'error');
+    if (c && !c.ok) return { text: `${e?.line ? `Line ${e.line}: ` : ''}${e?.msg ?? 'does not check out'}`, bad: true };
+    const mine = scriptPatches(patches, sc.id).filter(p => !p.off), bytes = mine.reduce((n, p) => n + p.bytes.length, 0);
+    if (mine.length) return { text: `${bytes} byte${bytes === 1 ? '' : 's'} changed in the program` };
+    if (runs[sc.id]) return { text: 'ran: it changed none of the program\'s bytes' };
+    return { text: 'ready to run' };
+  };
+  return (
+    <SideSection id="scripts" title="Scripts" summary={list.length ? `${list.length} script${list.length === 1 ? '' : 's'}` : 'none'}
+      actions={<button className="icon-btn" title="New script: Kick Assembler code that runs in Mimir (it opens in the Scripts tab)" aria-label="New script" onClick={onNew}><Icon name="plus" size={14} /></button>}>
+      {!list.length && <p className="side-hint">A script is Kick Assembler code that runs here in Mimir on the program's bytes: what it changes goes into the program and the source, its own code does not. + makes one.</p>}
+      <div role="list" aria-label="Scripts in the project">
+        {list.map(sc => {
+          const st = status(sc), ok = !!checks.get(sc.id)?.ok, changed = scriptPatches(patches, sc.id).length > 0;
+          return (
+            <div key={sc.id} role="listitem" className={cx('file-row script-row', running === sc.id && 'running')} onClick={() => onOpen(sc.id)}
+              title={`Open "${sc.name}" in the Scripts tab${runs[sc.id] ? `\nLast run: ${scriptEndText(runs[sc.id].run)}` : ''}`}>
+              <Icon name="prompt" size={14} />
+              <div className="file-meta"><div className="file-name">{sc.name}</div><div className={cx('small', st.bad ? 'script-bad' : 'muted')}>{st.text}</div></div>
+              <button className="icon-btn" aria-label={`Run ${sc.name}`} disabled={!ok || !!running}
+                title={!ok ? 'It does not check out: open it to fix it' : running ? 'A script is running' : 'Run it: what it changes in the program\'s bytes goes into the program'}
+                onClick={e => { e.stopPropagation(); onRun(sc.id); }}><Icon name="play" size={13} /></button>
+              <button className="icon-btn" aria-label={`Delete ${sc.name}`} title={`Delete the script${changed ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`}
+                onClick={e => { e.stopPropagation(); onRemove(sc.id); }}><Icon name="x" size={13} /></button>
+            </div>
+          );
+        })}
+      </div>
+      {library.length > 0 && <>
+        <div className="side-sub">From the library</div>
+        <div className="script-lib" role="list" aria-label="Library scripts to add">
+          {library.map(l => <button key={l.name} role="listitem" className="btn tiny ghost" title={`Add a copy of "${l.name}" to the project`} onClick={() => onAdd(l)}><Icon name="plus" size={12} />{l.name}</button>)}
+        </div>
+      </>}
+      <div className="side-actions">
+        <button className="btn small" onClick={onNew}><Icon name="plus" size={13} />New script</button>
+      </div>
     </SideSection>
   );
 }

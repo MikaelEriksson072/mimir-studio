@@ -10,7 +10,7 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  newId, newScript, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, newId, newScript, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
@@ -18,6 +18,7 @@ import {
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
 import { useScripts, type LibraryScript } from './store/scripts';
+import { runScriptInWorker } from './lib/scriptrun';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, uid } from './lib/util';
 import { blockStep, foldLines } from './lib/fold';
@@ -1644,6 +1645,40 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     });
     return { written: w.written, failed: w.failed };
   };
+  /** a run has ended (Run in the Scripts tab or the Explorer, or debugging to its end): its changes into the program,
+   *  the run kept to show, and what it did said */
+  const finishScriptRun = (id: string, r: ScriptRun, text: string) => {
+    const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
+    const w = ranUserScript(id, r);
+    const st = useScripts.getState();
+    st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [] } } });
+    if (st.selected === id && (st.shown.kind === 'patch' || !s.pads.length)) st.set({ shown: w?.written.length ? { kind: 'patch', id: w.written[0].id } : { kind: 'pad', i: 0 } });
+    const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
+    const what = w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
+    toast(`${s.name}: ${scriptEndText(r)}${what}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not be written (Scripts → Last run says why).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length ? 'warn' : 'ok') : 'warn');
+  };
+  /** Run a script (`text`: its code as the editor has it, else as the project has it), in its worker; one at a time */
+  const runUserScript = async (id: string, text?: string) => {
+    const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
+    if (useScripts.getState().running) { toast('A script is running: wait for it, or stop it in the Scripts tab', 'info'); return; }
+    const source = text ?? s.source, env = scriptEnvFor(id);
+    const c = checkScript(env, { source, pads: s.pads });
+    if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); toast(`"${s.name}" does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}`, 'warn'); return; }
+    useScripts.getState().set({ running: id });
+    try {
+      const r = await runScriptInWorker(env, { source, pads: s.pads });
+      useScripts.getState().set({ running: null });
+      finishScriptRun(id, r, source);
+    } catch (e) {
+      useScripts.getState().set({ running: null });
+      const msg = errorText(e);
+      toast(msg === 'stopped' ? `${s.name} stopped` : `${s.name} did not run: ${msg}`, msg === 'stopped' ? 'info' : 'err');
+    }
+  };
+  /** each script checked as the project has it, for the Explorer: whether it can run, and what is wrong */
+  const scriptChecks = useMemo(() => new Map(userScripts.map(s => [s.id, checkScript(scriptsEnv, s)])), [userScripts, scriptsEnv]);
+  /** a script in the Scripts tab */
+  const openUserScript = (id: string) => { useScripts.getState().set({ selected: id, shown: { kind: 'pad', i: 0 } }); setUi({ tab: 'scripts' }); };
   const saveScriptText = async (name: string, text: string) => {
     if (!kr) return needDesktop();
     try {
@@ -2891,6 +2926,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             d.patches = d.patches.filter(p => d.files.some(f => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length));
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
+          scripts={{ list: userScripts, checks: scriptChecks, patches: project.patches, onNew: () => newUserScript(), onOpen: id => { openUserScript(id); setDrawer(null); }, onRun: id => void runUserScript(id), onRemove: removeUserScript, onAdd: addLibraryScript }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onShowBlock={b => { showBlock(b); setDrawer(null); }}
           disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
@@ -3011,7 +3047,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} onNew={() => newUserScript()} onAdd={addLibraryScript}
-                onEdit={editUserScript} onRemove={removeUserScript} onRan={ranUserScript} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
+                onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);

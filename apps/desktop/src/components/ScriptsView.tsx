@@ -6,10 +6,10 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptPad, type ScriptRun, type ScriptWriteFailure, type UserScript } from '@mimir/core';
+import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptPad, type ScriptRun, type UserScript } from '@mimir/core';
 import { Icon } from '../lib/icons';
-import { cx, errorText } from '../lib/util';
-import { runScriptInWorker, stopScript } from '../lib/scriptrun';
+import { cx } from '../lib/util';
+import { stopScript } from '../lib/scriptrun';
 import { useScripts, type LibraryScript, type PadMode, type ScriptRunKept } from '../store/scripts';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
@@ -35,8 +35,10 @@ interface ScriptsViewProps {
   onAdd: (s: LibraryScript) => void;
   onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads'>>, label: string) => void;
   onRemove: (id: string) => void;
-  /** a run ended: its changes go into the program, its scratchpads into the project; what was written, what not */
-  onRan: (id: string, run: ScriptRun) => { written: Patch[]; failed: ScriptWriteFailure[] } | null;
+  /** Run: the script with this code, in its worker; its changes go into the program (App runUserScript) */
+  onRun: (id: string, text: string) => Promise<void>;
+  /** a run that ended here (debugging to its end): its changes go into the program, the run is kept and said */
+  onFinish: (id: string, run: ScriptRun, text: string) => void;
   /** the script's changes taken out of the program */
   onTakeOut: (id: string) => void;
   onSwitchPatch: (p: Patch, on: boolean) => void;
@@ -66,7 +68,7 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
   return out.endsWith('\n') ? out : out + '\n';
 }
 
-export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd, onEdit, onRemove, onRan, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
+export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd, onEdit, onRemove, onRun, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
   const { selected, runs, running, shown, mode, screen, outH, dbgOutH, library, set, saveToLibrary, removeFromLibrary } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -236,34 +238,13 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
 
   const goLine = (n: number) => { const e = ed.current; if (!e) return; e.revealLineInCenter(n); e.setPosition({ lineNumber: n, column: 1 }); e.focus(); };
 
-  const run = async () => {
+  /** Run: the code as the editor has it, in the worker (App's runUserScript, the same as the Explorer's Run) */
+  const run = () => {
     const s = curRef.current; if (!s || running) return;
     flush();
-    const text = models.current[s.id]?.getValue() ?? s.source;
-    const c = checkScript(env, { source: text, pads: s.pads });
-    if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
-    set({ running: s.id });
-    try {
-      const r = await runScriptInWorker(envFor(s.id), { source: text, pads: s.pads });
-      set({ running: null });
-      ran(s, r, text);
-    } catch (e) {
-      set({ running: null });
-      const msg = errorText(e);
-      toast(msg === 'stopped' ? `${s.name} stopped` : `${s.name} did not run: ${msg}`, msg === 'stopped' ? 'info' : 'err');
-    }
+    void onRun(s.id, models.current[s.id]?.getValue() ?? s.source);
   };
-  /** a run has ended (Run, or debugging to its end): its changes into the program, what it did shown and said */
-  const ran = (s: UserScript, r: ScriptRun, text: string) => {
-    const w = onRan(s.id, r);
-    set({ runs: { ...useScripts.getState().runs, [s.id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [] } } });
-    const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
-    const sh = useScripts.getState().shown;
-    if (sh.kind === 'patch' || !s.pads.length) set({ shown: w?.written.length ? { kind: 'patch', id: w.written[0].id } : { kind: 'pad', i: 0 } });
-    const what = w?.written.length ? ` It changed ${plural(bytes, 'byte')} of the program in ${plural(on.length, 'place')}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
-    toast(`${s.name}: ${scriptEndText(r)}${what}${w?.failed.length ? ` ${plural(w.failed.length, 'change')} could not be written (see Last run).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length ? 'warn' : 'ok') : 'warn');
-  };
-  runRef.current = () => void run();
+  runRef.current = run;
 
   /* ---- the debugger (spec 10.3): the run an instruction at a time, on the program as Run has it ---- */
   /** the breakpoints of a script: the lines of its model's breakpoint decorations (they move as lines are edited) */
@@ -294,8 +275,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
     if (dbgRef.current !== d) return;
     if (d.m.end) {
       setDbg(null); dbgRef.current = null;
-      const s = scriptsRef.current.find(x => x.id === d.id);
-      if (s) ran(s, d.m.result(), d.source);
+      onFinish(d.id, d.m.result(), d.source);
       return;
     }
     setTick(t => t + 1);
@@ -423,7 +403,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, onNew, onAdd
           </div> : <>
             {isRunning
               ? <button className="btn" onClick={() => stopScript()} title="Stop the run"><Icon name="x" />Stop</button>
-              : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={() => void run()} title={check.ok ? 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program' : 'The script must check out before it can run: see the errors'}>
+              : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={run} title={check.ok ? 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program' : 'The script must check out before it can run: see the errors'}>
                 <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
             <button className="btn scr-debug-btn" disabled={!check.ok || !!running} onClick={startDebug} title={check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
             <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}

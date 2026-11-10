@@ -1904,6 +1904,15 @@ $06, $08` i `.asm`-filen efter en körning.
   rader som listningen skriver dem: så klipper man ut en loop ur programmet. Skriptet heter `script`, `script2`, …,
   har ingen `* =` och ingen scratchpad, och börjar med en kommentar: det körs från första raden till sista RTS, det
   det ändrar i programmets byte går in i programmet och dess `.asm`, koden själv aldrig.
+- **Explorer → Scripts** (alltid där, efter *Patches*) listar projektets skript: namnet och vad som gäller för skriptet,
+  *ready to run*, *4 bytes changed in the program* (vad dess påslagna patchar skrev), *ran: it changed none of the
+  program's bytes*, *running…* eller, i rött, det första felet (*Line 1: Unknown symbol "x"*) från kontrollen av koden
+  som projektet har den. Varje rad har ▶ (*Run*, grå när skriptet inte går igenom kontrollen eller ett annat körs),
+  som kör skriptet precis som *Run* i fliken (`runUserScript` i App: samma worker, samma patchar och samma meddelande),
+  och × (*Delete*, som tar dess ändringar ur programmet; `Ctrl+Z` tar tillbaka båda). Ett klick på raden öppnar
+  skriptet i fliken Scripts. `+` i rubriken och *New script* gör ett nytt skript och öppnar det där, och under
+  *From the library* lägger en knapp per biblioteksskript till en kopia. Rubriken säger hur många skript projektet
+  har (*none* utan något).
 - **Editorn** är Monaco med Kick Assembler-färgningen (också `!`-etiketter, `.for`, `.while`, `.eval`, `.print`,
   `else` och funktionerna), och visar ett namns adress när pekaren står på det. Den föreslår ord som **börjar** med
   det som skrivits och är längre än det (`scriptSuggestions` i `monaco/providers.ts`): först på en rad mnemonics,
