@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { analyze, assemble, bankFiles, comparePrg, createProject, exportFiles, formatOverride, h4, makeDemo, makePrg, OPC, openC64File, openCartridge, parsePrg, planPatch, render, showcaseProject, withPatch, type ProjectInput } from '../src';
+import { analyze, assemble, bankFiles, SCRIPT_TEMPLATES, comparePrg, createProject, exportFiles, formatOverride, h4, makeDemo, makePrg, OPC, openC64File, openCartridge, parsePrg, planPatch, render, showcaseProject, withPatch, type ProjectInput } from '../src';
 import { findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
 import { allOpcodesProgram, fromSource, randomPrg, relocProgram, seededProject, SETTING_VARIANTS, zeroPageProgram } from './helpers/programs';
 
@@ -209,6 +209,15 @@ const BEYOND = [
     '        sta $0600,x', '        sta $06e8,x', '        lda #$00', '        sta $d800,x                     // Color RAM — row 0, column 0',
     '        sta $d900,x', '        sta $da00,x', '        sta $dae8,x', '        clc', '        adc #$02', '        sta pad2,x', '        inx', '        bne loop_111c', '        rts'],
 ].map(l => l.join('\n'));
+// the script templates (script-templates.ts), with their scratchpad as a label: as they come, and the other ways round
+// their switches give
+const TEMPLATE_PAD = '.label result = $c000\n.label result_end = $c400\n';
+const flip = (name: string, vars: Record<string, string>) => TEMPLATE_PAD + Object.entries(vars).reduce(
+  (s, [k, v]) => s.replace(new RegExp(`^(\\.var\\s+${k}\\s*=\\s*)\\S+`, 'm'), (_, h: string) => h + v), SCRIPT_TEMPLATES.find(t => t.name === name)!.source);
+BEYOND.push(...SCRIPT_TEMPLATES.map(t => TEMPLATE_PAD + t.source),
+  flip('xor_rolling_key', { backwards: 'true' }), flip('xor_chain', { backwards: 'true', encrypt: 'true', withDecrypted: 'false' }),
+  flip('steps', { step1: 'ROTL', key1: '3', step3: 'NONE', step4: 'ROTR', encrypt: 'true' }), flip('add_key', { subtract: 'false' }), flip('xor_key_string', { keyLength: '0' }),
+  flip('xor_rolling_key', { pageKey: 'true' }));
 
 describe.skipIf(!available)(`the built-in assembler beyond the generated subset, against ${jar ?? 'KickAss.jar'}`, () => {
   it('writes the same bytes as Kick Assembler', async () => {

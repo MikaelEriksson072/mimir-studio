@@ -470,14 +470,19 @@ export interface StackEntry {
  * until the script returns, a BRK or JAM, or `limit` instructions.
  */
 /** The bus of a script's run: the script's own memory where its code reads and writes its own addresses, the program's
- *  memory everywhere else. A class, so that every run's bus has the same methods and the CPU's calls stay fast. */
+ *  memory everywhere else. A pointer ((zp),y or (zp,x)) of the script's that points where its own instructions are
+ *  means the program's memory there: the script's code went where Mimir found room, and a pointer to the program's
+ *  bytes (a decryption's source or destination, set from `.var`s) may point there. A class, so that every run's bus has
+ *  the same methods and the CPU's calls stay fast. */
 class ScriptBus implements Bus {
-  constructor(private readonly mem: Uint8Array, private readonly own: Uint8Array, private readonly mine: Uint8Array, private readonly ctx: { script: boolean },
+  constructor(private readonly mem: Uint8Array, private readonly own: Uint8Array, private readonly mine: Uint8Array, private readonly ctx: { script: boolean; at: number },
     /** the script's code bytes, and how many times the script wrote over each (a check: code that changes itself) */
     private readonly code: Uint8Array, readonly overCode: Uint32Array) { }
-  read(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
+  /** the instruction running (the script's, at ctx.at) reaches memory through a pointer */
+  private viaPointer(): boolean { const m = OPC[this.own[this.ctx.at]].mode; return m === 'izy' || m === 'izx'; }
+  read(a: number): number { return this.ctx.script && this.mine[a] && !(this.code[a] && this.viaPointer()) ? this.own[a] : this.mem[a]; }
   write(a: number, v: number): void {
-    if (this.ctx.script && this.mine[a]) { this.own[a] = v; if (this.code[a]) this.overCode[a]++; } else this.mem[a] = v;
+    if (this.ctx.script && this.mine[a] && !(this.code[a] && this.viaPointer())) { this.own[a] = v; if (this.code[a]) this.overCode[a]++; } else this.mem[a] = v;
   }
   fetch(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
 }
@@ -490,7 +495,8 @@ export class ScriptMachine {
   readonly mine = new Uint8Array(0x10000);
   /** whether the code running is the script's */
   // (kept in an object of its own: the bus reads it at every byte)
-  private readonly ctx = { script: false };
+  // (and the address of the instruction running, for a pointer's: ScriptBus)
+  private readonly ctx = { script: false, at: 0 };
   get inScript(): boolean { return this.ctx.script; }
   set inScript(v: boolean) { this.ctx.script = v; }
   instructions = 0;
@@ -537,7 +543,7 @@ export class ScriptMachine {
     if (this.end) return false;
     if (this.instructions >= this.limit) { this.end = 'limit'; this.at = this.cpu.pc; return false; }
     const cpu = this.cpu, mine = this.mine;
-    this.at = cpu.pc;
+    this.at = this.ctx.at = cpu.pc;
     const s0 = cpu.s, was = this.inScript;
     this.cycles += cpu.step(); this.instructions++;
     if (cpu.jammed) { this.end = 'jam'; return false; }
@@ -568,7 +574,7 @@ export class ScriptMachine {
     const until = Math.min(this.limit, this.instructions + max);
     let n = this.instructions, cycles = this.cycles, end: ScriptEnd | null = null, at = this.at;
     while (n < until) {
-      at = cpu.pc;
+      at = ctx.at = cpu.pc;
       const s0 = cpu.s, was = ctx.script;
       cycles += cpu.step(); n++;
       if (cpu.jammed) { end = 'jam'; break; }

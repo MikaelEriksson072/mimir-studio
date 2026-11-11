@@ -10,7 +10,7 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  checkScript, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, type ScriptTemplate, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -1728,6 +1728,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}) }, 'Add script from the library');
     toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}`, 'ok');
   };
+  /** a copy of a template in the project (script-templates.ts): its code checked with its scratchpads out of the way,
+   *  then each scratchpad placed where there is room, away from the code and from what the code reaches */
+  const addTemplateScript = (t: ScriptTemplate) => {
+    const name = scriptName(userScripts, t.name);
+    const c = checkScript(scriptsEnv, { source: t.source, pads: t.pads.map(p => ({ ...p, start: 0xffff, size: 1 })) });
+    const pads: ScriptPad[] = [];
+    for (const p of t.pads) {
+      const taken = [...c.code, ...c.access, ...pads.map(q => ({ start: q.start, end: q.start + q.size }))];
+      pads.push({ ...p, start: scriptPlace(scriptsEnv.files, p.size, taken)?.at ?? 0xc000 });
+    }
+    addUserScript({ id: newId(), name, lang: 'kickass', source: t.source, pads }, 'Add template');
+    toast(`"${name}" added from the templates: set its .vars (source, dest, length, the key) and press Ctrl+Enter. With dest = result the program stays as it is`, 'ok');
+  };
   const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
@@ -3275,7 +3288,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                   setMenu({ x, y, items: [...('children' in m ? [{ header: m.label }, ...m.children] : [m]), ...(bm ? [{ sep: true }, bm] satisfies MenuItem[] : [])] });
                 }} />}
               {tab === 'spec' && <SpecView />}
-              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript}
+              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}

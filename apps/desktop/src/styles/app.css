@@ -1311,6 +1311,11 @@ main.main { container: editor / inline-size; }
 .scr-lib-item { display: flex; align-items: center; gap: 2px; padding: 2px 2px 2px 8px; border-radius: 5px; color: var(--fg-2); }
 .scr-lib-item:hover { background: var(--row-hover); color: var(--fg); }
 .scr-lib-item .icon-btn { width: 22px; height: 22px; }
+/* the templates: a heading that folds them in */
+.scr-tpl-head { padding-left: 2px; }
+.scr-tpl-fold { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 2px; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.scr-tpl-fold:hover { color: var(--fg); background: var(--row-hover); }
+.scr-tpl-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .scr-change-row { display: flex; align-items: center; gap: 6px; }
 .scr-change-row .scr-change { flex: 1; min-width: 0; }
 .scr-change-row.off .scr-change { color: var(--fg-3); text-decoration: line-through; }

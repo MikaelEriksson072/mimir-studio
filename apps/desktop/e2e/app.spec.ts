@@ -6956,3 +6956,54 @@ test('scripts: the Scripts tab folds in the side panel, the inspector and the bo
     await expect(page.getByRole('listbox', { name: 'Scripts' }).getByRole('option')).toHaveCount(2);
   });
 });
+
+test('scripts: templates that decrypt and encrypt have a section of their own in the list, which folds in; a copy comes with its scratchpad and decrypts the program\'s bytes into it', async ({ app, page }) => {
+  await waitForListing(page);
+  const prg = join(repoDir, 'fixtures/prg/raster-demo.prg');
+  await stubDialogs(app, { open: [prg] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const list = page.getByRole('list', { name: 'Templates' });
+  const fold = page.getByRole('button', { name: 'Templates', exact: true });
+
+  await test.step('the templates are listed under the library, each with what it does and where it was seen', async () => {
+    await expect(list.getByRole('listitem')).toHaveText(['XOR key byte', 'XOR key string', 'XOR rolling', 'XOR chain', 'Add/subtract', 'Several steps']);
+    await expect(list.getByRole('listitem').first()).toHaveAttribute('title', /^Every byte EORed with one key byte[\s\S]*Seen in/);
+  });
+
+  await test.step('the heading folds them in, and they stay folded', async () => {
+    await expect(fold).toHaveAttribute('aria-expanded', 'true');
+    await fold.click();
+    await expect(list).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(fold).toHaveAttribute('aria-expanded', 'false');
+    await expect(list).toHaveCount(0);
+    await fold.click();
+    await expect(list.getByRole('listitem')).toHaveCount(6);
+  });
+
+  await test.step('a copy in the project: its comment and settings, its scratchpad result placed, ready to run', async () => {
+    await list.getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
+    await expect(toast(page, /"xor_key" added from the templates: set its \.vars/)).toBeVisible();
+    await expect(page.getByLabel('Script name')).toHaveValue('xor_key');
+    await expect(page.locator('.scr-editor .view-lines')).toContainText('XOR with a key byte');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await expect(page.getByRole('table', { name: 'Scratchpads' }).locator('.pad-row:not(.pad-head)')).toHaveCount(1);
+    await expect(page.getByRole('table', { name: 'Scratchpads' }).getByLabel('Scratchpad name')).toHaveValue('result');
+    await expect(page.getByRole('table', { name: 'Scratchpads' }).getByLabel('Scratchpad size')).toHaveValue(/^(\$0400|1024)$/);
+  });
+
+  await test.step('run as it comes: the program\'s first $100 bytes from $0801, EORed with $77, are in result; the program stays as it is', async () => {
+    await page.getByRole('button', { name: /^Run/ }).click();
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    const bytes = readFileSync(prg).subarray(2, 18);
+    const row = [...bytes].map(b => (b ^ 0x77).toString(16).padStart(2, '0')).join(' ');
+    await expect(page.locator('.scr-dump')).toContainText(row);
+    await expect(toast(page, /xor_key: Returned .* It changed none of the program's bytes/)).toBeVisible();
+    // a second copy gets a name of its own
+    await list.getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
+    await expect(page.getByLabel('Script name')).toHaveValue('xor_key2');
+  });
+});

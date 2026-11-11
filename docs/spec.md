@@ -172,6 +172,7 @@ mimir-studio/
 │  ├─ src/render/{lines.ts, kick.ts, include.ts}
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
+│  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -1896,7 +1897,7 @@ dem.** Med `my_table: .byte $01,$02,$03,$04` i källkoden och ett skript som dub
 $06, $08` i `.asm`-filen efter en körning.
 
 - **Fliken Scripts** ligger bland huvudflikarna mellan Memory och källkoden. Till vänster står projektets skript
-  (*Project*, med *New script*) och biblioteket (*Library*). I mitten står skriptets namn, kontrollen, *Run*, *Save to
+  (*Project*, med *New script*), biblioteket (*Library*) och mallarna (*Templates*). I mitten står skriptets namn, kontrollen, *Run*, *Save to
   library* och papperskorgen, sedan editorn och under den utdata: problemen, *In the program*, scratchpadsen,
   `.print` och senaste körningen, och till höger en ändring eller en scratchpad som hex, kod eller text. Gränsen
   mellan editorn och utdata kan dras. Utan skript visar fliken vad ett skript är, *New script* och biblioteket.
@@ -1958,7 +1959,12 @@ $06, $08` i `.asm`-filen efter en körning.
   `,x`/`,y` 255 byte till). Annars kunde en loop som tömmer skärmen (`sta $0400,x`) skriva över sin egen kod när Mimir
   lagt den på skärmen (ett spels skärm full av mellanslag är den längsta följden av en byte): efter tre varv stod `$20`
   (JSR) där loopen börjar (rättat 2026-11-11). En scratchpad som läggs till hamnar inte heller där. En egen `* =` gäller
-  som den står.
+  som den står. **En pekare som pekar där skriptets egna instruktioner ligger menar programmets minne:** en instruktion
+  i skriptet som läser eller skriver genom en pekare (`lda (src),y`, `sta (dst,x)`) på en adress där skriptet har en
+  instruktion (inte data: en `.byte`-rad eller en scratchpad är skriptets) når programmets byte där (`ScriptBus`). En
+  pekare kan peka vart som helst och sätts när skriptet körs (från mallarnas `.var source`/`dest`), så placeringen kan
+  inte undvika den: när programmet fyller minnet kan Mimir lägga koden i just den tomma tabell som dekrypteringen
+  fyller, och utan regeln skrev skriptet då över sin egen kod i stället för tabellen.
 - **Kontrollen** (`checkScript`) assemblerar koden med den inbyggda assemblern med programmets namn (som listningen
   skriver dem), hårdvarunamnen och scratchpadsen (`pad1` och `pad1_end`) till hands. Ett namn koden själv definierar
   vinner. Mimirs egna namn slutar på sin adress (`colors_0939`, `ptr_fb`): ett sådant namn som programmet inte längre
@@ -2114,6 +2120,30 @@ $06, $08` i `.asm`-filen efter en körning.
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett
   likadant) och `×` tar bort det ur biblioteket; projekten behåller sina kopior.
+- **Mallar** (*Templates*, under *Library* i skriptlistan; `script-templates.ts`, `SCRIPT_TEMPLATES`) är färdiga skript
+  som Mimir har med sig: dekrypteringar (och krypteringar) som spelen i referensarkivet visade sig göra
+  (`docs/encryption.md`). *XOR key byte* (`xor_key`, EOR med en byte, `$FF` vänder alla bitar), *XOR key string*
+  (`xor_key_string`, EOR med nästa byte i en nyckel på 1–256 byte), *XOR rolling* (`xor_rolling_key`, en nyckel som
+  ändras efter varje byte: plus något, sedan EOR), *XOR chain* (`xor_chain`, EOR med byten före, som dekrypterad eller
+  krypterad), *Add/subtract* (`add_key`, ADC eller SBC med en nyckel som kan ändras, INC/DEC som nyckeln 1) och *Several
+  steps* (`steps`, upp till fyra steg i rad: ADD, SUB, XOR, ROTL, ROTR, som Commodores band gör SBC, EOR, SBC, EOR).
+  *XOR rolling* kan också ta sidan (adressens höga byte) EOR en nyckel som nyckel (`pageKey`, EA:s Construction Set).
+  Varje mall börjar med en kommentar som säger hur metoden fungerar och var den setts (spelets egen loop: *Pooyan
+  (Datasoft, tape) lda ($80),y / eor #$77 / sta ($80),y*),
+  och sedan inställningarna som `.var`: `source` (16 bitar: var de krypterade byten ligger, en adress, en av
+  programmets etiketter eller en scratchpad), `dest` (vart resultatet går: scratchpaden `result`, en etikett i
+  programmet, så att `.asm`-filen får byten, eller `source`, på plats), `length` (`tbl_001_end - tbl_001` är ett helt
+  block) och nyckeln, och för de metoder där vägen tillbaka inte är densamma `encrypt` (`true`: krypterar) och för
+  kedjan och den rullande nyckeln `backwards` (från sista byten ner). En nyckel från en CIA-timer som går medan loopen
+  går (Pirate Slayer, Melbourne Houses band) kan ett skript inte efterlikna, eftersom det saknar timers. Det säger
+  mallen *XOR rolling*, som hänvisar till Sindri (Unpack) eller VICE. Kontroller med `.error` stoppar skriptet innan
+  det körs (`length` mer än `result` rymmer). Mallarna använder nollsidan (`$f6–$fe`, som en körning inte behåller) och
+  pekare, så de når källan och målet var de än ligger. Rubriken *Templates* fäller in listan (appen minns det,
+  `kr.scriptTemplatesFolded`); verktygstipset på en mall är dess rad och kommentar. `+` lägger en kopia i projektet
+  (namnet `xor_key`, `xor_key2`, …) med scratchpaden `result` (1 kB) där det finns plats, bort från koden. Mallarna
+  ger samma byte i KickAss.jar som i den inbyggda assemblern (integrationstestet), och ett test per mall dekrypterar
+  det en referens av metoden krypterat, till scratchpaden, till en tabell i programmet och på plats, och krypterar
+  tillbaka till samma byte.
 - **Assemblern** (`verify/kick-subset-assembler.ts`, samma som verifieringen och patcharna använder) kan utöver det
   generatorn skriver: multi-etiketter (`!loop:`, `!:`, `bne !-`, `jmp !loop+`), scopes (`{ }`, `name: { }` som läses
   `name.label` utanför), `.if`/`else`/`else .if`, `.for`, `.while`, `.var` och `.eval` (`=`, `++`, `--`, `+=`, `-=`,

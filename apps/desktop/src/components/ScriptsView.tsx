@@ -6,7 +6,7 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { BLOCK_PAD_FORM, byteLines, checkScript, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptLink, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptRun, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, byteLines, checkScript, SCRIPT_TEMPLATES, type ScriptTemplate, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptLink, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptRun, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { Icon } from '../lib/icons';
@@ -41,6 +41,8 @@ interface ScriptsViewProps {
   onNew: () => void;
   /** a copy of a library script in the project */
   onAdd: (s: LibraryScript) => void;
+  /** a copy of a template in the project (its scratchpads placed where there is room) */
+  onAddTemplate: (t: ScriptTemplate) => void;
   onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
@@ -88,8 +90,8 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
   return out.endsWith('\n') ? out : out + '\n';
 }
 
-export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock }: ScriptsViewProps) {
-  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded } = useScripts();
+export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock }: ScriptsViewProps) {
+  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
@@ -399,7 +401,11 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   };
   keys.current = { step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp };
 
-  const libraryList = <LibraryList library={library} onAdd={onAdd} onRemove={name => { removeFromLibrary(name); toast(`"${name}" removed from the library`, 'ok'); }} />;
+  // the library, and below it the templates Mimir comes with
+  const libraryList = <>
+    <LibraryList library={library} onAdd={onAdd} onRemove={name => { removeFromLibrary(name); toast(`"${name}" removed from the library`, 'ok'); }} />
+    <TemplateList folded={templatesFolded} onFold={setTemplatesFolded} onAdd={onAddTemplate} />
+  </>;
 
   if (!scripts.length) return (
     <div className="scripts">
@@ -409,7 +415,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
         <h2>No scripts yet</h2>
         <p>A script is Kick Assembler code that runs here in Mimir on the program's bytes. Use the program's labels, variables and tables in it, call its routines or paste its code (a decryption loop, say): what it changes in the program's bytes goes into the program and the source, while the script's own code stays out of the export and Build &amp; Run.</p>
         <div className="empty-actions"><button className="btn primary" onClick={onNew}><Icon name="plus" size={14} />New script</button></div>
-        <p className="muted small">Or select lines in the listing, right-click and pick <b>Program → New script from selection</b>, or add one from the library.</p>
+        <p className="muted small">Or select lines in the listing, right-click and pick <b>Program → New script from selection</b>, or add one from the library, or start from a template (a decryption: XOR with a key, a chain, add, several steps).</p>
       </div>
     </div>
   );
@@ -559,7 +565,36 @@ function LibraryList({ library, onAdd, onRemove }: { library: LibraryScript[]; o
   </>;
 }
 
-function NameField({ value, taken, onCommit, toast }: { value: string; taken: string[]; onCommit: (n: string) => void; toast: ScriptsViewProps['toast'] }) {
+/** what a template's tooltip says: its line, and its comment up to the settings (what it does, where it was seen) */
+const templateTip = (t: ScriptTemplate) => {
+  const lines = t.source.split('\n');
+  const end = lines.findIndex((l, i) => i > 2 && /^\/\/ =+$/.test(l));
+  const text = lines.slice(3, end > 0 ? end : 20).map(l => l.replace(/^\/\/ {0,2}/, ''));
+  while (text.length && !text[text.length - 1].trim()) text.pop();
+  return `${t.about}\n\n${text.join('\n')}`;
+};
+
+/** The templates Mimir comes with (decryptions, script-templates.ts): each can be added to the project as a copy. The
+ *  heading folds the list in (kept by the app). */
+function TemplateList({ folded, onFold, onAdd }: { folded: boolean; onFold: (v: boolean) => void; onAdd: (t: ScriptTemplate) => void }) {
+  return <>
+    <div className="scr-list-head scr-lib-head scr-tpl-head">
+      <button className="scr-tpl-fold" onClick={() => onFold(!folded)} aria-expanded={!folded} aria-controls="scr-templates"
+        title={folded ? 'Show the templates: ready scripts that decrypt and encrypt the ways games do' : 'Fold the templates in'}>
+        <Icon name={folded ? 'chevron' : 'down'} size={11} /><span>Templates</span></button>
+      <span className="grow" /><span className="scr-lib-n">{SCRIPT_TEMPLATES.length}</span></div>
+    {!folded && <div role="list" aria-label="Templates" id="scr-templates">
+      {SCRIPT_TEMPLATES.map(t => (
+        <div key={t.name} role="listitem" className="scr-lib-item scr-tpl-item" title={templateTip(t)}>
+          <span className="scr-item-name">{t.title}</span>
+          <button className="icon-btn" aria-label={`Add the template ${t.title} to the project`} title={`Add a copy to this project, as "${t.name}": set its .vars and run it`} onClick={() => onAdd(t)}><Icon name="plus" size={13} /></button>
+        </div>
+      ))}
+    </div>}
+  </>;
+}
+
+function NameField({ value, taken, onCommit, toast }:{ value: string; taken: string[]; onCommit: (n: string) => void; toast: ScriptsViewProps['toast'] }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
   const commit = () => {
