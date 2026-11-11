@@ -11,6 +11,7 @@ import {
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   checkScript, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
@@ -1593,10 +1594,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /* ---- user scripts (spec 10.3): Kick Assembler code that runs in Mimir; what a run changes in the program's bytes
    * goes into the program as the script's patches, the script's code never ---- */
   const userScripts = project.userScripts ?? [];
-  const scriptsEnv = useMemo(() => scriptEnv(project, R, S), [project.files, project.cart, R, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
+  const scriptsEnv = useMemo(() => scriptEnv(project, R, S, A.blocks), [project.files, project.cart, R, A, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
   /** what a script runs on: the program without what its earlier runs changed (a decryption runs on the bytes as they
    *  were, not on what it decrypted the last time) */
-  const scriptEnvFor = (id: string) => { const { project: p, R: r, S: s } = latest.current; return scriptEnv({ ...p, ...withoutScriptPatches(p, id) }, r, s); };
+  const scriptEnvFor = (id: string) => { const { project: p, R: r, S: s, A: a } = latest.current; return scriptEnv({ ...p, ...withoutScriptPatches(p, id) }, r, s, a.blocks); };
   /** a script in the project (made, or copied from the library), shown in the Scripts tab */
   const addUserScript = (s: UserScript, what: string) => {
     update(`${what} "${s.name}"`, d => { d.userScripts = [...(d.userScripts ?? []), s]; });
@@ -1639,6 +1640,68 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     editUserScript(id, { pads: s.pads.map((x, k) => (k === pad ? { ...keep, data: bytes.slice(0, p.size) } : x)) }, `Copy ${where} into scratchpad ${p.name} of "${s.name}"`);
     show(id, pad);
     toast(n > p.size ? `${p.name} holds ${p.size} bytes: the first ${p.size} of the ${n} went in (make it bigger for all of them)` : `${where} copied into ${p.name} of "${s.name}": a run starts it with them`, n > p.size ? 'warn' : 'ok');
+  };
+  /** a block of the program copied into a scratchpad, written as its type is (blockPad: code as Kick Assembler, text as
+   *  text, characters, sprites and bitmaps as `.byte` lines in their shape, other data as hex): into one of a script's
+   *  (`pad`, its index; made as big as the block when there is room, else its first bytes in hex), a new one there
+   *  (`pad` null), or a new script with a new one (`id` null) */
+  const copyBlockIntoPad = (blockStart: Addr, id: string | null, pad: number | null) => {
+    const b = A.blocks.find(x => x.start === blockStart); if (!b) return;
+    const n = b.end - b.start, name = R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`;
+    const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, shown: { kind: 'pad', i }, outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
+    const typed = (at: Addr, pads: readonly ScriptPad[]) => blockPad(b, R.lines, A.mem, at, scriptNames(scriptsEnv, pads), S);
+    const said = (bp: BlockPad, padName: string, sname: string) => `Block ${name} ($${h4(spaceAddr(b.start))}-$${h4(spaceAddr(b.end - 1))}, ${n} bytes) copied into ${padName} of "${sname}" as ${bp.what}: a run starts it with them`;
+    if (id == null) {
+      const base = newScript(userScripts, [], newId()), c = checkScript(scriptsEnv, base);
+      const start = scriptPlace(scriptsEnv.files, n, [...c.code, ...c.access])?.at ?? 0xc000;
+      const bp = typed(start, []);
+      const s: UserScript = { ...base, pads: [{ name: 'pad1', start, size: n, data: bp.bytes, src: bp.src }] };
+      addUserScript(s, 'New script with a scratchpad');
+      show(s.id, 0);
+      toast(said(bp, 'pad1', s.name), 'ok');
+      return;
+    }
+    const s = userScripts.find(x => x.id === id); if (!s) return;
+    const c = scriptChecks.get(id), others = (skip: number) => [...(c?.code ?? []), ...(c?.access ?? []), ...s.pads.filter((_, k) => k !== skip).map(p => ({ start: p.start, end: p.start + p.size }))];
+    if (pad == null) {
+      const last = s.pads[s.pads.length - 1], pn = padName(s.pads);
+      const start = scriptPlace(scriptsEnv.files, n, others(-1), last ? last.start + last.size : undefined)?.at ?? 0xc000;
+      const bp = typed(start, s.pads);
+      editUserScript(id, { pads: [...s.pads, { name: pn, start, size: n, data: bp.bytes, src: bp.src }] }, `Copy block ${name} into a new scratchpad ${pn} of "${s.name}"`);
+      show(id, s.pads.length);
+      toast(said(bp, `the new scratchpad ${pn} ($${h4(start)})`, s.name), 'ok');
+      return;
+    }
+    const p = s.pads[pad]; if (!p) return;
+    // as big as the block, when nothing of the script's is in the way
+    const fits = p.size >= n || (p.start + n <= 0x10000 && !others(pad).some(r => r.start < p.start + n && p.start < r.end));
+    const { bytes: _b, src: _s, data: _d, ...keep } = p;
+    if (fits) {
+      const bp = typed(p.start, s.pads);
+      editUserScript(id, { pads: s.pads.map((x, k) => (k === pad ? { ...keep, size: Math.max(p.size, n), data: bp.bytes, src: bp.src } : x)) }, `Copy block ${name} into scratchpad ${p.name} of "${s.name}"`);
+      show(id, pad);
+      toast(`${said(bp, p.name, s.name)}${n > p.size ? ` (${p.name} is ${n} bytes now)` : ''}`, 'ok');
+      return;
+    }
+    const cut = A.mem.slice(b.start, b.start + p.size);
+    editUserScript(id, { pads: s.pads.map((x, k) => (k === pad ? { ...keep, data: cut, src: { form: 'hex', text: padText(cut, 'hex', p.start) } } : x)) }, `Copy block ${name} into scratchpad ${p.name} of "${s.name}"`);
+    show(id, pad);
+    toast(`${p.name} holds ${p.size} bytes and cannot grow (something of the script's is after it): the first ${p.size} of block ${name}'s ${n} went in, as hex`, 'warn');
+  };
+  /** the menu that copies a block into a scratchpad, written as its type is: each script's, a new one in it, or a new
+   *  script */
+  const blockCopyMenu = (blockStart: Addr): MenuItem | null => {
+    const b = A.blocks.find(x => x.start === blockStart); if (!b) return null;
+    const name = R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`, n = b.end - b.start;
+    return { label: `Copy block ${name} into a scratchpad (as ${BLOCK_PAD_FORM[b.type] ?? 'hex'})`, icon: 'copy', children: [
+      ...userScripts.flatMap((s, k): MenuItem[] => [
+        ...(k ? [{ sep: true }] satisfies MenuItem[] : []),
+        ...s.pads.map((p, j): MenuItem => ({ label: `${p.name} of "${s.name}" ($${h4(p.start)}, ${p.size} bytes)${p.size < n ? ', made bigger' : ''}`, run: () => copyBlockIntoPad(b.start, s.id, j) })),
+        { label: `A new scratchpad in "${s.name}"`, run: () => copyBlockIntoPad(b.start, s.id, null) },
+      ]),
+      ...(userScripts.length ? [{ sep: true }] satisfies MenuItem[] : []),
+      { label: 'A new script with a scratchpad', run: () => copyBlockIntoPad(b.start, null, null) },
+    ] };
   };
   /** the menu that copies the program's bytes `start`..`end` into a scratchpad: each script's, a new one in it, or a
    *  new script */
@@ -1756,8 +1819,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const m = new Map<string, string>();
     for (const [a, l] of R.labels) { const b = findBlock(A.blocks, a); m.set(l.name, b ? kindInfo(b.type).label.toLowerCase() : 'label'); }
     for (const z of R.zp.values()) if (!z.off) m.set(z.name, 'zero-page variable');
+    // a block's end (tbl_001_end): the address after it
+    for (const [n, r] of scriptsEnv.ends ?? []) { const b = findBlock(A.blocks, r.start); m.set(n, `end of the ${b ? kindInfo(b.type).label.toLowerCase() : 'block'} (the address after it)`); }
     return m;
-  }, [R, A]);
+  }, [R, A, scriptsEnv]);
+  /** the program's blocks a scratchpad can be filled from (Scripts → Scratchpads → From a block…) */
+  const scriptBlocks = useMemo(() => A.blocks.filter(b => b.start < 0x10000 && b.end > b.start).map(b => ({ start: b.start, end: b.end, kind: b.type, name: R.labels.get(b.start)?.name ?? `${h4(b.start)}` })), [A, R]);
   /** the scripts at each address of the program: linked to it, or their code uses its name (the listing marks them) */
   const scriptMarks = useMemo(() => {
     const m = new Map<Addr, ScriptMark[]>();
@@ -1767,10 +1834,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     };
     for (const s of userScripts) {
       for (const a of s.links ?? []) add(a, { id: s.id, name: s.name, linked: true });
-      for (const u of scriptChecks.get(s.id)?.uses ?? []) add(u.at, { id: s.id, name: s.name, linked: false, line: u.line });
+      // a block's end name marks the block (its label line), not the address after it
+      for (const u of scriptChecks.get(s.id)?.uses ?? []) add(scriptsEnv.ends?.get(u.name)?.start ?? u.at, { id: s.id, name: s.name, linked: false, line: u.line });
     }
     return m;
-  }, [userScripts, scriptChecks]);
+  }, [userScripts, scriptChecks, scriptsEnv]);
   /** link an address of the program to a script: the script editor shows its name, and a click writes it in the code */
   const linkToScript = (id: string, a: Addr) => {
     const s = userScripts.find(x => x.id === id); if (!s || s.links?.includes(a)) return;
@@ -2904,10 +2972,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         // Ctrl+C copies the line at the cursor (the line right-clicked) when no more than it is selected
         nLines > 1 ? { label: 'Copy line', run: () => void copyText(lineText(l, S).trim()) } : { label: 'Copy line', key: 'Ctrl+C', icon: 'copy', run: () => void copyText(lineText(l, S).trim()) },
         { label: `Copy address $${h4(l.a ?? cursor ?? 0)}`, run: () => void copyText('$' + h4(l.a ?? cursor ?? 0)) },
-        // the selection's bytes (else the block's, on its header, else the line's) into a script's scratchpad (10.3)
+        // the block written as its type is (code, text, characters, …) into a script's scratchpad, and the selection's
+        // bytes (else the line's) as they are (10.3)
         ...((): MenuItem[] => {
+          const blockItem = b ? blockCopyMenu(b.start) : null;
           const r = inSel && cs ? { start: cs.start, end: cs.end } : l.k === 'hdr' && b ? { start: b.start, end: b.end } : lineRange(l);
-          return r && r.end > r.start ? [padCopyMenu(r.start, r.end)] : [];
+          return [...(blockItem ? [blockItem] : []), ...(r && r.end > r.start ? [padCopyMenu(r.start, r.end)] : [])];
         })(),
       ],
     });
@@ -3178,12 +3248,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 onShow={a => navigate(a, { center: true, listing: true })} findReq={srcFind} />}
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} scriptMarks={scriptMarks} onScriptMark={openUserScript} onLinkMenu={(a, x, y) => { const m = linkMenu(a); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }}
-                onPadMenu={(s, e, x, y) => { const m = padCopyMenu(s, e); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }} />}
+                onPadMenu={(s, e, x, y) => {
+                  // the bytes as they are, and after them the block the line is in, written as its type is
+                  const b = findBlock(A.blocks, s), bm = b ? blockCopyMenu(b.start) : null, m = padCopyMenu(s, e);
+                  setMenu({ x, y, items: [...('children' in m ? [{ header: m.label }, ...m.children] : [m]), ...(bm ? [{ sep: true }, bm] satisfies MenuItem[] : [])] });
+                }} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
-                onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })} />}
+                onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
+                blocks={scriptBlocks} cursorBlock={cursor != null ? findBlock(A.blocks, cursor)?.start ?? null : null} onCopyBlock={(s, id, pad) => copyBlockIntoPad(s, id, pad)} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}

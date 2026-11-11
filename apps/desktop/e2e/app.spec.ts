@@ -6819,3 +6819,79 @@ test('scripts: an address the code writes where its own code is, is an error on 
     await expect(page.locator('.scr-run-sec')).toContainText('It wrote over its own code: line 3 ($c006, 2 times)');
   });
 });
+
+test('scripts: the line a breakpoint stopped on is marked; a block goes into a scratchpad as its type is; a block\'s end is a name', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  await editor.locator('.view-lines').click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.insertText(['        ldx #3', '!:      dex', '        bne !-', '        rts'].join('\n'));
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+
+  await test.step('stopped on a breakpoint: the line is marked red, and the debugger says so', async () => {
+    const box = await editor.locator('.line-numbers', { hasText: /^2$/ }).boundingBox();
+    const glyph = await editor.locator('.glyph-margin').boundingBox();
+    await page.mouse.click(glyph!.x + glyph!.width / 2, box!.y + box!.height / 2);
+    await expect(editor.locator('.scr-bp')).toHaveCount(1);
+    await page.getByRole('button', { name: /^Debug/ }).click();
+    const panel = page.getByRole('complementary', { name: 'Debugger' });
+    await expect(panel.getByRole('status')).toHaveText(/^Line 1 /);
+    await expect(editor.locator('.scr-pc-bp')).toHaveCount(0);
+    await page.getByRole('button', { name: /^Continue/ }).click();
+    await expect(panel.getByRole('status')).toHaveText(/^Line 2 /);
+    await expect(editor.locator('.scr-pc-bp')).toHaveCount(1);
+    await expect(editor.locator('.scr-pc-bp-glyph')).toHaveCount(1);
+    await expect(panel.locator('.dbg-bp')).toHaveText('Stopped at the breakpoint on line 2');    // a step off it: the usual mark
+    await page.keyboard.press('F8');
+    await expect(panel.getByRole('status')).toHaveText(/^Line 3 /);
+    await expect(editor.locator('.scr-pc-bp')).toHaveCount(0);
+    await expect(panel.locator('.dbg-bp')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  });
+
+  await test.step('From a block…: a table into a new scratchpad as hex, the charset into it as .byte lines of 8', async () => {
+    await page.getByRole('button', { name: 'From a block…' }).click();
+    const form = page.getByRole('group', { name: 'Copy a block into a scratchpad' });
+    await form.getByLabel('Block').selectOption(String(0x0939));
+    await expect(form).toContainText('As hex. A new scratchpad of 16 bytes.');
+    await form.getByRole('button', { name: 'Copy' }).click();
+    await expect(toast(page, /Block colors_0939 \(\$0939-\$0948, 16 bytes\) copied into the new scratchpad pad1 \(\$[0-9a-f]{4}\) of "script" as hex/)).toBeVisible();
+    await page.getByRole('button', { name: 'From a block…' }).click();
+    await form.getByLabel('Block').selectOption(String(0x3000));
+    await form.getByLabel('Into').selectOption('0');
+    await expect(form).toContainText('As .byte, 8 a line. pad1 becomes 2048 bytes, when there is room after it.');
+    await form.getByRole('button', { name: 'Copy' }).click();
+    await expect(toast(page, /copied into pad1 of "script" as characters, 8 bytes a line: a run starts it with them \(pad1 is 2048 bytes now\)/)).toBeVisible();
+    await page.getByRole('button', { name: 'Edit start' }).click();
+    await expect(page.getByLabel('pad1 at the start')).toHaveValue(/^\/\/ char \$00\n {8}\.byte \$7c, \$c6, \$de, \$de, \$dc, \$c0, \$7c, \$00\n\/\/ char \$01\n/);
+    await page.keyboard.press('Escape');
+  });
+
+  await test.step('the listing\'s right-click copies a code block as code', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'sub_0866');
+    await listing(page).locator('.row.k-lbl', { has: page.locator('.syn-label', { hasText: /^sub_0866:$/ }) }).click({ button: 'right' });
+    await fromSubmenu(page, 'Copy block sub_0866 into a scratchpad (as code)', 'A new scratchpad in "script"');
+    await expect(toast(page, /Block sub_0866 \(\$0866-\$08ad, 72 bytes\) copied into the new scratchpad pad2 \(\$[0-9a-f]{4}\) of "script" as code/)).toBeVisible();
+  });
+
+  await test.step('a block\'s end is a name the editor suggests: the address after it', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('        lda colors_0939_e');
+    const rows = editor.locator('.suggest-widget .monaco-list-row');
+    await expect(rows.first()).toContainText('colors_0939_end');
+    await expect(rows.first()).toContainText('$0949 · end of the table');
+    // Tab takes it, and the code assembles with it
+    await page.keyboard.press('Tab');
+    await expect(editor.locator('.view-lines')).toContainText('lda colors_0939_end');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+});

@@ -41,7 +41,7 @@ function StackRow({ e, top, names, lineAt }: { e: StackEntry; top: boolean; name
   );
 }
 
-export function DebugPanel({ m, prev, names: program, busy }: { m: ScriptMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean }) {
+export function DebugPanel({ m, prev, names: program, busy, atBp = null }: { m: ScriptMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean; atBp?: number | null }) {
   const r = regsOf(m);
   // the script's code names its own addresses by its own labels, the program's code by the program's names
   const names = m.inScript && m.check.labels.size ? new Map([...program, ...m.check.labels]) : program;
@@ -56,6 +56,7 @@ export function DebugPanel({ m, prev, names: program, busy }: { m: ScriptMachine
   return (
     <aside className="scr-debug" aria-label="Debugger">
       <div className="dbg-where" role="status">{busy ? 'Running…' : whereText(m, names)}</div>
+      {!busy && atBp != null && <div className="dbg-bp" role="note"><span className="dbg-bp-dot" />Stopped at the breakpoint on line {atBp}</div>}
       <div className="dbg-count muted small">{m.instructions.toLocaleString('en-US')} instruction{m.instructions === 1 ? '' : 's'} · {m.cycles.toLocaleString('en-US')} cycles</div>
       <table className="dbg-regs" aria-label="Registers">
         <tbody>

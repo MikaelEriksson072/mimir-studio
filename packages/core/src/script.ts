@@ -10,12 +10,14 @@
  * scratchpads (data kept outside the program, a log, say) is kept with the script.
  * ===================================================================== */
 import { Cpu, type Bus } from '@mimir/sindri';
-import type { Addr, AnalysisResult, Cartridge, FileInput, LoadedFile, Patch, Project, RenderResult, ScriptInit, ScriptPad, ScriptPadSource, Settings, UserScript } from './types';
+import type { Addr, AnalysisResult, Block, BlockKind, Cartridge, FileInput, ListingLine, LoadedFile, Patch, Project, RenderResult, ScriptInit, ScriptPad, ScriptPadSource, Settings, UserScript } from './types';
 import { monitorChar } from './c64/monitor';
 import { assemble } from './verify/kick-subset-assembler';
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
 import { fileSpaces } from './spaces';
 import { OPC } from './cpu/opcodes';
+import { lineText, type LineTextSettings } from './render/lines';
+import { PETSCII_CONTROLS } from './c64/text';
 import { SYM } from './c64/symbols';
 import { findBlock } from './analyze/classify';
 import { h2, h4 } from './util/hex';
@@ -26,15 +28,36 @@ export interface ScriptRange { start: Addr; end: Addr }
 export interface ScriptEnv {
   /** the files at their load addresses, later over earlier (a cartridge's: those of the bank the C64 starts in) */
   files: readonly Pick<LoadedFile, 'load' | 'bytes'>[];
-  /** the hardware names and the program's labels and zero-page variables, as the listing names them */
+  /** the hardware names and the program's labels and zero-page variables, as the listing names them, and the end of
+   *  each block whose start has a label (`tbl_001_end`, the address after it) */
   names: ReadonlyMap<string, Addr>;
+  /** the end names among `names`, with their block: `tbl_001_end` → the block tbl_001 starts */
+  ends?: ReadonlyMap<string, ScriptRange>;
+}
+
+/**
+ * The end of each of the program's blocks whose start has a label, by that label and `_end` (`tbl_001_end`): the
+ * address after the block, as a scratchpad's `pad1_end` is. Not where the program (or the hardware) has the name
+ * already: its own name wins.
+ */
+export function blockEndNames(R: Pick<RenderResult, 'labels'>, blocks: readonly Pick<Block, 'start' | 'end'>[], taken: ReadonlyMap<string, Addr>): Map<string, ScriptRange> {
+  const out = new Map<string, ScriptRange>();
+  for (const b of blocks) {
+    const l = R.labels.get(b.start);
+    if (!l || b.end <= b.start || b.end > 0x10000) continue;
+    const n = `${l.name}_end`;
+    if (!taken.has(n) && !out.has(n)) out.set(n, { start: b.start, end: b.end });
+  }
+  return out;
 }
 
 /** The env of a project: its files (with the patches that are on) and the names its listing gives. */
-export function scriptEnv(project: { files: readonly FileInput[]; cart?: Cartridge | null }, R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>): ScriptEnv {
+export function scriptEnv(project: { files: readonly FileInput[]; cart?: Cartridge | null }, R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, blocks: readonly Pick<Block, 'start' | 'end'>[] = []): ScriptEnv {
   const l = fileSpaces(project);
   const files = project.files.filter((_, i) => !l || l.spaces[i] === 0).map(f => ({ load: f.load, bytes: f.bytes }));
-  return { files, names: programNames(R, settings) };
+  const names = programNames(R, settings), ends = blockEndNames(R, blocks, names);
+  for (const [n, r] of ends) names.set(n, r.end);
+  return { files, names, ...(ends.size ? { ends } : {}) };
 }
 
 /** which addresses the files hold */
@@ -766,6 +789,114 @@ export function padText(bytes: Uint8Array, form: ScriptPadSource['form'], at: Ad
   let s = '';
   for (const b of bytes) s += b === 0x0d ? '\n' : ch(b);
   return s;
+}
+
+/** A block of the program as a scratchpad's start content: its bytes, and what they are written as (`src`), with
+ *  `what` saying how (*code*, *text*, *characters, 8 bytes a line*, …). */
+export interface BlockPad { bytes: Uint8Array; src: ScriptPadSource; what: string }
+
+/** what a block of each type becomes in a scratchpad (blockPad); the other types: hex */
+export const BLOCK_PAD_FORM: Readonly<Partial<Record<BlockKind, string>>> = {
+  code: 'code', text: 'text', charset: '.byte, 8 a line', sprite: '.byte, 3 a line', bitmap: '.byte, 8 a line', screen: '.byte, 40 a line',
+};
+
+/** a line of a block as the listing writes it, and where its bytes are (none for a comment or a label) */
+interface CodeLine { text: string; a?: Addr; n?: number }
+
+/** The block's lines as the listing writes them, with the program's names kept: its own label lines as comments (so
+ *  the names stay the program's, and the bytes the same), a branch as `*±n` from where it is (so it branches the same
+ *  way at any address); lines of no bytes (.pc, .pseudopc) left out, but a text's `.encoding` kept. */
+function listingLines(lines: readonly ListingLine[], start: Addr, end: Addr, mem: Uint8Array, S: LineTextSettings, encoding: boolean): CodeLine[] {
+  const out: CodeLine[] = [];
+  for (const l of lines) {
+    if (l.k === 'file' || l.k === 'hdr' || l.k === 'gfx' || l.k === 'blank' || !('a' in l) || l.a < start || l.a >= end) continue;
+    if (l.k === 'lbl') { out.push({ text: `// ${l.name}:` }); continue; }
+    if (l.k === 'cmt') { if (l.zp == null && !l.mark) out.push({ text: lineText(l, S) }); continue; }
+    if (l.k === 'dir' && !l.n) { if (encoding && l.tok[0]?.s === '.encoding') out.push({ text: lineText(l, S) }); continue; }
+    let t = lineText(l, S);
+    if (l.k === 'ins' && OPC[mem[l.a]].mode === 'rel') {
+      const off = (((mem[(l.a + 1) & 0xffff] ^ 0x80) - 0x80) + 2);
+      const m = /^(\s*[A-Za-z]{3}(?:\.[A-Za-z]+)?\s+)([^\s/]+)(.*)$/.exec(t);
+      if (m) t = `${m[1]}*${off >= 0 ? '+' : ''}${off}${m[3].includes('//') ? m[3].replace('//', `// ${m[2]} ·`) : `  // ${m[2]}`}`;
+    }
+    out.push({ text: t, ...('n' in l && l.n > 0 ? { a: l.a, n: l.n } : {}) });
+  }
+  return out;
+}
+
+/** The PETSCII control codes a text uses by name (`PET_RETURN`), defined as the source's head defines them */
+function petsciiConsts(text: string): string[] {
+  const used = new Set(text.match(/\bPET_[A-Z0-9_]+\b/g) ?? []);
+  return Object.entries(PETSCII_CONTROLS).filter(([, c]) => used.has(c.name)).map(([b, c]) => `.const ${c.name} = @"\\$${h2(+b)}"`);
+}
+
+/** The lines as Kick Assembler that gives `bytes` exactly at `at`: a line that does not assemble (a name only the
+ *  source's head has, `music.init`) or gives other bytes is written as its bytes (`.byte`, the line as a comment), so
+ *  the rest stays as it was. null: it cannot be made to. */
+function exactCode(lines: CodeLine[], bytes: Uint8Array, start: Addr, at: Addr, names: ReadonlyMap<string, Addr>, mem: Uint8Array): string | null {
+  const ls = lines.slice();
+  const raw = (i: number) => {
+    const l = ls[i];
+    if (l.a == null || l.n == null) { ls.splice(i, 1); return true; }
+    if (l.text.trimStart().startsWith('.byte $') && l.text.includes('// was')) return false;
+    ls[i] = { ...l, text: `${byteLines(mem.subarray(l.a, l.a + l.n), 16)[0]}  // was ${l.text.replace(/\s*\/\/.*$/, '').trim()}` };
+    return true;
+  };
+  for (let k = 0; k <= lines.length + 1; k++) {
+    const body = ls.map(l => l.text).join('\n'), head = petsciiConsts(body);
+    const r = padData({ form: 'asm', text: [...head, body].join('\n') }, at, bytes.length, names);
+    if ('error' in r) {
+      const i = (r.line ?? 0) - 1 - head.length;
+      if (i < 0 || i >= ls.length || !raw(i)) return null;
+      continue;
+    }
+    const d = r.bytes.length !== bytes.length ? Math.min(r.bytes.length, bytes.length) : r.bytes.findIndex((b, i) => b !== bytes[i]);
+    if (d < 0) return [...head, body].join('\n');
+    const i = ls.findIndex(l => l.a != null && l.n != null && start + d >= l.a && start + d < l.a + l.n);
+    if (i < 0 || !raw(i)) return null;
+  }
+  return null;
+}
+
+/** `.byte` lines of `per` bytes, a comment line before each `group` bytes (`// char $00`) */
+function byteGroups(bytes: Uint8Array, per: number, group: number, head: (i: number) => string): string {
+  const out: string[] = [];
+  for (let g = 0; g < bytes.length; g += group) {
+    out.push(`// ${head(g / group)}`);
+    out.push(...byteLines(bytes.subarray(g, Math.min(bytes.length, g + group)), per, '        '));
+  }
+  return out.join('\n');
+}
+
+/**
+ * A block of the program as what a scratchpad at `at` starts with (spec 10.3), written as its type is: code as Kick
+ * Assembler (its lines as the listing writes them, the program's names kept), text as text in its encoding (else as the
+ * listing writes it), characters as `.byte` lines of 8 (one character), sprites of 3 (a row; 21 and the 64th byte),
+ * a bitmap of 8 (a cell, the rows of 40 cells said), a screen of 40 (a row), and other data as hex. Each form is
+ * assembled (or read) at `at` with `names`: one that does not give the block's bytes exactly is not used, and hex
+ * always does.
+ */
+export function blockPad(block: Pick<Block, 'start' | 'end' | 'type' | 'props'>, lines: readonly ListingLine[], mem: Uint8Array, at: Addr, names: ReadonlyMap<string, Addr>, S: LineTextSettings): BlockPad {
+  const bytes = mem.slice(block.start, block.end), n = bytes.length;
+  const exact = (src: ScriptPadSource) => { const r = padData(src, at, n, names); return 'bytes' in r && r.bytes.length === n && r.bytes.every((b, i) => b === bytes[i]); };
+  const asm = (text: string, what: string): BlockPad => ({ bytes, src: { form: 'asm', text }, what });
+  const tries: BlockPad[] = [];
+  const t = block.type;
+  const listing = (encoding: boolean, what: string): BlockPad | null => {
+    const text = exactCode(listingLines(lines, block.start, block.end, mem, S, encoding), bytes, block.start, at, names, mem);
+    return text == null ? null : asm(text, what);
+  };
+  if (t === 'code') { const c = listing(false, 'code'); if (c) return c; }
+  else if (t === 'text') {
+    const screen = (block.props.enc ?? 'petscii').startsWith('screen');
+    tries.push({ bytes, src: { form: 'text', text: padText(bytes, 'text', at, screen), ...(screen ? { screen } : {}) }, what: `text (${screen ? 'screen codes' : 'PETSCII'})` });
+    if (!exact(tries[0].src)) { const c = listing(true, 'text, as the listing writes it'); if (c) return c; }
+  } else if (t === 'charset') tries.push(asm(byteGroups(bytes, 8, 8, i => `char $${h2(i & 0xff)}${i > 255 ? ` (${i})` : ''}`), 'characters, 8 bytes a line'));
+  else if (t === 'sprite') tries.push(asm(byteGroups(bytes, 3, 64, i => `sprite ${i}`), 'sprites, 3 bytes a line'));
+  else if (t === 'bitmap') tries.push(asm(byteGroups(bytes, 8, 320, i => `row ${i}`), 'a bitmap, 8 bytes (a cell) a line'));
+  else if (t === 'screen') tries.push(asm(byteGroups(bytes, 40, 1000, i => `screen ${i}`), 'a screen, 40 bytes (a row) a line'));
+  for (const c of tries) if (exact(c.src)) return c;
+  return { bytes, src: { form: 'hex', text: padText(bytes, 'hex', at) }, what: 'hex' };
 }
 
 /** Two scratchpads' bytes compared byte by byte from their starts: how many are the same and how many differ (of

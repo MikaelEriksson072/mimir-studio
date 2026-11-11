@@ -1,6 +1,6 @@
 /* User scripts (spec 10.3): checked with the program's names, run on a copy of its memory, scratchpads kept. */
 import { describe, expect, it } from 'vitest';
-import { analyze, checkScript, createProject, deserializeProject, disassembleBytes, freePlace, initEmpty, linkName, padData, padDiff, padNow, padStart, padText, SCRIPT_P, tidyInit, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
+import { analyze, blockEndNames, blockPad, checkScript, makeDemo, parsePrg, scriptNames, createProject, deserializeProject, disassembleBytes, freePlace, initEmpty, linkName, padData, padDiff, padNow, padStart, padText, SCRIPT_P, tidyInit, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
 import { fromSource } from './helpers/programs';
 
 const KEY = 0x5a;
@@ -385,6 +385,44 @@ describe('user scripts', () => {
     const s: UserScript = { ...newScript([]), id: 'x', links: [0x0830, 0x0835] };
     expect(deserializeProject(JSON.parse(JSON.stringify(serializeProject({ ...p, userScripts: [s] })))).userScripts![0].links).toEqual([0x0830, 0x0835]);
   });
+
+  it('copy a block into a scratchpad written as its type is, and always as its exact bytes', () => {
+    const d = makeDemo(), p = createProject({ name: 'demo', files: [parsePrg(d.name, d.prg)] });
+    const A = analyze(p), R = render(A, p), e = scriptEnv(p, R, p.settings, A.blocks), names = scriptNames(e, []);
+    const at = 0xc000, pad = (start: number) => blockPad(A.blocks.find(b => b.start === start)!, R.lines, A.mem, at, names, p.settings);
+    // every block: what the scratchpad is written as gives the block's bytes at its address
+    for (const b of A.blocks) {
+      const bp = pad(b.start), r = padData(bp.src, at, b.end - b.start, names);
+      expect('bytes' in r && [...r.bytes], `${b.type} at $${b.start.toString(16)} as ${bp.what}`).toEqual([...A.mem.subarray(b.start, b.end)]);
+    }
+    // code as the listing writes it: the program's labels as comments, branches from where they are, a line with a
+    // name only the source's head has as its bytes
+    const irq = pad(0x08b7);
+    expect(irq).toMatchObject({ what: 'code', src: { form: 'asm' } });
+    expect(irq.src.text).toMatch(/^\/\/ irq_08b7:\n\s+inc VIC_IRQ_STATUS/);
+    expect(irq.src.text).toMatch(/\n\/\/ loop_08bc:\n\s+lda colors_0939,y/);
+    expect(irq.src.text).toMatch(/\n\s+bne \*-\d+\s+\/\/ loop_08bc/);
+    expect(irq.src.text).toMatch(/\n\s+\.byte \$20, \$03, \$10\s+\/\/ was jsr music\.play/);
+    // text: as text when it reads back exactly, else as the listing writes it (its PETSCII names defined)
+    expect(pad(0x0985)).toMatchObject({ what: 'text (screen codes)', src: { form: 'text', screen: true } });
+    expect(pad(0x0949).src.text).toMatch(/^\.const PET_RETURN = @"\\\$0d"\n\/\/ txt_0949:\n\s+\.encoding "petscii_upper"\n\s+\.text "MIMIR STUDIO DEMO    " \+ PET_RETURN/);
+    // graphics as .byte lines in their shape; other data as hex
+    expect(pad(0x3000).src.text.split('\n').slice(0, 3)).toEqual(['// char $00', '        .byte $7c, $c6, $de, $de, $dc, $c0, $7c, $00', '// char $01']);
+    expect(pad(0x2000).src.text.split('\n').filter(l => l.includes('.byte'))).toHaveLength(22);
+    expect(pad(0x0939)).toMatchObject({ what: 'hex', src: { form: 'hex', text: '$c000  06 0e 03 01 03 0e 06 00 09 08 07 01 07 08 09 00' } });
+  });
+
+  it('name the end of each block that starts with a label: the address after it, unless the program has the name', () => {
+    const d = makeDemo(), p = createProject({ name: 'demo', files: [parsePrg(d.name, d.prg)] });
+    const A = analyze(p), R = render(A, p), e = scriptEnv(p, R, p.settings, A.blocks);
+    expect(e.names.get('colors_0939_end')).toBe(0x0949);
+    expect(e.ends?.get('colors_0939_end')).toEqual({ start: 0x0939, end: 0x0949 });
+    expect(blockEndNames(R, [{ start: 0x0939, end: 0x0949 }], new Map([['colors_0939_end', 0x1234]])).size).toBe(0);
+    // a loop over a table from its label to its end
+    const run = runScript(e, script('        ldx #0\n!:      lda colors_0939,x\n        sta pad1,x\n        inx\n        cpx #colors_0939_end-colors_0939\n        bne !-\n        rts'));
+    expect([...run.pads[0].bytes]).toEqual([...A.mem.subarray(0x0939, 0x0949)]);
+  });
+
   it('disassemble a scratchpad with the program\'s names', () => {
     const d = disassembleBytes([0xad, 0x30, 0x08, 0xd0, 0xfb, 0x02, 0xa9], 0xc000, new Map([[0x0830, 'data']]));
     expect(d.map(l => l.text)).toEqual(['lda data', 'bne $c000', 'jam', '.byte $a9']);

@@ -2005,6 +2005,9 @@ $06, $08` i `.asm`-filen efter en körning.
   Over, Out) står *Pause* där. Editorn markerar raden som körs härnäst (en pil i marginalen och ett band), och när
   programmets kod kör den rad vars JSR den kör för. En brytpunkt sätts och tas bort med ett klick till vänster om
   radnumret (en röd prick); brytpunkterna följer raderna när koden ändras och finns kvar när fliken öppnas igen.
+  **Har felsökaren stannat på en brytpunkt** är raden tydligt märkt: ett rött band med en röd kant till vänster och
+  överst och nederst, den röda pricken med pilen i marginalen, en röd markering i rullningslisten, och panelen säger
+  *Stopped at the breakpoint on line 5* under var körningen är.
   Koden kan inte ändras medan man felsöker (en rad under verktygsraden säger det). Panelen till höger om koden
   visar var körningen är (*Line 11 ($c011)*, eller *In the program at decrypt ($0810), called from line 3*),
   antalet instruktioner och cykler, registren PC, A, X, Y (hex, decimalt och binärt), S (och vilka byte stacken
@@ -2071,6 +2074,24 @@ $06, $08` i `.asm`-filen efter en körning.
   scratchpad* → en av skriptens scratchpads (*pad1 of "script"*, skärs till dess storlek), *A new scratchpad in
   "script"* (lika stor som byten, placerad som *Add*) eller *A new script with a scratchpad*. Byten blir scratchpadens
   startinnehåll och fliken Scripts visar den.
+- **Ett block till en scratchpad, skrivet som sin typ** (`blockPad`): högerklick på en rad i ett block i listningen
+  eller källkoden → *Copy block colors_0939 into a scratchpad (as hex)*, eller i fliken Scripts *Scratchpads → From a
+  block…*, där man väljer blocket (*Block*, blocket vid listningens markör först) och scratchpaden (*Into*: en ny, eller
+  en av skriptets). Startinnehållet skrivs som blockets typ: **kod** som Kick Assembler som listningen skriver den, med
+  programmets namn (blockets egna etikettrader som kommentarer, `// loop_08bc:`, och en branch som `bne *-12  //
+  loop_08bc`, så att byten blir desamma på scratchpadens adress), **text** som text i sin kodning (annars som listningen
+  skriver den, med `.encoding` och `PET_RETURN` definierat), **tecken** som `.byte`-rader om 8 (ett tecken, `// char
+  $00` före), **sprites** om 3 (en rad, 21 och den 64:e byten, `// sprite 0`), **bitmap** om 8 (en cell, `// row 0`
+  var 40:e), **skärm** om 40 (en rad), och **annan data som hex**. Varje form prövas: den måste ge blockets byte exakt
+  på scratchpadens adress. En rad som inte gör det (ett namn bara .asm-filens huvud har, som `music.init`) skrivs som
+  sina byte (`.byte $20, $00, $10  // was jsr music.init`), och går inget annat blir det hex. En ny scratchpad blir lika
+  stor som blocket; en befintlig växer till blockets storlek när inget av skriptets ligger efter den, annars får den
+  blockets första byte som hex.
+- **Blockens slut som namn:** varje block vars start har en etikett ger skriptet också `etikett_end`, adressen efter
+  blocket (`colors_0939_end` = `$0949`), som en scratchpads `pad1_end` (`blockEndNames`). Editorn föreslår dem (*$0949 ·
+  end of the table (the address after it)*), och en loop kan gå till `cpx #colors_0939_end-colors_0939`. Har programmet
+  redan ett namn som heter så gäller programmets, och slutnamnet läggs inte till. Ett skript som använder ett slutnamn
+  märks i .asm på blockets etikettrad.
 - **Scratchpad till scratchpad:** *Copy to…* i visningen kopierar byten som visas (det körningen lämnade, annars
   startinnehållet) till en annan av skriptets scratchpads som dess startinnehåll, eller till en ny (*A new scratchpad
   (a copy)*, samma storlek och fill). Har skriptet ingen annan heter knappen *Copy to a new pad* och gör kopian direkt.

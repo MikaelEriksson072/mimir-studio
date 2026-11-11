@@ -6,7 +6,7 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { byteLines, checkScript, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, tidyInit, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptLink, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptRun, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, byteLines, checkScript, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptLink, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptRun, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { Icon } from '../lib/icons';
@@ -62,6 +62,11 @@ interface ScriptsViewProps {
   toast: (msg: string, kind: 'ok' | 'info' | 'warn' | 'err') => void;
   /** a menu of the app's at a point of the window (Copy to… of a scratchpad) */
   onMenu: (x: number, y: number, items: MenuItem[]) => void;
+  /** the program's blocks a scratchpad can be filled from, and the one at the listing's cursor */
+  blocks: readonly BlockChoice[];
+  cursorBlock: Addr | null;
+  /** a block copied into a scratchpad of the script (its index; null: a new one), written as its type is */
+  onCopyBlock: (start: Addr, id: string, pad: number | null) => void;
 }
 
 const $ = (a: number) => '$' + h4(a);
@@ -83,7 +88,7 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
   return out.endsWith('\n') ? out : out + '\n';
 }
 
-export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu }: ScriptsViewProps) {
+export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock }: ScriptsViewProps) {
   const { selected, runs, running, shown, mode, screen, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -175,6 +180,11 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     const d = dbg && !dbgBusy ? dbg.m : null;
     const line = d?.lineAt() ?? null, call = d && !line ? d.callLine() : null;
     if (!d || (!line && !call)) { pcDeco.current.clear(); return; }
+    // stopped on a breakpoint's line: marked so it cannot be missed (a red band and bar, the arrow on the red dot)
+    if (line && atBp) {
+      pcDeco.current.set([{ range: new monaco.Range(line, 1, line, 1), options: { isWholeLine: true, className: 'scr-pc-line scr-pc-bp', linesDecorationsClassName: 'scr-pc-bp-bar', glyphMarginClassName: 'scr-pc-bp-glyph', glyphMarginHoverMessage: { value: `Stopped at the breakpoint on line ${line}: it runs next` }, overviewRuler: { color: '#ff5a6e', position: monaco.editor.OverviewRulerLane.Full } } }]);
+      return;
+    }
     pcDeco.current.set([{ range: new monaco.Range(line ?? call!, 1, line ?? call!, 1), options: { isWholeLine: true, className: line ? 'scr-pc-line' : 'scr-call-line', glyphMarginClassName: line ? 'scr-pc-glyph' : 'scr-call-glyph' } }]);
   });
   // the code cannot change while it is being debugged
@@ -312,6 +322,9 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     setBps(s.id, now.includes(line) ? now.filter(l => l !== line) : [...now, line]);
     setTick(t => t + 1);
   };
+  /** the breakpoint's line the debugger stopped on (it runs next), else null */
+  const dbgLine = dbg && !dbgBusy ? dbg.m.lineAt() : null;
+  const atBp = dbg && dbgLine != null && bpLines(dbg.id).includes(dbgLine) ? dbgLine : null;
   const busyRef = useRef(false);
   /** the registers and the scratchpads before a step (the panel and the scratchpad mark what it changed) */
   const keepBefore = (d: Debugging) => { d.prev = regsOf(d.m); d.padsBefore = d.m.script.pads.map(p => d.m.own.slice(p.start, p.start + p.size)); };
@@ -500,7 +513,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
           <div className="scr-edit-row">
             <div className="mon-host scr-editor" ref={host} style={{ display: state === 'ready' ? 'block' : 'none' }} />
             {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} readOnly={!!dbg} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
-            {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} />}
+            {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} atBp={atBp} />}
           </div>
           {!outFolded && <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />}
           <button className={cx('scr-out-bar', outFolded && 'folded')} aria-expanded={!outFolded} aria-controls="scr-out"
@@ -510,7 +523,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
             {errors.length > 0 && outFolded && <span className="scr-out-bad">{plural(errors.length, 'error')}</span>}
           </button>
           {!outFolded && <div className="scr-out" id="scr-out" style={{ height: dbg ? dbgOutH : outH }}>
-            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onWrite={write} />
+            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onWrite={write} blocks={blocks} cursorBlock={cursorBlock} onCopyBlock={onCopyBlock} />
             <PadView script={cur} mine={mine} would={kept?.safe ? kept.would ?? [] : []} names={names} mode={mode} screen={screen} live={livePad} theme={theme} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
               onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} onEdit={onEdit} onMenu={onMenu} placePad={placePad} toast={toast} />
           </div>}
@@ -552,11 +565,39 @@ function NameField({ value, taken, onCommit, toast }: { value: string; taken: st
 
 /** The left of the output: the problems, what the runs start with (Init), what the script changed in the program,
  *  what its last run would change (safe mode), the scratchpads (edited here) and the last run. */
-function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, onGoLine, onEdit, onTakeOut, onSwitchPatch, onWrite }: {
+/** a block of the program a scratchpad can be filled from: where it is, its type and its name (its label, else its address) */
+export interface BlockChoice { start: Addr; end: Addr; kind: BlockKind; name: string }
+
+/** Which block goes into which scratchpad (a new one, or one of the script's), and what it becomes there. */
+function BlockToPad({ blocks, pads, first, into, onCopy, onCancel }: { blocks: readonly BlockChoice[]; pads: readonly ScriptPad[]; first: Addr | null; into: number | null; onCopy: (start: Addr, pad: number | null) => void; onCancel: () => void }) {
+  const [start, setStart] = useState<Addr | null>(first != null && blocks.some(b => b.start === first) ? first : blocks[0]?.start ?? null);
+  const [pad, setPad] = useState<string>(into != null ? String(into) : 'new');
+  const b = blocks.find(x => x.start === start), n = b ? b.end - b.start : 0, p = pad === 'new' ? null : pads[+pad];
+  return (
+    <div className="pad-from" role="group" aria-label="Copy a block into a scratchpad">
+      <label><span>Block</span><select aria-label="Block" value={start ?? ''} onChange={e => setStart(+e.target.value)}>
+        {blocks.map(x => <option key={x.start} value={x.start}>{x.name} · {x.kind} · {rangeText(x)} · {plural(x.end - x.start, 'byte')}</option>)}
+      </select></label>
+      <label><span>Into</span><select aria-label="Into" value={pad} onChange={e => setPad(e.target.value)}>
+        <option value="new">a new scratchpad</option>
+        {pads.map((x, i) => <option key={i} value={i}>{x.name} ({rangeText({ start: x.start, end: x.start + x.size })})</option>)}
+      </select></label>
+      {b && <p className="muted small">As {BLOCK_PAD_FORM[b.kind] ?? 'hex'}{b.kind === 'code' ? ' (Kick Assembler, the program\'s names kept)' : ''}. {p ? (p.size < n ? `${p.name} becomes ${n} bytes, when there is room after it.` : `In place of what ${p.name} starts with now.`) : `A new scratchpad of ${n} bytes.`}</p>}
+      <div className="pad-from-act">
+        <button className="btn small primary" disabled={!b} onClick={() => b && onCopy(b.start, p ? +pad : null)}><Icon name="copy" size={13} />Copy</button>
+        <button className="btn small" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, onGoLine, onEdit, onTakeOut, onSwitchPatch, onWrite, blocks, cursorBlock, onCopyBlock }: {
   script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; names: ReadonlyMap<string, number>; canWrite: boolean; onGoLine: (n: number) => void;
   onEdit: ScriptsViewProps['onEdit']; onTakeOut: ScriptsViewProps['onTakeOut']; onSwitchPatch: ScriptsViewProps['onSwitchPatch']; onWrite: () => void;
+  blocks: readonly BlockChoice[]; cursorBlock: Addr | null; onCopyBlock: ScriptsViewProps['onCopyBlock'];
 }) {
   const { shown, set } = useScripts();
+  const [fromBlock, setFromBlock] = useState(false);
   const setPads = (pads: ScriptPad[], label: string) => onEdit(script.id, { pads }, label);
   const addPad = () => {
     // not over the code, another scratchpad, or memory the code reads and writes as the program's ($0400 for the screen)
@@ -614,7 +655,11 @@ function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, on
           title="Run the script once more and write what it changes into the program and its .asm, in place of what its earlier runs wrote (Ctrl+Z takes it back). Safe mode stays on"><Icon name="download" size={13} />Write into the program</button>}
       </section>}
       <section className="scr-sec">
-        <h4>Scratchpads<span className="grow" /><button className="btn ghost small" onClick={addPad} title="A scratchpad: memory of the script's own at an address, for data kept outside the program (a log, say) that can be saved as a file. It is cleared before each run; its name (and name_end) are labels in the code"><Icon name="plus" size={13} />Add</button></h4>
+        <h4>Scratchpads<span className="grow" />
+          <button className={cx('btn ghost small', fromBlock && 'on')} aria-expanded={fromBlock} onClick={() => setFromBlock(v => !v)} title="Copy a block of the program into a scratchpad, written as its type is: code as code, text as text, characters, sprites and bitmaps as .byte lines in their shape, other data as hex"><Icon name="copy" size={13} />From a block…</button>
+          <button className="btn ghost small" onClick={addPad} title="A scratchpad: memory of the script's own at an address, for data kept outside the program (a log, say) that can be saved as a file. It is cleared before each run; its name (and name_end) are labels in the code"><Icon name="plus" size={13} />Add</button></h4>
+        {fromBlock && <BlockToPad blocks={blocks} pads={script.pads} first={cursorBlock} into={shown.kind === 'pad' && script.pads[shown.i] ? shown.i : null}
+          onCopy={(start, pad) => { onCopyBlock(start, script.id, pad); setFromBlock(false); }} onCancel={() => setFromBlock(false)} />}
         {!script.pads.length && <p className="muted small">None. Add one to keep data outside the program, a log the script writes, say, and save it as a file.</p>}
         <div className="pad-table" role="table" aria-label="Scratchpads">
           {script.pads.length > 0 && <div className="pad-row pad-head" role="row"><span>Name</span><span>Address</span><span>Size</span><span>Fill</span><span /></div>}
