@@ -10,7 +10,7 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  checkScript, linkName, newId, newScript, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
@@ -1609,13 +1609,59 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     addUserScript(s, 'New script');
     toast(`Script "${s.name}" made. Write its code and press Ctrl+Enter: what it changes in the program goes into the program and its .asm`, 'ok');
   };
+  /** bytes of the program (the listing's or the source's selection) copied into a scratchpad as what a run starts it
+   *  with: one of a script's (`pad`, its index: cut to its size), a new one there (`pad` null, placed like Add), or a
+   *  new script with a new one (`id` null); the scratchpad is then shown */
+  const copyIntoPad = (from: Addr, bytes: Uint8Array, id: string | null, pad: number | null) => {
+    const n = bytes.length, where = `${n} byte${n === 1 ? '' : 's'} from $${h4(spaceAddr(from))}`;
+    const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, shown: { kind: 'pad', i }, outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
+    if (id == null) {
+      const base = newScript(userScripts, [], newId());
+      const start = scriptPlace(scriptsEnv.files, n, checkScript(scriptsEnv, base).code)?.at ?? 0xc000;
+      const s: UserScript = { ...base, pads: [{ name: 'pad1', start, size: n, data: bytes }] };
+      addUserScript(s, 'New script with a scratchpad');
+      show(s.id, 0);
+      toast(`${where} copied into pad1 ($${h4(start)}) of the new script "${s.name}": a run starts it with them`, 'ok');
+      return;
+    }
+    const s = userScripts.find(x => x.id === id); if (!s) return;
+    if (pad == null) {
+      const taken = [...(scriptChecks.get(id)?.code ?? []), ...s.pads.map(p => ({ start: p.start, end: p.start + p.size }))];
+      const last = s.pads[s.pads.length - 1], name = padName(s.pads);
+      const start = scriptPlace(scriptsEnv.files, n, taken, last ? last.start + last.size : undefined)?.at ?? 0xc000;
+      editUserScript(id, { pads: [...s.pads, { name, start, size: n, data: bytes }] }, `Copy ${where} into a new scratchpad ${name} of "${s.name}"`);
+      show(id, s.pads.length);
+      toast(`${where} copied into the new scratchpad ${name} ($${h4(start)}) of "${s.name}": a run starts it with them`, 'ok');
+      return;
+    }
+    const p = s.pads[pad]; if (!p) return;
+    const { bytes: _b, src: _s, ...keep } = p;
+    editUserScript(id, { pads: s.pads.map((x, k) => (k === pad ? { ...keep, data: bytes.slice(0, p.size) } : x)) }, `Copy ${where} into scratchpad ${p.name} of "${s.name}"`);
+    show(id, pad);
+    toast(n > p.size ? `${p.name} holds ${p.size} bytes: the first ${p.size} of the ${n} went in (make it bigger for all of them)` : `${where} copied into ${p.name} of "${s.name}": a run starts it with them`, n > p.size ? 'warn' : 'ok');
+  };
+  /** the menu that copies the program's bytes `start`..`end` into a scratchpad: each script's, a new one in it, or a
+   *  new script */
+  const padCopyMenu = (start: Addr, end: Addr): MenuItem => {
+    const bytes = A.mem.slice(start, end), n = bytes.length;
+    return { label: `Copy ${n} byte${n === 1 ? '' : 's'} into a scratchpad`, icon: 'copy', children: [
+      // each item says its script: the source view shows them under the menu's own heading
+      ...userScripts.flatMap((s, k): MenuItem[] => [
+        ...(k ? [{ sep: true }] satisfies MenuItem[] : []),
+        ...s.pads.map((p, j): MenuItem => ({ label: `${p.name} of "${s.name}" ($${h4(p.start)}, ${p.size} bytes)${p.size < n ? ': its first bytes only' : ''}`, run: () => copyIntoPad(start, bytes, s.id, j) })),
+        { label: `A new scratchpad in "${s.name}"`, run: () => copyIntoPad(start, bytes, s.id, null) },
+      ]),
+      ...(userScripts.length ? [{ sep: true }] satisfies MenuItem[] : []),
+      { label: 'A new script with a scratchpad', run: () => copyIntoPad(start, bytes, null, null) },
+    ] };
+  };
   /** a copy of a library script, under a name of its own in the project */
   const addLibraryScript = (l: LibraryScript) => {
     const name = userScripts.some(s => s.name.toLowerCase() === l.name.toLowerCase()) ? scriptName(userScripts, l.name) : l.name;
-    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}) }, 'Add script from the library');
+    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}) }, 'Add script from the library');
     toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}`, 'ok');
   };
-  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links'>>, label: string) =>
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
   const setScriptSafe = (id: string, on: boolean) => {
@@ -1686,11 +1732,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
     if (useScripts.getState().running) { toast('A script is running: wait for it, or stop it in the Scripts tab', 'info'); return; }
     const source = text ?? s.source, env = scriptEnvFor(id);
-    const c = checkScript(env, { source, pads: s.pads });
+    const c = checkScript(env, { source, pads: s.pads, init: s.init });
     if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); toast(`"${s.name}" does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}`, 'warn'); return; }
     useScripts.getState().set({ running: id });
     try {
-      const r = await runScriptInWorker(env, { source, pads: s.pads });
+      const r = await runScriptInWorker(env, { source, pads: s.pads, init: s.init });
       useScripts.getState().set({ running: null });
       finishScriptRun(id, r, source, write);
     } catch (e) {
@@ -2858,6 +2904,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         // Ctrl+C copies the line at the cursor (the line right-clicked) when no more than it is selected
         nLines > 1 ? { label: 'Copy line', run: () => void copyText(lineText(l, S).trim()) } : { label: 'Copy line', key: 'Ctrl+C', icon: 'copy', run: () => void copyText(lineText(l, S).trim()) },
         { label: `Copy address $${h4(l.a ?? cursor ?? 0)}`, run: () => void copyText('$' + h4(l.a ?? cursor ?? 0)) },
+        // the selection's bytes (else the block's, on its header, else the line's) into a script's scratchpad (10.3)
+        ...((): MenuItem[] => {
+          const r = inSel && cs ? { start: cs.start, end: cs.end } : l.k === 'hdr' && b ? { start: b.start, end: b.end } : lineRange(l);
+          return r && r.end > r.start ? [padCopyMenu(r.start, r.end)] : [];
+        })(),
       ],
     });
   };
@@ -3126,12 +3177,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'drive' && <DriveView A={A} S={S} name={project.files.length === 1 ? project.files[0].name : project.name} theme={theme} onCopy={t => void copyText(t)} onSave={D => void saveDrive(D)}
                 onShow={a => navigate(a, { center: true, listing: true })} findReq={srcFind} />}
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
-                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} scriptMarks={scriptMarks} onScriptMark={openUserScript} onLinkMenu={(a, x, y) => { const m = linkMenu(a); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }} />}
+                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} scriptMarks={scriptMarks} onScriptMark={openUserScript} onLinkMenu={(a, x, y) => { const m = linkMenu(a); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }}
+                onPadMenu={(s, e, x, y) => { const m = padCopyMenu(s, e); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
-                onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} />}
+                onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}

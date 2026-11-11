@@ -285,11 +285,32 @@ export interface ScriptPad {
   name: string;
   start: Addr;
   size: number;
-  /** the byte it holds when a run starts (0 when missing) */
+  /** the byte it holds when a run starts (0 when missing), where its start content does not reach */
   fill?: number;
-  /** what the last run left in it (missing: it has not run) */
+  /** what the last run left in it (missing: it has not run, or its start content changed since) */
   bytes?: Uint8Array;
+  /** what it holds from its start when a run starts (missing: only `fill`): written by the user (`src`), copied in from
+   *  the listing or copied from another scratchpad */
+  data?: Uint8Array;
+  /** how the user wrote `data` (missing: it was copied in as bytes) */
+  src?: ScriptPadSource;
 }
+
+/** A scratchpad's start content as the user wrote it (spec 10.3): Kick Assembler at the scratchpad's address (code
+ *  and data, with the program's names), hex bytes, or text as PETSCII or screen codes (`screen`). */
+export interface ScriptPadSource { form: 'asm' | 'hex' | 'text'; text: string; screen?: boolean }
+
+/** A zero-page byte a user script's run starts with, or a 16-bit word (low byte at `at`, high byte after it): a
+ *  pointer, say (spec 10.3). */
+export interface ScriptZpInit { at: Addr; value: number; word?: boolean }
+
+/**
+ * What a user script's run starts with besides the program's memory (spec 10.3, Init): the registers A, X and Y, the
+ * status register (N V - B D I Z C) and zero-page bytes. Missing: A, X and Y 0, I set and the other flags clear, the
+ * zero page as the program has it. The zero page is the program's: what is set there is there for the program's code
+ * the script calls too, and like any change there it never goes into the program.
+ */
+export interface ScriptInit { a?: number; x?: number; y?: number; p?: number; zp?: ScriptZpInit[] }
 
 /**
  * A script the user writes in Mimir to work on the program's bytes (spec 10.3): assembled with the program's names
@@ -309,6 +330,8 @@ export interface UserScript {
   /** safe mode: a run writes nothing into the program, so the program and its .asm stay as they are; what the run
    *  would change is only shown (patches its earlier runs wrote stay). Missing: off */
   safe?: boolean;
+  /** what its runs start with: registers, flags, zero-page bytes (missing: A, X and Y 0, only I set) */
+  init?: ScriptInit;
 }
 
 export interface Project {
@@ -427,7 +450,7 @@ export interface SerializedProject {
   /** `bytes` and `old` as base64; missing in project files from before patches */
   patches?: (Omit<Patch, 'id' | 'bytes' | 'old'> & { bytes: string; old: string })[];
   /** the user's scripts, a scratchpad's bytes as base64; missing in project files from before scripts, and without one */
-  userScripts?: (Omit<UserScript, 'id' | 'pads'> & { id?: string; pads: (Omit<ScriptPad, 'bytes'> & { bytes?: string })[] })[];
+  userScripts?: (Omit<UserScript, 'id' | 'pads'> & { id?: string; pads: (Omit<ScriptPad, 'bytes' | 'data'> & { bytes?: string; data?: string })[] })[];
   /** the cartridge image as base64; missing in project files from before cartridges, and without one */
   cart?: { name: string; data: string };
   settings: Partial<Settings>;

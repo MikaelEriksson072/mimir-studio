@@ -25,6 +25,8 @@ interface SourceViewProps {
   onScriptMark?: (id: string, line?: number) => void;
   /** a right-click's "Link to a script": the menu that links address `a` to a script, at the pointer */
   onLinkMenu?: (a: Addr, x: number, y: number) => void;
+  /** the menu that copies the program's bytes start..end (the selected lines') into a script's scratchpad */
+  onPadMenu?: (start: Addr, end: Addr, x: number, y: number) => void;
 }
 
 const isScript = (p: string): p is BuildScript => (BUILD_SCRIPTS as readonly string[]).includes(p);
@@ -48,7 +50,7 @@ function linkAddrAt(R: RenderResult, line: Line | undefined, word: string | null
   return line.k === 'lbl' || ('n' in line && line.n > 0) ? line.a : null;
 }
 
-export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed, findReq = 0, scriptMarks, onScriptMark, onLinkMenu }: SourceViewProps) {
+export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed, findReq = 0, scriptMarks, onScriptMark, onLinkMenu, onPadMenu }: SourceViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
   const ed = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -67,6 +69,7 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
   const onNavigateRef = useRef(onNavigate); onNavigateRef.current = onNavigate;
   const rRef = useRef(R); rRef.current = R;
   const linkRef = useRef(onLinkMenu); linkRef.current = onLinkMenu;
+  const padRef = useRef(onPadMenu); padRef.current = onPadMenu;
   const markRef = useRef(onScriptMark); markRef.current = onScriptMark;
   const ctxAt = useRef<{ x: number; y: number } | null>(null);
   /** the scripts marked after each line of the file shown (by line number) */
@@ -116,6 +119,25 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
           if (!at) { const v = e.getScrolledVisiblePosition(pos), r = e.getDomNode()?.getBoundingClientRect(); at = { x: (r?.left ?? 0) + (v?.left ?? 0), y: (r?.top ?? 0) + (v?.top ?? 0) + 20 }; }
           ctxAt.current = null;
           linkRef.current?.(a, at.x, at.y);
+        },
+      });
+      // a right-click's Copy into a scratchpad (spec 10.3): the bytes of the lines selected (else the line's)
+      editor.addAction({
+        id: 'mimir.copy-to-pad', label: 'Copy into a scratchpad…', contextMenuGroupId: 'navigation', contextMenuOrder: 0.5,
+        run: e => {
+          const sel = e.getSelection(), lines = rRef.current.fileLines[edPath.current]; if (!sel || !lines) return;
+          // a selection of whole lines ends at the start of the line after them
+          const last = sel.endColumn === 1 && sel.endLineNumber > sel.startLineNumber ? sel.endLineNumber - 1 : sel.endLineNumber;
+          let lo = Infinity, hi = -1;
+          for (let n = sel.startLineNumber; n <= last; n++) {
+            const l = lines[n - 1];
+            if (l && l.a != null && 'n' in l && l.n > 0) { lo = Math.min(lo, l.a); hi = Math.max(hi, l.a + l.n); }
+          }
+          if (hi < 0) return;
+          let at = ctxAt.current;
+          if (!at) { const v = e.getScrolledVisiblePosition(sel.getStartPosition()), r = e.getDomNode()?.getBoundingClientRect(); at = { x: (r?.left ?? 0) + (v?.left ?? 0), y: (r?.top ?? 0) + (v?.top ?? 0) + 20 }; }
+          ctxAt.current = null;
+          padRef.current?.(lo, hi, at.x, at.y);
         },
       });
       // a click on a script's mark after a line opens the script

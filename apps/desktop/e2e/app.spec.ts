@@ -6475,6 +6475,209 @@ test('scripts: safe mode runs without changing the program or its .asm, lists wh
   });
 });
 
+test('scripts: Init sets the registers, the flags and zero-page bytes a run starts with; the debugger starts there; the library keeps it; Reset', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  await editor.locator('.view-lines').click();
+  await page.keyboard.press('Control+a');
+  // nothing in the code sets A, X, Y, the carry, the pointer at $fb or $fd: Init does
+  await page.keyboard.insertText(['        sta colors_0939', '        stx colors_0939+1', '        lda #0', '        adc #0', '        sta ($fb),y', '        lda $fd', '        sta colors_0939+3', '        rts'].join('\n'));
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  const init = page.getByRole('region', { name: 'Init' });
+  const field = async (label: string, text: string, nth = 0) => { const f = init.getByLabel(label).nth(nth); await f.fill(text); await f.press('Enter'); };
+
+  await test.step('the registers, the carry and two zero-page bytes, a name for a value making one a word', async () => {
+    await field('Init A', '$aa');
+    await field('Init X', '3');
+    await field('Init Y', '%10');
+    await expect(init.getByLabel('Init X')).toHaveValue('$03');
+    await expect(init.getByLabel('Init Y')).toHaveValue('$02');
+    // a value too big for a register is not taken
+    await field('Init Y', '300');
+    await expect(init.getByLabel('Init Y')).toHaveValue('$02');
+    await init.getByRole('button', { name: 'Carry' }).click();
+    await expect(init.getByRole('button', { name: 'Carry' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(init.locator('.init-p')).toHaveText('P=$25');
+    await init.getByRole('button', { name: 'Zero page' }).click();
+    await field('Zero-page value', 'colors_0939');
+    await expect(init.getByLabel('Zero-page size')).toHaveValue('word');
+    await expect(init.getByLabel('Zero-page value')).toHaveValue('$0939');
+    await expect(init.getByLabel('Zero-page address')).toHaveValue(/^(\$fb|\w+)$/i);
+    await init.getByRole('button', { name: 'Zero page' }).click();
+    await expect(init.getByLabel('Zero-page address').nth(1)).toHaveValue(/^(\$fd|\w+)$/i);
+    await field('Zero-page value', '$7f', 1);
+  });
+
+  await test.step('a run starts with them: what it writes comes from Init', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(toast(page, /script: Returned .* It changed 4 bytes of the program in 1 place/)).toBeVisible();
+    const changes = page.getByRole('list', { name: 'Changed in the program' });
+    await expect(changes.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+    await changes.getByRole('button').click();
+    await expect(page.locator('.scr-dump')).toHaveText(/^\$0939\s+aa 03 01 7f/i);
+  });
+
+  await test.step('the script still checks out though its run made the table no colours (colors_0939 is tbl_0939 now)', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'tbl_0939');
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+
+  await test.step('the debugger starts with them too', async () => {
+    await page.getByRole('button', { name: /^Debug/ }).click();
+    const regs = page.getByRole('complementary', { name: 'Debugger' }).getByRole('table', { name: 'Registers' });
+    await expect(regs.locator('tr', { hasText: /^A/ })).toContainText(/\$aa/i);
+    await expect(regs.locator('tr', { hasText: /^X/ })).toContainText('$03');
+    await page.getByRole('button', { name: 'Stop' }).click();
+  });
+
+  await test.step('the library keeps the init with the script; Reset takes it all away', async () => {
+    await page.getByRole('button', { name: 'Save to library' }).click();
+    await page.getByRole('button', { name: 'Add script to the project' }).click();
+    await expect(page.getByRole('option', { name: 'script2' })).toHaveAttribute('aria-selected', 'true');
+    await expect(init.getByLabel('Init A')).toHaveValue('$aa');
+    await expect(init.getByLabel('Zero-page value')).toHaveCount(2);
+    await page.getByRole('button', { name: 'Remove script from the library' }).click();
+    await init.getByRole('button', { name: 'Reset' }).click();
+    await expect(init.getByLabel('Init A')).toHaveValue('$00');
+    await expect(init.getByRole('button', { name: 'Carry' })).toHaveAttribute('aria-pressed', 'false');
+    await expect(init.getByLabel('Zero-page value')).toHaveCount(0);
+    await expect(init.getByRole('button', { name: 'Reset' })).toHaveCount(0);
+  });
+});
+
+test('scripts: the output folds down; scratchpads filled from the .asm, set to start with Kick Assembler, hex or text, copied to one another and compared in a heat map', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const bar = page.getByRole('button', { name: /^Output/ });
+  const dump = page.locator('.scr-dump');
+  const showAs = page.getByRole('group', { name: 'Show as' });
+  const padRows = page.locator('.pad-row:not(.pad-head)');
+
+  await test.step('the output folds down to its bar and up again', async () => {
+    await expect(bar).toHaveAttribute('aria-expanded', 'true');
+    await bar.click();
+    await expect(page.locator('.scr-out')).toHaveCount(0);
+    await expect(bar).toHaveAttribute('aria-expanded', 'false');
+    await bar.click();
+    await expect(page.locator('.scr-out')).toBeVisible();
+  });
+
+  await test.step('a line of the .asm copied into a new scratchpad: a run starts it with those bytes', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'colors_0939');
+    await page.locator('.tab.tab-source').click();
+    const line = page.locator('.source .view-line', { hasText: '.byte $06, $0e, $03' });
+    await line.click({ button: 'right' });
+    // Monaco's menu takes no click in its first moments
+    const item = page.getByRole('menuitem', { name: 'Copy into a scratchpad…' });
+    await expect(item).toBeVisible();
+    await page.waitForTimeout(400);
+    await item.click();
+    await expect(page.locator('.ctx')).toContainText(/Copy \d+ bytes into a scratchpad/);
+    await page.locator('.ctx').getByRole('menuitem', { name: 'A new scratchpad in "script"' }).click();
+    await expect(toast(page, /bytes from \$0939 copied into the new scratchpad pad1/)).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.scr-start-pill')).toContainText(/at the start · \d+ set/);
+    await expect(dump).toHaveText(/^\$[0-9a-f]{4}\s+06 0e 03/i);
+  });
+
+  await test.step('the listing copies into a scratchpad there is: the bytes of its line go in', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'colors_0939');
+    await listing(page).locator('.row', { has: page.locator('.adr', { hasText: /^0939$/ }) }).first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /^Copy \d+ bytes? into a scratchpad/ }).hover();
+    await page.getByRole('menuitem', { name: /^pad1 of "script" \(/ }).click();
+    // the listing's row may hold more bytes than the source's line that made pad1: then the first of them go in
+    await expect(toast(page, /copied into pad1 of "script"|pad1 holds \d+ bytes: the first \d+ of the \d+ went in/)).toBeVisible();
+    await expect(dump).toHaveText(/^\$[0-9a-f]{4}\s+06 0e 03/i);
+  });
+
+  await test.step('what it starts with written as Kick Assembler: read as it is typed, Set keeps it', async () => {
+    // made bigger, it keeps what it starts with
+    const size = page.getByLabel('Scratchpad size');
+    await size.fill('$40');
+    await size.press('Enter');
+    await expect(page.locator('.scr-view-title')).toContainText('64 bytes');
+    await page.getByRole('button', { name: 'Edit start' }).click();
+    const edit = page.getByRole('group', { name: 'What pad1 starts with' });
+    // bytes copied in show as hex
+    await expect(edit.getByRole('button', { name: 'Hex' })).toHaveAttribute('aria-pressed', 'true');
+    await edit.getByRole('button', { name: 'Kick Assembler' }).click();
+    const text = edit.getByLabel('pad1 at the start');
+    await text.fill('        .byte $01, $02\n        .word colors_0939\n        nosuch');
+    await expect(edit.getByRole('status')).toHaveText(/^Line 3: /);
+    await expect(edit.getByRole('button', { name: /^Set/ })).toBeDisabled();
+    await text.fill('        .byte $01, $02\n        .word colors_0939\n        .text "HI"');
+    await expect(edit.getByRole('status')).toHaveText(/^6 of 64 bytes from \$[0-9a-f]{4}, the rest \$00$/i);
+    await text.press('Control+Enter');
+    await expect(edit).toHaveCount(0);
+    await expect(dump).toHaveText(/^\$[0-9a-f]{4}\s+01 02 39 09 48 49 00/i);
+  });
+
+  await test.step('as text: PETSCII, a byte a character', async () => {
+    await page.getByRole('button', { name: 'Edit start' }).click();
+    const edit = page.getByRole('group', { name: 'What pad1 starts with' });
+    await expect(edit.getByRole('button', { name: 'Kick Assembler' })).toHaveAttribute('aria-pressed', 'true');
+    await edit.getByRole('button', { name: 'Text' }).click();
+    await edit.getByLabel('pad1 at the start').fill('HELLO');
+    await expect(edit.getByRole('status')).toHaveText(/^5 of 64 bytes/);
+    await edit.getByRole('button', { name: /^Set/ }).click();
+    await showAs.getByRole('button', { name: 'Text' }).click();
+    await expect(dump).toContainText('HELLO');
+    await showAs.getByRole('button', { name: 'Hex' }).click();
+  });
+
+  await test.step('copied to a new scratchpad, changed there and compared: the numbers, the heat map, the rows that differ', async () => {
+    await page.getByRole('button', { name: 'Copy to a new pad' }).click();
+    await expect(toast(page, 'pad1 copied to the new scratchpad pad2')).toBeVisible();
+    await expect(page.getByLabel('Scratchpad name').nth(1)).toHaveValue('pad2');
+    await showAs.getByRole('button', { name: 'Compare' }).click();
+    await expect(page.getByLabel('Compare with')).toHaveValue('pad2');
+    const stats = page.locator('.pad-cmp-stats');
+    await expect(stats).toHaveText('The same: all 64 bytes.');
+    // pad2 shown (compared with pad1) and changed in two bytes: an E that is an A, a zero that is $ff
+    await padRows.nth(1).click({ position: { x: 4, y: 4 } });
+    await expect(page.getByLabel('Compare with')).toHaveValue('pad1');
+    await page.getByRole('button', { name: 'Edit start' }).click();
+    const edit = page.getByRole('group', { name: 'What pad2 starts with' });
+    await edit.getByRole('button', { name: 'Kick Assembler' }).click();
+    await edit.getByLabel('pad2 at the start').fill('        .text "HALLO"\n        .fill 20, 0\n        .byte $ff');
+    await edit.getByLabel('pad2 at the start').press('Control+Enter');
+    await expect(stats).toHaveText(/^2 of 64 bytes differ \(3\.1 %\) in 2 places, the first at \+\$0001/);
+    const heat = page.getByRole('img', { name: 'Heat map of 64 bytes: 2 differ' });
+    await expect(heat).toBeVisible();
+    const rows = page.getByRole('table', { name: 'Rows that differ' }).getByRole('row');
+    await expect(rows).toHaveCount(2);
+    // a cell says what both have there; a click goes to its row
+    const box = (await heat.boundingBox())!, cell = box.width / 16;
+    await heat.hover({ position: { x: cell * 1.5, y: cell * 0.5 } });
+    await expect(page.locator('.pad-heat-tip')).toContainText('+$0001');
+    await expect(page.locator('.pad-heat-tip')).toContainText('1 bit differs');
+    await heat.click({ position: { x: cell * 9.5, y: cell * 1.5 } });
+    await expect(page.locator('.pad-diff-row.on')).toHaveAttribute('data-row', '1');
+  });
+
+  await test.step('Copy to… puts one scratchpad into another: then they are the same', async () => {
+    await padRows.first().click({ position: { x: 4, y: 4 } });
+    await page.getByRole('button', { name: 'Copy to…' }).click();
+    await page.getByRole('menuitem', { name: /^pad2 \(/ }).click();
+    await expect(toast(page, 'pad1 copied to pad2')).toBeVisible();
+    await expect(page.locator('.pad-cmp-stats')).toHaveText('The same: all 64 bytes.');
+  });
+});
+
 test('scripts: names linked from the listing and the source, marked there, written in the code with a click; the editor suggests the program\'s names; the scratchpad follows the debugger', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });

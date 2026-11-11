@@ -10,7 +10,8 @@
  * scratchpads (data kept outside the program, a log, say) is kept with the script.
  * ===================================================================== */
 import { Cpu, type Bus } from '@mimir/sindri';
-import type { Addr, AnalysisResult, Cartridge, FileInput, LoadedFile, Patch, Project, RenderResult, ScriptPad, Settings, UserScript } from './types';
+import type { Addr, AnalysisResult, Cartridge, FileInput, LoadedFile, Patch, Project, RenderResult, ScriptInit, ScriptPad, ScriptPadSource, Settings, UserScript } from './types';
+import { monitorChar } from './c64/monitor';
 import { assemble } from './verify/kick-subset-assembler';
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
 import { fileSpaces } from './spaces';
@@ -147,6 +148,56 @@ export interface ScriptProblem {
   line?: number;
   /** the scratchpad it is about (its index) */
   pad?: number;
+  /** the zero-page byte of the script's init it is about (its index in ScriptInit.zp) */
+  zp?: number;
+}
+
+/** the status register a run starts with when the script's init does not say: I set (no interrupts come in a run in
+ *  any case), the other flags clear; bits 5 and 4 (- and B) are not flags a program can set */
+export const SCRIPT_P = 0x24;
+/** the flags of the status register, as the debugger and Init show them: name, bit and what it is */
+export const SCRIPT_FLAGS = [
+  { name: 'N', bit: 0x80, what: 'Negative' }, { name: 'V', bit: 0x40, what: 'Overflow' }, { name: 'D', bit: 0x08, what: 'Decimal mode' },
+  { name: 'I', bit: 0x04, what: 'Interrupt disable' }, { name: 'Z', bit: 0x02, what: 'Zero' }, { name: 'C', bit: 0x01, what: 'Carry' },
+] as const;
+
+/** Whether an init sets nothing: the run starts as without one (A, X and Y 0, only I set, the zero page as it is). */
+export function initEmpty(init?: ScriptInit | null): boolean {
+  return !init || (!init.a && !init.x && !init.y && ((init.p ?? SCRIPT_P) & 0xcf) === (SCRIPT_P & 0xcf) && !init.zp?.length);
+}
+
+/** An init as it is kept: without what is as without one (null: nothing at all). */
+export function tidyInit(init: ScriptInit): ScriptInit | null {
+  if (initEmpty(init)) return null;
+  const p = init.p == null ? undefined : (init.p & 0xcf) | 0x20;
+  return {
+    ...(init.a ? { a: init.a } : {}), ...(init.x ? { x: init.x } : {}), ...(init.y ? { y: init.y } : {}),
+    ...(p != null && (p & 0xcf) !== (SCRIPT_P & 0xcf) ? { p } : {}),
+    ...(init.zp?.length ? { zp: init.zp.map(z => ({ at: z.at, value: z.value, ...(z.word ? { word: true } : {}) })) } : {}),
+  };
+}
+
+/** what is wrong with a script's init: a register or flag byte that is not a byte, a zero-page entry outside the zero
+ *  page or with too big a value (errors), a zero-page byte set twice (a warning: the later one wins) */
+function checkInit(init: ScriptInit | undefined, problems: ScriptProblem[]): void {
+  if (!init) return;
+  const isByte = (v: number) => Number.isInteger(v) && v >= 0 && v <= 0xff;
+  for (const [k, v] of [['A', init.a], ['X', init.x], ['Y', init.y], ['The status register', init.p]] as const)
+    if (v != null && !isByte(v)) problems.push({ level: 'error', msg: `Init: ${k} must be a byte ($00-$ff).` });
+  const by = new Map<number, number>();
+  (init.zp ?? []).forEach((z, i) => {
+    const n = z.word ? 2 : 1;
+    if (!(Number.isInteger(z.at) && z.at >= 0 && z.at + n <= 0x100)) {
+      problems.push({ level: 'error', zp: i, msg: `Init: $${h4(Number(z.at) & 0xffff)} is not in the zero page: ${z.word ? 'a word goes at $00-$fe' : 'a byte goes at $00-$ff'}.` });
+      return;
+    }
+    if (!(Number.isInteger(z.value) && z.value >= 0 && z.value <= (z.word ? 0xffff : 0xff)))
+      problems.push({ level: 'error', zp: i, msg: `Init: the value for $${h2(z.at)} must be ${z.word ? 'a word ($0000-$ffff)' : 'a byte ($00-$ff); a word takes two'}.` });
+    for (let k = 0; k < n; k++) {
+      if (by.has(z.at + k)) problems.push({ level: 'warning', zp: i, msg: `Init: $${h2(z.at + k)} is set twice; the later one wins.` });
+      by.set(z.at + k, i);
+    }
+  });
 }
 
 /** A script checked: assembled, and its scratchpads looked at. It can run when `ok`. */
@@ -184,6 +235,22 @@ export function scriptNames(env: ScriptEnv, pads: readonly ScriptPad[]): Map<str
   return out;
 }
 
+/**
+ * Mimir's own names end in their address (`colors_0939`, `ptr_fb`). One that the script uses and the program no longer
+ * has, because the analysis named the bytes anew after a run changed them (`colors_0939` is `tbl_0939` once the table
+ * holds more than colours), still finds its address, when the program has a name there: a script does not stop
+ * assembling because of what its own run did.
+ */
+export function withAddressNames(names: Map<string, Addr>, source: string): Map<string, Addr> {
+  const named = new Set(names.values());
+  for (const m of source.matchAll(/\b([A-Za-z_][A-Za-z0-9]*_([0-9a-fA-F]{4}|[0-9a-fA-F]{2}))\b/g)) {
+    if (names.has(m[1])) continue;
+    const a = parseInt(m[2], 16);
+    if (named.has(a)) names.set(m[1], a);
+  }
+  return names;
+}
+
 /** whether the script's first line of code says where it goes (`* =` or `.pc =`) */
 const setsItsPlace = (source: string): boolean => {
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').split(/\r?\n/).map(l => l.replace(/\/\/.*$/, '').trim()).find(l => l);
@@ -196,8 +263,9 @@ const setsItsPlace = (source: string): boolean => {
  * memory of its own, so the only trouble an address can make is a name of the program that the script uses where
  * its own bytes are (it would read itself there): that is an error on the line that uses the name.
  */
-export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'>): ScriptCheck {
+export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'>): ScriptCheck {
   const problems: ScriptProblem[] = [];
+  checkInit(script.init, problems);
   const err = (msg: string, line?: number, pad?: number) => problems.push({ level: 'error', msg, ...(line ? { line } : {}), ...(pad != null ? { pad } : {}) });
   // the scratchpads: a name of their own, inside memory, not over each other, not in the zero page or the stack
   const good: ScriptPad[] = [];
@@ -208,10 +276,11 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
     const o = script.pads.findIndex((q, j) => j < i && q.start < p.start + p.size && p.start < q.start + q.size);
     if (o >= 0) err(`Scratchpad "${p.name}" lies over "${script.pads[o].name}".`, undefined, i);
     if (p.start < 0x200) err(`Scratchpad "${p.name}" is in the zero page or the stack ($0000-$01ff), which the script shares with the program: give it an address from $0200.`, undefined, i);
+    if (p.data && p.data.length > p.size) problems.push({ level: 'warning', pad: i, msg: `Scratchpad "${p.name}" starts with ${p.data.length} bytes but holds ${p.size}: a run starts it with the first ${p.size}.` });
     good.push(p);
   });
   const pads = good.map(p => ({ start: p.start, end: p.start + p.size }));
-  const names = scriptNames(env, script.pads);
+  const names = withAddressNames(scriptNames(env, script.pads), script.source);
   const at = (pc: number) => assemble({ 'script.asm': script.source }, 'script.asm', { names, pc });
   // assembled once where it may go, to learn how big it is and which of the program's names it uses
   const free = freePlace(env.files, 0x100, pads);
@@ -348,18 +417,24 @@ export class ScriptMachine {
   private readonly frames = new Map<number, boolean>();
   private readonly t0 = Date.now();
 
-  constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads'>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
+  constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
     if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
     const { mem, own, mine, ctx } = this;
     this.loaded = loadedMask(env.files);
     for (const f of env.files) mem.set(f.bytes.subarray(0, Math.max(0, 0x10000 - f.load)), f.load);
-    for (const p of script.pads) { own.fill((p.fill ?? 0) & 0xff, p.start, p.start + p.size); mine.fill(1, p.start, p.start + p.size); }
+    // each scratchpad as a run starts it: its start content, the rest its fill
+    for (const p of script.pads) { own.set(padStart(p), p.start); mine.fill(1, p.start, p.start + p.size); }
     for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
     this.inScript = !!mine[check.entry];
     const bus = new ScriptBus(mem, own, mine, ctx);
     const cpu = this.cpu = new Cpu(bus);
-    // called like SYS: the return address on the stack, interrupts off
-    mem[0x1ff] = (DONE - 1) >> 8 & 0xff; mem[0x1fe] = (DONE - 1) & 0xff; cpu.s = 0xfd; cpu.pc = check.entry; cpu.i = 1;
+    // called like SYS: the return address on the stack; the registers, the flags and the zero-page bytes the script's
+    // init gives (else A, X and Y 0 and interrupts off). The init's zero page is in place before the run, so it is no
+    // change of the run's
+    mem[0x1ff] = (DONE - 1) >> 8 & 0xff; mem[0x1fe] = (DONE - 1) & 0xff; cpu.s = 0xfd; cpu.pc = check.entry;
+    const init = script.init;
+    cpu.a = (init?.a ?? 0) & 0xff; cpu.x = (init?.x ?? 0) & 0xff; cpu.y = (init?.y ?? 0) & 0xff; cpu.p = (init?.p ?? SCRIPT_P) & 0xff;
+    for (const z of init?.zp ?? []) { mem[z.at & 0xff] = z.value & 0xff; if (z.word) mem[(z.at + 1) & 0xff] = (z.value >> 8) & 0xff; }
     this.at = cpu.pc;
     this.before = mem.slice();
   }
@@ -477,7 +552,7 @@ export class ScriptMachine {
 }
 
 /** Run a script that checked ok to its end (ScriptMachine), in one go. */
-export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT): ScriptRun {
+export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT): ScriptRun {
   const m = new ScriptMachine(env, script, check, limit);
   m.runUntil(null);
   return m.result();
@@ -499,6 +574,136 @@ export function byteLines(bytes: ArrayLike<number>, perRow = 16, indent = '     
   const out: string[] = [];
   for (let i = 0; i < bytes.length; i += perRow) out.push(`${indent}.byte ${Array.from({ length: Math.min(perRow, bytes.length - i) }, (_, k) => `$${h2(bytes[i + k])}`).join(', ')}`);
   return out;
+}
+
+/* ---- scratchpads: what one holds when a run starts, written as Kick Assembler, hex or text, and two compared ---- */
+
+/** The bytes a scratchpad holds when a run starts: its start content (`data`) from its start, the rest its fill. */
+export function padStart(p: Pick<ScriptPad, 'size' | 'fill' | 'data'>): Uint8Array {
+  const b = new Uint8Array(p.size).fill((p.fill ?? 0) & 0xff);
+  if (p.data) b.set(p.data.subarray(0, p.size));
+  return b;
+}
+
+/** What a scratchpad holds now: what the last run left in it, else what a run starts it with. */
+export const padNow = (p: Pick<ScriptPad, 'size' | 'fill' | 'data' | 'bytes'>): Uint8Array =>
+  p.bytes && p.bytes.length === p.size ? p.bytes : padStart(p);
+
+/** PETSCII or screen code of each character the C64 shows (the first byte that shows it); lower case letters are read
+ *  as the upper case ones the C64 shows */
+const charCodes = (screen: boolean): Map<string, number> => {
+  const m = new Map<string, number>();
+  for (let b = 0; b < (screen ? 0x80 : 0x100); b++) { const c = monitorChar(b, screen)?.ch; if (c != null && !m.has(c)) m.set(c, b); }
+  return m;
+};
+const CODES = { petscii: charCodes(false), screen: charCodes(true) };
+
+/** What is wrong with a scratchpad's start content as written: the message and the line of the text */
+export interface PadDataError { error: string; line?: number }
+
+/**
+ * A scratchpad's start content from what the user wrote (ScriptPad.src), for a scratchpad at `at` of `size` bytes:
+ * Kick Assembler assembled at `at` with `names` at hand (code and every kind of data: `.byte`, `.word`, `.text`,
+ * `.fill`, instructions, labels of its own), hex bytes (`01 02 ff`, `$01,$02`, `0102ff`; a line that starts with an
+ * address, as a hex dump does, puts its bytes there, and the text after two spaces is left out), or text, a byte a character: PETSCII
+ * with a line end as RETURN ($0d), or screen codes with a line end as spaces to the next row of 40. What it does not
+ * write from its first byte to its last is `fill`.
+ */
+export function padData(src: ScriptPadSource, at: Addr, size: number, names: ReadonlyMap<string, Addr>, fill = 0): { bytes: Uint8Array } | PadDataError {
+  const tooBig = (n: number): PadDataError => ({ error: `It is ${n} bytes, and the scratchpad holds ${size}: make the scratchpad bigger, or write less.` });
+  if (src.form === 'asm') {
+    if (!src.text.trim()) return { bytes: new Uint8Array(0) };
+    const asm = assemble({ 'pad.asm': src.text }, 'pad.asm', { names, pc: at });
+    const e = asm.errors[0];
+    if (e) return { error: e.msg, ...(e.file === 'pad.asm' && e.line > 0 ? { line: e.line } : {}) };
+    let lo = -1, hi = -1;
+    for (let a = 0; a < 0x10000; a++) if (asm.written[a]) { if (lo < 0) lo = a; hi = a; }
+    if (lo < 0) return { bytes: new Uint8Array(0) };
+    if (lo < at) return { error: `It writes $${h4(lo)}, before the scratchpad's start $${h4(at)}: leave * = out, or set it inside the scratchpad.` };
+    if (hi + 1 - at > size) return tooBig(hi + 1 - at);
+    const out = new Uint8Array(hi + 1 - at).fill(fill & 0xff);
+    for (let a = at; a <= hi; a++) if (asm.written[a]) out[a - at] = asm.mem[a];
+    return { bytes: out };
+  }
+  const lines = src.text.split(/\r?\n/);
+  const out: number[] = [];
+  if (src.form === 'hex') {
+    // where the next byte goes: on from the last line, or where a hex dump's line says
+    let pos = 0, hi = 0;
+    const put = (b: number) => { out[pos++] = b; hi = Math.max(hi, pos); };
+    for (let i = 0; i < lines.length; i++) {
+      let l = lines[i].replace(/\/\/.*$/, '').replace(/;.*$/, '');
+      // a hex dump's line: its address first (its bytes go there), its text after two spaces
+      const dump = /^\s*\$?([0-9a-f]{4})(?::\s*|\s{2,})/i.exec(l);
+      if (dump) {
+        const a = parseInt(dump[1], 16);
+        if (a < at || a >= at + size) return { error: `$${h4(a)} is outside the scratchpad ($${h4(at)}-$${h4(at + size - 1)}).`, line: i + 1 };
+        pos = a - at;
+        l = l.slice(dump[0].length); const t = /\S\s{2,}/.exec(l); if (t) l = l.slice(0, t.index + 1);
+      }
+      for (const tok of l.split(/[\s,]+/).filter(Boolean)) {
+        const h = tok.replace(/^(\$|0x)/i, '');
+        if (!/^[0-9a-f]+$/i.test(h) || (h.length > 2 && h.length % 2)) return { error: `"${tok}" is not a hex byte (write 01, $01 or 0102).`, line: i + 1 };
+        if (h.length <= 2) put(parseInt(h, 16));
+        else for (let k = 0; k < h.length; k += 2) put(parseInt(h.slice(k, k + 2), 16));
+      }
+    }
+    // what no line wrote, between bytes that were: the fill
+    out.length = hi;
+    for (let k = 0; k < hi; k++) if (out[k] === undefined) out[k] = fill & 0xff;
+  } else {
+    const codes = src.screen ? CODES.screen : CODES.petscii;
+    for (let i = 0; i < lines.length; i++) {
+      if (i > 0) {
+        // screen codes: the line before ends with spaces to the end of its row of 40 (an empty line is a row of them)
+        if (src.screen) { let n = (40 - (out.length % 40)) % 40; if (!n && !lines[i - 1].length) n = 40; for (let k = 0; k < n; k++) out.push(0x20); }
+        else out.push(0x0d);
+      }
+      for (const c of lines[i]) {
+        const b = codes.get(c) ?? codes.get(c.toUpperCase());
+        if (b == null) return { error: `"${c}" is not a character the C64 has in ${src.screen ? 'its screen codes' : 'PETSCII'}.`, line: i + 1 };
+        out.push(b);
+      }
+    }
+  }
+  if (out.length > size) return tooBig(out.length);
+  return { bytes: Uint8Array.from(out) };
+}
+
+/** A scratchpad's bytes written in a form (what the editor shows for them when the user has not written them in it):
+ *  `.byte` lines, a hex dump with the addresses, or the text (a byte with no character as `.`). */
+export function padText(bytes: Uint8Array, form: ScriptPadSource['form'], at: Addr, screen = false): string {
+  if (!bytes.length) return '';
+  if (form === 'asm') return byteLines(bytes, 16, '').join('\n');
+  if (form === 'hex') {
+    const rows: string[] = [];
+    for (let i = 0; i < bytes.length; i += 16) rows.push(`$${h4(at + i)}  ${Array.from(bytes.subarray(i, i + 16), b => h2(b)).join(' ')}`);
+    return rows.join('\n');
+  }
+  const ch = (b: number) => monitorChar(b, screen)?.ch ?? '.';
+  if (screen) {
+    const rows: string[] = [];
+    for (let i = 0; i < bytes.length; i += 40) rows.push(Array.from(bytes.subarray(i, i + 40), ch).join('').replace(/ +$/, ''));
+    return rows.join('\n');
+  }
+  let s = '';
+  for (const b of bytes) s += b === 0x0d ? '\n' : ch(b);
+  return s;
+}
+
+/** Two scratchpads' bytes compared byte by byte from their starts: how many are the same and how many differ (of
+ *  the bytes both have), how many only one has, the first that differs, and the runs of bytes that differ. */
+export interface PadDiff { same: number; differ: number; onlyA: number; onlyB: number; first: number | null; runs: ScriptRange[] }
+export function padDiff(a: ArrayLike<number>, b: ArrayLike<number>): PadDiff {
+  const n = Math.min(a.length, b.length), runs: ScriptRange[] = [];
+  let differ = 0;
+  for (let i = 0; i < n; i++) {
+    if (a[i] === b[i]) continue;
+    differ++;
+    const last = runs[runs.length - 1];
+    if (last && last.end === i) last.end++; else runs.push({ start: i, end: i + 1 });
+  }
+  return { same: n - differ, differ, onlyA: Math.max(0, a.length - n), onlyB: Math.max(0, b.length - n), first: runs[0]?.start ?? null, runs };
 }
 
 /** The patches that hold what the script `id` changed in the program when it last ran. */

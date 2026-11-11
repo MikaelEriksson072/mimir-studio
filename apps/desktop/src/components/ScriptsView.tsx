@@ -6,10 +6,13 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { byteLines, checkScript, disassembleBytes, h2, h4, monitorChar, padName, patchEnd, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptPad, type ScriptRun, type UserScript } from '@mimir/core';
+import { byteLines, checkScript, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, tidyInit, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptLink, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptRun, type ScriptZpInit, type UserScript } from '@mimir/core';
+import type { MenuItem } from '../lib/types';
+import { PadCompare, PadEditor } from './PadTools';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
 import { stopScript } from '../lib/scriptrun';
+import { initValue } from '../lib/scriptinit';
 import { useScripts, type LibraryScript, type PadMode, type ScriptRunKept } from '../store/scripts';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
@@ -38,7 +41,7 @@ interface ScriptsViewProps {
   onNew: () => void;
   /** a copy of a library script in the project */
   onAdd: (s: LibraryScript) => void;
-  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links'>>, label: string) => void;
+  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
    *  runUserScript) */
@@ -57,6 +60,8 @@ interface ScriptsViewProps {
   onSave: (name: string, bytes: Uint8Array, prg: boolean, load: Addr) => void;
   onSaveText: (name: string, text: string) => void;
   toast: (msg: string, kind: 'ok' | 'info' | 'warn' | 'err') => void;
+  /** a menu of the app's at a point of the window (Copy to… of a scratchpad) */
+  onMenu: (x: number, y: number, items: MenuItem[]) => void;
 }
 
 const $ = (a: number) => '$' + h4(a);
@@ -78,8 +83,8 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
   return out.endsWith('\n') ? out : out + '\n';
 }
 
-export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
-  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, library, gotoLine, set, saveToLibrary, removeFromLibrary } = useScripts();
+export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu }: ScriptsViewProps) {
+  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
@@ -185,7 +190,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
       if (line) e.revealLineInCenterIfOutsideViewport(line);
     });
     return () => cancelAnimationFrame(id);
-  }, [debugging, noteShown, state]);
+  }, [debugging, noteShown, state, outFolded]);
   // another script shown, or the tab left: the debugging stops
   useEffect(() => { if (dbgRef.current && dbgRef.current.id !== cur?.id) stopDbg(true); }, [cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { pauseReq.current = true; }, []);
@@ -226,7 +231,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   }, [state, cur?.id, cur?.source, scripts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const source = cur ? live[cur.id] ?? cur.source : '';
-  const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, pads: cur.pads }) : null, [env, source, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
+  const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, pads: cur.pads, init: cur.init }) : null, [env, source, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
   const names = useMemo(() => cur ? scriptNames(env, cur.pads) : new Map<string, number>(), [env, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
   /** a name for an address (the first of the names the script may use that has it) */
   const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a)) m.set(a, n); return m; }, [names]);
@@ -327,9 +332,9 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     const s = curRef.current; if (!s || running || dbgRef.current) return;
     flush();
     const text = models.current[s.id]?.getValue() ?? s.source;
-    const e = envFor(s.id), c = checkScript(e, { source: text, pads: s.pads });
+    const e = envFor(s.id), c = checkScript(e, { source: text, pads: s.pads, init: s.init });
     if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
-    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads }, c), source: text, prev: null, padsBefore: null };
+    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads, init: s.init }, c), source: text, prev: null, padsBefore: null };
     setDbg(d); dbgRef.current = d;
     stopped(d);
   };
@@ -414,6 +419,18 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     const ps = dbg.m.script.pads, p = ps[shown.i] ?? ps[0]; if (!p) return null;
     return { name: p.name, bytes: dbg.m.own.slice(p.start, p.start + p.size), before: dbg.padsBefore?.[ps.indexOf(p)] ?? null };
   })();
+  /** where a new scratchpad of `size` bytes goes: away from the script's code and its other scratchpads */
+  const placePad = (size: number, near?: Addr): Addr => {
+    const taken = [...(check?.code ?? []), ...(cur?.pads ?? []).map(p => ({ start: p.start, end: p.start + p.size }))];
+    return scriptPlace(env.files, size, taken, near)?.at ?? 0xc000;
+  };
+  // what the folded output's bar says it holds
+  const outSummary = !cur ? '' : [
+    !initEmpty(cur.init) ? 'Init set' : '',
+    cur.pads.length ? plural(cur.pads.length, 'scratchpad') : '',
+    mine.length ? `${plural(mine.length, 'change')} in the program` : '',
+    kept ? `last run: ${kept.run.end === 'rts' ? 'returned' : kept.run.end === 'brk' ? 'BRK' : kept.run.end === 'jam' ? 'jammed' : 'stopped at the limit'}` : '',
+  ].filter(Boolean).join(' · ');
 
   return (
     <div className="scripts">
@@ -485,12 +502,18 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
             {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} readOnly={!!dbg} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
             {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} />}
           </div>
-          <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />
-          <div className="scr-out" style={{ height: dbg ? dbgOutH : outH }}>
-            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} canWrite={check.ok && !running && !dbg} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onWrite={write} />
-            <PadView script={cur} mine={mine} would={kept?.safe ? kept.would ?? [] : []} names={names} mode={mode} screen={screen} live={livePad} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
-              onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} />
-          </div>
+          {!outFolded && <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />}
+          <button className={cx('scr-out-bar', outFolded && 'folded')} aria-expanded={!outFolded} aria-controls="scr-out"
+            onClick={() => set({ outFolded: !outFolded })} title={outFolded ? 'Show the output: Init, what the script changed, the scratchpads and the last run' : 'Fold the output down: the code gets the room'}>
+            <Icon name={outFolded ? 'up' : 'down'} size={13} /><span className="scr-out-name">Output</span>
+            <span className="scr-out-sum">{outSummary}</span>
+            {errors.length > 0 && outFolded && <span className="scr-out-bad">{plural(errors.length, 'error')}</span>}
+          </button>
+          {!outFolded && <div className="scr-out" id="scr-out" style={{ height: dbg ? dbgOutH : outH }}>
+            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onWrite={write} />
+            <PadView script={cur} mine={mine} would={kept?.safe ? kept.would ?? [] : []} names={names} mode={mode} screen={screen} live={livePad} theme={theme} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
+              onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} onEdit={onEdit} onMenu={onMenu} placePad={placePad} toast={toast} />
+          </div>}
         </div>
       </div>}
     </div>
@@ -527,10 +550,10 @@ function NameField({ value, taken, onCommit, toast }: { value: string; taken: st
   return <input className="scr-name" aria-label="Script name" value={v} maxLength={64} onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setV(value); (e.target as HTMLInputElement).blur(); } }} />;
 }
 
-/** The left of the output: the problems, what the script changed in the program, what its last run would change
- *  (safe mode), the scratchpads (edited here) and the last run. */
-function ScriptSide({ script, check, kept, stale, mine, env, canWrite, onGoLine, onEdit, onTakeOut, onSwitchPatch, onWrite }: {
-  script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; canWrite: boolean; onGoLine: (n: number) => void;
+/** The left of the output: the problems, what the runs start with (Init), what the script changed in the program,
+ *  what its last run would change (safe mode), the scratchpads (edited here) and the last run. */
+function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, onGoLine, onEdit, onTakeOut, onSwitchPatch, onWrite }: {
+  script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; names: ReadonlyMap<string, number>; canWrite: boolean; onGoLine: (n: number) => void;
   onEdit: ScriptsViewProps['onEdit']; onTakeOut: ScriptsViewProps['onTakeOut']; onSwitchPatch: ScriptsViewProps['onSwitchPatch']; onWrite: () => void;
 }) {
   const { shown, set } = useScripts();
@@ -542,6 +565,13 @@ function ScriptSide({ script, check, kept, stale, mine, env, canWrite, onGoLine,
     const name = padName(script.pads);
     setPads([...script.pads, { name, start, size: 0x100 }], `Add scratchpad ${name} to "${script.name}"`);
     set({ shown: { kind: 'pad', i: script.pads.length } });
+  };
+  /** a scratchpad changed in the table: start content written in Kick Assembler is for its address, so it is assembled
+   *  again where the scratchpad is now (when it still reads; else it keeps its bytes) */
+  const moved = (old: ScriptPad, q: ScriptPad): ScriptPad => {
+    if (q.start === old.start || q.src?.form !== 'asm') return q;
+    const r = padData(q.src, q.start, q.size, names, q.fill ?? 0);
+    return 'bytes' in r ? { ...q, ...(r.bytes.length ? { data: r.bytes } : {}) } : q;
   };
   const run = kept?.run;
   const sorted = [...mine].sort((a, b) => a.start - b.start);
@@ -557,6 +587,7 @@ function ScriptSide({ script, check, kept, stale, mine, env, canWrite, onGoLine,
             {p.line ? <button className="linkish" onClick={() => onGoLine(p.line!)}>Line {p.line}</button> : null}<span>{p.msg}</span>
           </li>))}</ul>
       </section>}
+      <InitSection script={script} names={names} problems={check.problems} onEdit={onEdit} />
       <section className="scr-sec">
         <h4>In the program{stale && !would && <span className="pill mid" title="The code has changed since this run: run it again to update the program">code changed since</span>}<span className="grow" />
           {mine.length > 0 && <button className="btn ghost small" onClick={() => onTakeOut(script.id)} title="Take what the script changed out of the program: the original bytes come back (Ctrl+Z puts it back)"><Icon name="undo" size={13} />Take out</button>}</h4>
@@ -589,7 +620,7 @@ function ScriptSide({ script, check, kept, stale, mine, env, canWrite, onGoLine,
           {script.pads.map((p, i) => (
             <PadRow key={`${script.id}-${i}`} pad={p} on={shown.kind === 'pad' && shown.i === i} bad={check.problems.some(x => x.pad === i && x.level === 'error')} warn={check.problems.some(x => x.pad === i && x.level === 'warning')}
               onShow={() => set({ shown: { kind: 'pad', i } })}
-              onChange={q => setPads(script.pads.map((x, j) => (j === i ? q : x)), `Change scratchpad ${p.name} of "${script.name}"`)}
+              onChange={q => setPads(script.pads.map((x, j) => (j === i ? moved(x, q) : x)), `Change scratchpad ${p.name} of "${script.name}"`)}
               onRemove={() => { setPads(script.pads.filter((_, j) => j !== i), `Remove scratchpad ${p.name} from "${script.name}"`); set({ shown: { kind: 'pad', i: 0 } }); }} />
           ))}
         </div>
@@ -606,6 +637,114 @@ function ScriptSide({ script, check, kept, stale, mine, env, canWrite, onGoLine,
   );
 }
 
+/**
+ * Init (spec 10.3): what the script's runs start with. A, X and Y (a byte each), the flags N V D I Z C (a click sets or
+ * clears one) and zero-page bytes or words (a pointer, low byte first), each with its address (a name of the program's
+ * zero page, or $fb) and its value (a number, or a name: a label's address). What differs from a run without an init
+ * is kept with the script (in the project and the library); Reset takes it all away.
+ */
+function InitSection({ script, names, problems, onEdit }: { script: UserScript; names: ReadonlyMap<string, number>; problems: readonly ScriptProblem[]; onEdit: ScriptsViewProps['onEdit'] }) {
+  const init = script.init ?? {};
+  const p = init.p ?? SCRIPT_P;
+  const zp = init.zp ?? [];
+  const save = (next: ScriptInit, label: string) => onEdit(script.id, { init: tidyInit(next) ?? undefined }, label);
+  /** the program's names in the zero page, by address (what the address of a zero-page init shows) */
+  const zpNames = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (a < 0x100 && !m.has(a)) m.set(a, n); return m; }, [names]);
+  const addZp = () => {
+    const used = new Set(zp.flatMap(z => (z.word ? [z.at, z.at + 1] : [z.at])));
+    const last = zp[zp.length - 1];
+    const free = (a: number) => a >= 0 && a <= 0xff && !used.has(a);
+    const at = [last ? last.at + (last.word ? 2 : 1) : -1, 0xfb, 0xfc, 0xfd, 0xfe, 0x02].find(free) ?? [...Array(0x100).keys()].find(free);
+    if (at == null) return;
+    save({ ...init, zp: [...zp, { at, value: 0 }] }, `Add zero-page byte $${h2(at)} to the init of "${script.name}"`);
+  };
+  return (
+    <section className="scr-sec scr-init" aria-label="Init">
+      <h4 title="What each run starts with: the registers, the flags and zero-page bytes. Without them a run starts with A, X and Y 0 and only I set, like a SYS. The zero page is the program's: what is set here is there for the program's code the script calls too, and never goes into the program">
+        Init<span className="grow" />
+        {!initEmpty(script.init) && <button className="btn ghost small" onClick={() => save({}, `Reset the init of "${script.name}"`)} title="A, X and Y back to 0, only I set, and no zero-page bytes"><Icon name="undo" size={13} />Reset</button>}
+        <button className="btn ghost small" onClick={addZp} title="A zero-page byte the run starts with (a word: a pointer, low byte first). The address and the value can be names of the program"><Icon name="plus" size={13} />Zero page</button>
+      </h4>
+      <div className="init-regs">
+        {(['a', 'x', 'y'] as const).map(r => (
+          <InitReg key={r} reg={r.toUpperCase()} value={init[r] ?? 0} names={names}
+            onCommit={v => save({ ...init, [r]: v }, `Init ${r.toUpperCase()} = $${h2(v)} for "${script.name}"`)} />
+        ))}
+      </div>
+      <div className="init-flags" role="group" aria-label="Flags at the start">
+        <span className="init-lbl">Flags</span>
+        {SCRIPT_FLAGS.map(f => {
+          const on = (p & f.bit) !== 0;
+          return <button key={f.name} className={cx('dbg-flag init-flag', on && 'on')} aria-pressed={on} aria-label={f.what}
+            title={`${f.what} (${f.name}): ${on ? 'set' : 'clear'} when the run starts; a click ${on ? 'clears' : 'sets'} it${f.name === 'I' ? '. No interrupts come in a run in any case' : f.name === 'D' ? '. ADC and SBC then count in decimal' : ''}`}
+            onClick={() => save({ ...init, p: p ^ f.bit }, `${on ? 'Clear' : 'Set'} ${f.what.toLowerCase()} at the start of "${script.name}"`)}>{f.name}</button>;
+        })}
+        <span className="init-p mono" title="The status register these flags make (N V - B D I Z C)">P=${h2(p | 0x20)}</span>
+      </div>
+      {zp.length > 0 && <div className="init-zp" role="table" aria-label="Zero page at the start">
+        <div className="init-zp-row init-zp-head" role="row"><span>Address</span><span>Value</span><span>Size</span><span /></div>
+        {zp.map((z, i) => (
+          <InitZpRow key={`${script.id}-${i}`} z={z} name={zpNames.get(z.at)} names={names}
+            bad={problems.some(x => x.zp === i && x.level === 'error')} warn={problems.some(x => x.zp === i && x.level === 'warning')}
+            onChange={q => save({ ...init, zp: zp.map((x, j) => (j === i ? q : x)) }, `Change zero-page $${h2(q.at)} in the init of "${script.name}"`)}
+            onRemove={() => save({ ...init, zp: zp.filter((_, j) => j !== i) }, `Remove zero-page $${h2(z.at)} from the init of "${script.name}"`)} />
+        ))}
+      </div>}
+    </section>
+  );
+}
+
+/** A register of Init: its value as `$xx`; a number or `<name` / `>name` typed, Enter or leaving it keeps it. */
+function InitReg({ reg, value, names, onCommit }: { reg: string; value: number; names: ReadonlyMap<string, number>; onCommit: (v: number) => void }) {
+  const shown = '$' + h2(value);
+  const [t, setT] = useState(shown);
+  useEffect(() => setT(shown), [shown]);
+  const commit = () => {
+    const v = initValue(t, names);
+    if (v == null || v > 0xff) { setT(shown); return; }
+    if (v !== value) onCommit(v); else setT(shown);
+  };
+  return (
+    <label className="init-reg" title={`${reg} when the run starts: a byte ($ff, 255, %1010, or <label / >label for a half of a label's address)`}>
+      <span>{reg}</span>
+      <input aria-label={`Init ${reg}`} className="mono" value={t} onChange={e => setT(e.target.value)} onBlur={commit} onFocus={e => e.target.select()}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setT(shown); (e.target as HTMLInputElement).blur(); } }} />
+    </label>
+  );
+}
+
+/** A zero-page byte or word of Init: its address (shown by the program's name for it), its value and its size. A value
+ *  past $ff makes it a word; a word cannot start at $ff. */
+function InitZpRow({ z, name, names, bad, warn, onChange, onRemove }: { z: ScriptZpInit; name?: string; names: ReadonlyMap<string, number>; bad: boolean; warn: boolean; onChange: (z: ScriptZpInit) => void; onRemove: () => void }) {
+  const atText = name ?? '$' + h2(z.at), valText = '$' + (z.word ? h4(z.value) : h2(z.value));
+  const [at, setAt] = useState(atText), [val, setVal] = useState(valText);
+  useEffect(() => { setAt(atText); setVal(valText); }, [atText, valText]);
+  const back = () => { setAt(atText); setVal(valText); };
+  const commit = () => {
+    const a = initValue(at, names), v = initValue(val, names);
+    if (a == null || a > 0xff || v == null) { back(); return; }
+    const word = !!z.word || v > 0xff;
+    if (word && a > 0xfe) { back(); return; }
+    const q: ScriptZpInit = { at: a, value: v, ...(word ? { word: true } : {}) };
+    if (q.at === z.at && q.value === z.value && !!q.word === !!z.word) { back(); return; }
+    onChange(q);
+  };
+  const key = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { back(); (e.target as HTMLInputElement).blur(); } };
+  return (
+    <div className={cx('init-zp-row', bad && 'bad', !bad && warn && 'warn')} role="row">
+      <input aria-label="Zero-page address" className="mono" value={at} onChange={e => setAt(e.target.value)} onBlur={commit} onKeyDown={key} onFocus={e => e.target.select()}
+        title={`$${h2(z.at)}${name ? ` (${name})` : ''}${z.word ? ` and $${h2(z.at + 1)}` : ''}: a zero-page address, $00-$ff, or a name of the program's zero page`} />
+      <input aria-label="Zero-page value" className="mono" value={val} onChange={e => setVal(e.target.value)} onBlur={commit} onKeyDown={key} onFocus={e => e.target.select()}
+        title={z.word ? `A word, low byte at $${h2(z.at)} ($${h2(z.value & 0xff)}) and high byte at $${h2(z.at + 1)} ($${h2(z.value >> 8)}): a number or a label (its address)` : 'A byte: a number, or <label / >label; a label or a value past $ff makes it a word'} />
+      <select aria-label="Zero-page size" value={z.word ? 'word' : 'byte'} title="A byte, or a word (two bytes, low byte first: a pointer)"
+        onChange={e => { const w = e.target.value === 'word'; if (w && z.at > 0xfe) { back(); return; } onChange({ at: z.at, value: w ? z.value : z.value & 0xff, ...(w ? { word: true } : {}) }); }}>
+        <option value="byte">byte</option><option value="word">word</option>
+      </select>
+      <button className="icon-btn" aria-label={`Remove zero-page $${h2(z.at)}`} title="Remove it: the run finds what the program has there" onClick={onRemove}><Icon name="x" size={13} /></button>
+    </div>
+  );
+}
+
 function PadRow({ pad, on, bad, warn, onShow, onChange, onRemove }: { pad: ScriptPad; on: boolean; bad: boolean; warn: boolean; onShow: () => void; onChange: (p: ScriptPad) => void; onRemove: () => void }) {
   const [name, setName] = useState(pad.name), [start, setStart] = useState($(pad.start)), [size, setSize] = useState($(pad.size)), [fill, setFill] = useState('$' + h2(pad.fill ?? 0));
   useEffect(() => { setName(pad.name); setStart($(pad.start)); setSize($(pad.size)); setFill('$' + h2(pad.fill ?? 0)); }, [pad]);
@@ -613,7 +752,8 @@ function PadRow({ pad, on, bad, warn, onShow, onChange, onRemove }: { pad: Scrip
   const commit = () => {
     const a = num(start), n = num(size), f = num(fill);
     if (!(a >= 0 && a <= 0xffff) || !(n >= 1 && a + n <= 0x10000) || !(f >= 0 && f <= 255) || !name.trim()) { setName(pad.name); setStart($(pad.start)); setSize($(pad.size)); setFill('$' + h2(pad.fill ?? 0)); return; }
-    const q: ScriptPad = { name: name.trim(), start: a, size: n, ...(f ? { fill: f } : {}) };
+    // its start content goes with it (written in Kick Assembler, ScriptSide assembles it again where it is now)
+    const q: ScriptPad = { name: name.trim(), start: a, size: n, ...(f ? { fill: f } : {}), ...(pad.data ? { data: pad.data } : {}), ...(pad.src ? { src: pad.src } : {}) };
     if (q.name === pad.name && q.start === pad.start && q.size === pad.size && (q.fill ?? 0) === (pad.fill ?? 0)) return;
     // what the last run left belongs to the old place and size
     onChange(q.start === pad.start && q.size === pad.size && pad.bytes ? { ...q, bytes: pad.bytes } : q);
@@ -635,12 +775,16 @@ interface LivePad { name: string; bytes: Uint8Array; before: Uint8Array | null }
 
 /** The right of the output: a scratchpad's bytes, or a change the script made in the program, as hex, code or text,
  *  with what can be done with them. While debugging, the scratchpad as the run has it now (`live`), the bytes the last
- *  step changed marked in the hex. */
-function PadView({ script, mine, would, names, mode, screen, live, onMode, onScreen, onShow, onCopy, onSave, onSaveText }: {
-  script: UserScript; mine: Patch[]; would: Patch[]; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; live: LivePad | null; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
+ *  step changed marked in the hex. A scratchpad that has not run (or whose start content changed since) shows what a
+ *  run starts it with; Edit sets that, Copy to copies it to another scratchpad (or a new one), and Compare sets it
+ *  against another scratchpad or its start with a heat map. */
+function PadView({ script, mine, would, names, mode, screen, live, theme, onMode, onScreen, onShow, onCopy, onSave, onSaveText, onEdit, onMenu, placePad, toast }: {
+  script: UserScript; mine: Patch[]; would: Patch[]; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; live: LivePad | null; theme: string; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
   onShow: ScriptsViewProps['onShow']; onCopy: ScriptsViewProps['onCopy']; onSave: ScriptsViewProps['onSave']; onSaveText: ScriptsViewProps['onSaveText'];
+  onEdit: ScriptsViewProps['onEdit']; onMenu: ScriptsViewProps['onMenu']; placePad: (size: number, near?: Addr) => Addr; toast: ScriptsViewProps['toast'];
 }) {
-  const { shown } = useScripts();
+  const { shown, cmpWith, set } = useScripts();
+  const [editing, setEditing] = useState<string | null>(null);
   // 16 bytes a hex row where they fit, else 8
   const [wide, setWide] = useState(true);
   const [view, setView] = useState<HTMLDivElement | null>(null);
@@ -653,14 +797,47 @@ function PadView({ script, mine, would, names, mode, screen, live, onMode, onScr
   // a change the last run (in safe mode) would make: not in the program
   const preview = shown.kind === 'would' && !!patch;
   const pad = !patch ? (shown.kind === 'pad' ? script.pads[shown.i] : undefined) ?? script.pads[0] : undefined;
+  const pi = pad ? script.pads.indexOf(pad) : -1;
   const now = !patch && pad && live && live.name === pad.name && live.bytes.length === pad.size ? live : null;
-  const bytes = patch ? patch.bytes : now ? now.bytes : pad?.bytes && pad.bytes.length === pad.size ? pad.bytes : null;
+  // a scratchpad without a run's bytes: what a run starts it with
+  const atStart = !patch && !!pad && !now && !(pad.bytes && pad.bytes.length === pad.size);
+  const startBytes = useMemo(() => (pad ? padStart(pad) : null), [pad]);
+  const bytes = patch ? patch.bytes : now ? now.bytes : pad ? (atStart ? startBytes : pad.bytes!) : null;
   const at = patch ? patch.start : pad?.start ?? 0;
+  const showAs = mode === 'compare' && !pad ? 'hex' : mode;
+  // what Compare sets the scratchpad against: the scratchpad picked (by name), else its start, else the first other
+  const others = pad ? script.pads.filter(p => p !== pad) : [];
+  const vs = cmpWith === '@start' || others.some(p => p.name === cmpWith) ? cmpWith! : others[0]?.name ?? '@start';
+  const vsPad = vs === '@start' ? null : others.find(p => p.name === vs) ?? null;
+  const vsBytes = useMemo(() => (!pad ? null : vsPad ? padNow(vsPad) : startBytes), [pad, vsPad, startBytes]);
+  /** the scratchpad's bytes as shown, copied to scratchpad `j` (its start content, cut to its size) or to a new one */
+  const copyTo = (j: number | null) => {
+    if (!pad || !bytes) return;
+    const from = bytes.slice();
+    if (j == null) {
+      const name = padName(script.pads), start = placePad(pad.size, pad.start + pad.size);
+      onEdit(script.id, { pads: [...script.pads, { name, start, size: pad.size, ...(pad.fill ? { fill: pad.fill } : {}), data: from }] }, `Copy scratchpad ${pad.name} to a new one, ${name}`);
+      toast(`${pad.name} copied to the new scratchpad ${name} at $${h4(start)}: a run starts it with these ${from.length} bytes`, 'ok');
+      return;
+    }
+    const t = script.pads[j], { bytes: _b, src: _s, ...keep } = t;
+    onEdit(script.id, { pads: script.pads.map((x, k) => (k === j ? { ...keep, data: from.slice(0, t.size) } : x)) }, `Copy scratchpad ${pad.name} to ${t.name}`);
+    toast(`${pad.name} copied to ${t.name}: a run starts it with ${from.length > t.size ? `the first ${t.size} of the ${from.length} bytes (it holds no more)` : `these ${from.length} bytes`}`, from.length > t.size ? 'warn' : 'ok');
+  };
+  /** what the editor set: the scratchpad's start content and how it was written; what the last run left goes (a run
+   *  starts from this now) */
+  const setStart = (data: Uint8Array | null, src: ScriptPadSource | null) => {
+    if (!pad) return;
+    const { bytes: _b, data: _d, src: _s, ...keep } = pad;
+    onEdit(script.id, { pads: script.pads.map((x, k) => (k === pi ? { ...keep, ...(data ? { data } : {}), ...(src ? { src } : {}) } : x)) },
+      data ? `Set what scratchpad ${pad.name} starts with` : `Clear what scratchpad ${pad.name} starts with`);
+    setEditing(null);
+  };
   const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a)) m.set(a, n); return m; }, [names]);
   // the bytes the last step changed: their rows of the hex written with the bytes marked
   const before = now?.before && now.before.length === now.bytes.length ? now.before : null;
   const marked = useMemo(() => {
-    if (!bytes || !before || mode !== 'hex' || !bytes.some((b, i) => b !== before[i])) return null;
+    if (!bytes || !before || showAs !== 'hex' || !bytes.some((b, i) => b !== before[i])) return null;
     const per = wide ? 16 : 8, out: React.ReactNode[] = [];
     for (let i = 0; i < bytes.length; i += per) {
       const row = Array.from(bytes.subarray(i, i + per)), chars = row.map(b => monitorChar(b, screen)?.ch ?? '.').join('');
@@ -668,21 +845,23 @@ function PadView({ script, mine, would, names, mode, screen, live, onMode, onScr
       out.push(<span key={i}>{`${$(at + i)}  `}{row.flatMap((b, j) => [j ? ' ' : '', <span key={j} className={b !== before[i + j] ? 'pad-chg' : undefined}>{h2(b)}</span>])}{' '.repeat(per * 3 - 1 - (row.length * 3 - 1))}{`  ${chars}\n`}</span>);
     }
     return out;
-  }, [bytes, before, at, mode, screen, wide]);
+  }, [bytes, before, at, showAs, screen, wide]);
   const text = useMemo(() => {
-    if (!bytes) return '';
+    if (!bytes || showAs === 'compare') return '';
     const out: string[] = [];
-    if (mode === 'code') for (const l of disassembleBytes(bytes, at, byAddr)) out.push(`${$(l.a)}  ${Array.from(bytes.subarray(l.a - at, l.a - at + l.n), b => h2(b)).join(' ').padEnd(9)} ${byAddr.has(l.a) ? `${byAddr.get(l.a)}: ` : ''}${l.text}`);
+    if (showAs === 'code') for (const l of disassembleBytes(bytes, at, byAddr)) out.push(`${$(l.a)}  ${Array.from(bytes.subarray(l.a - at, l.a - at + l.n), b => h2(b)).join(' ').padEnd(9)} ${byAddr.has(l.a) ? `${byAddr.get(l.a)}: ` : ''}${l.text}`);
     else {
-      const per = mode === 'hex' ? (wide ? 16 : 8) : 32;
+      const per = showAs === 'hex' ? (wide ? 16 : 8) : 32;
       for (let i = 0; i < bytes.length; i += per) {
         const row = Array.from(bytes.subarray(i, i + per));
         const chars = row.map(b => monitorChar(b, screen)?.ch ?? '.').join('');
-        out.push(mode === 'hex' ? `${$(at + i)}  ${row.map(b => h2(b)).join(' ').padEnd(per * 3 - 1)}  ${chars}` : `${$(at + i)}  ${chars}`);
+        out.push(showAs === 'hex' ? `${$(at + i)}  ${row.map(b => h2(b)).join(' ').padEnd(per * 3 - 1)}  ${chars}` : `${$(at + i)}  ${chars}`);
       }
     }
     return out.join('\n');
-  }, [bytes, at, mode, screen, byAddr, wide]);
+  }, [bytes, at, showAs, screen, byAddr, wide]);
+  // the editor is for the scratchpad it was opened on
+  const isEditing = !!pad && editing === `${script.id}/${pi}`;
   if (!pad && !patch) return <div className="scr-view" ref={setView}><div className="empty small">Run the script: what it changes in the program shows here. A scratchpad (Add) keeps data outside the program.</div></div>;
   const title = patch ? `${patch.name} · ${rangeText({ start: patch.start, end: patchEnd(patch) })} · ${plural(patch.bytes.length, 'byte')}${patch.off ? ' · left out' : ''}` : `${pad!.name} · ${rangeText({ start: pad!.start, end: pad!.start + pad!.size })} · ${pad!.size} bytes`;
   const fileName = `${script.name}_${patch ? h4(patch.start) : pad!.name}`.replace(/[^A-Za-z0-9_.-]+/g, '_');
@@ -694,22 +873,43 @@ function PadView({ script, mine, would, names, mode, screen, live, onMode, onScr
         {now && <span className="pill mid scr-live" title="Debugging: the scratchpad as the run has it now; what the last step changed is marked in the hex">now, as the run has it</span>}
         {preview && <span className="pill scr-live scr-would-pill" title="Safe mode: the last run would write these bytes here; the program still has its own (Write into the program puts these in)"><Icon name="shield" size={11} />would change: not in the program</span>}
         {patch && <span className="muted small" title={`The program had: ${Array.from(patch.old.subarray(0, 64), b => h2(b)).join(' ')}${patch.old.length > 64 ? ' …' : ''}`}>{differ} differ from the original</span>}
+        {atStart && !isEditing && <span className="pill scr-start-pill" title={pad!.data?.length ? `What a run starts it with: ${pad!.data.length} bytes set (Edit), the rest its fill. It has not run since` : 'What a run starts it with: its fill (Edit sets what it holds)'}>at the start{pad!.data?.length ? ` · ${pad!.data.length} set` : ''}</span>}
         <span className="grow" />
-        <div className="seg" role="group" aria-label="Show as">
-          {(['hex', 'code', 'text'] as const).map(m => <button key={m} className={cx(mode === m && 'on')} aria-pressed={mode === m} onClick={() => onMode(m)}>{m === 'hex' ? 'Hex' : m === 'code' ? 'Code' : 'Text'}</button>)}
-        </div>
-        {mode !== 'code' && <div className="seg" role="group" aria-label="Text as"><button className={cx(!screen && 'on')} aria-pressed={!screen} onClick={() => onScreen(false)} title="The bytes as PETSCII">PETSCII</button><button className={cx(screen && 'on')} aria-pressed={screen} onClick={() => onScreen(true)} title="The bytes as screen codes">Screen</button></div>}
+        {isEditing ? <span className="pill mid scr-edit-pill">editing the start</span> : <>
+          {pad && <button className="btn small ghost scr-pad-edit-btn" onClick={() => setEditing(`${script.id}/${pi}`)} title="Set what the scratchpad holds when a run starts: Kick Assembler (code and data), hex or text"><Icon name="pencil" size={13} /><span className="lbl">Edit start</span></button>}
+          <div className="seg" role="group" aria-label="Show as">
+            {(['hex', 'code', 'text', ...(pad ? ['compare' as const] : [])] as const).map(m => <button key={m} className={cx(showAs === m && 'on')} aria-pressed={showAs === m} onClick={() => onMode(m)}
+              title={m === 'compare' ? 'Set the scratchpad against another one, or against what a run starts it with: a heat map shows where the bytes differ' : undefined}>{m === 'hex' ? 'Hex' : m === 'code' ? 'Code' : m === 'text' ? 'Text' : 'Compare'}</button>)}
+          </div>
+          {showAs === 'compare' ? <select className="scr-cmp-with" aria-label="Compare with" value={vs} onChange={e => set({ cmpWith: e.target.value })} title="What the scratchpad is set against">
+            {others.map(p => <option key={p.name} value={p.name}>with {p.name}</option>)}
+            <option value="@start">with its start</option>
+          </select>
+            : showAs !== 'code' && <div className="seg" role="group" aria-label="Text as"><button className={cx(!screen && 'on')} aria-pressed={!screen} onClick={() => onScreen(false)} title="The bytes as PETSCII">PETSCII</button><button className={cx(screen && 'on')} aria-pressed={screen} onClick={() => onScreen(true)} title="The bytes as screen codes">Screen</button></div>}
+        </>}
       </div>
-      {bytes ? <pre className="scr-dump mono" aria-label={`${title} as ${mode}`}>{marked ?? text}</pre>
+      {isEditing ? <PadEditor key={`${script.id}/${pi}`} pad={pad!} names={names} onSet={setStart} onCancel={() => setEditing(null)} />
+        : showAs === 'compare' && bytes && vsBytes ? <PadCompare a={bytes} b={vsBytes} aName={pad!.name} bName={vsPad ? vsPad.name : 'start'} at={at} theme={theme} />
+        : bytes ? <pre className="scr-dump mono" aria-label={`${title} as ${showAs}`}>{marked ?? text}</pre>
         : <div className="empty small">Empty until the script runs: Run fills it.</div>}
-      {bytes && <div className="scr-view-actions">
+      {bytes && !isEditing && <div className="scr-view-actions">
         <button className="btn small" onClick={() => onCopy(byteLines(bytes).join('\n'), `${bytes.length} bytes as .byte lines`)} title="Copy the bytes as Kick Assembler .byte lines"><Icon name="copy" size={13} /><span className="lbl">Copy as .byte</span></button>
         {patch ? <>
           <span className="grow" />
           <button className="btn small" onClick={() => onShow(patch.start, patchEnd(patch))} title="Select these bytes in the listing"><Icon name="target" size={13} /><span className="lbl">Show in listing</span></button>
         </> : <>
-          <button className="btn small" onClick={() => onSaveText(`${fileName}.txt`, mode === 'text' ? logText(bytes, pad!.fill ?? 0, screen) : text + '\n')}
-            title={mode === 'text' ? `Save the text as a log file: ${screen ? 'screen codes, 40 to a line' : 'PETSCII, a line to each RETURN ($0d)'}, without the fill after it` : `Save what is shown (${mode === 'hex' ? 'the hex dump' : 'the code'}) as a text file`}><Icon name="download" size={13} /><span className="lbl">Save </span>.txt…</button>
+          <button className="btn small scr-copy-to" onClick={e => {
+            if (!others.length) { copyTo(null); return; }
+            const r = e.currentTarget.getBoundingClientRect();
+            onMenu(r.left, r.bottom + 2, [
+              { header: `Copy ${pad!.name} to` },
+              ...script.pads.flatMap((p, j): MenuItem[] => (p === pad ? [] : [{ label: `${p.name} ($${h4(p.start)}, ${p.size} bytes)${p.size < bytes.length ? ': only its first bytes' : ''}`, run: () => copyTo(j) }])),
+              { sep: true },
+              { label: 'A new scratchpad (a copy)', run: () => copyTo(null) },
+            ]);
+          }} title={others.length ? 'Copy these bytes to another scratchpad, or to a new one: a run starts it with them' : 'Copy these bytes to a new scratchpad: a run starts it with them'}><Icon name="copy" size={13} /><span className="lbl">{others.length ? 'Copy to…' : 'Copy to a new pad'}</span></button>
+          {showAs !== 'compare' && <button className="btn small" onClick={() => onSaveText(`${fileName}.txt`, showAs === 'text' ? logText(bytes, pad!.fill ?? 0, screen) : text + '\n')}
+            title={showAs === 'text' ? `Save the text as a log file: ${screen ? 'screen codes, 40 to a line' : 'PETSCII, a line to each RETURN ($0d)'}, without the fill after it` : `Save what is shown (${showAs === 'hex' ? 'the hex dump' : 'the code'}) as a text file`}><Icon name="download" size={13} /><span className="lbl">Save </span>.txt…</button>}
           <button className="btn small" onClick={() => onSave(`${fileName}.bin`, bytes, false, at)} title="Save the bytes as a binary file"><Icon name="download" size={13} /><span className="lbl">Save </span>.bin…</button>
           <button className="btn small" onClick={() => onSave(`${fileName}.prg`, bytes, true, at)} title={`Save the bytes as a PRG that loads at $${h4(at)}`}><Icon name="download" size={13} /><span className="lbl">Save </span>.prg…</button>
         </>}

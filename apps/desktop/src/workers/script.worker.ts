@@ -4,7 +4,7 @@ import * as Comlink from 'comlink';
 import { runScript, type ScriptEnv, type ScriptRun, type UserScript } from '@mimir/core';
 
 const api = {
-  run(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'>): ScriptRun {
+  run(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'>): ScriptRun {
     return runScript(env, script);
   },
 };

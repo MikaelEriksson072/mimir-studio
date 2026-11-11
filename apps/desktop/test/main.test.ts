@@ -338,21 +338,29 @@ describe('schemas', () => {
   });
 
   it('reads the user scripts with what their scratchpads hold, and older files without them', () => {
-    const script = { id: 's1', name: 'decrypt', lang: 'kickass' as const, source: '* = $c000\nstart: rts', safe: true, pads: [{ name: 'pad1', start: 0xc800, size: 4, bytes: new Uint8Array([1, 2, 3, 4]) }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] };
+    const init = { a: 0x10, x: 3, p: 0x25, zp: [{ at: 0xfb, value: 0x0830, word: true }, { at: 0x02, value: 0x7f }] };
+    const script = { id: 's1', name: 'decrypt', lang: 'kickass' as const, source: '* = $c000\nstart: rts', safe: true, init, pads: [{ name: 'pad1', start: 0xc800, size: 4, bytes: new Uint8Array([1, 2, 3, 4]) }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff, data: new Uint8Array([9, 8]), src: { form: 'hex' as const, text: '09 08' } }] };
     // what a run changed in the program: a patch that names the script
     const patch = { id: 'p1', name: 'decrypt', start: 0x0900, end: 0x0902, source: '.byte $01, $02', fill: 'keep' as const, over: false, bytes: new Uint8Array([1, 2]), old: new Uint8Array([3, 4]), script: 's1' };
     const p = { ...demoProject(), userScripts: [script], patches: [patch] };
     const json = JSON.parse(JSON.stringify(serializeProject(p)));
     const back = deserializeProject(serializedProjectSchema.parse(json) as SerializedProject);
-    expect(back.userScripts?.[0]).toMatchObject({ id: 's1', name: 'decrypt', lang: 'kickass', source: script.source, safe: true, pads: [{ name: 'pad1', start: 0xc800, size: 4 }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] });
+    expect(back.userScripts?.[0]).toMatchObject({ id: 's1', name: 'decrypt', lang: 'kickass', source: script.source, safe: true, init, pads: [{ name: 'pad1', start: 0xc800, size: 4 }, { name: 'pad2', start: 0xc900, size: 16, fill: 0xff }] });
     expect(back.patches[0]).toMatchObject({ name: 'decrypt', script: 's1' });
     expect([...back.userScripts![0].pads[0].bytes!]).toEqual([1, 2, 3, 4]);
+    // what a scratchpad starts with, and how the user wrote it
+    expect([...back.userScripts![0].pads[1].data!]).toEqual([9, 8]);
+    expect(back.userScripts![0].pads[1].src).toEqual({ form: 'hex', text: '09 08' });
     delete json.userScripts;
     expect(serializedProjectSchema.parse(json).userScripts).toBeUndefined();
     expect(projectSchema.safeParse(p).success).toBe(true);
     // a scratchpad past $ffff, or bytes not as many as it holds
     expect(projectSchema.safeParse({ ...p, userScripts: [{ ...script, pads: [{ name: 'x', start: 0xfff0, size: 0x20 }] }] }).success).toBe(false);
     expect(projectSchema.safeParse({ ...p, userScripts: [{ ...script, pads: [{ name: 'x', start: 0xc000, size: 8, bytes: new Uint8Array(4) }] }] }).success).toBe(false);
+    // an init with a register past $ff, a zero-page word at $ff, or a byte with a word's value
+    expect(projectSchema.safeParse({ ...p, userScripts: [{ ...script, init: { a: 0x100 } }] }).success).toBe(false);
+    expect(projectSchema.safeParse({ ...p, userScripts: [{ ...script, init: { zp: [{ at: 0xff, value: 1, word: true }] } }] }).success).toBe(false);
+    expect(projectSchema.safeParse({ ...p, userScripts: [{ ...script, init: { zp: [{ at: 0x10, value: 0x100 }] } }] }).success).toBe(false);
   });
 
   it('reads the empty lines the user inserted, and older files without them', () => {

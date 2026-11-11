@@ -2,28 +2,58 @@
  * (its scratchpads and its changes to the program are kept in the project, the rest of a run is not), the one running
  * and the output's height; and the library of scripts, which every project can take a copy of (kept by the app). */
 import { create } from 'zustand';
-import type { Patch, ScriptLang, ScriptPad, ScriptRun, ScriptWriteFailure, UserScript } from '@mimir/core';
+import { b64dec, b64enc, tidyInit, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
 import { store } from '../lib/util';
 
 /** what the output shows: a scratchpad (by index), one of the script's changes to the program (its patch's id) or one
  *  a run in safe mode would make (by index in its `would`) */
 export type ScriptShown = { kind: 'pad'; i: number } | { kind: 'patch'; id: string } | { kind: 'would'; i: number };
-export type PadMode = 'hex' | 'code' | 'text';
+/** how the output shows a scratchpad or a change: as hex, code or text, or (a scratchpad) compared with another */
+export type PadMode = 'hex' | 'code' | 'text' | 'compare';
 
 /** a run kept to show; `safe`: it ran in safe mode, so nothing went into the program, and `would` holds the patches it
  *  would have written (`failed`: what could not have been) */
 export interface ScriptRunKept { run: ScriptRun; source: string; at: number; failed: ScriptWriteFailure[]; safe?: boolean; would?: Patch[] }
 
-/** a script in the library: its code and its scratchpads (without what they held), and whether it runs in safe mode */
-export interface LibraryScript { name: string; lang: ScriptLang; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean }
+/** a script in the library: its code and its scratchpads (without what they held), whether it runs in safe mode and
+ *  what its runs start with */
+export interface LibraryScript { name: string; lang: ScriptLang; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit }
 
 const LIBRARY_KEY = 'kr.scriptLibrary';
 const isPad = (p: unknown): p is Omit<ScriptPad, 'bytes'> => !!p && typeof (p as ScriptPad).name === 'string' && Number.isInteger((p as ScriptPad).start) && Number.isInteger((p as ScriptPad).size);
+const isByte = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xff;
+/** an init as the library keeps it, when it is one (what is not a byte, or not in the zero page, left out) */
+const readInit = (v: unknown): ScriptInit | null => {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>, zp = Array.isArray(o.zp) ? o.zp : [];
+  return tidyInit({
+    ...(isByte(o.a) ? { a: o.a } : {}), ...(isByte(o.x) ? { x: o.x } : {}), ...(isByte(o.y) ? { y: o.y } : {}), ...(isByte(o.p) ? { p: o.p } : {}),
+    zp: zp.filter((z): z is ScriptZpInit => !!z && isByte(z.at) && Number.isInteger(z.value) && z.value >= 0 && (z.word === true ? z.at <= 0xfe && z.value <= 0xffff : isByte(z.value))),
+  });
+};
+/** how the user wrote a scratchpad's start content, when it is that */
+const readSrc = (v: unknown): ScriptPadSource | null => {
+  const o = v as Partial<ScriptPadSource> | null;
+  return o && (o.form === 'asm' || o.form === 'hex' || o.form === 'text') && typeof o.text === 'string' ? { form: o.form, text: o.text, ...(o.screen === true ? { screen: true } : {}) } : null;
+};
+const readData = (v: unknown): Uint8Array | null => { try { return typeof v === 'string' && v ? b64dec(v) : null; } catch { return null; } };
 const readLibrary = (): LibraryScript[] => {
   const v = store.get<unknown>(LIBRARY_KEY, []);
   return Array.isArray(v) ? v.filter((s): s is LibraryScript => !!s && typeof s.name === 'string' && s.name.length > 0 && typeof s.source === 'string' && Array.isArray(s.pads) && s.pads.every(isPad))
-    .map(s => ({ name: s.name, lang: 'kickass', source: s.source, pads: s.pads.map(({ name, start, size, fill }) => ({ name, start, size, ...(fill ? { fill } : {}) })), saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}) })) : [];
+    .map(s => {
+      const init = readInit(s.init);
+      return {
+        name: s.name, lang: 'kickass', source: s.source, saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}), ...(init ? { init } : {}),
+        pads: s.pads.map(({ name, start, size, fill, data, src }) => {
+          const d = readData(data), w = readSrc(src);
+          return { name, start, size, ...(fill ? { fill } : {}), ...(d ? { data: d } : {}), ...(w ? { src: w } : {}) };
+        }),
+      };
+    }) : [];
 };
+/** the library as localStorage keeps it: a scratchpad's start content as base64 */
+const storeLibrary = (library: LibraryScript[]) =>
+  store.set(LIBRARY_KEY, library.map(s => ({ ...s, pads: s.pads.map(({ data, ...p }) => ({ ...p, ...(data ? { data: b64enc(data) } : {}) })) })));
 
 interface ScriptsState {
   selected: string | null;
@@ -36,6 +66,11 @@ interface ScriptsState {
   outH: number;
   /** the output's height while debugging (lower: the code and the debugger's panel need the room) */
   dbgOutH: number;
+  /** the output below the editor folded down to its bar (the editor takes the room) */
+  outFolded: boolean;
+  /** what Compare compares the shown scratchpad with: another scratchpad (its name), or `@start`, what a run starts it
+   *  with (what the last run changed in it) */
+  cmpWith: string | null;
   library: LibraryScript[];
   /** a line of the shown script to go to once its editor is there (a click on a script's mark in the listing) */
   gotoLine: number | null;
@@ -44,25 +79,25 @@ interface ScriptsState {
   setBps: (id: string, lines: number[]) => void;
   set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
-  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'source' | 'pads' | 'safe'>) => boolean;
+  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'source' | 'pads' | 'safe' | 'init'>) => boolean;
   removeFromLibrary: (name: string) => void;
 }
 
 export const useScripts = create<ScriptsState>((set, get) => ({
-  selected: null, runs: {}, running: null, gotoLine: null, shown: { kind: 'pad', i: 0 }, mode: 'hex', screen: false, outH: 300, dbgOutH: 170,
+  selected: null, runs: {}, running: null, gotoLine: null, shown: { kind: 'pad', i: 0 }, mode: 'hex', screen: false, outH: 300, dbgOutH: 170, outFolded: false, cmpWith: null,
   library: readLibrary(),
   bps: {},
   setBps: (id, lines) => set(s => ({ bps: { ...s.bps, [id]: lines } })),
   set: s => set(s),
   saveToLibrary: s => {
     const lib = get().library, had = lib.some(x => x.name.toLowerCase() === s.name.toLowerCase());
-    const entry: LibraryScript = { name: s.name, lang: s.lang, source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}) };
+    const entry: LibraryScript = { name: s.name, lang: s.lang, source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}) };
     const library = [...lib.filter(x => x.name.toLowerCase() !== s.name.toLowerCase()), entry].sort((a, b) => a.name.localeCompare(b.name));
-    store.set(LIBRARY_KEY, library); set({ library });
+    storeLibrary(library); set({ library });
     return had;
   },
   removeFromLibrary: name => {
     const library = get().library.filter(x => x.name !== name);
-    store.set(LIBRARY_KEY, library); set({ library });
+    storeLibrary(library); set({ library });
   },
 }));

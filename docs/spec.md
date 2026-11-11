@@ -1950,7 +1950,10 @@ $06, $08` i `.asm`-filen efter en körning.
   `* =` gäller som den står.
 - **Kontrollen** (`checkScript`) assemblerar koden med den inbyggda assemblern med programmets namn (som listningen
   skriver dem), hårdvarunamnen och scratchpadsen (`pad1` och `pad1_end`) till hands. Ett namn koden själv definierar
-  vinner. Toolbarens bricka säger bara om skriptet kan köras, *Ready to run*, eller vad som är fel, *Line 2: Unknown
+  vinner. Mimirs egna namn slutar på sin adress (`colors_0939`, `ptr_fb`): ett sådant namn som programmet inte längre
+  har, därför att analysen döpt om byten efter att en körning ändrat dem (`colors_0939` blir `tbl_0939` när tabellen
+  inte längre håller färger), hittar ändå sin adress när programmet har ett namn där (`withAddressNames`), så att ett
+  skript inte slutar gå att assemblera av det dess egen körning gjorde. Toolbarens bricka säger bara om skriptet kan köras, *Ready to run*, eller vad som är fel, *Line 2: Unknown
   symbol "x"* (*2 errors · …* när de är fler); var koden ligger och varifrån den körs står i verktygstipset. Felen
   står också som markeringar på raderna och i listan *Problems* (ett klick går till raden). Fel är assemblerns, att
   koden saknas, kod eller scratchpad i nollsidan eller stacken (`$0000–$01ff`, som skriptet delar med programmet),
@@ -1971,6 +1974,18 @@ $06, $08` i `.asm`-filen efter en körning.
   Stacken (`$0100–$01ff`) är densamma för skriptet och programmet: körningen börjar med SYS-returen på `$01fe–$01ff`
   och S = `$fd`, och vid varje JSR antecknas vem som gjorde den (med stackpekaren som nyckel), så att ett RTS går
   tillbaka till skriptets eller programmets kod.
+- **Init** (överst i utdatat, `UserScript.init`, `ScriptInit`) är det körningen börjar med utöver programmets minne:
+  **A, X och Y** (fält med `$aa`, `170`, `%1010` eller `<etikett` / `>etikett`, låga och höga byten av en adress; mer
+  än en byte tas inte), **flaggorna** N V D I Z C (ett klick sätter eller nollar en; *P=$25* säger statusregistret)
+  och **byte i nollsidan** (*+ Zero page*: adress, värde och storlek *byte* eller *word*, ett word med låga byten
+  först, en pekare). Adressen visas med programmets namn för den (`ptr_fb`) och kan skrivas som namn; värdet kan vara
+  ett namn (en etiketts adress), och ett värde över `$ff` gör raden till ett word (ett word kan inte börja på `$ff`).
+  Utan init börjar körningen med A, X och Y 0 och bara I satt (`SCRIPT_P` = `$24`), som förut. Nollsidan är
+  programmets: det som sätts där finns också för programmets kod som skriptet anropar, det ligger där innan körningen
+  börjar (det räknas inte som en ändring av körningen) och går som allt i nollsidan aldrig in i programmet. Felsökaren
+  börjar med samma register. `checkScript` säger fel (ett register som inte är en byte, en rad utanför nollsidan, ett
+  för stort värde) och varnar för en byte som sätts två gånger (den senare gäller). Bara det som skiljer sig från en
+  körning utan init sparas (`tidyInit`), med skriptet i projektet och i biblioteket; *Reset* tar bort allt.
 - **Felsökaren:** *Debug* (eller `F8`) startar körningen och stannar före första instruktionen. Verktygsraden har då
   *Continue* (`Ctrl+Enter`: vidare till slutet eller nästa brytpunkt), *Step* (`F8`: en instruktion, in i en JSR),
   *Over* (`F6`: en JSR körs tills den återvänder), *Out* (`Shift+F6`: tills rutinen den är i återvänder; överst till
@@ -2023,6 +2038,39 @@ $06, $08` i `.asm`-filen efter en körning.
   laddadress) eller **som loggfil**, *Save .txt…*: i Text-läget tecknen utan adresser, utan fyllnaden efter det sista
   som skrevs, PETSCII med en rad per RETURN (`$0d`) eller skärmkoder 40 tecken en rad; i de andra lägena det som
   visas.
+- **Utdatat fälls ner:** en rad, *Output*, ligger mellan editorn och utdatat (Init, *In the program*, scratchpadsen,
+  *Last run* och visningen). Ett klick fäller ner utdatat till raden så att koden får hela höjden, och ett klick till
+  fäller upp det med samma höjd som förut; nedfälld säger raden vad utdatat håller (*Init set · 2 scratchpads · last
+  run: returned*) och hur många fel koden har. När fönstret är lågt ger utdatat vika först: koden behåller 140 px.
+- **Vad en scratchpad börjar med** (`ScriptPad.data`, och `ScriptPad.src` för hur det skrevs): utan det börjar
+  scratchpaden med sin fill, med det börjar den med de byten från sin första byte och fill efter dem. *Edit start* i
+  visningen öppnar en editor med tre former: **Kick Assembler** (assembleras vid scratchpadens adress med programmets
+  namn: `.byte`, `.word`, `.text`, `.fill`, instruktioner, egna etiketter), **Hex** (`01 02 ff`, `$01,$02`, `0102ff`; en
+  rad som börjar med en adress, som en hexdump, lägger sina byte där och dess textkolumn räknas inte) och **Text**
+  (PETSCII med radslut som RETURN, eller skärmkoder med radslut som mellanslag till nästa rad om 40). Det skrivna läses
+  medan man skriver (*6 of 64 bytes from $3800, the rest $00*, eller felet och dess rad) och *Set* (`Ctrl+Enter`)
+  sparar; en annan form gör om det skrivna till den. *Clear* tar bort det. Ändras startinnehållet glöms det senaste
+  körningen lämnade i scratchpaden, och visningen visar vad en körning börjar med (*at the start · 6 set*) tills den
+  körs igen. Flyttas scratchpaden assembleras Kick Assembler-innehåll om på den nya adressen. `padData` läser formerna
+  och `padText` skriver byte i dem; sparas i projektet (base64) och i biblioteket. `checkScript` varnar när
+  startinnehållet är längre än scratchpaden.
+- **Från .asm till en scratchpad:** högerklick i listningen (markeringen, ett blockhuvud: hela blocket, annars raden)
+  eller i källkoden (Monacos meny, *Copy into a scratchpad…*: de markerade raderna, annars raden) → *Copy N bytes into a
+  scratchpad* → en av skriptens scratchpads (*pad1 of "script"*, skärs till dess storlek), *A new scratchpad in
+  "script"* (lika stor som byten, placerad som *Add*) eller *A new script with a scratchpad*. Byten blir scratchpadens
+  startinnehåll och fliken Scripts visar den.
+- **Scratchpad till scratchpad:** *Copy to…* i visningen kopierar byten som visas (det körningen lämnade, annars
+  startinnehållet) till en annan av skriptets scratchpads som dess startinnehåll, eller till en ny (*A new scratchpad
+  (a copy)*, samma storlek och fill). Har skriptet ingen annan heter knappen *Copy to a new pad* och gör kopian direkt.
+  Så sparas ett resultat inför nästa körning: en körning som inte skriver i kopian lämnar den som den var.
+- **Compare** (ett fjärde visningsläge för scratchpads) jämför scratchpaden byte för byte med en annan (*with pad2*)
+  eller med vad en körning börjar den med (*with its start*: vad körningen ändrade i den). Överst siffrorna (*2 of 64
+  bytes differ (3.1 %) in 2 places, the first at +$0001 ($3801)*), sedan en **värmekarta** med en cell per byte, 16 till
+  256 i bredd så att cellerna blir så stora som ytan tillåter (2–18 px, annars 1–2 px och rullning; `heatLayout`):
+  lika byte är gråa, olika röda, starkare ju fler bitar som skiljer, och byte bara den ena har är blå. Pekaren på en
+  cell visar adressen, båda värdena och hur många bitar som skiljer; ett klick går till cellens rad. Bredvid kartan
+  (under den när visningen är smal) står raderna om 16 byte där något skiljer, båda scratchpadsens byte under varandra
+  med de olika markerade, högst 300 åt gången runt raden som klickats.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

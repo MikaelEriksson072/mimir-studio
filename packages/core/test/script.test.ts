@@ -1,6 +1,6 @@
 /* User scripts (spec 10.3): checked with the program's names, run on a copy of its memory, scratchpads kept. */
 import { describe, expect, it } from 'vitest';
-import { analyze, checkScript, createProject, deserializeProject, disassembleBytes, freePlace, linkName, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
+import { analyze, checkScript, createProject, deserializeProject, disassembleBytes, freePlace, initEmpty, linkName, padData, padDiff, padNow, padStart, padText, SCRIPT_P, tidyInit, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
 import { fromSource } from './helpers/programs';
 
 const KEY = 0x5a;
@@ -122,6 +122,96 @@ describe('user scripts', () => {
     const run = runScript(e, script('* = $c000\nstart: lda #<table\n sta $fb\n lda #>table\n sta $fc\n jsr sub\n rts\nsub: ldy #0\n lda #5\n sta ($fb),y\n rts', []));
     expect(run.changes).toEqual([expect.objectContaining({ start: 0x1000, end: 0x1001 })]);
     expect(run.other).toBeGreaterThanOrEqual(2);
+  });
+
+  it('start with the registers, the flags and the zero-page bytes their init gives; the init is no change of the run', () => {
+    // A, X and Y from the init, the carry added in, a pointer in the zero page that points at the program's data
+    const s: UserScript = {
+      ...script(['* = $c000', 'start: sta data', '        stx data+1', '        lda #0', '        adc #0', '        sta ($fb),y', '        lda $02', '        sta data+3', '        rts'].join('\n'), []),
+      init: { a: 0xaa, x: 0x03, y: 0x02, p: SCRIPT_P | 0x01, zp: [{ at: 0xfb, value: 0x0830, word: true }, { at: 0x02, value: 0x7f }] },
+    };
+    expect(checkScript(env, s).problems).toEqual([]);
+    const m = new ScriptMachine(env, s);
+    expect([m.cpu.a, m.cpu.x, m.cpu.y, m.cpu.c, m.cpu.i, m.cpu.pc]).toEqual([0xaa, 0x03, 0x02, 1, 1, 0xc000]);
+    expect([m.mem[0xfb], m.mem[0xfc], m.mem[0x02]]).toEqual([0x30, 0x08, 0x7f]);
+    const run = runScript(env, s);
+    expect(run.end).toBe('rts');
+    expect(run.changes).toEqual([expect.objectContaining({ start: 0x0830, end: 0x0834 })]);
+    expect([...run.changes[0].bytes]).toEqual([0xaa, 0x03, 0x01, 0x7f]);
+    // the init's zero page was there before the run: not a change of its
+    expect(run.other).toBe(0);
+    // without an init: A, X and Y 0, only I set
+    const plain = new ScriptMachine(env, script('* = $c000\nstart: rts', []));
+    expect([plain.cpu.a, plain.cpu.x, plain.cpu.y, plain.cpu.p]).toEqual([0, 0, 0, SCRIPT_P]);
+  });
+
+  it('say what is wrong with an init, and keep only what differs from a run without one', () => {
+    const s = (init: UserScript['init']) => checkScript(env, { ...script('* = $c000\nstart: rts', []), init });
+    expect(s({ a: 0x100 }).problems.map(p => p.msg)).toEqual(['Init: A must be a byte ($00-$ff).']);
+    expect(s({ zp: [{ at: 0xff, value: 0x1234, word: true }] }).problems).toEqual([expect.objectContaining({ level: 'error', zp: 0, msg: expect.stringContaining('$00ff is not in the zero page: a word goes at $00-$fe') })]);
+    expect(s({ zp: [{ at: 0x10, value: 0x1234 }] }).problems.map(p => p.msg)).toEqual(['Init: the value for $10 must be a byte ($00-$ff); a word takes two.']);
+    const twice = s({ zp: [{ at: 0xfb, value: 0x1000, word: true }, { at: 0xfc, value: 1 }] });
+    expect([twice.ok, twice.problems.map(p => [p.level, p.zp])]).toEqual([true, [['warning', 1]]]);
+    expect(initEmpty(undefined)).toBe(true);
+    expect(initEmpty({ a: 0, p: SCRIPT_P | 0x30, zp: [] })).toBe(true);
+    expect(initEmpty({ p: SCRIPT_P | 1 })).toBe(false);
+    expect(tidyInit({ a: 0, x: 5, p: SCRIPT_P | 0x10, zp: [{ at: 2, value: 0, word: false }] })).toEqual({ x: 5, zp: [{ at: 2, value: 0 }] });
+    expect(tidyInit({ p: 0x31 })).toEqual({ p: 0x21 });
+    expect(tidyInit({ a: 0, zp: [] })).toBeNull();
+  });
+
+  it('start a scratchpad with what it is set to hold: written as Kick Assembler, hex or text, the rest its fill', () => {
+    const names = new Map([['data', 0x0830]]);
+    const asm = padData({ form: 'asm', text: 'first: .byte 1, 2\n .word data\n lda first\n .text "AB"' }, 0xc800, 16, names);
+    expect('bytes' in asm && [...asm.bytes]).toEqual([1, 2, 0x30, 0x08, 0xad, 0x00, 0xc8, 0x41, 0x42]);
+    // a hex dump as the scratchpad view shows one (its address and text left out), and loose bytes
+    const hex = padData({ form: 'hex', text: '$c800  01 02 ff  ..A\n$03,0x04 0506 // a comment' }, 0xc800, 16, names);
+    expect('bytes' in hex && [...hex.bytes]).toEqual([1, 2, 0xff, 3, 4, 5, 6]);
+    expect(padData({ form: 'hex', text: '01 zz' }, 0xc800, 16, names)).toEqual({ error: expect.stringContaining('"zz" is not a hex byte'), line: 1 });
+    // a dump line's address puts its bytes there; what no line wrote between them is the fill
+    const at = padData({ form: 'hex', text: '01\n$c804  aa' }, 0xc800, 16, names, 0xee);
+    expect('bytes' in at && [...at.bytes]).toEqual([1, 0xee, 0xee, 0xee, 0xaa]);
+    expect(padData({ form: 'hex', text: '$c900  01' }, 0xc800, 16, names)).toEqual({ error: expect.stringContaining('$c900 is outside the scratchpad'), line: 1 });
+    const pet = padData({ form: 'text', text: 'Hi!\nOK' }, 0xc800, 16, names);
+    expect('bytes' in pet && [...pet.bytes]).toEqual([0x48, 0x49, 0x21, 0x0d, 0x4f, 0x4b]);
+    const scr = padData({ form: 'text', text: 'A\n\nB', screen: true }, 0xc800, 0x100, names);
+    expect('bytes' in scr && [scr.bytes.length, scr.bytes[0], scr.bytes[1], scr.bytes[80]]).toEqual([81, 0x01, 0x20, 0x02]);
+    // more than it holds, or written before its start
+    expect(padData({ form: 'hex', text: '01 02 03' }, 0xc800, 2, names)).toEqual({ error: expect.stringContaining('It is 3 bytes, and the scratchpad holds 2') });
+    expect(padData({ form: 'asm', text: '* = $c7ff\n .byte 1' }, 0xc800, 2, names)).toEqual({ error: expect.stringContaining('before the scratchpad\'s start') });
+    // the forms written back from bytes read the same bytes again
+    const b = Uint8Array.from([1, 2, 0x48, 0x49, 0xff]);
+    for (const form of ['asm', 'hex'] as const) { const r = padData({ form, text: padText(b, form, 0xc800) }, 0xc800, 16, names); expect('bytes' in r && [...r.bytes]).toEqual([...b]); }
+    expect(padText(Uint8Array.from([0x48, 0x49, 0x0d, 0x4f]), 'text', 0xc800)).toBe('HI\nO');
+
+    // a run starts the scratchpad with it, the rest its fill
+    const pad = { name: 'pad1', start: 0xc800, size: 8, fill: 0xee, data: Uint8Array.from([1, 2, 3]) };
+    expect([...padStart(pad)]).toEqual([1, 2, 3, 0xee, 0xee, 0xee, 0xee, 0xee]);
+    expect([...padNow({ ...pad, bytes: new Uint8Array(8) })]).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+    const run = runScript(env, script('* = $c000\nstart: lda pad1+1\n sta pad1+4\n rts', [pad]));
+    expect([...run.pads[0].bytes]).toEqual([1, 2, 3, 0xee, 2, 0xee, 0xee, 0xee]);
+    expect(checkScript(env, script('* = $c000\nstart: rts', [{ ...pad, size: 2 }])).problems).toEqual([expect.objectContaining({ level: 'warning', pad: 0, msg: expect.stringContaining('starts with 3 bytes but holds 2') })]);
+    // kept in the project
+    const p = { ...createProject({ files: [{ name: 'crypt.prg', load: program.load, bytes: program.bytes }] }), userScripts: [{ ...script('rts', [{ ...pad, src: { form: 'hex' as const, text: '01 02 03' } }]) }] };
+    const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(p))));
+    expect(back.userScripts?.[0].pads[0]).toMatchObject({ src: { form: 'hex', text: '01 02 03' } });
+    expect([...back.userScripts![0].pads[0].data!]).toEqual([1, 2, 3]);
+  });
+
+  it('compare two scratchpads byte by byte: the same, the different, the runs of differences', () => {
+    const d = padDiff([1, 2, 3, 4, 5, 6], [1, 9, 9, 4, 5, 7, 8]);
+    expect(d).toEqual({ same: 3, differ: 3, onlyA: 0, onlyB: 1, first: 1, runs: [{ start: 1, end: 3 }, { start: 5, end: 6 }] });
+    expect(padDiff([1, 2], [1, 2])).toMatchObject({ differ: 0, first: null, runs: [] });
+  });
+
+  it('still assemble when their own run made the analysis name a table anew: Mimir\'s names end in their address', () => {
+    // colors_0939 is tbl_0939 once the run wrote more than colours into it; ptr_fb a zero-page variable
+    const e: ScriptEnv = { files: [program], names: new Map([['tbl_0939', 0x0939], ['ptr_fb', 0xfb]]) };
+    const c = checkScript(e, script('* = $c000\nstart: lda colors_0939\n sta colors_0939+1\n lda zp_fb\n rts', []));
+    expect(c.problems).toEqual([]);
+    expect(c.uses.map(u => [u.name, u.at])).toEqual([['colors_0939', 0x0939], ['zp_fb', 0xfb]]);
+    // no name of the program at the address: still unknown
+    expect(checkScript(e, script('* = $c000\nstart: lda table_1234\n rts', [])).problems.map(p => p.msg)).toEqual(['Unknown symbol "table_1234"']);
   });
 
   it('stop at a JAM and at the instruction limit', () => {

@@ -118,11 +118,20 @@ const serializedPatch = z.object({ ...patchFields, bytes: base64, old: base64 })
 const patch = z.object({ ...patchFields, id: z.string().max(64), bytes: z.instanceof(Uint8Array), old: z.instanceof(Uint8Array) })
   .refine(p => p.bytes.length === p.old.length && p.bytes.length > 0 && p.start + p.bytes.length <= 0x10000, 'the bytes written and the bytes written over differ in length');
 /** a user script (spec 10.3): its code and its scratchpads, what a pad holds after the last run as many bytes as it is big */
-const padFields = { name: z.string().min(1).max(64), start: z.number().int().min(0).max(0xffff), size: z.number().int().min(1).max(0x10000), fill: z.number().int().min(0).max(255).optional() };
+const padFields = { name: z.string().min(1).max(64), start: z.number().int().min(0).max(0xffff), size: z.number().int().min(1).max(0x10000), fill: z.number().int().min(0).max(255).optional(),
+  src: z.object({ form: z.enum(['asm', 'hex', 'text']), text: z.string().max(400000), screen: z.boolean().optional() }).optional() };
+const b64 = z.string().max(0x16000).regex(/^[A-Za-z0-9+/]*={0,2}$/);
 const padFits = (p: { start: number; size: number }) => p.start + p.size <= 0x10000;
-const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144), links: z.array(at).max(256).optional(), safe: z.boolean().optional() };
-const serializedScript = z.object({ ...scriptFields, id: z.string().max(64).optional(), pads: z.array(z.object({ ...padFields, bytes: z.string().max(0x16000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
-const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.array(z.object({ ...padFields, bytes: z.instanceof(Uint8Array).optional() }).refine(p => padFits(p) && (!p.bytes || p.bytes.length === p.size), 'a scratchpad past $ffff, or its bytes not as many as it holds')).max(64) });
+/** what a script's runs start with: A, X, Y, the status register and zero-page bytes (a word at $00-$fe) */
+const reg = z.number().int().min(0).max(255);
+const scriptInit = z.object({
+  a: reg.optional(), x: reg.optional(), y: reg.optional(), p: reg.optional(),
+  zp: z.array(z.object({ at: z.number().int().min(0).max(0xff), value: z.number().int().min(0).max(0xffff), word: z.boolean().optional() })
+    .refine(e => (e.word ? e.at <= 0xfe : e.value <= 0xff), 'a zero-page word past $ff, or a byte with a word\'s value')).max(256).optional(),
+});
+const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144), links: z.array(at).max(256).optional(), safe: z.boolean().optional(), init: scriptInit.optional() };
+const serializedScript = z.object({ ...scriptFields, id: z.string().max(64).optional(), pads: z.array(z.object({ ...padFields, bytes: b64.optional(), data: b64.optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
+const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.array(z.object({ ...padFields, bytes: z.instanceof(Uint8Array).optional(), data: z.instanceof(Uint8Array).refine(d => d.length <= 0x10000).optional() }).refine(p => padFits(p) && (!p.bytes || p.bytes.length === p.size), 'a scratchpad past $ffff, or its bytes not as many as it holds')).max(64) });
 /** memory configuration / VIC bank the code in a range runs with (null: back to detection) */
 const bankZone = z.object({ start: at, end: at, port: z.number().int().min(0).max(255).nullable().optional(), vicBank: z.number().int().min(0).max(3).nullable().optional() });
 /** bytes the program copies elsewhere to run there (spec 8.1b): loaded at start-end (end excluded), run at `to` */

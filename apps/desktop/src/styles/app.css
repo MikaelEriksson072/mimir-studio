@@ -1248,7 +1248,8 @@ main.main { container: editor / inline-size; }
 .scr-run kbd { margin-left: 6px; }
 .scr-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .scr-fallback { flex: 1; min-height: 0; resize: none; border: 0; padding: 8px 12px; background: var(--editor); color: var(--fg); font: 13px/20px var(--font-code); }
-.scr-out { flex: none; display: flex; min-height: 0; border-top: 1px solid var(--line); background: var(--panel); }
+/* the output keeps the height it was dragged to, but gives way first when the window is low: the code keeps 140px */
+.scr-out { flex: 0 1 auto; display: flex; min-height: 60px; border-top: 1px solid var(--line); background: var(--panel); }
 .scr-side { width: 290px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 4px 0 10px; }
 .scr-sec { padding: 6px 10px; }
 .scr-sec h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
@@ -1303,6 +1304,67 @@ main.main { container: editor / inline-size; }
 .scr-failed .icon { flex: none; position: relative; top: 2px; }
 .scr-howto { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--hint) 8%, var(--panel)); color: var(--fg-2); font-size: 12px; line-height: 1.45; }
 .scr-howto .icon { flex: none; color: var(--hint); position: relative; top: 2px; }
+/* the output under a script's editor (10.3): a bar that folds it down and up */
+.scr-out-bar { flex: none; display: flex; align-items: center; gap: 7px; width: 100%; height: 26px; padding: 0 10px; border: 0; border-top: 1px solid var(--line); background: var(--panel); color: var(--fg-2); font-size: 11.5px; text-align: left; cursor: pointer; }
+.scr-out-bar:hover { color: var(--fg); background: var(--row-hover); }
+.scr-out-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.scr-out-name { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
+.scr-out-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); }
+.scr-out-bad { flex: none; color: var(--err); font-weight: 600; }
+/* a scratchpad's start content (10.3): the editor, and the pill of a scratchpad shown as a run starts it */
+.scr-start-pill, .scr-edit-pill { flex: none; }
+.scr-start-pill { color: var(--hint); background: color-mix(in srgb, var(--hint) 14%, transparent); }
+.pad-edit { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pad-edit-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.pad-edit-head .seg { margin-left: 0; }
+.pad-edit-status { flex: 1; min-width: 12em; }
+.pad-edit-status.bad { color: var(--err); }
+.pad-edit-text { flex: 1; min-height: 60px; margin: 0; padding: 8px 12px; border: 0; resize: none; background: var(--editor); color: var(--fg); font: 12.5px/18px var(--font-code); tab-size: 8; outline: none; }
+.pad-edit-text::placeholder { color: var(--fg-3); opacity: 0.7; }
+.pad-edit .scr-view-actions kbd { margin-left: 6px; }
+/* two scratchpads compared (10.3): the numbers, the heat map, its legend and the rows that differ */
+.scr-cmp-with { height: 24px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 4px; font: 12px var(--font-code); }
+.pad-cmp { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pad-cmp-stats { margin: 0; padding: 6px 12px 4px; color: var(--fg-2); }
+.pad-cmp-body { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--line); }
+.pad-cmp-body.stacked { flex-direction: column; }
+.pad-cmp-map { flex: none; display: flex; flex-direction: column; min-height: 0; max-width: 55%; padding: 6px 12px 4px; }
+.pad-cmp-body.stacked .pad-cmp-map { max-width: none; max-height: 50%; }
+.pad-heat-wrap { position: relative; flex: none; overflow: auto; padding-bottom: 6px; }
+.pad-heat { display: block; cursor: crosshair; image-rendering: pixelated; }
+.pad-heat-tip { position: absolute; z-index: 5; pointer-events: none; padding: 4px 7px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: 0 4px 14px rgb(0 0 0 / 0.3); font-size: 11.5px; line-height: 1.45; white-space: nowrap; color: var(--fg); }
+.pad-cmp-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--fg-3); }
+.pad-cmp-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.pad-cmp-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--err); }
+.pad-cmp-legend i.heat-same { background: var(--line-2); }
+.pad-cmp-legend i.heat-only { background: var(--hint); opacity: 0.55; }
+.pad-diff { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 4px 12px 8px; border-left: 1px solid var(--line); background: var(--editor); font-size: 12px; line-height: 18px; white-space: pre; }
+.pad-cmp-body.stacked .pad-diff { border-left: 0; border-top: 1px solid var(--line); }
+.pad-diff-row { padding: 2px 4px; border-radius: 4px; }
+.pad-diff-row + .pad-diff-row { margin-top: 2px; }
+.pad-diff-row.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.pad-diff-adr { display: inline-block; width: 12ch; color: var(--fg-3); }
+.pad-diff-name { display: inline-block; width: 7ch; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; color: var(--syn-label); }
+.pad-diff .pad-focus { outline: 1px solid var(--accent); border-radius: 2px; }
+.pad-diff-more { padding: 4px; color: var(--fg-3); white-space: normal; font-family: var(--font-ui); }
+/* Init (10.3): what a script's runs start with — the registers, the flags, zero-page bytes */
+.init-regs { display: flex; align-items: center; gap: 10px; }
+.init-reg { display: inline-flex; align-items: center; gap: 5px; font: 600 12px var(--font-code); color: var(--fg-2); }
+.init-reg input, .init-zp-row input, .init-zp-row select { height: 24px; min-width: 0; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 6px; font: 12px var(--font-code); }
+.init-reg input { width: 46px; }
+.init-flags { display: flex; align-items: center; gap: 3px; margin-top: 7px; }
+.init-lbl { font-size: 11px; color: var(--fg-3); margin-right: 5px; }
+.dbg-flag.init-flag { width: 20px; height: 20px; padding: 0; cursor: pointer; }
+.dbg-flag.init-flag:hover { border-color: var(--accent); }
+.init-flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.init-p { margin-left: auto; font-size: 11px; color: var(--fg-3); }
+.init-zp { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.init-zp-row { display: grid; grid-template-columns: minmax(0, 1fr) 66px 62px 24px; gap: 4px; align-items: center; padding: 1px 0; }
+.init-zp-row select { padding: 0 2px; }
+.init-zp-head { font-size: 10.5px; color: var(--fg-3); }
+.init-zp-row.bad input { border-color: color-mix(in srgb, var(--err) 70%, transparent); }
+.init-zp-row.warn input:first-child { border-color: color-mix(in srgb, var(--warn) 70%, transparent); }
+.init-zp-row .icon-btn { width: 24px; height: 24px; }
 /* safe mode (10.3): the switch in the toolbar, the mark in the lists, what a safe run would change */
 .scr-safe { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 28px; padding: 0 8px; border-radius: 6px; color: var(--fg-2); font-size: 12px; cursor: pointer; user-select: none; }
 .scr-safe:hover { background: var(--row-hover); color: var(--fg); }
@@ -1335,7 +1397,7 @@ main.main { container: editor / inline-size; }
 .scr-live { flex: none; }
 .pad-chg { color: var(--accent-ink); background: var(--accent-hi); border-radius: 2px; }
 /* the script debugger (10.3): the code and, beside it, the registers, the next instructions and the stack */
-.scr-edit-row { flex: 1; min-height: 0; display: flex; }
+.scr-edit-row { flex: 1; min-height: 140px; display: flex; }
 .scr-edit-row .scr-editor { flex: 1; min-width: 0; min-height: 0; }
 .scr-edit-row .scr-fallback { flex: 1; min-width: 0; }
 .scr-dbg-tools { display: flex; align-items: center; gap: 6px; flex: none; }
