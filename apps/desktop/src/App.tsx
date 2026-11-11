@@ -21,7 +21,11 @@ import { useUi, type Activity, type BottomTab, type InspectorMode } from './stor
 import { useScripts, type LibraryScript } from './store/scripts';
 import { runScriptInWorker } from './lib/scriptrun';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
-import { cx, errorText, filesKey, ROW, uid } from './lib/util';
+import { cx, errorText, filesKey, ROW, store, uid } from './lib/util';
+
+/** what the Scripts tab folded in when it opened, to bring back when another tab opens */
+interface ScriptsFold { sidePanel: boolean; panelOpen: boolean; inspector: InspectorMode }
+const SCRIPTS_FOLD_KEY = 'kr.scriptsFold';
 import { blockStep, foldLines } from './lib/fold';
 import { closeWindow, holdClose, whenClosing } from './lib/closing';
 import { blockMc, gfxColsFor, gfxListing } from './lib/gfxlines';
@@ -2525,6 +2529,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** the inspector always open beside the editor, or folded in until it is needed (also Settings → General) */
   const setInspector = (m: InspectorMode) => { closeInspector(); setUi({ inspector: m }); };
+  // The Scripts tab gets the window (spec 10.3): opening it folds in the side panel (Explorer, …), the inspector and the
+  // bottom panel (the analysis log, …); another tab brings back each as it was, unless it was opened or closed by hand
+  // meanwhile. What they were is kept until then (also over a restart in the Scripts tab).
+  const scriptsFold = useRef<ScriptsFold | null>(store.get<ScriptsFold | null>(SCRIPTS_FOLD_KEY, null));
+  useEffect(() => {
+    const u = useUi.getState();
+    if (tab === 'scripts' && !scriptsFold.current) {
+      const was: ScriptsFold = { sidePanel: u.sidePanel, panelOpen: u.panelOpen, inspector: u.inspector };
+      scriptsFold.current = was; store.set(SCRIPTS_FOLD_KEY, was);
+      setDrawer(d => (d === 'insp' || d === 'side' ? null : d));
+      setUi({ sidePanel: false, panelOpen: false, inspector: 'auto' });
+    } else if (tab !== 'scripts' && scriptsFold.current) {
+      const was = scriptsFold.current;
+      scriptsFold.current = null; store.set(SCRIPTS_FOLD_KEY, null);
+      setUi({ ...(!u.sidePanel ? { sidePanel: was.sidePanel } : {}), ...(!u.panelOpen ? { panelOpen: was.panelOpen } : {}), ...(u.inspector === 'auto' ? { inspector: was.inspector } : {}) });
+    }
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- commands & keys ---- */
   const undoLabel = past.length ? past[past.length - 1].label : null;

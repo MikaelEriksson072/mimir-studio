@@ -1234,6 +1234,13 @@ main.main { container: editor / inline-size; }
 .scripts-empty p { max-width: 560px; margin: 0; }
 .scr-list { width: 150px; flex: none; display: flex; flex-direction: column; gap: 1px; padding: 6px; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
 .scr-list-head { display: flex; align-items: center; gap: 6px; padding: 2px 2px 6px 6px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
+/* the list folded in to a strip: unfold, a new script, and each script by its first letters */
+.scr-list.folded { width: 38px; align-items: center; gap: 4px; padding: 6px 3px; }
+.scr-rail-sep { width: 20px; height: 1px; margin: 2px 0; background: var(--line); flex: none; }
+.scr-rail-item { position: relative; width: 30px; height: 26px; border-radius: 5px; color: var(--fg-2); }
+.scr-rail-item.on { background: var(--sel); color: var(--fg); }
+.scr-rail-name { font: 600 11px/1 var(--font-code); }
+.scr-rail-item .scr-busy { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; }
 .scr-item { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 8px; border: 0; background: none; text-align: left; border-radius: 5px; cursor: pointer; color: var(--fg-2); min-width: 0; }
 .scr-item:hover { background: var(--row-hover); color: var(--fg); }
 .scr-item.on { background: var(--sel); color: var(--fg); }

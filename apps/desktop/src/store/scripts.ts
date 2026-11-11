@@ -20,6 +20,7 @@ export interface ScriptRunKept { run: ScriptRun; source: string; at: number; fai
 export interface LibraryScript { name: string; lang: ScriptLang; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit }
 
 const LIBRARY_KEY = 'kr.scriptLibrary';
+const LIST_FOLDED_KEY = 'kr.scriptListFolded';
 const isPad = (p: unknown): p is Omit<ScriptPad, 'bytes'> => !!p && typeof (p as ScriptPad).name === 'string' && Number.isInteger((p as ScriptPad).start) && Number.isInteger((p as ScriptPad).size);
 const isByte = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xff;
 /** an init as the library keeps it, when it is one (what is not a byte, or not in the zero page, left out) */
@@ -68,6 +69,9 @@ interface ScriptsState {
   dbgOutH: number;
   /** the output below the editor folded down to its bar (the editor takes the room) */
   outFolded: boolean;
+  /** the Scripts tab's list of the project's scripts and the library folded in to a strip (kept by the app) */
+  listFolded: boolean;
+  setListFolded: (v: boolean) => void;
   /** what Compare compares the shown scratchpad with: another scratchpad (its name), or `@start`, what a run starts it
    *  with (what the last run changed in it) */
   cmpWith: string | null;
@@ -77,7 +81,7 @@ interface ScriptsState {
   /** each script's breakpoints, by line (the editor keeps them while it is open; this while it is not) */
   bps: Record<string, number[]>;
   setBps: (id: string, lines: number[]) => void;
-  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps'>>) => void;
+  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
   saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'source' | 'pads' | 'safe' | 'init'>) => boolean;
   removeFromLibrary: (name: string) => void;
@@ -89,6 +93,8 @@ export const useScripts = create<ScriptsState>((set, get) => ({
   bps: {},
   setBps: (id, lines) => set(s => ({ bps: { ...s.bps, [id]: lines } })),
   set: s => set(s),
+  listFolded: store.get<boolean>(LIST_FOLDED_KEY, false) === true,
+  setListFolded: v => { store.set(LIST_FOLDED_KEY, v); set({ listFolded: v }); },
   saveToLibrary: s => {
     const lib = get().library, had = lib.some(x => x.name.toLowerCase() === s.name.toLowerCase());
     const entry: LibraryScript = { name: s.name, lang: s.lang, source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}) };

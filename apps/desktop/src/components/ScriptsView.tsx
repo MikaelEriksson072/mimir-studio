@@ -89,7 +89,7 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
 }
 
 export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock }: ScriptsViewProps) {
-  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary } = useScripts();
+  const { selected, runs, running, shown, mode, screen, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
@@ -447,9 +447,18 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
 
   return (
     <div className="scripts">
-      <div className="scr-list">
+      {listFolded ? <div className="scr-list folded" role="navigation" aria-label="Scripts in the project, folded in">
+        <button className="icon-btn" onClick={() => setListFolded(false)} aria-label="Unfold the script list" title="Unfold the list of the project's scripts and the library"><Icon name="side-show" size={16} /></button>
+        <button className="icon-btn" onClick={onNew} aria-label="New script" title="New script: Kick Assembler code that runs in Mimir"><Icon name="plus" size={15} /></button>
+        <span className="scr-rail-sep" />
+        {scripts.map(s => (
+          <button key={s.id} className={cx('icon-btn scr-rail-item', s.id === cur?.id && 'on')} aria-label={s.name} aria-pressed={s.id === cur?.id} onClick={() => { flush(); set({ selected: s.id, shown: { kind: 'pad', i: 0 } }); }}
+            title={`${s.name}${s.safe ? ' · safe mode' : ''}${running === s.id ? ' · running' : ''}`}><span className="scr-rail-name">{railName(s.name)}</span>{running === s.id && <span className="scr-busy" />}</button>
+        ))}
+      </div> : <div className="scr-list">
         <div className="scr-list-head"><span>Project</span><span className="grow" />
-          <button className="icon-btn" onClick={onNew} aria-label="New script" title="New script: Kick Assembler code that runs in Mimir"><Icon name="plus" size={15} /></button></div>
+          <button className="icon-btn" onClick={onNew} aria-label="New script" title="New script: Kick Assembler code that runs in Mimir"><Icon name="plus" size={15} /></button>
+          <button className="icon-btn" onClick={() => setListFolded(true)} aria-label="Fold the script list" title="Fold the list in to a strip: the editor gets its room (the strip still switches scripts)"><Icon name="side-hide" size={15} /></button></div>
         <div role="listbox" aria-label="Scripts">
           {scripts.map(s => (
             <button key={s.id} role="option" aria-selected={s.id === cur?.id} className={cx('scr-item', s.id === cur?.id && 'on')} onClick={() => { flush(); set({ selected: s.id, shown: { kind: 'pad', i: 0 } }); }}
@@ -459,7 +468,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
           ))}
         </div>
         {libraryList}
-      </div>
+      </div>}
       {cur && check && <div className="scr-main">
         <div className="toolbar">
           <NameField key={cur.id} value={cur.name} taken={scripts.filter(s => s.id !== cur.id).map(s => s.name)} onCommit={n => onEdit(cur.id, { name: n }, `Rename script "${cur.name}" to "${n}"`)} toast={toast} />
@@ -565,6 +574,9 @@ function NameField({ value, taken, onCommit, toast }: { value: string; taken: st
 
 /** The left of the output: the problems, what the runs start with (Init), what the script changed in the program,
  *  what its last run would change (safe mode), the scratchpads (edited here) and the last run. */
+/** a script in the folded list: its first letter and the number it ends with (script, script2: s, s2) */
+const railName = (name: string) => (name[0] ?? '?') + (/\d+$/.exec(name)?.[0] ?? '').slice(-2);
+
 /** a block of the program a scratchpad can be filled from: where it is, its type and its name (its label, else its address) */
 export interface BlockChoice { start: Addr; end: Addr; kind: BlockKind; name: string }
 

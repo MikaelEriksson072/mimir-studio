@@ -6895,3 +6895,64 @@ test('scripts: the line a breakpoint stopped on is marked; a block goes into a s
     await expect(page.locator('.scr-check')).toHaveText('Ready to run');
   });
 });
+
+test('scripts: the Scripts tab folds in the side panel, the inspector and the bottom panel, and another tab brings them back; the script list folds in to a strip', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  const shell = page.locator('.app');
+  const bottom = page.getByRole('region', { name: 'Panels' });
+  // as the listing has them: all open
+  await expect(shell).not.toHaveClass(/side-closed|insp-auto/);
+  await expect(bottom).not.toHaveClass(/collapsed/);
+
+  await test.step('the Scripts tab: the side panel, the inspector and the bottom panel fold in', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await page.getByRole('button', { name: 'New script' }).first().click();
+    await expect(shell).toHaveClass(/side-closed/);
+    await expect(shell).toHaveClass(/insp-auto/);
+    await expect(bottom).toHaveClass(/collapsed/);
+  });
+
+  await test.step('another tab: they come back as they were', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await expect(shell).not.toHaveClass(/side-closed|insp-auto/);
+    await expect(bottom).not.toHaveClass(/collapsed/);
+  });
+
+  await test.step('one closed by hand before stays closed, and one opened in the Scripts tab stays open', async () => {
+    await bottom.getByRole('button', { name: 'Collapse panel' }).click();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(shell).toHaveClass(/side-closed/);
+    await page.getByRole('button', { name: 'Expand panel' }).click();
+    await expect(bottom).not.toHaveClass(/collapsed/);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await expect(shell).not.toHaveClass(/side-closed|insp-auto/);
+    await expect(bottom).not.toHaveClass(/collapsed/);
+    await bottom.getByRole('button', { name: 'Collapse panel' }).click();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await expect(bottom).toHaveClass(/collapsed/);
+    await page.getByRole('button', { name: 'Expand panel' }).click();
+  });
+
+  await test.step('the script list folds in to a strip that still switches scripts, and stays folded', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await page.getByRole('button', { name: 'New script' }).first().click();
+    await expect(page.getByRole('listbox', { name: 'Scripts' }).getByRole('option')).toHaveCount(2);
+    await page.getByRole('button', { name: 'Fold the script list' }).click();
+    const rail = page.getByRole('navigation', { name: 'Scripts in the project, folded in' });
+    await expect(rail).toBeVisible();
+    await expect(page.getByRole('listbox', { name: 'Scripts' })).toHaveCount(0);
+    await rail.getByRole('button', { name: 'script', exact: true }).click();
+    await expect(page.getByLabel('Script name')).toHaveValue('script');
+    await expect(rail.getByRole('button', { name: 'script', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(rail.locator('.scr-rail-name')).toHaveText(['s', 's2']);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(rail).toBeVisible();
+    await rail.getByRole('button', { name: 'Unfold the script list' }).click();
+    await expect(page.getByRole('listbox', { name: 'Scripts' }).getByRole('option')).toHaveCount(2);
+  });
+});

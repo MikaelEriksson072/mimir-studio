@@ -1900,6 +1900,12 @@ $06, $08` i `.asm`-filen efter en körning.
   library* och papperskorgen, sedan editorn och under den utdata: problemen, *In the program*, scratchpadsen,
   `.print` och senaste körningen, och till höger en ändring eller en scratchpad som hex, kod eller text. Gränsen
   mellan editorn och utdata kan dras. Utan skript visar fliken vad ett skript är, *New script* och biblioteket.
+  **Fliken får fönstret:** när den öppnas fälls sidopanelen (Explorer, …), inspektorn och bottenpanelen (analysloggen,
+  …) in, och när en annan flik öppnas kommer var och en tillbaka som den var, utom en som man själv öppnat eller stängt
+  under tiden. Vad de var sparas tills dess, också över en omstart i fliken. **Skriptlistan** (*Project* och *Library*)
+  fälls in till en smal remsa med knappen i rubriken; remsan har knappen som fäller ut den, *New script* och ett kort
+  namn för varje skript (första bokstaven och siffran det slutar med: `s`, `s2`) som byter skript. Appen minns om den
+  är infälld.
 - **Nytt skript:** *New script* i fliken och i kommandopaletten (med markeringen, när det finns en), eller högerklick i
   listningen → *Program* → *New script from selection / block*, som börjar skriptet med markeringens eller blockets
   rader som listningen skriver dem: så klipper man ut en loop ur programmet. Skriptet heter `script`, `script2`, …,

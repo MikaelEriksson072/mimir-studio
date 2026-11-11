@@ -15,7 +15,7 @@ export const ICONS = {
   err: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9 9l6 6M15 9l-6 6', ok: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8 12.5l2.5 2.5L16 9.5',
   hint: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-3.8 10.6c.6.5.8 1.2.8 2.4h6c0-1.2.2-1.9.8-2.4A6 6 0 0 0 12 3z',
   prompt: 'M5 7l5 5-5 5M12 17h7', trash: 'M4 7h16M9.5 7V4.5h5V7M6 7l1 13h10l1-13', plus: 'M12 5v14M5 12h14',
-  menu: 'M4 6h16M4 12h16M4 18h16', panel: 'M4 4h16v16H4zM15 4v16', 'side-hide': 'M4 4h16v16H4zM9 4v16M16 9l-3 3 3 3', 'insp-hide': 'M4 4h16v16H4zM15 4v16M8 9l3 3-3 3',
+  menu: 'M4 6h16M4 12h16M4 18h16', panel: 'M4 4h16v16H4zM15 4v16', 'side-hide': 'M4 4h16v16H4zM9 4v16M16 9l-3 3 3 3', 'side-show': 'M4 4h16v16H4zM9 4v16M13 9l3 3-3 3', 'insp-hide': 'M4 4h16v16H4zM15 4v16M8 9l3 3-3 3',
   pin: 'M9 4h6M10 4v5l-3 4h10l-3-4V4M12 13v7', copy: 'M9 9h11v11H9zM15 9V4H4v11h5',
   left: 'M19 12H5M11 6l-6 6 6 6', right: 'M5 12h14M13 6l6 6-6 6', pencil: 'M4 20h4L19.5 8.5l-4-4L4 16z',
   comment: 'M5 4.5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4.5 4v-4H5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM8 9h8M8 12h5',
