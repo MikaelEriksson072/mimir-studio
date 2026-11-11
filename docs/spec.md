@@ -1946,8 +1946,13 @@ $06, $08` i `.asm`-filen efter en körning.
   delar de. Därför **väljer Mimir adressen** när skriptets första kodrad inte är en `* =`: först minne som programmet
   inte använder (`$c000` när det är ledigt, annars det största lediga området, från `$1000` när det får plats;
   `freePlace`), och när programmet fyller minnet bland programmets byte, där programmet har en och samma byte längst
-  (troligen oanvänt), men aldrig där ett av programmets namn som skriptet använder ligger (`scriptPlace`). En egen
-  `* =` gäller som den står.
+  (troligen oanvänt), men aldrig där ett av programmets namn som skriptet använder ligger (`scriptPlace`), och **aldrig
+  där skriptets instruktioner läser eller skriver programmets minne** (`ScriptCheck.access`: en operand som är en
+  adress, ett av programmets namn eller en konstant, inte en av skriptets egna etiketter, `!`-etiketter eller `*`; med
+  `,x`/`,y` 255 byte till). Annars kunde en loop som tömmer skärmen (`sta $0400,x`) skriva över sin egen kod när Mimir
+  lagt den på skärmen (ett spels skärm full av mellanslag är den längsta följden av en byte): efter tre varv stod `$20`
+  (JSR) där loopen börjar (rättat 2026-11-11). En scratchpad som läggs till hamnar inte heller där. En egen `* =` gäller
+  som den står.
 - **Kontrollen** (`checkScript`) assemblerar koden med den inbyggda assemblern med programmets namn (som listningen
   skriver dem), hårdvarunamnen och scratchpadsen (`pad1` och `pad1_end`) till hands. Ett namn koden själv definierar
   vinner. Mimirs egna namn slutar på sin adress (`colors_0939`, `ptr_fb`): ett sådant namn som programmet inte längre
@@ -1959,7 +1964,10 @@ $06, $08` i `.asm`-filen efter en körning.
   koden saknas, kod eller scratchpad i nollsidan eller stacken (`$0000–$01ff`, som skriptet delar med programmet),
   scratchpads utan giltigt namn, med samma namn, utanför minnet eller över varandra, och **ett av programmets namn som
   skriptet använder där skriptets egen kod eller en scratchpad ligger** (skriptet skulle läsa sig självt där), på
-  raden som använder namnet. **Run går bara när kontrollen inte har något fel.** Tills skriptet har gjort något säger
+  raden som använder namnet, och **en instruktion som läser eller skriver programmets minne där skriptets egen kod
+  eller en scratchpad ligger** (*Line 4: "sta $0400,x" writes $0400-$04ff of the program, but the script's own code is
+  at …*); en rad som nämner scratchpaden (`sta pad1,x`) menar scratchpaden. **Run går bara när kontrollen inte har
+  något fel.** Tills skriptet har gjort något säger
   en rad under toolbaren vad *Run* gör.
 - **Körningen** (`runScript`, i en egen worker; *Stop* avslutar den) sker i Sindris 6510 utan ROM, I/O och avbrott,
   med två minnen: programmets, filerna som LOAD lägger dem (med påslagna patchar; en cartridges filer i banken C64:an
@@ -1971,6 +1979,10 @@ $06, $08` i `.asm`-filen efter en körning.
   återvänder därifrån, vid en BRK, vid en JAM eller efter 200 miljoner instruktioner (omkring 2,5 s; en körning går
   omkring 80 miljoner instruktioner i sekunden). Skriptet kan anropa programmets egna rutiner (`jsr decrypt`) eller
   köra en loop som klistrats in. Körningen är en `ScriptMachine`, som också går en instruktion i taget (felsökaren).
+  Den håller reda på när skriptet skriver över sina egna instruktioner (`ScriptRun.overCode`): *Last run* och
+  meddelandet säger vilken rad (*It wrote over its own code: line 3 ($c006, 2 times)*), eftersom ändrad kod inte längre
+  är koden som skrevs (också kod som ändrar sig själv med avsikt sägs där). Att den inbyggda assemblern skriver samma
+  byte som KickAss.jar prövas också med skript som användare skrivit (`kickass.integration.test.ts`).
   Stacken (`$0100–$01ff`) är densamma för skriptet och programmet: körningen börjar med SYS-returen på `$01fe–$01ff`
   och S = `$fd`, och vid varje JSR antecknas vem som gjorde den (med stackpekaren som nyckel), så att ett RTS går
   tillbaka till skriptets eller programmets kod.

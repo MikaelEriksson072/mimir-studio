@@ -955,6 +955,8 @@ export interface AssembleResult {
   lines: Int32Array;
   /** 1 where a statement's bytes start (an instruction's first byte), in the entry file */
   starts: Uint8Array;
+  /** 1 at an instruction's first byte (not a data directive's), in the entry file */
+  ops: Uint8Array;
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {

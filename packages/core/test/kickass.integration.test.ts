@@ -203,6 +203,11 @@ const BEYOND = [
   [` .byte 'A', 'a', 1==1 ? 1 : 0, 3 < 4 ? 1 : 0, !true ? 1 : 0, "ab".size(), 5 >= 5 && 1 != 2 ? 1 : 0`],
   ['.fill 16, round(127.5 + 127.5 * sin(toRadians(i * 360 / 16)))', ' .word abs(-300), max(3, 9), pow(2, 10)'],
   [' * = $1100 "two"', 'start: lda #0', '!: sta $0400,x', ' inx', ' bne !-', ' rts'],
+  // a script a user wrote (2026-11-11): the screen and the colour RAM cleared, scratchpads by name, comments after code
+  ['.label pad1 = $c800', '.label pad2 = $c900', 'sub_111a:', '        ldx #$00', 'loop_111c:', '        lda #$20', '        sta $0400,x  ',
+    '        sta pad1,x                   // Default screen matrix — row 0, column 0', '        sta $0500,x                     // Default screen matrix — row 6, column 16',
+    '        sta $0600,x', '        sta $06e8,x', '        lda #$00', '        sta $d800,x                     // Color RAM — row 0, column 0',
+    '        sta $d900,x', '        sta $da00,x', '        sta $dae8,x', '        clc', '        adc #$02', '        sta pad2,x', '        inx', '        bne loop_111c', '        rts'],
 ].map(l => l.join('\n'));
 
 describe.skipIf(!available)(`the built-in assembler beyond the generated subset, against ${jar ?? 'KickAss.jar'}`, () => {

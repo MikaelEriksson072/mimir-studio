@@ -484,7 +484,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   const prints: string[] = [];
   // in the final pass, the line of the entry file each byte comes from, and where each statement's bytes start (an
   // instruction's first byte: a debugger's line, a breakpoint's address)
-  const lines = new Int32Array(0x10000), starts = new Uint8Array(0x10000);
+  const lines = new Int32Array(0x10000), starts = new Uint8Array(0x10000), ops = new Uint8Array(0x10000);
   let fresh = false;
   const emit = (b: number, st: Stmt) => {
     b &= 0xff;
@@ -666,6 +666,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
           const op = modes[mode as AddrMode];
           if (op === undefined) { E(`${mn.toLowerCase()} does not support this addressing mode (${mode})`, st); return; }
           emit(op, st);
+          if (pass === 'final' && st.file === entryPath) ops[(pc - off - 1) & 0xffff] = 1;
           const len = MODE_LEN[mode as AddrMode];
           if (mode === 'rel') {
             const o = v == null ? 0 : v - (pc + 1);
@@ -693,5 +694,5 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   // an error a loop met in each round is said once
   const said = new Set<string>();
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts, ops };
 }

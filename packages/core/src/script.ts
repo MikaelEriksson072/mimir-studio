@@ -224,6 +224,11 @@ export interface ScriptCheck {
   labels: Map<Addr, string>;
   /** the program's names the code uses (not its scratchpads'): each with the line it is first used on and its address */
   uses: { name: string; line: number; at: Addr }[];
+  /** where its instructions start (not its data) */
+  ops: Uint8Array;
+  /** the program's memory its instructions read and write at an address (not the script's own): Mimir places the
+   *  code and finds room for scratchpads away from it */
+  access: ScriptAccess[];
 }
 
 const PAD_NAME = /^[A-Za-z_]\w*$/;
@@ -250,6 +255,41 @@ export function withAddressNames(names: Map<string, Addr>, source: string): Map<
   }
   return names;
 }
+
+/**
+ * Memory an instruction of the script reads or writes as the program's: its operand is an address (`$0400`, a name of
+ * the program, a constant), not one of the script's own labels (`name:`, a `!` label, `*`). An indexed one (`,x`
+ * `,y`) may reach 255 bytes on. `text` is its line without the comment.
+ */
+export interface ScriptAccess extends ScriptRange { line: number; write: boolean; text: string }
+
+/** a line of code without its comment and its strings, and without the label it starts with */
+const codeOf = (line: string) => line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '').replace(/"(?:[^"\\]|\\.)*"/g, '""')
+  .replace(/^\s*(?:[A-Za-z_][\w.]*|![A-Za-z_]\w*|!)\s*:/, '').trim();
+
+/** The script's instructions that read or write the program's memory at an address (not by a pointer: (zp),y and
+ *  (zp,x) can go anywhere), from its assembled bytes and its lines. */
+function programAccesses(asm: { mem: Uint8Array; ops: Uint8Array; lines: Int32Array }, source: string): ScriptAccess[] {
+  const src = source.split(/\r?\n/);
+  // the script's own labels: where its code and data are (an operand naming one is the script's own memory)
+  const own = new Set([...source.matchAll(/^\s*([A-Za-z_]\w*)\s*:/gm)].map(m => m[1]));
+  const ownRef = (text: string) => /![A-Za-z_+-]|(^|[\s(,#<>+\-*/])\*(?=\s*(?:[+\-),]|$))/.test(text) || [...text.matchAll(/[A-Za-z_]\w*/g)].some(m => own.has(m[0]));
+  const out: ScriptAccess[] = [];
+  for (let a = 0; a < 0x10000; a++) {
+    if (!asm.ops[a]) continue;
+    const o = OPC[asm.mem[a]];
+    const reach = o.mode === 'abs' ? 1 : o.mode === 'abx' || o.mode === 'aby' ? 256 : o.mode === 'ind' ? 2 : 0;
+    if (!reach || (!o.access && o.mode !== 'ind')) continue;
+    const line = asm.lines[a], text = codeOf(src[line - 1] ?? '');
+    if (ownRef(text.replace(/^\S+/, ''))) continue;
+    const v = asm.mem[(a + 1) & 0xffff] | asm.mem[(a + 2) & 0xffff] << 8;
+    out.push({ start: v, end: Math.min(0x10000, v + reach), line, write: o.access === 'write' || o.access === 'rmw', text });
+  }
+  return out;
+}
+
+/** whether a line of code names a scratchpad (or the address after it) */
+const namesPad = (text: string, pad: ScriptPad) => new RegExp(`(^|[^\\w.])(${pad.name}|${pad.name}_end)(?!\\w)`).test(text);
 
 /** whether the script's first line of code says where it goes (`* =` or `.pc =`) */
 const setsItsPlace = (source: string): boolean => {
@@ -292,10 +332,14 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
   if (!setsItsPlace(script.source) && !asm.errors.length) {
     let n = 0; while (pc + n < 0x10000 && asm.written[pc + n]) n++;
     const elsewhere = maskRanges(asm.written).filter(r => r.start !== pc);
-    const p = scriptPlace(env.files, Math.max(1, n), [...pads, ...elsewhere, ...used.map(u => ({ start: u.at, end: u.at + 1 }))], free ?? undefined);
-    if (!p) err('There is no room for the script\'s code: it uses names all over memory. Give it an address with * = at its top.');
+    // not where the code reads or writes the program's memory (`sta $0400,x` over the code would change the code)
+    const reached = programAccesses(asm, script.source);
+    const p = scriptPlace(env.files, Math.max(1, n), [...pads, ...elsewhere, ...used.map(u => ({ start: u.at, end: u.at + 1 })), ...reached], free ?? undefined);
+    if (!p) err('There is no room for the script\'s code: it uses the program\'s memory all over. Give it an address with * = at its top.');
     else { place = p.free ? 'free' : 'program'; if (p.at !== pc) { pc = p.at; asm = at(pc); } }
   }
+  // (a line that names a scratchpad and reaches into it means the scratchpad)
+  const access = programAccesses(asm, script.source).filter(x => !good.some(p => p.start < x.end && x.start < p.start + p.size && namesPad(x.text, p)));
   for (const e of asm.errors) err(e.msg, e.file === 'script.asm' && e.line > 0 ? e.line : undefined);
   const code = maskRanges(asm.written);
   const bytes = code.reduce((n, r) => n + r.end - r.start, 0);
@@ -309,10 +353,24 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
       const pad = script.pads.findIndex(p => u.at >= p.start && u.at < p.start + p.size);
       if (pad >= 0) err(`${u.name} ($${h4(u.at)}) is inside the scratchpad ${script.pads[pad].name}, so the script would read the scratchpad there, not the program: give the scratchpad another address.`, u.line, pad);
     }
+    // an address the code reads or writes as the program's where the script's own code or a scratchpad is: the
+    // access would go to the script's own memory there (`sta $0400,x` over the code changes the code, and the loop
+    // stops after a few rounds)
+    for (const x of access) {
+      if (problems.some(p => p.level === 'error' && p.line === x.line)) continue;
+      const span = rangeText(x), verb = x.write ? 'writes' : 'reads';
+      const over = maskRanges(asm.written, x.start, x.end);
+      if (over.length) {
+        err(`"${x.text}" ${verb} ${span} of the program, but the script's own code is at ${over.map(rangeText).join(', ')}: it would ${x.write ? 'write over its own code' : 'read its own code'} there, not the program. ${place === 'own' ? 'Give the code another address with * =, or leave * = out and Mimir finds room.' : 'There is no other room for the code: give it an address with * = at its top.'}`, x.line);
+        continue;
+      }
+      const pad = script.pads.findIndex(p => p.start < x.end && x.start < p.start + p.size && !namesPad(x.text, p));
+      if (pad >= 0) err(`"${x.text}" ${verb} ${span} of the program, but the scratchpad ${script.pads[pad].name} is at ${rangeText({ start: script.pads[pad].start, end: script.pads[pad].start + script.pads[pad].size })}: it would ${x.write ? 'write' : 'read'} the scratchpad there, not the program. Give the scratchpad another address (or write ${script.pads[pad].name} when the scratchpad is meant).`, x.line, pad);
+    }
   }
   const labels = new Map<Addr, string>();
   for (const [k, v] of asm.symbols) if (typeof v === 'number' && /^[A-Za-z_]\w*$/.test(k) && v >= 0 && v < 0x10000 && asm.written[v] && !labels.has(v)) labels.set(v, k);
-  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written, lines: asm.lines, starts: asm.starts, labels, uses: used };
+  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written, lines: asm.lines, starts: asm.starts, ops: asm.ops, labels, uses: used, access };
 }
 
 /** An address of the program linked to a script (UserScript.links), with the name its code writes for it and what that
@@ -356,6 +414,9 @@ export interface ScriptRun {
   /** the program's memory after the run */
   mem: Uint8Array;
   ms: number;
+  /** the script's own code it wrote over while it ran (code that changes itself, or an address it writes that lies
+   *  where its code is): by line of the code, its first address written and how many writes */
+  overCode?: { at: Addr; line: number; times: number }[];
 }
 
 /** instructions a run may take before it is stopped (about 2.5 s; a run goes some 80 million a second) */
@@ -388,9 +449,13 @@ export interface StackEntry {
 /** The bus of a script's run: the script's own memory where its code reads and writes its own addresses, the program's
  *  memory everywhere else. A class, so that every run's bus has the same methods and the CPU's calls stay fast. */
 class ScriptBus implements Bus {
-  constructor(private readonly mem: Uint8Array, private readonly own: Uint8Array, private readonly mine: Uint8Array, private readonly ctx: { script: boolean }) { }
+  constructor(private readonly mem: Uint8Array, private readonly own: Uint8Array, private readonly mine: Uint8Array, private readonly ctx: { script: boolean },
+    /** the script's code bytes, and how many times the script wrote over each (a check: code that changes itself) */
+    private readonly code: Uint8Array, readonly overCode: Uint32Array) { }
   read(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
-  write(a: number, v: number): void { if (this.ctx.script && this.mine[a]) this.own[a] = v; else this.mem[a] = v; }
+  write(a: number, v: number): void {
+    if (this.ctx.script && this.mine[a]) { this.own[a] = v; if (this.code[a]) this.overCode[a]++; } else this.mem[a] = v;
+  }
   fetch(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
 }
 
@@ -416,6 +481,8 @@ export class ScriptMachine {
   /** who made each JSR whose return address is on the stack, by the stack pointer before it: the script or not */
   private readonly frames = new Map<number, boolean>();
   private readonly t0 = Date.now();
+  /** how many times the script wrote over each byte of its own code */
+  readonly overCode = new Uint32Array(0x10000);
 
   constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
     if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
@@ -426,7 +493,10 @@ export class ScriptMachine {
     for (const p of script.pads) { own.set(padStart(p), p.start); mine.fill(1, p.start, p.start + p.size); }
     for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
     this.inScript = !!mine[check.entry];
-    const bus = new ScriptBus(mem, own, mine, ctx);
+    // its instructions' bytes (not its data): a write there changes its code
+    const codeBytes = new Uint8Array(0x10000);
+    for (let a = 0; a < 0x10000; a++) if (check.ops[a]) codeBytes.fill(1, a, Math.min(0x10000, a + OPC[check.mem[a]].len));
+    const bus = new ScriptBus(mem, own, mine, ctx, codeBytes, this.overCode);
     const cpu = this.cpu = new Cpu(bus);
     // called like SYS: the return address on the stack; the registers, the flags and the zero-page bytes the script's
     // init gives (else A, X and Y 0 and interrupts off). The init's zero page is in place before the run, so it is no
@@ -542,11 +612,18 @@ export class ScriptMachine {
       else changes.push({ start: a, end: a + 1, bytes: new Uint8Array(0), old: new Uint8Array(0) });
     }
     for (const c of changes) { c.bytes = mem.slice(c.start, c.end); c.old = before.slice(c.start, c.end); }
+    // the script's own code it wrote over, by line (the first address and how many writes)
+    const overCode: ScriptRun['overCode'] = [];
+    for (let a = 0; a < 0x10000; a++) {
+      if (!this.overCode[a]) continue;
+      const line = this.check.lines[a], o = overCode.find(x => x.line === line);
+      if (o) o.times += this.overCode[a]; else overCode.push({ at: a, line, times: this.overCode[a] });
+    }
     return {
       end: this.end ?? 'limit', at: this.end ? this.at : cpu.pc, instructions: this.instructions, cycles: this.cycles,
       regs: { a: cpu.a, x: cpu.x, y: cpu.y, s: cpu.s, p: cpu.p, pc: cpu.pc },
       pads: this.script.pads.map(p => ({ name: p.name, bytes: this.own.slice(p.start, p.start + p.size) })),
-      changes, other, mem, ms: Date.now() - this.t0,
+      changes, other, mem, ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
     };
   }
 }

@@ -6781,3 +6781,41 @@ test('scripts: names linked from the listing and the source, marked there, writt
     await expect(page.locator('.scr-live')).toHaveCount(0);
   });
 });
+
+test('scripts: an address the code writes where its own code is, is an error on the line; a run that wrote over its code says so', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const code = async (text: string) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(text);
+  };
+  const check = page.locator('.scr-check');
+
+  await test.step('code at $0400 that clears the screen from $0400: the line says it would write over the code', async () => {
+    await code(['* = $0400', '        ldx #$00', 'loop:   lda #$20', '        sta $0400,x', '        inx', '        bne loop', '        rts'].join('\n'));
+    await expect(check).toContainText('Line 4: "sta $0400,x" writes $0400-$04ff of the program, but the script\'s own code is at');
+    await expect(page.getByRole('button', { name: /^Run/ })).toBeDisabled();
+  });
+
+  await test.step('without * = Mimir puts the code elsewhere, and the loop goes all 256 rounds', async () => {
+    await code(['        ldx #$00', 'loop:   lda #$20', '        sta $0400,x', '        inx', '        bne loop', '        rts'].join('\n'));
+    await expect(check).toHaveText('Ready to run');
+    await page.getByRole('button', { name: /^Run/ }).click();
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await expect(page.locator('.scr-run-sec')).not.toContainText('It wrote over its own code');
+  });
+
+  await test.step('code that changes itself: Last run and the message say which line was written over', async () => {
+    await code(['        ldx #2', '!:      inc ld+1', 'ld:     lda #0', '        dex', '        bne !-', '        rts'].join('\n'));
+    await expect(check).toHaveText('Ready to run');
+    await page.getByRole('button', { name: /^Run/ }).click();
+    await expect(toast(page, /It wrote over its own code \(line 3\)/)).toBeVisible();
+    await expect(page.locator('.scr-run-sec')).toContainText('It wrote over its own code: line 3 ($c006, 2 times)');
+  });
+});

@@ -559,7 +559,8 @@ function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, on
   const { shown, set } = useScripts();
   const setPads = (pads: ScriptPad[], label: string) => onEdit(script.id, { pads }, label);
   const addPad = () => {
-    const taken = [...check.code, ...script.pads.map(p => ({ start: p.start, end: p.start + p.size }))];
+    // not over the code, another scratchpad, or memory the code reads and writes as the program's ($0400 for the screen)
+    const taken = [...check.code, ...script.pads.map(p => ({ start: p.start, end: p.start + p.size })), ...check.access];
     const last = script.pads[script.pads.length - 1];
     const start = scriptPlace(env.files, 0x100, taken, last ? last.start + last.size : undefined)?.at ?? 0xc000;
     const name = padName(script.pads);
@@ -631,6 +632,7 @@ function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, on
         <p className={cx('scr-end', run.end === 'jam' || run.end === 'limit' ? 'warn' : 'ok')}>{scriptEndText(run)}</p>
         <p className="scr-regs mono">A=${h2(run.regs.a)} X=${h2(run.regs.x)} Y=${h2(run.regs.y)} S=${h2(run.regs.s)} P=${h2(run.regs.p)} · {run.ms} ms</p>
         {kept!.failed.map((f, i) => <p key={i} className="small scr-failed"><Icon name="warn" size={13} />{kept!.safe ? 'Could not be written' : 'Not written'} into the program, {rangeText(f)}: {f.error}</p>)}
+        {run.overCode?.length ? <p className="small scr-failed" title="A run that writes over its code no longer runs the code it was written as (a loop stops early). Code that changes itself on purpose (an operand) is said here too"><Icon name="warn" size={13} />It wrote over its own code: {run.overCode.slice(0, 4).map(o => `line ${o.line} ($${h4(o.at)}${o.times > 1 ? `, ${o.times} times` : ''})`).join(', ')}{run.overCode.length > 4 ? ', …' : ''}. If that was not meant, an address the code writes lies where the code is.</p> : null}
         {run.other > 0 && <p className="small muted">{plural(run.other, 'byte')} changed outside the program and the scratchpads (the zero page, the stack, …): not kept.</p>}
       </section>}
     </div>

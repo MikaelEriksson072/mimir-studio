@@ -116,6 +116,47 @@ describe('user scripts', () => {
     expect([...run.changes[0].bytes]).toEqual([1, 1, 1, 1]);
   });
 
+  it('are placed away from the memory their instructions read and write, so a loop that clears the screen does not clear itself', () => {
+    // the user's loop: a program that fills memory, its screen ($0400-$07e7) all spaces, the longest run of one value
+    const src = ['sub_111a:', '        ldx #$00', 'loop_111c:', '        lda #$20', '        sta $0400,x', '        sta pad1,x   // the screen', '        sta $0500,x',
+      '        sta $0600,x', '        sta $06e8,x', '        lda #$00', '        sta $d800,x', '        sta $d900,x', '        sta $da00,x', '        sta $dae8,x',
+      '        clc', '        adc #$02', '        sta pad2,x', '        inx', '        bne loop_111c', '        rts'].join('\n');
+    const mem = new Uint8Array(0xfe00).map((_, i) => (i * 13 + (i >> 8)) & 0xff);
+    mem.fill(0x20, 0x0400 - 0x200, 0x07e8 - 0x200);
+    const e: ScriptEnv = { files: [{ load: 0x0200, bytes: mem }], names: new Map() };
+    const s = script(src, [{ name: 'pad1', start: 0xc800, size: 256 }, { name: 'pad2', start: 0xc900, size: 256 }]);
+    const c = checkScript(e, s);
+    expect(c).toMatchObject({ ok: true, place: 'program' });
+    // the screen, the colour RAM: what the code writes as the program's (the scratchpads' lines are the scratchpads')
+    expect(c.access.map(x => [x.start, x.end, x.line, x.write])).toEqual([
+      [0x0400, 0x0500, 5, true], [0x0500, 0x0600, 7, true], [0x0600, 0x0700, 8, true], [0x06e8, 0x07e8, 9, true],
+      [0xd800, 0xd900, 11, true], [0xd900, 0xda00, 12, true], [0xda00, 0xdb00, 13, true], [0xdae8, 0xdbe8, 14, true]]);
+    expect(c.code.every(r => r.end <= 0x0400 || r.start >= 0x07e8)).toBe(true);
+    // all 256 rounds: the screen and the colour RAM written, each scratchpad byte too
+    const run = runScript(e, s, c);
+    expect(run.end).toBe('rts');
+    expect(run.overCode).toBeUndefined();
+    expect([...run.mem.subarray(0x0400, 0x07e8)].every(b => b === 0x20)).toBe(true);
+    expect([...run.mem.subarray(0xd800, 0xdbe8)].every(b => b === 0)).toBe(true);
+    expect([...run.pads[0].bytes].every(b => b === 0x20) && [...run.pads[1].bytes].every(b => b === 2)).toBe(true);
+    // its own address over the screen: an error on the line, and the run that would have stopped after 3 rounds
+    // (the loop's first instruction became $20, JSR) never starts
+    const own = checkScript(e, script(`* = $0400\n${src}`, s.pads));
+    expect(own.ok).toBe(false);
+    expect(own.problems).toContainEqual(expect.objectContaining({ level: 'error', line: 6, msg: expect.stringMatching(/^"sta \$0400,x" writes \$0400-\$04ff of the program, but the script's own code is at \$0400-\$04[0-9a-f]{2}: it would write over its own code there/) }));
+    // a scratchpad over the screen: the screen's lines would write the scratchpad; its own line is fine
+    const padded = checkScript(e, script(src, [{ name: 'pad1', start: 0x0400, size: 256 }, { name: 'pad2', start: 0xc900, size: 256 }]));
+    expect(padded.problems).toEqual([expect.objectContaining({ level: 'error', line: 5, pad: 0, msg: expect.stringContaining('the scratchpad pad1 is at $0400-$04ff: it would write the scratchpad there, not the program') })]);
+  });
+
+  it('say when a run wrote over the script\'s own code', () => {
+    // code that changes itself: the lda's operand
+    const run = runScript(env, script(['        ldx #2', '!:      inc ld+1', 'ld:     lda #0', '        dex', '        bne !-', '        rts'].join('\n'), []));
+    expect(run.end).toBe('rts');
+    expect(run.regs.a).toBe(2);
+    expect(run.overCode).toEqual([{ at: 0xc006, line: 3, times: 2 }]);
+  });
+
   it('leave the zero page and the stack out of what goes into the program', () => {
     // a snapshot-like program from $0002: the script's JSR and its pointer change bytes there
     const e: ScriptEnv = { files: [{ load: 0x0002, bytes: new Uint8Array(0x3000) }], names: new Map([['table', 0x1000]]) };
