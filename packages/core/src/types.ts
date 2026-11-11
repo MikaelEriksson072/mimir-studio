@@ -306,6 +306,9 @@ export interface UserScript {
   /** addresses of the program linked to the script from the listing or the source (a right-click): the editor shows
    *  each by the name the code writes for it (linkName), and the listing marks them */
   links?: Addr[];
+  /** safe mode: a run writes nothing into the program, so the program and its .asm stay as they are; what the run
+   *  would change is only shown (patches its earlier runs wrote stay). Missing: off */
+  safe?: boolean;
 }
 
 export interface Project {

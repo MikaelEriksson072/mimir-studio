@@ -371,10 +371,17 @@ function ScriptsSection({ list, checks, patches, onNew, onOpen, onRun, onRemove,
     if (running === sc.id) return { text: 'running…' };
     const c = checks.get(sc.id), e = c?.problems.find(p => p.level === 'error');
     if (c && !c.ok) return { text: `${e?.line ? `Line ${e.line}: ` : ''}${e?.msg ?? 'does not check out'}`, bad: true };
+    const kept = runs[sc.id];
+    // a run in safe mode: what it would change (nothing went into the program)
+    if (kept?.safe) {
+      const on = (kept.would ?? []).filter(p => !p.off), n = on.reduce((k, p) => k + p.bytes.length, 0);
+      const head = sc.safe ? 'safe mode' : 'ran in safe mode';
+      return { text: n ? `${head}: ${n} byte${n === 1 ? '' : 's'} would change` : `${head}: it would change none of the program's bytes` };
+    }
     const mine = scriptPatches(patches, sc.id).filter(p => !p.off), bytes = mine.reduce((n, p) => n + p.bytes.length, 0);
-    if (mine.length) return { text: `${bytes} byte${bytes === 1 ? '' : 's'} changed in the program` };
-    if (runs[sc.id]) return { text: 'ran: it changed none of the program\'s bytes' };
-    return { text: 'ready to run' };
+    if (mine.length) return { text: `${bytes} byte${bytes === 1 ? '' : 's'} changed in the program${sc.safe ? ' · safe mode' : ''}` };
+    if (kept) return { text: 'ran: it changed none of the program\'s bytes' };
+    return { text: sc.safe ? 'safe mode · ready to run' : 'ready to run' };
   };
   return (
     <SideSection id="scripts" title="Scripts" summary={list.length ? `${list.length} script${list.length === 1 ? '' : 's'}` : 'none'}
@@ -385,11 +392,11 @@ function ScriptsSection({ list, checks, patches, onNew, onOpen, onRun, onRemove,
           const st = status(sc), ok = !!checks.get(sc.id)?.ok, changed = scriptPatches(patches, sc.id).length > 0;
           return (
             <div key={sc.id} role="listitem" className={cx('file-row script-row', running === sc.id && 'running')} onClick={() => onOpen(sc.id)}
-              title={`Open "${sc.name}" in the Scripts tab${runs[sc.id] ? `\nLast run: ${scriptEndText(runs[sc.id].run)}` : ''}`}>
+              title={`Open "${sc.name}" in the Scripts tab${sc.safe ? '\nSafe mode: its runs write nothing into the program or its .asm' : ''}${runs[sc.id] ? `\nLast run: ${scriptEndText(runs[sc.id].run)}` : ''}`}>
               <Icon name="prompt" size={14} />
-              <div className="file-meta"><div className="file-name">{sc.name}</div><div className={cx('small', st.bad ? 'script-bad' : 'muted')}>{st.text}</div></div>
+              <div className="file-meta"><div className="file-name">{sc.name}{sc.safe && <Icon name="shield" size={12} className="scr-safe-ico" />}</div><div className={cx('small', st.bad ? 'script-bad' : 'muted')}>{st.text}</div></div>
               <button className="icon-btn" aria-label={`Run ${sc.name}`} disabled={!ok || !!running}
-                title={!ok ? 'It does not check out: open it to fix it' : running ? 'A script is running' : 'Run it: what it changes in the program\'s bytes goes into the program'}
+                title={!ok ? 'It does not check out: open it to fix it' : running ? 'A script is running' : sc.safe ? 'Run it in safe mode: nothing goes into the program; the row says what it would change' : 'Run it: what it changes in the program\'s bytes goes into the program'}
                 onClick={e => { e.stopPropagation(); onRun(sc.id); }}><Icon name="play" size={13} /></button>
               <button className="icon-btn" aria-label={`Delete ${sc.name}`} title={`Delete the script${changed ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`}
                 onClick={e => { e.stopPropagation(); onRemove(sc.id); }}><Icon name="x" size={13} /></button>

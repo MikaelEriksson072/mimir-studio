@@ -1612,11 +1612,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a copy of a library script, under a name of its own in the project */
   const addLibraryScript = (l: LibraryScript) => {
     const name = userScripts.some(s => s.name.toLowerCase() === l.name.toLowerCase()) ? scriptName(userScripts, l.name) : l.name;
-    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })) }, 'Add script from the library');
-    toast(`"${name}" added from the library: Ctrl+Enter runs it on this program`, 'ok');
+    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}) }, 'Add script from the library');
+    toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}`, 'ok');
   };
   const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
+  /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
+  const setScriptSafe = (id: string, on: boolean) => {
+    const s = userScripts.find(x => x.id === id); if (!s || !!s.safe === on) return;
+    update(`Safe mode ${on ? 'on' : 'off'} for "${s.name}"`, d => { const t = d.userScripts?.find(x => x.id === id); if (!t) return; if (on) t.safe = true; else delete t.safe; });
+    const had = scriptPatches(project.patches, id).length > 0;
+    toast(on ? `Safe mode on for "${s.name}": its runs leave the program and its .asm as they are, and show what they would change${had ? '. What its earlier runs wrote stays in (Take out removes it)' : ''}`
+      : `Safe mode off for "${s.name}": what a run changes goes into the program and its .asm again`, 'ok');
+  };
   /** the script goes, and what it changed goes out of the program with it */
   const removeUserScript = (id: string) => {
     const s = userScripts.find(x => x.id === id); if (!s) return;
@@ -1645,20 +1653,36 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     });
     return { written: w.written, failed: w.failed };
   };
-  /** a run has ended (Run in the Scripts tab or the Explorer, or debugging to its end): its changes into the program,
-   *  the run kept to show, and what it did said */
-  const finishScriptRun = (id: string, r: ScriptRun, text: string) => {
-    const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
-    const w = ranUserScript(id, r);
-    const st = useScripts.getState();
-    st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [] } } });
-    if (st.selected === id && (st.shown.kind === 'patch' || !s.pads.length)) st.set({ shown: w?.written.length ? { kind: 'patch', id: w.written[0].id } : { kind: 'pad', i: 0 } });
-    const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
-    const what = w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
-    toast(`${s.name}: ${scriptEndText(r)}${what}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not be written (Scripts → Last run says why).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length ? 'warn' : 'ok') : 'warn');
+  /** a run in safe mode ended: what it would change in the program worked out as Run would write it, but nothing goes
+   *  into the program; only its scratchpads (the script's own memory, not the program's) are kept in the project */
+  const ranSafely = (id: string, run: ScriptRun) => {
+    const { A: a, R: r, project: p, S: st } = latest.current;
+    const s = p.userScripts?.find(x => x.id === id); if (!s) return null;
+    const w = writeScriptRun(a, r, { ...p, ...withoutScriptPatches(p, id), settings: st }, s, run, scriptPatches(p.patches, id));
+    if (s.pads.length) update(`Run script "${s.name}" in safe mode`, d => {
+      const t = d.userScripts?.find(x => x.id === id); if (!t) return;
+      for (const pad of t.pads) { const b = run.pads.find(x => x.name === pad.name); if (b && b.bytes.length === pad.size) pad.bytes = b.bytes; }
+    });
+    return { written: w.written, failed: w.failed };
   };
-  /** Run a script (`text`: its code as the editor has it, else as the project has it), in its worker; one at a time */
-  const runUserScript = async (id: string, text?: string) => {
+  /** a run has ended (Run in the Scripts tab or the Explorer, or debugging to its end): its changes into the program
+   *  (in safe mode only worked out, unless `write`: Write into the program), the run kept to show, and what it did said */
+  const finishScriptRun = (id: string, r: ScriptRun, text: string, write = false) => {
+    const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
+    const safe = !!s.safe && !write;
+    const w = safe ? ranSafely(id, r) : ranUserScript(id, r);
+    const st = useScripts.getState();
+    st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [], ...(safe ? { safe: true, would: w?.written ?? [] } : {}) } } });
+    if (st.selected === id && (st.shown.kind !== 'pad' || !s.pads.length)) st.set({ shown: !w?.written.length ? { kind: 'pad', i: 0 } : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
+    const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
+    const what = safe
+      ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → Would change).` : 'It would change none of the program\'s bytes.'}`
+      : w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
+    toast(`${s.name}: ${scriptEndText(r)}${what}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length ? 'warn' : 'ok') : 'warn');
+  };
+  /** Run a script (`text`: its code as the editor has it, else as the project has it), in its worker; one at a time.
+   *  `write`: what it changes goes into the program also when the script is in safe mode (Write into the program) */
+  const runUserScript = async (id: string, text?: string, write = false) => {
     const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
     if (useScripts.getState().running) { toast('A script is running: wait for it, or stop it in the Scripts tab', 'info'); return; }
     const source = text ?? s.source, env = scriptEnvFor(id);
@@ -1668,7 +1692,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try {
       const r = await runScriptInWorker(env, { source, pads: s.pads });
       useScripts.getState().set({ running: null });
-      finishScriptRun(id, r, source);
+      finishScriptRun(id, r, source, write);
     } catch (e) {
       useScripts.getState().set({ running: null });
       const msg = errorText(e);
@@ -3105,7 +3129,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} scriptMarks={scriptMarks} onScriptMark={openUserScript} onLinkMenu={(a, x, y) => { const m = linkMenu(a); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript}
-                onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
+                onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);

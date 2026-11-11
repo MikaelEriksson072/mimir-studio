@@ -40,8 +40,13 @@ interface ScriptsViewProps {
   onAdd: (s: LibraryScript) => void;
   onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links'>>, label: string) => void;
   onRemove: (id: string) => void;
-  /** Run: the script with this code, in its worker; its changes go into the program (App runUserScript) */
+  /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
+   *  runUserScript) */
   onRun: (id: string, text: string) => Promise<void>;
+  /** Write into the program: a run whose changes go into the program also in safe mode */
+  onWrite: (id: string, text: string) => Promise<void>;
+  /** safe mode on or off: on, a run writes nothing into the program and shows what it would change */
+  onSafe: (id: string, on: boolean) => void;
   /** a run that ended here (debugging to its end): its changes go into the program, the run is kept and said */
   onFinish: (id: string, run: ScriptRun, text: string) => void;
   /** the script's changes taken out of the program */
@@ -73,7 +78,7 @@ export function logText(bytes: Uint8Array, fill: number, screen: boolean): strin
   return out.endsWith('\n') ? out : out + '\n';
 }
 
-export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
+export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast }: ScriptsViewProps) {
   const { selected, runs, running, shown, mode, screen, outH, dbgOutH, library, gotoLine, set, saveToLibrary, removeFromLibrary } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -272,6 +277,12 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     void onRun(s.id, models.current[s.id]?.getValue() ?? s.source);
   };
   runRef.current = run;
+  /** Write into the program (safe mode): the script runs once more, and this time what it changes goes into the program */
+  const write = () => {
+    const s = curRef.current; if (!s || running || dbgRef.current) return;
+    flush();
+    void onWrite(s.id, models.current[s.id]?.getValue() ?? s.source);
+  };
 
   /* ---- the debugger (spec 10.3): the run an instruction at a time, on the program as Run has it ---- */
   /** the breakpoints of a script: the lines of its model's breakpoint decorations (they move as lines are edited) */
@@ -366,7 +377,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     pauseReq.current = true;
     if (!dbgRef.current) return;
     setDbg(null); dbgRef.current = null; busyRef.current = false; setDbgBusy(false);
-    if (!quiet) toast('Debugging stopped: nothing went into the program (Run, or debugging to the end, writes the changes)', 'info');
+    if (!quiet) toast(curRef.current?.safe ? 'Debugging stopped (safe mode: nothing goes into the program in any case)' : 'Debugging stopped: nothing went into the program (Run, or debugging to the end, writes the changes)', 'info');
   };
   keys.current = { step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp };
 
@@ -412,8 +423,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
         <div role="listbox" aria-label="Scripts">
           {scripts.map(s => (
             <button key={s.id} role="option" aria-selected={s.id === cur?.id} className={cx('scr-item', s.id === cur?.id && 'on')} onClick={() => { flush(); set({ selected: s.id, shown: { kind: 'pad', i: 0 } }); }}
-              title={`${s.name}${runs[s.id] ? ` · last run: ${scriptEndText(runs[s.id].run)}` : ''}`}>
-              <Icon name="prompt" size={13} /><span className="scr-item-name">{s.name}</span>{running === s.id && <span className="scr-busy" aria-label="running" />}
+              title={`${s.name}${s.safe ? ' · safe mode: its runs write nothing into the program' : ''}${runs[s.id] ? ` · last run: ${scriptEndText(runs[s.id].run)}` : ''}`}>
+              <Icon name="prompt" size={13} /><span className="scr-item-name">{s.name}</span>{s.safe && <Icon name="shield" size={12} className="scr-safe-ico" />}{running === s.id && <span className="scr-busy" aria-label="running" />}
             </button>
           ))}
         </div>
@@ -427,10 +438,16 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}
           </span>
           <span className="grow" />
+          <label className={cx('scr-safe', cur.safe && 'on')} title={cur.safe
+            ? 'Safe mode is on: a run leaves the program and its .asm as they are and lists what it would change (Would change); Write into the program puts that in. Switch it off and runs write into the program again'
+            : 'Safe mode: the script\'s runs write nothing into the program or its .asm; they list what they would change'}>
+            <input type="checkbox" role="switch" className="switch" aria-label="Safe mode" checked={!!cur.safe} onChange={e => onSafe(cur.id, e.target.checked)} />
+            <Icon name="shield" size={14} /><span className="lbl">Safe mode</span>
+          </label>
           {dbg ? <div className="scr-dbg-tools" role="group" aria-label="Debugging">
             {dbgBusy
               ? <button className="btn" onClick={() => { pauseReq.current = true; }} title="Stop where it is now, and go on debugging from there">Pause</button>
-              : <button className="btn primary" onClick={contDbg} title="Go on to the end of the run, or to the next breakpoint (Ctrl+Enter). At the end it is a run: its changes go into the program"><Icon name="play" />Continue<kbd>Ctrl+Enter</kbd></button>}
+              : <button className="btn primary" onClick={contDbg} title={`Go on to the end of the run, or to the next breakpoint (Ctrl+Enter). At the end it is a run: ${cur.safe ? 'in safe mode nothing goes into the program' : 'its changes go into the program'}`}><Icon name="play" />Continue<kbd>Ctrl+Enter</kbd></button>}
             <button className="btn" disabled={dbgBusy} onClick={stepDbg} title="Run the next instruction; into a JSR (F8)">Step<kbd>F8</kbd></button>
             <button className="btn" disabled={dbgBusy} onClick={overDbg} title="Run the next instruction; a JSR runs until it returns (F6)">Over<kbd>F6</kbd></button>
             <button className="btn" disabled={dbgBusy} onClick={outDbg} title="Run until the routine it is in returns; at the top, to the end of the run (Shift+F6)">Out<kbd>Shift+F6</kbd></button>
@@ -438,7 +455,9 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
           </div> : <>
             {isRunning
               ? <button className="btn" onClick={() => stopScript()} title="Stop the run"><Icon name="x" />Stop</button>
-              : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={run} title={check.ok ? 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program' : 'The script must check out before it can run: see the errors'}>
+              : <button className="btn primary scr-run" disabled={!check.ok || !!running} onClick={run} title={!check.ok ? 'The script must check out before it can run: see the errors'
+                : cur.safe ? 'Run the script in safe mode (Ctrl+Enter in the editor): nothing goes into the program or its .asm; what it would change is listed under Would change'
+                : 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program'}>
                 <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
             <button className="btn scr-debug-btn" disabled={!check.ok || !!running} onClick={startDebug} title={check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
             <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
@@ -446,8 +465,10 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
             <button className="icon-btn" aria-label="Delete script" title={`Delete the script "${cur.name}"${mine.length ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`} onClick={() => { flush(); onRemove(cur.id); }}><Icon name="trash" size={15} /></button>
           </>}
         </div>
-        {howTo && !dbg && <p className="scr-howto" role="note"><Icon name="info" size={13} /><span><b>Run</b> (Ctrl+Enter) runs the code here in Mimir. What it changes in the program's bytes goes into the program and its .asm, listed under <i>In the program</i>; the script's own code never does. <b>Debug</b> (F8) goes through it an instruction at a time.</span></p>}
-        {dbg && <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. Reaching the end, it is a run: its changes go into the program.</span></p>}
+        {howTo && !dbg && (cur.safe
+          ? <p className="scr-howto scr-safe-note" role="note"><Icon name="shield" size={13} /><span><b>Safe mode</b> is on: <b>Run</b> (Ctrl+Enter) runs the code here in Mimir and leaves the program and its .asm as they are. What it would change is listed under <i>Would change</i>, and <b>Write into the program</b> puts it in. <b>Debug</b> (F8) goes through it an instruction at a time.</span></p>
+          : <p className="scr-howto" role="note"><Icon name="info" size={13} /><span><b>Run</b> (Ctrl+Enter) runs the code here in Mimir. What it changes in the program's bytes goes into the program and its .asm, listed under <i>In the program</i>; the script's own code never does. <b>Debug</b> (F8) goes through it an instruction at a time.</span></p>)}
+        {dbg && <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. Reaching the end, it is a run: {cur.safe ? 'in safe mode nothing goes into the program.' : 'its changes go into the program.'}</span></p>}
         <div className="scr-links" role="list" aria-label="Links">
           <span className="scr-links-head" title="Names of the program linked to the script: right-click a label (a byte of a table, an instruction) in the listing or the source and pick Link to a script. A click writes the name in the code where the cursor is; Shift+click shows it in the listing">Links</span>
           {links.length ? links.map(k => (
@@ -466,8 +487,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
           </div>
           <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />
           <div className="scr-out" style={{ height: dbg ? dbgOutH : outH }}>
-            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} />
-            <PadView script={cur} mine={mine} names={names} mode={mode} screen={screen} live={livePad} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
+            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} canWrite={check.ok && !running && !dbg} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onWrite={write} />
+            <PadView script={cur} mine={mine} would={kept?.safe ? kept.would ?? [] : []} names={names} mode={mode} screen={screen} live={livePad} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
               onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} />
           </div>
         </div>
@@ -506,11 +527,11 @@ function NameField({ value, taken, onCommit, toast }: { value: string; taken: st
   return <input className="scr-name" aria-label="Script name" value={v} maxLength={64} onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setV(value); (e.target as HTMLInputElement).blur(); } }} />;
 }
 
-/** The left of the output: the problems, what the script changed in the program, the scratchpads (edited here) and
- *  the last run. */
-function ScriptSide({ script, check, kept, stale, mine, env, onGoLine, onEdit, onTakeOut, onSwitchPatch }: {
-  script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; onGoLine: (n: number) => void;
-  onEdit: ScriptsViewProps['onEdit']; onTakeOut: ScriptsViewProps['onTakeOut']; onSwitchPatch: ScriptsViewProps['onSwitchPatch'];
+/** The left of the output: the problems, what the script changed in the program, what its last run would change
+ *  (safe mode), the scratchpads (edited here) and the last run. */
+function ScriptSide({ script, check, kept, stale, mine, env, canWrite, onGoLine, onEdit, onTakeOut, onSwitchPatch, onWrite }: {
+  script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; canWrite: boolean; onGoLine: (n: number) => void;
+  onEdit: ScriptsViewProps['onEdit']; onTakeOut: ScriptsViewProps['onTakeOut']; onSwitchPatch: ScriptsViewProps['onSwitchPatch']; onWrite: () => void;
 }) {
   const { shown, set } = useScripts();
   const setPads = (pads: ScriptPad[], label: string) => onEdit(script.id, { pads }, label);
@@ -524,6 +545,8 @@ function ScriptSide({ script, check, kept, stale, mine, env, onGoLine, onEdit, o
   };
   const run = kept?.run;
   const sorted = [...mine].sort((a, b) => a.start - b.start);
+  // what the last run would have written, when it ran in safe mode
+  const would = kept?.safe ? kept.would ?? [] : null;
   return (
     <div className="scr-side">
       {check.problems.length > 0 && <section className="scr-sec">
@@ -535,15 +558,29 @@ function ScriptSide({ script, check, kept, stale, mine, env, onGoLine, onEdit, o
           </li>))}</ul>
       </section>}
       <section className="scr-sec">
-        <h4>In the program{stale && <span className="pill mid" title="The code has changed since this run: run it again to update the program">code changed since</span>}<span className="grow" />
+        <h4>In the program{stale && !would && <span className="pill mid" title="The code has changed since this run: run it again to update the program">code changed since</span>}<span className="grow" />
           {mine.length > 0 && <button className="btn ghost small" onClick={() => onTakeOut(script.id)} title="Take what the script changed out of the program: the original bytes come back (Ctrl+Z puts it back)"><Icon name="undo" size={13} />Take out</button>}</h4>
-        {!mine.length && <p className="muted small">Nothing yet. What a run changes in the program's bytes goes in here and into the program: the listing, the source, the export and Build &amp; Run have it.</p>}
+        {!mine.length && <p className="muted small">{script.safe
+          ? 'Nothing. Safe mode is on: runs leave the program and its .asm as they are.'
+          : <>Nothing yet. What a run changes in the program's bytes goes in here and into the program: the listing, the source, the export and Build &amp; Run have it.</>}</p>}
+        {mine.length > 0 && script.safe && <p className="muted small">Written before safe mode was switched on; runs in safe mode leave it as it is.</p>}
         <ul className="scr-changes" aria-label="Changed in the program">{sorted.map(p => (
           <li key={p.id} className={cx('scr-change-row', p.off && 'off')}>
             <input type="checkbox" role="switch" className="switch" checked={!p.off} aria-label={`${p.name} in the program`} title={p.off ? 'Left out: the original bytes are there. Switch it on to write the change' : 'Written into the program. Switch it off to leave it out (runs keep it out)'} onChange={e => onSwitchPatch(p, e.target.checked)} />
             <button className={cx('scr-change', shown.kind === 'patch' && shown.id === p.id && 'on')} onClick={() => set({ shown: { kind: 'patch', id: p.id } })}>{rangeText({ start: p.start, end: patchEnd(p) })} · {plural(p.bytes.length, 'byte')}</button>
           </li>))}</ul>
       </section>
+      {would && <section className="scr-sec scr-would-sec">
+        <h4><Icon name="shield" size={12} />Would change{stale && <span className="pill mid" title="The code has changed since this run: run it again to see what it would change now">code changed since</span>}</h4>
+        <p className="muted small">{would.length ? 'The last run ran in safe mode: none of this is in the program.' : 'The last run ran in safe mode and would change none of the program\'s bytes.'}</p>
+        <ul className="scr-changes" aria-label="Would change in the program">{would.map((p, i) => (
+          <li key={i} className={cx('scr-change-row', p.off && 'off')}>
+            <button className={cx('scr-change', shown.kind === 'would' && shown.i === i && 'on')} onClick={() => set({ shown: { kind: 'would', i } })}
+              title={p.off ? 'You left this change out of the program: written, it would stay out' : 'What the run would write here: a click shows the bytes'}>{rangeText({ start: p.start, end: patchEnd(p) })} · {plural(p.bytes.length, 'byte')}</button>
+          </li>))}</ul>
+        {would.length > 0 && <button className="btn small scr-write" disabled={!canWrite} onClick={onWrite}
+          title="Run the script once more and write what it changes into the program and its .asm, in place of what its earlier runs wrote (Ctrl+Z takes it back). Safe mode stays on"><Icon name="download" size={13} />Write into the program</button>}
+      </section>}
       <section className="scr-sec">
         <h4>Scratchpads<span className="grow" /><button className="btn ghost small" onClick={addPad} title="A scratchpad: memory of the script's own at an address, for data kept outside the program (a log, say) that can be saved as a file. It is cleared before each run; its name (and name_end) are labels in the code"><Icon name="plus" size={13} />Add</button></h4>
         {!script.pads.length && <p className="muted small">None. Add one to keep data outside the program, a log the script writes, say, and save it as a file.</p>}
@@ -562,7 +599,7 @@ function ScriptSide({ script, check, kept, stale, mine, env, onGoLine, onEdit, o
         <h4>Last run</h4>
         <p className={cx('scr-end', run.end === 'jam' || run.end === 'limit' ? 'warn' : 'ok')}>{scriptEndText(run)}</p>
         <p className="scr-regs mono">A=${h2(run.regs.a)} X=${h2(run.regs.x)} Y=${h2(run.regs.y)} S=${h2(run.regs.s)} P=${h2(run.regs.p)} · {run.ms} ms</p>
-        {kept!.failed.map((f, i) => <p key={i} className="small scr-failed"><Icon name="warn" size={13} />Not written into the program, {rangeText(f)}: {f.error}</p>)}
+        {kept!.failed.map((f, i) => <p key={i} className="small scr-failed"><Icon name="warn" size={13} />{kept!.safe ? 'Could not be written' : 'Not written'} into the program, {rangeText(f)}: {f.error}</p>)}
         {run.other > 0 && <p className="small muted">{plural(run.other, 'byte')} changed outside the program and the scratchpads (the zero page, the stack, …): not kept.</p>}
       </section>}
     </div>
@@ -599,8 +636,8 @@ interface LivePad { name: string; bytes: Uint8Array; before: Uint8Array | null }
 /** The right of the output: a scratchpad's bytes, or a change the script made in the program, as hex, code or text,
  *  with what can be done with them. While debugging, the scratchpad as the run has it now (`live`), the bytes the last
  *  step changed marked in the hex. */
-function PadView({ script, mine, names, mode, screen, live, onMode, onScreen, onShow, onCopy, onSave, onSaveText }: {
-  script: UserScript; mine: Patch[]; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; live: LivePad | null; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
+function PadView({ script, mine, would, names, mode, screen, live, onMode, onScreen, onShow, onCopy, onSave, onSaveText }: {
+  script: UserScript; mine: Patch[]; would: Patch[]; names: ReadonlyMap<string, number>; mode: PadMode; screen: boolean; live: LivePad | null; onMode: (m: PadMode) => void; onScreen: (v: boolean) => void;
   onShow: ScriptsViewProps['onShow']; onCopy: ScriptsViewProps['onCopy']; onSave: ScriptsViewProps['onSave']; onSaveText: ScriptsViewProps['onSaveText'];
 }) {
   const { shown } = useScripts();
@@ -612,7 +649,9 @@ function PadView({ script, mine, names, mode, screen, live, onMode, onScreen, on
     const ro = new ResizeObserver(() => setWide(view.clientWidth >= 560)); ro.observe(view); setWide(view.clientWidth >= 560);
     return () => ro.disconnect();
   }, [view]);
-  const patch = shown.kind === 'patch' ? mine.find(p => p.id === shown.id) : undefined;
+  const patch = shown.kind === 'patch' ? mine.find(p => p.id === shown.id) : shown.kind === 'would' ? would[shown.i] : undefined;
+  // a change the last run (in safe mode) would make: not in the program
+  const preview = shown.kind === 'would' && !!patch;
   const pad = !patch ? (shown.kind === 'pad' ? script.pads[shown.i] : undefined) ?? script.pads[0] : undefined;
   const now = !patch && pad && live && live.name === pad.name && live.bytes.length === pad.size ? live : null;
   const bytes = patch ? patch.bytes : now ? now.bytes : pad?.bytes && pad.bytes.length === pad.size ? pad.bytes : null;
@@ -653,6 +692,7 @@ function PadView({ script, mine, names, mode, screen, live, onMode, onScreen, on
       <div className="scr-view-head">
         <b className="scr-view-title">{title}</b>
         {now && <span className="pill mid scr-live" title="Debugging: the scratchpad as the run has it now; what the last step changed is marked in the hex">now, as the run has it</span>}
+        {preview && <span className="pill scr-live scr-would-pill" title="Safe mode: the last run would write these bytes here; the program still has its own (Write into the program puts these in)"><Icon name="shield" size={11} />would change: not in the program</span>}
         {patch && <span className="muted small" title={`The program had: ${Array.from(patch.old.subarray(0, 64), b => h2(b)).join(' ')}${patch.old.length > 64 ? ' …' : ''}`}>{differ} differ from the original</span>}
         <span className="grow" />
         <div className="seg" role="group" aria-label="Show as">

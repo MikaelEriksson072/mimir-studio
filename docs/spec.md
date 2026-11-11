@@ -2000,6 +2000,16 @@ $06, $08` i `.asm`-filen efter en körning.
   ändringar med ut. En ändring som inte kan bli en patch (i en av användarens patchar, över kanten på ett relokerat
   block) skrivs inte in, och *Last run* säger varför. Står koden inte längre som när den kördes säger rubriken *code
   changed since*.
+- **Safe mode** (knappen *Safe mode* med en sköld i verktygsraden, `UserScript.safe`; av som förval, sparas med
+  skriptet i projektet och i biblioteket): skriptets körningar skriver **ingenting** in i programmet, så listningen,
+  `.asm`-filen, exporten och Build & Run förblir som de är. Körningen går som annars (från programmet utan skriptets
+  tidigare ändringar), och det den skulle skriva räknas ut som *Run* skulle skriva det (`writeScriptRun`, utan att
+  projektet ändras) och listas under *Would change* (ett klick visar byten med *would change: not in the program*).
+  *Write into the program* kör skriptet en gång till och skriver det den ändrar in i programmet (ett steg att ångra);
+  safe mode förblir på. Scratchpadsen, skriptets eget minne, får vad körningen lämnade i dem (utan scratchpads ändras
+  projektet inte alls), och felsökaren som når slutet följer samma regel. Det skriptets körningar skrev innan safe mode
+  slogs på ligger kvar (*Take out* tar ut det, och *In the program* säger det). Listan i fliken och Explorer → Scripts
+  visar en sköld, och raden säger *safe mode: 4 bytes would change*.
 - **Last run** säger hur körningen slutade (*Returned (RTS at $c008) after N instructions, M cycles*), registren och
   tiden, och hur många byte som ändrades utanför programmets byte eller i nollsidan och stacken (de sparas inte).
 - **Scratchpads** används bara när man vill ha data utanför programmet, till exempel en logg: *Add* lägger till en

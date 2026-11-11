@@ -27,6 +27,7 @@ export const ICONS = {
   disk: 'M4 4h13l3 3v13H4zM8 4v5h8V4M8 20v-6h8v6', tape: 'M3 6h18v12H3zM9.5 11a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM17.5 11a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM9.5 11h5M7 18l1.5-3h7L17 18', eject: 'M12 5l7 8H5zM5 18h14',
   bookmark: 'M7 3.5h10v17l-5-3.8-5 3.8z', pack: 'M3.5 4h17v4h-17zM5 8v12h14V8M10 12h4', clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2',
   star: 'M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.85l-5.25 2.75 1-5.8L3.5 9.7l5.9-.9z',
+  shield: 'M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6zM8.8 12l2.2 2.2 4.2-4.4',
 } as const;
 
 export type IconName = keyof typeof ICONS;

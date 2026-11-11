@@ -6392,6 +6392,89 @@ test('scripts in the Explorer: made, run, shown with what they changed or what i
   });
 });
 
+test('scripts: safe mode runs without changing the program or its .asm, lists what a run would change, and writes it in when asked', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  await editor.locator('.view-lines').click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.insertText(['        ldx #3', '!:      inc colors_0939,x', '        dex', '        bpl !-', '        rts'].join('\n'));
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  const safe = page.getByRole('switch', { name: 'Safe mode' });
+  const would = page.getByRole('list', { name: 'Would change in the program' });
+  const changes = page.getByRole('list', { name: 'Changed in the program' });
+  const tag = listing(page).locator('.patch-tag', { hasText: 'script' });
+  const mark = listing(page).locator('.row .syn-comment', { hasText: 'changed by the script "script"' });
+  const section = page.getByRole('region', { name: 'Scripts' });
+  const row = section.getByRole('list', { name: 'Scripts in the project' }).getByRole('listitem').first();
+  const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); };
+  const inListing = async () => { await page.getByRole('tab', { name: 'Listing' }).click(); await goTo(page, 'colors_0939'); };
+
+  await test.step('safe mode switched on: the note says a run leaves the program and its .asm as they are', async () => {
+    await safe.check();
+    await expect(toast(page, 'Safe mode on for "script"')).toBeVisible();
+    await expect(page.getByRole('note')).toContainText('leaves the program and its .asm as they are');
+    await expect(page.getByRole('option', { name: 'script' }).locator('.scr-safe-ico')).toBeVisible();
+  });
+
+  await test.step('a run in safe mode lists what it would change; the listing and the .asm have none of it', async () => {
+    await runIt();
+    await expect(toast(page, /script: Returned .* Safe mode: nothing went into the program\. It would change 4 bytes in 1 place/)).toBeVisible();
+    await expect(would.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+    await expect(changes.getByRole('listitem')).toHaveCount(0);
+    await expect(page.getByText('Nothing. Safe mode is on')).toBeVisible();
+    await expect(page.locator('.scr-view-head')).toContainText('would change: not in the program');
+    await expect(page.locator('.scr-view-head')).toContainText('4 differ from the original');
+    await inListing();
+    await expect(tag).toHaveCount(0);
+    await expect(mark).toHaveCount(0);
+    await section.getByRole('button', { name: 'Scripts' }).click();
+    await expect(row).toContainText('safe mode: 4 bytes would change');
+  });
+
+  await test.step('Write into the program runs it once more and puts the change in; safe mode stays on', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await page.getByRole('button', { name: 'Write into the program' }).click();
+    await expect(toast(page, /script: Returned .* It changed 4 bytes of the program in 1 place/)).toBeVisible();
+    await expect(changes.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+    await expect(would).toHaveCount(0);
+    await expect(safe).toBeChecked();
+    await inListing();
+    await expect(tag).toBeVisible();
+    await expect(mark).toHaveCount(1);
+  });
+
+  await test.step('a run in safe mode again leaves what was written as it is', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await runIt();
+    await expect(toast(page, /Safe mode: nothing went into the program\. It would change 4 bytes/)).toBeVisible();
+    await expect(changes.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+    await expect(page.getByText('Written before safe mode was switched on')).toBeVisible();
+    await expect(would.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+  });
+
+  await test.step('the library keeps safe mode with the script', async () => {
+    await page.getByRole('button', { name: 'Save to library' }).click();
+    await page.getByRole('button', { name: 'Add script to the project' }).click();
+    await expect(page.getByRole('option', { name: 'script2' })).toHaveAttribute('aria-selected', 'true');
+    await expect(safe).toBeChecked();
+    await page.getByRole('button', { name: 'Remove script from the library' }).click();
+  });
+
+  await test.step('safe mode off: a run writes into the program again', async () => {
+    await page.getByRole('option', { name: 'script', exact: true }).click();
+    await safe.uncheck();
+    await expect(toast(page, 'Safe mode off for "script"')).toBeVisible();
+    await runIt();
+    await expect(toast(page, /script: Returned .* It changed 4 bytes of the program in 1 place/)).toBeVisible();
+    await expect(would).toHaveCount(0);
+  });
+});
+
 test('scripts: names linked from the listing and the source, marked there, written in the code with a click; the editor suggests the program\'s names; the scratchpad follows the debugger', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
