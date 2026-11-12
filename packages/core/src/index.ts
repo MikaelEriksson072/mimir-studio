@@ -37,7 +37,12 @@ export { isT64, makeT64, readT64, t64Info, writeT64, type T64Entry, type T64Info
 export { readSpindleDisk, spinChunkName, spinScript, type SpindleChunk, type SpindleDisk, type SpindleJob } from './c64/spindle-disk';
 export { BOOZE_CRUNCHER, boozeFileList, boozeFileName, readBoozeDisk, unpackByteBoozer1, unpackByteBoozer2, type BoozeCruncher, type BoozeDisk, type BoozeFile, type BoozeUnpacked } from './c64/booze-disk';
 export { readSparkleDisk, sparkleBlockOrder, sparkleChunkName, sparkleChunkPrg, sparkleCount, sparkleScript, type SparkleBundle, type SparkleChunk, type SparkleCountCode, type SparkleDisk, type SparkleItems } from './c64/sparkle-disk';
-export { cc1541Script, cc1541Text, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readKrillDisk, unpackKrillZx0, type KrillDisk, type KrillEntry, type KrillFile, type KrillUnpacked } from './c64/krill-disk';
+export {
+  COVERT_PACKER, COVERT_RAW_AT, covertCallText, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, maked64DiskName, maked64Text, readCovertDisk,
+  unpackCovertExomizer, unpackCovertExomizer3Raw, unpackCovertFile, unpackCovertPucrunch,
+  type CovertCall, type CovertDisk, type CovertEntry, type CovertFile, type CovertPacker, type CovertScript, type CovertTool, type CovertUnpacked,
+} from './c64/covert-disk';
+export { cc1541Script, cc1541Text, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readKrillDisk, unpackKrillDoynax, unpackKrillZx0, type KrillDisk, type KrillEntry, type KrillFile, type KrillPacker, type KrillUnpacked } from './c64/krill-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
 export { sidPlayer, musicPlayData, type SidPlayer, type SidPlayerOptions, type MusicPlayData } from './c64/sidplayer';

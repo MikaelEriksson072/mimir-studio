@@ -735,6 +735,28 @@ the reference as a patch in `test/helpers/reference.ts`):
     C64 Debugger 0.64.58.6: `-alwaysjmp`, which waits for READY, `-d64`, `-tap`; its `-jmp` is lost and it does not
     start a cartridge. Neither reads a VICE 3.10 snapshot.) Both load into RAM under the I/O area and the ROMs, as the
     monitor path needs. `test/debugger-start.test.ts` runs the start code in Sindri's C64 the way they do.
+40. Disks for the Covert Bitops loader (spec 13.5l) are new, and GoatLight is read. `readCovertDisk`
+    (`packages/core/src/c64/covert-disk.ts`) reads a disk whose directory files the loader loads by name (version 2: two
+    letters or a whole name; version 3: two hex digits), unpacked the ways the loader unpacks them: exomizer level
+    (Exomizer 1/2, protocol 0, backwards or with -f forwards; Exomizer 3, protocol 7), exomizer3 raw (version 3, to where
+    the program says) and pucrunch -c0 in Pucrunch's old format (31 RLE bytes), the streams read with Brokkr's
+    `readStream` and an own Pucrunch reader. It reads the load calls in the code on the disk (`ldx #"A" / ldy #"B" /
+    jsr`, a pointer to a name, `lda #n / ldx / ldy / jsr`), which also place raw files, and tells which of Cadaver's
+    tools laid the disk out by laying the files out as each does (makedisk: from the directory out, in the command
+    file's order; maked64: from track 1, in its own order, with a file's own interleave), for the Covert script tab:
+    the files, loaded into Mimir unpacked, the calls, and the tool's command file and command line (`covertScript`). It
+    was checked against the example disks of the loader's 16 releases (2.05 to 3.06, from Cadaver's own pages): all 28
+    packed files are byte for byte what the loader's own unpacker, from the test programs on the same disk, makes of
+    them on Sindri's Cpu with openfile/getbyte trapped, and the 15 laid out by makedisk are written again byte for
+    byte by the test helper from what the reader read back. Mimir's loader search knew only version 3; it now knows
+    version 2 (2.05, 2.12 and 2.29's test programs). GoatLight, the example the user gave, turned out not to be a
+    Covert disk: its credits, sd2iec's list and its boot's own text say Krill's loader, version 146, built with Doynax
+    LZ. `readKrillDisk` now reads that build too (`unpackKrillDoynax`, in place as the loader does: GoatLight's C1
+    writes over three bytes of its own stream before it reads them), and every packed file of both sides (32) is byte
+    for byte what the demo's own unpacker, taken from its boot and run on Sindri's Cpu, makes of it; the loader search
+    knows version 146 by its installer's version text. `mimir disks <folder> [--list] [--json]` counts the disks each
+    reader takes, for checking the archive. Not done in the cloud: Sindri's 1541 needs the DOS ROM, so GoatLight was not
+    run with the disk in Sindri's drive, and the archive was not scanned.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

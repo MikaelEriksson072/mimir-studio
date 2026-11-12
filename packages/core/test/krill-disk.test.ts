@@ -1,11 +1,13 @@
-/* Disks of Krill's loader with its ZX0 (c64/krill-disk.ts, spec 13.5k). The files are packed the way the loader's ZX0
- * unpacker reads them, the disks laid out as test/helpers/krill-disk.ts writes them. The reader was also checked against
- * released disks: every file Nightfall's loader unpacked in Sindri is byte for byte what it unpacks (spec 13.5k). */
+/* Disks of Krill's loader with its ZX0 or, version 146, Doynax LZ (c64/krill-disk.ts, spec 13.5k and 13.5l). The files
+ * are packed the way the loader's unpackers read them, the disks laid out as test/helpers/krill-disk.ts writes them. The
+ * reader was also checked against released disks: every file Nightfall's loader unpacked in Sindri is byte for byte
+ * what it unpacks (spec 13.5k), and so is every packed file of both sides of GoatLight (2015) against the demo's own
+ * Doynax unpacker, taken from its boot and run on Sindri's Cpu (spec 13.5l). */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cc1541Script, cc1541Text, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, makeD64, parseD64, readBitfireDisk, readBoozeDisk, readKrillDisk, readSparkleDisk, readSpindleDisk, unpackDali, unpackKrillZx0 } from '../src';
-import { KrillZx0, makeKrillDisk, packKrillInPlace, packKrillZx0, type FakeKrillEntry } from './helpers/krill-disk';
+import { cc1541Script, cc1541Text, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, makeD64, parseD64, readBitfireDisk, readBoozeDisk, readKrillDisk, readSparkleDisk, readSpindleDisk, unpackDali, unpackKrillDoynax, unpackKrillZx0 } from '../src';
+import { KrillDoynax, KrillZx0, makeKrillDisk, packKrillDoynax, packKrillInPlace, packKrillZx0, type FakeKrillEntry } from './helpers/krill-disk';
 
 /** the bytes of literals and copies (an offset of 0: the last one again), as a plain decoder makes them */
 function expand(steps: ([number[]] | [number, number])[]): number[] {
@@ -206,5 +208,69 @@ describe('the Krill disk fixture', () => {
     expect(readSpindleDisk(disk)).toBeNull();
     expect(readBoozeDisk(disk)).toBeNull();
     expect(readSparkleDisk(disk)).toBeNull();
+  });
+});
+
+describe("Krill's loader's Doynax LZ (version 146)", () => {
+  it('reads its bits from the top of a byte, the address low byte first, a literal\'s bytes last first', () => {
+    // a literal of 2 ($41 $42: bits 1, 0 0, 1), stored $42 $41, then the end: a match (no bit after a literal), range
+    // 0 (bits 000), 4 offset bits (1111 for an offset of 1), length 256 (eight digits 0, each with a 0 to go on, the
+    // last with a 1): the first byte of bits is 1001 000 1
+    const w = new KrillDoynax();
+    w.literal([0x41, 0x42]); w.end();
+    const u = unpackKrillDoynax(Uint8Array.from([0x00, 0x10, ...w.out]), 0x8000);
+    expect(u).toMatchObject({ start: 0x1000, end: 0x1002, inplace: false, packer: 'doynax', overwritten: 0 });
+    expect([...u!.bytes]).toEqual([0x41, 0x42]);
+    expect(w.out.slice(0, 3)).toEqual([0x91, 0x42, 0x41]);
+  });
+
+  it('unpacks literals, matches of 2 bytes and longer in every offset range, literals of 256 bytes', () => {
+    const plain = [...mixed(9000, 7), ...Array.from({ length: 300 }, (_, i) => (i * 97 + 13) & 0xff), ...mixed(2000, 7)];
+    const packed = Uint8Array.from(packKrillDoynax(plain, 0x2000));
+    const u = unpackKrillDoynax(packed, 0x9000);
+    expect(u).toMatchObject({ start: 0x2000, end: 0x2000 + plain.length, overwritten: 0 });
+    expect([...u!.bytes]).toEqual(plain);
+    // every offset range is used
+    const w = new KrillDoynax();
+    w.literal([1, 2, 3]);
+    for (const [len, off] of [[2, 1], [2, 8], [2, 9], [2, 72], [2, 73], [2, 328], [2, 329], [2, 1352], [3, 1], [5, 16], [4, 17], [9, 144], [3, 145], [3, 1168], [3, 1169], [40, 9360]]) {
+      w.match(len, off); w.literal([len]);
+    }
+    w.end();
+    const all = unpackKrillDoynax(Uint8Array.from([0x00, 0x40, ...w.out]), 0x0800);
+    // (the copies reach before the start: zeros there, as the unpacker's memory would have)
+    expect(all).toMatchObject({ start: 0x4000 });
+    expect(all!.bytes.length).toBe(3 + [2, 2, 2, 2, 2, 2, 2, 2, 3, 5, 4, 9, 3, 3, 3, 40].reduce((a, b) => a + b + 1, 0));
+    // a byte more after the end is not this file
+    expect(unpackKrillDoynax(Uint8Array.from([...packed, 0]), 0x9000)).toBeNull();
+  });
+
+  it('unpacks in place, reading what it wrote over bytes of its stream still to be read', () => {
+    // a literal written over the stream's own next bytes: GoatLight's C1 has three such bytes
+    const w = new KrillDoynax();
+    w.literal([0x11, 0x22, 0x33]); w.end();
+    const stream = [0x05, 0x10, ...w.out];
+    // loaded at $1000 it unpacks to $1005, over the end's own bits
+    const u = unpackKrillDoynax(Uint8Array.from(stream), 0x1000);
+    expect(u === null || u.overwritten! > 0).toBe(true);
+    expect(unpackKrillDoynax(Uint8Array.from(stream), 0x2000)).toMatchObject({ start: 0x1005, end: 0x1008, overwritten: 0 });
+  });
+
+  it('reads a disk whose files are packed with it, as GoatLight\'s are, and names them .dnx', () => {
+    const a = packKrillDoynax(mixed(3000, 1), 0x2000), b = packKrillDoynax(mixed(1500, 2), 0xc000);
+    const disk = makeKrillDisk([
+      { name: 'BOOT', load: 0x0801, bytes: [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0, 0, 0, 0x60] },
+      { name: 'A1 PART ONE', load: 0x6000 - a.length, bytes: a },
+      { name: 'B2', load: 0xe000 - b.length, bytes: b },
+    ]);
+    const d = readKrillDisk(disk)!;
+    expect(d.packer).toBe('doynax');
+    expect(d.files.map(f => [krillFileName(f), f.unpacked?.start ?? null, f.unpacked?.end ?? null])).toEqual([
+      ['file00_0801.prg', null, null], ['file01_2000.dnx', 0x2000, 0x2000 + 3000], ['file02_c000.dnx', 0xc000, 0xc000 + 1500],
+    ]);
+    expect([...krillFilePrg(d.files[1])]).toEqual([0x00, 0x20, ...mixed(3000, 1)]);
+    expect(cc1541Script(d, 'goat.d64')[0]).toBe("# cc1541 command line, rebuilt by Mimir Studio from goat.d64 (Krill's loader, Doynax LZ (version 146)): 3 files, 2 of them packed.");
+    // ZX0 is tried first: the ZX0 fixture stays a ZX0 disk
+    expect(readKrillDisk(new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/d64/krill-demo.d64'))))!.packer).toBe('zx0');
   });
 });

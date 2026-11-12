@@ -110,3 +110,69 @@ export function makeKrillDisk(entries: FakeKrillEntry[], o: { header?: string | 
   if (o.id) disk.set(o.id.slice(0, 5), bamAt() + 0xa2);
   return disk;
 }
+
+/** Doynax LZ as version 146 of the loader reads it (doynaxdecomp.s): bits from the top of a byte, put in the stream
+ *  when the first is written; literal bytes and the low bytes of far offsets go in between as they come. */
+export class KrillDoynax {
+  out: number[] = [];
+  private mask = 0;
+  private at = 0;
+  /** what came last: a literal of fewer than 256 bytes is always followed by a match, with no bit to say so */
+  private afterLiteral = false;
+  private started = false;
+  bit(v: number) {
+    if (!this.mask) { this.mask = 0x80; this.at = this.out.length; this.out.push(0); }
+    if (v) this.out[this.at] |= this.mask;
+    this.mask >>= 1;
+  }
+  bits(v: number, n: number) { for (let i = n - 1; i >= 0; i--) this.bit((v >> i) & 1); }
+  /** a literal: 1, its length (a 0 and a digit for each digit after the first 1, then a 1; 256 is 0), its bytes last first */
+  literal(bytes: number[]) {
+    if (!this.started || !this.afterLiteral) this.bit(1);
+    this.started = true;
+    const digits = (bytes.length & 0xff || 0x100).toString(2).slice(1);
+    for (const d of digits) { this.bit(0); this.bit(+d); }
+    this.bit(1);
+    for (let i = bytes.length - 1; i >= 0; i--) this.out.push(bytes[i]);
+    this.afterLiteral = bytes.length < 256;
+  }
+  /** a match: 0 (unless after a literal), 1 for 2 bytes, the offset's range and bits (counted down from the range's
+   *  top), then for a longer one its length - 1 (each digit after the first 1, then 0 to go on or 1 to stop) */
+  match(len: number, offset: number) {
+    if (!this.started || !this.afterLiteral) this.bit(0);
+    this.started = true;
+    const ranges = len === 2 ? [[7, 3, 8], [6, 6, 72], [5, 8, 328], [4, 10, 1352]] : [[0, 4, 16], [1, 7, 144], [2, 10, 1168], [3, 13, 9360]];
+    const [y, n, top] = ranges.find(([, , t]) => offset <= t)!;
+    this.bits(y, 3);
+    const v = top - offset;
+    // far offsets: the high bits, then the low byte as a byte of its own
+    if (y >= 2 && y <= 5) { this.bits(v >> 8, n - 8); this.out.push(v & 0xff); } else this.bits(v, n);
+    if (len > 2) { const digits = (len - 1).toString(2).slice(1); digits.split('').forEach((d, i) => { this.bit(+d); this.bit(i === digits.length - 1 ? 1 : 0); }); }
+    this.afterLiteral = false;
+  }
+  /** the end: a match of 257 bytes */
+  end() { this.match(257, 1); }
+}
+
+/** `data` packed with Doynax LZ for `dest` (the low byte first), with the end; matches from up to 8 KB back */
+export function packKrillDoynax(data: number[], dest: number): number[] {
+  const w = new KrillDoynax();
+  let lit: number[] = [];
+  const flush = () => { while (lit.length) { w.literal(lit.slice(0, 256)); lit = lit.slice(256); } };
+  for (let i = 0; i < data.length;) {
+    let len = 0, off = 0;
+    for (let o = 1; i > 0 && o <= Math.min(i, 8192); o++) {
+      let n = 0;
+      while (i + n < data.length && data[i + n] === data[i + n - o] && n < 256) n++;
+      if (n > len) { len = n; off = o; }
+    }
+    if (len < 3 && !(len === 2 && off <= 1352)) { lit.push(data[i++]); continue; }
+    // a match needs a literal before it unless it is the first, or the literal before it was of 256 bytes
+    flush();
+    w.match(len, off);
+    i += len;
+  }
+  flush();
+  w.end();
+  return [dest & 0xff, dest >> 8, ...w.out];
+}

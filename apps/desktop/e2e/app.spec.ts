@@ -5834,6 +5834,70 @@ test("a mounted disk for Krill's loader: its files in the Krill script tab, unpa
   });
 });
 
+test('a mounted disk for the Covert Bitops loader: its files in the Covert script tab, opened unpacked, makedisk\'s command file copied and saved', async ({ workDir, app, page }) => {
+  // fixtures/d64/covert-demo.d64 (packages/core/test/covert-disk.test.ts): a BASIC boot that loads "01" by its letters,
+  // the raster demo packed with exomizer level, a Pucrunch file, an Exomizer 3 file and one as it is, laid out by makedisk
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/covert-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted covert-demo.d64: "COVERT DEMO", 5 files, a disk for the Covert Bitops loader (version 2, 3 files packed (Exomizer 1/2, Exomizer 3, Pucrunch), 1 load call read from the code)')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText('Covert Bitops loader: version 2, 3 files packed (Exomizer 1/2, Exomizer 3, Pucrunch), 1 load call read from the code; files loaded by name, laid out by makedisk');
+  const files = page.getByRole('table', { name: 'Covert files' });
+
+  await test.step('the Explorer opens the tab, a row per file, the calls and the command file under them', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Covert script' }).click();
+    await expect(page.getByRole('tab', { name: /Covert script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /Covert script/ })).toContainText('5');
+    await expect(page.locator('.spindle-head').first()).toContainText('Files of covert-demo.d64 (Covert Bitops loader, version 2): 5 files, 3 unpacked');
+    await expect(page.locator('.spindle-head').first()).toContainText('laid out by makedisk');
+    await expect(files.locator('tbody tr td:nth-child(2)')).toHaveText(['"COVERT DEMO"', '"01 RASTER"', '"02 ART"', '"03 MUSIC"', '"04 TEXT"']);
+    await expect(files.locator('tbody tr td:nth-child(4)')).toHaveText(['—', '$0801–$37ff', '$4000–$47cf', '$1000–$15db', '—']);
+    await expect(files.locator('tbody tr td:nth-child(6)')).toHaveText(['file00_0801.prg', 'file01_0801.exo', 'file02_4000.puc', 'file03_1000.exo3', 'file04_0400.prg']);
+    await expect(files.locator('tbody tr').nth(1).locator('td:nth-child(7)')).toHaveText('Exomizer 1/2 (exomizer level (Exomizer 1: exomizer -r)) · loaded by $080d · from 17/1');
+    await expect(page.getByRole('table', { name: 'Covert calls' }).locator('tbody tr td:nth-child(4)')).toHaveText(['ldx #"0" / ldy #"1" / jsr $c000']);
+    await expect(page.getByLabel('Covert script', { exact: true })).toContainText('file01_0801.exo 01_RASTER');
+    await expect(page.getByLabel('Covert script', { exact: true })).toContainText('makedisk covert-demo.d64 covert-demo.seq COVERT_DEMO_______CB_2A 10');
+  });
+
+  await test.step('a row loads its file into Mimir unpacked, as a PRG at where it unpacks to; + adds one', async () => {
+    await files.getByRole('row', { name: /file01_0801/ }).click();
+    await expect(toast(page, 'Loaded file01_0801.prg at $0801')).toBeVisible();
+    // the raster demo, as it was before it was packed
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await files.getByRole('button', { name: 'Add file02_4000.puc to this project' }).click();
+    await expectFiles(page, ['file01_0801.prg', 'file02_4000.prg']);
+  });
+
+  await test.step("it copies makedisk's command file, with the notes and the command line", async () => {
+    await page.getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, 'Copied the makedisk command file')).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text[0]).toBe('; makedisk command file, rebuilt by Mimir Studio from covert-demo.d64 (Covert Bitops loader, version 2): 5 files, 3 of them packed.');
+    expect(text.slice(text.indexOf(''))).toEqual(['', 'file00_0801.prg COVERT_DEMO', 'file01_0801.exo 01_RASTER', 'file02_4000.puc 02_ART', 'file03_1000.exo3 03_MUSIC', 'file04_0400.prg 04_TEXT', '',
+      '; makedisk covert-demo.d64 covert-demo.seq COVERT_DEMO_______CB_2A 10']);
+  });
+
+  await test.step('Save files… saves every file as it is on the disk and unpacked, with the command file', async () => {
+    const out = join(workDir, 'covert-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 5 files of covert-demo\.d64 to .* \(3 of them unpacked as well\), covert-demo\.seq, makedisk's command file that writes the disk again, and covert-demo-makedisk\.txt$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['covert-demo-makedisk.txt', 'covert-demo.seq', 'file00_0801.prg', 'file01_0801.exo', 'file01_0801.prg', 'file02_4000.prg', 'file02_4000.puc', 'file03_1000.exo3', 'file03_1000.prg', 'file04_0400.prg']);
+    expect(readFileSync(join(out, 'file01_0801.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+    // as it is on the disk: exomizer level, where it ends ($3800) high byte first
+    expect([...readFileSync(join(out, 'file01_0801.exo')).subarray(0, 2)]).toEqual([0x38, 0x00]);
+    expect(readFileSync(join(out, 'covert-demo.seq'), 'utf8').split('\r\n')).toEqual(['file00_0801.prg COVERT_DEMO', 'file01_0801.exo 01_RASTER', 'file02_4000.puc 02_ART', 'file03_1000.exo3 03_MUSIC', 'file04_0400.prg 04_TEXT', '']);
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /Covert script/ })).toHaveCount(0);
+  });
+});
+
 test('the tab row fits a small window: the listing tools lose their labels, then move into the ⋯ menu', async ({ app, page }) => {
   await waitForListing(page);
   const row = page.locator('main.main > .tabs');

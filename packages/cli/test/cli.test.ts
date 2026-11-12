@@ -155,6 +155,20 @@ describe('mimir CLI', () => {
     expect(await main(['measure', 'nothing-here'], c.io)).toBe(2);
   });
 
+  it('counts the disks each loader\'s reader takes in a folder', async () => {
+    const fixtures = join(__dirname, '../../../fixtures/d64');
+    let c = capture(fixtures);
+    expect(await main(['disks', '.', '--list'], c.io)).toBe(0);
+    const out = c.lines.join('\n');
+    expect(out).toMatch(/^covert {7}covert-demo\.d64: version 2, 3 files packed \(Exomizer 1\/2, Exomizer 3, Pucrunch\), 1 load call read from the code; found by files, laid out by makedisk$/m);
+    expect(out).toMatch(/^krill {8}krill-demo\.d64: 2 of 3 files packed with its ZX0$/m);
+    expect(out).toMatch(/^covert +1 disks, +1 different$/m);
+    expect(out).toMatch(/^\d+ disk images$/m);
+    c = capture(fixtures);
+    expect(await main(['disks', 'covert-demo.d64', '--json'], c.io)).toBe(0);
+    expect(JSON.parse(c.lines.join('\n')).readers).toContainEqual({ reader: 'covert', disks: 1, different: 1 });
+  });
+
   it('rejects unknown settings and commands', async () => {
     let c = capture(dir);
     expect(await main(['verify', 'demo.prg', '--set', 'nope=1'], c.io)).toBe(2);
