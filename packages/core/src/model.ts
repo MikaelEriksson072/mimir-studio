@@ -84,6 +84,9 @@ export const DEFAULT_SETTINGS: Settings = {
   editorPath: '', editorArgs: '{dir} {file}',
   // a music block plays in VICE, or in DeepSID (online)
   musicPlayer: 'vice',
+  // Build & Run in a debugger (Shift+F5): Retro Debugger or C64 Debugger, where they are; Retro Debugger loads the
+  // program 3 s after it starts, when the C64 is at READY
+  debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000,
 };
 
-export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer'] as const;
+export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer', 'debugger', 'retroDebuggerPath', 'retroDebuggerArgs', 'c64DebuggerPath', 'c64DebuggerArgs', 'debuggerWait'] as const;

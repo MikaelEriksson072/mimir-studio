@@ -126,11 +126,24 @@ export interface Settings {
   /** where a music block plays: in VICE (a PRG with a driver that calls init and play) or in DeepSID, the online SID
    *  player (deepsid.chordian.net), as the .sid the export writes */
   musicPlayer: MusicPlayer;
+  /** the debugger Build & Run in a debugger (Shift+F5) starts the program in, instead of VICE (spec 13.2b) */
+  debugger: DebuggerKind;
+  /** Retro Debugger (C64Debugger.exe of a Retro Debugger release) and its extra arguments */
+  retroDebuggerPath: string;
+  retroDebuggerArgs: string;
+  /** C64 Debugger (0.64.x, C64Debugger.exe) and its extra arguments */
+  c64DebuggerPath: string;
+  c64DebuggerArgs: string;
+  /** how long (ms) Retro Debugger waits before it loads the program and jumps to its start (`-wait`): the C64 must be
+   *  at READY by then */
+  debuggerWait: number;
 }
 
 export type MusicPlayer = 'vice' | 'deepsid';
+/** Retro Debugger, or C64 Debugger (both Marcin Skoczylas', with VICE inside) */
+export type DebuggerKind = 'retro' | 'c64d';
 
-export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer'>;
+export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer' | 'debugger' | 'retroDebuggerPath' | 'retroDebuggerArgs' | 'c64DebuggerPath' | 'c64DebuggerArgs' | 'debuggerWait'>;
 
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment.
  *  `below`: empty lines between it and the line (the empty lines of Project.blanks go above it). */

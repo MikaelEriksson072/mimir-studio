@@ -1836,11 +1836,23 @@ test('Settings → Choose folder… finds the program in the folder picked', asy
     await expect(settings.locator('#set-javaPath')).toHaveValue('java');
   });
 
+  // both debuggers call their program C64Debugger.exe
+  const retro = make('C64', 'RetroDebugger-v1.0.0', 'C64Debugger.exe');
+  const c64d = make('C64', 'C64Debug', 'C64Debugger.exe');
+  await test.step('Retro Debugger and C64 Debugger: the folder with C64Debugger.exe', async () => {
+    await answer([join(work, 'C64', 'RetroDebugger-v1.0.0')]);
+    await choose('Retro Debugger').click();
+    await expect(settings.locator('#set-retroDebuggerPath')).toHaveValue(retro);
+    await answer([join(work, 'C64', 'C64Debug')]);
+    await choose('C64 Debugger').click();
+    await expect(settings.locator('#set-c64DebuggerPath')).toHaveValue(c64d);
+  });
+
   await test.step('Save settings keeps the paths found', async () => {
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await expect(settings).toBeHidden();
     const stored = await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<Record<string, string>> } }).kr.getSettings());
-    expect(stored).toMatchObject({ vicePath: x64sc, kickJar: jar, exomizerPath: exo, unpackerPath: other });
+    expect(stored).toMatchObject({ vicePath: x64sc, kickJar: jar, exomizerPath: exo, unpackerPath: other, retroDebuggerPath: retro, c64DebuggerPath: c64d });
   });
 });
 
@@ -4811,6 +4823,59 @@ test('Build & Run restarts a VICE snapshot as it was taken, with the built progr
   expect(log).toContain('the snapshot restarted as it was taken (PC $08c7, $01 = $37), the built program in its RAM');
   // the program is byte-identical, so the snapshot VICE gets is the one that was opened
   expect(readFileSync(started![1])).toEqual(readFileSync(vsf));
+});
+
+test('Build & Run in a debugger (Shift+F5): Settings picks Retro Debugger or C64 Debugger, which gets the program with start code at its load address', async ({ app, page }) => {
+  // the debuggers themselves are not started here: a Windows program that ends at once stands in for them (what the
+  // start code does in a C64 is tested in packages/core/test/debugger-start.test.ts)
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  test.skip(!existsSync(standIn), 'needs where.exe');
+  await waitForListing(page);
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  const log = page.locator('.build-log');
+
+  await test.step('nothing set: Shift+F5 says where to set it', async () => {
+    await page.keyboard.press('Shift+F5');
+    await expect(toast(page, /Where Retro Debugger is, is not set: set it in Settings → Toolchain/)).toBeVisible({ timeout: 120_000 });
+  });
+
+  await test.step('Retro Debugger: -wait, then the start PRG and -jmp to its load address', async () => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(settings.locator('#set-debugger')).toHaveValue('retro');
+    await expect(settings.locator('#set-debuggerWait')).toHaveValue('3000');
+    await settings.locator('#set-retroDebuggerPath').fill(standIn);
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+    await page.keyboard.press('Shift+F5');
+    await expect(toast(page, /^Retro Debugger started/)).toBeVisible({ timeout: 120_000 });
+    await page.getByRole('tab', { name: 'Build output' }).click();
+    await expect(log).toContainText('> Retro Debugger started (pid');
+    const text = await log.innerText();
+    // (a path with a space in it is in quotes)
+    const cmd = /> \S*where\.exe (?:-symbols "?[^"\n]*?\.vs"? )?-wait 3000 -prg "?([^"\n]*?\.debugger\.prg)"? -jmp x([0-9a-f]{4})/.exec(text);
+    expect(cmd, text.slice(-800)).toBeTruthy();
+    expect(text).toMatch(/\(start code at \$[0-9a-f]{4}-\$[0-9a-f]{4}; it types (run|sys\d+)\)/);
+    // the debugger jumps to the PRG's load address; the built program is in it at its own addresses
+    const prg = readFileSync(cmd![1]), built = readFileSync(cmd![1].replace(/\.debugger\.prg$/, '.prg'));
+    expect((prg[0] | (prg[1] << 8)).toString(16).padStart(4, '0')).toBe(cmd![2]);
+    const off = (built[0] | (built[1] << 8)) - (prg[0] | (prg[1] << 8));
+    expect(prg.subarray(2 + off, 2 + off + built.length - 2)).toEqual(built.subarray(2));
+  });
+
+  await test.step('C64 Debugger: -alwaysjmp, and the command palette names it', async () => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await settings.locator('#set-debugger').selectOption('c64d');
+    await settings.locator('#set-c64DebuggerPath').fill(standIn);
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+    await page.keyboard.press('F1');
+    await page.keyboard.type('run in C64 Debugger');
+    await expect(page.locator('.palette')).toContainText('Shift+F5');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Shift+F5');
+    await expect(toast(page, /^C64 Debugger started/)).toBeVisible({ timeout: 120_000 });
+    await expect(log).toContainText(/> \S*where\.exe (?:-symbols "?[^"\n]*?\.vs"? )?-prg "?[^"\n]*?\.debugger\.prg"? -alwaysjmp/);
+  });
 });
 
 test('the side panel\'s sections say what they hold, start closed, stay open for the run and are closed again after a restart', async ({ page }) => {

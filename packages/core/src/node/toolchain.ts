@@ -8,6 +8,7 @@ import type { KickProblem, Vfs } from '../types';
 import { START_STUB, startsFromMonitor } from '../c64/prg';
 import { parseKickOutput } from '../verify/kick-output';
 import { splitArgs } from '../util/args';
+import { DRIVE_INIT } from '../c64/debugger-start';
 
 export { splitArgs };
 
@@ -132,15 +133,8 @@ export interface ViceLaunch {
  * drive reads the disk) before `run` or `sys <start>`. A snapshot brings its drive as it was. A start with another
  * $01 (`port`, from Sindri) is typed as a stub that sets it and jumps (startStatements), or set from the monitor.
  */
-/**
- * The disk command "I" (initialise) on the command channel, typed before `run` or `sys <start>`. Without a string:
- * BASIC copies a string typed at READY into string space, and a program that loads up to $a000 or beyond (an
- * unpacked one, $0801-$f344 say) leaves none, so `open15,8,15,"i"` stops with ?OUT OF MEMORY before the program
- * starts. The channel is opened without a name, and the KERNAL sends the "I": CHKOUT 15 (X in 781), CHROUT $49
- * (A in 780), CLRCHN (unlisten: the drive runs the command). 69 characters: with `sys` and five digits the line
- * stays within BASIC's 80.
- */
-export const DRIVE_INIT = 'open15,8,15:poke781,15:sys65481:poke780,73:sys65490:sys65484:close15:';
+/** (DRIVE_INIT, the drive's initialise typed at READY, is in c64/debugger-start.ts: the debuggers' start code types it too) */
+export { DRIVE_INIT };
 
 /**
  * The statements that start the program at `start` from READY: `sys <start>`, or, with another $01 than $37 (a program

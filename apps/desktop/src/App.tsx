@@ -62,7 +62,7 @@ import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
-import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo } from '../shared/ipc';
+import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo, RunRequest, RunResult } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
 import { AnalysisOverview, type OverviewLinks } from './components/Overview';
 import { GFX_KIND } from './lib/overview';
@@ -78,6 +78,16 @@ const CHANGED_MS = 4000;
 const pickToolchain = (s: Settings): ToolchainSettings => Object.fromEntries(TOOLCHAIN_KEYS.map(k => [k, s[k]])) as ToolchainSettings;
 /** the source shown first and opened in the external editor: the first file's, or a cartridge's banks in one source */
 const mainSource = (R: RenderResult): string => R.main ?? `${R.fileNames[0] || 'main'}.asm`;
+
+/** a debugger's run in the build log (spec 13.2b): its command line, the start code next to the program and what it
+ *  types, and what is not as in VICE; nothing for VICE */
+function runDetail(r: RunResult): string {
+  if (!r.debugger) return '';
+  const lines = r.argv ? [`> ${r.argv.map(shellWord).join(' ')}`] : [];
+  if (r.code) lines.push(`(start code at $${h4(r.code.start)}-$${h4(r.code.end - 1)}${r.carried ? ', with the program, which it copies into place first' : ''}${r.typed ? `; it types ${r.typed}` : ''})`);
+  for (const n of r.notes ?? []) lines.push(`Note: ${n}`);
+  return lines.map(l => `\n${l}`).join('');
+}
 /** `n` empty lines above `addr` (Project.blanks) in a draft of the project: 0 removes them, and the record once empty */
 function putBlanks(d: Project, addr: Addr, n: number): void {
   if (!n && !d.blanks?.[addr]) return;
@@ -1920,6 +1930,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** where music blocks play (Settings → Toolchain) */
   const musicPlayerName = toolchain.musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE';
+  /** the debugger Build & Run in a debugger (Shift+F5) starts the program in */
+  const debuggerName = toolchain.debugger === 'c64d' ? 'C64 Debugger' : 'Retro Debugger';
   /** The music block at `at` in VICE: a PRG of its bytes (those the export's .sid holds) with a driver that puts them
    *  where they run, calls init with the song in A and play each frame from a raster interrupt (c64/sidplayer.ts); or
    *  in DeepSID, the online player, as the .sid the export writes (electron/main/deepsid.ts). A snapshot's player that init
@@ -2181,16 +2193,24 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return w ? { path: `${w.dir}/${copy}`, wrote } : undefined;
   };
 
-  const runBuild = async () => {
+  /** Build & Run: build and verify, then start the program in VICE (F5), or (`inDebugger`, Shift+F5) in the debugger
+   *  Settings → Toolchain names, the way VICE starts it (spec 13.2b) */
+  const runBuild = async (inDebugger = false) => {
     if (!kr) return needDesktop();
+    const emu = inDebugger ? debuggerName : 'VICE';
     const res = await runVerify({ quiet: true });
     setUi({ bottom: 'build', panelOpen: true });
     if (!res) return;
-    if (!res.ok) { toast('Build failed verification; VICE was not started', 'err'); return; }
+    if (!res.ok) { toast(`Build failed verification; ${emu} was not started`, 'err'); return; }
     // the analysis and render that were verified (runVerify waited for the latest edit)
     const { A, R, project } = latest.current;
     try {
-      setBuildBusy('Starting VICE');
+      setBuildBusy(`Starting ${emu}`);
+      // the run in VICE or the debugger; a debugger's command line, start code and notes go into the build log
+      const run = (req: RunRequest) => kr.run(inDebugger ? { ...req, debugger: true } : req);
+      const started = (r: RunResult, what: string) => `> ${emu} started (pid ${r.pid}): ${what}${runDetail(r)}`;
+      const note = (r: RunResult) => (r.notes?.length ? ` (${r.notes.join('; ')})` : '');
+      const level = (r: RunResult) => (r.notes?.length ? 'warn' : 'ok');
       const built = (i: number) => res.kick?.compared[i]?.prg ?? res.V.results[i]?.prg ?? null;
       const dc = await diskCopy(built);
       const diskPath = dc?.path;
@@ -2209,9 +2229,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         }
         // the labels of the first chip's source, or of the one source with every bank (13.9c)
         const labels = (project.settings.cartOneSource ? res.kick?.cart?.vs : undefined) ?? res.kick?.compared[0]?.vsPath ?? undefined;
-        const { pid } = await kr.run({ prgPath: crtPath, labelsPath: labels, disk: diskPath, cart: true });
-        setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): the cartridge ${crtPath} attached (-cartcrt)${labels ? ` with labels from ${labels}` : ''}${drive}` });
-        toast(`VICE started the cartridge ${res.cart?.name ?? project.cart.name}${labels ? ' with labels in the monitor' : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}`, 'ok');
+        const r = await run({ prgPath: crtPath, labelsPath: labels, disk: diskPath, cart: true });
+        setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `the cartridge ${crtPath} attached (${inDebugger ? '-crt' : '-cartcrt'})${labels ? ` with labels from ${labels}` : ''}${drive}`)}` });
+        toast(`${emu} started the cartridge ${res.cart?.name ?? project.cart.name}${labels ? ` with labels in the ${inDebugger ? 'debugger' : 'monitor'}` : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}${note(r)}`, level(r));
         return;
       }
       // a project opened from a VICE snapshot: VICE restarts the snapshot as it was taken (CPU, $01, VIC, SID, CIAs,
@@ -2226,9 +2246,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const vsfPath = `${w.dir}/${name}`, labels = res.kick?.compared[snapAt]?.vsPath ?? undefined;
         const s = parseVsf(vsf, name);
         const at = [s.cpu ? `PC $${h4(s.cpu.pc)}` : null, `$01 = $${h2(s.port.data)}`].filter(Boolean).join(', ');
-        const { pid } = await kr.run({ prgPath: vsfPath, labelsPath: labels, disk: diskPath });
-        setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${vsfPath}${labels ? ` with labels from ${labels}` : ''}, the snapshot restarted as it was taken (${at}), the built program in its RAM${drive}` });
-        toast(`VICE restarted the snapshot as it was taken (${at}), with the built program in its RAM${labels ? '; labels in the monitor' : ''}`, 'ok');
+        const r = await run({ prgPath: vsfPath, labelsPath: labels, disk: diskPath });
+        setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${vsfPath}${labels ? ` with labels from ${labels}` : ''}, the snapshot restarted as it was taken (${at}), the built program in its RAM${drive}`)}` });
+        toast(`${emu} restarted the snapshot as it was taken (${at}), with the built program in its RAM${labels ? '; labels in the monitor' : ''}`, 'ok');
         return;
       }
       // a project whose first file came from a KERNAL file of the tape in the datasette (13.5f): VICE loads the tape
@@ -2248,10 +2268,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const w = await kr.writeExport({ target: 'temp', name: 'run', files: { [name]: replaceTapeFile(tape.bytes, t0.file, header, data.subarray(2)) } });
         if (!w) return;
         const tapPath = `${w.dir}/${name}`, labels = res.kick?.compared[0]?.vsPath ?? undefined;
-        const { pid } = await kr.run({ prgPath: tapPath, labelsPath: labels, disk: diskPath });
+        const r = await run({ prgPath: tapPath, labelsPath: labels, disk: diskPath });
         const what = `the built ${R.fileNames[0]}${hb ? ` and its header (${R.fileNames[hi]})` : ''} as its first file, then ${tape.name} from after "${t0.file.name}"`;
-        setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${tapPath} autostarted, ${what}${labels ? `, labels from ${labels}` : ''}${drive}` });
-        toast(`VICE loads ${name}: ${what}`, 'ok');
+        setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${tapPath} autostarted, ${what}${labels ? `, labels from ${labels}` : ''}${drive}`)}` });
+        toast(`${emu} loads ${name}: ${what}${note(r)}`, level(r));
         return;
       }
       // a project whose first file came from the T64 in the datasette (13.5j): VICE autostarts a T64 of that file as
@@ -2264,12 +2284,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const w = await kr.writeExport({ target: 'temp', name: 'run', files: { [name]: writeT64(tape.bytes, b.slots, slot) } });
         if (!w) return;
         const t64Path = `${w.dir}/${name}`, labels = res.kick?.compared[0]?.vsPath ?? undefined;
-        const { pid } = await kr.run({ prgPath: t64Path, labelsPath: labels, disk: diskPath });
+        const r = await run({ prgPath: t64Path, labelsPath: labels, disk: diskPath });
         const others = b.wrote.filter(n => n !== t0.file.name);
         const after = tape.img.files.some(f => f.at > t0.file.at) ? `, then the files of ${tape.name} after "${t0.file.name}"${others.length ? ` (${others.join(', ')} as built)` : ''}` : '';
         const what = `the built ${R.fileNames[0]} as its first file${after}`;
-        setBuild(x => x && { ...x, log: `${x.log}\n\n> VICE started (pid ${pid}): ${t64Path} autostarted, ${what}${labels ? `, labels from ${labels}` : ''}${drive}` });
-        toast(`VICE autostarts ${name}: ${what}`, 'ok');
+        setBuild(x => x && { ...x, log: `${x.log}\n\n${started(r, `${t64Path} autostarted, ${what}${labels ? `, labels from ${labels}` : ''}${drive}`)}` });
+        toast(`${emu} autostarts ${name}: ${what}${note(r)}`, level(r));
         return;
       }
       // a project whose first file is the disk's first program (what LOAD"*",8,1 loads): VICE autostarts the disk's copy,
@@ -2278,13 +2298,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const p0 = project.files[0], first = disk?.img.files.find(f => f.type === 'PRG' && f.track);
       if (dc && disk && p0 && first && project.entryPoint == null && diskOf.current.get(p0.id) === disk.bytes && diskFileOf.current.get(p0.id)?.track === first.track && diskFileOf.current.get(p0.id)?.sector === first.sector) {
         const labels = res.kick?.compared[0]?.vsPath ?? undefined;
-        const { pid } = await kr.run({ prgPath: dc.path, labelsPath: labels });
-        setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${dc.path} autostarted (LOAD"*",8,1 and RUN: the disk's own boot)${back}${labels ? `, labels from ${labels}` : ''}` });
-        toast(`VICE autostarts ${disk.name} (a copy${back}): its boot loads "${first.name}"`, 'ok');
+        const r = await run({ prgPath: dc.path, labelsPath: labels });
+        setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${dc.path} autostarted (LOAD"*",8,1 and RUN: the disk's own boot)${back}${labels ? `, labels from ${labels}` : ''}`)}` });
+        toast(`${emu} autostarts ${disk.name} (a copy${back}): its boot loads "${first.name}"${note(r)}`, level(r));
         return;
       }
       const tc = await tapeCopy(built), tapePath = tc?.path;
-      const datasette = tapePath && tape ? `, ${tape.name} in the datasette${tc?.wrote.length ? ` (a copy with ${tc.wrote.join(', ')} written back as built)` : ''} (press PLAY in VICE when the program asks)` : '';
+      const datasette = tapePath && tape ? `, ${tape.name} in the datasette${tc?.wrote.length ? ` (a copy with ${tc.wrote.join(', ')} written back as built)` : ''}${inDebugger ? '' : ' (press PLAY in VICE when the program asks)'}` : '';
       let prgPath: string, labelsPath: string | undefined;
       if (res.kick?.compared[0]) { prgPath = res.kick.compared[0].prgPath; labelsPath = res.kick.compared[0].vsPath ?? undefined; }
       else {
@@ -2301,25 +2321,30 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const start = ep != null && A.owner[ep] === 0 ? ep : undefined;
       // $01 as the program starts, when Unpack set the start and Sindri saw another value there (a game under the BASIC ROM)
       const port = start != null && project.entryPort != null && project.entryPort !== 0x37 ? project.entryPort : undefined;
-      if (ep != null && start == null && A.owner[ep] >= 0) toast(`The program start $${h4(ep)} is in another file than the one VICE runs; it starts with RUN`, 'warn');
+      if (ep != null && start == null && A.owner[ep] >= 0) toast(`The program start $${h4(ep)} is in another file than the one ${emu} runs; it starts with RUN`, 'warn');
       const f0 = A.files[0];
       const overSystem = !!f0 && overwritesSystemArea(f0.load, f0.bytes.length);
       // the RAM of a snapshot opened before snapshots were kept with the project: it can only start like a PRG
-      if (f0 && (f0.load === 0x0200 || f0.load === 0x0002) && f0.load + f0.bytes.length === 0x10000) toast('This file looks like a VICE snapshot that was opened before Mimir kept snapshots, so VICE starts it like a PRG: open the .vsf again and Build & Run restarts it as it was', 'warn');
+      if (f0 && (f0.load === 0x0200 || f0.load === 0x0002) && f0.load + f0.bytes.length === 0x10000) toast(`This file looks like a VICE snapshot that was opened before Mimir kept snapshots, so ${emu} starts it like a PRG: open the .vsf again and Build & Run restarts it as it was`, 'warn');
       else if (start == null && overSystem) toast(`The program overwrites BASIC's work area ($${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}), so RUN cannot start it: set the program start`, 'warn');
-      const { pid, via } = await kr.run({ prgPath, labelsPath, start, port, disk: diskPath, tape: tapePath });
+      const r = await run({ prgPath, labelsPath, start, port, disk: diskPath, tape: tapePath }), via = r.via;
       const p01 = port != null ? ` with $01 = $${h2(port)}` : '';
+      // (a debugger that cannot take the disk or the tape leaves it out, and its notes say so)
+      const left = (what: string) => !!r.notes?.some(n => n.startsWith(`The ${what} is not`));
+      const inDrive = left('disk') ? '' : drive, inDatasette = left('tape') ? '' : datasette;
       const why = overSystem ? `the program overwrites BASIC's work area $${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}`
         : `the program covers the screen at READY, $${h4(READY_SCREEN.start)}-$${h4(READY_SCREEN.end - 1)}, which typing sys would write on`;
-      const how = start == null ? '' : via === 'monitor'
+      const how = start == null ? '' : inDebugger
+        ? `, starting at $${h4(start)}${p01} (${via === 'monitor' ? `as from VICE's monitor${inDrive ? ', after the drive read the disk' : ''}: ${why}` : port != null ? 'sys to a routine that sets $01 and jumps there: BASIC cannot set $01 itself' : `sys ${start} typed`})`
+        : via === 'monitor'
         ? `, starting at $${h4(start)}${p01} (loaded and started from the VICE monitor${diskPath ? `, after the drive read the disk (typed at READY, then sys ${START_STUB} stops in the monitor)` : ''}: ${why})`
         : port != null ? `, starting at $${h4(start)}${p01} (after loading, POKEs put a stub at $${h4(START_STUB)} that sets $01 and jumps there, and sys ${START_STUB} runs it: BASIC cannot set $01 itself)`
         : `, starting at $${h4(start)} (sys ${start} after loading)`;
-      setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${prgPath}${labelsPath ? ` with labels from ${labelsPath}` : ''}${how}${drive}${datasette}` });
-      toast(`VICE started${start != null ? ` at $${h4(start)}${p01}` : ''}${labelsPath ? ' with labels in the monitor' : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}${datasette}`, 'ok');
+      setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${prgPath}${labelsPath ? ` with labels from ${labelsPath}` : ''}${how}${inDrive}${inDatasette}`)}` });
+      toast(`${emu} started${start != null ? ` at $${h4(start)}${p01}` : ''}${labelsPath ? ` with labels in the ${inDebugger ? 'debugger' : 'monitor'}` : ''}${diskPath && disk && inDrive ? `, ${disk.name} in drive 8` : ''}${inDatasette}${note(r)}`, level(r));
     } catch (e) {
       toast(errorText(e), 'err');
-      setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE: ${errorText(e)}` });
+      setBuild(b => b && { ...b, log: `${b.log}\n\n> ${emu}: ${errorText(e)}` });
     } finally { setBuildBusy(null); }
   };
 
@@ -2659,6 +2684,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'panel', label: 'Toggle bottom panel', key: 'Ctrl+J', run: () => setUi({ panelOpen: !useUi.getState().panelOpen }) },
     { id: 'verify', label: 'Verify round-trip (re-assemble and compare)', key: 'F7', run: () => void runVerify() },
     { id: 'build', label: 'Build with KickAss.jar & run in VICE', key: 'F5', run: () => void runBuild() },
+    { id: 'build-debugger', label: `Build with KickAss.jar & run in ${debuggerName} (started as in VICE; Settings → Toolchain picks the debugger)`, key: 'Shift+F5', run: () => void runBuild(true) },
     { id: 'pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} (build, verify, pack as the Pack view says)`, run: () => void runPack() },
     { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack', sidePanel: true }) },
     ...(packRes?.ok && packRes.path ? [
@@ -2752,7 +2778,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (ctrl && (e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'o')) return run(e.key.toLowerCase() === 's' ? 'save' : 'open');
       // Ctrl+C in the listing copies its lines; text selected with the mouse elsewhere is copied as usual
       if (ctrl && !e.shiftKey && !typing && !k.modal && !k.editing && e.key.toLowerCase() === 'c' && k.tab === 'listing' && (t?.closest?.('.listing') || !window.getSelection()?.toString())) return run('copy-lines');
-      if (e.key === 'F5') return run('build');
+      if (e.key === 'F5') return run(e.shiftKey ? 'build-debugger' : 'build');
       if (e.key === 'F9') return run('quicksave');
       if (e.key === 'F7') return run('verify');
       if (typing || k.editing || k.modal || ctrl || (e.altKey && !['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'].includes(e.key))) return;

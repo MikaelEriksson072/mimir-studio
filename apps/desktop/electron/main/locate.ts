@@ -30,6 +30,9 @@ export function toolLook(key: LocateKey, win = isWin): ToolLook {
     case 'unpackerPath': return { what: 'the external unpacker', names: [exe('unp64', win)], under: [], filter: programs(win) };
     case 'editorPath': return { what: 'the external editor', names: win ? ['subl.exe', 'Code.exe', 'notepad++.exe'] : ['subl', 'code'], under: ['bin'], filter: programs(win) };
     case 'exomizerPath': return { what: 'Exomizer', names: [exe('exomizer', win)], under: ['win32', 'bin'], filter: programs(win) };
+    // (a Retro Debugger release names its program C64Debugger, as C64 Debugger does)
+    case 'retroDebuggerPath': return { what: 'Retro Debugger', names: [exe('RetroDebugger', win), exe('C64Debugger', win)], under: [], filter: programs(win) };
+    case 'c64DebuggerPath': return { what: 'C64 Debugger', names: [exe('C64Debugger', win)], under: [], filter: programs(win) };
   }
 }
 

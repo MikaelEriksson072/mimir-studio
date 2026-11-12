@@ -180,10 +180,22 @@ export interface BuildResult {
 /** `cart`: `prgPath` is a cartridge image (.crt), which VICE attaches (-cartcrt) and starts at reset; a `prgPath` that is
  *  a .tap or .t64 is autostarted (VICE loads its first file from it) */
 /** `port`: with a start, $01 as the program starts there (Sindri saw another than $37 there) */
-export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; port?: number; disk?: string; tape?: string; cart?: boolean }
+/** `debugger`: in the debugger Settings → Toolchain names (Build & Run in a debugger, Shift+F5), instead of VICE */
+export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; port?: number; disk?: string; tape?: string; cart?: boolean; debugger?: boolean }
 /** `via`: RUN, `sys <start>`, (a program over BASIC's work area $0002-$03ff) loaded and started from the monitor, or a
- *  cartridge attached */
-export interface RunResult { pid: number; via: 'run' | 'sys' | 'monitor' | 'cart' }
+ *  cartridge attached; in a debugger also `load` (LOAD from the disk or the tape, then RUN). A debugger's run also
+ *  says which one (`debugger`), its command line, what its start code types, where that code is, and `notes`: what is
+ *  not as in VICE */
+export interface RunResult {
+  pid: number;
+  via: 'run' | 'sys' | 'monitor' | 'cart' | 'load';
+  debugger?: string;
+  argv?: string[];
+  typed?: string;
+  code?: { start: number; end: number } | null;
+  carried?: boolean;
+  notes?: string[];
+}
 
 /**
  * A terminal window (VICE on PATH, `kickass` defined) in `dir`: a folder opened in this session (the export or
@@ -277,7 +289,7 @@ export type ViceResult = { ok: true; response: string } | { ok: false; error: st
 export interface FsChangedEvent { path: string }
 
 /** the toolchain settings that are a path to a program or file (Settings → Toolchain, Choose folder…) */
-export type LocateKey = 'javaPath' | 'kickJar' | 'vicePath' | 'viceQuicksave' | 'unpackerPath' | 'editorPath' | 'exomizerPath';
+export type LocateKey = 'javaPath' | 'kickJar' | 'vicePath' | 'viceQuicksave' | 'unpackerPath' | 'editorPath' | 'exomizerPath' | 'retroDebuggerPath' | 'c64DebuggerPath';
 /** A folder dialog for the tool of `key` (it opens at `current`, the path in the form, when that is there), and the
  *  program found in the folder picked. */
 export interface LocateRequest { key: LocateKey; current?: string }

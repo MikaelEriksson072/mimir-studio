@@ -14,7 +14,7 @@ import type { SettingsStore } from './settings';
 import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
 import { PROJECT_FOLDERS } from '../../shared/projects';
 import { createBuildFolder, readDiskImage, readPrgFiles, readTapeImage, readProjectFile, writeExportFolder, writeProjectFile, type ExportWatcher } from './project-fs';
-import { buildWithKickAssembler, c64Roms, currentEditor, identifyWithTool, keepPacked, openInEditor, openTerminal, packWithBrokkr, packWithExomizer, runInVice, unpackWithTool } from './toolchain';
+import { buildWithKickAssembler, c64Roms, currentEditor, identifyWithTool, keepPacked, openInEditor, openTerminal, packWithBrokkr, packWithExomizer, runInDebugger, runInVice, unpackWithTool } from './toolchain';
 import { viceAttach, viceCommand } from './vice-monitor';
 import { quicksaveFileName, quicksaveFiles, quicksaveInfo, readQuicksave, type QuicksaveHistory, type QuicksaveWatcher } from './quicksave';
 import { charRomFiles, readCharRom } from './chargen';
@@ -248,7 +248,7 @@ export function registerIpc(deps: IpcDeps): void {
     assertEntryName(entry);
     return { path, dir: chose(dirname(path), 'asm'), entry };
   });
-  handle(CHANNELS.toolchainRun, runSchema, req => runInVice(req, settings.get(), policy));
+  handle(CHANNELS.toolchainRun, runSchema, req => (req.debugger ? runInDebugger(req, settings.get(), policy) : runInVice(req, settings.get(), policy)));
   handle(CHANNELS.toolchainUnpack, unpackSchema, req => unpackWithTool(req, settings.get()));
   handle(CHANNELS.toolchainIdentify, unpackSchema, req => identifyWithTool(req, settings.get()));
   handle(CHANNELS.toolchainRoms, z.undefined().or(z.object({}).strict()), () => c64Roms(settings.get().vicePath));

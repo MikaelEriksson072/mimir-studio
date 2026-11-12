@@ -4,7 +4,7 @@ import { existsSync, statSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import type { BrokkrPack, KickProblem, ToolchainSettings } from '@mimir/core';
-import { canIdentify, editorName, findC64Roms, findEditors, identifyPacker, launchEditor, launchTerminal, launchVice, runExomizer, runKickAssembler, runUnpacker, splitArgs } from '@mimir/core/node';
+import { canIdentify, DEBUGGERS, editorName, findC64Roms, findEditors, identifyPacker, launchDebugger, launchEditor, launchTerminal, launchVice, runExomizer, runKickAssembler, runUnpacker, splitArgs } from '@mimir/core/node';
 import { rm, writeFile } from 'node:fs/promises';
 import type { BuildRequest, BuildResult, EditorInfo, EditorOpenResult, IdentifyResponse, PackRequest, PackResponse, RomsResponse, RunRequest, RunResult, TerminalOpenResult, UnpackRequest, UnpackResponse } from '../../shared/ipc';
 import { createBuildFolder } from './project-fs';
@@ -157,4 +157,21 @@ export async function runInVice(req: RunRequest, settings: ToolchainSettings, po
   const disk = req.disk ? policy.assert(req.disk, 'Disk image') : null;
   const tape = req.tape ? policy.assert(req.tape, 'Tape image') : null;
   return launchVice({ vice: settings.vicePath, args: splitArgs(settings.viceArgs), prgPath, labelsPath: labelsPath && existsSync(labelsPath) ? labelsPath : null, start: req.start, port: req.port, disk, tape, cart: req.cart });
+}
+
+/** Build & Run in a debugger (spec 13.2b): the program in the debugger Settings → Toolchain names, started as in VICE */
+export async function runInDebugger(req: RunRequest, settings: ToolchainSettings, policy: PathPolicy): Promise<RunResult> {
+  const kind = settings.debugger, name = DEBUGGERS[kind].name;
+  const exe = (kind === 'retro' ? settings.retroDebuggerPath : settings.c64DebuggerPath).trim();
+  if (!exe) throw new Error(`Where ${name} is, is not set: set it in Settings → Toolchain (Choose folder…: the folder with C64Debugger.exe).`);
+  if (!existsSync(exe)) throw new Error(`${name} not found at "${exe}". Set the path in Settings → Toolchain.`);
+  const prgPath = policy.assert(req.prgPath, 'Program');
+  const labelsPath = req.labelsPath ? policy.assert(req.labelsPath, 'Label file') : null;
+  const disk = req.disk ? policy.assert(req.disk, 'Disk image') : null;
+  const tape = req.tape ? policy.assert(req.tape, 'Tape image') : null;
+  const r = await launchDebugger({
+    kind, exe, args: splitArgs(kind === 'retro' ? settings.retroDebuggerArgs : settings.c64DebuggerArgs), wait: settings.debuggerWait,
+    prgPath, labelsPath: labelsPath && existsSync(labelsPath) ? labelsPath : null, start: req.start, port: req.port, disk, tape, cart: req.cart,
+  });
+  return { pid: r.pid, via: r.via, debugger: name, argv: [exe, ...r.argv], typed: r.plan?.typed, code: r.plan?.code ?? null, carried: !!r.plan?.carried, notes: r.notes };
 }

@@ -1817,6 +1817,7 @@ kommandona, etiketterna, VIA-namnen, en gren som alltid tas, `.byte $2c`, samma 
 | Ångra / gör om | `Ctrl+Z` / `Ctrl+Y` | Hela projektet; senaste åtgärden visas i tooltip |
 | Kommandopalett | `Ctrl+Shift+P`, `F1` | Alla kommandon sökbara |
 | Verifiera / bygg och kör | `F7` / `F5` | Round-trip / KickAss + VICE |
+| Bygg och kör i en debugger | `Shift+F5` | KickAss + Retro Debugger eller C64 Debugger, startat som i VICE (13.2b) |
 
 **Override-modellen:** overrides lagras som en ordnad lista i projektet. `analyze()` applicerar dem i ordning (senare vinner, `auto` rensar). Bara det som fortfarande vinner räknas: en override som senare overrides täcker helt lämnar ingen blockgräns, inga props, ingen startpunkt och ingen linjär disassemblering efter sig. Att markera ett intervall slår därför ihop blocken och de tidigare overrides i intervallet till ett nytt block; en override som bara delvis täcks behåller resten som eget block. Kod-overrides blir startpunkter och, om spårningen inte når hela intervallet, linjär disassemblering. Data-overrides blockerar spårning in i intervallet och rapporterar kodvägar som når dem.
 
@@ -2406,6 +2407,10 @@ Verifieringen är produktens kvalitetsgrind:
 | Extra Kick-argument | `-vicesymbols -showmem` | Etikettfil för VICE, minneskarta |
 | VICE | `C:\C64\VICE\bin\x64sc.exe` | Cykelexakt C64-emulering |
 | Extra VICE-argument | `-autostartprgmode 1` | Laddar PRG direkt i minnet |
+| Bygg och kör i en debugger (Shift+F5) | Retro Debugger | Retro Debugger eller C64 Debugger (13.2b) |
+| Retro Debugger, C64 Debugger | tomma | Deras `C64Debugger.exe` |
+| Extra argument för Retro Debugger, C64 Debugger | tomma | Till exempel `-layout <id>` |
+| Retro Debugger väntar före start | 3000 ms | `-wait`: C64:an ska stå vid READY när programmet laddas |
 | Utdatamapp | `out` | |
 | Extern uppackare | tom: Sindri, den inbyggda uppackaren | Ett externt verktyg (unp64) som packar upp packade PRG:er i stället för den inbyggda (8.11b) |
 | Den externa uppackarens argument | `{in}` | `{in}` = den packade PRG:n, `{out}` = ett namn för resultatet; exomizer: `desfx -o {out} {in}` |
@@ -2450,6 +2455,61 @@ Verifieringen är produktens kvalitetsgrind:
    systemområdet som varken BASIC eller KERNAL använder) och `sys679`, på rader om högst 79 tecken. Sätter användaren
    en egen start glöms `$01`. Kortet *Program start* och Build-loggen säger hur programmet startas, med `$01`.
    `test/vice.integration.test.ts` kör detta i riktiga VICE (`-console`, egen konfigurationsfil, debug-cartridgens `$d7ff` som avslutningskod).
+
+### 13.2b Bygg och kör i en debugger (Shift+F5)
+
+`Shift+F5` bygger och verifierar som `F5` och startar sedan programmet i Retro Debugger eller C64 Debugger (Marcin
+Skoczylas, med VICE inuti) i stället för i VICE, på samma sätt som VICE startar det. *Settings → Toolchain* säger var
+de finns (*Choose folder…*: mappen med `C64Debugger.exe`, som båda kallar sitt program), vilken av dem `Shift+F5` kör,
+deras extra argument och hur länge Retro Debugger väntar innan den startar programmet (standard 3000 ms).
+
+Debuggrarna tar inget av VICE:s `-keybuf` eller monitorkommandon (de går inte vidare till deras VICE). De laddar en PRG
+rakt in i RAM, också under I/O-området och ROM:arna (som VICE:s `bank ram`), när C64:an står vid READY, och hoppar:
+Retro Debugger till `-jmp` efter `-wait` (utan väntan hoppar den innan C64:an startat, med skärmen av), C64 Debugger
+till PRG:ns laddadress med `-alwaysjmp` (den nollställer, väntar på READY och laddar själv, och en `-jmp` går förlorad
+i nollställningen; `-autojmp` får Retro Debugger 1.0.0 att krascha). Därför laddar debuggern en kopia av PRG:n,
+`main.debugger.prg` bredvid programmet, med en liten startkod (`debuggerStart`, `core/src/c64/debugger-start.ts`) på
+kopians laddadress, och hoppar dit. Startkoden gör det VICE gör:
+
+- **Utan programstart, och med `sys <start>`:** den skriver raden VICE skriver vid READY: markören släcks och tecknet
+  under den sätts tillbaka (som KERNAL gör när en tangent kommer), raden skrivs ut och läggs i BASIC:s inmatningsbuffert,
+  och BASIC tar den därifrån som efter RETURN (`$a486`: TXTPTR, direktläge, tokenisering, körning). BASIC:s slutpekare
+  (`$2d-$32`, `$ae`) sätts först till programmets slut, som VICE:s laddning gör. `run` är alltså BASIC:s riktiga RUN och
+  `sys` en riktig SYS som går tillbaka till BASIC. Med en disk i station 8 skrivs diskinitieringen (`DRIVE_INIT`) först
+  på samma rad. Med ett annat `$01` än `$37` anropar raden en rutin efter startkoden som sätter `$01` och hoppar till
+  starten (VICE:s POKE:ar till `$02a7` behövs inte: koden finns redan där).
+- **Ett program över BASIC:s arbetsområde eller skärmen** (`startsFromMonitor`) startas som från VICE:s monitor:
+  med en disk får stationen läsa disken (KERNAL:s OPEN 15,8,15, CHKOUT, CHROUT `I`, CLRCHN och CLOSE anropas direkt,
+  förbi programmets vektorer, utan avbrott, och nollsidan `$90-$bc` och filtabellerna `$0259-$0276` som de använder
+  sätts tillbaka till programmets) och `$ba` blir 8 (om programmet inte laddats över den); `$01` som programmet startar
+  med; stackpekaren som vid READY. Utan disk och med `$01 = $37` och starten på laddadressen hoppar debuggern direkt.
+- **En disk eller ett band som VICE autostartar** (projektets första fil är diskens första program, eller bandets):
+  startkoden ensam på `$02a7` skriver `load"*",8,1` eller `load` med `run` väntande i tangentbordsbufferten.
+
+Startkoden ligger direkt före programmet i ledigt minne (BASIC:s fria minne, `$c000`-blocket, bandbufferten,
+`$02a7-$02ff`, och för en monitorstart också botten av stacksidan och inmatningsbufferten: koden flyttar då stacken
+under sig). Annars direkt efter, med en `JMP` dit direkt före programmet (för ett program på `$0801` på `$07fd-$07ff`,
+och `$0800` förblir 0). Annars bärs programmet: kopian laddas i BASIC:s fria minne efter dess tomma program
+(`$0803-`) eller i `$c000`-blocket, och startkoden kopierar programmet på plats först med `$01 = $34` (ett program på
+`$c000` har inget ledigt minne före sig: `$bfxx` är under BASIC-ROM:et). Finns ingen plats laddas programmet bara, och
+Build-loggen säger vad man skriver i debuggern.
+
+Byggloggen visar debuggerns kommandorad, var startkoden ligger och vad den skriver, och det som inte blir som i VICE.
+Kontrollerat med Retro Debugger 1.0.0 och C64 Debugger 0.64.58.6:
+
+| | Retro Debugger 1.0.0 | C64 Debugger 0.64.58.6 |
+|---|---|---|
+| PRG | `-wait 3000 -prg main.debugger.prg -jmp x<adress>` | `-prg main.debugger.prg -alwaysjmp` |
+| Etiketter | `-symbols main.vs` | `-symbols main.vs` |
+| Disk | utelämnas: dess emulering stannar med `-d64` på kommandoraden (också utan program), och en disk som skickas med `-pass` gav samma sak eller en krasch; en disk som ska autostartas vägras | `-d64` |
+| Band | utelämnas (tom skärm, sedan ingen); ett band som ska autostartas vägras | `-tap`; PLAY trycks i debuggerns *Settings → Tape* |
+| Cartridge | `-crt <fil> -reset` | vägras: den står kvar vid READY |
+| VICE-snapshot | vägras: *Snapshot loading failed* (läser inte VICE 3.x) | vägras: den återställer det inte |
+
+`test/debugger-start.test.ts` kör startkoden i Sindris C64 med VICE:s ROM:ar så som debuggrarna gör (PRG:n in i RAM
+vid READY, hopp): RUN med slutpekaren och tillbaka till READY, ett buret program på `$c000` med `$01 = $36`, en
+monitorstart med skärmens byte kvar, och med en 1541 felkanalen `00, OK` efter initieringen (`73,CBM DOS` utan),
+programmets systemområde tillbaka efter KERNAL-anropen, och `load"*",8,1` med RUN.
 
 ### 13.3 VICE binary monitor (M3)
 

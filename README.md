@@ -169,8 +169,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   border flash) or how crunched data loads, and the exact command it runs. Crunched data can go in a file for each block
   (or PRG), and Brokkr writes its decruncher next to it, one for all of them, as a PRG to load and call and as Kick
   Assembler source to #import; each file is decrunched with that PRG in the emulated C64 before it is handed over.
-- **The toolchain is built in:** Kick Assembler builds, VICE (`F5`), Brokkr or Exomizer packing in the *Pack* view, and a
-  terminal with the tools on its `PATH`.
+- **The toolchain is built in:** Kick Assembler builds, VICE (`F5`), Retro Debugger or C64 Debugger (`Shift+F5`, the
+  program started as in VICE), Brokkr or Exomizer packing in the *Pack* view, and a terminal with the tools on its `PATH`.
 
 ![The Graphics tab drawing the showcase's multicolour bitmap logo](docs/images/graphics.png)
 
@@ -240,7 +240,7 @@ packed file.
    as source.
 4. **Verify** with `F7`. The status bar says whether the source assembles back to the original bytes.
 5. **Export** the Kick Assembler project with its build scripts (`Ctrl+E`, into the project's `source` folder), or
-   **Build & Run** it in VICE (`F5`).
+   **Build & Run** it in VICE (`F5`), or in Retro Debugger or C64 Debugger (`Shift+F5`, set in *Settings → Toolchain*).
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
 the Spindle, Bitfire, Booze, Sparkle and Krill scripts and Pirate Slayer (when there is one), statistics and the build output. With a

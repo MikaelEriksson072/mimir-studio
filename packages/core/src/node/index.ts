@@ -1,5 +1,7 @@
 export { splitArgs, safeJoin, writeVfs, runKickAssembler, launchVice, prepareVice, viceArgv, viceMonitorScript, startStatements, typedLines, DRIVE_INIT } from './toolchain';
 export type { KickRunOptions, KickRunResult, ViceLaunch, ViceStart } from './toolchain';
+export { DEBUGGERS, debuggerArgv, launchDebugger, prepareDebugger } from './debugger';
+export type { DebuggerLaunch, DebuggerPrepared } from './debugger';
 export { findC64Roms, findExomizer, findKickAssJar, findUnp64, findVice, viceRomFolders } from './detect';
 export { launchTerminal, terminalCommand, windowsStartLine } from './terminal';
 export type { TerminalCommand, TerminalLaunch } from './terminal';

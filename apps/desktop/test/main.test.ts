@@ -23,7 +23,7 @@ import { projectNameOf, projectNameProblem } from '../shared/projects';
 import { smartKind, smartPlan } from '../shared/smart-attach';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
-const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', ...patch });
+const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000, ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
