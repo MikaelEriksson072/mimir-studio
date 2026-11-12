@@ -184,14 +184,18 @@ Bootet körs nu hela vägen i Sindri med G64:an i driven. Det krävde åtta rät
 1. **G64 i driven, bit för bit**: SYNC efter tio 1-bitar, en byte var åttonde bit efter det, halvspår. På ett spår
    utan SYNC glider inramningen en bit per varv, som på en riktig skiva.
 2. **CIA-timern läses i instruktionens sista cykel** (tidigare i den första) och börjar räkna i tredje cykeln efter
-   skrivningen. `STA $DC0E / LDA $DC04` ger latchen minus 2.
+   skrivningen. `STA $DC0E / LDA $DC04` ger latchen minus 2 (minus 1 när skrivningen också laddar timern, force
+   load: mätt i VICE i november 2026).
 3. **En timer som går visar aldrig 0**: den laddas om i samma cykel, och latchen syns två cykler i rad.
 4. **Badline-DMA i cykel 11–54** av raden (räknat från 0, när rasterraden byter), och processorn stannar först vid
    en läsning, inte efter instruktionen som passerar.
 5. **CLK och DATA som C64:an släpper når driven en cykel senare**; neddragning och ATN syns direkt. Det mättes: EA:s
    och Ferraris laddare behöver det, och Krills laddare, som klockar bitarna med ATN, går som förut bara om ATN inte
    fördröjs. Med en fördröjning på alla linjer, som VICE:s `maincpu_clk + 1`, föll sju av 200 diskar i
-   regressionskörningen; med den här ingen.
+   regressionskörningen; med den här ingen. *(November 2026: Sindri följer nu VICE, en cykel på alla
+   linjer. Sedan IRQ:er tas i rätt cykel och en timer med force load räknar en cykel senare föll ingen av 675 filer
+   i jämförelsen med det, åtta kom längre, och Pirate Slayer-bootarna sparas som förut, byte för byte; se Sindris
+   README.)*
 6. **Stegmotorns fas hör till huvudets läge** (fas 0 på spår 1, 2 på spår 2), och den motsatta fasen flyttar huvudet
    ett helt spår. Så flyttar `UJ` huvudet från nyckelspåret.
 7. **LOAD lagrar genom pekaren på `$AE/$AF`**, byte för byte. En fil över pekaren fortsätter dit dess första byte

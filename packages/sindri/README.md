@@ -24,6 +24,18 @@ both CIAs with timers, interrupts and the keyboard and joysticks, and the SID re
 C64 ROMs it starts the machine, types `LOAD`, loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
 autostarts through the vectors or the stack, and packers that call the KERNAL work as they do on the real machine.
 
+Raster code that times itself to the cycle needs the CPU to take an IRQ in the same cycle as a C64 does, measured in
+VICE 3.10 with test programs after a cycle-exact raster sync (`test/timing.test.ts`). The 6510 polls the IRQ line in
+an instruction's last cycle with the level it had a cycle before, so a raster IRQ that comes in the last cycle waits
+for the next instruction, and a taken branch that stays in its page polls a cycle earlier still. A CIA timer started
+by a write counts from the third cycle after it, and from the fourth when the write also loads it (force load); an
+indexed read across a page reads I/O in its extra last cycle. Before November 2026 an IRQ was taken after the
+instruction in which it came and a forced load counted as a start: The Wild Bunch (#1 of 2006), which corrects its IRQ
+jitter with CIA timer A, read its timer a few cycles off and branched past the end of its delay into a JAM, and a
+copy of Royal Arte (#1 of 2001) took a stray IRQ at the one place in a copy loop where it breaks the demo. Sprites
+taking the bus (each one shown on a line takes two cycles or more there) are not emulated: Party Elk 2's IRQ handler
+times itself with sprites on and still crashes.
+
 For every byte of RAM it records which layer wrote it last and when, when it was last read as data and when it was
 last run. **A new layer begins when the CPU jumps into code that the running layer wrote and has not run yet**: the
 depacker a stub copied to `$0100`, the program a decruncher wrote, the code a decoder decrypted. Jumping into BASIC's
@@ -61,7 +73,9 @@ comparison with unp64 (with the ROMs and with the stand-ins) and on a sample of 
 demos and games) every layer, name and saved program stayed.
 
 The run stops when the newest layer settles (it stops streaming new data through memory), loads a file (without a
-disk), returns to BASIC, crashes or runs out of time. The newest layer is then the unpacked program. When an intro waits before anything
+disk), returns to BASIC, crashes or runs out of time. A program back at the READY prompt with its IRQ vector at `$0314`
+still leading into code of its own (and the interrupt on) has not ended: it goes on there. Uncensored (#1 of 2014)
+sets its own handler and returns to READY; a second later the handler takes over and loads the demo. The newest layer is then the unpacked program. When an intro waits before anything
 was unpacked, keys are pressed in turn (space and fire first, then return, N, F1, Y, F7, 1) until it reacts to one;
 then the list goes round again, from space when a new program started, else from the key it took. A trainer menu that
 asks its questions one after another ("Unlimited lives (Y/N)") takes N with little: it puts the next question up. That
@@ -99,8 +113,17 @@ With a disk (a D64 or G64 image, given instead of the file or with `--disk`) a 1
 
 The drive runs behind the C64 at its own 1 MHz. Whenever the C64 reads or writes the serial port it first catches up
 to that cycle, running every instruction whose bus access comes before the C64's; its reads of the head, the timers
-and the overflow flag see them as they are in the cycle of the access. CLK or DATA the C64 lets go reaches the drive a
-cycle later (the line rises through the pull-ups); a line pulled low, and ATN, at once. So transfer protocols that count cycles work:
+and the overflow flag see them as they are in the cycle of the access. What the C64 does to ATN, CLK and DATA reaches
+the drive a cycle after its write, as in VICE (`maincpu_clk + 1`). Until November 2026 only CLK and DATA let go were a
+cycle late and ATN was at once (a delay on ATN broke Krill's loader then; with the IRQ and timer timing above it no
+longer does, Scramble Infinity's installer included);
+Megaparts 2 (#1 of 1990), whose drive sends a byte's four bit pairs 16 to 40 cycles after the C64 lets ATN go, got
+every tenth byte of its second part wrong. On 675 files (the first disk of the 364 demos and games of CSDB's top 200
+lists, 311 one-file demos and intros), with the IRQ and timer timing above: 8 runs that crashed or stopped early now get
+to their program (Barnsley Badger, Commando Arcade SE, Hit and Run Baseball, International Karate Ultimate, Ghosts'n
+Goblins Arcade, Wavemode, Uncensored, a Padua intro), Comaland and Yogi's Big Clean Up get a layer further, none got
+worse, and 26 are saved with the same range and start but other bytes (where the run stopped); the Pirate Slayer boots
+are saved as before, byte for byte. So transfer protocols that count cycles work:
 Bitfire, Krill's loader, Sparkle, Spindle, the Booze loader and plain KERNAL loads all get through. The file is put in
 memory as `LOAD"*",8,1` would leave it (`$ba` is 8, and the drive has read the disk's ID), a byte at a time through
 LOAD's pointer at `$ae/$af` (a file that loads over the pointer goes on where it now points); the program then loads
@@ -123,6 +146,15 @@ On the first disk of each of the 190 top-rated demos at CSDB, 151 get further th
 loader loads the next part and starts it. Without the drive, 151 waited in the boot, 35 went back to READY when
 their drive code got no answer and 4 crashed; with it 186 run until a part settles, 3 end at READY and 1 runs out of
 time. A disk takes about 0.3 s.
+
+A demo on more than one disk or side asks for the next one when it gets there ("PLEASE TURN DISK...", "INSERT
+DISKSIDE 2 AND PRESS SPACE"). Given the release's other disks (`UnpackOptions.disks`, `--next FILE` once for each, in
+order), Sindri turns the disk when the program waits, every key was tried, and the text screen asks for it (turn or
+flip the disk, insert one, disk 2, side B): the disk in the drive slides out past the write protect sensor, the drive
+stands empty half a second, and the next slides in, so the DOS sees a new disk; then the keys are tried again. Mathematica (#1 of 1995) waits for
+side B after its first file and unpacks with it (SuperCrunch, the intro at `$b000`); Tower Power 100% (#1 of 1994)
+gets to its program at `$902d`; Edge of Disgrace's disk 0 goes on to disk 1A, and a part that just runs a while with
+no such text on the screen keeps its disk.
 
 In such a demo the part that settles keeps what earlier parts left that it runs (see above): Fairlight's 1337 is saved
 as `$0200-$ffff`, with the loader at `$0200` and the music at `$1000` that the first part loaded, where it was
@@ -229,6 +261,7 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
 | `-o FILE` | save here (default: `<name>.<start address>.prg` next to the file) |
 | `--file NAME` | the file on the D64, G64, TAP or T64 to unpack (default: its first program; `*` and `?` as the DOS takes them) |
 | `--disk FILE` | put this D64 or G64 in the drive for a PRG given on its own |
+| `--next FILE` | the disk to turn to when the program asks for it and waits (a demo's next side); once for each, in order |
 | `--tape FILE` | put this TAP or T64 in the datasette for a PRG given on its own |
 | `-e ADDR` | start with `SYS ADDR` instead of `RUN` |
 | `--port VALUE` | with `-e`: `$01` as the program starts there, set right before the jump (a saved program's start hint, `$36` say: a game that starts under the BASIC ROM) |

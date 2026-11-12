@@ -20,6 +20,10 @@ import { Via, type ViaState } from './via.ts';
 /** drive cycles per C64 cycle (1 MHz against PAL's 985248 Hz) */
 export const DRIVE_RATIO = 1_000_000 / 985248;
 
+/** a disk change: a tenth of a second for a disk to slide past the write protect sensor, and the new one goes in
+ *  half a second after the old one began to come out */
+const CHANGE_OUT = 100_000, CHANGE_IN = 500_000;
+
 export interface DriveState {
   ram: Uint8Array; cpu: { a: number; x: number; y: number; s: number; pc: number; p: number };
   via1: ViaState; via2: ViaState; cycles: number; halftrack: number;
@@ -73,7 +77,7 @@ export class Drive implements Bus {
     this.cpu = new Cpu(this);
     this.via1.inputB = () => (this.dataLow ? 0x01 : 0) | (this.clkLow ? 0x04 : 0) | (this.c64Atn ? 0x80 : 0);
     this.via2.inputA = () => this.latch;
-    this.via2.inputB = () => (this.sync ? 0 : 0x80) | (this.disk?.writeProtected ? 0 : 0x10);
+    this.via2.inputB = () => (this.sync ? 0 : 0x80) | (this.sensorCovered ? 0 : 0x10);
     this.via2.changedB = () => this.step2();
     this.via1.changedB = () => {
       const l = this.via1.outB & 0x0a;
@@ -90,6 +94,31 @@ export class Drive implements Bus {
 
   /** the spindle motor runs (VIA 2 port B bit 2): the drive is loading or about to */
   get motorOn(): boolean { return (this.via2.outB & 0x04) !== 0; }
+
+  /** a disk change under way: the disk that goes in, and the drive cycle the one in the drive began to come out */
+  private changing: { disk: Disk; at: number } | null = null;
+
+  /**
+   * Take the disk out and put another in, as a hand does (a demo's next side): the old one slides out past the write
+   * protect sensor (covered, then light), the drive stands empty half a second, and the new one slides in (covered
+   * again) and sits. The DOS tells a new disk by the sensor; a loader of the demo's own reads on from the new one.
+   */
+  change(disk: Disk): void { this.changing = { disk, at: this.cycles }; }
+
+  /** the write protect sensor is covered: a protected disk, or one sliding in or out */
+  private get sensorCovered(): boolean {
+    const c = this.changing;
+    if (!c) return this.disk?.writeProtected ?? false;
+    const t = this.cycles - c.at;
+    return t < CHANGE_OUT || (t >= CHANGE_IN && t < CHANGE_IN + CHANGE_OUT);
+  }
+
+  /** a disk change goes on: the old disk is gone once it is out, the new one there once it is in */
+  private changeStep(): void {
+    const c = this.changing!, t = this.cycles - c.at;
+    if (t >= CHANGE_IN + CHANGE_OUT) { this.disk = c.disk; this.changing = null; }
+    else if (t >= CHANGE_OUT) this.disk = null;
+  }
 
   /**
    * Insert the disk and have the DOS read a header on track 18, as it does when the C64 loads the file: then it
@@ -153,6 +182,7 @@ export class Drive implements Bus {
 
   private pass(n: number): void {
     if (n <= 0) return;
+    if (this.changing) this.changeStep();
     this.via1.advance(n);
     this.via2.advance(n);
     this.turn(n);

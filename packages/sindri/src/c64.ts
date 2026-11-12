@@ -45,6 +45,8 @@ export class Vic {
   private den = true;
   /** this line is a badline whose cycles the VIC has not taken yet */
   bad = false;
+  /** in the last advance: the cycle (counted from its start) in which the raster compare raised its flag, else -1 */
+  rose = -1;
 
   /** register r as the CPU reads it `at` cycles into the instruction (the raster line may have moved on) */
   read(r: number, at = 0): number {
@@ -82,6 +84,7 @@ export class Vic {
    */
   advance(n: number): number {
     let stolen = 0;
+    this.rose = -1;
     this.lineCycle += n;
     for (;;) {
       if (this.bad && this.lineCycle >= 14) { this.bad = false; stolen += 40; this.lineCycle += 40; }
@@ -89,7 +92,8 @@ export class Vic {
       this.lineCycle -= CYCLES_PER_LINE;
       const line = this.line = this.line === LINES - 1 ? 0 : this.line + 1;
       if (line === 0x30) this.den = (this.regs[0x11] & 0x10) !== 0;
-      if (line === this.compare) this.flags |= 1;
+      // the compare matches in the line's first cycle (line 0: its second, as in VICE)
+      if (line === this.compare) { if (!(this.flags & 1)) this.rose = n + stolen - this.lineCycle + (line ? 0 : 1); this.flags |= 1; }
       this.bad = this.den && line >= 0x30 && line <= 0xf7 && (line & 7) === (this.regs[0x11] & 7);
     }
     return stolen;
@@ -103,12 +107,13 @@ export class Cia {
   icr = 0; mask = 0;
   sdr = 0;
   /**
-   * cycles a timer does not count yet: one started or loaded by a write waits for the rest of the writing
-   * instruction and one cycle more, so it counts from the third cycle after the write
+   * cycles a timer does not count yet: one started by a write waits for the rest of the writing instruction and one
+   * cycle more, so it counts from the third cycle after the write; one the write loads (force load, bit 4) waits a
+   * cycle longer (measured in VICE: STA $DC0E / LDA $DC04 gives the latch minus 2 after a start, minus 1 after a load)
    */
   waitA = 0; waitB = 0;
-  /** a write just started or loaded the timer (the C64 sets the wait, as it knows the instruction) */
-  startedA = false; startedB = false;
+  /** a write just started (1) or loaded (2) the timer: the C64 sets the wait, as it knows the instruction */
+  startedA = 0; startedB = 0;
   /** TOD: tenths, seconds, minutes, hours (BCD) */
   readonly tod = new Uint8Array([0, 0, 0, 1]);
   private todCycles = 0;
@@ -210,8 +215,8 @@ export class Cia {
       case 0x8: case 0x9: case 0xa: case 0xb: if (!(this.crb & 0x80)) this.tod[r - 8] = v; return;
       case 0xc: this.sdr = v; return;
       case 0xd: if (v & 0x80) this.mask |= v & 0x1f; else this.mask &= ~v & 0x1f; return;
-      case 0xe: if (v & 0x10) this.ta = this.tal; this.startedA = (v & 0x10) !== 0 || ((v & 1) !== 0 && !(this.cra & 1)); this.cra = v & 0xef; return;
-      default: if (v & 0x10) this.tb = this.tbl; this.startedB = (v & 0x10) !== 0 || ((v & 1) !== 0 && !(this.crb & 1)); this.crb = v & 0xef;
+      case 0xe: if (v & 0x10) this.ta = this.tal; this.startedA = v & 0x10 ? 2 : v & 1 && !(this.cra & 1) ? 1 : 0; this.cra = v & 0xef; return;
+      default: if (v & 0x10) this.tb = this.tbl; this.startedB = v & 0x10 ? 2 : v & 1 && !(this.crb & 1) ? 1 : 0; this.crb = v & 0xef;
     }
   }
 }
@@ -353,8 +358,11 @@ export class C64 implements Bus {
     return ((out >> 3) & 1) | ((out >> 3) & 2) | ((out >> 3) & 4);
   }
 
-  /** the cycle in which the running instruction reaches the bus: its last one */
-  private get busCycle(): number { return this.cycles + CYCLES[this.cpu.lastOp & 0xff] - 1; }
+  /** the cycle in which the running instruction reaches the bus: its last one (a read across a page takes one more) */
+  private get busCycle(): number { return this.cycles + this.lastCycle; }
+
+  /** the last cycle of the running instruction, counted from its first: where it reads or writes I/O */
+  private get lastCycle(): number { return CYCLES[this.cpu.lastOp & 0xff] - 1 + this.cpu.penalty; }
 
   // --- banking ----------------------------------------------------------------------------------------------------
   updateMap(): void {
@@ -450,7 +458,7 @@ export class C64 implements Bus {
 
   private readIo(a: number): number {
     // the timers and the raster line as they are in the cycle the instruction reads them (its last one)
-    const at = CYCLES[this.cpu.lastOp & 0xff] - 1;
+    const at = this.lastCycle;
     if (a < 0xd400) return this.vic.read(a & 0x3f, at);
     if (a < 0xd800) return this.readSid(a & 0x1f);
     if (a < 0xdc00) return this.color[a & 0x3ff] & 0x0f;
@@ -471,35 +479,27 @@ export class C64 implements Bus {
     else if (a < 0xdd00) { this.cia1.write(a & 0x0f, v); this.timerStart(this.cia1); }
     else if (a < 0xde00) {
       const serial = this.drive && (a & 0x0d) === 0;
-      if (serial) this.syncDrive(this.busCycle);
-      const before = serial ? this.serialLines() : 0;
+      // what the C64 does to ATN, CLK and DATA reaches the drive a cycle after the write, as in VICE (maincpu_clk + 1):
+      // the drive runs to then first. Fast loaders are timed so to the cycle: Pirate Slayer's reads its first bit pair
+      // 16 cycles after it lets DATA go, and Megaparts 2's drive sends a byte's four pairs 16-40 cycles after ATN goes
+      // (one cycle off, every tenth byte arrived wrong). (Until the C64's IRQs were taken in the right cycle, a delay on
+      // ATN broke Krill's loader and others; see docs/pirateslayer.md)
+      if (serial) this.syncDrive(this.busCycle + 1);
       this.cia2.write(a & 0x0f, v);
       this.timerStart(this.cia2);
-      if (serial) {
-        // a line the C64 pulls low is low at once; CLK or DATA it lets go reaches the drive a cycle later (the line rises
-        // through the pull-ups and the cable). Fast loaders that start a byte by letting DATA go are timed so: Pirate
-        // Slayer's reads its first bit pair 16 cycles after it, with no cycle to spare otherwise, and Ferrari Formula
-        // One's needs it too. ATN goes at once: loaders that clock the bits with it (Krill's) were timed that way (see
-        // docs/pirateslayer.md for how this was measured)
-        const after = this.serialLines(), rising = before & ~after & 6;
-        if (rising) {
-          this.drive!.setC64(((after | rising) & 1) !== 0, ((after | rising) & 2) !== 0, ((after | rising) & 4) !== 0);
-          this.syncDrive(this.busCycle + 1);
-        }
-        this.serialOut();
-      }
+      if (serial) this.serialOut();
     }
   }
 
   /**
    * a timer the write started waits for the rest of this instruction (see Cia.waitA): the write is in its last
    * cycle, and the timer counts from the third cycle after it, as on the 6526 (read right after STA $DC0E, LDA
-   * $DC04 gives the latch minus 2)
+   * $DC04 gives the latch minus 2), or from the fourth when the write loads it (the latch minus 1)
    */
   private timerStart(cia: Cia): void {
-    const wait = CYCLES[this.cpu.lastOp & 0xff] + 1;
-    if (cia.startedA) { cia.waitA = wait; cia.startedA = false; }
-    if (cia.startedB) { cia.waitB = wait; cia.startedB = false; }
+    const wait = CYCLES[this.cpu.lastOp & 0xff];
+    if (cia.startedA) { cia.waitA = wait + cia.startedA; cia.startedA = 0; }
+    if (cia.startedB) { cia.waitB = wait + cia.startedB; cia.startedB = 0; }
   }
 
   private readSid(r: number): number {
@@ -540,16 +540,34 @@ export class C64 implements Bus {
 
   /** Let the cycles of one instruction pass; returns them plus the cycles badlines stole. */
   advance(n: number): number {
+    const was = this.irqLine, t0 = this.cycles;
     const total = n + this.vic.advance(n);
     this.cia1.advance(total);
     this.cia2.advance(total);
     // a pulse from the tape ends: an edge on the FLAG line
     if (this.tape?.motor && this.tape.advance(total)) this.cia1.icr |= 0x10;
     this.cycles += total;
+    // the IRQ line went low: in the cycle the raster compare matched, or (a CIA, an enable written) taken as at the
+    // start of the instruction
+    if (!was && this.irqLine) this.irqSince = this.vic.rose >= 0 && this.vic.irq && !this.cia1.irq ? t0 + this.vic.rose : t0;
     return total;
   }
 
+  /** the cycle the IRQ line went low (while it is) */
+  irqSince = 0;
+
   get irqLine(): boolean { return this.vic.irq || this.cia1.irq; }
+
+  /**
+   * After an instruction: whether the CPU takes an IRQ now (the caller checks the I flag). The 6510 polls the line in
+   * the instruction's last cycle, with the level it had a cycle before: an IRQ that comes in the last cycle waits for
+   * the next instruction, and a taken branch that stays in its page polls a cycle earlier still (measured in VICE
+   * with raster IRQs after a cycle-exact sync: The Wild Bunch's IRQ handler times itself by CIA timer A, and taken a
+   * few cycles early it branches past the end of its delay into a JAM).
+   */
+  irqDue(): boolean {
+    return this.irqLine && this.irqSince <= this.cycles - (this.cpu.quickBranch ? 3 : 2);
+  }
   get nmiLine(): boolean { return this.cia2.irq; }
 
   // --- state ------------------------------------------------------------------------------------------------------

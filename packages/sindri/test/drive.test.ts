@@ -126,6 +126,34 @@ fail:  inc $d020
 name:  .text "PART2"
 `);
 
+/** side 1's boot file: it asks for the other side, waits for a key and loads PART2 from it (LOAD "PART2",8,1), and
+ *  asks again while the file is not there (Tower Power: "INSERT DISKSIDE 2 AND PRESS SPACE") */
+const TURN_BOOT = asm(`${SYS_LINE}
+ask:   ldx #0
+show:  lda text,x
+       beq wait
+       jsr $ffd2
+       inx
+       bne show
+wait:  jsr $ffe4
+       beq wait
+       lda #5
+       ldx #<name
+       ldy #>name
+       jsr $ffbd
+       lda #1
+       ldx #8
+       ldy #1
+       jsr $ffba
+       lda #0
+       jsr $ffd5
+       bcs ask
+       jmp $c000
+text:  .text "TURN DISK AND PRESS SPACE"
+       .byte 13, 0
+name:  .text "PART2"
+`);
+
 /** a backup saved as two files, as the Super Snapshot and the Action Replay write them: the first copies the page it
  *  holds to $d000 under the I/O, puts a "1" in front of the name it was loaded by and loads that file over itself,
  *  going on at $080d */
@@ -424,6 +452,19 @@ describe.skipIf(!withDrive)('programs that load from the disk', () => {
     expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
     expect(r.saved).toMatchObject({ entry: 0xc000, start: 0xc000, end: PART2.end });
     expect([...r.saved!.prg]).toEqual([...PART2.prg]);
+  });
+
+  it('turns to the next side when the program asks for it and waits, and goes on loading from that one', () => {
+    const side1 = makeD64([{ name: 'BOOT', prg: TURN_BOOT.prg }], [], 'SIDE 1', 'S1');
+    const side2 = makeD64([{ name: 'PART2', prg: PART2.prg }], [], 'SIDE 2', 'S2');
+    // with side 1 alone it asks for ever
+    expect(unpack(TURN_BOOT.prg, { roms, disk: side1 }).layers.map(l => l.entry)).toEqual([0x080d]);
+    const r = unpack(TURN_BOOT.prg, { roms, disk: side1, disks: [side2] });
+    expect(r.drive).toMatch(/^1541 with "SIDE 1" S1, then "SIDE 2" S2 at \d+\.\d s, \d+ bytes read$/);
+    expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+    const s = r.saved!;
+    expect(s.entry).toBe(0xc000);
+    expect([...s.prg.subarray(2 + 0xc000 - s.start, 2 + PART2.end + 1 - s.start)]).toEqual([...PART2.prg.subarray(2)]);
   });
 
   it('loads the file by its name on the disk, as LOAD"name",8,1 leaves it: a split freeze loads "1" and the name', () => {

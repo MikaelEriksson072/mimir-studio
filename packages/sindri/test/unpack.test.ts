@@ -541,6 +541,35 @@ ${basic([[10, '!:GOTO10']], 0x1001)}`).prg);
     expect(r.saved).toMatchObject({ layer: 2, basic: true, entry: 0x1001 });
     expect(r.stop.reason).toBe('settled');
   });
+
+  it('goes on at the READY prompt while the program\'s own interrupt handler runs, until it takes over', () => {
+    // SYS: $0314 to its own handler, back to READY; 30 interrupts later the handler writes the part at $c000 and
+    // jumps there (Uncensored by Booze Design starts so)
+    const r = go(asm(`${SYS_LINE}
+       sei
+       lda #<irq
+       sta $0314
+       lda #>irq
+       sta $0315
+       cli
+       rts
+irq:   dec count
+       beq go
+       jmp $ea31
+go:    ldx #part_end-part-1
+copy:  lda part,x
+       sta $c000,x
+       dex
+       bpl copy
+       jmp $c000
+count: .byte 30
+part:  inc $d020
+       jmp $c000
+part_end:
+`).prg);
+    expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+    expect(r.stop.reason).toBe('settled');
+  });
 });
 
 const EXOMIZER = ['C:\\C64\\exomizer-3.1.1\\win32\\exomizer.exe', '/usr/bin/exomizer', '/usr/local/bin/exomizer'].find(p => existsSync(p));

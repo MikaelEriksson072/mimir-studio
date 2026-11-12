@@ -24,6 +24,8 @@ unpacks on from there (the keys Sindri presses get past the menu). The 1541 is n
   -o FILE        save here (default: <name>.<start address>.prg next to the file)
   --file NAME    the file on the D64, G64, TAP or T64 to unpack (default: its first program; * and ? as the DOS takes them)
   --disk FILE    put this D64 or G64 in the drive for a PRG given on its own
+  --next FILE    the disk to turn to when the program waits with nothing left to try (a demo's next side, as
+                 its "turn disk" asks); give it again for more sides, in order
   --tape FILE    put this TAP or T64 in the datasette for a PRG given on its own
   -e ADDR        start with SYS ADDR instead of RUN
   --port VALUE   with -e: $01 as the program starts there (a saved program's start hint, $36 say)
@@ -105,12 +107,14 @@ function main(argv: string[]): number {
   const inputs: string[] = [];
   let out: string | null = null, info = false, all = false, json = false, learn: string | null = null;
   let roms: string | null | false = null, fileName: string | null = null, diskPath: string | null = null, tapePath: string | null = null;
+  const nextPaths: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
       case '-o': out = argv[++i]; break;
       case '--file': fileName = argv[++i]; break;
       case '--disk': diskPath = argv[++i]; break;
+      case '--next': nextPaths.push(argv[++i]); break;
       case '--tape': tapePath = argv[++i]; break;
       case '-e': o.entry = parseAddr(argv[++i], '-e'); break;
       case '--port': { const v = parseAddr(argv[++i], '--port'); if (v > 0xff) throw new Error('--port: a byte, $00-$ff'); o.port = v; break; }
@@ -166,6 +170,10 @@ function main(argv: string[]): number {
     base += `.${name(f.header).replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
   } else if (fileName) throw new Error('--file picks a file on a D64, G64, TAP or T64');
   if (diskPath) o.disk = new Uint8Array(readFileSync(resolve(cwd, diskPath)));
+  if (nextPaths.length) {
+    if (!o.disk) throw new Error('--next turns to another disk: give the first one too (a D64 or G64, or --disk)');
+    o.disks = nextPaths.map(p => new Uint8Array(readFileSync(resolve(cwd, p))));
+  }
   if (tapePath) o.tape = new Uint8Array(readFileSync(resolve(cwd, tapePath)));
   o.roms = roms === false ? null : roms ? loadRoms(resolve(cwd, roms)) : findRoms();
   if (roms && !o.roms) throw new Error(`no kernal, basic and chargen ROM files in ${roms}`);

@@ -37,6 +37,13 @@ export interface UnpackOptions {
    */
   disk?: Uint8Array | null;
   /**
+   * the release's other disks or sides, in order (D64 or G64): when the program waits with the disk in the drive and
+   * nothing it reacts to (the keys tried), the next goes in, as its owner turns the disk when the screen asks for it
+   * (Mathematica's "PLEASE TURN DISK...", Tower Power's "INSERT DISKSIDE 2 AND PRESS SPACE"), and the keys are tried
+   * again
+   */
+  disks?: Uint8Array[];
+  /**
    * the tape the file came from (a TAP image): it is in the datasette with PLAY held down, wound to where the file
    * ended, so the program's own loader reads on from there, and LOAD from the tape loads the next file. A T64 tape
    * archive: LOAD from the tape loads its files (it has no pulses for a loader of the program's own)
@@ -240,6 +247,10 @@ const PRESSES: { name: string; keys: [number, number][]; joy: number; petscii: n
 ];
 /** keys pressed at most, and one more for every key the program took as an answer (up to MAX_ANSWERS) */
 const MAX_PRESSES = 24;
+/** the text screen asks for another disk or side ("PLEASE TURN DISK...", "INSERT DISKSIDE 2", "insert ... disk 1,
+ *  side A", "flip the disk"): only then does the next of options.disks go in (a trackmo's part that just runs a while
+ *  stays, whatever its scroll text says about the inside of a border or a return) */
+const TURN_DISK = /(turn|flip)\s*(the\s+)?(dis[kc]|side|over)|insert|dis[kc]\s*(side\s*)?[0-9a-d]\b|side\s*[0-9a-d]\b/;
 const MAX_ANSWERS = 32;
 /** a press the program took as an answer wrote this many fresh bytes at least (a short line of text): a trainer menu
  *  that asks one question after another puts the next one up */
@@ -359,6 +370,8 @@ class Session {
   /** the 1541 (with a disk and its DOS ROM), or why there is none */
   private drive: Drive | null = null;
   private driveNote: string | null = null;
+  /** the disks of options.disks put in so far */
+  private turned = 0;
   /** since when the drive's motor runs without the program getting new data */
   private driveBusy = 0;
   /** the file's name as LOAD left it below $a000 (with a disk), what was there before, and whether the program loaded
@@ -587,6 +600,16 @@ class Session {
     return sys != null && sys >= lo && sys < hi;
   }
 
+  /**
+   * The IRQ vector at $0314 leads into RAM the program wrote (not the KERNAL's handler), and an interrupt that goes
+   * there is on (CIA 1's timer, as the KERNAL leaves it, or the raster): the program goes on in it.
+   */
+  private ownIrq(): boolean {
+    const m = this.m, v = m.peekWord(0x0314);
+    if (v === KERNAL_VECTORS[0] || m.map[v >> 8] > ZP || m.wid[v] === BOOT) return false;
+    return (m.cia1.mask & 1) !== 0 || (m.vic.regs[0x1a] & 1) !== 0;
+  }
+
   /** With the stand-ins: where a file that loads over the RAM vectors or the stack starts by itself. */
   private autostart(): number | null {
     const m = this.m, lo = this.loadAt, hi = this.loadAt + this.data.length;
@@ -708,7 +731,7 @@ class Session {
         if (op === 0x20) this.call((pc + 3) & 0xffff);
         else if (op === 0x00) this.call((pc + 2) & 0xffff);
       }
-      if (m.irqLine && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(cpu.irq()); this.call(this.irqRet); }
+      if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(cpu.irq()); this.call(this.irqRet); }
       const nmi = m.nmiLine;
       if (nmi && !this.nmiWas) { this.interrupted(pc); m.advance(cpu.nmi()); this.call(this.irqRet); }
       this.nmiWas = nmi;
@@ -973,7 +996,32 @@ class Session {
       this.stop('not-started', `no machine code ran${at}`);
       return;
     }
+    if (this.drive && this.turned < (this.o.disks?.length ?? 0) && TURN_DISK.test(this.screenText())) { this.turnDisk(); return; }
     this.stop('settled', `waits at ${hex4(m.cpu.pc)}`);
+  }
+
+  /** the text screen in lower case (screen codes of either character set, reversed or not; others as spaces) */
+  private screenText(): string {
+    return this.screenRows().join('\n').replace(/[\s\S]/g, ch => {
+      const c = ch.charCodeAt(0) & 0x7f;
+      return c >= 1 && c <= 26 ? String.fromCharCode(c + 96) : c >= 65 && c <= 90 ? String.fromCharCode(c + 32) : c >= 0x30 && c <= 0x39 ? ch : ' ';
+    });
+  }
+
+  /** The next of options.disks goes into the drive; the program has its time again, and the keys are tried again. */
+  private turnDisk(): void {
+    const m = this.m, bytes = this.o.disks![this.turned++];
+    const disk = isG64(bytes) ? g64ToDisk(bytes) : d64ToDisk(bytes);
+    this.d64 = isG64(bytes) ? g64ToD64(bytes) : bytes;
+    this.drive!.change(disk);
+    const when = ((m.cycles - this.startCycle) / 985248).toFixed(1);
+    this.driveNote += `, then "${disk.name}"${disk.id.trim() ? ` ${disk.id}` : ""} at ${when} s`;
+    this.trace(`waiting at ${hex4(m.cpu.pc)}: turned to disk ${this.turned + 1} ("${disk.name}"), the screen says ${JSON.stringify(this.screenText().replace(/\s+/g, ' ').trim().slice(0, 80))}`);
+    this.pressQueue = PRESSES.map((_, i) => i);
+    this.pressCount = 0;
+    this.pressMark = null;
+    this.rowsSeen.clear();
+    this.progressAt = m.cycles;
   }
 
   /** the fresh writes of the windows that began after the program last made progress (or a key was let go) */
@@ -1110,6 +1158,9 @@ class Session {
       // returned to BASIC
       this.trap(READY_WAITS, KERNAL, () => {
         if (m.ram[0xc6]) return false;
+        // a program back at the prompt with its own interrupt still running goes on there: Uncensored (Booze Design)
+        // sets $0314 to its own handler and returns to READY, and the handler takes over a second later
+        if (this.started && this.ownIrq()) return false;
         if (this.phase === 'loaded') {
           if (this.started) { this.stop('ready', 'returned to the READY prompt'); return true; }
           const basicStart = m.ram[0x2b] | (m.ram[0x2c] << 8);
@@ -1430,7 +1481,7 @@ function bootC64(roms: Roms): MachineState | null {
     m.icount++;
     if (cpu.jammed) return null;
     m.advance(cycles);
-    if (m.irqLine && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
+    if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
     const nmi = m.nmiLine;
     if (nmi && !nmiWas) m.advance(cpu.nmi());
     nmiWas = nmi;
