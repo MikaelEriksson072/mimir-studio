@@ -1131,6 +1131,26 @@ stannar (inga tangenter när något redan packats upp), men från sin start tryc
 `$03dc` och Sindri hittade inget där. E2e-testet packar upp `fixtures/prg/packed-menu.prg` (demon packad två gånger
 med en tangentväntan på `$07f8` mellan, `test/sindri.test.ts`) i två steg.
 
+**Trainermenyer som frågar en sak i taget.** Sindri trycker tangenterna i tur och ordning (mellanslag och fire först,
+sedan RETURN, N, F1, Y, F7, 1) tills programmet reagerar på en; då går listan om igen, från mellanslag när ett nytt
+program startat, annars från tangenten det tog. En meny som frågar *Unlimited lives (Y/N)* och sedan nästa sak
+reagerar på N med lite: den skriver nästa fråga. Det räknas som en reaktion när programmet skrev mer än det gör av sig
+självt (nya byte i följd: åtta fler än dubbelt så många som under väntan före trycket) och skärmen visar en rad som
+inte syntes vid något tidigare tryck och som står still: inte samma klagomål på fel tangent igen, samma *insert side 3*
+på nästa rad eller en rulltext. Högst 24 tryck, och ett till för varje besvarad fråga (högst 32). Cybernoid 2 från
+C64com (crackad av Ikari, trainer av Powerplant, nio J/N-frågor och två sifferfrågor) stannade förut i menyn efter att
+varje tangent tryckts en gång. Nu får den N på J/N-frågorna och 1 på sifferfrågorna, och tredje *Unpack* ger spelet:
+`$1800` (`$0800-$d8e6`), trainermenyn på `$c000` (`$03a6-$f500`) och spelet på `$a2ab` (`$0400-$ffff`, `$01=$36`),
+som startar i VICE. Mätt mot förra versionen på 1013 program (613 spel från C64com, 187 från CSDB:s Games Top200,
+213 intron från CSDB), var och ett uppackat upp till tre gånger som med *Unpack* (2227 körningar): 14 körningar
+packar nu upp där inget packades upp förut, alla spel bakom trainermenyer (Cybernoid 2, Rainbow Islands, Operation
+Wolf, Night Breed, Count Duckula, Ball Fever, Genloc …); fyra av sex som provades startar i VICE till titelbilden
+(Rainbow Islands och Night Breed gör det inte ur den sparade filen). En slutar packa upp, Maze of the Mummy V2.0, vars
+"program" förut startade på `$0001` (en krasch). Åtta sparar andra byte i samma intervall med samma start, de flesta
+för att menyn nu får N där den fick Y, så att trainerns ändringar inte står i spelet. C64-tiden är 2,6 % längre.
+Testerna `test/unpack.test.ts` i Sindri: en meny med tolv J/N-frågor och en sifferfråga, och en meny som bara klagar
+på fel tangent (Sindri går vidare till nästa tangent i stället för att trycka samma igen).
+
 **Packa upp när filen öppnas.** Med Settings → General → *Unpack packed files when they are opened* (av från början,
 sparas per användare, `autoUnpack`) packas en fil som öppnas eller läggs till upp direkt, som *Unpack* gör, när den är
 packad: Sindri har kört den och skalat av ett lager (med en extern uppackare: när analysen och verktygets

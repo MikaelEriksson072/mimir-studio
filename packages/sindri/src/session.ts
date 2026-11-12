@@ -233,7 +233,12 @@ const PRESSES: { name: string; keys: [number, number][]; joy: number; petscii: n
   { name: 'f7', keys: [[0, 3]], joy: 0, petscii: 0x88 },
   { name: '1', keys: [[7, 0]], joy: 0, petscii: 0x31 },
 ];
+/** keys pressed at most, and one more for every key the program took as an answer (up to MAX_ANSWERS) */
 const MAX_PRESSES = 24;
+const MAX_ANSWERS = 32;
+/** a press the program took as an answer wrote this many fresh bytes at least (a short line of text): a trainer menu
+ *  that asks one question after another puts the next one up */
+const ANSWER_FRESH = 8;
 const HOLD = 100_000;
 const CHECK = 4096;
 const CALLS = 1024;
@@ -326,9 +331,19 @@ class Session {
   private windowIcount = 0;
   private freshSum = 0;
   private holdUntil = 0;
-  private pressIndex = 0;
+  /** the fresh writes of the last windows, with the cycle each began */
+  private windowFresh: { at: number; fresh: number }[] = [];
+  /** the keys still to press (indexes into PRESSES) before the program gives up, the keys pressed in all, and the
+   *  presses the program took as answers */
+  private pressQueue = PRESSES.map((_, i) => i);
   private pressCount = 0;
-  private pressMark: { layer: Layer | null; fresh: number } | null = null;
+  private answers = 0;
+  /** the last press: the layer then, the fresh writes so far and in the settle time before it, and which key it was */
+  private pressMark: { layer: Layer | null; fresh: number; quiet: number; index: number } | null = null;
+  /** the rows of text the screen showed at the presses since the program last moved on, and the screen at the ends of
+   *  the last two windows */
+  private readonly rowsSeen = new Set<string>();
+  private shots: string[][] = [];
 
   /** the stand-in BASIC interpreter: the statements of the program and the next one to run */
   private basicStatements: number[][] = [];
@@ -878,7 +893,10 @@ class Session {
       if (bus - this.windowBus >= LOADS) this.progressAt = now;
       this.windowBus = bus;
       this.freshSum += m.fresh;
+      this.windowFresh.push({ at: this.windowEnd - this.settleCycles / 3, fresh: m.fresh });
+      if (this.windowFresh.length > 4) this.windowFresh.shift();
       m.fresh = 0;
+      this.shots = [this.shots.at(-1) ?? [], this.screenRows()];
       m.freshMark = this.windowIcount;
       this.windowIcount = m.icount;
       this.windowEnd = now + this.settleCycles / 3;
@@ -898,30 +916,47 @@ class Session {
     if (!this.holdUntil && now - this.progressAt >= this.settleCycles) this.settled();
   }
 
-  /** The program writes no new memory: press a key if it is an intro still in front of the depacker, or stop. */
+  /**
+   * The program writes no new memory: press a key if it is an intro still in front of the depacker, or stop. The keys
+   * go in turn until the program reacts to one: then from the first again when it is a new program, else that key
+   * again first. A trainer menu that asks one question after another ("Unlimited lives (Y/N)") reacts to N with little:
+   * it puts the next question up, a line of text the screen had not shown at a press, and stands still there. It
+   * stops once every key was pressed without a reaction.
+   */
   private settled(): void {
     const m = this.m;
     const first = !this.started || this.layers.length === 1;
-    if (this.pressMark) {
-      const reacted = this.cur !== this.pressMark.layer || this.freshSum + m.fresh - this.pressMark.fresh >= 128;
-      if (reacted) this.pressIndex = 0;
-    }
-    if ((first || this.o.deep) && this.o.keys !== false && this.pressCount < MAX_PRESSES) {
-      const p = PRESSES[this.pressIndex];
-      if (p) {
-        this.pressIndex++;
-        this.pressCount++;
-        m.input.release();
-        for (const [col, row] of p.keys) m.input.keys[col] |= 1 << row;
-        m.input.joy1 = m.input.joy2 = p.joy;
-        m.input.petscii = p.petscii;
-        this.holdUntil = m.cycles + HOLD;
-        this.pressMark = { layer: this.cur, fresh: this.freshSum + m.fresh };
-        const when = ((m.cycles - this.startCycle) / 985248).toFixed(1);
-        this.cur?.presses.push(`${p.name} at ${when} s`);
-        this.trace(`waiting at ${hex4(m.cpu.pc)}: pressed ${p.name}`);
-        return;
+    const k = this.pressMark, rows = this.screenRows();
+    if (k) {
+      const fresh = this.freshSum + m.fresh - k.fresh;
+      const all = PRESSES.map((_, i) => i), again = [k.index, ...all.filter(i => i !== k.index)];
+      // a new program: the keys from the first again
+      if (this.cur !== k.layer) { this.pressQueue = all; this.rowsSeen.clear(); }
+      // the same program did much (a new page, or a depacker started): that key again first
+      else if (fresh >= 128) this.pressQueue = again;
+      else if (this.answers < MAX_ANSWERS && fresh >= ANSWER_FRESH + 2 * k.quiet && this.newRow(rows)) {
+        // it wrote more than it does when left alone and shows a line it had not shown at a press, which stands still
+        // (the next question; not the same complaint about a wrong key again, the same "insert side 2" on the next
+        // line, or a scroll text)
+        this.pressQueue = again;
+        this.answers++;
+        this.trace(`answered with ${PRESSES[k.index].name} (${fresh} fresh writes, ${k.quiet} before it)`);
       }
+    }
+    if ((first || this.o.deep) && this.o.keys !== false && this.pressCount < MAX_PRESSES + this.answers && this.pressQueue.length) {
+      const index = this.pressQueue.shift()!, p = PRESSES[index];
+      this.pressCount++;
+      for (const row of rows) this.rowsSeen.add(row);
+      m.input.release();
+      for (const [col, row] of p.keys) m.input.keys[col] |= 1 << row;
+      m.input.joy1 = m.input.joy2 = p.joy;
+      m.input.petscii = p.petscii;
+      this.holdUntil = m.cycles + HOLD;
+      this.pressMark = { layer: this.cur, fresh: this.freshSum + m.fresh, quiet: this.quietFresh(), index };
+      const when = ((m.cycles - this.startCycle) / 985248).toFixed(1);
+      this.cur?.presses.push(`${p.name} at ${when} s`);
+      this.trace(`waiting at ${hex4(m.cpu.pc)}: pressed ${p.name}`);
+      return;
     }
     if (!this.started) {
       // (a snapshot taken while the KERNAL loaded from a disk: the 1541 is not in it as it was)
@@ -930,6 +965,27 @@ class Session {
       return;
     }
     this.stop('settled', `waits at ${hex4(m.cpu.pc)}`);
+  }
+
+  /** the fresh writes of the windows that began after the program last made progress (or a key was let go) */
+  private quietFresh(): number {
+    return this.windowFresh.reduce((sum, w) => w.at >= this.progressAt ? sum + w.fresh : sum, 0);
+  }
+
+  /** the text screen the VIC-II shows (its video matrix in the bank CIA 2 sets), a string a row */
+  private screenRows(): string[] {
+    const m = this.m, c = m.cia2;
+    const at = (3 - ((c.pra | ~c.ddra) & 3)) * 0x4000 + ((m.vic.regs[0x18] >> 4) << 10);
+    const rows: string[] = [];
+    for (let r = 0; r < 25; r++) rows.push(String.fromCharCode(...m.ram.subarray(at + r * 40, at + r * 40 + 40)));
+    return rows;
+  }
+
+  /** the screen shows a row not shown at a press, and the same at the end of the window before last (half a second
+   *  or more ago, after the press): it stands still */
+  private newRow(rows: string[]): boolean {
+    const before = this.shots[0];
+    return rows.some((row, i) => row === before?.[i] && !this.rowsSeen.has(row));
   }
 
   private stop(reason: StopReason, detail = ''): void {

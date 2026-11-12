@@ -62,7 +62,17 @@ demos and games) every layer, name and saved program stayed.
 
 The run stops when the newest layer settles (it stops streaming new data through memory), loads a file (without a
 disk), returns to BASIC, crashes or runs out of time. The newest layer is then the unpacked program. When an intro waits before anything
-was unpacked, keys are pressed in turn (space and fire first, then return, N, F1, Y, F7, 1).
+was unpacked, keys are pressed in turn (space and fire first, then return, N, F1, Y, F7, 1) until it reacts to one;
+then the list goes round again, from space when a new program started, else from the key it took. A trainer menu that
+asks its questions one after another ("Unlimited lives (Y/N)") takes N with little: it puts the next question up. That
+counts when the program wrote more than it does when left alone and the screen shows a line it had not shown at a
+press, standing still: not the same complaint about a wrong key, the same "insert side 2" on the next line, or a scroll
+text. Cybernoid 2's trainer (C64com, cracked by Ikari and trained by Powerplant) gets N for its nine questions and 1
+for its two digit ones, and the game behind it is unpacked; before, each key was pressed once and the run stopped in the
+menu. At most 24 keys are pressed, and one more for each question answered. On 1013 games and intros of the archive,
+each unpacked up to three times (as Mimir's *Unpack* goes on from the saved program's start), 14 runs now unpack a
+game that stayed behind its trainer menu, and one stops unpacking: a run whose earlier "program" started at `$0001`;
+the C64 time grew by 2.6 %.
 
 Compared with unp64, which stops at the first jump back to `$0800` or higher, this finds the end of depackers that never
 go below `$0800`, goes through every layer of a program packed several times (unp64 does with `-c`), and needs no
@@ -425,7 +435,8 @@ with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of te
   cycle 11 to 54 of the line (from its first read on), CIA timers are read in the instruction's last cycle and never
   read 0. What the drive writes stays in memory; the image is not changed.
 - An intro that waits for something other than the keys it tries stays where it is; `-e` can start the program behind
-  it.
+  it. A trainer menu that shows an answer only in colour, or with fewer than eight characters in a row (a marker that
+  moves, a YES), is taken as one that does not react: each key is pressed once there.
 
 ## License
 

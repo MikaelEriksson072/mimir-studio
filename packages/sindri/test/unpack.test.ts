@@ -233,6 +233,61 @@ never: .byte $ea,$ea
       expect(r.layers[0].presses[0]).toMatch(/^space \+ fire/);
     });
 
+    it('answers a trainer menu that asks one question after another, with the key it took before', () => {
+      // twelve "(Y/N)" questions, each put up on the same line, and then a digit (1 or 2), as a +12 trainer asks;
+      // other keys are ignored
+      const menu = `
+       lda #12
+       sta $fd
+ask:   lda $fd
+       ora #$40
+       ldy #29
+pr:    sta $0428,y
+       dey
+       bpl pr
+yn:    jsr $ffe4
+       cmp #$4e
+       beq nx
+       cmp #$59
+       bne yn
+nx:    dec $fd
+       bne ask
+       lda #$31
+       ldy #29
+pr2:   sta $0428,y
+       dey
+       bpl pr2
+dig:   jsr $ffe4
+       cmp #$31
+       bcc dig
+       cmp #$33
+       bcs dig`;
+      const r = go(pack(PROGRAM, { before: menu }).prg);
+      expectProgram(r);
+      const keys = r.layers[0].presses.map(p => p.replace(/ at .*/, ''));
+      expect(keys.slice(0, 15)).toEqual(['space + fire', 'return', ...Array(13).fill('n')]);
+      expect(keys.at(-1)).toBe('1');
+    });
+
+    it('goes on to the next key when a menu only complains about the one pressed', () => {
+      // any key but Y puts the same line up again
+      const menu = `
+wt:    jsr $ffe4
+       beq wt
+       cmp #$59
+       beq ok
+       ldy #29
+cm:    lda #$17
+       sta $0450,y
+       dey
+       bpl cm
+       jmp wt
+ok:`;
+      const r = go(pack(PROGRAM, { before: menu }).prg);
+      expectProgram(r);
+      expect(r.layers[0].presses.map(p => p.replace(/ at .*/, ''))).toEqual(['space + fire', 'space + fire', 'return', 'n', 'f1', 'y']);
+    });
+
     it('saves a BASIC program a depacker starts with RUN', () => {
       const basicProgram = asm(`${SYS_LINE}
 loop:  inc $d020
