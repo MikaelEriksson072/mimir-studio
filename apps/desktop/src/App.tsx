@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
+  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
@@ -37,7 +37,7 @@ import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
-import type { BuildState, CartCheck, Changed, Command, ContextMenuState, Editing, KickBuild, MenuItem, Message, MountedDisk, MountedTape, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
+import type { BuildState, CartCheck, Changed, Command, ContextMenuState, DiskSide, Editing, KickBuild, MenuItem, Message, MountedDisk, MountedTape, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
 import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
@@ -626,7 +626,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     else toast('VICE saved a new quicksave: F9 opens it', 'info');
   }), [toast, refreshQuicksave]);
   /* ---- the mounted .d64 or .g64 ---- */
-  const mountBytes = (name: string, path: string | null, bytes: Uint8Array) => {
+  const mountBytes = (name: string, path: string | null, bytes: Uint8Array, sides: DiskSide[] = []) => {
     const img = parseD64(bytes);
     let pirateslayer: PirateSlayerDisk | null = null;
     try { pirateslayer = readPirateSlayerDisk(bytes); } catch { /* not one */ }
@@ -640,7 +640,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try { if (!spindle && !bitfire && !booze) sparkle = readSparkleDisk(bytes); } catch { /* not one */ }
     let krill: KrillDisk | null = null;
     try { if (!spindle && !bitfire && !booze && !sparkle) krill = readKrillDisk(bytes); } catch { /* not one */ }
-    setDisk({ name, path, bytes, img, spindle, bitfire, booze, sparkle, krill, pirateslayer });
+    setDisk({ name, path, bytes, img, spindle, bitfire, booze, sparkle, krill, pirateslayer, sides });
     showSection('disk');
     const kind = spindle ? `, a Spindle 3 disk with ${spindle.jobs.length} job${spindle.jobs.length === 1 ? '' : 's'}`
       : bitfire ? `, a Bitfire disk with ${bitfire.files.length} file${bitfire.files.length === 1 ? '' : 's'} of its own`
@@ -648,11 +648,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       : sparkle ? `, a Sparkle disk with ${sparkle.bundles.length} bundle${sparkle.bundles.length === 1 ? '' : 's'} of files${sparkle.side != null ? ` (side ${sparkle.side})` : ''}`
       : krill ? `, a disk for Krill's loader with ${krill.files.filter(f => f.unpacked).length} files packed with its ZX0`
       : pirateslayer ? `; ${pirateslayer.summary}` : '';
-    toast(`Mounted ${name}: "${img.name}"${img.format === 'G64' ? ' (G64)' : ''}, ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}`, 'ok');
+    const then = sides.length ? `; then ${sides.map(s => s.name).join(', ')}, which Sindri turns to when the program asks` : '';
+    toast(`Mounted ${name}: "${img.name}"${img.format === 'G64' ? ' (G64)' : ''}, ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}${then}`, 'ok');
   };
   const mountDisk = async () => {
     if (!kr) return needDesktop();
-    try { const r = await kr.openDisk(); if (r) mountBytes(r.name, r.path, r.bytes); } catch (e) { toast(errorText(e), 'err'); }
+    try { const r = await kr.openDisk(); if (r) mountBytes(r.name, r.path, r.bytes, r.sides); } catch (e) { toast(errorText(e), 'err'); }
   };
   const ejectDisk = () => { if (disk) toast(`Ejected ${disk.name}`, 'info'); setDisk(null); };
   /* ---- the tape in the datasette (13.5e) ---- */
@@ -720,7 +721,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       for (const p of r.problems) toast(`${p.name}: ${p.message}`, 'err');
       if (r.left.length) toast(`Not opened: ${r.left.map(l => `${l.name} (${l.why})`).join(', ')}`, 'warn');
       if (r.project) { await openProject(r.project); return; }
-      if (r.disk) mountBytes(r.disk.name, r.disk.path, r.disk.bytes);
+      if (r.disk) mountBytes(r.disk.name, r.disk.path, r.disk.bytes, r.disk.sides);
       if (r.tape) insertTapeBytes(r.tape.name, r.tape.path, r.tape.bytes);
       if (r.files.length) addFiles(r.files, false, { show: true });
       if (r.asm) setPackSource(r.asm);
@@ -730,6 +731,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  (Build & Run writes the built file back into the disk's copy) */
   const diskOf = useRef(new Map<string, Uint8Array>());
   const diskFileOf = useRef(new Map<string, D64File>());
+  /** the next sides of the disk each file came from (Sindri turns to them when the program asks) */
+  const sidesOf = useRef(new Map<string, Uint8Array[]>());
   const openFromDisk = (f: D64File, add: boolean) => {
     if (!disk) return;
     lastFrom.current = { kind: 'disk', f };
@@ -737,6 +740,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const file = withId(parsePrg(d64FileName(f), readD64File(disk.bytes, f)));
       diskOf.current.set(file.id, disk.bytes);
       diskFileOf.current.set(file.id, f);
+      sidesOf.current.set(file.id, disk.sides.map(s => s.bytes));
       addFiles([file], add);
     } catch (e) { toast(`"${f.name}": ${errorText(e)}`, 'err'); }
   };
@@ -959,7 +963,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     let p = running.current.get(key);
     if (!p) {
       const t = tapeOf.current.get(f.id);
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f), f.vsf ?? null, runPort(f));
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? []);
       running.current.set(key, p);
       p.then(r => setRuns(m => ({ ...m, [key]: r })), () => running.current.delete(key));
     }
@@ -1083,6 +1087,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openDroppedProject = (p: Project, name: string) => { leaveProject(); replace(p); resetView(); toast(`Opened project ${name} as work without a project: Save creates a project from it`, 'ok'); };
   const readDropped = async (list: FileList, add: boolean) => {
     const prgs: OpenedPrg[] = [];
+    const disks: DiskSide[] = [];
     for (const f of Array.from(list)) {
       const buf = new Uint8Array(await f.arrayBuffer());
       try {
@@ -1091,7 +1096,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           if (!askFirst(f.name, !!home, () => later.current.openDroppedProject(p, f.name))) openDroppedProject(p, f.name);
           continue;
         }
-        if (/\.[dg]64$/i.test(f.name)) { mountBytes(f.name, null, buf); continue; }
+        if (/\.[dg]64$/i.test(f.name)) { disks.push({ name: f.name, bytes: buf }); continue; }
         if (/\.t(ap|64)$/i.test(f.name)) { insertTapeBytes(f.name, null, buf); continue; }
         // a cartridge image (known by its header): the chips of its boot bank, with the image
         if (isCrt(buf)) { const o = openCartridge(f.name, buf); prgs.push(...o.files.map(x => ({ ...withId(x), cart: o.cart }))); continue; }
@@ -1099,6 +1104,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const o = openC64File(f.name, buf, { zeroPage: !!project.settings.snapshotZeroPage });
         prgs.push({ ...withId(o), ...(o.entries ? { entries: o.entries } : {}), ...(o.snapshot ? { snapshot: o.snapshot } : {}), ...(o.start != null ? { start: o.start } : {}) });
       } catch (e) { toast(errorText(e), 'err'); }
+    }
+    if (disks.length) {
+      // (several disks of one release: its first side, the others after it; else the last one, as before)
+      const names = disks.map(d => d.name), sidesAfter = (d: DiskSide) => nextSides(d.name, names);
+      const first = disks.reduce((a, d) => (sidesAfter(d).length >= sidesAfter(a).length ? d : a));
+      try { mountBytes(first.name, null, first.bytes, sidesAfter(first).map(n => disks.find(d => d.name === n)!)); } catch (e) { toast(`${first.name}: ${errorText(e)}`, 'err'); }
     }
     addFiles(prgs, add);
   };

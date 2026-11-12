@@ -1,10 +1,10 @@
 /* Project files (.mimir.json), PRG input (VICE snapshots too), exported project folders and their file watcher. */
 import { watch, type FSWatcher } from 'node:fs';
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, relative } from 'node:path';
-import { deserializeProject, isCrt, isT64, isTap, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
-import type { OpenedPrg } from '../../shared/ipc';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { deserializeProject, isCrt, isT64, isTap, nextSides, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
+import type { DiskOpenResult, DiskSide, OpenedPrg } from '../../shared/ipc';
 import { writeVfs } from '@mimir/core/node';
 import { serializedProjectSchema } from './schemas';
 
@@ -44,13 +44,25 @@ export const openedPrg = (f: OpenedFile): OpenedPrg =>
   ({ ...withId(f), ...(f.entries ? { entries: f.entries } : {}), ...(f.snapshot ? { snapshot: f.snapshot } : {}), ...(f.start != null ? { start: f.start } : {}) });
 
 /** A .d64 or .g64 disk image (the renderer reads its directory and files); anything that is not one is refused here.
- *  A G64 holds every half track as GCR bytes: up to 84 tracks of 7928 bytes and its tables, under 700 KB. */
-export async function readDiskImage(path: string): Promise<{ path: string; name: string; bytes: Uint8Array }> {
+ *  A G64 holds every half track as GCR bytes: up to 84 tracks of 7928 bytes and its tables, under 700 KB. With it the
+ *  release's next sides in its folder, by their names (nextSides); one that is not a disk image is left out. */
+export async function readDiskImage(path: string): Promise<DiskOpenResult> {
+  const bytes = await readImage(path);
+  const sides: DiskSide[] = [];
+  let names: string[] = [];
+  try { names = await readdir(dirname(path)); } catch { /* the disk alone */ }
+  for (const name of nextSides(basename(path), names)) {
+    try { sides.push({ name, bytes: await readImage(join(dirname(path), name)) }); } catch { /* not a disk image */ }
+  }
+  return { path, name: basename(path), bytes, sides };
+}
+
+async function readImage(path: string): Promise<Uint8Array> {
   const st = await stat(path);
   if (!st.isFile() || st.size > 1024 * 1024) throw new Error(`${basename(path)} is not a .d64 or .g64 disk image (${st.size} bytes)`);
   const bytes = new Uint8Array(await readFile(path));
   parseD64(bytes);
-  return { path, name: basename(path), bytes };
+  return bytes;
 }
 
 /** A .tap tape image or a .t64 tape archive (the renderer reads its files): up to 64 MB, known by its header. */

@@ -727,6 +727,7 @@ main.main { container: editor / inline-size; }
 .disk-spindle { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; color: var(--fg-2); }
 .disk-spindle > span { flex: 1; min-width: 0; }
 .disk-spindle .btn { flex: none; }
+.disk-sides { margin: 2px 0 6px; padding: 0 6px; overflow-wrap: anywhere; }
 .ps-notes { padding: 4px 10px 8px; font-size: 12px; color: var(--fg-2); }
 .ps-notes p { margin: 4px 0; }
 .kind { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--line); color: var(--fg-2); }

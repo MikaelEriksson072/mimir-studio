@@ -530,6 +530,11 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
         {!img.files.length && <div className="muted small">No files on this disk.</div>}
       </div>
       </>}
+      {disk.sides.length > 0 && (
+        <div className="disk-sides muted small" title="The release's next disks or sides, from the disk's folder (or dropped with it): Sindri turns to them, in this order, when the program asks for another side and waits">
+          Then {disk.sides.map(s => s.name).join(', ')}
+        </div>
+      )}
       {disk.spindle && (
         <div className="disk-spindle">
           <span><b>Spindle 3 disk:</b> {disk.spindle.jobs.length} job{disk.spindle.jobs.length === 1 ? '' : 's'} the loader reads, not files</span>

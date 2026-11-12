@@ -64,7 +64,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   - packed programs, which [Sindri](https://github.com/MikaelEriksson072/Sindri), Mimir's own unpacker, unpacks with one
     click: it runs the program in an emulated C64, reports each layer it peels off (coders, movers, decrunchers) and
     names the packer by its fingerprint. A file opened from a mounted D64 or G64 gets that disk in an emulated 1541, so
-    a boot file's fast loader (Bitfire, Krill's, Sparkle, Spindle and others) goes on loading the next part; a G64's
+    a boot file's fast loader (Bitfire, Krill's, Sparkle, Spindle and others) goes on loading the next part, and the
+    release's next sides from the disk's folder go in when the demo asks for them; a G64's
     tracks are read bit by bit, half tracks and copy-protection tracks with no SYNC too. A file opened
     from a tape gets the tape in an emulated datasette, wound to after the file with PLAY held down, so a tape boot
     file's own turbo loader (Novaload, Cyberload, TapeTool's and the rest) goes on loading the game. Freezer backups
@@ -258,7 +259,7 @@ pnpm mimir analyse game.prg
 `analyse`, `verify [--kickass]`, `export -o <folder>` and `demo` take `.prg` files, a cartridge (`.crt`: every bank, or
 `--bank <n>` for one of them) or saved projects (`.mimir.json`).
 `--deep` runs the deep analysis. `unpack game.prg [-o unpacked.prg]` unpacks a packed program and prints its layers; `unpack demo.d64` takes the disk's
-first PRG (or `--file NAME`) with the disk in the drive, `unpack game.tap` (or `game.t64`) the tape's first program with the tape in the
+first PRG (or `--file NAME`) with the disk in the drive and the release's next sides from its folder to turn to, `unpack game.tap` (or `game.t64`) the tape's first program with the tape in the
 datasette (`--tape` puts a tape in it for a PRG). `measure <folder>` runs every program in it in Sindri and sets
 what the analysis made of each byte against what the program did with it (the code it ran, the data it read), and
 counts the problems by kind: run it with and without a setting (`--deep`, `--set codeIslands=false`) to see what the

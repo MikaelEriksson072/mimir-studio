@@ -118,6 +118,49 @@ describe.skipIf(!roms?.drive)('Sindri with the disk in a 1541', () => {
   it('stops where the program loads without the disk', () => {
     expect(unpackPrg(boot, roms).stop).toMatchObject({ reason: 'load', detail: 'loads "PART2" from device 8' });
   });
+
+  it('turns to the next side the program asks for, and the report says when (fixtures/d64/turn-disk-a.d64 and -b.d64, which the e2e tests mount)', () => {
+    // side 1's boot prints the request, waits for a key and loads PART2, again while it is not there
+    const ascii = (t: string) => [...t].map(c => '$' + c.charCodeAt(0).toString(16)).join(',');
+    const turn = fromSource('turn.prg', `*=$0801
+.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00
+*=$080d
+ask:   ldx #0
+show:  lda text,x
+       beq wait
+       jsr $ffd2
+       inx
+       bne show
+wait:  jsr $ffe4
+       beq wait
+       lda #5
+       ldx #<name
+       ldy #>name
+       jsr $ffbd
+       lda #1
+       ldx #8
+       ldy #1
+       jsr $ffba
+       lda #0
+       jsr $ffd5
+       bcs ask
+       jmp $c000
+text:  .byte ${ascii('TURN DISK AND PRESS SPACE')},13,0
+name:  .byte ${ascii('PART2')}
+`);
+    const prg = makePrg(turn.load, turn.bytes);
+    const side1 = makeD64({ name: 'side 1', id: 's1', files: [{ name: 'boot', data: prg }] });
+    const side2 = makeD64({ name: 'side 2', id: 's2', files: [{ name: 'part2', data: part2 }] });
+    for (const [name, d] of [['turn-disk-a.d64', side1], ['turn-disk-b.d64', side2]] as const) {
+      const path = join(__dirname, '../../../fixtures/d64', name);
+      if (process.env.WRITE_FIXTURES) writeFileSync(path, d);
+      expect(new Uint8Array(readFileSync(path))).toEqual(d);
+    }
+    expect(unpackPrg(prg, roms, side1).layers.map(l => l.entry)).toEqual([0x080d]);
+    const run = unpackPrg(prg, roms, side1, null, null, null, null, [side2]);
+    expect(run.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+    expect(unpackLog(run, 'boot', 0x0801, prg.length - 2).split('\n')[2]).toMatch(/^Drive: 1541 with "SIDE 1" S1, then "SIDE 2" S2 at \d+\.\d s, \d+ bytes read$/);
+  });
 });
 
 const vendored = join(__dirname, '..', '..', '..', 'apps', 'desktop', 'vendor', 'exomizer', 'exomizer.exe');

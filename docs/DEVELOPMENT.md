@@ -708,6 +708,14 @@ the reference as a patch in `test/helpers/reference.ts`):
     different, 472 packed files, 5.2 MB unpacked), and every file is byte for byte what Nightfall's own unpacker gives
     when it runs on Sindri's 6502. Builds of the loader with other unpackers (Exomizer: Still Standing, Meetro 2024) are
     not read.
+37. A release's next sides (spec 8.11b, 13.5) are new: `nextSides` (`packages/core/src/c64/sides.ts`) finds the disk
+    images in a disk's folder whose names differ only in the side mark, `readDiskImage` reads them with the disk, and
+    the mounted disk passes them to Sindri (`UnpackOptions.disks`), which turns the disk when the program asks for it.
+    It came from running Sindri on every year's #1 demo of CSDB's Year-top20: Mathematica and Tower Power 100% waited
+    for side 2. The same run found three timing faults, each measured in VICE with test programs and fixed in Sindri:
+    IRQs were taken an instruction early, a timer started with a force load counted a cycle early, and ATN reached the
+    drive a cycle early (VICE delays every line by a cycle); and a program back at READY with its own IRQ running
+    (Uncensored) was taken as ended. Sprites taking the bus are still not emulated (Party Elk 2).
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

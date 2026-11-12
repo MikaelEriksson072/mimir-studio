@@ -959,9 +959,26 @@ Stationen går efter C64:an i sin egen takt (1 MHz) och hinner ikapp till rätt 
 skriver seriebussen, så snabbladdare som räknar cykler fungerar. Startfilen läggs i minnet som `LOAD"*",8,1`, och
 programmet laddar resten själv, med KERNAL eller sin egen laddare. På första disken av CSDB:s 190 bäst betygsatta demos
 kommer 151 längre än startfilen (laddaren laddar och startar nästa del); utan stationen väntade 151 i startfilen, 35
-gick tillbaka till READY och 4 kraschade. Ett program på flera disketter väntar när det ber om nästa. Ett skydd som
+gick tillbaka till READY och 4 kraschade. Ett skydd som
 kräver mer än en D64 rymmer kommer igenom med skivans G64 (13.5, 13.5h): huvudet läser då spåren bit för bit, halvspår
 och spår utan SYNC med.
+
+**Nästa sida.** Ett demo på flera disketter eller sidor ber om nästa när det kommer dit ("PLEASE TURN DISK...",
+"INSERT DISKSIDE 2 AND PRESS SPACE"). Mimir ger Sindri utgåvans följande sidor (13.5), och Sindri vänder disken när
+programmet står still, alla tangenter är provade och textskärmen ber om det (vänd eller byt disk, sätt i en, disk 2,
+sida B): disken glider ut förbi skrivskyddssensorn, stationen står tom en halv sekund och nästa glider in, så att DOS:en
+ser en ny disk; sedan provas tangenterna igen. Lagerrapportens rad *Drive* säger när (`then "IT'S SHOWTIME!" at
+23.6 s`). Av årsettorna i CSDB:s Year-top20 packas Mathematica (1995) upp så, från sida A: SuperCrunch och introt på
+`$b000`; Tower Power 100% (1994) når sitt program på `$902d`, och Edge of Disgraces disk 0 går vidare till första
+delen på disk 1A. Void och Neon vänder sida i slutet av sida 1 men sparar samma program som förut.
+
+**Timing.** Kod som tajmar sig till cykeln behöver att C64:an tar ett avbrott i samma cykel som en riktig gör, mätt i
+VICE 3.10 med testprogram (Sindris `test/timing.test.ts`): ett rasteravbrott som kommer i en instruktions sista cykel
+väntar till nästa instruktion, och en tagen branch inom sidan känner av det en cykel tidigare än så. En CIA-timer som
+laddas av skrivningen (force load) börjar räkna en cykel senare än en som bara startas, och en indexerad läsning över
+en sidgräns läser I/O i sin extra cykel. Det C64:an gör med ATN, CLK och DATA når stationen en cykel efter skrivningen,
+som i VICE. Så packas The Wild Bunch (2006), Megaparts 2 (1990), en kopia av Royal Arte (2001) och Uncensored (2014,
+som återvänder till READY med ett eget avbrott igång) upp nu; på 675 andra filer kom 8 längre och ingen kortare.
 
 **Varje körning börjar likadant.** C64:an står vid READY efter sin uppstart, och stationen startade en stund innan,
 har just läst diskens ID och har motorn igång, som efter `LOAD`. Den första körningen i en process (i appen den första
@@ -2509,6 +2526,16 @@ filerna och Spindle-, Bitfire- och BoozeLoader-läsarna fungerar som för en D64
 under *Files*, som 1541:an listar den:
 diskens namn och id, en rad per fil med block, `"NAMN"` och typ (`*PRG` för en fil som aldrig stängdes, `PRG<` för en
 låst), och "blocks free" (spår 1–35 utom katalogspåret). Tomma och raderade poster visas inte.
+
+**Utgåvans nästa sidor.** När disken monteras läses också utgåvans följande sidor i samma mapp: avbilder vars namn
+skiljer sig från diskens bara i sidmärket, i ordning (`nextSides()` i `packages/core/src/c64/sides.ts`:
+`Mathematical_SideA` → `_SideB`, `-a` → `-b`, `image1` → `image2`, `EdgeOfDisgrace_0` → `_1a`, `_1b`, `Disk1` →
+`Disk2`). En annan version i samma mapp skiljer sig i mer än så och tas inte med (`e2ira_A` får `e2ira_B` och
+`e2ira_C`, inte `e2ira_101_B`), och inte heller sidor före disken. Släpps flera diskar samtidigt monteras den första
+sidan med de andra som nästa. Toasten och raden *Then …* under katalogen i Explorer säger vilka, och en fil som öppnas
+från disken får dem med till Sindri (8.11b), liksom `mimir unpack disk.d64`. På årsettorna i CSDB:s Year-top20 hittas
+rätt sidor i varje mapp med flera; Royal Artes ena par, vars namn skiljer sig i ett skrivfel (`)` mot `]`), och
+Desert Dreams `0-intro`/`1-parti` hittas inte.
 
 Ett klick på en PRG öppnar den som ett nytt projekt, och **+** lägger till den i projektet. Filens byte hämtas längs
 sektorkedjan (en kedja som går i cirkel eller pekar utanför disken ger ett fel i stället för att hänga), och

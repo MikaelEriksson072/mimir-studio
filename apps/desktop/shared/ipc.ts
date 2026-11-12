@@ -104,10 +104,13 @@ export type OpenedPrg = LoadedFile & { entries?: number[]; snapshot?: string; st
 
 /** A .d64 or .g64 disk image to mount. `path` given: read it (in a folder the user picked); otherwise a file dialog. */
 export interface DiskOpenRequest { path?: string }
-export interface DiskOpenResult { path: string; name: string; bytes: Uint8Array }
+/** `sides`: the release's next disks or sides in the same folder (core's nextSides: Mathematical_SideA's
+ *  Mathematical_SideB), read, in order; Sindri turns to them when the program asks for them */
+export interface DiskOpenResult { path: string; name: string; bytes: Uint8Array; sides: DiskSide[] }
+export interface DiskSide { name: string; bytes: Uint8Array }
 /** A .tap tape image (or a .t64 tape archive) to put in the datasette, as disk:open does it for a disk. */
 export interface TapeOpenRequest { path?: string }
-export type TapeOpenResult = DiskOpenResult;
+export interface TapeOpenResult { path: string; name: string; bytes: Uint8Array }
 
 /** Smart attach: a dialog for every kind of file Mimir opens (shared/smart-attach.ts says what each is opened as).
  *  `zeroPage` as for prg:open. */

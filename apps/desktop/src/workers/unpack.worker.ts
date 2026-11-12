@@ -6,9 +6,9 @@ import { unpackPrg, type Roms, type UnpackRun, type UnpackTape } from '@mimir/co
 const api = {
   /** `entry`: start the program with SYS there instead of as LOAD leaves it (RUN, or SYS to where it loads), with
    *  `port` in $01 when it is given; `vsf`: the PRG is this VICE snapshot's RAM, and Sindri goes on from the snapshot
-   *  where it was taken */
-  unpack(prg: Uint8Array, roms: Roms | null, disk: Uint8Array | null, tape: UnpackTape | null = null, entry: number | null = null, vsf: Uint8Array | null = null, port: number | null = null): UnpackRun {
-    return unpackPrg(prg, roms, disk, entry, tape, vsf, port);
+   *  where it was taken; `disks`: the disk's next sides, which Sindri turns to when the program asks */
+  unpack(prg: Uint8Array, roms: Roms | null, disk: Uint8Array | null, tape: UnpackTape | null = null, entry: number | null = null, vsf: Uint8Array | null = null, port: number | null = null, disks: Uint8Array[] = []): UnpackRun {
+    return unpackPrg(prg, roms, disk, entry, tape, vsf, port, disks);
   },
 };
 

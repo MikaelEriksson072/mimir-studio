@@ -5,8 +5,12 @@ import type { IconName } from './icon-paths';
  *  Run (with the files the project opened from it built and written back); `spindle`: its jobs, when it is a Spindle 3
  *  disk (the Spindle script tab lists them); `bitfire`: its files, when it is a Bitfire disk (the Bitfire script tab
  *  lists them); `krill`: its directory's files, when they are packed with the ZX0 of Krill's loader (the Krill script
- *  tab lists them); `pirateslayer`: Electronic Arts' copy protection on it (the Pirate Slayer tab) */
-export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null; sparkle: SparkleDisk | null; krill: KrillDisk | null; pirateslayer: PirateSlayerDisk | null }
+ *  tab lists them); `pirateslayer`: Electronic Arts' copy protection on it (the Pirate Slayer tab); `sides`: the
+ *  release's next disks or sides from its folder (or dropped with it), in order: Sindri turns to them when the program
+ *  asks */
+export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null; sparkle: SparkleDisk | null; krill: KrillDisk | null; pirateslayer: PirateSlayerDisk | null; sides: DiskSide[] }
+/** one of a mounted disk's next sides: its file name and bytes */
+export interface DiskSide { name: string; bytes: Uint8Array }
 
 /** The tape in the datasette (13.5e): its files are listed in the Explorer (and every block in the Tape tab), a file
  *  opens with the tape in Sindri's datasette, and Build & Run puts a copy in VICE's datasette (or the tape with the

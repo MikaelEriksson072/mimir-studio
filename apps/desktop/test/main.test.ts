@@ -890,12 +890,25 @@ describe('project files', () => {
     g64[9] = 84;
     writeFileSync(gcr, g64);
     const r = await readDiskImage(disk);
-    expect(r).toMatchObject({ path: disk, name: 'disk.d64' });
+    expect(r).toMatchObject({ path: disk, name: 'disk.d64', sides: [] });
     expect(r.bytes.length).toBe(174848);
     expect(await readDiskImage(gcr)).toMatchObject({ path: gcr, name: 'disk.g64' });
     await expect(readDiskImage(big)).rejects.toThrow(/big\.d64 is not a \.d64 or \.g64 disk image \(2000000 bytes\)/);
     await expect(readDiskImage(odd)).rejects.toThrow(/not a \.d64 or \.g64 disk image: 300000 bytes/);
     await expect(readDiskImage(prg)).rejects.toThrow(/not a \.d64 or \.g64 disk image: 3 bytes/);
+  });
+
+  it('reads the release\'s next sides from the disk\'s folder, in order, and leaves out what is not a disk image', async () => {
+    const dir = tmp(), side = (n: string) => makeD64({ name: n, files: [{ name: 'a', data: Uint8Array.from([1, 8, 0x60]) }] });
+    writeFileSync(join(dir, 'demo_side1.d64'), side('one'));
+    writeFileSync(join(dir, 'demo_side3.d64'), side('three'));
+    writeFileSync(join(dir, 'demo_side2.d64'), side('two'));
+    writeFileSync(join(dir, 'demo_side4.d64'), new Uint8Array(300000));
+    writeFileSync(join(dir, 'other_side2.d64'), side('other'));
+    const r = await readDiskImage(join(dir, 'demo_side1.d64'));
+    expect(r.sides.map(s => s.name)).toEqual(['demo_side2.d64', 'demo_side3.d64']);
+    expect(r.sides[0].bytes).toEqual(side('two'));
+    expect((await readDiskImage(join(dir, 'demo_side3.d64'))).sides).toEqual([]);
   });
 });
 

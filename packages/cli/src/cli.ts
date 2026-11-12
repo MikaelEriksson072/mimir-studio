@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
-  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackLog, unpackPrg, verify,
+  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackLog, unpackPrg, verify,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
 import { findC64Roms, findKickAssJar, findVice, runKickAssembler, splitArgs, writeVfs } from '@mimir/core/node';
@@ -36,7 +36,8 @@ Options:
   --bank <n>        a cartridge: only this bank (by default every bank, each a space of its own)
   --file <name>     unpack: the file on the D64, G64, TAP or T64 (default: its first program; * and ? as the DOS takes them)
   --disk <d64|g64>  unpack: put this disk in the drive (a D64 or G64 given as the file is in it already), so the
-                    program can load from it with the KERNAL or its own fast loader
+                    program can load from it with the KERNAL or its own fast loader; the release's next sides in
+                    its folder (Demo_SideA.d64's Demo_SideB.d64) go in when the program asks for them
   --tape <tap|t64>  unpack: put this tape in the datasette, PLAY held down (a TAP or T64 given as the file is in
                     it already, wound to after the file), so the program's own tape loader reads it (a T64 has
                     no pulses: LOAD from the tape reads its files)
@@ -340,11 +341,14 @@ export async function main(argv: string[], io: Io): Promise<number> {
         }
         const diskFlag = flags.get('disk'), tapeFlag = flags.get('tape');
         if (typeof diskFlag === 'string') disk = new Uint8Array(readFileSync(resolve(io.cwd, diskFlag)));
+        // the release's next sides beside the disk, for Sindri to turn to when the program asks for them
+        const diskPath = typeof diskFlag === 'string' ? resolve(io.cwd, diskFlag) : disk ? path : null;
+        const sides = diskPath ? nextSides(basename(diskPath), readdirSync(dirname(diskPath))).map(n => new Uint8Array(readFileSync(join(dirname(diskPath), n)))) : [];
         if (typeof tapeFlag === 'string') tape = { tap: new Uint8Array(readFileSync(resolve(io.cwd, tapeFlag))) };
         if (prg.length < 3) { io.err(`${path} is too short to be a PRG`); return 2; }
         let run: UnpackRun;
         try {
-          run = unpackPrg(prg, flags.has('no-roms') ? null : findC64Roms(findVice() ?? ''), disk, null, tape, vsf);
+          run = unpackPrg(prg, flags.has('no-roms') ? null : findC64Roms(findVice() ?? ''), disk, null, tape, vsf, null, sides);
         } catch (e) { io.err(`${name}: ${e instanceof Error ? e.message : String(e)}`); return 2; }
         io.out(unpackLog(run, name, prg[0] | (prg[1] << 8), prg.length - 2));
         if (!run.unpacked || !run.saved) return 1;

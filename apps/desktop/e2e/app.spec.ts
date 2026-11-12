@@ -2044,6 +2044,29 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
   await expectFiles(page, ['BOOT-unpacked.prg']);
 });
 
+test('a disk mounted with its next side in the folder: Sindri turns to it when the program asks', async ({ app, page }) => {
+  // fixtures/d64/turn-disk-a.d64: BOOT prints TURN DISK AND PRESS SPACE, waits for a key and loads PART2, which only
+  // turn-disk-b.d64 has. Needs VICE's ROMs, as above.
+  const vice = 'C:\\C64\\VICE';
+  const drives = () => { try { return readdirSync(vice).some(d => existsSync(join(vice, d, 'DRIVES'))); } catch { return false; } };
+  test.skip(!process.env.C64_ROMS && !drives(), 'needs VICE\'s ROMs');
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/turn-disk-a.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'then turn-disk-b.d64, which Sindri turns to when the program asks')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-sides')).toHaveText('Then turn-disk-b.d64');
+  await page.getByRole('list', { name: 'Files on turn-disk-a.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
+  const bar = page.locator('.pack-bar');
+  await expect(bar).toContainText('the program starts at $c000', { timeout: 60_000 });
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  const done = page.locator('.unpack-bar');
+  await expect(done).toContainText('starting at $c000', { timeout: 60_000 });
+  await done.getByText('Layer report').click();
+  await expect(done.locator('.unpack-log')).toContainText(/Drive: 1541 with "SIDE 1" S1, then "SIDE 2" S2 at \d+\.\d s, \d+ bytes read/);
+});
+
 test('file dialogs open in the folder they were last used in', async ({ app, page, userData }) => {
   await waitForListing(page);
   await openSection(page, 'Files');
