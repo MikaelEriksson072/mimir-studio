@@ -716,6 +716,14 @@ the reference as a patch in `test/helpers/reference.ts`):
     IRQs were taken an instruction early, a timer started with a force load counted a cycle early, and ATN reached the
     drive a cycle early (VICE delays every line by a cycle); and a program back at READY with its own IRQ running
     (Uncensored) was taken as ended. Sprites taking the bus are still not emulated (Party Elk 2).
+38. Music whose `JMP` the program writes into place (spec 8.6): Mathematica's music did not play. Its demo writes
+    `JMP $081d` over BASIC's zero byte at `$0800`, the player's `JMP init`, before `lda #0 / jsr $0800`, and its NMI
+    calls play at `$0803`; the analysis took the table from `$0803` (init `$0803`, play `$0809`, a voice start) and it
+    played nothing. `writtenJmps()` now gives the music search the JMPs the program writes with constants before it calls
+    them, and an entry that is one becomes its target (init `$081d`). On 428 programs (Year-top20 ranks 1-6 of every
+    year and Onefile-top200, unpacked with Sindri) two change, both from silent to playing in VICE: Mathematica and What
+    Is The Matrix 2 (2024, which writes both its init and play JMPs at `$0c00`). The other 426 are the same, at the same
+    speed.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

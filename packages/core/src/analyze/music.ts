@@ -24,7 +24,7 @@ import { $4, word } from '../util/hex';
 import { plays, runPlayer, USED_READ, USED_RUN, type PlayerRun, type PlayerRunOptions } from '../c64/sidrun';
 import { parseVsf } from '../c64/vsf';
 
-export type MusicCtx = Pick<Ctx, 'S' | 'mem' | 'insLen' | 'codeOwner' | 'skip' | 'inlineCalls' | 'xrefs' | 'owner' | 'ovList' | 'loaded' | 'forcedData' | 'L' | 'entryKind'> & Partial<Pick<Ctx, 'files'>>;
+export type MusicCtx = Pick<Ctx, 'S' | 'mem' | 'insLen' | 'codeOwner' | 'skip' | 'inlineCalls' | 'xrefs' | 'owner' | 'ovList' | 'loaded' | 'forcedData' | 'L' | 'entryKind'> & Partial<Pick<Ctx, 'files' | 'ev'>>;
 
 /** a player keeps its code together: the table's targets and the code they reach lie this close after it */
 const SPAN = 0x2000;
@@ -111,9 +111,53 @@ const memKey = (m: Uint8Array): string => {
   return `${(h >>> 0).toString(36)}.${(g >>> 0).toString(36)}`;
 };
 
+/**
+ * The JMPs the program writes into place before it calls them: three bytes that traced code calls or jumps to, where
+ * every store into each puts the same constant (by traced code: `lda #$4c / sta`), $4c into the first, and where the
+ * file has no JMP. By address, the JMP's target.
+ */
+export function writtenJmps(ctx: Pick<MusicCtx, 'mem' | 'xrefs' | 'loaded' | 'ev'>): Map<Addr, Addr> {
+  const out = new Map<Addr, Addr>();
+  const writes = ctx.ev?.writes;
+  if (!writes?.length) return out;
+  const { mem, xrefs, loaded } = ctx;
+  const byDest = new Map<Addr, { pc: Addr; v: number | null }[]>();
+  for (const w of writes) if (!w.indexed) { let l = byDest.get(w.dest); if (!l) byDest.set(w.dest, l = []); l.push(w); }
+  // the one value every store into the byte puts there (undefined: nothing stores into it; null: another or an unknown
+  // one, or a store the constants pass did not follow: an indexed one, inc or dec)
+  const value = (a: Addr): number | null | undefined => {
+    const stores = (xrefs.get(a) || []).filter(x => x.kind === 'write' || x.kind === 'rmw');
+    if (!stores.length) return undefined;
+    const ws = byDest.get(a) || [];
+    let v: number | null = null;
+    for (const x of stores) {
+      const w = ws.find(w => w.pc === x.from);
+      if (!w || w.v == null || (v != null && w.v !== v)) return null;
+      v = w.v;
+    }
+    return v;
+  };
+  for (const a of byDest.keys()) {
+    if (a > 0xfffd || mem[a] === 0x4c || !loaded(a) || !loaded(a + 1) || !loaded(a + 2)) continue;
+    if (!(xrefs.get(a) || []).some(x => x.kind === 'call' || x.kind === 'jump') || value(a) !== 0x4c) continue;
+    const lo = value(a + 1), hi = value(a + 2);
+    if (lo === null || hi === null) continue;
+    const t = (lo ?? mem[a + 1]) | ((hi ?? mem[a + 2]) << 8);
+    if (loaded(t)) out.set(a, t);
+  }
+  return out;
+}
+
 export function detectMusic(ctx: MusicCtx): MusicInfo[] {
-  const { S, mem, insLen, codeOwner, skip, inlineCalls, xrefs, owner, ovList, loaded, forcedData, L, entryKind } = ctx;
+  const { S, insLen, codeOwner, skip, inlineCalls, xrefs, owner, ovList, loaded, forcedData, L, entryKind } = ctx;
   const music: MusicInfo[] = [];
+  // the JMPs the program writes into place before it calls them are in the memory the tables are read from and the
+  // players run in; an entry that is one is its target, which the block's own bytes play from. Mathematica's demo
+  // (Reflex, 1995) writes JMP $081d over the $00 of BASIC's $0800, its player's JMP init, before it calls $0800
+  const put = writtenJmps(ctx);
+  const mem = put.size ? ctx.mem.slice() : ctx.mem;
+  for (const [a, t] of put) { mem[a] = 0x4c; mem[a + 1] = t & 0xff; mem[a + 2] = t >> 8; }
+  const entryOf = (e: Addr) => put.get(e) ?? e;
 
   const reach = (starts: Addr[], tracedOnly = false): Reach => {
     const ins = new Map<Addr, number>(), stack = [...starts];
@@ -526,8 +570,12 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
         } else c.why.push(`it reads ${st.length} bytes outside the block, too many to play it on from the snapshot`);
       }
     }
+    for (const x of new Set([a, c.play])) {
+      const t = put.get(x);
+      if (t != null) c.why.push(`the program writes JMP ${$4(t)} at ${$4(x)} before it calls it: ${x === a ? 'init' : 'play'} is ${$4(t)}`);
+    }
     music.push({
-      start: s, end: e, init: a, play: c.play, sidRegs: run ? run.regs : c.regs.size, score: c.score, why: c.why, file: owner[a],
+      start: s, end: e, init: entryOf(a), play: entryOf(c.play), sidRegs: run ? run.regs : c.regs.size, score: c.score, why: c.why, file: owner[a],
       ...(run ? { run: { regs: run.regs, notes: run.notes, seconds: Math.round(run.played / 50) } } : {}), ...(resume ? { resume } : {}),
     });
   }

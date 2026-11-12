@@ -368,6 +368,27 @@ freqhi: .byte ${hex(FREQ.map(f => f >> 8))}
     expect(music(project(src))).toEqual([[0x1000, 0x1000, 0x1003]]);
   });
 
+  it('takes the JMP init the program writes into place before it calls it, and plays from its target (Mathematica)', () => {
+    // the file has $00 where JMP init is (Mathematica's player at $0800, where BASIC's zero byte is) and the target
+    // after it, or nothing at all: the program writes the JMP (`lda #$4c / sta`), calls init there and play from the IRQ
+    for (const [table, main] of [
+      [' .byte 0, <init, >init\n jmp play\n', ' lda #$4c\n sta $1000\n'],
+      [' .byte 0, 0, 0\n jmp play\n', ' lda #$4c\n sta $1000\n lda #<$1006\n sta $1001\n lda #>$1006\n sta $1002\n'],
+    ]) {
+      const p = project(program(`${main} lda #0\n jsr $1000\n`, 'jsr $1003') + player(table));
+      const A = analyze(p);
+      expect(A.music.map(m => [m.start, m.init, m.play])).toEqual([[0x1000, 0x1006, 0x1003]]);
+      expect(A.music[0].why).toEqual(expect.arrayContaining(['the program writes JMP $1006 at $1000 before it calls it: init is $1006', 'play called from the IRQ']));
+      expect(A.music[0].run?.notes).toBeGreaterThan(0);
+      // the block's own bytes play from that init (they have no JMP at $1000)
+      const m = A.music[0], d = musicPlayData(A.mem.slice(m.start, m.end), m.start, m.init, m.play);
+      expect(d.alone).toBeUndefined();
+    }
+    // a byte the program writes two values into is no JMP it puts in place (a JMP switched on and off)
+    const both = project(program(' lda #$4c\n sta $1000\n lda #0\n jsr $1000\n lda #$2c\n sta $1000\n', 'jsr $1003') + player(' .byte 0, <init, >init\n jmp play\n'));
+    expect(music(both).some(([, init]) => init === 0x1006)).toBe(false);
+  });
+
   it('does not take a JMP pair in code that clears the SID for a player', () => {
     const src = `${BASIC} ldx #$18\n lda #0\nclear: sta $d400,x\n dex\n bpl clear\n lda #$0f\n sta $d418\n jmp next\n jmp clear\nnext: sta $d404\n sta $d40b\n rts\n`;
     expect(music(project(src))).toEqual([]);

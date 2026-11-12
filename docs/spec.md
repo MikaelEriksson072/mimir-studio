@@ -537,6 +537,15 @@ i minnet pekar på (en snapshots). Annars är det en ingång som programmet anro
 volym- eller ljudeffektsingång skriver få. **Init** är `B`. Anrop räknas *utifrån*: från kod som inte är spelarens egen,
 och inte från en `JMP` i en tabell strax före (högst 12 byte).
 
+**En `JMP` som programmet skriver dit** (`writtenJmps()`): tre byte som spårad kod anropar eller hoppar till, där varje
+skrivning till var och en lägger samma konstant (`lda #$4c / sta`), `$4c` i den första, och där filen inte har någon
+`JMP`. Musikdetekteringen läser dem som den `JMP` programmet skriver, både i tabellerna och i körningarna, och en ingång
+som är en sådan `JMP` blir dess mål, som blockets egna byte spelar från. Mathematicas demo (Reflex, 1995) skriver
+`JMP $081d` över BASIC-nollan på `$0800`, där spelarens `JMP init` stod, och anropar sedan `$0800` med låt 0; NMI:n anropar
+play på `$0803`. Utan regeln togs tabellen från `$0803` med play som init och en röststart (`$0809`) som play, och den
+spelade ingenting. Nu är init `$081d` och play `$0803`, och blocket `$0800-$1d22` spelar i VICE. En byte som får två
+olika värden (en `JMP` som slås av och på med `BIT`) eller skrivs indexerat räknas inte.
+
 | Signal | Poäng |
 |---|---|
 | Hopptabellen | +2 |
