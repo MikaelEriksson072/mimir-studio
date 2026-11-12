@@ -234,7 +234,7 @@ function measureCmd(inputs: string[], io: Io, sets: [string, string][], flags: M
     const f = p.files[0];
     if (!f || f.chip != null || f.vsf || !f.bytes.length) continue;
     const start = p.entryPoint != null && p.entryPoint >= f.load && p.entryPoint < f.load + f.bytes.length ? p.entryPoint : null;
-    const run = unpackPrg(makePrg(f.load, f.bytes), roms, null, start);
+    const run = unpackPrg(makePrg(f.load, f.bytes), roms, null, start, null, null, start != null ? p.entryPort ?? null : null);
     const A = analyze(p);
     const c = checkRun(A, run.fileUse), codes = new Map<ProblemCode, number>();
     for (const l of A.log) if (isProblem(l) && l.code) { codes.set(l.code, (codes.get(l.code) ?? 0) + 1); total.set(l.code, (total.get(l.code) ?? 0) + 1); }

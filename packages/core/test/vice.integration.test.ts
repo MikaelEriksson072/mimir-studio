@@ -9,8 +9,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, builtCartridge, makeD64, makePrg, makeT64, makeTap, openCartridge, overwritesSystemArea, parseVsf, patchSnapshot, readTape, render, replaceTapeFile, verify, writeT64 } from '../src';
-import { DRIVE_INIT, findVice, prepareVice, viceArgv, viceMonitorScript } from '../src/node';
+import { analyze, builtCartridge, coversReadyScreen, makeD64, makePrg, makeT64, makeTap, openCartridge, overwritesSystemArea, parseVsf, startsFromMonitor, patchSnapshot, readTape, render, replaceTapeFile, verify, writeT64 } from '../src';
+import { DRIVE_INIT, findVice, prepareVice, startStatements, typedLines, viceArgv, viceMonitorScript } from '../src/node';
 import { fromSource } from './helpers/programs';
 import { readPng } from './helpers/png';
 import { bootLoader, tinyFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
@@ -37,6 +37,22 @@ describe('VICE command line', () => {
     expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x1400, disk: true })).toBe('> C:00ba 08\nbank ram\nl "p.prg" 0\nbank cpu\ng 1400\n');
   });
 
+  it('starts a program with the $01 Sindri saw at its start: a stub typed with POKEs, or set from the monitor', () => {
+    // BASIC runs in the ROM $01 switches off: `lda #$36 / sta $01 / jmp $a2ab` at $02a7, then sys679
+    expect(startStatements(0xa2ab, 0x36)).toEqual(['poke679,169', 'poke680,54', 'poke681,133', 'poke682,1', 'poke683,76', 'poke684,171', 'poke685,162', 'sys679']);
+    expect(startStatements(0xa2ab, 0x37)).toEqual(['sys41643']);
+    expect(startStatements(0xa2ab, null)).toEqual(['sys41643']);
+    const pokes = 'poke679,169:poke680,54:poke681,133:poke682,1:poke683,76:poke684,171:poke685,162';
+    expect(viceArgv({ prgPath: 'p.prg', start: 0xa2ab, port: 0x36 })).toEqual(['-autoload', 'p.prg', '-keybuf', `${pokes}\\nsys679\\n`]);
+    // with a disk: the drive reads it first, on a line of its own (each line within BASIC's 80)
+    const lines = viceArgv({ prgPath: 'p.prg', start: 0xa2ab, port: 0x36, disk: 'd.d64' }).at(-1)!.split('\\n').filter(Boolean);
+    expect(lines).toEqual([DRIVE_INIT.slice(0, -1), pokes, 'sys679']);
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual(79);
+    expect(typedLines(['a'.repeat(70), 'b'.repeat(8), 'c'])).toBe(`${'a'.repeat(70)}:${'b'.repeat(8)}\\nc\\n`);
+    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0xa2ab, port: 0x36, disk: true })).toBe('> C:00ba 08\nbank ram\nl "p.prg" 0\nbank cpu\n> C:0001 36\ng a2ab\n');
+    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x1400, port: 0x37 })).toBe('bank ram\nl "p.prg" 0\nbank cpu\ng 1400\n');
+  });
+
   it('puts a disk in drive 8, with the inject PRG mode (the disk image mode would replace it), and has the drive read it first', () => {
     // no string literal: BASIC would copy it into string space, which a program up to $a000 or beyond leaves none of
     const init = 'open15,8,15:poke781,15:sys65481:poke780,73:sys65490:sys65484:close15:';
@@ -47,7 +63,10 @@ describe('VICE command line', () => {
     expect(viceArgv({ args: ['-autostartprgmode', '1'], prgPath: 'p.prg', labelsPath: 'p.vs', start: 0x0801, disk: 'd.d64' }))
       .toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-moncommands', 'p.vs', '-autoload', 'p.prg', '-keybuf', `${init}sys2049\\n`]);
     expect(viceArgv({ args: ['-autostartprgmode', '2'], prgPath: 'p.prg', disk: 'd.d64' })).toEqual(['-autostartprgmode', '2', '-autostartprgmode', '1', '-8', 'd.d64', '-autoload', 'p.prg', '-keybuf', `${init}run\\n`]);
-    expect(viceArgv({ prgPath: 'p.prg', start: 0x1000, via: 'monitor', scriptPath: 'p.start.mon', disk: 'd.d64' })).toEqual(['-8', 'd.d64', '-moncommands', 'p.start.mon', '-initbreak', 'ready']);
+    // started from the monitor: the drive reads the disk first, typed at READY with nothing loaded, and sys679 stops in
+    // the monitor, which loads the program over what the typing wrote
+    expect(viceArgv({ prgPath: 'p.prg', start: 0x1000, via: 'monitor', scriptPath: 'p.start.mon', disk: 'd.d64' }))
+      .toEqual(['-8', 'd.d64', '-keybuf', `${init}sys679\\n`, '-moncommands', 'p.start.mon', '-initbreak', '0x02a7']);
     // a snapshot brings its drive as it was taken
     expect(viceArgv({ prgPath: 'p.vsf', disk: 'd.d64' })).toEqual(['-autostartprgmode', '1', '-8', 'd.d64', '-autostart', 'p.vsf']);
   });
@@ -75,13 +94,22 @@ describe('VICE command line', () => {
     expect(overwritesSystemArea(0x0400, 0x1000)).toBe(false); // the screen is not BASIC's
     expect(overwritesSystemArea(0x0801, 0x2000)).toBe(false);
     expect(overwritesSystemArea(0x0000, 2)).toBe(false); // $00/$01 are the CPU port, not RAM BASIC needs
+    // ... but typing at READY writes on the screen: a program over it starts from the monitor too
+    expect(coversReadyScreen(0x0400, 0xfc00)).toBe(true); // a game Sindri saved (Cybernoid 2)
+    expect(coversReadyScreen(0x07e7, 1)).toBe(true);
+    expect(coversReadyScreen(0x07e8, 0x100)).toBe(false);
+    expect(coversReadyScreen(0x0801, 0x2000)).toBe(false);
+    expect(startsFromMonitor(0x0400, 0x1000)).toBe(true);
+    expect(startsFromMonitor(0x0200, 0x100)).toBe(true);
+    expect(startsFromMonitor(0x0801, 0x2000)).toBe(false);
   });
 
   it('picks the start from the PRG and writes the monitor file next to it', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
     try {
-      const basic = join(dir, 'basic.prg'), dump = join(dir, 'dump.prg'), vs = join(dir, 'dump.vs');
+      const basic = join(dir, 'basic.prg'), dump = join(dir, 'dump.prg'), vs = join(dir, 'dump.vs'), screen = join(dir, 'screen.prg');
       await writeFile(basic, Uint8Array.from([0x01, 0x08, 0x60]));
+      await writeFile(screen, Uint8Array.from([0x00, 0x04, ...new Uint8Array(0x1000)]));
       await writeFile(dump, Uint8Array.from([0x02, 0x00, ...new Uint8Array(0x400)]));
       await writeFile(vs, 'al C:0002 .zp\n');
       expect(await prepareVice({ prgPath: basic })).toEqual({ argv: ['-autostart', basic], via: 'run' });
@@ -90,6 +118,9 @@ describe('VICE command line', () => {
       const m = await prepareVice({ prgPath: dump, labelsPath: vs, start: 0x0300 });
       expect(m).toEqual({ argv: ['-moncommands', join(dir, 'dump.start.mon'), '-initbreak', 'ready'], via: 'monitor' });
       expect(await readFile(join(dir, 'dump.start.mon'), 'utf8')).toBe(`al C:0002 .zp\nbank ram\nl "${dump}" 0\nbank cpu\ng 0300\n`);
+      // over the screen at READY, with the $01 Sindri saw at the start
+      expect(await prepareVice({ prgPath: screen, start: 0x1000, port: 0x36 })).toEqual({ argv: ['-moncommands', join(dir, 'screen.start.mon'), '-initbreak', 'ready'], via: 'monitor' });
+      expect(await readFile(join(dir, 'screen.start.mon'), 'utf8')).toBe(`bank ram\nl "${screen}" 0\nbank cpu\n> C:0001 36\ng 1000\n`);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -266,6 +297,47 @@ describe.skipIf(!vice)(`real VICE (${vice ?? 'not found'})`, () => {
         expect(via).toBe(how);
         expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status, name).toBe(0x42);
       }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('starts a program under the BASIC ROM with the $01 it needs, typed as a stub and from the monitor, with a disk too', async () => {
+    // a game Sindri saved can start at $a2ab with $01 = $36 (Cybernoid 2): with $37 the CPU runs BASIC's ROM there.
+    // The program exits with $42, with $01 as it found it in A when that was not $36
+    const code = '.pc = $a000\n lda $01\n cmp #$36\n bne bad\n lda #$42\nbad:\n sta $d7ff\n jmp *';
+    const files: [string, ReturnType<typeof fromSource>, string][] = [
+      ['game', fromSource('game.prg', code), 'sys'],
+      ['dump', fromSource('dump.prg', `.pc = $0200\n.byte $00\n${code}`), 'monitor'],
+    ];
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      const disk = join(dir, 'disk.d64');
+      await writeFile(disk, makeD64({ name: 'parts', files: [{ name: 'top10', data: Uint8Array.from([0x00, 0xc0, 0x60]) }] }));
+      for (const [name, f, how] of files) for (const d of [null, disk]) {
+        const prgPath = join(dir, `${name}.prg`);
+        await writeFile(prgPath, prgOf(f));
+        const { argv, via } = await prepareVice({ args: headless(dir), prgPath, start: 0xa000, port: 0x36, disk: d });
+        expect(via).toBe(how);
+        expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status, `${name}${d ? ' with the disk' : ''}`).toBe(0x42);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it('starts a program over the screen at READY from the monitor, with its bytes there, after the drive read the disk', async () => {
+    // typing at READY writes on the screen: $0400's $42 would be gone. With the disk, the drive reads it first (M-R of
+    // its $0012, the ID's "M"), and the monitor stopped at $02a7 for it once: the program's own code there runs
+    const f = fromSource('screen.prg', '.pc = $0400\n.byte $42\n.pc = $0c00\n lda #$60\n sta $02a7\n jsr $02a7\n lda #6\n ldx #<cmd\n ldy #>cmd\n jsr $ffbd\n lda #15\n ldx #8\n ldy #15\n jsr $ffba\n jsr $ffc0\n ldx #15\n jsr $ffc6\n jsr $ffcf\n cmp #$4d\n bne bad\n lda $0400\n sta $d7ff\n jmp *\nbad:\n lda #$ee\n sta $d7ff\n jmp *\ncmd: .byte $4d,$2d,$52,$12,$00,$01');
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      const prgPath = join(dir, 'screen.prg'), disk = join(dir, 'disk.d64');
+      await writeFile(prgPath, prgOf(f));
+      await writeFile(disk, makeD64({ name: 'parts', id: 'mi', files: [] }));
+      const { argv, via } = await prepareVice({ args: headless(dir), prgPath, start: 0x0c00, disk });
+      expect(via).toBe('monitor');
+      expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status).toBe(0x42);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

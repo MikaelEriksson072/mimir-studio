@@ -1151,6 +1151,16 @@ för att menyn nu får N där den fick Y, så att trainerns ändringar inte stå
 Testerna `test/unpack.test.ts` i Sindri: en meny med tolv J/N-frågor och en sifferfråga, och en meny som bara klagar
 på fel tangent (Sindri går vidare till nästa tangent i stället för att trycka samma igen).
 
+**`$01` vid programstarten.** Sindri säger vilket `$01` det uppackade programmet startar med (`saved.port`, i
+lagerrapporten `start with SYS 41643 = $a2ab, $01=$36`). *Unpack* sparar det med programstarten när det inte är `$37`
+(`Project.entryPort`; bara när den uppackade filen blir projektets enda), och *Unpacked …* säger *starting at $a2ab
+with $01 = $36*. Då startar Build & Run programmet med det (13.2), Sindris nästa körning från programstarten likaså
+(Sindris `port`: värdet skrivs i `$01` precis före BASIC:s `JMP ($0014)` på `$e144`, eller med ersättnings-ROM:arna
+vid deras SYS; CLI: `--port`), och analysen följer koden från starten med den minneskonfigurationen. Förut startades
+Cybernoid 2:s spel med `$37`, och både VICE och Sindri körde BASIC-ROM:ets byte på `$a2ab` och hamnade i READY.
+`fixtures/prg/packed-rom.prg` (`packages/core/test/sindri.test.ts`) packar upp till ett program på `$a000` som startar
+med `$01 = $36`; e2e-testet packar upp det och startar det med Build & Run.
+
 **Packa upp när filen öppnas.** Med Settings → General → *Unpack packed files when they are opened* (av från början,
 sparas per användare, `autoUnpack`) packas en fil som öppnas eller läggs till upp direkt, som *Unpack* gör, när den är
 packad: Sindri har kört den och skalat av ett lager (med en extern uppackare: när analysen och verktygets
@@ -2399,6 +2409,20 @@ Verifieringen är produktens kvalitetsgrind:
    från disken (vid READY efter start är den 0): ett program som laddar sin nästa fil från "enheten det kom ifrån" tar
    den därifrån (Cybernoids high score-lista). En dump som själv har `$ba` laddas över den.
    Utan programstart varnar appen för en sådan PRG och ber användaren sätta en.
+   Från monitorn startas också en PRG som täcker skärmen vid READY, `$0400-$07e7` (`startsFromMonitor`): det som
+   skrivs vid READY (`sys <start>`, diskinitieringen) och READY själv hamnar i de byten. Cybernoid 2:s spel som Sindri
+   sparat (`$0400-$ffff`) startade med `sys` på en skärm full av `e`; laddat från monitorn visar det sin titelbild.
+   Med en disk skriver VICE först diskinitieringen och `sys679` vid READY, med ingenting laddat än, och stannar där
+   (`-initbreak 0x02a7`, innan något på `$02a7` körs; brytpunkten gäller bara den gången) och kör monitorkommandona,
+   som laddar programmet över det som skrevs: `-keybuf "open15,…:close15:sys679\n" -moncommands out/main.start.mon
+   -initbreak 0x02a7`.
+   **`$01` vid start.** Satte *Unpack* programstarten och såg Sindri ett annat värde än `$37` i `$01` där
+   (`Project.entryPort`, sparas i projektfilen), startar Build & Run programmet med det: ett spel som Sindri sparat kan
+   starta under BASIC-ROM:et (Cybernoid 2 på `$a2ab` med `$01 = $36`), och med `$37` kör CPU:n ROM:ets byte där och
+   hamnar i READY. Från monitorn skrivs `> C:0001 36` före `g`. Med `sys` går det inte: BASIC körs i ROM:et som `$01`
+   slår bort, så VICE skriver POKE:ar som lägger `lda #$36 / sta $01 / jmp $a2ab` på `$02a7-$02ad` (en del av
+   systemområdet som varken BASIC eller KERNAL använder) och `sys679`, på rader om högst 79 tecken. Sätter användaren
+   en egen start glöms `$01`. Kortet *Program start* och Build-loggen säger hur programmet startas, med `$01`.
    `test/vice.integration.test.ts` kör detta i riktiga VICE (`-console`, egen konfigurationsfil, debug-cartridgens `$d7ff` som avslutningskod).
 
 ### 13.3 VICE binary monitor (M3)
@@ -2544,7 +2568,9 @@ sträng: `open15,8,15:poke781,15:sys65481:poke780,73:sys65490:sys65484:close15:`
 KERNAL:ns CHKOUT, CHROUT och CLRCHN skickar `I`). En sträng som skrivs vid READY kopierar BASIC till strängutrymmet,
 och ett program som laddar upp till `$a000` eller längre (ett uppackat, `$0801-$f344` till exempel) lämnar inget
 kvar: `open15,8,15,"i"` stannade där med ?OUT OF MEMORY innan programmet startade. En snapshot
-har med sin drive som den var; start från monitorn (13.2, ett program över BASIC:s arbetsområde) initierar inte.
+har med sin drive som den var. Ett program som startas från monitorn (13.2: över BASIC:s arbetsområde eller skärmen)
+initieras numera också: kommandot skrivs vid READY innan programmet laddas, och `sys679` stannar i monitorn som sedan
+laddar och startar det (förut fick det ingen initiering).
 `test/d64.test.ts` läser diskar som VICE:s `c1541` skrivit och låter `c1541` läsa och validera diskar som `makeD64`
 skrivit; `test/vice.integration.test.ts` kör i riktiga VICE ett program som laddar sin andra del från disken, och ett
 som läser diskens id ur driven (`M-R` av `$0012`): det finns där bara efter initieringen, också för ett program som

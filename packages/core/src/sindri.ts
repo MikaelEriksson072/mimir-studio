@@ -21,14 +21,15 @@ export interface UnpackTape { tap: Uint8Array; at?: number | null }
  * Unpack a PRG (load address first); without ROMs Sindri runs with its stand-ins for the KERNAL and BASIC. With
  * the D64 it came from (and the 1541 DOS ROM in `roms`), the drive reads the disk for the program's loader; with the
  * tape it came from, the datasette plays it from after the file for the program's tape loader. `entry`: start it
- * there (SYS) instead of with RUN, as a program without a BASIC line needs. `vsf`: the PRG is a VICE snapshot's RAM,
+ * there (SYS) instead of with RUN, as a program without a BASIC line needs, with `port` in $01 when it is given (a
+ * program Sindri saved that starts under the BASIC ROM, $36). `vsf`: the PRG is a VICE snapshot's RAM,
  * and Sindri goes on from the snapshot's machine where it was taken instead (it needs the ROMs; throws when the
  * snapshot is not one Sindri reads): a game stopped in its intro or trainer menu still holds the game packed.
  */
-export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null, tape: UnpackTape | null = null, vsf: Uint8Array | null = null): UnpackRun {
+export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null, tape: UnpackTape | null = null, vsf: Uint8Array | null = null, port: number | null = null): UnpackRun {
   const resume = vsf ? vsfMachine(vsf) : null;
   const { save: _save, ...run } = unpack(prg, {
-    roms, disk, ...(resume ? { resume } : entry != null ? { entry } : {}),
+    roms, disk, ...(resume ? { resume } : entry != null ? { entry, ...(port != null ? { port } : {}) } : {}),
     ...(tape ? { tape: tape.tap, ...(tape.at != null ? { tapeAt: tape.at } : {}) } : {}),
   });
   return resume ? { ...run, snapshot: resume.cpu.pc } : run;

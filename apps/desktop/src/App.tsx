@@ -7,7 +7,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readD64File, readKrillDisk, cc1541Script, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   checkScript, type ScriptTemplate, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
@@ -950,14 +950,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const e = f.vsf ? null : project.entryPoint;
     return e != null && e >= f.load && e < f.load + f.bytes.length ? e : null;
   };
-  /** a run of `f` from where it starts now (another program start is another run) */
-  const runKey = (f: LoadedFile): string => { const e = runStart(f); return e == null ? f.id : `${f.id}@${e}`; };
+  /** $01 as Sindri starts `f` at runStart: what Sindri saw there when Unpack set the start (null: as at READY) */
+  const runPort = (f: LoadedFile): number | null => (runStart(f) != null ? project.entryPort ?? null : null);
+  /** a run of `f` from where it starts now (another program start, or $01 there, is another run) */
+  const runKey = (f: LoadedFile): string => { const e = runStart(f), p = runPort(f); return e == null ? f.id : `${f.id}@${e}${p != null ? `:${p}` : ''}`; };
   const runFor = (f: LoadedFile): Promise<UnpackRun> => {
     const key = runKey(f);
     let p = running.current.get(key);
     if (!p) {
       const t = tapeOf.current.get(f.id);
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f), f.vsf ?? null);
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f), f.vsf ?? null, runPort(f));
       running.current.set(key, p);
       p.then(r => setRuns(m => ({ ...m, [key]: r })), () => running.current.delete(key));
     }
@@ -968,7 +970,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // snapshot's RAM is not loaded and started either: Sindri goes on from the snapshot's machine where it was taken
     // (LOAD and RUN would start what its BASIC line says, not the program as it was)
     if (!external) for (const f of project.files) if (f.chip == null && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
-  }, [project.files, project.entryPoint, external]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project.files, project.entryPoint, project.entryPort, external]); // eslint-disable-line react-hooks/exhaustive-deps
   const [identified, setIdentified] = useState<Record<string, IdentifyResponse>>({});
   const asked = useRef(new Set<string>());
   const idKey = (f: LoadedFile) => `${f.id}:${toolchain.unpackerPath}`;
@@ -993,12 +995,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
     if (!external && f && onlyRelocates(run, A)) return null;
     return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, run, at);
-  }), [A, identified, runs, project.files, project.entryPoint, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went. */
-  const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined): string => {
+  }), [A, identified, runs, project.files, project.entryPoint, project.entryPort, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went.
+   *  `port`: $01 as the program starts at `start` (Sindri's saved.port), kept with the start when it is not $37 */
+  const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined, port: number | null = null): string => {
     const out = withId(parsePrg(`${f.name.replace(/\.prg$/i, '')}-unpacked.prg`, prg));
     const entry = start != null && start >= out.load && start < out.load + out.bytes.length ? start : null;
-    if (project.files.length === 1) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry }, home ? `Unpack ${f.name}` : undefined); resetView(); }
+    const entryPort = entry != null && port != null && port !== 0x37 && project.files.length === 1 ? port : null;
+    if (project.files.length === 1) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry, ...(entryPort != null ? { entryPort } : {}) }, home ? `Unpack ${f.name}` : undefined); resetView(); }
     else update(`Unpack ${f.name}`, d => {
       // a patch written over the packed file has nothing to stand on in the unpacked one
       const was = d.files[i];
@@ -1009,7 +1013,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     afterLoad([out.id], project.files.length > 1, true);
     const at = `$${h4(out.load)}-$${h4(out.load + out.bytes.length - 1)}`;
     toast(`Unpacked ${f.name}: ${out.bytes.length} bytes at ${at}`, 'ok');
-    return `${out.name}, ${at}${entry != null ? `, starting at $${h4(entry)}${project.files.length === 1 ? ' (set as the program start)' : ''}` : ''}`;
+    return `${out.name}, ${at}${entry != null ? `, starting at $${h4(entry)}${entryPort != null ? ` with $01 = $${h2(entryPort)}` : ''}${project.files.length === 1 ? ' (set as the program start)' : ''}` : ''}`;
   };
   /** `auto`: the file was just opened, with *Unpack packed files when they are opened* on */
   const unpackFile = async (i: number, auto = false) => {
@@ -1028,7 +1032,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         }
         const names = packerNames(run);
         // a BASIC program starts with RUN: the analysis finds its SYS line itself
-        const where = takeUnpacked(i, f, run.saved.prg, run.saved.basic ? null : run.saved.entry);
+        const where = takeUnpacked(i, f, run.saved.prg, run.saved.basic ? null : run.saved.entry, run.saved.basic ? null : run.saved.port);
         setUnpacked({ ok: true, title: `Unpacked ${f.name}${names ? ` (${names})` : ''}${when}: ${where}.`, output, label: 'Layer report' });
       } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
       return;
@@ -1466,7 +1470,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    * address) again and Build & Run autostarts the program with RUN */
   const setStart = (a: Addr | null) => {
     if (project.entryPoint === a) return;
-    update(a == null ? 'Clear program start' : `Program start $${h4(a)}`, d => { d.entryPoint = a; });
+    // ($01 there was what Sindri saw at the start Unpack set)
+    update(a == null ? 'Clear program start' : `Program start $${h4(a)}`, d => { d.entryPoint = a; d.entryPort = null; });
     toast(a == null ? 'Program start cleared: Build & Run starts the program with RUN, and the analysis uses the detected start again' : `The program starts at $${h4(a)}; tracing from there`, 'ok');
     if (a != null) navigate(a, { center: true, listing: true });
   };
@@ -2283,18 +2288,24 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       // BASIC's work area, loads and starts it from the monitor (only the first file is run)
       const ep = project.entryPoint;
       const start = ep != null && A.owner[ep] === 0 ? ep : undefined;
+      // $01 as the program starts, when Unpack set the start and Sindri saw another value there (a game under the BASIC ROM)
+      const port = start != null && project.entryPort != null && project.entryPort !== 0x37 ? project.entryPort : undefined;
       if (ep != null && start == null && A.owner[ep] >= 0) toast(`The program start $${h4(ep)} is in another file than the one VICE runs; it starts with RUN`, 'warn');
       const f0 = A.files[0];
       const overSystem = !!f0 && overwritesSystemArea(f0.load, f0.bytes.length);
       // the RAM of a snapshot opened before snapshots were kept with the project: it can only start like a PRG
       if (f0 && (f0.load === 0x0200 || f0.load === 0x0002) && f0.load + f0.bytes.length === 0x10000) toast('This file looks like a VICE snapshot that was opened before Mimir kept snapshots, so VICE starts it like a PRG: open the .vsf again and Build & Run restarts it as it was', 'warn');
       else if (start == null && overSystem) toast(`The program overwrites BASIC's work area ($${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}), so RUN cannot start it: set the program start`, 'warn');
-      const { pid, via } = await kr.run({ prgPath, labelsPath, start, disk: diskPath, tape: tapePath });
+      const { pid, via } = await kr.run({ prgPath, labelsPath, start, port, disk: diskPath, tape: tapePath });
+      const p01 = port != null ? ` with $01 = $${h2(port)}` : '';
+      const why = overSystem ? `the program overwrites BASIC's work area $${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}`
+        : `the program covers the screen at READY, $${h4(READY_SCREEN.start)}-$${h4(READY_SCREEN.end - 1)}, which typing sys would write on`;
       const how = start == null ? '' : via === 'monitor'
-        ? `, starting at $${h4(start)} (loaded and started from the VICE monitor: the program overwrites BASIC's work area $${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)})`
+        ? `, starting at $${h4(start)}${p01} (loaded and started from the VICE monitor${diskPath ? `, after the drive read the disk (typed at READY, then sys ${START_STUB} stops in the monitor)` : ''}: ${why})`
+        : port != null ? `, starting at $${h4(start)}${p01} (after loading, POKEs put a stub at $${h4(START_STUB)} that sets $01 and jumps there, and sys ${START_STUB} runs it: BASIC cannot set $01 itself)`
         : `, starting at $${h4(start)} (sys ${start} after loading)`;
       setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE started (pid ${pid}): ${prgPath}${labelsPath ? ` with labels from ${labelsPath}` : ''}${how}${drive}${datasette}` });
-      toast(`VICE started${start != null ? ` at $${h4(start)}` : ''}${labelsPath ? ' with labels in the monitor' : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}${datasette}`, 'ok');
+      toast(`VICE started${start != null ? ` at $${h4(start)}${p01}` : ''}${labelsPath ? ' with labels in the monitor' : ''}${diskPath && disk ? `, ${disk.name} in drive 8` : ''}${datasette}`, 'ok');
     } catch (e) {
       toast(errorText(e), 'err');
       setBuild(b => b && { ...b, log: `${b.log}\n\n> VICE: ${errorText(e)}` });

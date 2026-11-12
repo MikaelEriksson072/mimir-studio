@@ -342,6 +342,10 @@ export interface Project {
   overrides: Override[]; // ordered, later wins
   entries: Addr[]; // extra user entry points
   entryPoint: Addr | null; // the program start set by the user (null: BASIC SYS or the load address)
+  /** $01 as the program starts at entryPoint, when Unpack set the start and Sindri saw another value there than $37
+   *  (a game it saved that starts under the BASIC ROM, $36): Build & Run, Sindri's next run and the analysis start with
+   *  it. Missing: $37, as at READY */
+  entryPort?: number | null;
   labels: Record<Addr, string>; // user names (empty string = restore)
   comments: Record<Addr, string>; // line comments
   blockComments: Record<Addr, string>; // comments above blocks
@@ -377,6 +381,8 @@ export interface ProjectInput {
   entries?: Addr[];
   /** the program start set by the user; replaces the detected one (BASIC SYS target or the first file's load address) */
   entryPoint?: Addr | null;
+  /** $01 as the program starts at entryPoint (Project.entryPort) */
+  entryPort?: number | null;
   labels?: Record<Addr, string>;
   comments?: Record<Addr, string>;
   blockComments?: Record<Addr, string>;
@@ -425,6 +431,8 @@ export interface SerializedProject {
   entries: Addr[];
   /** missing in project files from before the program start could be set */
   entryPoint?: Addr | null;
+  /** $01 at the program start; missing: $37 */
+  entryPort?: number | null;
   labels: Record<string, string>;
   comments: Record<string, string>;
   blockComments: Record<string, string>;

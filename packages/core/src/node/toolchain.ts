@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import type { KickProblem, Vfs } from '../types';
-import { overwritesSystemArea } from '../c64/prg';
+import { START_STUB, startsFromMonitor } from '../c64/prg';
 import { parseKickOutput } from '../verify/kick-output';
 import { splitArgs } from '../util/args';
 
@@ -102,6 +102,8 @@ export interface ViceLaunch {
   vice: string; args?: string[]; prgPath: string; labelsPath?: string | null;
   /** start the program here instead of autostarting it (RUN) */
   start?: number | null;
+  /** with a start: $01 as the program starts there (null or $37: as BASIC leaves it) */
+  port?: number | null;
   /** with a start: 'monitor' for a program that overwrites BASIC's work area (launchVice picks it from the PRG) */
   via?: Exclude<ViceStart, 'run'>;
   /** with via 'monitor': the monitor command file (viceMonitorScript) */
@@ -119,13 +121,16 @@ export interface ViceLaunch {
  * program is loaded without RUN (`-autoload`) and `sys <start>` is typed into the keyboard buffer (VICE reads
  * `\n` there as RETURN, and lower case as unshifted letters). That needs the inject or disk image PRG mode: the
  * virtual file system mode loads through the keyboard buffer itself, so a `-autostartprgmode 0` is overridden.
- * A program that overwrites BASIC's work area leaves no BASIC to type into, so with via 'monitor' VICE stops at
- * the READY prompt (`-initbreak ready`) and runs the monitor commands of viceMonitorScript instead: load, then go.
+ * A program that overwrites BASIC's work area leaves no BASIC to type into, and one over the screen at READY would
+ * lose the bytes typing writes there, so with via 'monitor' VICE stops at the READY prompt (`-initbreak ready`) and
+ * runs the monitor commands of viceMonitorScript instead: load, then go. With a disk it first types DRIVE_INIT and
+ * `sys679`, and stops there (`-initbreak 0x02a7`) to load and go.
  * A disk (`-8 disk.d64`) needs the inject PRG mode too: the disk image mode would put a disk of its own in drive 8.
  * A program put straight into memory leaves the drive as it was at power on, without the disk read: on a C64 it was
  * loaded from that disk (LOAD"*",8,1), and fast loaders count on it (We Are The Anomaly's Sparkle hangs there with
  * the drive's light blinking). So with a disk VICE loads the PRG without RUN and types DRIVE_INIT (initialise: the
- * drive reads the disk) before `run` or `sys <start>`. A snapshot brings its drive as it was.
+ * drive reads the disk) before `run` or `sys <start>`. A snapshot brings its drive as it was. A start with another
+ * $01 (`port`, from Sindri) is typed as a stub that sets it and jumps (startStatements), or set from the monitor.
  */
 /**
  * The disk command "I" (initialise) on the command channel, typed before `run` or `sys <start>`. Without a string:
@@ -137,6 +142,32 @@ export interface ViceLaunch {
  */
 export const DRIVE_INIT = 'open15,8,15:poke781,15:sys65481:poke780,73:sys65490:sys65484:close15:';
 
+/**
+ * The statements that start the program at `start` from READY: `sys <start>`, or, with another $01 than $37 (a program
+ * Sindri saved that starts under the BASIC ROM, $36), POKEs that write `lda #port / sta $01 / jmp start` at START_STUB
+ * and `sys679`. BASIC runs in the ROM that $01 switches off, so it cannot POKE 1 itself: the stub does it.
+ */
+export function startStatements(start: number, port?: number | null): string[] {
+  if (port == null || (port & 0xff) === 0x37) return [`sys${start & 0xffff}`];
+  const code = [0xa9, port & 0xff, 0x85, 0x01, 0x4c, start & 0xff, (start >> 8) & 0xff];
+  return [...code.map((b, i) => `poke${START_STUB + i},${b}`), `sys${START_STUB}`];
+}
+
+/**
+ * Statements typed at READY: as few lines as they fit in, each at most 79 characters (BASIC takes 80, but the 80th
+ * moves the cursor to the next line, where RETURN enters an empty one), each ended with RETURN (`\n` as VICE's -keybuf
+ * reads it: a backslash and an n).
+ */
+export function typedLines(statements: string[]): string {
+  const lines: string[] = [];
+  for (const s of statements) {
+    const last = lines.length - 1;
+    if (last >= 0 && lines[last].length + 1 + s.length <= 79) lines[last] += `:${s}`;
+    else lines.push(s);
+  }
+  return lines.map(l => `${l}\\n`).join('');
+}
+
 export function viceArgv(o: Omit<ViceLaunch, 'vice'>): string[] {
   const args = [...(o.args || [])];
   // (a .tap or .t64 given as the program is autostarted: VICE loads its first file and presses PLAY itself). A T64
@@ -146,13 +177,16 @@ export function viceArgv(o: Omit<ViceLaunch, 'vice'>): string[] {
   if (o.cart) return [...args, ...drive, ...(o.labelsPath ? ['-moncommands', o.labelsPath] : []), '-cartcrt', o.prgPath];
   if (o.start != null && o.via === 'monitor') {
     if (!o.scriptPath) throw new Error('starting from the monitor needs a monitor command file');
+    // with a disk the drive reads it first, typed at READY with nothing loaded yet, and `sys679` then stops in the
+    // monitor (at START_STUB, before it runs anything there), which loads the program over what the typing wrote
+    if (o.disk) return [...args, ...drive, '-keybuf', typedLines([...DRIVE_INIT.split(':').filter(Boolean), `sys${START_STUB}`]), '-moncommands', o.scriptPath, '-initbreak', `0x${START_STUB.toString(16).padStart(4, '0')}`];
     return [...args, ...drive, '-moncommands', o.scriptPath, '-initbreak', 'ready'];
   }
   const i = args.lastIndexOf('-autostartprgmode'), mode = i >= 0 ? args[i + 1] : null;
   if (o.disk ? mode !== '1' : o.start != null && mode === '0') args.push('-autostartprgmode', '1');
-  const init = o.disk && !/\.(vsf|tap|t64)$/i.test(o.prgPath) ? DRIVE_INIT : '';
-  const run = o.start == null && !init ? ['-autostart', o.prgPath]
-    : ['-autoload', o.prgPath, '-keybuf', `${init}${o.start == null ? 'run' : `sys${o.start & 0xffff}`}\\n`];
+  const init = o.disk && !/\.(vsf|tap|t64)$/i.test(o.prgPath) ? DRIVE_INIT.split(':').filter(Boolean) : [];
+  const run = o.start == null && !init.length ? ['-autostart', o.prgPath]
+    : ['-autoload', o.prgPath, '-keybuf', typedLines([...init, ...(o.start == null ? ['run'] : startStatements(o.start, o.port))])];
   return [...args, ...drive, ...(o.labelsPath ? ['-moncommands', o.labelsPath] : []), ...run];
 }
 
@@ -167,24 +201,26 @@ export function viceArgv(o: Omit<ViceLaunch, 'vice'>): string[] {
  * takes it from there (Cybernoid II +17HDF's high scores, `lda $ba / tax / tay / jsr SETLFS`). A dump that holds
  * $ba itself loads over it.
  */
-export function viceMonitorScript(o: { prgPath: string; start: number; labels?: string; disk?: boolean }): string {
+export function viceMonitorScript(o: { prgPath: string; start: number; port?: number | null; labels?: string; disk?: boolean }): string {
   const labels = o.labels ? o.labels.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n') : '';
   const device = o.disk ? '> C:00ba 08\n' : '';
-  return `${labels}${device}bank ram\nl "${o.prgPath}" 0\nbank cpu\ng ${(o.start & 0xffff).toString(16).padStart(4, '0')}\n`;
+  // (in the CPU's view $01 is the processor port: the program starts with its memory configuration)
+  const port = o.port != null && (o.port & 0xff) !== 0x37 ? `> C:0001 ${(o.port & 0xff).toString(16).padStart(2, '0')}\n` : '';
+  return `${labels}${device}bank ram\nl "${o.prgPath}" 0\nbank cpu\n${port}g ${(o.start & 0xffff).toString(16).padStart(4, '0')}\n`;
 }
 
 /**
- * The command line for a launch (see viceArgv). With a start address, a PRG that overwrites BASIC's work area is
- * started from the monitor: its command file is written next to the PRG (`name.start.mon`).
+ * The command line for a launch (see viceArgv). With a start address, a PRG that overwrites BASIC's work area or the
+ * screen at READY is started from the monitor: its command file is written next to the PRG (`name.start.mon`).
  */
 export async function prepareVice(o: Omit<ViceLaunch, 'vice'>): Promise<{ argv: string[]; via: ViceStart }> {
   if (o.cart) return { argv: viceArgv(o), via: 'cart' };
   if (o.start == null) return { argv: viceArgv(o), via: 'run' };
   const prg = await readFile(o.prgPath);
-  if (!(prg.length > 2 && overwritesSystemArea(prg[0] | (prg[1] << 8), prg.length - 2))) return { argv: viceArgv({ ...o, via: 'sys' }), via: 'sys' };
+  if (!(prg.length > 2 && startsFromMonitor(prg[0] | (prg[1] << 8), prg.length - 2))) return { argv: viceArgv({ ...o, via: 'sys' }), via: 'sys' };
   const scriptPath = o.prgPath.replace(/(\.prg)?$/i, '.start.mon');
   const labels = o.labelsPath && existsSync(o.labelsPath) ? await readFile(o.labelsPath, 'utf8') : '';
-  await writeFile(scriptPath, viceMonitorScript({ prgPath: o.prgPath, start: o.start, labels, disk: !!o.disk }));
+  await writeFile(scriptPath, viceMonitorScript({ prgPath: o.prgPath, start: o.start, port: o.port, labels, disk: !!o.disk }));
   return { argv: viceArgv({ ...o, via: 'monitor', scriptPath }), via: 'monitor' };
 }
 

@@ -149,6 +149,8 @@ export const serializedProjectSchema = z.object({
   entries: z.array(at).max(65536).default([]),
   // project files from before the program start could be set have none
   entryPoint: at.nullable().default(null),
+  // $01 at the program start, when Sindri saw another than $37 there; project files from before it, and others, have none
+  entryPort: z.number().int().min(0).max(0xff).nullable().optional(),
   labels: record.default({}),
   comments: record.default({}),
   blockComments: record.default({}),
@@ -189,6 +191,7 @@ export const projectSchema = z.object({
   overrides: z.array(overrideSchema).max(100000),
   entries: z.array(at).max(65536),
   entryPoint: at.nullable(),
+  entryPort: z.number().int().min(0).max(0xff).nullable().optional(),
   labels: record,
   comments: record,
   blockComments: record,
@@ -239,7 +242,7 @@ export const exportWriteSchema = z.object({
 /** the sources to assemble: one per project file, and a cartridge's own source after them */
 export const buildSchema = z.object({ dir: z.string().min(1).max(4096), entries: z.array(z.string().max(255)).min(1).max(1025) });
 /** `cart`: prgPath is a cartridge image VICE attaches (-cartcrt) */
-export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional() });
+export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), port: z.number().int().min(0).max(0xff).optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional() });
 const prg = z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG');
 /** the built PRGs (one per project file, in order) and how to pack them */
 export const packSchema = z.object({ files: z.array(z.object({ name: fileName, prg })).min(1).max(64), prefs: packPrefsSchema });

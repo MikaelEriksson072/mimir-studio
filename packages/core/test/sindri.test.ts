@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, openC64File, packedData, packerNames, parsePrg, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
 import { findC64Roms, findExomizer, runExomizer, viceRomFolders } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
+import { fromSource } from './helpers/programs';
 
 const demo = makeDemo().prg;
 const packed = fakePack(demo, 0x0810);
@@ -21,6 +22,12 @@ const packed = fakePack(demo, 0x0810);
 const menuPacked = (() => {
   const head = [0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x20, 0xe4, 0xff, 0xf0, 0xfb, 0x4c, 0x0d, 0x08, 0x02];
   return fakePack(makePrg(0x07f0, Uint8Array.from([...head, ...packed.subarray(2)])), 0x07f8);
+})();
+/** fixtures/prg/packed-rom.prg, as Cybernoid 2's game starts at $a2ab with $01 = $36: fakePack unpacks a stage at
+ *  $0900 that copies a program to $a000, under the BASIC ROM, and starts it with $01 = $36 */
+const romPacked = (() => {
+  const f = fromSource('rom.prg', '.pc = $0900\n ldx #5\nc:\n lda game,x\n sta $a000,x\n dex\n bpl c\n lda #$36\n sta $01\n jmp $a000\ngame:\n inc $d020\n jmp $a000\n.fill 400, $55');
+  return fakePack(makePrg(f.load, f.bytes), 0x0900);
 })();
 const roms = findC64Roms();
 const modes: [string, Roms | null][] = roms ? [['stand-ins', null], ['ROMs', roms]] : [['stand-ins', null]];
@@ -140,6 +147,22 @@ describe('the fixture fixtures/prg/packed-menu.prg', () => {
     const path = join(__dirname, '../../../fixtures/prg/packed-menu.prg');
     if (process.env.WRITE_FIXTURES) writeFileSync(path, menuPacked);
     expect(new Uint8Array(readFileSync(path))).toEqual(menuPacked);
+  });
+});
+
+describe('the fixture fixtures/prg/packed-rom.prg', () => {
+  it('unpacks to a program under the BASIC ROM that starts with $01 = $36, and runs again from there with it', () => {
+    const path = join(__dirname, '../../../fixtures/prg/packed-rom.prg');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, romPacked);
+    expect(new Uint8Array(readFileSync(path))).toEqual(romPacked);
+    for (const [mode, r] of modes) {
+      const run = unpackPrg(romPacked, r);
+      expect(run.saved, mode).toMatchObject({ entry: 0xa000, port: 0x36, basic: false });
+      // Unpack again from that start (the app's runStart): with its $01 the program runs; with $37, BASIC's ROM
+      const again = (port: number | null) => unpackPrg(run.saved!.prg, r, null, 0xa000, null, null, port);
+      expect(again(0x36).layers[0]?.entry, mode).toBe(0xa000);
+      expect(again(null).layers[0]?.entry, mode).not.toBe(0xa000);
+    }
   });
 });
 

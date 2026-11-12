@@ -118,7 +118,7 @@ const CALL_ROUNDS = 4;
 export type SpaceCache = Map<number, { files: readonly FileInput[]; cart: unknown; key: string; calls: Addr[]; A: AnalysisResult }>;
 
 /** what decides a space's analysis besides its files (the same objects while they do not change) */
-const inputKey = (p: ProjectInput): string => JSON.stringify([p.overrides, p.entries, p.entryPoint, p.bankZones, p.relocs, p.settings, p.calls, p.bank]);
+const inputKey = (p: ProjectInput): string => JSON.stringify([p.overrides, p.entries, p.entryPoint, p.entryPort, p.bankZones, p.relocs, p.settings, p.calls, p.bank]);
 
 /** The analysis of a project, a space per bank of its cartridge, merged; one space: `analyze` as it is. */
 export function analyze(project: ProjectInput, cache?: SpaceCache): AnalysisResult {

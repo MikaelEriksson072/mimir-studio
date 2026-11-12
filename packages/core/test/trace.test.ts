@@ -1,6 +1,6 @@
 /* Heuristic unit tests: one small synthetic program per rule (spec 16). */
 import { describe, expect, it } from 'vitest';
-import { analyze, findBlock, h4, hwSymbol, parseBasic, render, verify, type FileInput } from '../src';
+import { analyze, createProject, deserializeProject, findBlock, h4, hwSymbol, parseBasic, render, serializeProject, verify, type FileInput } from '../src';
 import { fromSource } from './helpers/programs';
 
 const run = (file: FileInput, extra: object = {}) => {
@@ -52,6 +52,21 @@ describe('entry points', () => {
     expect(findBlock(A.blocks, 0xc000)?.type).not.toBe('code');
     expect(label(A, 0xc010)).toBe('start');
     expect(A.log.some(l => /No BASIC stub/.test(l.msg))).toBe(false);
+  });
+
+  it('starts the trace with the $01 Sindri saw at the program start Unpack set', () => {
+    // a game Sindri saved can start under the BASIC ROM with $01 = $36 (Cybernoid 2 at $a2ab)
+    const file = fromSource('g.prg', '.pc = $a000\n lda #$35\n sta $01\n inc $d020\n jmp *');
+    // (without it: any configuration with RAM there, as code found under a ROM is taken)
+    expect(run(file, { entryPoint: 0xa000 }).A.mcfg!.port[0xa000]).not.toBe(1 << 6);
+    const { A, V } = run(file, { entryPoint: 0xa000, entryPort: 0x36 });
+    expect(V.ok).toBe(true);
+    expect(A.mcfg!.port[0xa000]).toBe(1 << 6);
+    expect(findBlock(A.blocks, 0xa000)?.type).toBe('code');
+    // the project file keeps it with the start
+    const p = createProject({ files: [file] });
+    expect(deserializeProject(serializeProject({ ...p, entryPoint: 0xa000, entryPort: 0x36 })).entryPort).toBe(0x36);
+    expect(serializeProject({ ...p, entryPoint: 0xa000 })).not.toHaveProperty('entryPort');
   });
 
   it('falls back to the detected start when the one the user set is not loaded', () => {

@@ -17,7 +17,7 @@ export { SYM, hwSymbol, isIO } from './c64/symbols';
 export * from './c64/memconfig';
 export { PETSCII_CONTROLS, petsciiControl, TEXT_ENCODINGS, textEncoding, type PetsciiControl, type TextEncodingInfo } from './c64/text';
 export { parseBasic, BASIC_TOKENS } from './c64/basic';
-export { parsePrg, makePrg, overwritesSystemArea, SYSTEM_AREA } from './c64/prg';
+export { parsePrg, makePrg, overwritesSystemArea, coversReadyScreen, startsFromMonitor, SYSTEM_AREA, READY_SCREEN, START_STUB } from './c64/prg';
 export {
   clipRanges, findInMemory, loadedRanges, MAX_MATCHES, monitorChar, monitorHexOf, monitorLine, monitorPrefix, monitorRows, monitorText, monitorTextOf, MONITOR_ROW, nextZero, parseMonitorCommand,
   petsciiToScreen, textLabel, TEXT_LABEL_MAX, type FindAs, type MemoryMatch, type MonitorChar, type MonitorCommand, type MonitorMode, type MonitorRange, type MonitorRow,

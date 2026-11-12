@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, patchEnd, patchFileName, scriptEndText, scriptPatches, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -656,12 +656,17 @@ function LoadersSection({ A, packed, onNavigate }: { A: AnalysisResult; packed: 
 }
 
 /** How Build & Run starts the first file in VICE (see App.runBuild and prepareVice); `snapshot`: where the snapshot the
- *  project was opened from goes on, which Build & Run restarts instead */
-function viceStartText(A: AnalysisResult, ep: Addr | null, snapshot?: string | null): { text: string; warn?: boolean } {
+ *  project was opened from goes on, which Build & Run restarts instead; `port`: $01 as the program starts at `ep` (what
+ *  Sindri saw there when Unpack set it) */
+function viceStartText(A: AnalysisResult, ep: Addr | null, snapshot?: string | null, port?: number | null): { text: string; warn?: boolean } {
   if (snapshot) return { text: `VICE restarts the snapshot as it was taken (${snapshot}); the start is for the analysis` };
   const f0 = A.files[0];
   const overSystem = !!f0 && overwritesSystemArea(f0.load, f0.bytes.length);
-  if (ep != null && A.owner[ep] === 0) return { text: overSystem ? `VICE loads it from the monitor and jumps to $${h4(ep)}` : `VICE loads it and types sys ${ep}` };
+  // (a program over the screen at READY would lose the bytes typing writes there)
+  const monitor = !!f0 && startsFromMonitor(f0.load, f0.bytes.length);
+  const p = port != null && port !== 0x37 ? port : null;
+  if (ep != null && A.owner[ep] === 0) return { text: monitor ? `VICE loads it from the monitor and jumps to $${h4(ep)}${p != null ? ` with $01 = $${h2(p)}` : ''}`
+    : p != null ? `VICE loads it and starts it at $${h4(ep)} with $01 = $${h2(p)}, through a stub at $${h4(START_STUB)} (sys ${START_STUB})` : `VICE loads it and types sys ${ep}` };
   if (ep != null && A.owner[ep] > 0) return { text: 'VICE starts it with RUN: the start is in another file', warn: true };
   return overSystem ? { text: `VICE starts it with RUN, which cannot work: it overwrites $${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}. Set a start.`, warn: true } : { text: 'VICE starts it with RUN, no start address' };
 }
@@ -677,7 +682,7 @@ function ProgramStart({ A, R, project, onNavigate, onSetStart }: Pick<SidebarPro
   // a project opened from a snapshot: where the CPU was when it was taken
   const vsf = project.files.find(f => f.vsf)?.vsf;
   const snapshot = useMemo(() => { if (!vsf) return null; try { const s = parseVsf(vsf); return [s.cpu ? `PC $${h4(s.cpu.pc)}` : null, `$01 = $${h2(s.port.data)}`].filter(Boolean).join(', '); } catch { return null; } }, [vsf]);
-  const vice = viceStartText(A, project.entryPoint, snapshot);
+  const vice = viceStartText(A, project.entryPoint, snapshot, project.entryPort);
   const apply = () => {
     const t = parseGoto(v, n => { for (const [a, l] of R.labels) if (l.name === n) return a; return undefined; });
     if (!('addr' in t)) { setErr('Enter one hex address like $0810 or a label name.'); return; }

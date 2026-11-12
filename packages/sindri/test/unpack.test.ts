@@ -332,6 +332,30 @@ ${byteLines(code)}
       expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000 });
     });
 
+    it('starts a program under the BASIC ROM with the $01 it is given', () => {
+      // a game Sindri saved can start at $a2ab with $01 = $36 (Cybernoid 2): with $37 the CPU runs BASIC's ROM there
+      const code = asm(`
+* = $1000
+loop:  inc $d020
+       jmp loop`).prg.subarray(2);
+      const file = asm(`
+* = $a000
+       ldx #${code.length - 1}
+cp:    lda payload,x
+       sta $1000,x
+       dex
+       bpl cp
+       jmp $1000
+payload:
+${byteLines(code)}
+`);
+      const run = (port?: number) => unpack(file.prg, { roms: mode === 'ROMs' ? roms : null, entry: 0xa000, ...(port != null ? { port } : {}) });
+      const r = run(0x36);
+      expect(r.layers[0].entry).toBe(0xa000);
+      expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000, port: 0x36 });
+      expect(run().layers[0]?.entry).not.toBe(0xa000);
+    });
+
     it('starts a file that loads in the screen with RUN when it has a SYS line at $0801 into it', () => {
       // as Cybernoid II +17HDF at $05b8: SYS to where it loads runs into the screen's bytes (here a JAM); RUN goes on
       // from the 0 at $0800

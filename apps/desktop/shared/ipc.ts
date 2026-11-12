@@ -176,7 +176,8 @@ export interface BuildResult {
  */
 /** `cart`: `prgPath` is a cartridge image (.crt), which VICE attaches (-cartcrt) and starts at reset; a `prgPath` that is
  *  a .tap or .t64 is autostarted (VICE loads its first file from it) */
-export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; disk?: string; tape?: string; cart?: boolean }
+/** `port`: with a start, $01 as the program starts there (Sindri saw another than $37 there) */
+export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; port?: number; disk?: string; tape?: string; cart?: boolean }
 /** `via`: RUN, `sys <start>`, (a program over BASIC's work area $0002-$03ff) loaded and started from the monitor, or a
  *  cartridge attached */
 export interface RunResult { pid: number; via: 'run' | 'sys' | 'monitor' | 'cart' }

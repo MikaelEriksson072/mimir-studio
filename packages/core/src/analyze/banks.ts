@@ -227,13 +227,15 @@ export function memConfig(ctx: Ctx): MemConfigInfo {
   };
   const seed = (n: Addr, p: number, b: number) => join(n, p, b, UNKNOWN, UNKNOWN, UNKNOWN);
 
-  // a snapshot's program was running with the $01 the snapshot holds (at its PC too); a program starts with $37
+  // a snapshot's program was running with the $01 the snapshot holds (at its PC too); a program starts with $37, or
+  // with the $01 Sindri saw at the program start Unpack set (Project.entryPort)
   let snap: Snapshot | null = null;
   for (const f of ctx.files) if (!snap && f.vsf) try { snap = parseVsf(f.vsf); } catch { /* not readable: a plain start */ }
   const startPort = snap ? bit(snapshotConfig(snap)) : bit(DEFAULT_PORT);
   // ... and the VIC bank its $dd00 holds (a program starts with bank 0)
   const startBank = 1 << ((snap && snapshotVicBank(snap)) ?? 0);
-  for (const [a, k] of entryKind) if (k === 'entry') seed(a, startPort, startBank);
+  const ep = project.entryPoint, epPort = project.entryPort;
+  for (const [a, k] of entryKind) if (k === 'entry') seed(a, a === ep && epPort != null ? bit(epPort) : startPort, startBank);
   if (snap?.cpu) seed(snap.cpu.pc, startPort, startBank);
   run();
   let mainP = 0, mainB = 0;

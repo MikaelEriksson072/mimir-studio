@@ -26,6 +26,7 @@ unpacks on from there (the keys Sindri presses get past the menu). The 1541 is n
   --disk FILE    put this D64 or G64 in the drive for a PRG given on its own
   --tape FILE    put this TAP or T64 in the datasette for a PRG given on its own
   -e ADDR        start with SYS ADDR instead of RUN
+  --port VALUE   with -e: $01 as the program starts there (a saved program's start hint, $36 say)
   -l ADDR        load the file at ADDR instead of its own load address
   --layer N      save layer N instead of the newest (see the report)
   --all          save every layer
@@ -112,6 +113,7 @@ function main(argv: string[]): number {
       case '--disk': diskPath = argv[++i]; break;
       case '--tape': tapePath = argv[++i]; break;
       case '-e': o.entry = parseAddr(argv[++i], '-e'); break;
+      case '--port': { const v = parseAddr(argv[++i], '--port'); if (v > 0xff) throw new Error('--port: a byte, $00-$ff'); o.port = v; break; }
       case '-l': o.load = parseAddr(argv[++i], '-l'); break;
       case '--layer': o.layer = Number(argv[++i]); break;
       case '--all': all = true; break;

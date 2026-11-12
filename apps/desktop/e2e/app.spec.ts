@@ -1957,6 +1957,34 @@ test('a program that waits for a key in front of more packing: Unpack again runs
   await expect(bar).toHaveCount(0);
 });
 
+test('a program Unpack saved under the BASIC ROM keeps its $01 with the start: Build & Run starts it through a stub', async ({ app, page }) => {
+  // fixtures/prg/packed-rom.prg (packages/core/test/sindri.test.ts), as Cybernoid 2's game starts at $a2ab with $01 =
+  // $36: with $37 the CPU would run BASIC's ROM there. VICE itself is not started: a Windows program that ends at once
+  // stands in for it (the real VICE is in packages/core/test/vice.integration.test.ts)
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  test.skip(!existsSync(standIn), 'needs where.exe');
+  await waitForListing(page);
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  await openSection(page, 'Files');
+  const bar = page.locator('.pack-bar');
+  const done = page.locator('.unpack-bar');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/packed-rom.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(bar).toContainText(/Sindri peels off 2 layers: an unknown mover at \$080d .*, then an unknown decoder at \$0340 .*; the program starts at \$a000/, { timeout: 30_000 });
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(done).toContainText('Unpacked packed-rom.prg: packed-rom-unpacked.prg, $a000-$a005, starting at $a000 with $01 = $36 (set as the program start).', { timeout: 30_000 });
+  await openSection(page, 'Program start');
+  await expect(page.locator('.start-vice')).toContainText('Build & Run: VICE loads it and starts it at $a000 with $01 = $36, through a stub at $02a7 (sys 679)');
+  await page.keyboard.press('F5');
+  await expect(toast(page, /^VICE started at \$a000 with \$01 = \$36/)).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('tab', { name: 'Build output' }).click();
+  await expect(page.locator('.build-log')).toContainText('starting at $a000 with $01 = $36 (after loading, POKEs put a stub at $02a7 that sets $01 and jumps there, and sys 679 runs it: BASIC cannot set $01 itself)');
+  // a start of the user's own: Sindri's $01 was for the one Unpack set
+  await page.locator('.start-row input').fill('$a003');
+  await page.locator('.start-row').getByRole('button', { name: 'Set' }).click();
+  await expect(page.locator('.start-vice')).toContainText('Build & Run: VICE loads it and types sys 40963');
+});
+
 test('a VICE snapshot that still holds packed data: Sindri goes on from it, and Unpack gives the program', async ({ app, page }) => {
   // fixtures/vsf/packed-menu.vsf (make-packed-menu.mon): fixtures/prg/packed-menu.prg in x64sc 3.10, stopped where it
   // waits for a key at $07f8, in front of the demo packed by fakePack. Going on from there needs VICE's ROMs

@@ -54,6 +54,11 @@ export interface UnpackOptions {
   resume?: MachineState;
   /** start the program here (SYS) instead of RUN */
   entry?: number;
+  /**
+   * with `entry`: $01 as the program starts there, set right before the jump (a program Sindri saved can start under
+   * the BASIC ROM with $01 = $36); by default as at READY, $37
+   */
+  port?: number;
   /** load the file here instead of at its own load address */
   load?: number;
   /** give up after this many cycles of the program (default 400 million, about 7 minutes of C64 time) */
@@ -554,7 +559,11 @@ class Session {
     m.cpu.s = 0xf8;
     m.cpu.p = 0x20;
     this.setPhase('run');
-    if (this.o.entry != null) { this.sys(this.o.entry); return; }
+    if (this.o.entry != null) {
+      this.sys(this.o.entry);
+      if (this.o.port != null) m.write(1, this.o.port & 0xff);
+      return;
+    }
     const auto = this.autostart();
     if (auto != null) { m.cpu.pc = auto; m.cpu.lastOp = 0x6c; return; }
     if (basic) { this.runBasic(true); return; }
@@ -1128,6 +1137,13 @@ class Session {
         if (this.phase !== 'loaded' || this.started || this.o.entry == null) return false;
         const link = (m.ram[0x2b] | (m.ram[0x2c] << 8)) + 1;
         return link >= this.loadAt && link < this.loadAt + this.data.length ? this.rts() : false;
+      });
+      // SYS jumps to the program with JMP ($0014): a start with its own $01 gets it right before (as Build & Run's
+      // stub sets it), so a program under the BASIC ROM is what runs, not the ROM
+      const port = this.o.port, entry = this.o.entry;
+      if (port != null && entry != null) this.trap(0xe144, KERNAL, () => {
+        if (!this.started && (m.ram[0x14] | (m.ram[0x15] << 8)) === entry) m.write(1, port & 0xff);
+        return false;
       });
       return;
     }

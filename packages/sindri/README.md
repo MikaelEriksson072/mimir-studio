@@ -231,6 +231,7 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
 | `--disk FILE` | put this D64 or G64 in the drive for a PRG given on its own |
 | `--tape FILE` | put this TAP or T64 in the datasette for a PRG given on its own |
 | `-e ADDR` | start with `SYS ADDR` instead of `RUN` |
+| `--port VALUE` | with `-e`: `$01` as the program starts there, set right before the jump (a saved program's start hint, `$36` say: a game that starts under the BASIC ROM) |
 | `-l ADDR` | load the file at `ADDR` instead of its own load address |
 | `--layer N` | save layer N instead of the newest (the report lists them) |
 | `--all` | save every layer |
