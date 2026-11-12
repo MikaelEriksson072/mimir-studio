@@ -1230,7 +1230,7 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
     await expect(page.locator('.side-inner')).toContainText('613 blocks free');
     // the disk comes right under Files, and the VICE quicksave under the disk
     await expect.poll(() => page.locator('.side-sec').evaluateAll(s => s.map(e => e.getAttribute('aria-label'))))
-      .toEqual(['Files', 'Disk', 'VICE quicksave', 'Scripts', 'Loaders', 'Program start', 'Memory map']);
+      .toEqual(['Files', 'Disk', 'VICE quicksave', 'Loaders', 'Program start', 'Memory map']);
   });
 
   await test.step('a click opens a PRG, + adds one to the project', async () => {
@@ -1423,7 +1423,7 @@ test('open a cartridge: every bank is in the listing, one after the other, and t
     for (const row of await banks.getByRole('listitem').all()) await expect(row).toHaveClass(/on/);
     await expect(page.locator('.disk-head').first()).toContainText('"MIMIR DEMO"');
     await expect.poll(() => page.locator('.side-sec').evaluateAll(s => s.map(e => e.getAttribute('aria-label'))))
-      .toEqual(['Files', 'Cartridge', 'VICE quicksave', 'Scripts', 'Loaders', 'Program start', 'Memory map']);
+      .toEqual(['Files', 'Cartridge', 'VICE quicksave', 'Loaders', 'Program start', 'Memory map']);
     // both banks in the listing, each under its own file bar; bank 0's vectors and signature, and the code they start
     // (read once the analysis is done: on a slow machine, a laptop on battery say, it is still running here)
     await expect(statusBar(page)).not.toContainText('analysing');
@@ -4777,8 +4777,8 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await expect(page.getByRole('region', { name: 'Files' }).locator('.sec-sum')).toHaveText('1 file');
   await expect(loaders.locator('.sec-sum')).toHaveText('none found');
   await expect(page.getByRole('region', { name: 'Program start' }).locator('.sec-sum')).toHaveText('$0810');
-  // Files, VICE quicksave, Scripts, Loaders, Program start and Memory map
-  await allClosed(6);
+  // Files, VICE quicksave, Loaders, Program start and Memory map (the scripts have a view of their own)
+  await allClosed(5);
   await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
 
   await toggle.click();
@@ -4805,7 +4805,7 @@ test('the side panel\'s sections say what they hold, start closed, stay open for
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await page.reload();
   await waitForListing(page);
-  await allClosed(6);
+  await allClosed(5);
   await expect(loaders).not.toContainText('No fast, IRQ or tape loader found');
   await views.getByRole('button', { name: 'Pack' }).click();
   await allClosed(5);
@@ -6331,13 +6331,17 @@ test('scripts: the debugger goes an instruction at a time with the registers and
   });
 });
 
-test('scripts in the Explorer: made, run, shown with what they changed or what is wrong, opened in the Scripts tab, deleted', async ({ app, page }) => {
+test('the Scripts view, its own button in the activity bar: scripts made, run, shown with what they changed or what is wrong, opened in the Scripts tab, deleted', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
   await page.keyboard.press('Control+o');
   await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
-  const section = page.getByRole('region', { name: 'Scripts' });
-  await section.getByRole('button', { name: 'Scripts' }).click();
+  // the Explorer has no Scripts section: the scripts have a view of their own
+  await expect(page.locator('.side-sec[aria-label="Scripts"]')).toHaveCount(0);
+  const button = page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Scripts' });
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  const section = page.getByRole('region', { name: 'Scripts', exact: true });
   const rows = section.getByRole('list', { name: 'Scripts in the project' }).getByRole('listitem');
   const editor = page.locator('.scr-editor');
   const code = async (text: string) => {
@@ -6346,8 +6350,10 @@ test('scripts in the Explorer: made, run, shown with what they changed or what i
     await page.keyboard.insertText(text);
   };
 
-  await test.step('+ makes a script and opens it in the Scripts tab', async () => {
-    await expect(section).toContainText('none');
+  await test.step('+ makes a script and opens it in the Scripts tab; the view\'s button counts the scripts', async () => {
+    await expect(section.locator('.side-title')).toHaveText('Scripts 0');
+    await expect(section).toContainText('+ makes one');
+    await expect(button.locator('.act-count')).toHaveCount(0);
     await section.getByRole('button', { name: 'New script' }).first().click();
     await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
     await code(['        ldx #3', '!:      inc colors_0939,x', '        dex', '        bpl !-', '        rts'].join('\n'));
@@ -6356,9 +6362,10 @@ test('scripts in the Explorer: made, run, shown with what they changed or what i
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText('script');
     await expect(rows.first()).toContainText('ready to run');
+    await expect(button.locator('.act-count')).toHaveText('1');
   });
 
-  await test.step('Run in the Explorer: the change goes into the program, and the row says so', async () => {
+  await test.step('Run in the Scripts view: the change goes into the program, and the row says so', async () => {
     await rows.first().getByRole('button', { name: 'Run script' }).click();
     await expect(toast(page, /script: Returned .* It changed 4 bytes of the program in 1 place/)).toBeVisible();
     await expect(rows.first()).toContainText('4 bytes changed in the program');
@@ -6409,7 +6416,7 @@ test('scripts: safe mode runs without changing the program or its .asm, lists wh
   const changes = page.getByRole('list', { name: 'Changed in the program' });
   const tag = listing(page).locator('.patch-tag', { hasText: 'script' });
   const mark = listing(page).locator('.row .syn-comment', { hasText: 'changed by the script "script"' });
-  const section = page.getByRole('region', { name: 'Scripts' });
+  const section = page.getByRole('region', { name: 'Scripts', exact: true });
   const row = section.getByRole('list', { name: 'Scripts in the project' }).getByRole('listitem').first();
   const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); };
   const inListing = async () => { await page.getByRole('tab', { name: 'Listing' }).click(); await goTo(page, 'colors_0939'); };
@@ -6432,7 +6439,7 @@ test('scripts: safe mode runs without changing the program or its .asm, lists wh
     await inListing();
     await expect(tag).toHaveCount(0);
     await expect(mark).toHaveCount(0);
-    await section.getByRole('button', { name: 'Scripts' }).click();
+    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Scripts' }).click();
     await expect(row).toContainText('safe mode: 4 bytes would change');
   });
 
@@ -7005,5 +7012,43 @@ test('scripts: templates that decrypt and encrypt have a section of their own in
     // a second copy gets a name of its own
     await list.getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
     await expect(page.getByLabel('Script name')).toHaveValue('xor_key2');
+  });
+});
+
+test('scripts: a button for each scratchpad above the output switches between them, and marks those the last run changed', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('list', { name: 'Templates' }).getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  const tabs = page.getByRole('tablist', { name: 'Scratchpads to show' });
+  const title = page.locator('.scr-view-title');
+
+  await test.step('one scratchpad: no buttons', async () => {
+    await expect(title).toContainText('result');
+    await expect(tabs).toHaveCount(0);
+  });
+
+  await test.step('a second one: a button each, the new one shown', async () => {
+    await page.locator('.scr-sec h4').getByRole('button', { name: 'Add' }).click();
+    await expect(tabs.getByRole('tab')).toHaveText(['result', 'pad1']);
+    await expect(tabs.getByRole('tab', { name: 'pad1' })).toHaveAttribute('aria-selected', 'true');
+    await expect(title).toContainText('pad1');
+  });
+
+  await test.step('after a run the changed one has a dot; a click shows it, another click the other', async () => {
+    await page.getByRole('button', { name: /^Run/ }).click();
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    const result = tabs.getByRole('tab', { name: 'result' });
+    await expect(result.getByLabel('changed by the last run')).toHaveCount(1);
+    await expect(tabs.getByRole('tab', { name: 'pad1' }).getByLabel('changed by the last run')).toHaveCount(0);
+    await result.click();
+    await expect(result).toHaveAttribute('aria-selected', 'true');
+    await expect(title).toContainText('result');
+    await expect(result).toHaveAttribute('title', /^Show result: \$[0-9a-f]{4}-\$[0-9a-f]{4}, 1024 bytes · the last run changed it$/);
+    await tabs.getByRole('tab', { name: 'pad1' }).click();
+    await expect(title).toContainText('pad1');
   });
 });

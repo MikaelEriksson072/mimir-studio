@@ -28,6 +28,8 @@ export const ICONS = {
   bookmark: 'M7 3.5h10v17l-5-3.8-5 3.8z', pack: 'M3.5 4h17v4h-17zM5 8v12h14V8M10 12h4', clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2',
   star: 'M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.85l-5.25 2.75 1-5.8L3.5 9.7l5.9-.9z',
   shield: 'M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6zM8.8 12l2.2 2.2 4.2-4.4',
+  // a scroll with code on it: the user's scripts (spec 10.3), the Scripts view and tab
+  script: 'M19 17V5a2 2 0 0 0-2-2H4M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3M11.5 7.5 9.5 10l2 2.5M14 7.5l2 2.5-2 2.5',
 } as const;
 
 export type IconName = keyof typeof ICONS;

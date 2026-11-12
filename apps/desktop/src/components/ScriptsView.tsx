@@ -287,7 +287,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     e.pushUndoStop(); e.focus();
   };
 
-  /** Run: the code as the editor has it, in the worker (App's runUserScript, the same as the Explorer's Run) */
+  /** Run: the code as the editor has it, in the worker (App's runUserScript, the same as Run in the Scripts view of the side panel) */
   const run = () => {
     const s = curRef.current; if (!s || running) return;
     flush();
@@ -956,12 +956,31 @@ function PadView({ script, mine, would, names, mode, screen, live, theme, onMode
   }, [bytes, at, showAs, screen, byAddr, wide]);
   // the editor is for the scratchpad it was opened on
   const isEditing = !!pad && editing === `${script.id}/${pi}`;
+  // which scratchpads the last run changed (a dot on their buttons)
+  const changed = useMemo(() => script.pads.map(p => {
+    if (!p.bytes || p.bytes.length !== p.size) return false;
+    const s = padStart(p);
+    for (let i = 0; i < p.size; i++) if (p.bytes[i] !== s[i]) return true;
+    return false;
+  }), [script.pads]);
+  /** a button for each scratchpad, when there are two or more: a click shows it */
+  const tabs = script.pads.length > 1 && (
+    <div className="scr-pad-tabs" role="tablist" aria-label="Scratchpads to show">
+      {script.pads.map((p, i) => {
+        const on = !patch && p === pad;
+        return <button key={p.name + i} role="tab" aria-selected={on} className={cx('scr-pad-tab', on && 'on')} onClick={() => { if (!on) set({ shown: { kind: 'pad', i } }); }}
+          title={`Show ${p.name}: ${rangeText({ start: p.start, end: p.start + p.size })}, ${p.size} bytes${changed[i] ? ' · the last run changed it' : ''}`}>
+          <span className="scr-pad-tab-name">{p.name}</span>{changed[i] && <span className="scr-pad-tab-dot" aria-label="changed by the last run" />}</button>;
+      })}
+    </div>
+  );
   if (!pad && !patch) return <div className="scr-view" ref={setView}><div className="empty small">Run the script: what it changes in the program shows here. A scratchpad (Add) keeps data outside the program.</div></div>;
   const title = patch ? `${patch.name} · ${rangeText({ start: patch.start, end: patchEnd(patch) })} · ${plural(patch.bytes.length, 'byte')}${patch.off ? ' · left out' : ''}` : `${pad!.name} · ${rangeText({ start: pad!.start, end: pad!.start + pad!.size })} · ${pad!.size} bytes`;
   const fileName = `${script.name}_${patch ? h4(patch.start) : pad!.name}`.replace(/[^A-Za-z0-9_.-]+/g, '_');
   const differ = patch ? patch.bytes.reduce((n, b, i) => n + (b !== patch.old[i] ? 1 : 0), 0) : 0;
   return (
     <div className="scr-view" ref={setView}>
+      {tabs}
       <div className="scr-view-head">
         <b className="scr-view-title">{title}</b>
         {now && <span className="pill mid scr-live" title="Debugging: the scratchpad as the run has it now; what the last step changed is marked in the hex">now, as the run has it</span>}

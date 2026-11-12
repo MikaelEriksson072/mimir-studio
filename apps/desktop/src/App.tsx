@@ -1598,6 +1598,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /* ---- user scripts (spec 10.3): Kick Assembler code that runs in Mimir; what a run changes in the program's bytes
    * goes into the program as the script's patches, the script's code never ---- */
   const userScripts = project.userScripts ?? [];
+  /** the script running (the Scripts view's button has a spinner meanwhile) */
+  const scriptRunning = useScripts(s => s.running);
   const scriptsEnv = useMemo(() => scriptEnv(project, R, S, A.blocks), [project.files, project.cart, R, A, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
   /** what a script runs on: the program without what its earlier runs changed (a decryption runs on the bytes as they
    *  were, not on what it decrypted the last time) */
@@ -1791,7 +1793,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     });
     return { written: w.written, failed: w.failed };
   };
-  /** a run has ended (Run in the Scripts tab or the Explorer, or debugging to its end): its changes into the program
+  /** a run has ended (Run in the Scripts tab or the Scripts view, or debugging to its end): its changes into the program
    *  (in safe mode only worked out, unless `write`: Write into the program), the run kept to show, and what it did said */
   const finishScriptRun = (id: string, r: ScriptRun, text: string, write = false) => {
     const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
@@ -1825,7 +1827,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       toast(msg === 'stopped' ? `${s.name} stopped` : `${s.name} did not run: ${msg}`, msg === 'stopped' ? 'info' : 'err');
     }
   };
-  /** each script checked as the project has it, for the Explorer: whether it can run, and what is wrong */
+  /** each script checked as the project has it, for the Scripts view: whether it can run, and what is wrong */
   const scriptChecks = useMemo(() => new Map(userScripts.map(s => [s.id, checkScript(scriptsEnv, s)])), [userScripts, scriptsEnv]);
   /** a script in the Scripts tab; `line`: the line of its code to show */
   const openUserScript = (id: string, line?: number) => { useScripts.getState().set({ selected: id, shown: { kind: 'pad', i: 0 }, gotoLine: line ?? null }); setUi({ tab: 'scripts' }); };
@@ -3134,7 +3136,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'prompt', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'prompt', 'Scripts'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'script', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'script', 'Scripts'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
@@ -3146,7 +3148,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onTheme={() => setUi({ theme: theme === 'dark' ? 'light' : 'dark' })} onSettings={() => setModal('settings')}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, pack: project.pack?.ranges?.length ?? 0 }} busy={{ pack: !!packRun }} onActivity={(a: Activity) => {
+      <ActivityBar activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
           // the view shown: its button collapses the side panel; collapsed, any view's button brings it back
           if (narrow) { setUi({ activity: a }); setDrawer('side'); } else if (sidePanel && a === activity) toggleSide(); else setUi({ activity: a, sidePanel: true });
         }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />

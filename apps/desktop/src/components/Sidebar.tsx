@@ -1,4 +1,4 @@
-/* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, the tape in the datasette, program start, memory map), Blocks (a folder per type, with how many; filterable), Symbols (labels, hardware registers), Bookmarks, Pack.
+/* Sidebar: Explorer (files, the cartridge's banks, the mounted disk, the tape in the datasette, program start, memory map), Blocks (a folder per type, with how many; filterable), Symbols (labels, hardware registers), Bookmarks, Scripts (the project's scripts), Pack.
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
@@ -149,7 +149,6 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
-        <ScriptsSection {...scripts} />
         <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
         <ProgramStart A={A} R={R} project={project} onNavigate={onNavigate} onSetStart={onSetStart} />
         <SideSection id="map" title="Memory map" summary={`${segs.length} block${segs.length === 1 ? '' : 's'}`}>
@@ -167,6 +166,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
     );
   }
   if (view === 'bookmarks') return <BookmarksView A={A} editing={bmEditing} bookmarks={project.bookmarks} R={R} cursor={cursor} selected={bmSel} onSelect={onBmSelect} onGo={onBmGo} onAdd={onBmAdd} onEdit={onBmEdit} onDelete={onBmDelete} />;
+  if (view === 'scripts') return <ScriptsSideView {...scripts} />;
   if (view === 'pack') return <PackView {...pack} />;
   if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} onPlayMusic={onPlayMusic} musicPlayer={musicPlayer} onShowBlock={onShowBlock} />;
   // symbols
@@ -363,9 +363,10 @@ function QuicksaveSection({ info, follow, onOpen, onFollow, ...kept }: Quicksave
   );
 }
 
-/** The project's scripts (spec 10.3): each runs from here (its changes go into the program), opens in the Scripts tab
- *  or is deleted; + makes a new one, and the library's can be added. */
-function ScriptsSection({ list, checks, patches, onNew, onOpen, onRun, onRemove, onAdd }: ScriptsProps) {
+/** The Scripts view (its own button in the activity bar): the project's scripts (spec 10.3). Each runs from here (its
+ *  changes go into the program), opens in the Scripts tab or is deleted; + makes a new one, and the library's can be
+ *  added. */
+function ScriptsSideView({ list, checks, patches, onNew, onOpen, onRun, onRemove, onAdd }: ScriptsProps) {
   const running = useScripts(s => s.running), runs = useScripts(s => s.runs), library = useScripts(s => s.library);
   const status = (sc: UserScript): { text: string; bad?: boolean } => {
     if (running === sc.id) return { text: 'running…' };
@@ -384,36 +385,39 @@ function ScriptsSection({ list, checks, patches, onNew, onOpen, onRun, onRemove,
     return { text: sc.safe ? 'safe mode · ready to run' : 'ready to run' };
   };
   return (
-    <SideSection id="scripts" title="Scripts" summary={list.length ? `${list.length} script${list.length === 1 ? '' : 's'}` : 'none'}
-      actions={<button className="icon-btn" title="New script: Kick Assembler code that runs in Mimir (it opens in the Scripts tab)" aria-label="New script" onClick={onNew}><Icon name="plus" size={14} /></button>}>
-      {!list.length && <p className="side-hint">A script is Kick Assembler code that runs here in Mimir on the program's bytes: what it changes goes into the program and the source, its own code does not. + makes one.</p>}
-      <div role="list" aria-label="Scripts in the project">
-        {list.map(sc => {
-          const st = status(sc), ok = !!checks.get(sc.id)?.ok, changed = scriptPatches(patches, sc.id).length > 0;
-          return (
-            <div key={sc.id} role="listitem" className={cx('file-row script-row', running === sc.id && 'running')} onClick={() => onOpen(sc.id)}
-              title={`Open "${sc.name}" in the Scripts tab${sc.safe ? '\nSafe mode: its runs write nothing into the program or its .asm' : ''}${runs[sc.id] ? `\nLast run: ${scriptEndText(runs[sc.id].run)}` : ''}`}>
-              <Icon name="prompt" size={14} />
-              <div className="file-meta"><div className="file-name">{sc.name}{sc.safe && <Icon name="shield" size={12} className="scr-safe-ico" />}</div><div className={cx('small', st.bad ? 'script-bad' : 'muted')}>{st.text}</div></div>
-              <button className="icon-btn" aria-label={`Run ${sc.name}`} disabled={!ok || !!running}
-                title={!ok ? 'It does not check out: open it to fix it' : running ? 'A script is running' : sc.safe ? 'Run it in safe mode: nothing goes into the program; the row says what it would change' : 'Run it: what it changes in the program\'s bytes goes into the program'}
-                onClick={e => { e.stopPropagation(); onRun(sc.id); }}><Icon name="play" size={13} /></button>
-              <button className="icon-btn" aria-label={`Delete ${sc.name}`} title={`Delete the script${changed ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`}
-                onClick={e => { e.stopPropagation(); onRemove(sc.id); }}><Icon name="x" size={13} /></button>
-            </div>
-          );
-        })}
-      </div>
-      {library.length > 0 && <>
-        <div className="side-sub">From the library</div>
-        <div className="script-lib" role="list" aria-label="Library scripts to add">
-          {library.map(l => <button key={l.name} role="listitem" className="btn tiny ghost" title={`Add a copy of "${l.name}" to the project`} onClick={() => onAdd(l)}><Icon name="plus" size={12} />{l.name}</button>)}
+    <section className="side-inner scripts-side" aria-label="Scripts">
+      <div className="side-title">Scripts <span className="muted">{list.length}</span><span className="grow" />
+        <button className="icon-btn" title="New script: Kick Assembler code that runs in Mimir (it opens in the Scripts tab)" aria-label="New script" onClick={onNew}><Icon name="plus" size={14} /></button></div>
+      <div className="scripts-side-body">
+        {!list.length && <p className="side-hint">A script is Kick Assembler code that runs here in Mimir on the program's bytes: what it changes goes into the program and the source, its own code does not. + makes one.</p>}
+        <div role="list" aria-label="Scripts in the project">
+          {list.map(sc => {
+            const st = status(sc), ok = !!checks.get(sc.id)?.ok, changed = scriptPatches(patches, sc.id).length > 0;
+            return (
+              <div key={sc.id} role="listitem" className={cx('file-row script-row', running === sc.id && 'running')} onClick={() => onOpen(sc.id)}
+                title={`Open "${sc.name}" in the Scripts tab${sc.safe ? '\nSafe mode: its runs write nothing into the program or its .asm' : ''}${runs[sc.id] ? `\nLast run: ${scriptEndText(runs[sc.id].run)}` : ''}`}>
+                <Icon name="script" size={14} />
+                <div className="file-meta"><div className="file-name">{sc.name}{sc.safe && <Icon name="shield" size={12} className="scr-safe-ico" />}</div><div className={cx('small', st.bad ? 'script-bad' : 'muted')}>{st.text}</div></div>
+                <button className="icon-btn" aria-label={`Run ${sc.name}`} disabled={!ok || !!running}
+                  title={!ok ? 'It does not check out: open it to fix it' : running ? 'A script is running' : sc.safe ? 'Run it in safe mode: nothing goes into the program; the row says what it would change' : 'Run it: what it changes in the program\'s bytes goes into the program'}
+                  onClick={e => { e.stopPropagation(); onRun(sc.id); }}><Icon name="play" size={13} /></button>
+                <button className="icon-btn" aria-label={`Delete ${sc.name}`} title={`Delete the script${changed ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`}
+                  onClick={e => { e.stopPropagation(); onRemove(sc.id); }}><Icon name="x" size={13} /></button>
+              </div>
+            );
+          })}
         </div>
-      </>}
-      <div className="side-actions">
-        <button className="btn small" onClick={onNew}><Icon name="plus" size={13} />New script</button>
+        {library.length > 0 && <>
+          <div className="side-sub">From the library</div>
+          <div className="script-lib" role="list" aria-label="Library scripts to add">
+            {library.map(l => <button key={l.name} role="listitem" className="btn tiny ghost" title={`Add a copy of "${l.name}" to the project`} onClick={() => onAdd(l)}><Icon name="plus" size={12} />{l.name}</button>)}
+          </div>
+        </>}
+        <div className="side-actions">
+          <button className="btn small" onClick={onNew}><Icon name="plus" size={13} />New script</button>
+        </div>
       </div>
-    </SideSection>
+    </section>
   );
 }
 

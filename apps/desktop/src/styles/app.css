@@ -1296,6 +1296,13 @@ main.main { container: editor / inline-size; }
 .scr-view { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; container: scrview / inline-size; }
 .scr-view-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .scr-view-head .seg { margin-left: 0; }
+/* a button for each scratchpad above the output: a click shows it */
+.scr-pad-tabs { display: flex; gap: 2px; padding: 4px 8px 0; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; flex: none; }
+.scr-pad-tab { position: relative; display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 10px 4px; margin-bottom: -1px; border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0; background: none; color: var(--fg-3); font: 12px var(--font-code); cursor: pointer; }
+.scr-pad-tab:hover { color: var(--fg); background: var(--row-hover); }
+.scr-pad-tab.on { color: var(--fg); background: var(--panel-2); border-color: var(--line); box-shadow: inset 0 2px 0 var(--accent); }
+.scr-pad-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.scr-pad-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .scr-view-title { font: 600 12px var(--font-code); }
 .scr-dump { flex: 1; min-height: 0; margin: 0; padding: 8px 12px; overflow: auto; background: var(--editor); font-size: 12px; line-height: 18px; white-space: pre; color: var(--fg); }
 .scr-view-actions { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; }
@@ -1460,7 +1467,9 @@ main.main { container: editor / inline-size; }
 .dbg-bp { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; padding: 3px 8px; border-radius: 4px; background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--fg); font-weight: 600; font-size: 12px; }
 .dbg-bp-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); flex: none; }
 .monaco-editor .scr-call-glyph::after { content: '↳'; color: var(--hint); }
-/* the Explorer's Scripts section (10.3) */
+/* the Scripts view of the side panel (10.3): its own button in the activity bar */
+.scripts-side-body { padding: 0 10px 12px; }
+.scripts-side-body > .side-hint:first-child { margin: 0 4px 6px; }
 .side-sub { margin: 8px 0 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
 .script-lib { display: flex; flex-wrap: wrap; gap: 4px; }
 .script-lib .btn { font-family: var(--font-code); }

@@ -2,21 +2,23 @@ import { Icon, type IconName } from '../lib/icons';
 import { cx } from '../lib/util';
 import type { Activity } from '../store/ui';
 
-const ITEMS: [Activity, IconName, string][] = [['explorer', 'files', 'Explorer'], ['blocks', 'blocks', 'Blocks'], ['symbols', 'tag', 'Symbols'], ['bookmarks', 'bookmark', 'Bookmarks (Ctrl+B)'], ['pack', 'pack', 'Pack (Brokkr or Exomizer)']];
+const ITEMS: [Activity, IconName, string][] = [['explorer', 'files', 'Explorer'], ['blocks', 'blocks', 'Blocks'], ['symbols', 'tag', 'Symbols'], ['bookmarks', 'bookmark', 'Bookmarks (Ctrl+B)'], ['scripts', 'script', 'Scripts'], ['pack', 'pack', 'Pack (Brokkr or Exomizer)']];
+/** what a view at work is doing, in its button's tip */
+const BUSY: Partial<Record<Activity, string>> = { pack: 'packing', scripts: 'a script is running' };
 
 export function ActivityBar({ activity, specOpen, counts = {}, busy = {}, onActivity, onSpec, onPalette }: {
   /** the view the side panel shows; null: the side panel is collapsed */
   activity: Activity | null; specOpen: boolean;
-  /** a number shown on a view's button (the bookmarks, the ranges to pack) */
+  /** a number shown on a view's button (the bookmarks, the scripts, the ranges to pack) */
   counts?: Partial<Record<Activity, number>>;
-  /** views at work (Pack while it packs): a spinner on the button instead of the number */
+  /** views at work (Pack while it packs, Scripts while one runs): a spinner on the button instead of the number */
   busy?: Partial<Record<Activity, boolean>>;
   onActivity: (a: Activity) => void; onSpec: () => void; onPalette: () => void;
 }) {
   return (
     <nav className="activity" aria-label="Views">
       {ITEMS.map(([k, ic, l]) => (
-        <button key={k} className={cx(activity === k && 'on', busy[k] && 'busy')} title={busy[k] ? `${l}: packing…` : activity === k ? `${l}: a click collapses the side panel (Ctrl+Shift+B)` : l} aria-label={l.replace(/ \(.*\)$/, '')} aria-pressed={activity === k} aria-busy={busy[k] || undefined} onClick={() => onActivity(k)}>
+        <button key={k} className={cx(activity === k && 'on', busy[k] && 'busy')} title={busy[k] ? `${l}: ${BUSY[k] ?? 'working'}…` : activity === k ? `${l}: a click collapses the side panel (Ctrl+Shift+B)` : l} aria-label={l.replace(/ \(.*\)$/, '')} aria-pressed={activity === k} aria-busy={busy[k] || undefined} onClick={() => onActivity(k)}>
           <Icon name={ic} size={20} />{busy[k] ? <span className="act-busy spinner" aria-hidden /> : counts[k] ? <span className="act-count">{counts[k]}</span> : null}
         </button>
       ))}
