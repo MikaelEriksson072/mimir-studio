@@ -317,10 +317,25 @@ done: rts
       ['resident', 'receive loop (waits for no badline, then lda $dd00 / lsr / lsr / eor $dd00 …)'],
       ['command', 'drive command M-W, stored backwards (its installer sends it from the end)'],
     ]);
+    // version 2 (2.05 to 2.29, and 3.02 on): lda $dd00 / ora #$10; version 2's installer keeps M-W and M-E backwards
+    const v2 = loaders(' jsr fill\n rts\n.pc = $0400\nfill: lda $d011\n clc\n sbc $d012\n and #$07\n beq fill\n lda $dd00\n ora #$10\n sta $dd00\n rts\n'
+      + 'cmds: .byte $20,$00,$00,$57,$2d,$4d,$05,$00,$45,$2d,$4d\n');
+    expect(v2.map(l => l.id)).toEqual(['covert']);
+    expect(v2[0].parts.map(p => [p.role, p.what])).toEqual([
+      ['resident', 'receive loop (waits for no badline, pulls CLK with lda $dd00 / ora #$10, then lda $dd00 / lsr / lsr / eor $dd00 …)'],
+      ['command', "drive commands M-W (32 bytes at a time) and M-E $0500, stored backwards: version 2's installer sends them from the end"],
+    ]);
     // the classic loop alone is many loaders'
     const classic = loaders(' jsr r\n rts\nr: lda $dd00\n lsr\n lsr\n eor $dd00\n lsr\n lsr\n eor $dd00\n lsr\n lsr\n eor $dd00\n rts\n');
     expect(classic.map(l => `${l.id}${l.sure}`)).toEqual(['fastloaderlikely']);
     expect(classic[0].parts[0].what).toMatch(/^receive loop: the classic 2-bit loop .* as in the Covert Bitops loader and many older loaders$/);
+  });
+
+  it("know version 146 of Krill's loader by its installer's version text (GoatLight's boot)", () => {
+    // "Krill's Loader, version 146" in PETSCII upper and lower case
+    const text = [0xcb, 0x52, 0x49, 0x4c, 0x4c, 0x27, 0x53, 0x20, 0xcc, 0x4f, 0x41, 0x44, 0x45, 0x52, 0x2c, 0x20, 0x56, 0x45, 0x52, 0x53, 0x49, 0x4f, 0x4e, 0x20, 0x31, 0x34, 0x36];
+    const found = loaders(` rts\nversion: .byte ${text.map(b => `$${b.toString(16)}`).join(',')}\n`);
+    expect(found.map(l => [l.id, l.parts.map(p => p.role)])).toEqual([['krill', ['install']]]);
   });
 
   it('find any other fast loader by its drive code, drive commands, installer and receive loop', () => {

@@ -19,16 +19,42 @@
  * - a file packed in place has no end: it ends where its writing reaches its reading after a match, the rest being the
  *   bytes as they are (a few: less than a quarter of the file is taken as one, as other bytes that unpack so by chance
  *   end after a few bytes, the rest of them left).
+ * Older builds of the loader (version 146, 2015) unpack with Doynax LZ (Doynamite) instead, as GoatLight (Fairlight,
+ * Noice and Offence, 2015) has them: read from the loader's doynaxdecomp.s, and every packed file of both of GoatLight's
+ * sides is byte for byte what the demo's own unpacker (from its boot, run on Sindri's Cpu) makes of it:
+ * - where the file unpacks to (2 bytes, the low byte first), then the stream; bits come from the top of a byte, read
+ *   when they are needed, and the bytes of literals and far offsets are taken from the stream between them;
+ * - a 1 starts a literal: its length in interlaced Elias gamma (a 0 before each further bit, a 1 at the end; 0 is 256),
+ *   then its bytes, the last of them first; a literal of 256 is followed by a 1 or 0 again, any other by a match;
+ * - a match: 3 bits (the first 1 for a match of 2 bytes, then which of 4 offset ranges), the offset (in bits, or high
+ *   bits and a byte), then for a longer match its length - 1 in gamma (a data bit, then a 0 to go on or 1 to stop);
+ *   a length of 256 ends the stream;
+ * - the loader unpacks in place, reading the stream where the file loaded: when writing reaches bytes of the stream
+ *   that are still to be read (GoatLight's C1 has three), it reads what it wrote, and so does this.
+ * Such a file has to end where its stream ends. Builds with other unpackers (Exomizer, Pucrunch, ByteBoozer,
+ * Levelcrush) are not read here.
  * A disk counts as one when at least two of its files unpack so, twice as many as the files that neither unpack nor are
  * BASIC programs at $0801 (the boot program loads with LOAD; those are not tried): a disk packed another way has a file
- * that happens to unpack now and then. Builds of the loader with other unpackers (Exomizer and others) are not read here. */
+ * that happens to unpack now and then. */
 import type { Addr } from '../types';
 import { diskSectors, parseD64, petsciiName, sectorOffset, sectorsOnTrack, type D64FileType } from './d64';
+
+/** the unpackers this reads files of: the loader's ZX0 (version 184 on) and Doynax LZ (version 146) */
+export type KrillPacker = 'zx0' | 'doynax';
+/** each packer as the script and the app name it, and the extension of a file packed with it */
+export const KRILL_PACKER: Record<KrillPacker, { name: string; ext: string }> = {
+  zx0: { name: 'its ZX0', ext: 'zx0' },
+  doynax: { name: 'Doynax LZ (version 146)', ext: 'dnx' },
+};
 
 export interface KrillUnpacked {
   start: Addr; end: Addr; bytes: Uint8Array;
   /** packed in place: it ends where it started to be read */
   inplace: boolean;
+  /** what it is packed with (when it is not the ZX0) */
+  packer?: KrillPacker;
+  /** bytes of its stream that the unpacking wrote over before it read them (Doynax LZ, unpacking in place) */
+  overwritten?: number;
 }
 
 export interface KrillFile {
@@ -39,7 +65,7 @@ export interface KrillFile {
   load: Addr; end: Addr; bytes: Uint8Array;
   /** its sectors, in the order of its chain */
   sectors: [number, number][];
-  /** what it unpacks to (Krill's ZX0); null: not packed so */
+  /** what it unpacks to (the disk's packer); null: not packed so */
   unpacked: KrillUnpacked | null;
   /** a BASIC program at $0801 (a line, then a token), such as the boot program: it loads with LOAD, not with the
    *  loader, and is not tried as a packed file */
@@ -63,8 +89,8 @@ export interface KrillEntry {
 }
 
 export interface KrillDisk {
-  /** the packer of its files: the loader's ZX0 */
-  packer: 'zx0';
+  /** the packer of its files: the loader's ZX0, or Doynax LZ (version 146) */
+  packer: KrillPacker;
   /** the directory, entry by entry */
   entries: KrillEntry[];
   /** the entries' files, in the directory's order: the order the loader loads them in, the next after the last */
@@ -123,6 +149,60 @@ export function unpackKrillZx0(data: Uint8Array, load: Addr): KrillUnpacked | nu
   } catch { return null; }
 }
 
+const DOYNAX_LENGTH = [0x1f, 0x03, 0x5f, 0x0b, 0x5f, 0x00, 0x07, 0x3f];
+const DOYNAX_LOW = [0xfe, 0xee, 0x6e, 0x6e, 0xb6, 0xb6, 0xf6, 0xfe];
+const DOYNAX_HIGH = [0, 0, 0x7f, 0x7b, 0x7e, 0xfe, 0, 0];
+
+/** A file packed with Doynax LZ, as version 146 of Krill's loader unpacks it: in place, reading the stream where the
+ *  file loaded; null when it is not one. `data` starts with where it unpacks to (the low byte first). */
+export function unpackKrillDoynax(data: Uint8Array, load: Addr): KrillUnpacked | null {
+  if (data.length < 3 || load + data.length > 0x10000) return null;
+  const mem = new Uint8Array(0x10000);
+  mem.set(data, load);
+  const end = load + data.length, start = data[0] | (data[1] << 8);
+  let src = load + 2, dst = start, buf = 0, left = 0, overwritten = 0;
+  const byte = () => { if (src >= end) throw new RangeError('past the end'); return mem[src++]; };
+  const bit = () => { if (!left) { buf = byte(); left = 8; } const b = buf >> 7; buf = (buf << 1) & 0xff; left--; return b; };
+  const put = (a: Addr, v: number) => { if (a >= src && a < end && mem[a] !== v) overwritten++; mem[a] = v; };
+  try {
+    let literal = bit();
+    for (;;) {
+      if (literal) {
+        // its length (0: 256), then its bytes, the last first
+        let v = 1;
+        while (!bit()) v = ((v << 1) | bit()) & 0x1ff;
+        const n = (v & 0xff) || 256;
+        if (dst + n > 0x10000) return null;
+        for (let i = n - 1; i >= 0; i--) put(dst + i, byte());
+        dst += n;
+        if (n === 256) { literal = bit(); continue; }
+      }
+      // a match: 2 bytes or longer, and the offset's range; the offset in bits, or high bits and then a byte, worked
+      // out as the unpacker's adds with carry do
+      let y = (bit() << 2) | (bit() << 1);
+      y |= bit();
+      let a = DOYNAX_LENGTH[y], from: Addr;
+      if (a) { let c: number; do { c = a >> 7; a = ((a << 1) | bit()) & 0xff; } while (!c); }
+      if (!(a & 0x80)) {
+        const s = byte() + DOYNAX_LOW[y] + 1, hi = s < 0x100 ? (a - 1) & 0xff : a;
+        const lo = (s & 0xff) + (dst & 0xff) + 1, mid = (hi + DOYNAX_HIGH[y] + (lo >> 8)) & 0xff;
+        from = (lo & 0xff) | (((mid + (dst >> 8) + 1) & 0xff) << 8);
+      } else {
+        const s = a + DOYNAX_LOW[y] + 1, lo = (s & 0xff) + (dst & 0xff) + (s >> 8);
+        from = (lo & 0xff) | (((0xff + (dst >> 8) + (lo >> 8)) & 0xff) << 8);
+      }
+      let n = 1;
+      if (y < 4) do n = ((n << 1) | bit()) & 0xff; while (!bit());
+      // a match of 257 bytes ends the stream, which has to be where the file ends
+      if (!n) return src === end ? { start, end: dst, bytes: mem.slice(start, dst), inplace: false, packer: 'doynax', overwritten } : null;
+      if (dst + n + 1 > 0x10000) return null;
+      for (let i = 0; i <= n; i++) put(dst + i, mem[(from + i) & 0xffff]);
+      dst += n + 1;
+      literal = bit();
+    }
+  } catch { return null; }
+}
+
 /** The most common value, the smallest of those as common; `none` for none. */
 function mode(values: number[], none: number): number {
   const count = new Map<number, number>();
@@ -132,7 +212,8 @@ function mode(values: number[], none: number): number {
   return best;
 }
 
-/** The directory and files of a disk for Krill's loader whose files are packed with its ZX0; null when it is not one. */
+/** The directory and files of a disk for Krill's loader whose files are packed with its ZX0 or Doynax LZ; null when it
+ *  is not one. */
 export function readKrillDisk(disk: Uint8Array): KrillDisk | null {
   let image: Uint8Array, img: ReturnType<typeof parseD64>;
   try { image = diskSectors(disk); img = parseD64(image); } catch { return null; }
@@ -169,12 +250,17 @@ export function readKrillDisk(disk: Uint8Array): KrillDisk | null {
     // can happen to unpack (Kings Size has two that do), so it is not tried
     const link = bytes[0] | (bytes[1] << 8);
     const basic = load === 0x0801 && bytes.length >= 6 && link > 0x0805 && link <= 0x0801 + bytes.length && bytes[4] >= 0x80;
-    e.file = { entry: n, load, end: Math.min(load + bytes.length, 0x10000), bytes, sectors: c.sectors, unpacked: basic ? null : unpackKrillZx0(bytes, load), basic };
+    e.file = { entry: n, load, end: Math.min(load + bytes.length, 0x10000), bytes, sectors: c.sectors, unpacked: null, basic };
     return e;
   });
   const files = entries.flatMap(e => (e.file ? [e.file] : []));
-  const packed = files.filter(f => f.unpacked).length, other = files.filter(f => !f.unpacked && !f.basic).length;
-  if (packed < 2 || packed < 2 * other) return null;
+  // the loader's ZX0, else Doynax LZ (an older build): the first that the disk's files are packed with
+  const packer = (['zx0', 'doynax'] as const).find(p => {
+    for (const f of files) f.unpacked = f.basic ? null : p === 'zx0' ? unpackKrillZx0(f.bytes, f.load) : unpackKrillDoynax(f.bytes, f.load);
+    const packed = files.filter(f => f.unpacked).length, other = files.filter(f => !f.unpacked && !f.basic).length;
+    return packed >= 2 && packed >= 2 * other;
+  });
+  if (!packer) return null;
   // the step from a sector to the next on the same track, as cc1541's interleave takes it
   const steps = files.flatMap(f => f.sectors.slice(1).flatMap(([t, s], i) => {
     const [pt, ps] = f.sectors[i];
@@ -182,7 +268,7 @@ export function readKrillDisk(disk: Uint8Array): KrillDisk | null {
   }));
   const bam = sec(18, 0);
   return {
-    packer: 'zx0', entries, files, header: img.name, id: petsciiName(bam.subarray(0xa2, 0xa7)), headerRaw: bam.slice(0x90, 0xa0), idRaw: bam.slice(0xa2, 0xa7),
+    packer, entries, files, header: img.name, id: petsciiName(bam.subarray(0xa2, 0xa7)), headerRaw: bam.slice(0x90, 0xa0), idRaw: bam.slice(0xa2, 0xa7),
     interleave: mode(steps, 10), tracks,
   };
 }
@@ -190,8 +276,9 @@ export function readKrillDisk(disk: Uint8Array): KrillDisk | null {
 const hx = (v: number, w: number) => v.toString(16).padStart(w, '0');
 
 /** A file's name in the rebuilt script: its directory entry and where it unpacks to (or loads, when it is not packed),
- *  `.zx0` for the file as it is on the disk when it is packed, else `.prg` (the local names are not on the disk). */
-export const krillFileName = (f: KrillFile): string => `file${hx(f.entry, 2)}_${hx(f.unpacked?.start ?? f.load, 4)}.${f.unpacked ? 'zx0' : 'prg'}`;
+ *  `.zx0` (`.dnx` for Doynax LZ) for the file as it is on the disk when it is packed, else `.prg` (the local names are
+ *  not on the disk). */
+export const krillFileName = (f: KrillFile): string => `file${hx(f.entry, 2)}_${hx(f.unpacked?.start ?? f.load, 4)}.${f.unpacked ? KRILL_PACKER[f.unpacked.packer ?? 'zx0'].ext : 'prg'}`;
 /** The name of a packed file unpacked: a PRG at where it unpacks to. */
 export const krillUnpackedName = (f: KrillFile): string => `file${hx(f.entry, 2)}_${hx(f.unpacked?.start ?? f.load, 4)}.prg`;
 
@@ -235,7 +322,7 @@ const TYPE_OPTION: Partial<Record<D64FileType, string>> = { SEQ: 'SEQ', USR: 'US
 export function cc1541Script(disk: KrillDisk, name: string): string[] {
   const n = disk.files.length, unpacked = disk.files.filter(f => f.unpacked).length;
   const out = [
-    `# cc1541 command line, rebuilt by Mimir Studio from ${name} (Krill's loader, its ZX0): ${n} file${n === 1 ? '' : 's'}, ${unpacked} of them packed.`,
+    `# cc1541 command line, rebuilt by Mimir Studio from ${name} (Krill's loader, ${KRILL_PACKER[disk.packer].name}): ${n} file${n === 1 ? '' : 's'}, ${unpacked} of them packed.`,
     '# Krill\'s loader has no load script: a part loads a file by its name, or the next file in the directory with an empty',
     '# name, so the directory is the order they load in. cc1541 writes each file as it is on the disk (packed); the names',
     '# are the directory\'s (# and two hex digits is a PETSCII byte), the local file names are made up from the entry and',
@@ -248,7 +335,8 @@ export function cc1541Script(disk: KrillDisk, name: string): string[] {
       continue;
     }
     const u = f.unpacked;
-    const what = u ? `unpacks to $${hx(u.start, 4)}-$${hx(u.end - 1, 4)} (${u.end - u.start} bytes)` : f.basic ? 'a BASIC program, loaded with LOAD and RUN' : 'not packed with the loader\'s ZX0';
+    const what = u ? `unpacks to $${hx(u.start, 4)}-$${hx(u.end - 1, 4)} (${u.end - u.start} bytes)${u.overwritten ? `, writing over ${u.overwritten} byte${u.overwritten === 1 ? '' : 's'} of its stream before they are read` : ''}`
+      : f.basic ? 'a BASIC program, loaded with LOAD and RUN' : `not packed with ${disk.packer === 'zx0' ? "the loader's ZX0" : 'Doynax LZ'}`;
     out.push(`#   ${label} ${krillFileName(f).padEnd(16)} loads at $${hx(f.load, 4)}-$${hx(f.end - 1, 4)} (${f.bytes.length} bytes), ${what}`);
   }
   const lines = [`cc1541 -n "${cc1541Text(disk.headerRaw)}" -i "${cc1541Text(disk.idRaw, false)}"${disk.interleave !== 10 ? ` -S ${disk.interleave}` : ''}`];

@@ -44,8 +44,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     with no labels for what its instructions only read to take time. Spindle's jitter correction, which subtracts
     the timer from a constant, is one too;
   - routines nothing traced reaches, such as an init that ran before a snapshot was taken;
-  - fast loaders: Spindle, Krill's loader, Bitfire, Sparkle, BoozeLoader (HCL's, in Booze Design's demos since 2008),
-    the Covert Bitops loader, and any other one by its drive code;
+  - fast loaders: Spindle, Krill's loader (its version 146 too, by the version text its installer keeps), Bitfire,
+    Sparkle, BoozeLoader (HCL's, in Booze Design's demos since 2008), the Covert Bitops loader (versions 2 and 3), and
+    any other one by its drive code;
   - Pirate Slayer, Electronic Arts' copy protection (1986-1989): its loader in the analysis, and on a mounted disk its
     key track (on a G64: track 2 with no SYNC, read bit by bit), its boot (EA and LOADER, the stack-page EA, or a
     game's own) and what it does, in the *Pirate Slayer* tab, with the game's files outside the directory (sector
@@ -98,7 +99,15 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     one in the directory, so the directory is the order, often under a dirart. The *Krill script* tab lists the files
     in that order, unpacked as the loader unpacks them while it loads; *Copy script* copies the cc1541 command line that
     writes the disk again (the names as PETSCII bytes, the blocks the directory shows, the dirart's lines), and *Save
-    files…* saves every file as it is on the disk and unpacked, with that command line;
+    files…* saves every file as it is on the disk and unpacked, with that command line. Version 146 of the loader,
+    whose files are packed with Doynax LZ, is read the same way (GoatLight, 2015: both sides, every packed file byte for
+    byte what the demo's own unpacker makes of it);
+  - the files of a disk for Cadaver's Covert Bitops loader (versions 2 and 3): the files of its directory, loaded by
+    name, unpacked as the loader unpacks them (exomizer level 1/2/3, exomizer3 raw, pucrunch), the load calls read from
+    the code on the disk (which also say where a raw file goes), and which of Cadaver's tools laid the disk out
+    (makedisk or maked64). The *Covert script* tab lists the files, loads each one into Mimir unpacked, copies the
+    tool's command file and command line that write the disk again, and *Save files…* saves every file as it is on the
+    disk and unpacked, with the command file; `mimir disks <folder>` counts the disks each loader's reader takes;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
     Gold's loader and Martin Piper's TapeTool (the TinyHeader file its boot loader reads, files in checksum blocks in
     any order, RLE packed blocks) are
@@ -243,7 +252,7 @@ packed file.
    **Build & Run** it in VICE (`F5`), or in Retro Debugger or C64 Debugger (`Shift+F5`, set in *Settings → Toolchain*).
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
-the Spindle, Bitfire, Booze, Sparkle and Krill scripts and Pirate Slayer (when there is one), statistics and the build output. With a
+the Spindle, Bitfire, Booze, Sparkle, Krill and Covert scripts and Pirate Slayer (when there is one), statistics and the build output. With a
 disk mounted, Build & Run writes the files the project opened from it back into a copy of the disk as they were built
 (a G64's sectors encoded again in place, its copy protection untouched), and autostarts that copy when the project
 starts with the disk's first program, so the disk's own boot loads them.

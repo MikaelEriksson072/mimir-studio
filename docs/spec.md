@@ -1223,12 +1223,12 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 |---|---|
 | Spindle 3 (lft) | den fasta sidan som börjar `lda #$18 / nop #1 / cmp #$38` (`A9 18 80 01 C9 38`); mottagarloopen `eor $dd00 / sax $dd00` (`4D 00 DD 8F 00 DD`). Delen är hela sidan (standard `$0200`, `jsr` dit laddar nästa del) |
 | Spindle 2 (lft) | `ldx $dd00 / sty $dd00 / eor tabell,x` (`AE 00 DD 8C 00 DD 5D`), de två fasta sidorna `$0c00–$0dff` (läst ur spin.exe i 2.3) |
-| Krill's loader (Krill/Plush) | `ora $dcc9,x / stx $dd02 / ror / ror / ldx #$3f / sax` och `adc $dd00 / stx $dd02 / iny / beq` (v194, hal-c64-c128.inc); installationen skickar `"M-E" $020b "KRILL."` |
+| Krill's loader (Krill/Plush) | `ora $dcc9,x / stx $dd02 / ror / ror / ldx #$3f / sax` och `adc $dd00 / stx $dd02 / iny / beq` (v194, hal-c64-c128.inc); installationen skickar `"M-E" $020b "KRILL."`; version 146 på installerarens versionstext `"Krill's Loader, version "` i PETSCII med stora och små bokstäver (GoatLight, 13.5l) |
 | Bitfire (Bitbreaker/Oxyron) | `adc $dd00 / stx $dd02 / lsr / lsr / dey / cpy #$01`, `ora $dd00 / stx $dd02 / ror / ror / ldx #$3f / sax` (resident.asm), och den äldre `ldy #$37 / lda $dcc9,y / sty $dd02` |
 | Sparkle (Sparta/OMG) | `lda $dd00 / sty $dd00 / lsr / lsr / dex / nop / ldy #$c0 / ora $dd00 / sty $dd00` och `and $dd00 / sta $dd00 / ora #0 / sta buffer,x / bvc` (sl.asm), i en senare version `inx` och `ora #1`, i Memento Mori `inx` och `ldy #$00`; blockuppackaren på `$0200` (`lda $0300,x / beq / cmp #$f8 / bcs / lsr / alr #$fe / tay / eor #$ff / adc`, och i All Hallows Eve och senare `lda $0300,x / bpl / sty / alr #$7c / lsr / cmp #2`), som en del sparad från `$0200` har utan mottagarloopen; texten "sparkle". En Sparkle-disks bundlar läses som 13.5i säger |
 | BoozeLoader (HCL/Booze Design) | mottagarloopen `dey / ldx #8 / lda $dd00 / stx $dd00 / lsr / lsr / iny / nop / ldx #0 / eor $dd00 / stx $dd00 / lsr / lsr`, där ATN skrivs till `$dd00` som klocka, och dess fjärde läsning `lda #$c0 / and $dd00 / sta $dd00 / ora #0 / sta buffer,y`; hur den skickar en bit av filnumret (`ldy #0 / bcc / ldy #$10 / lda #8 / sta $dd00 / bit $dd00 / bpl / sty $dd00 / rts`); ByteBoozer 1:s och 2:s offsettabeller, som bara räknas med loaderns egen kod; drivkommandot `"M-E" $020b` med sina egna byte, som låter DOS:en läsa drivkoden från 18/18, 18/15 och 18/12. Mönstren kommer ur Booze Designs demos 2008–2025 (källkoden är inte offentlig). Drivkoden finns aldrig i C64:ans minne, och skriptet i koden läses som 13.5d säger |
 | Pirate Slayer (Electronic Arts) | drivkodens nyckelkontroll `bvc * / clv / lda $1c01 / cmp #$d7 / bne / bvc * / clv / lda $1c01 / cmp #$d7 / beq / cmp #$eb / bne` (`50 FE B8 AD 01 1C C9 D7 D0 .. 50 FE B8 AD 01 1C C9 D7 F0 .. C9 EB D0`) och nyckelns 12 sista byte `55 AE 9B 55 AD 55 CB AE 6B AB AD AF`; drivens sändrutin `lda #1 / sta $1800 / bit $1800 / bne / stx $1800 / txa / asl / and #$0f / sta $1800`; C64:ans mottagarloop `sec / ldx $02 / lda $d012 / sbc #$32 / bcc / and #$07 / beq / stx $dd00` och stack-bootens handskakning `lda $dd00 / and #$07 / ora #$08 / sta $dd00 / lda $dd00 / bmi / dey / beq / bit $dd00 / bvs …`; texten `PIRATESLAYER`. Mönstren kommer ur drivkoden och laddarna som bootarna på fyra EA-skivor laddade upp och körde (Sindri med deras G64:or, 13.5h). Super Snapshot-kopierarens tecken `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c` (motor och lampa på) räknas nu bara med kopierarens egen kod: Pirate Slayers drivkod börjar likadant |
-| Covert Bitops loader (Cadaver) | badline-väntan `lda $d011 / clc / sbc $d012 / and #$07 / beq` följd av `lda #$10 / ora $dd00 / sta $dd00` (v3 loader.s), och `M-W` lagrat baklänges (`"W-M"`) |
+| Covert Bitops loader (Cadaver) | badline-väntan `lda $d011 / clc / sbc $d012 / and #$07 / beq` följd av `lda #$10 / ora $dd00 / sta $dd00` (3.0–3.01) eller `lda $dd00 / ora #$10 / sta $dd00` (version 2 och 3.02–3.06), `M-W` lagrat baklänges (`"W-M"`), version 2:s `20 00 00 "W-M" 05 00 "E-M"` och dess 1-bitsloop `lda #$10 / eor $dd00 / sta $dd00 / asl / ror` (räknas bara med koden); läst ur loader.s i alla releaser 2.05–3.06 och prövat på deras testprogram (13.5l) |
 | Action Replay fastload (Datel) | byten tas emot på en rad utan badline: `bit $dd00 / bvc / sec / lda $d012 / sbc $aa / bcc / and #$07 / beq` (MK4: `cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); ett block till `$0200` (`… ora $dd00 / sta $0200,y`); stackkoden som kopierar blocken med cartridgen avbankad (`lda #$23 / sta $de00`, 128 byte till `$013f`); drivkoden: starten vid `$0150` (`sei / jsr $01xx / lda #$7a / sta $1802`), 1541-koden vid `$0300`, 1581-koden vid `$0500` (`sta $4001`); installationen som skickar `M-`, `-` och `W`/`E`/`R` var för sig |
 | Action Replay Warp*25 (Datel) | mottagarloopen som lägger tre byte per varv på stacken (`… eor $dd00 / pha / lda $dd00 …`); avkodningen `inc $01 / pla / eor #$f9 / dey / sta ($ae),y` (MK4 `dec $01`); stackkoden (`ldx #$20 / stx $de00`); 1541-koden vid `$0400` (768 byte); `B-E 2 0 18 5/6` i loaderfilen, som bara räknas med koden (andra loaders har samma B-E) |
 | Action Replay, bandbackuper (Datel) | loadern i bandets header (`$0351–$03fa`, början `lda #$0b / sta $d011 / lda #$05 / sta $01 / sta $c0`), synkbyten `"RB"`, biten genom CIA2:s timer B (`lda $dd0d / stx $dd0f / lsr / lsr / inc $d020`), första filen som skriver över vektorerna vid `$0300` och hoppar till `$0351`; sparrutinen. Turbo och superturbo har samma loader (pulslängden står på bandet) |
@@ -3283,8 +3283,8 @@ efter namn, sedan tomma namn som laddar nästa fil i katalogen (fil 2–6 i kata
   råkar packas upp.
 - En katalogpost utan sektorer (spår 0, eller 18/0, BAM:en) är en rad i en dir-art. En post som börjar där en tidigare
   gör är samma fil (en loop-fil).
-- Byggen av loadern med andra uppackare (Exomizer och andra, som Still Standing och Meetro 2024) läses inte här, och
-  inte heller diskar som laddar efter spår och sektor.
+- Version 146 med Doynax LZ (GoatLight) läses också, se 13.5l. Byggen av loadern med andra uppackare (Exomizer och
+  andra, som Still Standing och Meetro 2024) läses inte här, och inte heller diskar som laddar efter spår och sektor.
 
 **Skriptet** (`cc1541Script`): först kommentarsrader om vad disken är och hur loadern laddar, och en rad per katalogpost
 (filnamnet, var den laddas, vart den packas upp; en rad utan fil, samma fil som en tidigare). Sedan cc1541:s kommandorad:
@@ -3335,6 +3335,163 @@ kopior (också 16-bitars längder, långa offset och en upprepad offset), filer 
 filnamnen, PRG:erna, cc1541-namnen och kommandoraden, och andra loaders diskar. `fixtures/d64/krill-demo.d64` är en av
 diskarna: ett BASIC-startprogram, rasterdemot packat med slut, en fil packad på plats under ett dir-art-namn och en rad
 dir-art. `e2e/app.spec.ts` (*a mounted disk for Krill's loader*) monterar den.
+
+### 13.5l Diskar för Covert Bitops-loadern (makedisks och maked64:s kommandofil) – och GoatLight
+
+Covert Bitops-loadern (Cadaver, Lasse Öörni) finns i två generationer: version 2, *Autoconfiguring Loader/Depacker*
+2.0–2.29 (2002–2020), och version 3, *Loadersystem* 3.0–3.06 (2023). Den laddar vanliga filer i diskens katalog, var och
+en en kedja av länkade sektorer, efter namn:
+- version 2 med två bokstäver i X och Y (namnets två första tecken) eller en pekare till ett helt namn som slutar med en
+  0 (en `*` avslutar det tidigare);
+- version 3 med ett nummer i A: namnets två första tecken som hexsiffror (`"00"`–`"FF"`; resten av namnet tittar
+  drivkoden inte på).
+
+Filen går till minnet byte för byte, som drivkoden skickar den, med den rutin programmet anropar. `readCovertDisk()`
+(`packages/core/src/c64/covert-disk.ts`) läser katalogen och filerna (`CovertDisk`, `CovertEntry`, `CovertFile`,
+`CovertCall`), och `covertScript()` skriver kommandofilen som bygger disken igen.
+
+**Källorna** är Cadavers egna: loaderns alla releaser från hans sidor (cadaver.github.io: `loader.zip` = 2.05,
+`loader212.zip`, `loader223`–`229`, `loader30`–`306`, var och en med källkod, testprogram och en färdigbyggd
+exempeldisk), c64loader, c64gameframework, Hessian, MW4 och Steel Ranger på GitHub, och c64tools med `makedisk.c`.
+
+**Filerna:**
+- *Som de är:* de två första byten är laddadressen (`LOADFILE`, `LoadUnpacked`), eller programmet säger vart
+  (`LoadUnpackedRaw`).
+- *Exomizer 1/2* (`LOADFILE_EXOMIZER`, version 2): filen är `exomizer level` (Exomizer 1: `exomizer -r`) som den är:
+  var den slutar, den höga byten först, sedan strömmen (protokoll 0), som packas upp baklänges. Med `-f` (loadern
+  byggd med `FORWARD_DECRUNCHING`) är adressen starten och den packas upp framlänges. En fil som får plats åt båda
+  hållen tas baklänges, loaderns standard.
+- *Exomizer 3* (2.27–2.29 byggd med `EXOMIZER_VERSION_3`): detsamma med `exomizer3 level`, protokoll 7 (bitarna
+  uppifrån i en byte, längre offset i hela byte, första literalen utan flagga), och framlänges med `-f`.
+- *Exomizer 3 raw* (`LoadExomizer3Raw`, version 3): `exomizer3 raw -T4 -M256 -P-32 -c`, bara strömmen, framlänges dit
+  programmet säger (X och Y). Cadavers egna spel packar så också (`pack3`, som lämnar Exomizer 3.1:s protokoll 39 som
+  det är), men deras motorers loaders och chunk-filer (`pchunk`) är deras egna och läses inte här.
+- *Pucrunch* (`LOADFILE_PUCRUNCH`, version 2): `pucrunch -c0`: en laddadress som loadern hoppar över, `"pu"`, slutet,
+  escape-värdet, starten, parametrarna, högst 31 RLE-byte och sedan strömmen. Det är Pucrunchs gamla format, som
+  loaderns uppackare läser (en byte över tabellen är 5 bitar och 3 till); dagens Pucrunch skriver 15 RLE-byte.
+- Strömmarna läses med Brokkrs Exomizer-läsare (den läser alla protokoll) och en egen Pucrunch-läsare
+  (`unpackCovertExomizer`, `unpackCovertExomizer3Raw`, `unpackCovertPucrunch`, `unpackCovertFile`). En fil räknas bara
+  när strömmen slutar där filen slutar.
+
+**Disken:**
+- En disk räknas när loaderns kod finns i en av dess filer, som den är eller uppackad: installerarens drivkommandon
+  `M-W` och `M-E` lagrade baklänges (version 2: `20 00 00 "W-M" 05 00 "E-M"`, version 3: `20 04 04 "W-M" .. .. "E-M"`),
+  annars mottagarloopen (3.0 och 3.01: `lda #$10 / ora $dd00`, version 2 och 3.02 och senare: `lda $dd00 / ora #$10`).
+- Eller när minst två av dess filer är packade som loadern läser dem, och dubbelt så många som filerna som varken är
+  packade eller BASIC-program på `$0801` (de laddas med LOAD och prövas inte), som för Krills loader (13.5k).
+- Versionen är kodens, annars den som packar så (raw: version 3).
+- Andra loaders som läser `exomizer level`- eller `pucrunch -c0`-filer som de är skulle också räknas; deras filer packas
+  upp lika rätt. Monteringen prövar läsarna i ordningen Spindle, Bitfire, BoozeLoader, Sparkle, Krill, Covert.
+
+**Anropen i koden** (`CovertCall`): loadern har inget laddskript, programmet ber om en fil efter namn. I filernas kod
+(uppackad, eller i en fil som inte är packad) läses `ldx #"A" / ldy #"B" / jsr`, `ldx #<namn / ldy #>namn / jsr` (namnet
+i samma fil, avslutat med 0) och `lda #$01 (/ ldx #<till / ldy #>till) / jsr`, när de namnger en fil på disken.
+`lda #n / jsr` finns överallt: en rutin räknas som loadern när den anropas med två av diskens filer eller fler, eller
+från ett program med loaderns kod och med X och Y satta också. En raw-fil packas upp dit det första anropet som laddar
+den lägger den; utan ett sådant öppnas den på `$1000` (`COVERT_RAW_AT`). Ett startprogram som är packat med en
+Exomizer-sfx (det vanliga) har sina anrop utom räckhåll här.
+
+**Hur disken byggs:** med Cadavers egna verktyg, *makedisk* (c64tools; loaderns exempeldiskar, BOFH, MW4) och
+*maked64* (Hessian, Steel Ranger, c64gameframework). Båda tar en kommandofil med en rad per fil, den lokala filen och
+namnet på disken (`_` för mellanslag), och på kommandoraden diskens namn (16 tecken rubrik, 2 till, id:t, ett till och
+DOS-typen: `_` för `$a0`, `.` för ett mellanslag) och interleaven.
+- makedisk skriver filerna i kommandofilens ordning, från katalogen och utåt: spår 17 nedåt, sedan 19 uppåt (med
+  interleave över 10 tvärtom), och katalogen i samma ordning.
+- maked64 skriver från spår 1 och uppåt i den ordning som står efter den första tomma raden, med en fils egen interleave
+  efter dess namn; med `dir` får filerna gå på spår 18 också.
+- Båda börjar en fil på första lediga sektorn på ett spår (från sektor 0 uppåt; med interleave över 10: 0 och sedan
+  nedåt) och går `interleave` sektorer vidare, annars till nästa lediga på spåret, annars till nästa spår.
+- `readCovertDisk` lägger ut filerna som vart och ett av verktygen gör och säger vilket som lagt disken (`tool`), i
+  vilken ordning (`order`) och med vilken interleave (diskens: den flest filer tar, och en fils egen, `fileInterleave`).
+
+**Skriptet** (`covertScript`, `covertScriptText`): kommandofilen så som verktyget läser den (`seq`), anteckningar om
+disken och varje post med anropen som laddar den (`notes`), och kommandoraden, till exempel
+`makedisk examples.d64 examples.seq LOADER_EXAMPLES___LE_2A 12`. makedisk tar varken kommentarer eller tomma rader i sin
+kommandofil (en tom rad skriver förra filen igen), så anteckningarna står för sig. Ett namn med byte som inte kan
+skrivas i en kommandofil (skiftade bokstäver, grafik, `$a0` inne i namnet) står som `?`, med en anteckning om byten.
+Filerna heter `file01_0801.exo`: posten och vart den packas upp (`.exo`, `.exo3`, `.puc`; `raw` för en raw-fil utan
+adress; `.prg` när den inte är packad).
+
+**I appen:**
+- Explorer säger om en monterad disk *Covert Bitops loader: version 2, 3 files packed (Exomizer 1/2, Exomizer 3,
+  Pucrunch), 1 load call read from the code; files loaded by name, laid out by makedisk*, med knappen **Covert
+  script**. Monteringen säger *a disk for the Covert Bitops loader (…)*.
+- Bottenpanelens flik **Covert script** har en rad per fil: posten, namnet som 1541:an listar det, var den laddas
+  (*packed* för en packad fil), vart den packas upp (*raw* när programmet säger det), storlek (packad → uppackad),
+  filnamnet och anmärkningar (packaren och hur filen görs, *raw: the program says where*, loaderns egen kod, anropen som
+  laddar den, var den börjar, blocken katalogen visar). Under raderna står anropen och kommandofilen med kommandoraden.
+- Ett klick på en rad laddar in filen i Mimir som en PRG: uppackad där den packas upp, annars som den laddas. **+**
+  lägger till den i projektet.
+- **Copy script** kopierar anteckningarna, kommandofilen och kommandoraden. **Save files…** sparar varje fil som den är
+  på disken och uppackad (`.prg`) i en mapp man väljer, med `<disk>.seq` (kommandofilen) och `<disk>-makedisk.txt` eller
+  `<disk>-maked64.txt` (anteckningarna och kommandoraden).
+
+**Loadersökningen** (8.11c) kände bara igen version 3. Nu känns version 2 igen på sin mottagarloop (`lda $dd00 / ora
+#$10`), 1-bitsloopen (`lda #$10 / eor $dd00 / sta $dd00 / asl / ror`, som bara räknas med loaderns egen kod) och
+installerarens `M-W`/`M-E` baklänges: testprogrammen i 2.05, 2.12 och 2.29 hittas.
+
+**Kommandoraden:** `mimir disks <mapp>... [--list] [--json]` läser varje D64 och G64 i mapparna som appen gör när den
+monterar en, och räknar diskarna och de olika diskarna (efter innehåll) som varje loaders läsare tar; `--list` skriver
+en rad per disk med vad läsaren säger. Det är så arkivet räknas och falska träffar letas.
+
+**Mätt mot Cadavers egna diskar** (exempeldiskarna i loaderns 16 releaser, 2.05, 2.12, 2.23–2.29 och 3.0–3.06):
+- Alla läses, versionen av koden i testprogrammen. Alla 28 packade filer (Exomizer 1 och 2, Exomizer 3, Exomizer 3 raw,
+  Pucrunch) är byte för byte vad loaderns egen uppackare gör av dem: rutinen ur testprogrammet på samma disk
+  (`loadfile_exomizer`, `loadfile_pucrunch`, `LoadExomizer3Raw`) körd på Sindris Cpu, med `openfile` och `getbyte`
+  fångade så att `getbyte` ger filens byte (version 3:s `GetByte` lämnar carry som den är, version 2:s nollar den;
+  2.05 läser genom en omslagsrutin `php / jsr getbyte / bcs / plp / rts`).
+- 15 av de 16 är lagda som makedisk lägger dem (inte 2.05:s). Testhjälparen skriver de 15 igen byte för byte ur det
+  läsaren läste: namnet, interleaven, ordningen och filerna. maked64-porten skriver c64gameframeworks `example.d64` igen
+  byte för byte ur dess `example.seq`.
+- 3.x-diskarnas raw-fil `01` får sin adress, `$4000`, ur testprogrammets anrop `lda #$01 / ldx #<$4000 / ldy #>$4000 /
+  jsr`.
+- Ingen av Mimirs andra fixture-diskar tas, inte heller GoatLight eller Cadavers musikdiskar. c64gameframeworks
+  exempeldisk tas inte: tre av dess åtta filer är Exomizer 3 (raw och `level -f`), de andra fem `pchunk3`-filer, och
+  dess loader är motorns egen.
+
+**GoatLight** (Fairlight, Noice och Offence, Revision 2015, CSDb 137495) togs för en Covert-disk, men är det inte.
+CSDb:s credits säger *Loader … Krill of Plush*, sd2iec:s lista över produktioner med Krills loader säger version 146, och
+startprogrammet (som Sindri packar upp: en Exomizer-sfx till `$0800–$9766`, start `$4800`) har texten *Krill's Loader,
+version 146, configuration 81E.40.1.0.0.120002.18101C.01101011000110000010.6.0A2712120201.2.0*: filnamn på 2 tecken
+(`FILENAME_MAXLENGTH` 2) och uppackare 2, Doynax LZ (Doynamite). Mimir kallade startprogrammet *A fast loader (not one
+of the known ones)*. Nu:
+- Krill-läsaren (13.5k) läser också version 146 med Doynax LZ (`unpackKrillDoynax`, `KrillDisk.packer` `'doynax'`,
+  filerna `.dnx`). Formatet är läst ur loaderns `doynaxdecomp.s` (r146) och ur den residenta delen i GoatLights minne:
+  - först vart filen packas upp (2 byte, den låga först), sedan strömmen. Bitarna läses uppifrån i en byte, som hämtas
+    när den behövs; literalernas byte och fjärran offsets låga byte tas ur strömmen mellan dem;
+  - en 1 börjar en literal: längden som sammanflätad Elias-gamma (en 0 före varje bit till, en 1 sist; 0 är 256), sedan
+    byten, den sista först. Efter en literal på 256 byte kommer en 1 eller 0 igen, efter en kortare alltid en kopia;
+  - en kopia: 3 bitar (den första 1 för en kopia på 2 byte, sedan vilket av fyra offsetintervall), offseten (i bitar,
+    eller höga bitar och en byte, räknad nedåt från intervallets topp), och för en längre kopia längden − 1 som gamma
+    (en databit, sedan 0 för att fortsätta eller 1 för att sluta). Längden 256 avslutar strömmen, som ska sluta där
+    filen slutar;
+  - loadern packar upp på plats och läser strömmen där filen laddats. När skrivningen når byte i strömmen som inte är
+    lästa än läser den det den skrev: GoatLights `C1` skriver över tre sådana byte, och läsaren gör likadant
+    (`KrillUnpacked.overwritten`, som tabellen och skriptet visar).
+- ZX0 prövas först, sedan Doynax LZ: diskens filer ska packas upp med samma uppackare.
+- Loadersökningen känner igen version 146 på installerarens versionstext (`"Krill's Loader, version "` i PETSCII med
+  stora och små bokstäver), och GoatLights startprogram kallas nu *Krill's loader*.
+- **Mätt:** sida A har 30 poster (28 filer: startprogrammet och 27 packade, två rader dir-art), sida B 8 poster (6 filer:
+  5 packade och `D2`, 4 byte). Alla 32 packade filer är byte för byte vad demots egen uppackare gör av dem: `decompress`
+  ur den residenta delen i startprogrammet (`$9650`, som körs flyttad till `$043c`) körd på Sindris Cpu, med filen i
+  minnet där den laddas och `getcmem` riktad mot den. I appen (Electron under Xvfb) listar fliken **Krill script** båda
+  sidorna, en rad laddar in en fil uppackad (`file04_3100.prg`, `file02_6400.prg`), och **Save files…** sparar 28 och 6
+  filer, packade och uppackade, med cc1541:s kommandorad.
+- Sindris 1541 behöver DOS-ROM:en, som inte fanns i molnet där detta gjordes: GoatLight kördes inte med disken i
+  Sindris station. Verifieringen är demots egen uppackare mot varje fil.
+
+**Test:** `test/covert-disk.test.ts`, med diskar som `test/helpers/covert-disk.ts` skriver (makedisk och maked64
+portade från deras C-källor, filer packade med Brokkrs Exomizer-strömmar och en egen enkel Pucrunch-skrivare, ingen kod
+från loadern utom där ett test lägger dit byte av den): varje packare (Exomizer level bak- och framlänges, Exomizer 3,
+raw, Pucrunch med escape, kopior och RLE), byte som inte är någon fil, version 2:s disk (makedisk, anrop med bokstäver
+och med namn), version 3:s disk (maked64 med skrivordning och en fils egen interleave, koden, raw-filer dit anropet lägger
+dem), filnamnen och PRG:erna, att skriptet skriver samma disk igen byte för byte (makedisk, maked64, maked64 med `dir`),
+en disk som inget verktyg lagt, och andra loaders diskar. `fixtures/d64/covert-demo.d64` är en av diskarna:
+ett BASIC-startprogram som laddar `"01"` med bokstäver, rasterdemot packat med `exomizer level`, en Pucrunch-fil, en
+Exomizer 3-fil och en fil som den är, lagda av makedisk. `e2e/app.spec.ts` (*a mounted disk for the Covert Bitops
+loader*) monterar den. `test/krill-disk.test.ts` har Doynax LZ (en egen skrivare i `test/helpers/krill-disk.ts`), och
+`test/loaders.test.ts` version 2 och Krills version 146. `packages/cli/test/cli.test.ts` kör `mimir disks` på
+fixture-diskarna.
 
 ### 13.6 Terminal
 
@@ -4014,7 +4171,7 @@ blir för lång.
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista, en mapp per blocktyp. Ett klick på ett block går till det i listningen; Shift+klick visar det markerat i typens egen vy (`blockView`): sprites, charset, bitmapp och skärmmatris i Graphics ritade som sin typ (multicolor som blocket, en bitmapp så hög som den är, rutnätet flyttat så att en cell börjar vid blocket), text i Memory som `i` (PETSCII) eller `ii` (skärmkoder) med raderna från dess första byte, övriga data (bytes, ord, tabeller, musik, fill) i Memory som `m`, och kod, BASIC och flyttad kod markerad i listningen. Varje rads tips säger vart Shift+klick går. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Scripts**: projektets skript, att köra, öppna och ta bort (10.3). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
-| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Statistics, Build output |
+| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Krill script (filerna på en disk för Krills loader och cc1541:s kommandorad, 13.5k), Covert script (filerna på en disk för Covert Bitops-loadern, anropen i koden och makedisks eller maked64:s kommandofil, 13.5l), Pirate Slayer (13.5h), Tape (13.5e), Statistics, Build output |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, antal meddelanden, analystid, verifieringsstatus. Det som går att göra något med är knappar (se nedan) |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.

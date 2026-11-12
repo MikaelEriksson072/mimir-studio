@@ -2,7 +2,9 @@
  *
  * Spindle, Krill's loader, Bitfire, Sparkle and the Covert Bitops loader are known by their own receive loops, install
  * commands and texts; the byte patterns come from their sources (Spindle 3.1 stage1.s, Krill's loader v194
- * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, Covert Bitops loader v3 loader.s); BoozeLoader's
+ * hal-c64-c128.inc and install.s, Bitfire resident.asm, Sparkle sl.asm, the Covert Bitops loader's loader.s of versions
+ * 2.05 to 2.29 and 3.x, checked against the test programs its releases come with); version 146 of Krill's loader by the
+ * version text its installer keeps (GoatLight's boot); BoozeLoader's
  * (HCL) come from Booze Design's demos, 2008 to 2025, as its source is not public; Pirate Slayer's (Electronic Arts) from
  * the drive code and loaders its boots upload and run (Sindri with the G64s of four EA disks). The Action
  * Replay's loaders (Datel) come from its ROMs (5.1, 7.2 and 7.5 keep the same code in other places; 7.2's turbo tape differs), the backups and loader files
@@ -63,6 +65,8 @@ const KNOWN: Known[] = [
     signs: [
       { pat: pat('1D C9 DC 8E 02 DD 6A 6A A2 3F 87|8F'), role: 'resident', what: 'receive loop (ora $dcc9,x / stx $dd02)' },
       { pat: pat('6D|7D 00|C9 DD|DC 8E 02 DD C8 F0 .. 4A 4A A2 3F'), role: 'resident', what: 'receive loop (adc $dd00 / stx $dd02 / iny)' },
+      // "Krill's Loader, version 146, configuration …" in PETSCII upper and lower case (GoatLight, 2015)
+      { pat: pat('CB 52 49 4C 4C 27 53 20 CC 4F 41 44 45 52 2C 20 56 45 52 53 49 4F 4E 20'), role: 'install', what: "its installer's version text: \"Krill's Loader, version …, configuration …\"" },
     ],
     text: 'KRILL.',
   },
@@ -119,11 +123,15 @@ const KNOWN: Known[] = [
     text: 'PIRATESLAYER',
   },
   {
-    id: 'covert', name: 'Covert Bitops loader (Cadaver)', how: '2-bit, the C64 reads $dd00 four times per byte (lsr / lsr / eor $dd00)',
+    id: 'covert', name: 'Covert Bitops loader (Cadaver)', how: '2-bit, the C64 reads $dd00 four times per byte (lsr / lsr / eor $dd00), or 1-bit (version 2); files by a name of two letters (version 3: two hex digits), loaded as they are or unpacked with Exomizer or Pucrunch while they load',
     signs: [
       // waits out badlines, then pulls CLK and reads with the classic loop (which older loaders use too)
       { pat: pat('AD 11 D0 18 ED 12 D0 29 07 F0 .. A9 10 0D 00 DD 8D 00 DD'), role: 'resident', what: 'receive loop (waits for no badline, then lda $dd00 / lsr / lsr / eor $dd00 …)' },
       { pat: pat('.. 04|05|06|07 .. 57 2D 4D'), role: 'command', what: 'drive command M-W, stored backwards (its installer sends it from the end)' },
+      // version 2 (2.05 to 2.29) and 3.02 on: lda $dd00 / ora #$10 where 3.0 and 3.01 have lda #$10 / ora $dd00
+      { pat: pat('AD 11 D0 18 ED 12 D0 29 07 F0 .. AD 00 DD 09 10 8D 00 DD'), role: 'resident', what: 'receive loop (waits for no badline, pulls CLK with lda $dd00 / ora #$10, then lda $dd00 / lsr / lsr / eor $dd00 …)' },
+      { pat: pat('A9 10 4D 00 DD 8D 00 DD 0A 6E|7E'), role: 'resident', what: 'receive loop of version 2, 1-bit (lda #$10 / eor $dd00 / sta $dd00 / asl / ror: a bit each time CLK turns)', weak: true },
+      { pat: pat('20 00 00 57 2D 4D 05 00 45 2D 4D'), role: 'command', what: 'drive commands M-W (32 bytes at a time) and M-E $0500, stored backwards: version 2\'s installer sends them from the end' },
     ],
   },
   // the Action Replay: its ROM holds the code it copies to the stack page and the drive, and the loader file it saves

@@ -1,4 +1,5 @@
-/* mimir analyse | export | verify | unpack | measure | demo — batch and CI front end for @mimir/core. */
+/* mimir analyse | export | verify | unpack | measure | disks | demo — batch and CI front end for @mimir/core. */
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,6 +7,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
   exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackLog, unpackPrg, verify,
+  covertSummary, KRILL_PACKER, readBitfireDisk, readBoozeDisk, readCovertDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
 import { findC64Roms, findKickAssJar, findVice, runKickAssembler, splitArgs, writeVfs } from '@mimir/core/node';
@@ -23,6 +25,11 @@ Usage:
                 runs each PRG (a folder: every PRG and project in it and below; a project: its first file,
                 from its program start) in Sindri and sets what the analysis made of each byte against what
                 the program did with it (the code it ran, the data it read), and counts the problems by kind
+  mimir disks   <disk.d64 | disk.g64 | folder>... [--list] [--json]
+                reads each disk image (a folder: every D64 and G64 in it and below) as the app does when
+                it mounts one, and counts the disks each loader's reader takes (Spindle, Bitfire,
+                BoozeLoader, Sparkle, Krill's loader, the Covert Bitops loader, Pirate Slayer), all and
+                different ones; --list prints a line per disk a reader takes
   mimir demo    [-o raster-demo.prg]
 
 Options:
@@ -190,6 +197,59 @@ function prgsIn(paths: string[], io: Io): { path: string; name: string }[] {
     walk(path, statSync(path).isDirectory() ? path : dirname(path));
   }
   return out;
+}
+
+/** The loader readers, in the order the app tries them when it mounts a disk (Pirate Slayer besides them). */
+const DISK_READERS: [string, (d: Uint8Array) => string | null][] = [
+  ['spindle', d => { const r = readSpindleDisk(d); return r && `${r.jobs.length} jobs`; }],
+  ['bitfire', d => { const r = readBitfireDisk(d); return r && `${r.files.length} files`; }],
+  ['booze', d => { const r = readBoozeDisk(d); return r && `${r.files.length} files`; }],
+  ['sparkle', d => { const r = readSparkleDisk(d); return r && `${r.bundles.length} bundles`; }],
+  ['krill', d => { const r = readKrillDisk(d); return r && `${r.files.filter(f => f.unpacked).length} of ${r.files.length} files packed with ${KRILL_PACKER[r.packer].name}`; }],
+  ['covert', d => { const r = readCovertDisk(d); return r && `${covertSummary(r)}; found by ${r.found}${r.tool ? `, laid out by ${r.tool}` : ''}`; }],
+];
+
+/** `mimir disks`: which loader's reader takes each disk image, counted. */
+function disksCmd(inputs: string[], io: Io, flags: Map<string, string | true>): number {
+  if (!inputs.length) { io.err('disks needs a disk image or a folder'); return 2; }
+  const paths: string[] = [];
+  const walk = (p: string) => {
+    if (statSync(p).isDirectory()) for (const e of readdirSync(p).sort()) walk(join(p, e));
+    else if (/\.[dg]64$/i.test(p)) paths.push(p);
+  };
+  for (const p of inputs) {
+    const path = resolve(io.cwd, p);
+    if (!existsSync(path)) { io.err(`no file or folder ${path}`); return 2; }
+    walk(path);
+  }
+  const counts = new Map<string, { disks: number; different: Set<string> }>();
+  const rows: { path: string; reader: string; what: string }[] = [];
+  let failed = 0;
+  for (const path of paths) {
+    let bytes: Uint8Array;
+    try { bytes = new Uint8Array(readFileSync(path)); parseD64(bytes); } catch { failed++; continue; }
+    const hash = createHash('sha1').update(bytes).digest('hex');
+    const take = (reader: string, what: string | null) => {
+      if (!what) return false;
+      const c = counts.get(reader) ?? { disks: 0, different: new Set<string>() };
+      c.disks++; c.different.add(hash);
+      counts.set(reader, c);
+      rows.push({ path: relative(io.cwd, path) || path, reader, what });
+      return true;
+    };
+    for (const [reader, read] of DISK_READERS) {
+      let what: string | null = null;
+      try { what = read(bytes); } catch { /* not one */ }
+      if (take(reader, what)) break;
+    }
+    try { const ps = readPirateSlayerDisk(bytes); take('pirateslayer', ps && ps.summary); } catch { /* not one */ }
+  }
+  const summary = [...DISK_READERS.map(([r]) => r), 'pirateslayer'].map(r => ({ reader: r, disks: counts.get(r)?.disks ?? 0, different: counts.get(r)?.different.size ?? 0 }));
+  if (flags.has('json')) { io.out(JSON.stringify({ disks: paths.length, unreadable: failed, readers: summary, ...(flags.has('list') ? { list: rows } : {}) }, null, 2)); return 0; }
+  if (flags.has('list')) for (const r of rows) io.out(`${r.reader.padEnd(12)} ${r.path}: ${r.what}`);
+  io.out(`${paths.length} disk image${paths.length === 1 ? '' : 's'}${failed ? ` (${failed} not readable as one)` : ''}`);
+  for (const r of summary) io.out(`${r.reader.padEnd(12)} ${String(r.disks).padStart(7)} disks, ${String(r.different).padStart(7)} different`);
+  return 0;
 }
 
 const pct = (n: number, of: number) => (of ? `${(100 * n / of).toFixed(1)} %` : '-');
@@ -360,6 +420,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
       }
       case 'measure':
         return measureCmd(inputs, io, sets, flags);
+      case 'disks':
+        return disksCmd(inputs, io, flags);
       case 'demo': {
         const d = makeDemo();
         const target = resolve(io.cwd, typeof flags.get('out') === 'string' ? flags.get('out') as string : d.name);
