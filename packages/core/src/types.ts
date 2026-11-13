@@ -372,6 +372,9 @@ export interface Project {
   /** bytes the user called junk (spec 11.7), by address, sorted, none touching: not loaded for the analysis, so not in
    *  the listing, the source or the output; the Explorer's Junk list puts them back. Missing: none */
   junk?: JunkArea[];
+  /** bytes the listing shows at another address (spec 10.4), for manual analysis: only the editor sees them, the
+   *  analysis, the .asm, the output and the round trip do not. Missing: none */
+  viewOffsets?: ViewOffset[];
   bookmarks: Record<Addr, Bookmark>; // the user's notes on addresses (the Bookmarks list); not written to the source
   /** zero-page bytes the user joined into a 16-bit variable, by the low byte's address: true, `$a` low and `$a+1` high
    *  (written `name` and `name+1`); false, two variables even where the analysis made a pointer. Missing: none */
@@ -414,6 +417,9 @@ export interface ProjectInput {
   binary?: Addr[];
   /** bytes left out of everything (Project.junk): the analysis takes them as not loaded */
   junk?: JunkArea[];
+  /** bytes the listing shows at another address (Project.viewOffsets): only a render with RenderOptions.viewOffsets
+   *  reads them */
+  viewOffsets?: ViewOffset[];
   /** the user's notes on addresses; they change nothing in the analysis or the output */
   bookmarks?: Record<Addr, Bookmark>;
   /** zero-page bytes joined into (true) or split from (false) a 16-bit variable, by the low byte (Project.zpPairs) */
@@ -468,6 +474,8 @@ export interface SerializedProject {
   binary?: Addr[];
   /** missing in project files from before junk, and in those without any */
   junk?: JunkArea[];
+  /** missing in project files from before view offsets, and in those without any */
+  viewOffsets?: ViewOffset[];
   /** missing in project files from before bookmarks */
   bookmarks?: Record<Addr, Bookmark>;
   /** missing in project files from before zero-page pairs, and in those without one */
@@ -957,12 +965,22 @@ export interface RenderResult {
   parts?: RenderResult[];
   /** the source to show first when it is not the first file's: a cartridge's banks in one source (13.9c) */
   main?: string;
+  /** the view offsets the listing (`lines`, `labels`) shows (spec 10.4): those of RenderOptions.viewOffsets whose bytes
+   *  can be shown. The files, fileLines and problems never see them */
+  viewOffsets?: ViewOffset[];
+  /** the labels the files have where the listing's (`labels`) differ: with view offsets, whose bytes the listing names
+   *  where they are shown (spec 10.4). Missing: the same as `labels` */
+  fileLabels?: Map<Addr, RenderLabel>;
 }
 
 export interface ExcludedRange { start: Addr; end: Addr; file: number; name: string; junk?: boolean }
 
 /** Bytes the user called junk (spec 11.7): `start`..`end`, end excluded. */
 export interface JunkArea { start: Addr; end: Addr }
+
+/** A view offset (spec 10.4): the bytes loaded at `start`..`end` (end excluded) are shown at `to` in the listing, with
+ *  the addresses and labels they would have there, and references to `to`.. go to them. Nothing else sees it. */
+export interface ViewOffset { start: Addr; end: Addr; to: Addr }
 
 /* ---------- verification ---------- */
 export type Vfs = Record<string, string | Uint8Array>;

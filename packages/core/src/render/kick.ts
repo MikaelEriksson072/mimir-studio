@@ -4,7 +4,7 @@
  * ===================================================================== */
 import type {
   Addr, AnalysisResult, Block, BlockKind, DelaySled, ForcedMode, HeadPart, Line, ListingLine, MusicInfo, NumberFormat,
-  ProjectInput, RenderLabel, RenderProblem, RenderResult, TextEncoding, Token, ZpVar, ExcludedRange, LoaderPart } from '../types';
+  ProjectInput, RenderLabel, RenderProblem, RenderResult, TextEncoding, Token, ZpVar, ExcludedRange, LoaderPart, ViewOffset } from '../types';
 import { MAX_BLANKS } from '../types';
 import { kindInfo, TYPE_BY_KEY } from '../model';
 import { ENC, MODE_LEN, OPC } from '../cpu/opcodes';
@@ -21,6 +21,7 @@ import { kickMnemonic, lineText } from './lines';
 import { hardwareInclude } from './include';
 import { applyZpPairs } from '../zp-pairs';
 import { junkIn } from '../junk';
+import { shiftText, shownAddress, shownLabelName, shownTarget, usableViewOffsets, viewOffsetAt } from '../viewoffsets';
 
 const ID_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** the words Kick Assembler 5.25 does not take as a label (measured with KickAss.jar; in this case only, `TRUE` is one) */
@@ -64,6 +65,10 @@ export interface RenderOptions {
   dataAsCode?: boolean;
   /** put before the names of the binary files (gfx/, music/, data/): a bank's own (spec 13.9b, `bank03_`) */
   binPrefix?: string;
+  /** listing only (spec 10.4): the project's view offsets (Project.viewOffsets) show their bytes where they are shown,
+   *  with the labels they have there, and references to that area go to them. The files, fileLines, problems and
+   *  verification do not change. */
+  viewOffsets?: boolean;
 }
 
 /** loader parts that span code or data: their end gets a mark too */
@@ -102,6 +107,15 @@ export function wrapComment(text: string, width: number): string[] {
 }
 
 export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOptions = {}): RenderResult {
+  const plain = renderWith(A, project, opts, []);
+  const offs = opts.viewOffsets ? usableViewOffsets(A, project.viewOffsets) : [];
+  if (!offs.length) return plain;
+  // 10.4: the listing (its lines and the names it shows) from a render with the view offsets, the rest without them
+  const shown = renderWith(A, project, opts, offs);
+  return { ...plain, lines: shown.lines, labels: shown.labels, fileLabels: plain.labels, viewOffsets: offs };
+}
+
+function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOptions, offs: readonly ViewOffset[]): RenderResult {
   const S = A.S;
   const up = S.hexCase === 'upper';
   const hx = (v: number, w: number) => { const s = v.toString(16).padStart(w, '0'); return up ? s.toUpperCase() : s; };
@@ -120,6 +134,27 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   applyZpPairs(zp, project.zpPairs, a => !loaded(a));
   // a pointer's high byte is written `<name>+1`: it follows the name of its low byte when that is renamed
   for (const [a, z] of zp) if (z.off) { const base = zp.get(a - z.off); if (base && base.name !== z.name) zp.set(a, { ...z, name: base.name }); }
+  // 10.4: where a view offset shows its bytes, the analysis's labels there are named by the address shown, and each
+  // reference into the area shown gets a label on the byte it goes to (on its instruction's first byte); a name some
+  // other byte has already gets the loaded address after it
+  const offAt = (a: Addr) => (offs.length ? viewOffsetAt(offs, a) : undefined);
+  const shownOf = (a: Addr) => (offs.length ? shownAddress(offs, a) : a);
+  if (offs.length) {
+    const taken = new Set([...labels].filter(([a]) => !offAt(a)).map(([, l]) => l.name));
+    const free = (name: string, a: Addr) => (taken.has(name) ? `${name}_${h4(a)}` : name);
+    for (const [a, l] of labels) if (!l.user && offAt(a)) labels.set(a, { ...l, name: free(shownLabelName(l.name, a, shownOf(a)), a) });
+    for (const o of offs) for (let t = o.to; t < o.to + o.end - o.start; t++) {
+      // (code loaded where the bytes are shown keeps its own references)
+      const xs = A.xrefs.get(t)?.filter(x => !shownTarget([o], x.from));
+      if (!xs?.length) continue;
+      let r = o.start + t - o.to;
+      const c = codeOwner[r];
+      if (c >= o.start && c < r) r = c;
+      if (labels.has(r)) continue;
+      const kind = xs.some(x => x.kind === 'call') ? 'sub' : insLen[r] ? 'l' : xs.some(x => x.kind === 'write' || x.kind === 'rmw') ? 'var' : 'data';
+      labels.set(r, { name: free(`${kind}_${h4(shownOf(r))}`, r), kind: 'shown', user: false });
+    }
+  }
   const labelAt = (a: Addr) => labels.get(a);
   // comment lines and blocks the user inserted above an address; data and text rows break there like at labels
   const notes = project.notes || {};
@@ -161,6 +196,12 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     markAt(loaderStarts, p.start, p.script ? `==== changed by the script "${p.name}": ${n} ====` : `==== patch "${p.name}": ${n} written over the original ====`);
     markAt(loaderEnds, p.start + p.bytes.length, p.script ? `==== end of the script "${p.name}"'s change ====` : `==== end of patch "${p.name}" ====`);
   }
+  // the view offsets (10.4): where the bytes shown elsewhere start and end
+  for (const o of offs) {
+    const n = o.end - o.start;
+    markAt(loaderStarts, o.start, `==== shown at ${n4(o.to)}-${n4(o.to + n - 1)} (offset ${shiftText(o)}), only here: the .asm has these ${n} byte${n === 1 ? '' : 's'} at ${n4(o.start)}-${n4(o.end - 1)} ====`);
+    markAt(loaderEnds, o.end, `==== end of the bytes shown at ${n4(o.to)} ====`);
+  }
   const marked = (a: Addr) => loaderStarts.has(a) || loaderEnds.has(a);
   /** data and text rows break at notes, empty lines and loader marks like at labels */
   const breakAt = (a: Addr) => noteAt(a) || blankAt(a) || marked(a);
@@ -201,8 +242,26 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
   const byName = new Map<string, Addr>(); const dupes = new Set<string>();
   for (const [a, l] of labels) { if (byName.has(l.name) && byName.get(l.name) !== a) dupes.add(l.name); byName.set(l.name, a); }
 
+  /** 10.4: a reference to `a`, where view offset `o` shows its byte `r`: that byte's label, or the label before it in the
+   *  bytes shown (`label+n`), else the address */
+  function shownTokens(o: ViewOffset, r: Addr, a: Addr, zpWidth = false): Token[] {
+    const lb = labelAt(r);
+    if (lb) return [{ t: 'lbl', s: lb.name, to: r }];
+    let from = codeOwner[r] >= o.start && codeOwner[r] < r && labelAt(codeOwner[r]) ? codeOwner[r] : -1;
+    for (let p = r - 1; from < 0 && p >= o.start && r - p < 256; p--) if (labelAt(p)) from = p;
+    if (from >= 0) return [{ t: 'lbl', s: labelAt(from)!.name, to: from }, { t: 'p', s: '+' }, { t: 'num', s: String(r - from) }];
+    return [{ t: 'num', s: a < 0x100 && zpWidth ? n2(a) : n4(a), to: r }];
+  }
+
   function addrTokens(a: Addr, ctx: RenderCtx): Token[] {
     a &= 0xffff;
+    if (offs.length) {
+      // 10.4: the area a view offset shows its bytes at is theirs (code loaded there too keeps its own references);
+      // where they are loaded their labels (named where they are shown) do not fit, so the address is written as it is
+      const sh = shownTarget(offs, a);
+      if (sh && !(ctx.pc != null && shownTarget([sh.o], ctx.pc))) return shownTokens(sh.o, sh.at, a, ctx.zpWidth);
+      if (offAt(a)) return [{ t: 'num', s: a < 0x100 && ctx.zpWidth ? n2(a) : n4(a), to: a }];
+    }
     const m = musicFor(a);
     if (m) {
       const v = musicVar(m);
@@ -293,7 +352,12 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
         } else opTok.push({ t: 'p', s: '#' }, { t: 'num', s: n2(d.v!) });
         break;
       }
-      case 'rel': opTok.push(...addrTokens(d.target!, c)); break;
+      case 'rel': {
+        // 10.4: a branch inside the bytes a view offset shows elsewhere goes where they are shown
+        const o = offAt(pc), t = d.target!;
+        opTok.push(...(o && t >= o.start && t < o.end ? shownTokens(o, t, shownOf(t)) : addrTokens(t, c)));
+        break;
+      }
       case 'zp': case 'zpx': case 'zpy': case 'izx': case 'izy': {
         // a delay's operand only takes time: the number, no label
         const tk: Token[] = delayAt.has(pc) ? [{ t: 'num', s: n2(d.v!) }] : addrTokens(d.v!, c);
@@ -405,6 +469,13 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     if (b.type === 'data' && p.var) t = 'Variables';
     return t;
   };
+  /** 10.4: the part of a block a view offset shows elsewhere, for its header */
+  const shownIn = (b: Block): string => {
+    const o = offs.find(x => x.start < b.end && b.start < x.end);
+    if (!o) return '';
+    const s = Math.max(b.start, o.start), e = Math.min(b.end, o.end);
+    return ` · shown at ${n4(shownOf(s))}-${n4(shownOf(e - 1))}`;
+  };
   const SEG_NAME: Partial<Record<BlockKind, string>> = { code: 'Code', sprite: 'Sprites', charset: 'Charset', bitmap: 'Bitmap', screen: 'Screen', data: 'Data', reloc: 'Relocated' };
 
   function renderBlock(out: Line[], b: Block, ctx: RenderCtx & { usedMusic: Set<MusicInfo> }) {
@@ -415,10 +486,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     const binary = binaryStarts.has(b.start) ? binaryPath(b) : null;
     const reloc = b.type === 'reloc' ? relocs.find(x => x.start === b.start) : undefined;
     const runs = reloc ? ` · runs at ${n4(reloc.to)}-${n4(reloc.to + len - 1)}` : '';
-    out.push({ k: 'hdr', a: b.start, blk: b.id, type: TYPE_BY_KEY[b.type], text: `${title}${lb ? ' · ' + lb.name : ''} · ${n4(b.start)}-${n4(b.end - 1)} (${len} byte${len === 1 ? '' : 's'})${runs}${binary ? ` · ${binary}` : ''}`, ...(binary ? { binary } : {}) });
+    out.push({ k: 'hdr', a: b.start, blk: b.id, type: TYPE_BY_KEY[b.type], text: `${title}${lb ? ' · ' + lb.name : ''} · ${n4(b.start)}-${n4(b.end - 1)} (${len} byte${len === 1 ? '' : 's'})${runs}${shownIn(b)}${binary ? ` · ${binary}` : ''}`, ...(binary ? { binary } : {}) });
     if (userCmt) out.push(...commentLines(b.start, userCmt));
     // inside a relocated block's .pseudopc the bytes follow one another: a .pc there would move where they are loaded
-    const seg = (name: string) => { if (!ctx.reloc) out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(b.start) }, { t: 'p', s: ' ' }, { t: 'str', s: `"${name}"` }] }); };
+    // (in a view offset, 10.4, the listing has the .pc where the bytes are shown)
+    const seg = (name: string) => { if (!ctx.reloc) out.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(shownOf(b.start)) }, { t: 'p', s: ' ' }, { t: 'str', s: `"${name}"` }] }); };
     if (ctx.needSeg || (['sprite', 'charset', 'bitmap', 'screen'] as BlockKind[]).includes(b.type) || (b.type === 'code' && ctx.prevType !== 'code') || (b.type !== 'code' && ctx.prevType === 'code')) {
       if (binary || (b.type !== 'basic' && !(b.type === 'music' && S.musicAsSid))) seg(SEG_NAME[b.type] || (b.type === 'code' ? 'Code' : 'Data'));
     }
@@ -432,7 +504,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       const define = (p: Addr) => {
         const l = labelAt(p);
         if (!l) return;
-        const def: Line = { k: 'dir', a: p, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: l.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(p) }] };
+        const def: Line = { k: 'dir', a: p, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: l.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(shownOf(p)) }] };
         binaryDefs.add(def); // kept only if the file refers to the label (see the file loop)
         out.push(def);
       };
@@ -677,7 +749,7 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       const defs = inner.filter(l => l.k === 'dir' && l.n === 0 && l.tok[0]?.s === '.label');
       if (lbls.length || defs.length) {
         body.push({ k: 'dir', a: b.start, n: 0, tok: [{ t: 'dir', s: '#else' }] });
-        for (const l of lbls) body.push({ k: 'dir', a: l.a, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: l.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(l.a) }] });
+        for (const l of lbls) body.push({ k: 'dir', a: l.a, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: l.name }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(shownOf(l.a)) }] });
         body.push(...defs);
       }
       body.push({ k: 'dir', a: b.end, n: 0, tok: [{ t: 'dir', s: '#endif' }] }, { k: 'blank', a: b.end });

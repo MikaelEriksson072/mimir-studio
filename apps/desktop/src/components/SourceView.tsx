@@ -36,15 +36,17 @@ const languageOf = (p: string) => p.endsWith('.asm') ? 'kickass' : p.endsWith('.
 /** the address a script can be linked to at a place in a source file: the name under the pointer when it is one of the
  *  program's (a label, a zero-page variable), else the line's (its label, its .label line's, its first byte) */
 function linkAddrAt(R: RenderResult, line: Line | undefined, word: string | null): Addr | null {
+  // the names the files have (with a view offset the listing's differ, spec 10.4)
+  const labels = R.fileLabels ?? R.labels;
   if (word) {
-    for (const [a, l] of R.labels) if (l.name === word) return a;
+    for (const [a, l] of labels) if (l.name === word) return a;
     for (const [a, z] of R.zp) if (!z.off && z.name === word) return a;
   }
   if (!line) return null;
   if (line.k === 'dir' && line.tok[0]?.s === '.label') {
     if (line.zp != null) return line.zp;
     const def = line.tok.find(t => t.t === 'def');
-    if (def) for (const [a, l] of R.labels) if (l.name === def.s) return a;
+    if (def) for (const [a, l] of labels) if (l.name === def.s) return a;
     return null;
   }
   return line.k === 'lbl' || ('n' in line && line.n > 0) ? line.a : null;
@@ -215,7 +217,7 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     if (!marksDeco.current) marksDeco.current = e.createDecorationsCollection();
     const lines = scriptMarks?.size ? R.fileLines[cur.path] : undefined;
     const by = new Map<number, ScriptMark[]>();
-    if (lines) for (let i = 0; i < lines.length; i++) { const ms = lineScriptMarks(lines, i, scriptMarks!, R.labels); if (ms) by.set(i + 1, ms); }
+    if (lines) for (let i = 0; i < lines.length; i++) { const ms = lineScriptMarks(lines, i, scriptMarks!, R.fileLabels ?? R.labels); if (ms) by.set(i + 1, ms); }
     markLines.current = by;
     const m = e.getModel(); if (!m) return;
     // the name goes after the line's text (Monaco draws no text injected at an empty range, so the range is the text)

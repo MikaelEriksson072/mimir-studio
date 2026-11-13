@@ -11,7 +11,7 @@ export const PEEK_ROWS = 12;
 export const PEEK_ROW = 8;
 
 /** the names the instructions use: the render's labels and zero-page variables */
-export type PeekNames = Pick<RenderResult, 'labels' | 'zp'>;
+export type PeekNames = Pick<RenderResult, 'labels' | 'zp' | 'viewOffsets'>;
 
 /** a row of bytes */
 export type PeekBytes = { k: 'row'; a: Addr; n: number };

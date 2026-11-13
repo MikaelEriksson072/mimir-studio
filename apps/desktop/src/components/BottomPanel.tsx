@@ -4,6 +4,7 @@
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
   BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, KRILL_PACKER, krillFileName, type KrillFile, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  refsShown, shownAddress, shownTarget,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -77,19 +78,23 @@ export function XrefPanel({ A, R, cursor, onNavigate, S }: { A: AnalysisResult; 
   if (cursor == null) return <div className="empty">Place the cursor on a line to see who references it.</div>;
   const ins = A.insLen[cursor] ? cursor : A.codeOwner[cursor] >= 0 ? A.codeOwner[cursor] : cursor;
   const label = R.labels.get(ins);
-  const to = (A.xrefs.get(ins) || []).slice().sort((x, y) => x.from - y.from);
+  // where a view offset shows the bytes (10.4), the references to the address shown too, and the addresses as shown
+  const voffs = R.viewOffsets, shown = (a: Addr) => shownAddress(voffs, a);
+  const to = refsShown(A, voffs, ins).slice().sort((x, y) => x.from - y.from);
   const text = (a: Addr) => { const l = R.lines.find(x => x.a === a && (x.k === 'ins' || x.k === 'dat')); return l ? lineText(l, S).trim().replace(/\s+\/\/.*$/, '') : ''; };
   const outgoing: Addr[] = [];
   if (A.insLen[ins]) { const d = decode(A.mem, ins); if (d.target != null) outgoing.push(d.target); }
+  // an instruction outside the bytes shown elsewhere that targets where they are shown goes to them
+  const goes = outgoing.length ? (shownTarget(voffs, outgoing[0]) && !shownTarget(voffs, ins) ? shownTarget(voffs, outgoing[0])!.at : outgoing[0]) : null;
   return (
     <div className="xref">
-      <div className="xref-head">References to <b className="mono">{label ? label.name : '$' + h4(ins)}</b> <span className="muted">(${h4(ins)})</span> — {to.length}</div>
+      <div className="xref-head">References to <b className="mono">{label ? label.name : '$' + h4(shown(ins))}</b> <span className="muted">(${h4(shown(ins))}{shown(ins) !== ins ? `, loaded at $${h4(ins)}` : ''})</span> — {to.length}</div>
       {to.length ? (
         <table className="tbl"><thead><tr><th>From</th><th>Kind</th><th>Instruction</th></tr></thead><tbody>
-          {to.map((x, i) => <tr key={i} onClick={() => onNavigate(x.from)}><td className="mono link-cell">${h4(x.from)}</td><td><span className={cx('kind', `kind-${x.kind}`)}>{XREF_KIND[x.kind] || x.kind}</span></td><td className="mono">{text(x.from)}</td></tr>)}
+          {to.map((x, i) => <tr key={i} onClick={() => onNavigate(x.from)}><td className="mono link-cell">${h4(shown(x.from))}</td><td><span className={cx('kind', `kind-${x.kind}`)}>{XREF_KIND[x.kind] || x.kind}</span></td><td className="mono">{text(x.from)}</td></tr>)}
         </tbody></table>
       ) : <div className="empty small">No references. Entry points, vectors and data reached only through computed addresses have none.</div>}
-      {outgoing.length > 0 && <div className="xref-out">This instruction targets <button className="addr-link" onClick={() => onNavigate(outgoing[0])}>${h4(outgoing[0])}</button>{R.labels.get(outgoing[0]) ? <span className="mono"> {R.labels.get(outgoing[0])!.name}</span> : (hwSymbol(outgoing[0]) ? <span className="mono syn-hw"> {hwSymbol(outgoing[0])!.text}</span> : null)}</div>}
+      {goes != null && <div className="xref-out">This instruction targets <button className="addr-link" onClick={() => onNavigate(goes)}>${h4(outgoing[0])}</button>{R.labels.get(goes) ? <span className="mono"> {R.labels.get(goes)!.name}</span> : (hwSymbol(outgoing[0]) ? <span className="mono syn-hw"> {hwSymbol(outgoing[0])!.text}</span> : null)}</div>}
     </div>
   );
 }

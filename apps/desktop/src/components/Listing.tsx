@@ -1,7 +1,7 @@
 /* Listing — virtualized, interactive view of the shared line model (spec 6, "one line model, two views"). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, SPACE, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Block, type Bookmark, type ByteMove, type Line, type ListingLine, type Patch, type Token } from '@mimir/core';
+import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, shiftText, SPACE, viewOffsetAt, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Block, type Bookmark, type ByteMove, type Line, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { cellParts, type Cell } from '../lib/cells';
 import { Icon } from '../lib/icons';
@@ -566,6 +566,11 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const r = areas.find(x => to >= x.i0 && i <= x.i1); if (!r) return null;
     return <span className={cx('bm-area', i === r.i0 && 'first', r.i1 >= i && r.i1 <= to && 'last')} style={{ background: r.css }} aria-hidden="true" />;
   };
+  // 10.4: the bytes a view offset shows elsewhere have the address shown in the address column, and a stripe
+  const voffs = names.viewOffsets;
+  const voffAt = (a: Addr | null) => (voffs?.length && a != null ? viewOffsetAt(voffs, a) : undefined);
+  const adrText = (a: Addr) => { const o = voffAt(a); return h4(o ? o.to + a - o.start : a); };
+  const voffTip = (a: Addr) => { const o = voffAt(a); return o ? `Shown at $${h4(o.to + a - o.start)} (offset ${shiftText(o)}), in the listing only: loaded at $${h4(a)}, where the .asm has it` : undefined; };
   /** a line with a find match, and the one shown */
   const hit = (l: ListingLine) => (find?.hits.has(l) ? (find.cur === l ? 'hit hit-cur' : 'hit') : undefined);
   // with data shown as code the listing no longer matches the .asm file line for line: addresses then
@@ -594,8 +599,8 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       const inSel = !!(sel && sel.multi && blk && blk.start >= sel.start && blk.end <= sel.end);
       // the loaders this block holds a part of
       const lparts = blk ? A.loaders.flatMap(f => f.parts.filter(p => p.start < blk.end && p.end > blk.start).map(p => ({ f, p }))) : [];
-      rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, ...tint(i) }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
-        <span className="gut" style={{ background: `var(--g-${hg})` }} />{stripe(i)}{mark(i)}{offCell(l.a)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : h4(l.a)}</span>
+      rows.push(<div key={i} className={cx('row', 'hdr', inSel && 'sel', l.preview && 'preview', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, ...tint(i) }} onMouseDown={e => down(l, i, e)} onContextMenu={e => onContext(e, l)}>
+        <span className="gut" style={{ background: `var(--g-${hg})` }} />{stripe(i)}{mark(i)}{offCell(l.a)}<span className={cx('adr', byLine && 'lno', !byLine && voffAt(l.a) && 'shifted')} title={byLine ? undefined : voffTip(l.a)}>{byLine ? lineNo[i] : adrText(l.a)}</span>
         <button className="fold" aria-label={folded.has(l.a) ? 'Unfold block' : 'Fold block'} aria-expanded={!folded.has(l.a)} title={folded.has(l.a) ? 'Unfold (F)' : 'Fold (F)'}
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleFold(l.a); }}><Icon name={folded.has(l.a) ? 'chevron' : 'down'} size={12} /></button>
         <span className="hdr-chip" style={{ '--c': `var(--g-${hg})` } as React.CSSProperties}>{typeInfo(l.type).label}</span>
@@ -613,10 +618,10 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       const end = l.a + l.n, full = !!sel && l.a >= sel.start && end <= sel.end;
       const over = sel && sel.start < end && sel.end > l.a ? sel : null;
       rows.push(
-        <div key={i} className={cx('row', 'k-gfx', full && 'sel', i === curLine && 'cur', blk && excluded.has(blk.start) && 'excluded', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, height: l.rows * ROW, ...tint(i) }}
+        <div key={i} className={cx('row', 'k-gfx', full && 'sel', i === curLine && 'cur', blk && excluded.has(blk.start) && 'excluded', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, height: l.rows * ROW, ...tint(i) }}
           onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
           <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i, i + l.rows - 1)}{mark(i)}
-          {offCell(l.a)}<span className={cx('adr', byLine && 'lno')} title={runTip}>{byLine ? lineNo[i] || '' : h4(l.a)}</span>
+          {offCell(l.a)}<span className={cx('adr', byLine && 'lno', !byLine && voffAt(l.a) && 'shifted')} title={runTip ?? (byLine ? undefined : voffTip(l.a))}>{byLine ? lineNo[i] || '' : adrText(l.a)}</span>
           <span className="hex" title={`$${h4(l.a)}–$${h4(end - 1)} (${l.n} byte${l.n === 1 ? '' : 's'})`}>–{h4(end - 1)}</span>
           {cycles && <span className="cyc" />}
           <span className="src gfx-src"><GfxStrip l={l} i={i} A={A} colors={gfxColors} sel={over} cur={i === curLine ? cursor : null} />{l.cmt && <span className="syn-comment cmt user">// {l.cmt}</span>}</span>
@@ -639,10 +644,10 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const sm = marksOf(l, i);
     const ptTip = pt && (pt.script ? `Changed by the script "${pt.name}" when it ran: $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} (the Scripts tab runs it again or takes it out)` : `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`);
     rows.push(
-      <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', hit(l))} style={{ top: i * ROW, ...tint(i) }}
+      <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i)}{mark(i)}
-        {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno')} title={tip ?? runTip}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? h4(l.a) : ''}</span>
+        {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno', !byLine && (n > 0 || l.k === 'lbl') && voffAt(l.a) && 'shifted')} title={tip ?? runTip ?? (byLine || !(n > 0 || l.k === 'lbl') ? undefined : voffTip(l.a))}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? adrText(l.a) : ''}</span>
         <span className="hex" title={pt ? [ptTip, tip].filter(Boolean).join('\n\n') : tip}>{bytes}</span>
         {cycles && <CycleCell l={l} A={A} step={steps.get(l.a)} taken={cycles.taken} onToggle={cycles.onToggle} />}
         <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>{pt.script ? 'script' : 'patch'} {pt.name}</span>}{sm && <ScriptTag marks={sm} onOpen={onScriptMark} />}</span>

@@ -1801,6 +1801,7 @@ kommandona, etiketterna, VIA-namnen, en gren som alltid tas, `.byte $2c`, samma 
 | Flyttade block | bottenpanelens flik *Relocated* (siffran: flyttade block och hittade kopieringsloopar), kommandopaletten | En tabell med de flyttade blocken: etiketten, var det är laddat och var det körs, storlek och fil, med *Runs at…* och *Stop relocating*; ett klick på raden går dit blocket körs. Ett block i projektet som analysen inte kunde lägga ut står med skälet. Under den kopieringslooparna som analysen hittat (8.1b): loopen, vad den kopierar och vart, hoppet dit, och *Relocate…* som fyller i dialogen (*Run it there…* när blocket är flyttat någon annanstans). *Relocate…* i flikens huvud relokerar markeringen eller blocket vid markören |
 | Patch | `P`, högerklick → *Program* → *Patch selection/line/block with new code…* (på en patchad rad: undermenyn *Patch "namn"* överst), kommandopaletten | Ny kod skrivs över markeringen (eller raden vid markören) i de laddade bytena; `P` på en patchad rad redigerar patchen (10.2). I ett flyttat block assembleras den där koden körs och skrivs där filen har byten (`Patch.at`) |
 | Flytta ett block (relokera) | `R`, högerklick → *Program* → *Relocate selection/block…*, inspektorns *Relocate…*, *Relocate…* på ett tips i Problems eller i fliken *Relocated*, kommandopaletten | En dialog med start, slut (inklusive) och adressen byten körs på (8.1b), ifylld från markeringen, blocket vid markören eller kopieringsloopen tipset gäller. Den säger direkt vad som är i vägen (något laddat där det skulle köras, blockets egna byte, en fil- eller patchgräns), varnar för kod som också körs där den är laddad, och räknar upp vad som följer med. Användarens namn, kommentarer, kommentarrader, bokmärken, markeringar (kapade vid kanterna), startpunkter, programstart, uteslutna och binära block, patchar och block flyttade därifrån flyttas till där byten körs (`addReloc`). På ett flyttat block (där det är laddat eller körs) ger `R` samma dialog för att köra det någon annanstans (`moveReloc`, allt följer med) eller *Stop relocating* (`removeReloc`, allt går tillbaka). Listningen visar raderna där blocket körs med körningsadressen, filens offset för laddplatsen och en rand i blocktypens färg (*Relocated*), och inspektorn säger var blocket är laddat och körs. Ångras med `Ctrl+Z` |
+| Visa på en annan adress (visningsoffset) | `O`, högerklick → *Program* → *Show selection/block at another address (listing only)…*, inspektorns *Show at…*, kommandopaletten | Bara för manuell analys: listningen visar byten på en annan adress, med de adresser och etiketter de har där, och referenser dit går till dem. Exporten, utdata och round-trip påverkas inte (10.4). På en offset ger `O` samma dialog för att visa den någon annanstans, och *Remove the offset* visar byten där de laddas igen. Explorers sektion *View offsets* listar dem. Ångras med `Ctrl+Z` |
 | Lägg till startpunkt | `E` | Spårning från adressen |
 | Programstart | Explorer → *Program start* (adress eller etikett), högerklick → *Program* → *Set as program start*, kommandopaletten | Ersätter den detekterade starten (8.2); *Use the detected start* tar bort valet |
 | Korsreferenser | `X` | Bottenpanelen visar alla referenser till raden |
@@ -1835,7 +1836,7 @@ egen etikett (`N`) och, när operanden namnger en annan, *Rename namn…* för d
 at the end of the line…* (`;`), *Insert above* (kommentarrad `/`, kommentarblock `*`, tom rad `Shift+Enter`), *Add/Edit bookmark…* (`B`) och
 *Mark … as* (typerna och *Clear override (automatic)* `U`). Resten i undermenyer efter vad det gäller: *Block* (fäll ihop,
 dela, foga, flytta och slå ihop, storlek, utanför bygget, binärfil), *Program* (ingångspunkt, programstart, patch,
-relokering, packning) och *Memory banking* (`$01` och VIC-bank under var sin rubrik). Sist *Show cross-references* (`X`)
+relokering, visningsoffset, packning) och *Memory banking* (`$01` och VIC-bank under var sin rubrik). Sist *Show cross-references* (`X`)
 och kopiorna. På en nollsidevariabel finns *16-bit variable* (foga ihop eller dela). Undermenyer och rubriker som inte
 har något att visa på raden visas inte. Musen och tangenterna flyttar samma markering: `↑`/`↓` (`Home`/`End`), `→` eller
 `Enter` in i en undermeny, `←` eller `Esc` ut, `Enter` väljer; andra tangenter stänger menyn och gör det de gör i
@@ -2221,6 +2222,44 @@ $06, $08` i `.asm`-filen efter en körning.
   scope vars etiketter koden utanför inte ser (varje varv i `.for` och `.while` sitt eget), medan `.pseudopc { }`
   inte gör det, `else` står på raden efter en `.if` utan block, och ett villkor måste vara sant eller falskt. Ett
   okänt namn är ett fel på raden som använder det. Testerna assemblerar samma kod med KickAss.jar och jämför byten.
+
+### 10.4 Visningsoffset (bara i editorn)
+
+En visningsoffset (`Project.viewOffsets`: `start`–`end` i filen visas på `to`) är till för manuell analys: kod som
+programmet kopierar någon annanstans innan den körs läses i listningen med de adresser och etiketter den har där, utan
+att relokeras. Skillnaden mot ett flyttat block (8.1b) är att den bara finns i editorn. Analysen, `.asm`-filen, utdata
+och round-trip är som utan den: byten står i källkoden där de laddas, utan `.pseudopc`, och programmets egen kod flyttar
+dem när det körs. Den kräver därför inte att ingenting är laddat där byten visas.
+
+- **Dialogen.** `O`, högerklick → *Program* → *Show selection/block at another address (listing only)…*, inspektorns
+  *Show at…* eller kommandopaletten öppnar *Show at another address* med start och slut (inklusive) från markeringen
+  eller blocket vid markören, och *Shown at (or offset)*: en adress (`$2000`) eller hur långt (`+$1000`, `-$0100`).
+  Den säger direkt vad referenserna säger om adressen: hur många som går dit, hur många av dem som kommer från byten
+  själva, och hur många av hoppen och anropen dit som landar på en instruktion (*mark the bytes as code to read them*
+  när några inte gör det). Ligger laddade byte där de visas varnar den för det. Byten måste vara laddade och i en bank,
+  inte i ett flyttat block (som redan visas där det körs), och får inte visas över sig själva eller över en annan
+  offsets byte eller område (`viewOffsetProblem` i `packages/core/src/viewoffsets.ts`). På en offset ger `O` samma
+  dialog för att visa den någon annanstans, eller *Remove offset*.
+- **Listningen.** `render()` med `RenderOptions.viewOffsets` gör listningen (`lines` och `labels`) en gång till med
+  offseten; filerna, `fileLines`, problemen och verifieringen kommer från renderingen utan den, och
+  `RenderResult.viewOffsets` säger vilka offsets listningen visar. Analysens etiketter i byten får namn efter adressen
+  där de visas (`l_1003` blir `l_2003`), och varje referens in i området där de visas får en etikett på byten den går
+  till (`sub_2009`, på instruktionens första byte). Referenser dit skrivs med dem (`jmp code_2000`, `jsr sub_2009`,
+  `lda l_200d,x`), en branch inne i byten likaså, medan referenser till där byten laddas skrivs som adressen (`lda
+  $1000,x` i kopieringsloopen), eftersom etiketterna där har värdet där de visas. Ligger laddad kod där byten visas
+  behåller den sina egna referenser, och ett namn den redan har får laddadressen efter sig (`sub_0903_1003`).
+  Användarens namn står kvar på byten, i listningen och i `.asm`-filen (där referenserna till området där de visas
+  skrivs som adressen, `jsr $2009`). Byten har adressen där de visas i adresskolumnen (kursivt i accentfärgen, med
+  laddadressen i verktygstipset) och en rand vid gutter, blockets `.pc` och rubrik säger var de visas (`· shown at
+  $2000-$2010`), och en rad `==== shown at $2000-$2010 (offset +$1000), only here: the .asm has these 17 bytes at
+  $1000-$1010 ====` och en vid slutet markerar dem.
+- **Resten av editorn.** Statusraden visar `$2009 (loaded at $1009)`. *Go to* en adress där byten visas går till dem.
+  Inspektorn säger var blocket visas (*Shown at*, med *Shown at…* och *Remove offset*) och räknar referenserna dit
+  med i *Refs in*, och korsreferenserna (`X`) listar dem (`refsShown`). Explorers sektion *View offsets* listar varje
+  offset med var den visas, hur långt och namnet på dess första byte; ett klick markerar byten i listningen, pennan
+  öppnar dialogen och krysset tar bort den. En offset vars byte inte längre går att visa (filen borttagen, skräp,
+  relocerad) står kvar tonad med skälet. Allt ångras med `Ctrl+Z`, och offseten sparas i projektfilen. I en
+  cartridge visas den i sin bank.
 
 ## 11. Kick Assembler-generatorn
 

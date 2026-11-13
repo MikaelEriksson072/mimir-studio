@@ -144,6 +144,8 @@ const bankZone = z.object({ start: at, end: at, port: z.number().int().min(0).ma
 const reloc = z.object({ start: at, end: at, to: at }).refine(r => r.start < r.end && r.end - r.start <= 0x10000, 'a relocated block needs at least one byte');
 /** bytes the user called junk (spec 11.7): start-end, end excluded */
 const junk = z.array(z.object({ start: at, end: at }).refine(j => j.start < j.end && j.end - j.start <= 0x10000, 'a junk area needs at least one byte')).max(65536);
+/** bytes the listing shows at another address (spec 10.4): loaded at start-end (end excluded), shown at `to` */
+const viewOffsets = z.array(z.object({ start: at, end: at, to: at }).refine(o => o.start < o.end && o.end - o.start <= 0x10000, 'a view offset needs at least one byte')).max(4096);
 
 /** .mimir.json on disk (and a .krproj.json saved before the rename) */
 export const serializedProjectSchema = z.object({
@@ -187,6 +189,8 @@ export const serializedProjectSchema = z.object({
   binary: z.array(at).max(65536).default([]),
   // project files from before junk, and those without any, have none
   junk: junk.optional(),
+  // project files from before view offsets, and those without any, have none
+  viewOffsets: viewOffsets.optional(),
   // project files from before cartridges, and those without one, have none
   cart: z.object({ name: fileName, data: z.string() }).optional(),
   settings: settingsSchema.default({}),
@@ -218,6 +222,7 @@ export const projectSchema = z.object({
   excluded: z.array(at).max(65536),
   binary: z.array(at).max(65536),
   junk: junk.optional(),
+  viewOffsets: viewOffsets.optional(),
   cart: z.object({ name: fileName, crt: crtBytes }).nullable().optional(),
   settings: settingsSchema,
 });

@@ -58,6 +58,7 @@ export { boozeLine, boozeScript } from './analyze/booze';
 export { validLabel, type RenderOptions } from './render/kick';
 export { applyZpPairs, zpPairable } from './zp-pairs';
 export { addJunk, junkAt, junkIn, removeJunk } from './junk';
+export { refsShown, removeViewOffset, setViewOffset, shiftText, shownAddress, shownLabelName, shownTarget, usableViewOffsets, viewOffsetAt, viewOffsetFit, viewOffsetProblem } from './viewoffsets';
 export { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';
 export type { LineTextSettings } from './render/lines';
 export { hardwareInclude } from './render/include';

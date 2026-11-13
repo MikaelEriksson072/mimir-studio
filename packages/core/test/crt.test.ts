@@ -325,6 +325,21 @@ describe('every bank at once, each a space of its own (13.9b)', () => {
     expect(verify(A, R).ok).toBe(true);
   });
 
+  it('shows a view offset in its own bank, in the listing only (10.4)', () => {
+    const o = openCartridge('demo.crt', demoCartridge());
+    const off = { start: SPACE + 0x8000, end: SPACE + 0x8010, to: SPACE + 0xa000 };
+    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, viewOffsets: [off] };
+    expect(splitProject(p, fileSpaces(p)!).map(x => x.input.viewOffsets)).toEqual([[], [{ start: 0x8000, end: 0x8010, to: 0xa000 }]]);
+    const A = analyze(p), R = render(A, p, { viewOffsets: true }), plain = render(A, p);
+    expect(R.viewOffsets).toEqual([off]);
+    expect(R.files).toEqual(plain.files);
+    expect(R.lines.some(l => l.k === 'cmt' && l.text.startsWith('==== shown at $a000-$a00f'))).toBe(true);
+    expect(plain.lines.some(l => l.k === 'cmt' && l.text.includes('shown at'))).toBe(false);
+    // the files' names stay those of the source
+    expect([...R.fileLabels!.values()].map(l => l.name).sort()).toEqual([...plain.labels.values()].map(l => l.name).sort());
+    expect(verify(A, R).ok).toBe(true);
+  });
+
   it('gives each bank its bookmarks at plain addresses, an area to its end there', () => {
     const o = openCartridge('demo.crt', demoCartridge());
     const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, bookmarks: { [SPACE + 0x8000]: { title: 'text', text: '', end: SPACE + 0x802a }, [0x8009]: { title: 'reset', text: '' } } };

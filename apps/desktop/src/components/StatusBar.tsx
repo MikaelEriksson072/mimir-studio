@@ -22,6 +22,8 @@ interface StatusBarProps {
   cycles?: number | null;
   /** the cartridge bank the cursor is in (13.9b); null without banks */
   bank?: number | null;
+  /** the address the listing shows the cursor's byte at: another one in a view offset (spec 10.4) */
+  shown?: Addr | null;
   /** the toasts of this run (the Messages tab), and the errors among them */
   messages: { count: number; errors: number };
   actions: StatusActions;
@@ -31,14 +33,14 @@ interface StatusBarProps {
 const Item = ({ onClick, title, className, children }: { onClick: () => void; title: string; className?: string; children: ReactNode }) =>
   <button type="button" className={cx('sb-item sb-btn', className)} title={title} onClick={onClick}>{children}</button>;
 
-export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, busy, deepBusy, verify, cycles, bank, messages, actions }: StatusBarProps) {
+export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, busy, deepBusy, verify, cycles, bank, shown, messages, actions }: StatusBarProps) {
   // the memory configuration the instruction at the cursor runs with
   const port = cursor != null && A.mcfg ? A.mcfg.port[A.codeOwner[cursor] >= 0 ? A.codeOwner[cursor] : cursor] : 0;
   return (
     <footer className="statusbar">
       <span className="sb-item"><Icon name="chip" size={13} />6510 · PAL</span>
       <Item className="hide-narrow" title="Show the files in the Explorer" onClick={actions.onFiles}>{fileCount} file{fileCount === 1 ? '' : 's'} · {fmtBytes(A.stats.total)}</Item>
-      {cursor != null && <Item className="mono" title="Go to an address, label or range (G)" onClick={actions.onGoto}>{bank != null ? `bank ${bank} · ` : ''}${h4(cursor)}{curLabel ? ` · ${curLabel}` : ''}{blk ? ` · ${kindInfo(blk.type).label}` : ''}</Item>}
+      {cursor != null && <Item className="mono" title="Go to an address, label or range (G)" onClick={actions.onGoto}>{bank != null ? `bank ${bank} · ` : ''}{shown != null && shown !== cursor ? `$${h4(shown)} (loaded at $${h4(cursor)})` : `$${h4(cursor)}`}{curLabel ? ` · ${curLabel}` : ''}{blk ? ` · ${kindInfo(blk.type).label}` : ''}</Item>}
       {port > 0 && <span className="sb-item mono hide-narrow" title={`Memory configuration here: ${describePorts(port, (A.spaces?.find(s => cursor != null && s.space === Math.floor(cursor / 0x10000))?.cart) ?? A.mcfg?.cart)}`}>$01 {port === ALL_PORTS ? '?' : portsOf(port).map(portName).join('/')}</span>}
       {sel && sel.multi && <span className="sb-item mono hide-narrow">sel ${h4(sel.start)}–${h4(sel.end - 1)} ({sel.end - sel.start} B)</span>}
       {cycles != null && <span className="sb-item mono" title="Cycles of the selection (or the code block at the cursor) on the path in the Cycles section">{cycles} cycles</span>}

@@ -13,7 +13,7 @@
  * ===================================================================== */
 import type {
   Addr, AnalysisResult, Block, Bookmark, FileInput, FileLine, FileVerifyResult, HeadPart, Line, ListingLine, LogEntry, Note, Override, ProjectInput,
-  RenderResult, Settings, SpaceInfo, Token, VerifyResult, XRef,
+  RenderLabel, RenderResult, Settings, SpaceInfo, Token, VerifyResult, XRef,
 } from './types';
 import { lineText } from './render/lines';
 import { analyze as analyzeOne } from './analyze';
@@ -94,6 +94,8 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
   const bankZones = ranged(project.bankZones), junk = ranged(project.junk);
   // a relocated block runs in the bank it is loaded in
   const relocs = ranged(project.relocs).map(rs => rs.map(r => ({ ...r, to: spaceAddr(r.to) })));
+  // and a view offset is shown in its bank (10.4)
+  const viewOffsets = ranged(project.viewOffsets).map(os => os.map(o => ({ ...o, to: spaceAddr(o.to) })));
   const patches = parts.map((): NonNullable<ProjectInput['patches']> => []);
   for (const p of project.patches || []) for (const i of route(p.start)) patches[i].push({ ...p, start: spaceAddr(p.start) });
   const ep = project.entryPoint;
@@ -102,6 +104,7 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
       ...project, files: p.files.map(fi => project.files[fi]), labels: labels[i], comments: comments[i], blockComments: blockComments[i], notes: notes[i], blanks: blanks[i], bookmarks: bookmarks[i],
       entries: entries[i], excluded: excluded[i], binary: binary[i], overrides: overrides[i], bankZones: bankZones[i], relocs: relocs[i], patches: patches[i],
       ...(project.junk ? { junk: junk[i] } : {}),
+      ...(project.viewOffsets ? { viewOffsets: viewOffsets[i] } : {}),
       entryPoint: ep != null && spaceOf(ep) === p.space ? spaceAddr(ep) : null,
       ...(p.space ? { bank: p.bank } : {}),
     };
@@ -253,10 +256,12 @@ function renderSpaces(A: AnalysisResult, project: ProjectInput, opts: RenderOpti
   let renders = parts.map((_, i) => one(i));
   // the labels of other banks a bank refers to, named as there (made unique in its file)
   renders = renders.map((R, i) => {
-    const foreign: Record<Addr, string> = {}, taken = new Set([...R.labels.values()].map(l => l.name).concat([...R.zp.values()].map(z => z.name)));
+    // (the names the files have: a view offset's in the listing differ, 10.4)
+    const files = (x: RenderResult) => x.fileLabels ?? x.labels;
+    const foreign: Record<Addr, string> = {}, taken = new Set([...files(R).values()].map(l => l.name).concat([...R.zp.values()].map(z => z.name)));
     for (const to of A.parts![i].xrefs.keys()) {
       if (has[i][to]) continue;
-      const t = first(to), name = t >= 0 ? renders[t].labels.get(to)?.name : undefined;
+      const t = first(to), name = t >= 0 ? files(renders[t]).get(to)?.name : undefined;
       if (!name) continue;
       foreign[to] = unique(name, parts[t].bank, n => taken.has(n));
       taken.add(foreign[to]);
@@ -268,6 +273,8 @@ function renderSpaces(A: AnalysisResult, project: ProjectInput, opts: RenderOpti
 
 function mergeRenders(project: ProjectInput, parts: Split[], renders: RenderResult[], A: AnalysisResult, has: Uint8Array[], first: (a: Addr) => number): RenderResult {
   const out: RenderResult = { lines: [], files: {}, fileLines: {}, labels: new Map(), zp: new Map(), fileNames: project.files.map(() => ''), problems: [], usedHw: new Set(), excluded: [], parts: renders };
+  const fileLabels = new Map<Addr, RenderLabel>();
+  if (renders.some(R => R.fileLabels)) out.fileLabels = fileLabels;
   let blockBase = 0;
   renders.forEach((R, i) => {
     const p = parts[i], off = p.space * SPACE;
@@ -289,11 +296,14 @@ function mergeRenders(project: ProjectInput, parts: Split[], renders: RenderResu
     for (const [path, ls] of Object.entries(R.fileLines)) out.fileLines[path] = ls.map(line);
     Object.assign(out.files, R.files);
     for (const [a, l] of R.labels) { const k = g(a); if (!out.labels.has(k)) out.labels.set(k, l); }
+    // the files' own names, where a bank's listing shows a view offset (10.4)
+    for (const [a, l] of R.fileLabels ?? R.labels) { const k = g(a); if (!fileLabels.has(k)) fileLabels.set(k, l); }
     for (const [a, z] of R.zp) if (!out.zp.has(a)) out.zp.set(a, z);
     R.fileNames.forEach((n, fi) => { out.fileNames[p.files[fi]] = n; });
     out.problems.push(...R.problems.map(x => ({ ...x, addr: x.addr == null ? undefined : g(x.addr) })));
     for (const h of R.usedHw) out.usedHw.add(h);
     out.excluded.push(...R.excluded.map(x => ({ ...x, start: off + x.start, end: off + x.end, file: p.files[x.file] ?? x.file })));
+    if (R.viewOffsets?.length) (out.viewOffsets ??= []).push(...R.viewOffsets.map(o => ({ start: off + o.start, end: off + o.end, to: off + o.to })));
     blockBase += A.parts![i].blocks.length;
   });
   return out;

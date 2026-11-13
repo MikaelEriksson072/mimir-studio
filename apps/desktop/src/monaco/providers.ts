@@ -90,7 +90,8 @@ export function registerProviders(monaco: typeof Monaco): void {
       if (sym) return { contents: [{ value: `**${name}** — $${h4(sym.addr)}` }, { value: `${sym.cat} · ${sym.desc}` }] };
       if (region) return { contents: [{ value: `**${name}** — $${h4(region.start)}` }, { value: `${region.cat} · ${region.desc}` }] };
       const { R, A } = monacoContext;
-      if (R && A && !drive) for (const [a, l] of R.labels) if (l.name === name) {
+      // (the names the source has: with a view offset the listing's differ, spec 10.4)
+      if (R && A && !drive) for (const [a, l] of R.fileLabels ?? R.labels) if (l.name === name) {
         const xs = A.xrefs.get(a) || [];
         const b = findBlock(A.blocks, a);
         return { contents: [{ value: `**${name}** — $${h4(a)}` }, { value: `${b ? kindInfo(b.type).label : 'label'} · ${xs.length} reference${xs.length === 1 ? '' : 's'}${l.user ? ' · renamed by you' : ''}` }] };

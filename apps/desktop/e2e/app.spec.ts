@@ -2779,6 +2779,80 @@ test('timing code: a delay a timer sets the branch into is marked, and what it r
   await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
 });
 
+test('a view offset shows code at the address it runs at, in the listing only: the .asm keeps it where it is loaded (10.4)', async ({ app, page }) => {
+  // fixtures/prg/moved-demo.prg: a loop copies $1000-$1010 to $2000 and jumps there; the code at $1000 is written for $2000
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/moved-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded moved-demo.prg at $0801')).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: 'Show at another address' });
+
+  await test.step('mark the bytes as code, then O shows them at +$1000: what the references say comes first', async () => {
+    await goTo(page, '$1000');
+    await page.keyboard.press('c');
+    await expect.poll(async () => rowAt(await listingRows(page), '1003')?.text).toMatch(/^jsr \$2009/);
+    await page.keyboard.press('o');
+    await expect(dialog.getByLabel('Start (loaded at)')).toHaveValue('$1000');
+    await expect(dialog.getByLabel('End (included)')).toHaveValue('$1010');
+    // not over its own bytes
+    await dialog.getByLabel('Shown at (or offset)').fill('$1008');
+    await expect(dialog).toContainText('At $1008 the bytes would be shown over themselves ($1000-$1010).');
+    await expect(dialog.getByRole('button', { name: 'Show there' })).toBeDisabled();
+    await dialog.getByLabel('Shown at (or offset)').fill('+$1000');
+    await expect(dialog).toContainText('$1000–$1010 (17 bytes) is shown at $2000–$2010 (offset +$1000), in the listing only.');
+    await expect(dialog).toContainText('5 references go to $2000–$2010, 3 of them from these bytes; of the jumps and calls there, 3 of 3 land on an instruction.');
+    await dialog.getByRole('button', { name: 'Show there' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(toast(page, '$1000–$1010 is shown at $2000–$2010 (offset +$1000) in the listing only')).toBeVisible();
+  });
+
+  await test.step('the listing names the bytes where they are shown, and references there go to them', async () => {
+    const rows = await listingRows(page);
+    expect(rowAt(rows, '080f')?.text).toMatch(/^lda \$1000,x/);
+    expect(rowAt(rows, '0812')?.text).toMatch(/^sta code_2000,x/);
+    expect(rowAt(rows, '0818')?.text).toMatch(/^jmp code_2000/);
+    expect(headerAt(rows, '2000')?.text).toContain('$1000-$1010 (17 bytes) · shown at $2000-$2010');
+    expect(rows.some(r => r.text.startsWith('// ==== shown at $2000-$2010 (offset +$1000), only here: the .asm has these 17 bytes at $1000-$1010'))).toBe(true);
+    expect(rowAt(rows, '2003')?.text).toMatch(/^jsr sub_2009/);
+    expect(rowAt(rows, '2009')?.text).toMatch(/^lda l_200d,x/);
+    await goTo(page, '$2009');
+    await expect(statusBar(page)).toContainText('$2009 (loaded at $1009) · sub_2009');
+    await expect(listing(page).locator('.row.cur')).toHaveClass(/in-voff/);
+    await expect(listing(page).locator('.row.cur .adr')).toHaveClass(/shifted/);
+    await expect(page.locator('.inspector')).toContainText('The listing shows $1000–$1010 at $2000–$2010 (offset +$1000)');
+  });
+
+  await test.step('a name given there stays with the bytes; the .asm has them where they are loaded, and F7 verifies', async () => {
+    await page.keyboard.press('n');
+    const input = page.getByLabel('Label at $1009');
+    await input.fill('blink');
+    await input.press('Enter');
+    await expect.poll(async () => rowAt(await listingRows(page), '2003')?.text).toMatch(/^jsr blink/);
+    await page.getByRole('tab', { name: 'moved-demo.asm' }).click();
+    const editor = page.locator('.mon-host .view-lines');
+    await expect(editor).toContainText('.pc = $1000 "Code"');
+    await expect(editor).toContainText('jsr $2009');
+    await expect(editor).not.toContainText('shown at');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await listing(page).focus();
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  });
+
+  await test.step('the View offsets list goes to it and removes it; Ctrl+Z brings it back', async () => {
+    await openSection(page, 'View offsets');
+    const list = page.getByRole('list', { name: 'View offsets' });
+    await expect(list.getByRole('listitem')).toHaveText([/^\$1000–\$1010\s*at \$2000 · \+\$1000 · 17 B · code_2000$/]);
+    await list.getByRole('button', { name: 'Remove the offset of $1000–$1010' }).click();
+    await expect(toast(page, '$1000–$1010 is shown where it is loaded again')).toBeVisible();
+    await expect.poll(async () => rowAt(await listingRows(page), '0818')?.text).toMatch(/^jmp \$2000/);
+    expect(rowAt(await listingRows(page), '1003')?.text).toMatch(/^jsr \$2009/);
+    await listing(page).focus();
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => rowAt(await listingRows(page), '2003')?.text).toMatch(/^jsr blink/);
+  });
+});
+
 test('relocate code the program copies elsewhere: Problems finds the copy, the listing reads it where it runs, names go along', async ({ app, page }) => {
   // fixtures/prg/moved-demo.prg (packages/core/test/reloc.test.ts): 10 SYS2061, a loop that copies $1000-$1010 to $2000
   // and jumps there, and at $1000 code assembled to run at $2000

@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript, type JunkArea } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -70,6 +70,8 @@ interface SidebarProps {
   patches: PatchesProps;
   /** the bytes the user called junk (spec 11.7) */
   junk: JunkProps;
+  /** the bytes the listing shows at another address (spec 10.4) */
+  viewOffsets: ViewOffsetsProps;
   /** the user's scripts (spec 10.3) */
   scripts: ScriptsProps;
   /** play the music block that starts at `start` (the Blocks view's play button), in VICE or DeepSID as `musicPlayer`
@@ -105,6 +107,19 @@ interface JunkProps {
   onIncludeAll: () => void;
 }
 
+interface ViewOffsetsProps {
+  list: readonly ViewOffset[];
+  /** those the listing shows (RenderResult.viewOffsets): the rest have lost their bytes (a file, junk, a relocated block) */
+  shown: readonly ViewOffset[];
+  /** the listing at the offset's bytes, selected */
+  onGo: (o: ViewOffset) => void;
+  /** the view offset dialog: show it elsewhere */
+  onEdit: (o: ViewOffset) => void;
+  /** show the bytes where they are loaded again */
+  onRemove: (start: Addr) => void;
+  onRemoveAll: () => void;
+}
+
 interface PatchesProps {
   list: readonly Patch[];
   onGo: (p: Patch) => void; onEdit: (p: Patch) => void; onSave: (p: Patch) => void; onRemove: (p: Patch) => void;
@@ -125,7 +140,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -163,6 +178,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
         {junk.list.length > 0 && <JunkSection {...junk} A={A} project={project} fileAddr={fileAddr} />}
+        {viewOffsets.list.length > 0 && <ViewOffsetsSection {...viewOffsets} A={A} R={R} />}
         <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
         <ProgramStart A={A} R={R} project={project} onNavigate={onNavigate} onSetStart={onSetStart} />
         <SideSection id="map" title="Memory map" summary={`${segs.length} block${segs.length === 1 ? '' : 's'}`}>
@@ -503,6 +519,39 @@ function JunkSection({ list, onGo, onInclude, onIncludeAll, A, project, fileAddr
         })}
       </div>
       <p className="side-hint">Junk is left out of the listing, the source and the output; unlike Exclude from the build, nothing of it is written. Only here can it be put back.</p>
+    </SideSection>
+  );
+}
+
+/**
+ * The view offsets (spec 10.4) by address: the bytes, where the listing shows them and how far, with the name of their
+ * first byte there. A click goes to them, the pencil shows them elsewhere and the cross where they are loaded again. One
+ * the listing cannot show any more (its bytes are not loaded, or relocated) says why.
+ */
+function ViewOffsetsSection({ list, shown, onGo, onEdit, onRemove, onRemoveAll, A, R }: ViewOffsetsProps & { A: AnalysisResult; R: RenderResult }) {
+  return (
+    <SideSection id="offsets" title="View offsets" summary={`${list.length} area${list.length === 1 ? '' : 's'}`}
+      actions={list.length > 1 ? <button className="icon-btn" title="Show every area where it is loaded again" aria-label="Remove all view offsets" onClick={onRemoveAll}><Icon name="x" size={14} /></button> : undefined}>
+      <div role="list" aria-label="View offsets">
+        {list.map(o => {
+          const n = o.end - o.start, on = shown.some(x => x.start === o.start && x.end === o.end && x.to === o.to);
+          const why = on ? null : viewOffsetProblem(A, shown, o.start, o.end, o.to) ?? 'another view offset is in the way.';
+          const range = `${bankAdr(A, o.start)}–$${h4(o.end - 1)}`, at = `$${h4(o.to)}–$${h4(o.to + n - 1)}`, name = on ? R.labels.get(o.start)?.name : undefined;
+          return (
+            <div key={o.start} role="listitem" className={cx('file-row voff-row', !on && 'off')} onClick={() => onGo(o)}
+              title={on ? `${range} (${n} byte${n === 1 ? '' : 's'}) is shown at ${at} in the listing only: the .asm keeps it where it is loaded. Click to go to it` : `Not shown: ${why}`}>
+              <Icon name="target" size={14} />
+              <div className="file-meta">
+                <div className="file-name mono">{range}</div>
+                <div className="muted mono small">{on ? `at $${h4(o.to)} · ${shiftText(o)} · ${fmtBytes(n)}${name ? ` · ${name}` : ''}` : `not shown: ${why}`}</div>
+              </div>
+              <button className="icon-btn" title={`Show ${range} at another address`} aria-label={`Change where ${range} is shown`} onClick={e => { e.stopPropagation(); onEdit(o); }}><Icon name="pencil" size={13} /></button>
+              <button className="icon-btn" title={`Show ${range} where it is loaded again`} aria-label={`Remove the offset of ${range}`} onClick={e => { e.stopPropagation(); onRemove(o.start); }}><Icon name="x" size={13} /></button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="side-hint">The listing shows these bytes at another address, with the labels they have there. The .asm, the output and the round trip keep them where they are loaded.</p>
     </SideSection>
   );
 }

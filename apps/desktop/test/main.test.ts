@@ -445,6 +445,15 @@ describe('schemas', () => {
     expect(projectSchema.safeParse({ ...p, junk: [{ start: 0x3000, end: 0x3000 }] }).success).toBe(false);
   });
 
+  it('reads view offsets (spec 10.4), and older files without them; an empty one is refused', () => {
+    const p = { ...demoProject(), viewOffsets: [{ start: 0x1000, end: 0x1011, to: 0x2000 }] };
+    const json = JSON.parse(JSON.stringify(serializeProject(p)));
+    expect(serializedProjectSchema.parse(json).viewOffsets).toEqual(p.viewOffsets);
+    expect(projectSchema.safeParse(p).success).toBe(true);
+    expect(serializedProjectSchema.parse(JSON.parse(JSON.stringify(serializeProject(demoProject())))).viewOffsets).toBeUndefined();
+    expect(projectSchema.safeParse({ ...p, viewOffsets: [{ start: 0x1000, end: 0x1000, to: 0x2000 }] }).success).toBe(false);
+  });
+
   it('reads bookmarks, and older files without them', () => {
     const p = { ...demoProject(), bookmarks: { 0x0810: { title: 'init', text: 'set up\nthe screen' } } };
     const json = JSON.parse(JSON.stringify(serializeProject(p)));

@@ -1,7 +1,7 @@
 /* Inspector (right column): memory map, block evidence/type/label/comment (or the zero-page variable whose .label line
  * was clicked: its name and comments), graphics/music/text preview. */
 import { useEffect, useMemo, useState } from 'react';
-import { textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, relocAt, relocLoadedAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
+import { textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, refsShown, relocAt, relocLoadedAt, shiftText, viewOffsetAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
 import type { MusicPlayer, TypeGroup } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -30,6 +30,9 @@ interface InspectorProps {
   /** open the Relocate dialog for these bytes (on a relocated block: where it runs), or stop relocating the block loaded
    *  at `start` (spec 8.1b) */
   onRelocate: (range: { start: Addr; end: Addr }) => void; onUnrelocate: (start: Addr) => void;
+  /** open the view offset dialog for these bytes (on a view offset: where it is shown), or remove the view offset that
+   *  starts at `start` (spec 10.4) */
+  onViewOffset: (range: { start: Addr; end: Addr }) => void; onRemoveOffset: (start: Addr) => void;
   onToggleExcluded: (at: Addr) => void;
   /** save the block as data/<label>.bin (loaded with .import binary), or write it in the source again */
   onToggleBinary: (at: Addr) => void;
@@ -55,7 +58,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice' }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice' }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -78,7 +81,10 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   // the characters the export writes in .text (textEncoding); RETURN and the PETSCII terminator get their own marks
   const te = blk && blk.type === 'text' ? textEncoding(blk.props.enc) : null;
   const textPreview = blk && te ? [...A.mem.subarray(blk.start, Math.min(blk.end, blk.start + 120))].map(b => b === 0x0d && te.kick.startsWith('petscii') ? '⏎' : te.char(b) ?? (b === 0 ? '·' : '░')).join('') : null;
-  const xin = blk ? (A.xrefs.get(blk.start) || []).length : 0;
+  // (and those to where a view offset shows it, 10.4)
+  const xin = blk ? refsShown(A, R.viewOffsets, blk.start).length : 0;
+  // the view offset the listing shows the cursor's byte with, else one in the block
+  const voff = cursor != null ? viewOffsetAt(R.viewOffsets, cursor) ?? (blk ? R.viewOffsets?.find(o => o.start < blk.end && blk.start < o.end) : undefined) : undefined;
   // a relocated block (8.1b): this one, where its bytes are loaded, or the one whose copy this block is in
   const loadedRl = blk?.type === 'reloc' ? relocLoadedAt(A, blk.start) : undefined, runRl = blk ? relocAt(A, blk.start) : undefined;
   return (
@@ -100,11 +106,13 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
             <dt>Range</dt><dd className="mono">${h4(blk.start)}–${h4(blk.end - 1)} <span className="muted">· {blk.end - blk.start} bytes</span></dd>
             {loadedRl && <><dt>Runs at</dt><dd className="mono"><button className="linkish mono" title="Go to where it runs" onClick={() => onNavigate(loadedRl.to)}>${h4(loadedRl.to)}–${h4(loadedRl.to + loadedRl.end - loadedRl.start - 1)}</button></dd></>}
             {runRl && <><dt>Loaded at</dt><dd className="mono">${h4(loadAddress(A, blk.start))}–${h4(loadAddress(A, blk.end - 1))} <span className="muted">· in </span><button className="linkish mono" title="Go to the relocated block, where it is loaded" onClick={() => onNavigate(runRl.start)}>{R.labels.get(runRl.start)?.name ?? `$${h4(runRl.start)}`}</button></dd></>}
+            {voff && <><dt>Shown at</dt><dd className="mono">${h4(voff.to + Math.max(blk.start, voff.start) - voff.start)}–${h4(voff.to + Math.min(blk.end, voff.end) - 1 - voff.start)} <span className="muted">· offset {shiftText(voff)}</span></dd></>}
             <dt>Why</dt><dd>{blk.reason || '—'}</dd>
             <dt>Refs in</dt><dd>{xin}</dd>
             <dt>Entropy</dt><dd className="mono">{blk.entropy.toFixed(2)} <span className="muted">bits/byte</span></dd>
           </dl>
           {(loadedRl || runRl) && <RelocNotice R={R} r={(loadedRl ?? runRl)!} inside={!loadedRl} onRelocate={onRelocate} onUnrelocate={onUnrelocate} />}
+          {voff && <OffsetNotice o={voff} onViewOffset={onViewOffset} onRemoveOffset={onRemoveOffset} />}
           {!loadedRl && <label className="field"><span>Type</span>
             <select value={markId} onChange={e => e.target.value === 'auto' ? onClearOverride(blk) : onMark(e.target.value, { start: blk.start, end: blk.end })}>
               {MARK_AS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -123,6 +131,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
             <button className="btn small merge-range-btn" onClick={onMergeRange} title="Merge from this block to an end address into one block (M)">Merge range…</button>
             {blk.type !== 'basic' && !loadedRl && <button className="btn small merge-range-btn" onClick={() => onBlockSize(blk.start)} title="Set where this block starts and ends: the blocks next to it give or take the bytes (L)">Size…</button>}
             {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onRelocate({ start: blk.start, end: blk.end })} title="The program copies these bytes to another address and runs them there: read them where they run, written inside .pseudopc (R)">Relocate…</button>}
+            {!loadedRl && !runRl && !voff && <button className="btn small merge-range-btn" onClick={() => onViewOffset({ start: blk.start, end: blk.end })} title="Show these bytes at another address in the listing, with the labels they have there; the .asm keeps them where they are loaded (O)">Show at…</button>}
             {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onJunk({ start: blk.start, end: blk.end })} title="These bytes are junk: left out of the listing, the source and the output (unlike Include in the build, nothing of them stays). The Junk list in the Explorer puts them back">Junk</button>}
           </div>
           {blk.type === 'code' && A.mcfg && <MemoryFields A={A} blk={blk} cart={B.A.mcfg?.cart} onBankZone={onBankZone} />}
@@ -186,6 +195,24 @@ function RelocNotice({ R, r, inside, onRelocate, onUnrelocate }: { R: RenderResu
         <div className="merge-row">
           <button className="btn small" onClick={() => onRelocate({ start: r.start, end: r.end })} title="Give another address it runs at (R)">Runs at…</button>
           <button className="btn small" onClick={() => onUnrelocate(r.start)} title="Read the bytes where they are loaded again; names and comments go back with them">Stop relocating</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A view offset (spec 10.4): where the listing shows the bytes, and buttons to show them elsewhere or where they are
+ *  loaded again. */
+function OffsetNotice({ o, onViewOffset, onRemoveOffset }: { o: { start: Addr; end: Addr; to: Addr } } & Pick<InspectorProps, 'onViewOffset' | 'onRemoveOffset'>) {
+  const n = o.end - o.start;
+  return (
+    <div className="notice small reloc-notice voff-notice">
+      <Icon name="info" size={14} />
+      <div>
+        <p>The listing shows <span className="mono">${h4(o.start)}–${h4(o.end - 1)}</span> at <span className="mono">${h4(o.to)}–${h4(o.to + n - 1)}</span> (offset <span className="mono">{shiftText(o)}</span>), with the labels it has there. Only here: the .asm, the output and the round trip keep the bytes where they are loaded.</p>
+        <div className="merge-row">
+          <button className="btn small" onClick={() => onViewOffset({ start: o.start, end: o.end })} title="Show the bytes at another address (O)">Shown at…</button>
+          <button className="btn small" onClick={() => onRemoveOffset(o.start)} title="Show the bytes where they are loaded again">Remove offset</button>
         </div>
       </div>
     </div>

@@ -135,6 +135,11 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .junk-row > svg { flex: none; color: var(--fg-3); }
 .junk-row .file-meta .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .junk-row .icon-btn { flex: none; }
+/* the View offsets list (spec 10.4): one the listing cannot show is muted */
+.voff-row > svg { flex: none; color: var(--accent-hi); }
+.voff-row .file-meta .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voff-row .icon-btn { flex: none; }
+.voff-row.off .file-meta { opacity: 0.55; }
 /* an on/off switch (a checkbox with role="switch") */
 .switch { appearance: none; flex: none; position: relative; width: 26px; height: 15px; margin: 0; border-radius: 8px; background: var(--line-2); cursor: pointer; transition: background 0.15s; }
 .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--fg-2); transition: transform 0.15s, background 0.15s; }
@@ -546,6 +551,11 @@ main.main { container: editor / inline-size; }
 /* where a relocated block runs (8.1b): a stripe in its colour beside the gutter */
 .row.in-reloc .gut { box-shadow: 3px 0 0 var(--g-reloc); }
 .row.in-reloc.cur .gut { box-shadow: 0 0 0 1px var(--accent-hi), 3px 0 0 var(--g-reloc); }
+/* bytes a view offset shows at another address (spec 10.4): the address shown, in the accent colour and slanted, and a
+   dashed stripe beside the gutter (the .asm has them where they are loaded) */
+.adr.shifted { color: var(--accent-hi); font-style: italic; }
+.row.in-voff .gut { box-shadow: 3px 0 0 var(--accent); }
+.row.in-voff.cur .gut { box-shadow: 0 0 0 1px var(--accent-hi), 3px 0 0 var(--accent); }
 .reloc-notice > div { display: flex; flex-direction: column; gap: 6px; }
 .reloc-notice p { margin: 0; }
 .zp-tag.delay-tag { color: var(--accent-hi); }

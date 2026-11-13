@@ -111,7 +111,7 @@ function collect(project: NotesProject, R: RenderResult, S: Settings): Notes | n
       if (!name && l.k === 'lbl' && l.a <= a) name = l.a === a ? l.name : `${l.name}+${a - l.a}`;
       if (l.k === 'hdr') { block = l.text; break; }
     }
-    return { name: name ?? R.labels.get(a)?.name ?? R.zp.get(a)?.name ?? null, block };
+    return { name: name ?? (R.fileLabels ?? R.labels).get(a)?.name ?? R.zp.get(a)?.name ?? null, block };
   };
   const row = (loc: Loc, i: number, cur = i === loc.idx): Row => {
     const l = R.fileLines[loc.file][i];
@@ -128,7 +128,7 @@ function collect(project: NotesProject, R: RenderResult, S: Settings): Notes | n
     const rows: Row[] = []; for (let i = s; i < e; i++) rows.push(row(loc, i, i >= loc.idx && i <= last));
     return { rows, more: Math.max(0, last + 1 - e) };
   };
-  const place = (a: Addr): Place => { const loc = at(a); return { a, loc, ...(loc ? context(loc, a) : { name: R.labels.get(a)?.name ?? null, block: null }) }; };
+  const place = (a: Addr): Place => { const loc = at(a); return { a, loc, ...(loc ? context(loc, a) : { name: (R.fileLabels ?? R.labels).get(a)?.name ?? null, block: null }) }; };
   return {
     files,
     bookmarks: bookmarks.map(([a, b]) => {

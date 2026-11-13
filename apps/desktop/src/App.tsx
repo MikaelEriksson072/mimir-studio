@@ -11,6 +11,7 @@ import {
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
+  removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
   checkScript, type ScriptTemplate, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
@@ -53,6 +54,7 @@ import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
 import { BlockSizeModal } from './components/BlockSize';
 import { RelocateModal, type RelocDraft } from './components/Relocate';
+import { ViewOffsetModal, type ViewOffsetDraft } from './components/ViewOffset';
 import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
 import { MemoryDump } from './components/MemoryDump';
@@ -79,6 +81,8 @@ const kr = window.kr;
 const CHANGED_MS = 4000;
 /** the Junk list of a project without junk */
 const NO_JUNK: readonly JunkArea[] = [];
+/** the view offsets of a project without any (spec 10.4) */
+const NO_OFFSETS: readonly ViewOffset[] = [];
 const pickToolchain = (s: Settings): ToolchainSettings => Object.fromEntries(TOOLCHAIN_KEYS.map(k => [k, s[k]])) as ToolchainSettings;
 /** the source shown first and opened in the external editor: the first file's, or a cartridge's banks in one source */
 const mainSource = (R: RenderResult): string => R.main ?? `${R.fileNames[0] || 'main'}.asm`;
@@ -128,7 +132,8 @@ export function App() {
 function Studio({ note, onStartScreen }: { note: Note | null; onStartScreen: () => void }) {
   const project = useProject(s => s.present);
   const dataAsCode = useUi(s => s.dataAsCode);
-  const { analysis, error, busy, deepBusy } = useAnalysis(project, { dataAsCode });
+  // the listing shows the view offsets (spec 10.4); the files, the export and verify never see them
+  const { analysis, error, busy, deepBusy } = useAnalysis(project, { dataAsCode, viewOffsets: true });
   const [toolchain, setToolchain] = useState<ToolchainSettings>(() => pickToolchain(project.settings));
   useEffect(() => { if (kr) kr.getSettings().then(setToolchain).catch(() => { /* keep project defaults */ }); }, []);
 
@@ -177,13 +182,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'overview' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | null>(null);
   /** the block the Block size dialog changes (its start when the dialog opened) */
   const [sizeAt, setSizeAt] = useState<Addr | null>(null);
   /** the patch dialog's range and code */
   const [patchDraft, setPatchDraft] = useState<PatchDraft | null>(null);
   /** the Relocate dialog's block: a range, a relocated block, or a copy loop's (spec 8.1b) */
   const [relocDraft, setRelocDraft] = useState<RelocDraft | null>(null);
+  /** the view offset dialog's bytes: a range, or a view offset (spec 10.4) */
+  const [voffDraft, setVoffDraft] = useState<ViewOffsetDraft | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [labelError, setLabelError] = useState<string | null>(null);
@@ -1434,6 +1441,40 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     toast(`$${h4(r.start)}–$${h4(r.end - 1)} is read where it is loaded again: its names and comments went back with it (Ctrl+Z relocates it again)`, 'ok');
     showChanged(r.start, r.end, 'No longer relocated');
   };
+  /* ---- view offsets: bytes the listing shows at another address, for manual analysis (spec 10.4) ---- */
+  const viewOffsets = project.viewOffsets ?? NO_OFFSETS;
+  /** O: the view offset at the cursor (or the one given), else the selection, else the block at the cursor */
+  const startViewOffset = (range?: Range | null) => {
+    const r = range ?? (sel && sel.multi && sel.end > sel.start ? { start: sel.start, end: sel.end } : null);
+    const at = r ? r.start : cursor;
+    if (at == null) { toast('Select the bytes to show at another address, or put the cursor in their block', 'info'); return; }
+    const o = viewOffsetAt(viewOffsets, at);
+    if (o && (!r || (r.start === o.start && r.end === o.end))) { setVoffDraft({ start: o.start, end: o.end, offset: o }); setModal('voff'); return; }
+    const b = findBlock(A.blocks, at), span = r ?? (b ? { start: b.start, end: b.end } : null);
+    if (!span) { toast(`$${h4(at)} is not part of any loaded file`, 'warn'); return; }
+    setVoffDraft({ start: span.start, end: span.end });
+    setModal('voff');
+  };
+  const closeVoff = () => { setModal(null); setVoffDraft(null); setTimeout(() => listRef.current?.focus(), 0); };
+  const applyViewOffset = (o: ViewOffset) => {
+    const was = viewOffsets.some(x => x.start === o.start), n = o.end - o.start;
+    update(was ? `Show $${h4(o.start)}-$${h4(o.end - 1)} at $${h4(o.to)} instead` : `Show $${h4(o.start)}-$${h4(o.end - 1)} at $${h4(o.to)}`, d => { d.viewOffsets = setViewOffset(d.viewOffsets, o); });
+    closeVoff(); setSel(null);
+    toast(`$${h4(o.start)}–$${h4(o.end - 1)} is shown at $${h4(o.to)}–$${h4(o.to + n - 1)} (offset ${shiftText(o)}) in the listing only: the .asm keeps it where it is loaded (Ctrl+Z takes it back)`, 'ok');
+    showChanged(o.start, o.end, `Shown at $${h4(o.to)}`);
+  };
+  const removeOffset = (start: Addr) => {
+    const o = viewOffsets.find(x => x.start === start); if (!o) return;
+    update(`Show $${h4(o.start)}-$${h4(o.end - 1)} where it is loaded again`, d => { const rest = removeViewOffset(d.viewOffsets, start); d.viewOffsets = rest.length ? rest : undefined; });
+    closeVoff();
+    toast(`$${h4(o.start)}–$${h4(o.end - 1)} is shown where it is loaded again (Ctrl+Z shows it at $${h4(o.to)})`, 'ok');
+    showChanged(o.start, o.end, 'Shown where it is loaded');
+  };
+  const removeAllOffsets = () => {
+    const n = viewOffsets.length; if (!n) return;
+    update(`Remove all ${n} view offset${n === 1 ? '' : 's'}`, d => { d.viewOffsets = undefined; });
+    toast(`${n} view offset${n === 1 ? ' is' : 's are'} gone: the listing shows the bytes where they are loaded`, 'ok');
+  };
   /** another address has the name, or a zero-page variable (they share the name space) */
   const nameTaken = (name: string, addr: Addr) => [...R.labels].some(([a, l]) => a !== addr && l.name === name) || [...R.zp].some(([a, z]) => a !== addr && !z.off && z.name === name);
   const rename = (addr: Addr, name: string): boolean => {
@@ -2032,6 +2073,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }
   };
   const goPatch = (p: Patch) => { navigate(p.start, { center: true, listing: true }); setSel({ start: p.start, end: patchEnd(p), multi: true, anchor: p.start, anchorEnd: patchEnd(p) }); setTimeout(() => listRef.current?.focus(), 0); };
+  /** the listing at a view offset's first byte, with its bytes selected (10.4) */
+  const goViewOffset = (o: ViewOffset) => { navigate(o.start, { center: true, listing: true }); setSel({ start: o.start, end: o.end, multi: true, anchor: o.start, anchorEnd: o.end }); setTimeout(() => listRef.current?.focus(), 0); };
   /** the listing where a junk area was (11.7): the bytes right after it, else those right before it */
   const goJunk = (j: JunkArea) => {
     const a = A.owner[j.end] >= 0 ? j.end : j.start > 0 && A.owner[j.start - 1] >= 0 ? j.start - 1 : null;
@@ -2744,6 +2787,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'join-prev', label: 'Join the bytes from the start of the block to the cursor with the previous block', key: 'Shift+J', run: () => joinFrom('prev') },
     { id: 'block-size', label: 'Block size… (set where the block at the cursor starts and ends)', key: 'L', run: () => openBlockSize() },
     { id: 'relocate', label: 'Relocate the selection (or the block at the cursor): the program copies it elsewhere to run there… (on a relocated block: where it runs)', key: 'R', run: () => startRelocate() },
+    { id: 'view-offset', label: 'Show the selection (or the block at the cursor) at another address, in the listing only (view offset)… (on a view offset: where)', key: 'O', run: () => startViewOffset() },
+    ...(viewOffsets.length ? [{ id: 'view-offset-all', label: `Remove all view offsets (${viewOffsets.length}): show the bytes where they are loaded`, run: removeAllOffsets }] : []),
     { id: 'patch', label: 'Patch the selection (or the cursor line) with new code… (a patch on it: edit it)', key: 'P', run: () => startPatch() },
     ...project.patches.flatMap(p => [
       { id: `patch-switch-${p.id}`, label: `Switch ${p.off ? 'on' : 'off'} patch "${p.name}" (${patchSpan(p)})`, run: () => switchOnePatch(p, !!p.off) },
@@ -2904,7 +2949,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: e.shiftKey ? 'rename-operand' : 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text', S: 'split', J: e.shiftKey ? 'join-prev' : 'join-next', L: 'block-size', V: 'text-cols' };
+      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', O: 'view-offset', P: 'patch', N: e.shiftKey ? 'rename-operand' : 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text', S: 'split', J: e.shiftKey ? 'join-prev' : 'join-next', L: 'block-size', V: 'text-cols' };
       if (single[key]) run(single[key]);
     };
     window.addEventListener('keydown', onKey);
@@ -3070,6 +3115,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const r = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
         return r ? [{ label: `Relocate ${inSel ? 'selection' : 'block'}… (the program copies it elsewhere to run)`, key: 'R', run: () => startRelocate(r) }] : [];
       })(),
+      ...((): MenuItem[] => {
+        // 10.4: on a view offset, where it is shown or not; else show the selection or the block at another address
+        const o = l.a != null && !inSel ? viewOffsetAt(viewOffsets, l.a) : undefined;
+        if (o) return [
+          { label: `Change where $${h4(o.start)}–$${h4(o.end - 1)} is shown ($${h4(o.to)})…`, key: 'O', run: () => startViewOffset({ start: o.start, end: o.end }) },
+          { label: `Remove the offset (show $${h4(o.start)}–$${h4(o.end - 1)} where it is loaded)`, run: () => removeOffset(o.start) },
+        ];
+        const r = inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: b.start, end: b.end } : null;
+        return r && !relocAt(A, r.start) ? [{ label: `Show ${inSel ? 'selection' : 'block'} at another address (listing only)…`, key: 'O', run: () => startViewOffset(r) }] : [];
+      })(),
       { sep: true },
       ...((): MenuItem[] => {
         // the Pack view: the selection, else the whole block, where its bytes are in the built PRG (a relocated block's
@@ -3111,7 +3166,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         { sep: true },
         // each rename item says what it renames: the line's own label (N), and the label or zero-page variable its operand
         // names (Shift+N) where that is another one
-        { label: renameText(ownName, own), key: 'N', icon: 'pencil', run: () => (def ? startDefRename(def, zl?.line ?? view.lines.indexOf(l)) : startRename(l.a)) },
+        // (a byte a view offset shows elsewhere gets its label where it is shown, 10.4)
+        { label: renameText(ownName, own != null ? shownAddress(R.viewOffsets, own) : own), key: 'N', icon: 'pencil', run: () => (def ? startDefRename(def, zl?.line ?? view.lines.indexOf(l)) : startRename(l.a)) },
         ...(opName ? [{ label: renameText(opName, opName.addr), key: 'Shift+N', icon: 'pencil', run: () => startOperandRename(l, cell ?? null) }] satisfies MenuItem[] : []),
         // a zero-page variable's .label line, or an instruction that uses one: join it with a neighbour into 16 bits, or split it
         { label: '16-bit variable', children: zpPairItems(zl ? zl.addr : zpOperand(l)) },
@@ -3306,6 +3362,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
           junk={{ list: project.junk ?? NO_JUNK, onGo: goJunk, onInclude: includeJunk, onIncludeAll: includeAllJunk }}
+          viewOffsets={{ list: viewOffsets, shown: R.viewOffsets ?? NO_OFFSETS, onGo: goViewOffset, onEdit: o => startViewOffset({ start: o.start, end: o.end }), onRemove: removeOffset, onRemoveAll: removeAllOffsets }}
           scripts={{ list: userScripts, checks: scriptChecks, patches: project.patches, onNew: () => newUserScript(), onOpen: id => { openUserScript(id); setDrawer(null); }, onRun: id => void runUserScript(id), onRemove: removeUserScript, onAdd: addLibraryScript }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onShowBlock={b => { showBlock(b); setDrawer(null); }}
@@ -3490,14 +3547,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpPair={pairZp} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
       {inspector === 'auto' && <button className={cx('insp-rail', drawer === 'insp' && 'on')} onClick={() => (drawer === 'insp' ? closeInspector() : setDrawer('insp'))} aria-label="Inspector" aria-expanded={drawer === 'insp'}
         title={drawer === 'insp' ? 'Fold in the inspector (a click outside it or Esc does too)' : 'Open the inspector: the memory map, the block at the cursor and its preview'}><Icon name="panel" size={16} /><span>Inspector</span></button>}
 
-      <StatusBar A={A} fileCount={project.files.length} cursor={cursor} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} deepBusy={deepBusy} cycles={path && path.instructions ? path.total : null}
+      <StatusBar A={A} fileCount={project.files.length} cursor={cursor} shown={cursor != null ? shownAddress(R.viewOffsets, cursor) : null} bank={bankAt(cursor)} curLabel={curLabel} blk={blk} sel={sel} renderMs={renderMs} busy={busy} deepBusy={deepBusy} cycles={path && path.instructions ? path.total : null}
         verify={build && !stale ? { ok: build.ok, kick: build.kick ? build.kick.ok : null } : null}
         messages={{ count: messages.length, errors: messages.filter(m => m.kind === 'err').length }}
         actions={{ onFiles: () => showSection('files'), onGoto: () => setModal('goto'), onLog: () => setUi({ bottom: 'log', panelOpen: true }),
@@ -3512,11 +3569,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} packing={packing} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} links={overviewLinks} onClose={() => setModal(null)} />}
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
-      {modal === 'goto' && <GotoModal R={R} resolve={resolveAddr} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
+      {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
       {modal === 'size' && sizeAt != null && <BlockSizeModal A={A} R={R} at={sizeAt} onResize={resizeInto} onClose={() => { setModal(null); setSizeAt(null); }} />}
       {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}
+      {modal === 'voff' && voffDraft && <ViewOffsetModal A={A} R={R} offsets={viewOffsets} draft={voffDraft} onApply={applyViewOffset} onRemove={removeOffset} onClose={closeVoff} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {unsavedAsk && <UnsavedWorkModal name={(unsavedAsk.kept ?? project).name} what={unsavedAsk.what} left={unsavedAsk.kept && home ? home.name : null}
         onSave={() => { setSaveFirst(unsavedAsk); setUnsavedAsk(null); }} onDiscard={() => { setUnsavedAsk(null); unsavedAsk.go(); }} onClose={() => setUnsavedAsk(null)} />}
