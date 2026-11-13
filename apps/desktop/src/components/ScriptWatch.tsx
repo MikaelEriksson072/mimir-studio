@@ -45,14 +45,25 @@ function Value({ v, was, word, mode }: { v: number; was?: number; word?: boolean
   return <span title={`${t}\nWhen the run started: ${f(was)}`}><span className="wl-was">{f(was)}</span><span className="wl-arrow">→</span><span className="wl-chg">{f(v)}</span></span>;
 }
 
+/** where a spot comes from, in the wide table: the line that writes it (a click goes there), or the user */
+function Source({ s, onGoLine }: { s: WatchSpot; onGoLine?: (line: number) => void }) {
+  if (s.user || !s.lines.length) return <span className="wl-src wl-user">added</span>;
+  const more = s.lines.length > 1 ? ` +${s.lines.length - 1}` : '';
+  return <button className="wl-src" onClick={() => onGoLine?.(s.lines[0])} title={`${s.readsThrough ? 'Read through and moved' : 'Written'} on line ${s.lines.join(', ')}: a click goes to line ${s.lines[0]}`}>
+    line {s.lines[0]}{more}{s.readsThrough ? <span className="wl-was"> (reads)</span> : null}</button>;
+}
+
 /** The watch list's rows: the name (a click goes to the line that writes it), the address (a click shows the program's
- *  memory in the listing), the value, and a row of bytes for a range or where a pointer points. */
+ *  memory in the listing), the value, and a row of bytes for a range or where a pointer points. The wide table (the
+ *  output's Watch tab) has a heading and the bytes and the line that writes each in columns of their own; the compact
+ *  one (the debugger's panel) has the bytes under their row. */
 export function WatchTable({ items, mode, compact, onRemove, onGoLine, onShow }: {
   items: readonly WatchItem[]; mode: WatchMode; compact?: boolean;
   onRemove?: (s: WatchSpot) => void; onGoLine?: (line: number) => void; onShow?: (start: Addr, end: Addr) => void;
 }) {
   return (
-    <div className={cx('wl', compact && 'compact')} role="list" aria-label="Watch">
+    <div className={cx('wl', compact ? 'compact' : 'wide')} role="list" aria-label="Watch">
+      {!compact && <div className="wl-row wl-head" aria-hidden="true"><span>Name</span><span>Address</span><span>Value</span><span>Bytes</span><span>Written on</span><span /></div>}
       {items.map(({ spot: s, view: v }) => {
         const row = v.row;
         const marks = mode !== 'start' && row?.was;
@@ -68,6 +79,7 @@ export function WatchTable({ items, mode, compact, onRemove, onGoLine, onShow }:
                 : v.changed != null && mode !== 'start' ? <span className={cx(v.changed > 0 && 'wl-chg')} title={`Of the ${v.of} bytes, ${v.changed} differ from what the run started with`}>{v.changed} changed</span>
                 : <span className="wl-was">{s.size} bytes</span>}
             </span>
+            {!compact && <Source s={s} onGoLine={onGoLine} />}
             {onRemove && <button className="icon-btn" aria-label={`Take ${s.name} off the watch list`} title={s.user ? 'Take it off the list' : 'Take it off the list (the code still writes it; the count under the list brings it back)'} onClick={() => onRemove(s)}><Icon name="x" size={11} /></button>}
             {row && <div className="wl-bytes" aria-label={`${s.name} bytes`}>
               <span className="wl-was">{$4(row.at)}</span>
@@ -96,21 +108,25 @@ export function WatchSection({ items, mode, stale, hidden, onRemove, onRestore, 
   const [expr, setExpr] = useState(''), [kind, setKind] = useState<WatchKind>('byte');
   const add = () => { if (expr.trim() && onAdd(expr.trim(), kind)) setExpr(''); };
   return (
-    <section className="scr-sec scr-watch" aria-label="Watch">
-      <h4 title="Memory to keep an eye on: what the code writes (STA, INC and the like, an indexed range, a pointer it writes through) comes here by itself, and you can add an address or a name. The values are as a run starts until it has run, then as the last run left them (what changed marked, with what it was), and while debugging as the run has it now (what the last step changed marked)">
-        Watch<span className="wl-mode">{mode === 'start' ? 'at the start' : mode === 'run' ? 'after the last run' : 'now'}</span>
+    <section className="scr-pane scr-watch" aria-label="Watch">
+      <div className="scr-pane-bar">
+        <span className="wl-mode-lbl" title="The values are as a run starts until it has run, then as the last run left them (what changed marked, with what it was), and while debugging as the run has it now (what the last step changed marked)">Values</span>
+        <span className={cx('wl-mode', `wl-mode-${mode}`)}>{mode === 'start' ? 'at the start' : mode === 'run' ? 'after the last run' : 'now'}</span>
         {stale && mode === 'run' && <span className="pill mid" title="The code has changed since this run: run it again to see what it does now">code changed since</span>}
-      </h4>
-      {items.length ? <WatchTable items={items} mode={mode} onRemove={onRemove} onGoLine={onGoLine} onShow={onShow} />
-        : <p className="muted small">Nothing the code writes yet: an address it stores to (<code>sta $d020</code>, <code>inc counter</code>, <code>sta (ptr),y</code>) comes here by itself.</p>}
-      {hidden > 0 && <button className="linkish wl-hidden" onClick={onRestore} title="Put back on the list what was found in the code and taken off">{hidden} taken off · put back</button>}
-      <div className="wl-add">
-        <input aria-label="Watch address" className="mono" placeholder="$c000, a label, ptr+1…" value={expr} onChange={e => setExpr(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); if (e.key === 'Escape') setExpr(''); }}
-          title="An address ($c000, 49152) or a name of the program or the script (a label, a zero-page variable, a scratchpad, name+2): Enter adds it" />
-        <select aria-label="Watch size" value={kind} onChange={e => setKind(e.target.value as WatchKind)} title="A byte, a word (low byte first), a zero-page pointer (the word and the bytes it points at), or a row of bytes">
-          {WATCH_KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-        </select>
-        <button className="btn small" onClick={add} disabled={!expr.trim()} title="Put it on the watch list"><Icon name="plus" size={13} />Watch</button>
+        {hidden > 0 && <button className="linkish wl-hidden" onClick={onRestore} title="Put back on the list what was found in the code and taken off">{hidden} taken off · put back</button>}
+        <span className="grow" />
+        <div className="wl-add" role="group" aria-label="Add to the watch list">
+          <input aria-label="Watch address" className="mono" placeholder="$c000, a label, ptr+1…" value={expr} onChange={e => setExpr(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); if (e.key === 'Escape') setExpr(''); }}
+            title="An address ($c000, 49152) or a name of the program or the script (a label, a zero-page variable, a scratchpad, name+2): Enter adds it" />
+          <select aria-label="Watch size" value={kind} onChange={e => setKind(e.target.value as WatchKind)} title="A byte, a word (low byte first), a zero-page pointer (the word and the bytes it points at), or a row of bytes">
+            {WATCH_KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+          <button className="btn small" onClick={add} disabled={!expr.trim()} title="Put it on the watch list"><Icon name="plus" size={13} />Watch</button>
+        </div>
+      </div>
+      <div className="scr-pane-body">
+        {items.length ? <WatchTable items={items} mode={mode} onRemove={onRemove} onGoLine={onGoLine} onShow={onShow} />
+          : <p className="scr-empty">Nothing the code writes yet: an address it stores to (<code>sta $d020</code>, <code>inc counter</code>, <code>sta (ptr),y</code>) comes here by itself, and an address or a name typed above is added.</p>}
       </div>
     </section>
   );

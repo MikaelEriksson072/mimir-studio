@@ -12,6 +12,12 @@ import { dialogOptions, fromFileMenu, fromSubmenu, goTo, expectFiles, headerRow,
 
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
+/** a tab of the output under a script's editor (Init, Watch, In the program, Scratchpads, Last run, Problems) shown */
+const outTab = async (page: Page, name: 'Init' | 'Watch' | 'In the program' | 'Scratchpads' | 'Last run' | 'Problems') => {
+  const tab = page.getByRole('tablist', { name: 'Output of the script' }).getByRole('tab', { name: new RegExp(`^${name}`) });
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
+};
 
 test('shows the analysed demo listing', async ({ app, page }) => {
   expect(await app.evaluate(({ app: electronApp }) => electronApp.isPackaged), 'packaged app').toBe(!!process.env.MIMIR_E2E_EXE);
@@ -6633,6 +6639,7 @@ test('scripts: Kick Assembler that runs in Mimir; what it changes goes into the 
     await expect(page.getByRole('option', { name: 'script' })).toHaveAttribute('aria-selected', 'true');
     await expect(editor.locator('.view-lines')).toContainText('lda SID_OSC3');
     await expect(editor.locator('.view-lines')).not.toContainText('* =');
+    await outTab(page, 'Scratchpads');
     await expect(page.getByText('None. Add one to keep data outside the program')).toBeVisible();
     // plain words: it can run, and what Run does
     await expect(check).toHaveText('Ready to run');
@@ -6673,6 +6680,7 @@ test('scripts: Kick Assembler that runs in Mimir; what it changes goes into the 
     await expect(check).toHaveAttribute('title', /Its code: 9 bytes at \$c000-\$c008, in memory the program does not use/);
     await runIt();
     await expect(page.getByRole('note')).toHaveCount(0);
+    await outTab(page, 'In the program');
     await expect(changes.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
     await expect(changes.getByRole('switch')).toBeChecked();
     await changes.getByRole('button').click();
@@ -6704,6 +6712,7 @@ test('scripts: Kick Assembler that runs in Mimir; what it changes goes into the 
   });
 
   await test.step('a scratchpad keeps a log outside the program, saved as a text file', async () => {
+    await outTab(page, 'Scratchpads');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
     await expect(page.getByLabel('Scratchpad name')).toHaveValue('pad1');
     await code(['        ldx #3', '!:      inc colors_0939,x', '        lda msg,x', '        sta pad1,x', '        dex', '        bpl !-', '        rts', 'msg:    .byte $48, $49, $21, $0d'].join('\n'));
@@ -6797,6 +6806,7 @@ test('scripts: the debugger goes an instruction at a time with the registers and
     await page.getByRole('button', { name: /^Continue/ }).click();
     await expect(panel).toHaveCount(0);
     await expect(page.locator('.scr-end')).toContainText('Returned');
+    await outTab(page, 'In the program');
     await expect(page.getByRole('list', { name: 'Changed in the program' }).getByRole('button')).toHaveText(['$0939-$093a · 2 bytes']);
     // the breakpoint stays, and the code can be changed again
     await expect(editor.locator('.scr-bp')).toHaveCount(1);
@@ -6819,10 +6829,14 @@ test('scripts: the watch list finds what the code writes, shows it after a run a
   const section = page.getByRole('region', { name: 'Watch' });
   const watch = section.getByRole('list', { name: 'Watch' });
   const names = watch.locator('.wl-name');
-  const head = section.locator('h4');
+  const head = section.locator('.wl-mode');
 
   await test.step('what the code writes is on the list by itself: a range written with X, a byte, the script\'s own data', async () => {
+    await outTab(page, 'Watch');
     await expect(names).toHaveText(['colors_0939', '$d020', 'counter']);
+    // the tab counts them, and each row says which line writes it
+    await expect(page.getByRole('tab', { name: /^Watch/ }).locator('.count')).toHaveText('3');
+    await expect(watch.getByRole('listitem').nth(1).locator('.wl-src')).toHaveText('line 8');
     await expect(head).toContainText('at the start');
     await expect(watch.getByRole('listitem').nth(0).locator('.wl-addr')).toHaveText('$0939,x');
     await expect(watch.getByRole('listitem').nth(1).locator('.wl-val')).toHaveText('$00');
@@ -6968,7 +6982,10 @@ test('scripts: safe mode runs without changing the program or its .asm, lists wh
   await test.step('a run in safe mode lists what it would change; the listing and the .asm have none of it', async () => {
     await runIt();
     await expect(toast(page, /script: Returned .* Safe mode: nothing went into the program\. It would change 4 bytes in 1 place/)).toBeVisible();
+    await outTab(page, 'In the program');
     await expect(would.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
+    // the tab says it: none in the program, one place it would change
+    await expect(page.getByRole('tab', { name: /^In the program/ }).locator('.count')).toHaveText(['0', '1']);
     await expect(changes.getByRole('listitem')).toHaveCount(0);
     await expect(page.getByText('Nothing. Safe mode is on')).toBeVisible();
     await expect(page.locator('.scr-view-head')).toContainText('would change: not in the program');
@@ -7036,6 +7053,7 @@ test('scripts: Init sets the registers, the flags and zero-page bytes a run star
   const field = async (label: string, text: string, nth = 0) => { const f = init.getByLabel(label).nth(nth); await f.fill(text); await f.press('Enter'); };
 
   await test.step('the registers, the carry and two zero-page bytes, a name for a value making one a word', async () => {
+    await outTab(page, 'Init');
     await field('Init A', '$aa');
     await field('Init X', '3');
     await field('Init Y', '%10');
@@ -7047,12 +7065,12 @@ test('scripts: Init sets the registers, the flags and zero-page bytes a run star
     await init.getByRole('button', { name: 'Carry' }).click();
     await expect(init.getByRole('button', { name: 'Carry' })).toHaveAttribute('aria-pressed', 'true');
     await expect(init.locator('.init-p')).toHaveText('P=$25');
-    await init.getByRole('button', { name: 'Zero page' }).click();
+    await init.getByRole('button', { name: 'Add a zero-page byte' }).click();
     await field('Zero-page value', 'colors_0939');
     await expect(init.getByLabel('Zero-page size')).toHaveValue('word');
     await expect(init.getByLabel('Zero-page value')).toHaveValue('$0939');
     await expect(init.getByLabel('Zero-page address')).toHaveValue(/^(\$fb|\w+)$/i);
-    await init.getByRole('button', { name: 'Zero page' }).click();
+    await init.getByRole('button', { name: 'Add a zero-page byte' }).click();
     await expect(init.getByLabel('Zero-page address').nth(1)).toHaveValue(/^(\$fd|\w+)$/i);
     await field('Zero-page value', '$7f', 1);
   });
@@ -7061,6 +7079,7 @@ test('scripts: Init sets the registers, the flags and zero-page bytes a run star
     await editor.locator('.view-lines').click();
     await page.keyboard.press('Control+Enter');
     await expect(toast(page, /script: Returned .* It changed 4 bytes of the program in 1 place/)).toBeVisible();
+    await outTab(page, 'In the program');
     const changes = page.getByRole('list', { name: 'Changed in the program' });
     await expect(changes.getByRole('button')).toHaveText(['$0939-$093c · 4 bytes']);
     await changes.getByRole('button').click();
@@ -7086,6 +7105,9 @@ test('scripts: Init sets the registers, the flags and zero-page bytes a run star
     await page.getByRole('button', { name: 'Save to library' }).click();
     await page.getByRole('button', { name: 'Add script to the project' }).click();
     await expect(page.getByRole('option', { name: 'script2' })).toHaveAttribute('aria-selected', 'true');
+    // the tab says Init is set
+    await expect(page.getByRole('tab', { name: /^Init/ }).locator('.count')).toHaveText('set');
+    await outTab(page, 'Init');
     await expect(init.getByLabel('Init A')).toHaveValue('$aa');
     await expect(init.getByLabel('Zero-page value')).toHaveCount(2);
     await page.getByRole('button', { name: 'Remove script from the library' }).click();
@@ -7259,7 +7281,8 @@ test('scripts: names linked from the listing and the source, marked there, writt
     await page.getByRole('list', { name: 'Links' }).getByRole('button', { name: 'colors_0939', exact: true }).click();
     await page.keyboard.insertText(',x\n        sta pad1,x\n        dex\n        bpl !-\n        rts');
     await expect(editor.locator('.view-lines')).toContainText('lda colors_0939,x');
-    await page.locator('.scr-sec h4').getByRole('button', { name: 'Add' }).click();
+    await outTab(page, 'Scratchpads');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
     await expect(page.locator('.scr-check')).toHaveText('Ready to run');
   });
 
@@ -7352,6 +7375,7 @@ test('scripts: an address the code writes where its own code is, is an error on 
     await expect(check).toHaveText('Ready to run');
     await page.getByRole('button', { name: /^Run/ }).click();
     await expect(page.locator('.scr-end')).toContainText('Returned');
+    await outTab(page, 'Last run');
     await expect(page.locator('.scr-run-sec')).not.toContainText('It wrote over its own code');
   });
 
@@ -7399,6 +7423,7 @@ test('scripts: the line a breakpoint stopped on is marked; a block goes into a s
   });
 
   await test.step('From a block…: a table into a new scratchpad as hex, the charset into it as .byte lines of 8', async () => {
+    await outTab(page, 'Scratchpads');
     await page.getByRole('button', { name: 'From a block…' }).click();
     const form = page.getByRole('group', { name: 'Copy a block into a scratchpad' });
     await form.getByLabel('Block').selectOption(String(0x0939));
@@ -7534,6 +7559,8 @@ test('scripts: templates that decrypt and encrypt have a section of their own in
     await expect(page.getByLabel('Script name')).toHaveValue('xor_key');
     await expect(page.locator('.scr-editor .view-lines')).toContainText('XOR with a key byte');
     await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    // a template's result is in its scratchpad: the output shows the scratchpads
+    await expect(page.getByRole('tab', { name: /^Scratchpads/ })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('table', { name: 'Scratchpads' }).locator('.pad-row:not(.pad-head)')).toHaveCount(1);
     await expect(page.getByRole('table', { name: 'Scratchpads' }).getByLabel('Scratchpad name')).toHaveValue('result');
     await expect(page.getByRole('table', { name: 'Scratchpads' }).getByLabel('Scratchpad size')).toHaveValue(/^(\$0400|1024)$/);
@@ -7552,7 +7579,7 @@ test('scripts: templates that decrypt and encrypt have a section of their own in
   });
 });
 
-test('scripts: a button for each scratchpad above the output switches between them, and marks those the last run changed', async ({ app, page }) => {
+test('scripts: the output has a tab each for Init, Watch, In the program, Scratchpads, Last run and Problems; the scratchpads\' list beside the view switches between them and marks those the last run changed', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
   await page.keyboard.press('Control+o');
@@ -7560,32 +7587,53 @@ test('scripts: a button for each scratchpad above the output switches between th
   await page.getByRole('tab', { name: 'Scripts' }).click();
   await page.getByRole('list', { name: 'Templates' }).getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
   await expect(page.locator('.scr-check')).toHaveText('Ready to run');
-  const tabs = page.getByRole('tablist', { name: 'Scratchpads to show' });
+  const tabs = page.getByRole('tablist', { name: 'Output of the script' });
+  const table = page.getByRole('table', { name: 'Scratchpads' });
+  const rows = table.locator('.pad-row:not(.pad-head)');
   const title = page.locator('.scr-view-title');
 
-  await test.step('one scratchpad: no buttons', async () => {
+  await test.step('the tabs, each saying what it holds; one tab shown at a time', async () => {
+    await expect(tabs.getByRole('tab')).toHaveText([/^Init/, /^Watch\d+$/, /^In the program0$/, /^Scratchpads1$/, /^Last run$/, /^Problems0$/]);
+    await expect(tabs.getByRole('tab', { selected: true })).toHaveText(/^Scratchpads/);
+    await expect(page.getByRole('region', { name: 'Init' })).toHaveCount(0);
+    await outTab(page, 'Problems');
+    await expect(page.locator('.scr-ok-line')).toContainText('No problems');
+    await expect(page.locator('.scr-where')).toContainText('Its code:');
+    await outTab(page, 'Scratchpads');
     await expect(title).toContainText('result');
-    await expect(tabs).toHaveCount(0);
+    await expect(rows).toHaveCount(1);
   });
 
-  await test.step('a second one: a button each, the new one shown', async () => {
-    await page.locator('.scr-sec h4').getByRole('button', { name: 'Add' }).click();
-    await expect(tabs.getByRole('tab')).toHaveText(['result', 'pad1']);
-    await expect(tabs.getByRole('tab', { name: 'pad1' })).toHaveAttribute('aria-selected', 'true');
+  await test.step('a second one: in the list beside the view, the new one shown', async () => {
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(rows.nth(0).getByLabel('Scratchpad name')).toHaveValue('result');
+    await expect(rows.nth(1).getByLabel('Scratchpad name')).toHaveValue('pad1');
+    await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true');
     await expect(title).toContainText('pad1');
+    await expect(tabs.getByRole('tab', { name: /^Scratchpads/ }).locator('.count')).toHaveText('2');
   });
 
-  await test.step('after a run the changed one has a dot; a click shows it, another click the other', async () => {
+  await test.step('after a run the changed one has a dot; a click shows it, another click the other; the run\'s end is in the tab row', async () => {
     await page.getByRole('button', { name: /^Run/ }).click();
     await expect(page.locator('.scr-end')).toContainText('Returned');
-    const result = tabs.getByRole('tab', { name: 'result' });
-    await expect(result.getByLabel('changed by the last run')).toHaveCount(1);
-    await expect(tabs.getByRole('tab', { name: 'pad1' }).getByLabel('changed by the last run')).toHaveCount(0);
-    await result.click();
-    await expect(result).toHaveAttribute('aria-selected', 'true');
+    await expect(rows.nth(0).getByLabel('changed by the last run')).toHaveCount(1);
+    await expect(rows.nth(1).getByLabel('changed by the last run')).toHaveCount(0);
+    await rows.nth(0).click({ position: { x: 4, y: 4 } });
+    await expect(rows.nth(0)).toHaveAttribute('aria-selected', 'true');
     await expect(title).toContainText('result');
-    await expect(result).toHaveAttribute('title', /^Show result: \$[0-9a-f]{4}-\$[0-9a-f]{4}, 1024 bytes · the last run changed it$/);
-    await tabs.getByRole('tab', { name: 'pad1' }).click();
+    await rows.nth(1).click({ position: { x: 4, y: 4 } });
     await expect(title).toContainText('pad1');
+    // a click on the run's end shows Last run
+    await page.locator('.scr-run-stat').click();
+    await expect(tabs.getByRole('tab', { selected: true })).toHaveText(/^Last run/);
+    await expect(page.locator('.scr-end-text')).toContainText('Returned');
+  });
+
+  await test.step('folded down, the tab row stays; a tab brings the output back on it', async () => {
+    await page.getByRole('button', { name: 'Output', exact: true }).click();
+    await expect(page.locator('.scr-out')).toHaveCount(0);
+    await expect(tabs).toBeVisible();
+    await tabs.getByRole('tab', { name: /^Watch/ }).click();
+    await expect(page.getByRole('region', { name: 'Watch' })).toBeVisible();
   });
 });

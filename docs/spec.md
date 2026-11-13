@@ -2082,10 +2082,15 @@ dem.** Med `my_table: .byte $01,$02,$03,$04` i källkoden och ett skript som dub
 $06, $08` i `.asm`-filen efter en körning.
 
 - **Fliken Scripts** ligger bland huvudflikarna mellan Memory och källkoden. Till vänster står projektets skript
-  (*Project*, med *New script*), biblioteket (*Library*) och mallarna (*Templates*). I mitten står skriptets namn, kontrollen, *Run*, *Save to
-  library* och papperskorgen, sedan editorn och under den utdata: problemen, *In the program*, scratchpadsen,
-  `.print` och senaste körningen, och till höger en ändring eller en scratchpad som hex, kod eller text. Gränsen
-  mellan editorn och utdata kan dras. Utan skript visar fliken vad ett skript är, *New script* och biblioteket.
+  (*Project*, med *New script*), biblioteket (*Library*) och mallarna (*Templates*). I mitten står verktygsraden i
+  grupper med streck emellan (skriptets namn och kontrollen · *Safe mode* · *Run* och *Debug* · *Save to library* och
+  papperskorgen), sedan editorn och under den **utdatat, en flikrad som bottenpanelens** (`ScriptOutput.tsx`):
+  *Init*, *Watch*, *In the program*, *Scratchpads*, *Last run* och *Problems*. Varje flik har utdatats hela bredd och
+  säger på fliken vad den håller (antal rader, ändringar och scratchpads, *set* när Init är satt, en bock eller en
+  varning för senaste körningen, antal problem i rött när det är fel); längst till höger i raden står hur senaste
+  körningen slutade (ett klick visar *Last run*). I *In the program* och *Scratchpads* står listan till vänster och det
+  som valts i den till höger som hex, kod eller text, så det som visas hör till listan bredvid. Gränsen mellan editorn
+  och utdata kan dras. Utan skript visar fliken vad ett skript är, *New script* och biblioteket.
   **Fliken får fönstret:** när den öppnas fälls sidopanelen (Explorer, …), inspektorn och bottenpanelen (analysloggen,
   …) in, och när en annan flik öppnas kommer var och en tillbaka som den var, utom en som man själv öppnat eller stängt
   under tiden. Vad de var sparas tills dess, också över en omstart i fliken. **Skriptlistan** (*Project* och *Library*)
@@ -2185,10 +2190,11 @@ $06, $08` i `.asm`-filen efter en körning.
   Stacken (`$0100–$01ff`) är densamma för skriptet och programmet: körningen börjar med SYS-returen på `$01fe–$01ff`
   och S = `$fd`, och vid varje JSR antecknas vem som gjorde den (med stackpekaren som nyckel), så att ett RTS går
   tillbaka till skriptets eller programmets kod.
-- **Init** (överst i utdatat, `UserScript.init`, `ScriptInit`) är det körningen börjar med utöver programmets minne:
+- **Init** (utdatats första flik, `UserScript.init`, `ScriptInit`) är det körningen börjar med utöver programmets minne,
+  i tre grupper bredvid varandra (*Registers*, *Flags*, *Zero page*) under en rad som säger vad Init är och har *Reset*:
   **A, X och Y** (fält med `$aa`, `170`, `%1010` eller `<etikett` / `>etikett`, låga och höga byten av en adress; mer
   än en byte tas inte), **flaggorna** N V D I Z C (ett klick sätter eller nollar en; *P=$25* säger statusregistret)
-  och **byte i nollsidan** (*+ Zero page*: adress, värde och storlek *byte* eller *word*, ett word med låga byten
+  och **byte i nollsidan** (*Add* i gruppen *Zero page*: adress, värde och storlek *byte* eller *word*, ett word med låga byten
   först, en pekare). Adressen visas med programmets namn för den (`ptr_fb`) och kan skrivas som namn; värdet kan vara
   ett namn (en etiketts adress), och ett värde över `$ff` gör raden till ett word (ett word kan inte börja på `$ff`).
   Utan init börjar körningen med A, X och Y 0 och bara I satt (`SCRIPT_P` = `$24`), som förut. Nollsidan är
@@ -2218,7 +2224,8 @@ $06, $08` i `.asm`-filen efter en körning.
   felsöker är utdataytan lägre (egen höjd, kan dras), och **scratchpaden som visas är körningens som den är nu**
   (*now, as the run has it*): den följer varje steg, och i hex är de byte det senaste steget ändrade markerade.
   Panelen har också **watch-listan** (se nedan) mellan registren och stacken.
-- **Watch** (i utdatat efter Init, `script-watch.ts`): minnet skriptet kan ändra, som listan **hittar själv i koden**
+- **Watch** (utdatats flik efter Init, `script-watch.ts`; en tabell med rubriker *Name*, *Address*, *Value*, *Bytes*
+  och *Written on*, raden som skriver adressen eller *added*; ett klick på raden går dit): minnet skriptet kan ändra, som listan **hittar själv i koden**
   (`scriptWatches`, ur de assemblerade byten och raderna, medan man skriver): varje instruktion som skriver en adress
   (STA, STX, STY, SAX och de som läser-ändrar-skriver: INC, DEC, ASL, LSR, ROL, ROR och de odokumenterade) ger byten den
   skriver, en indexerad (`sta $0400,x`) intervallet den når (256 byte, i nollsidan runt nollsidan) och en som skriver genom
@@ -2251,7 +2258,8 @@ $06, $08` i `.asm`-filen efter en körning.
   är flera och byten som `.byte`-rader. De ersätter skriptets tidigare patchar. Listningen märker dem *script namn*,
   källkoden `// ==== changed by the script "namn": $0939-$093c, 4 bytes ====` och Explorer → Patches *· script*. Allt
   i en körning är ett steg att ångra (*Run script "x"*), också vad scratchpadsen håller.
-- **In the program** listar skriptets ändringar med var sin på/av-knapp och ett klick visar byten. En ändring som
+- **In the program** (en flik) listar skriptets ändringar till vänster med var sin på/av-knapp, och den valda visas
+  till höger (först den första; efter en körning den första den gjorde). En ändring som
   stängs av lämnas utanför programmet och förblir avstängd när skriptet körs igen (så länge den har samma intervall).
   *Take out* tar alla ut (originalbyten kommer tillbaka) och skriptet står kvar; tas skriptet bort följer dess
   ändringar med ut. En ändring som inte kan bli en patch (i en av användarens patchar, över kanten på ett relokerat
@@ -2261,17 +2269,23 @@ $06, $08` i `.asm`-filen efter en körning.
   skriptet i projektet och i biblioteket): skriptets körningar skriver **ingenting** in i programmet, så listningen,
   `.asm`-filen, exporten och Build & Run förblir som de är. Körningen går som annars (från programmet utan skriptets
   tidigare ändringar), och det den skulle skriva räknas ut som *Run* skulle skriva det (`writeScriptRun`, utan att
-  projektet ändras) och listas under *Would change* (ett klick visar byten med *would change: not in the program*).
+  projektet ändras) och listas under *Would change* i fliken *In the program*, som också räknar dem med en sköld (ett
+  klick visar byten med *would change: not in the program*).
   *Write into the program* kör skriptet en gång till och skriver det den ändrar in i programmet (ett steg att ångra);
   safe mode förblir på. Scratchpadsen, skriptets eget minne, får vad körningen lämnade i dem (utan scratchpads ändras
   projektet inte alls), och felsökaren som når slutet följer samma regel. Det skriptets körningar skrev innan safe mode
   slogs på ligger kvar (*Take out* tar ut det, och *In the program* säger det). Listan i fliken och vyn Scripts
   visar en sköld, och raden säger *safe mode: 4 bytes would change*.
-- **Last run** säger hur körningen slutade (*Returned (RTS at $c008) after N instructions, M cycles*), registren och
-  tiden, och hur många byte som ändrades utanför programmets byte eller i nollsidan och stacken (de sparas inte).
-- **Scratchpads** används bara när man vill ha data utanför programmet, till exempel en logg: *Add* lägger till en
-  (efter den sista, placerad som koden; den är skriptets eget minne). De redigeras i tabellen: namn, adress, storlek
-  och fill (`$100` eller `256`). Flyttas eller ändras storleken på en glöms vad den höll. Vad en körning lämnar i dem
+- **Last run** (en flik) säger hur körningen slutade (*Returned (RTS at $c008) after N instructions, M cycles*),
+  registren, tiden, om den gick i safe mode och om koden ändrats sedan, och under det vad som inte kunde skrivas, om
+  den skrev över sin egen kod och hur många byte som ändrades utanför programmets byte eller i nollsidan och stacken
+  (de sparas inte). **Problems** (sista fliken) listar kontrollens fel och varningar (ett klick på *Line N* går dit),
+  annars *No problems*, och under det var koden placerades (*Its code: 9 bytes at $c000-$c008, …*) och `.print`.
+- **Scratchpads** (en flik) används bara när man vill ha data utanför programmet, till exempel en logg: *Add* lägger
+  till en (efter den sista, placerad som koden; den är skriptets eget minne). Listan till vänster är en tabell: namn,
+  adress, storlek och fill (`$100` eller `256`), redigerade på plats (fälten syns som fält på raden under pekaren och
+  den valda); ett klick på en rad visar den till höger, och en prick står på dem som senaste körningen ändrade (där
+  körningens byte inte är vad en körning börjar den med). Flyttas eller ändras storleken på en glöms vad den höll. Vad en körning lämnar i dem
   sparas med skriptet.
 - **Visningen:** en ändring eller en scratchpad (klick på raden) visas som *Hex* (16 byte en rad, 8 när det är smalt),
   *Code* (disassemblerad vid sin adress, med programmets namn) eller *Text* (32 tecken en rad), texten som PETSCII
@@ -2279,13 +2293,10 @@ $06, $08` i `.asm`-filen efter en körning.
   har *Show in listing*. Byten kopieras som `.byte`-rader. En scratchpad sparas som `.bin`, `.prg` (med adressen som
   laddadress) eller **som loggfil**, *Save .txt…*: i Text-läget tecknen utan adresser, utan fyllnaden efter det sista
   som skrevs, PETSCII med en rad per RETURN (`$0d`) eller skärmkoder 40 tecken en rad; i de andra lägena det som
-  visas. **Har skriptet två scratchpads eller fler** står en knapp för var och en överst i visningen (*result*,
-  *pad1*, …): ett klick visar den, den som visas är markerad, och en prick står på dem som senaste körningen ändrade
-  (där körningens byte inte är vad en körning börjar den med). Verktygstipset säger adress och storlek.
-- **Utdatat fälls ner:** en rad, *Output*, ligger mellan editorn och utdatat (Init, *In the program*, scratchpadsen,
-  *Last run* och visningen). Ett klick fäller ner utdatat till raden så att koden får hela höjden, och ett klick till
-  fäller upp det med samma höjd som förut; nedfälld säger raden vad utdatat håller (*Init set · 2 scratchpads · last
-  run: returned*) och hur många fel koden har. När fönstret är lågt ger utdatat vika först: koden behåller 140 px.
+  visas.
+- **Utdatat fälls ner** med pilen längst till höger i flikraden (*Output*): flikraden står kvar och koden får resten
+  av höjden; ett klick på pilen eller en flik fäller upp det med samma höjd som förut. Nedfälld säger flikarna
+  fortfarande vad de håller, och raden hur många fel koden har. När fönstret är lågt ger utdatat vika först: koden behåller 140 px.
 - **Vad en scratchpad börjar med** (`ScriptPad.data`, och `ScriptPad.src` för hur det skrevs): utan det börjar
   scratchpaden med sin fill, med det börjar den med de byten från sin första byte och fill efter dem. *Edit start* i
   visningen öppnar en editor med tre former: **Kick Assembler** (assembleras vid scratchpadens adress med programmets

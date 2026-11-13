@@ -5,9 +5,12 @@ import { create } from 'zustand';
 import { b64dec, b64enc, tidyInit, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWatchEntry, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
 import { store } from '../lib/util';
 
-/** what the output shows: a scratchpad (by index), one of the script's changes to the program (its patch's id) or one
+/** the output's tabs (spec 10.3): what the runs start with, the watch list, what the script changed in the program,
+ *  its scratchpads, how the last run ended, and what the check found */
+export type OutTab = 'init' | 'watch' | 'program' | 'pads' | 'run' | 'problems';
+/** the change In the program shows beside its list: one of the script's changes to the program (its patch's id) or one
  *  a run in safe mode would make (by index in its `would`) */
-export type ScriptShown = { kind: 'pad'; i: number } | { kind: 'patch'; id: string } | { kind: 'would'; i: number };
+export type ChangeShown = { kind: 'patch'; id: string } | { kind: 'would'; i: number };
 /** how the output shows a scratchpad or a change: as hex, code or text, or (a scratchpad) compared with another */
 export type PadMode = 'hex' | 'code' | 'text' | 'compare';
 
@@ -66,7 +69,12 @@ interface ScriptsState {
   selected: string | null;
   runs: Record<string, ScriptRunKept>;
   running: string | null;
-  shown: ScriptShown;
+  /** the output's tab shown */
+  outTab: OutTab;
+  /** the scratchpad the Scratchpads tab shows beside its list (by index) */
+  pad: number;
+  /** the change In the program shows beside its list (null: the first) */
+  change: ChangeShown | null;
   mode: PadMode;
   /** the text column: PETSCII or screen codes */
   screen: boolean;
@@ -97,7 +105,7 @@ interface ScriptsState {
 }
 
 export const useScripts = create<ScriptsState>((set, get) => ({
-  selected: null, runs: {}, running: null, gotoLine: null, shown: { kind: 'pad', i: 0 }, mode: 'hex', screen: false, outH: 300, dbgOutH: 170, outFolded: false, cmpWith: null,
+  selected: null, runs: {}, running: null, gotoLine: null, outTab: 'watch', pad: 0, change: null, mode: 'hex', screen: false, outH: 300, dbgOutH: 170, outFolded: false, cmpWith: null,
   library: readLibrary(),
   bps: {},
   setBps: (id, lines) => set(s => ({ bps: { ...s.bps, [id]: lines } })),

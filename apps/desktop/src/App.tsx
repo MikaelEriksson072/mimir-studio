@@ -1742,7 +1742,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a script in the project (made, or copied from the library), shown in the Scripts tab */
   const addUserScript = (s: UserScript, what: string) => {
     update(`${what} "${s.name}"`, d => { d.userScripts = [...(d.userScripts ?? []), s]; });
-    useScripts.getState().set({ selected: s.id, shown: { kind: 'pad', i: 0 } });
+    useScripts.getState().set({ selected: s.id, pad: 0, change: null });
     setUi({ tab: 'scripts' });
   };
   /** a new script; `lines`: code of the listing it starts with (the selection); `links`: addresses linked to it */
@@ -1756,7 +1756,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  new script with a new one (`id` null); the scratchpad is then shown */
   const copyIntoPad = (from: Addr, bytes: Uint8Array, id: string | null, pad: number | null) => {
     const n = bytes.length, where = `${n} byte${n === 1 ? '' : 's'} from $${h4(spaceAddr(from))}`;
-    const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, shown: { kind: 'pad', i }, outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
+    const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, pad: i, outTab: 'pads', outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
     if (id == null) {
       const base = newScript(userScripts, [], newId());
       const start = scriptPlace(scriptsEnv.files, n, checkScript(scriptsEnv, base).code)?.at ?? 0xc000;
@@ -1789,7 +1789,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const copyBlockIntoPad = (blockStart: Addr, id: string | null, pad: number | null) => {
     const b = A.blocks.find(x => x.start === blockStart); if (!b) return;
     const n = b.end - b.start, name = R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`;
-    const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, shown: { kind: 'pad', i }, outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
+    const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, pad: i, outTab: 'pads', outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
     const typed = (at: Addr, pads: readonly ScriptPad[]) => blockPad(b, R.lines, A.mem, at, scriptNames(scriptsEnv, pads), S);
     const said = (bp: BlockPad, padName: string, sname: string) => `Block ${name} ($${h4(spaceAddr(b.start))}-$${h4(spaceAddr(b.end - 1))}, ${n} bytes) copied into ${padName} of "${sname}" as ${bp.what}: a run starts it with them`;
     if (id == null) {
@@ -1876,6 +1876,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       pads.push({ ...p, start: scriptPlace(scriptsEnv.files, p.size, taken)?.at ?? 0xc000 });
     }
     addUserScript({ id: newId(), name, lang: 'kickass', source: t.source, pads }, 'Add template');
+    // what it decrypts goes into its scratchpad: the output shows the scratchpads
+    if (pads.length) useScripts.getState().set({ outTab: 'pads', outFolded: false });
     toast(`"${name}" added from the templates: set its .vars (source, dest, length, the key) and press Ctrl+Enter. With dest = result the program stays as it is`, 'ok');
   };
   const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) =>
@@ -1936,10 +1938,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const w = safe ? ranSafely(id, r) : ranUserScript(id, r);
     const st = useScripts.getState();
     st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [], ...(safe ? { safe: true, would: w?.written ?? [] } : {}) } } });
-    if (st.selected === id && (st.shown.kind !== 'pad' || !s.pads.length)) st.set({ shown: !w?.written.length ? { kind: 'pad', i: 0 } : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
+    // In the program shows the first change the run made (or would make, in safe mode) beside its list
+    if (st.selected === id) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
     const what = safe
-      ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → Would change).` : 'It would change none of the program\'s bytes.'}`
+      ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → In the program → Would change).` : 'It would change none of the program\'s bytes.'}`
       : w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
     toast(`${s.name}: ${scriptEndText(r)}${what}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
   };
@@ -1965,7 +1968,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** each script checked as the project has it, for the Scripts view: whether it can run, and what is wrong */
   const scriptChecks = useMemo(() => new Map(userScripts.map(s => [s.id, checkScript(scriptsEnv, s)])), [userScripts, scriptsEnv]);
   /** a script in the Scripts tab; `line`: the line of its code to show */
-  const openUserScript = (id: string, line?: number) => { useScripts.getState().set({ selected: id, shown: { kind: 'pad', i: 0 }, gotoLine: line ?? null }); setUi({ tab: 'scripts' }); };
+  const openUserScript = (id: string, line?: number) => { useScripts.getState().set({ selected: id, pad: 0, change: null, gotoLine: line ?? null }); setUi({ tab: 'scripts' }); };
   /** the name a script's code writes for an address of the program (a link's): as the listing names it */
   const scriptLinkOf = (a: Addr) => linkName(R, A, a);
   /** what kind of block each of the program's labels is on (the script editor's suggestions say it) */

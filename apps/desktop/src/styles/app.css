@@ -1275,57 +1275,112 @@ main.main { container: editor / inline-size; }
 .scr-run kbd { margin-left: 6px; }
 .scr-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .scr-fallback { flex: 1; min-height: 0; resize: none; border: 0; padding: 8px 12px; background: var(--editor); color: var(--fg); font: 13px/20px var(--font-code); }
-/* the output keeps the height it was dragged to, but gives way first when the window is low: the code keeps 140px */
-.scr-out { flex: 0 1 auto; display: flex; min-height: 60px; border-top: 1px solid var(--line); background: var(--panel); }
-.scr-side { width: 290px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 4px 0 10px; }
-.scr-sec { padding: 6px 10px; }
-.scr-sec h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
-.scr-sec h4 .pill { margin-left: 4px; letter-spacing: 0; }
-.scr-sec p { margin: 4px 0; }
-.scr-problems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+/* the toolbar's groups: the name and its check · safe mode · Run and Debug · the library and delete */
+.tb-sep { width: 1px; height: 18px; flex: none; margin: 0 2px; background: var(--line-2); }
+/* the output under a script's editor (10.3): a tab row as the window's bottom panel has (Init, Watch, In the program,
+   Scratchpads, Last run, Problems), each tab saying what it holds, the last run's end at its right; under it the tab
+   shown, with the panel's whole width. It keeps the height it was dragged to, but gives way first when the window is
+   low: the code keeps 140px */
+.scr-out-tabs { border-top: 1px solid var(--line); }
+.scr-out-tabs .tab { gap: 7px; }
+.scr-out-tabs .tab.last { color: var(--fg-2); }
+.scr-out-tabs .count { min-width: 16px; text-align: center; }
+.count.scr-count-on { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--accent-hi); }
+.count.scr-count-warn { background: color-mix(in srgb, var(--warn) 28%, transparent); color: var(--warn); }
+.count.scr-count-safe { display: inline-flex; align-items: center; gap: 3px; margin-left: -3px; background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.scr-tab-ok { color: var(--ok); }
+.scr-tab-warn { color: var(--warn); }
+.scr-run-stat { display: inline-flex; align-items: center; gap: 6px; align-self: center; height: 24px; min-width: 0; max-width: 48%; margin: 0 4px; padding: 0 8px; border: 0; border-radius: 5px; background: none; color: var(--fg-2); font-size: 11.5px; white-space: nowrap; cursor: pointer; }
+.scr-run-stat:hover { background: var(--row-hover); color: var(--fg); }
+.scr-run-stat .scr-end { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.scr-run-stat > .icon { flex: none; }
+.scr-run-stat.ok > .icon { color: var(--ok); }
+.scr-run-stat.warn { color: var(--warn); }
+.scr-run-stat .pill { flex: none; margin-left: 0; }
+.scr-out { flex: 0 1 auto; display: flex; flex-direction: column; min-height: 60px; background: var(--panel); container: scrout / inline-size; }
+.scr-out > .scr-pane-body { flex: 1; }
+/* a tab: a bar with what it is about and its tools, and its content under it */
+.scr-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.scr-pane-bar { flex: none; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.scr-pane-bar .pill { margin-left: 0; }
+.scr-pane-bar .btn.small { padding: 0 6px; }
+.scr-pane-bar .btn.on { color: var(--accent-hi); }
+.scr-pane-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 12px; }
+.scr-pane-help { flex: 1 1 380px; min-width: 0; margin: 2px 0; color: var(--fg-3); font-size: 12px; line-height: 1.45; }
+.scr-group-h { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); white-space: nowrap; }
+.scr-empty { margin: 0; max-width: 72ch; color: var(--fg-3); font-size: 12px; line-height: 1.5; }
+.scr-note { margin: 4px 0 6px; color: var(--fg-3); font-size: 11.5px; line-height: 1.45; }
+/* In the program and Scratchpads: the list at the left, what is picked in it at the right (stacked when narrow) */
+.scr-split { flex: 1; min-height: 0; display: flex; }
+.scr-master { width: 300px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.scr-master.scr-pads-master { width: 360px; }
+.scr-master .scr-pane-bar { flex-wrap: nowrap; padding: 4px 8px 4px 12px; }
+.scr-master-body { flex: 1; min-height: 0; overflow: auto; padding: 6px 8px 10px; }
+.scr-master-body > .scr-empty, .scr-master-body > .scr-note { padding: 2px 4px; }
+.scr-sub-h { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; padding: 10px 4px 0; border-top: 1px solid var(--line); }
+.scr-would-sec .scr-group-h > .icon { color: var(--ok); }
+.scr-would-sec > .scr-note { padding: 0 4px; }
+.scr-view-empty { padding: 12px 14px; }
+@container scrout (max-width: 680px) {
+  .scr-split { flex-direction: column; }
+  .scr-master, .scr-master.scr-pads-master { width: auto; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--line); }
+}
+/* Problems: the check's problems, where the code is, .print */
+.scr-ok-line { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--fg-2); font-size: 12.5px; }
+.scr-ok-line .icon { color: var(--ok); }
+.scr-where { display: flex; align-items: flex-start; gap: 7px; max-width: 92ch; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); color: var(--fg-3); font-size: 12px; line-height: 1.45; }
+.scr-where .icon { flex: none; position: relative; top: 2px; color: var(--hint); }
+.scr-prints-h { margin: 14px 0 6px; }
+/* Last run: what it ended with, as facts */
+.scr-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 22px; max-width: 900px; margin: 0; font-size: 12.5px; }
+.scr-facts dt { padding-top: 1px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
+.scr-facts dd { margin: 0; color: var(--fg); }
+.scr-facts .pill { margin: 0 6px 0 0; }
+.scr-end-text { display: flex; align-items: center; gap: 6px; }
+.scr-end-text .icon { flex: none; }
+.scr-end-text.ok .icon { color: var(--ok); }
+.scr-end-text.warn { color: var(--warn); }
+.scr-facts .scr-regs { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--fg); }
+.scr-reg b { margin-right: 5px; font-weight: 600; color: var(--fg-3); }
+.scr-safe-txt { display: inline-flex; align-items: center; gap: 5px; color: var(--ok); }
+.scr-run-notes { display: flex; flex-direction: column; gap: 4px; max-width: 900px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.scr-run-notes p { margin: 0; }
+.scr-problems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
 .scr-problems li { display: flex; align-items: baseline; gap: 6px; }
 .scr-problems li > .icon { flex: none; position: relative; top: 2px; }
 .scr-problems li.bad > .icon { color: var(--err); }
 .scr-problems li.warn > .icon { color: var(--warn); }
 .scr-problems .linkish { flex: none; font-size: 12px; }
-.pad-table { display: flex; flex-direction: column; gap: 2px; }
+.pad-table { display: flex; flex-direction: column; gap: 1px; }
 /* a block copied into a scratchpad (From a block…): which block, into which scratchpad, what it becomes */
 .pad-from { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; padding: 8px; border-radius: 6px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
 .pad-from label { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 6px; font-size: 12px; color: var(--fg-2); }
 .pad-from select { min-width: 0; width: 100%; }
 .pad-from p { margin: 0; }
 .pad-from-act { display: flex; gap: 6px; justify-content: flex-end; }
-.scr-sec h4 .btn.on { color: var(--accent-hi); }
-/* (the headings' buttons fit beside the side's scroll bar, which the watch list makes more common: no sideways scroll) */
-.scr-sec h4 .btn.small { padding: 0 5px; }
-.scr-side { overflow-x: hidden; }
-.pad-row { display: grid; grid-template-columns: minmax(0, 1fr) 56px 56px 36px 28px; gap: 4px; align-items: center; padding: 2px 4px; border-radius: 5px; cursor: pointer; }
+/* a scratchpad in the list: its fields read as a table, and show as fields where the pointer is and on the one picked */
+.pad-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 60px 56px 40px 24px; gap: 4px; align-items: center; padding: 2px 2px 2px 4px; border-radius: 5px; cursor: pointer; }
 .pad-row:hover { background: var(--row-hover); }
-.pad-row.on { background: var(--sel); }
+.pad-row.on { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
+.pad-row input { height: 24px; min-width: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--fg); padding: 0 5px; font: 12px var(--font-code); }
+.pad-row:hover input, .pad-row.on input { border-color: var(--line-2); background: var(--panel-2); }
+.pad-row input:focus { border-color: var(--accent); outline: none; }
 .pad-row.bad input { border-color: color-mix(in srgb, var(--err) 70%, transparent); }
-.pad-row.warn input:first-child { border-color: color-mix(in srgb, var(--warn) 70%, transparent); }
-.pad-row input { height: 24px; min-width: 0; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 6px; font: 12px var(--font-code); }
-.pad-head { cursor: default; font-size: 10.5px; color: var(--fg-3); padding-top: 0; padding-bottom: 0; }
+.pad-row.warn input[aria-label="Scratchpad name"] { border-color: color-mix(in srgb, var(--warn) 70%, transparent); }
+.pad-row .icon-btn { width: 24px; height: 24px; }
+.pad-dot-cell { display: grid; place-items: center; }
+.pad-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.pad-head { cursor: default; padding-top: 0; padding-bottom: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-3); }
+.pad-head > span { padding-left: 6px; }
 .pad-head:hover { background: none; }
-.scr-prints { margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--editor); font: 12px/1.5 var(--font-code); white-space: pre-wrap; max-height: 120px; overflow: auto; }
-.scr-end { font-size: 12.5px; }
-.scr-end.ok { color: var(--fg); }
-.scr-end.warn { color: var(--warn); }
-.scr-regs { font-size: 11.5px; color: var(--fg-2); }
+.scr-prints { margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--editor); font: 12px/1.5 var(--font-code); white-space: pre-wrap; max-height: 160px; overflow: auto; }
 .scr-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
-.scr-change { width: 100%; text-align: left; border: 0; background: none; padding: 3px 6px; border-radius: 5px; cursor: pointer; color: var(--fg-2); font: 12px var(--font-code); }
+.scr-change { width: 100%; text-align: left; border: 0; background: none; padding: 4px 8px; border-radius: 5px; cursor: pointer; color: var(--fg-2); font: 12px var(--font-code); }
 .scr-change:hover { background: var(--row-hover); color: var(--fg); }
-.scr-change.on { background: var(--sel); color: var(--fg); }
+.scr-change.on { background: var(--sel); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 .scr-view { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; container: scrview / inline-size; }
-.scr-view-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.scr-view-head { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .scr-view-head .seg { margin-left: 0; }
-/* a button for each scratchpad above the output: a click shows it */
-.scr-pad-tabs { display: flex; gap: 2px; padding: 4px 8px 0; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; flex: none; }
-.scr-pad-tab { position: relative; display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 10px 4px; margin-bottom: -1px; border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0; background: none; color: var(--fg-3); font: 12px var(--font-code); cursor: pointer; }
-.scr-pad-tab:hover { color: var(--fg); background: var(--row-hover); }
-.scr-pad-tab.on { color: var(--fg); background: var(--panel-2); border-color: var(--line); box-shadow: inset 0 2px 0 var(--accent); }
-.scr-pad-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.scr-pad-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .scr-view-title { font: 600 12px var(--font-code); }
 .scr-dump { flex: 1; min-height: 0; margin: 0; padding: 8px 12px; overflow: auto; background: var(--editor); font-size: 12px; line-height: 18px; white-space: pre; color: var(--fg); }
 .scr-view-actions { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; }
@@ -1353,13 +1408,8 @@ main.main { container: editor / inline-size; }
 .scr-failed .icon { flex: none; position: relative; top: 2px; }
 .scr-howto { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--hint) 8%, var(--panel)); color: var(--fg-2); font-size: 12px; line-height: 1.45; }
 .scr-howto .icon { flex: none; color: var(--hint); position: relative; top: 2px; }
-/* the output under a script's editor (10.3): a bar that folds it down and up */
-.scr-out-bar { flex: none; display: flex; align-items: center; gap: 7px; width: 100%; height: 26px; padding: 0 10px; border: 0; border-top: 1px solid var(--line); background: var(--panel); color: var(--fg-2); font-size: 11.5px; text-align: left; cursor: pointer; }
-.scr-out-bar:hover { color: var(--fg); background: var(--row-hover); }
-.scr-out-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.scr-out-name { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
-.scr-out-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); }
-.scr-out-bad { flex: none; color: var(--err); font-weight: 600; }
+/* the output folded down to its tab row: how many errors the code has */
+.scr-out-bad { flex: none; align-self: center; margin-right: 4px; color: var(--err); font-weight: 600; font-size: 11.5px; }
 /* a scratchpad's start content (10.3): the editor, and the pill of a scratchpad shown as a run starts it */
 .scr-start-pill, .scr-edit-pill { flex: none; }
 .scr-start-pill { color: var(--hint); background: color-mix(in srgb, var(--hint) 14%, transparent); }
@@ -1396,27 +1446,50 @@ main.main { container: editor / inline-size; }
 .pad-diff-name { display: inline-block; width: 7ch; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; color: var(--syn-label); }
 .pad-diff .pad-focus { outline: 1px solid var(--accent); border-radius: 2px; }
 .pad-diff-more { padding: 4px; color: var(--fg-3); white-space: normal; font-family: var(--font-ui); }
-/* Init (10.3): what a script's runs start with — the registers, the flags, zero-page bytes */
-.init-regs { display: flex; align-items: center; gap: 10px; }
+/* Init (10.3): what a script's runs start with — the registers, the flags, zero-page bytes, a group each side by side */
+.init-groups { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px 40px; }
+.init-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.init-zp-group { flex: 1 1 320px; max-width: 480px; }
+.init-group .scr-group-h { min-height: 24px; }
+.init-group .scr-group-h .btn { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.init-group .scr-note { margin: 0; }
+.init-regs { display: flex; align-items: center; gap: 12px; }
 .init-reg { display: inline-flex; align-items: center; gap: 5px; font: 600 12px var(--font-code); color: var(--fg-2); }
 .init-reg input, .init-zp-row input, .init-zp-row select { height: 24px; min-width: 0; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 6px; font: 12px var(--font-code); }
-.init-reg input { width: 46px; }
-.init-flags { display: flex; align-items: center; gap: 3px; margin-top: 7px; }
-.init-lbl { font-size: 11px; color: var(--fg-3); margin-right: 5px; }
-.dbg-flag.init-flag { width: 20px; height: 20px; padding: 0; cursor: pointer; }
+.init-reg input { width: 50px; }
+.init-flags { display: flex; align-items: center; gap: 3px; height: 24px; }
+.dbg-flag.init-flag { width: 22px; height: 22px; padding: 0; cursor: pointer; }
 .dbg-flag.init-flag:hover { border-color: var(--accent); }
 .init-flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.init-p { margin-left: auto; font-size: 11px; color: var(--fg-3); }
-.init-zp { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
-.init-zp-row { display: grid; grid-template-columns: minmax(0, 1fr) 66px 62px 24px; gap: 4px; align-items: center; padding: 1px 0; }
+.init-p { margin-left: 4px; font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-3); }
+.init-zp { display: flex; flex-direction: column; gap: 2px; }
+.init-zp-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px 64px 24px; gap: 4px; align-items: center; padding: 1px 0; }
 .init-zp-row select { padding: 0 2px; }
 .init-zp-head { font-size: 10.5px; color: var(--fg-3); }
 .init-zp-row.bad input { border-color: color-mix(in srgb, var(--err) 70%, transparent); }
 .init-zp-row.warn input:first-child { border-color: color-mix(in srgb, var(--warn) 70%, transparent); }
 .init-zp-row .icon-btn { width: 24px; height: 24px; }
-/* the watch list (spec 10.3): in the output, and while debugging in the debugger's panel */
-.scr-watch h4 .wl-mode { margin-left: 2px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-3); }
+/* the watch list (spec 10.3): the output's Watch tab (what the values are, adding, a table with a heading), and while
+   debugging the debugger's panel (compact: the bytes under their row) */
+.wl-mode-lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); cursor: help; }
+.wl-mode { padding: 1px 8px; border-radius: 9px; background: var(--line); color: var(--fg-2); font-size: 11.5px; }
+.wl-mode.wl-mode-run { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.wl-mode.wl-mode-now { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent-hi); }
 .wl { display: flex; flex-direction: column; gap: 1px; font-size: 12px; }
+.wl.wide { gap: 0; max-width: 1180px; }
+.wl.wide .wl-row { grid-template-columns: minmax(130px, 1.1fr) 104px 128px minmax(210px, 1.7fr) 92px 24px; column-gap: 14px; min-height: 27px; padding: 0 4px 0 6px; border-radius: 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.wl.wide .wl-row > * { grid-row: 1; }
+.wl.wide .wl-row > .wl-name { grid-column: 1; }
+.wl.wide .wl-row > .wl-addr { grid-column: 2; justify-self: start; text-align: left; }
+.wl.wide .wl-row > .wl-val { grid-column: 3; text-align: left; }
+.wl.wide .wl-row > .wl-bytes { grid-column: 4; flex-wrap: nowrap; overflow: hidden; padding: 0; }
+.wl.wide .wl-row > .wl-src { grid-column: 5; }
+.wl.wide .wl-row > .icon-btn { grid-column: 6; }
+.wl.wide .wl-head { min-height: 24px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); border-bottom-color: var(--line); }
+.wl.wide .wl-head:hover { background: none; }
+.wl-src { justify-self: start; border: 0; background: none; padding: 0; color: var(--fg-2); font: 11.5px var(--font-code); white-space: nowrap; cursor: pointer; }
+button.wl-src:hover { color: var(--accent-hi); text-decoration: underline; text-underline-offset: 2px; }
+span.wl-src.wl-user { color: var(--syn-label); font-family: var(--font-ui); cursor: default; }
 .wl-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 22px; column-gap: 8px; align-items: center; min-height: 22px; padding: 0 2px 0 4px; border-radius: 4px; }
 .wl.compact .wl-row { grid-template-columns: minmax(0, 1fr) auto auto; padding: 0; }
 .wl-row:hover { background: var(--row-hover); }
@@ -1436,8 +1509,10 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .wl-bytes { grid-column: 1 / -1; display: flex; gap: 0 0.55em; flex-wrap: wrap; padding: 0 0 2px 10px; font: 11.5px var(--font-code); color: var(--fg-2); }
 .wl-bytes > .wl-was:first-child { margin-right: 0.35em; }
 .wl-n { margin-left: 0.35em; color: var(--fg-3); font-weight: 400; }
-.wl-hidden { margin-top: 4px; font-size: 11.5px; }
-.wl-add { display: grid; grid-template-columns: minmax(0, 1fr) 84px auto; gap: 4px; margin-top: 6px; }
+.wl-hidden { font-size: 11.5px; }
+.wl-add { display: flex; align-items: center; gap: 4px; }
+.wl-add input { width: 200px; }
+.wl-add select { width: 92px; }
 .wl-add input, .wl-add select { height: 24px; min-width: 0; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 6px; font: 12px var(--font-code); }
 .wl-add select { padding: 0 2px; }
 /* safe mode (10.3): the switch in the toolbar, the mark in the lists, what a safe run would change */
@@ -1448,7 +1523,6 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .scr-safe-ico { flex: none; color: var(--ok); }
 .scr-howto.scr-safe-note { background: color-mix(in srgb, var(--ok) 9%, var(--panel)); }
 .scr-howto.scr-safe-note .icon { color: var(--ok); }
-.scr-would-sec h4 > .icon { color: var(--ok); }
 .scr-write { margin-top: 6px; }
 .scr-would-pill { display: inline-flex; align-items: center; gap: 4px; color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
 .script-row .scr-safe-ico { margin-left: 5px; vertical-align: -1px; }
