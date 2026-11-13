@@ -1965,7 +1965,7 @@ test('a program that waits for a key in front of more packing: Unpack again runs
   await expect(bar).toContainText(/Sindri peels off 2 layers: an unknown mover at \$07f8 .*, then an unknown decoder at \$0340 .*; the program starts at \$0810/, { timeout: 30_000 });
   await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
   await expect(toast(page, 'Unpacked packed-menu-unpacked.prg: 12287 bytes at $0801-$37ff')).toBeVisible({ timeout: 30_000 });
-  await expect(done).toContainText('packed-menu-unpacked-unpacked.prg, $0801-$37ff, starting at $0810 (set as the program start).');
+  await expect(done).toContainText('packed-menu-unpacked_2.prg, $0801-$37ff, starting at $0810 (set as the program start).');
   await expect(bar).toHaveCount(0);
 });
 

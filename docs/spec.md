@@ -1145,7 +1145,9 @@ ur filnamnet (unp64 skriver `namn.prg.xxxx` där xxxx är JMP-adressen, efter fl
 `return to mem: $xxxx`, annars `jmp`/`start`/`sys $xxxx` i utdata. unp64:s `Entry point:` är den packade filens start och
 används inte. Packarens namn tas ur raden `<packare>, unpacker=$xxxx`. Ett projekt med en fil
 ersätts av den uppackade filen med startadressen som programstart (8.2); i ett projekt med flera filer byts bara filen ut,
-och det går att ångra. Verktygets kommandorad och utdata visas i en rad över listningen. Den uppackade filen räknas som
+och det går att ångra. Den uppackade filen heter `namn-unpacked.prg`; packas den upp igen räknas uppackningarna i namnet
+(`namn-unpacked_2.prg`, `namn-unpacked_3.prg` …) i stället för att `-unpacked` upprepas (`unpackedName()`, som också
+namnger `mimir unpack`s fil; ett gammalt `-unpacked-unpacked` räknas som två). Verktygets kommandorad och utdata visas i en rad över listningen. Den uppackade filen räknas som
 en laddning (14.1): *Files* fälls ihop, och *Loaders* och *Program start* öppnas när programmet som packaren gömde har
 en loader eller en känd start.
 

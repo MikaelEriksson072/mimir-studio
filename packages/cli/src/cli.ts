@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
-  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackLog, unpackPrg, verify,
+  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackedName, unpackLog, unpackPrg, verify,
   covertSummary, KRILL_PACKER, readBitfireDisk, readBoozeDisk, readCovertDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
@@ -413,7 +413,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         io.out(unpackLog(run, name, prg[0] | (prg[1] << 8), prg.length - 2));
         if (!run.unpacked || !run.saved) return 1;
         const out = flags.get('out');
-        const target = typeof out === 'string' && out ? resolve(io.cwd, out) : join(dirname(path), `${base}-unpacked.prg`);
+        const target = typeof out === 'string' && out ? resolve(io.cwd, out) : join(dirname(path), unpackedName(base));
         writeFileSync(target, run.saved.prg);
         io.out(`Wrote ${target} (${run.saved.prg.length} bytes, start $${h4(run.saved.entry)})`);
         return 0;

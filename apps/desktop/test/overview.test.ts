@@ -16,6 +16,7 @@ describe('the overview of the analysis', () => {
     // set for the project: by you, or where an unpacker left an unpacked program
     expect(startOf(A, { ...p, entryPoint: A.entry })!.from).toBe('Set by you.');
     expect(startOf(A, { ...p, entryPoint: A.entry, files: [{ ...p.files[0], name: 'game-unpacked.prg' }] })!.from).toBe('Where the unpacker left the program.');
+    expect(startOf(A, { ...p, entryPoint: A.entry, files: [{ ...p.files[0], name: 'game-unpacked_3.prg' }] })!.from).toBe('Where the unpacker left the program.');
   });
 
   it('takes the load address when there is no BASIC SYS, and says so', () => {

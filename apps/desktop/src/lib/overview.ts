@@ -19,7 +19,7 @@ export function startOf(A: AnalysisResult, project: Pick<Project, 'entryPoint' |
   if (project.entryPoint === e) {
     // a snapshot's BASIC SYS and the address an unpacker left the program at are set as the start when they are opened
     const from = project.files.some(f => f.vsf) ? "From the snapshot's BASIC SYS line."
-      : project.files.some(f => /-unpacked\.prg$/i.test(f.name)) ? 'Where the unpacker left the program.' : 'Set by you.';
+      : project.files.some(f => /-unpacked(_\d+)?\.prg$/i.test(f.name)) ? 'Where the unpacker left the program.' : 'Set by you.';
     return { addr: e, from, basic };
   }
   if (sys) return { addr: e, from: 'From the SYS in the BASIC line.', basic };

@@ -98,6 +98,15 @@ function layerLines(l: LayerReport): string[] {
   return lines;
 }
 
+/** The name Unpack gives what unpacking the file `name` leaves: `game.prg` → `game-unpacked.prg`, unpacked again
+ *  `game-unpacked_2.prg`, then `game-unpacked_3.prg`: the number counts the Unpacks (`-unpacked-unpacked` from before
+ *  counts as two). */
+export function unpackedName(name: string): string {
+  let base = name.replace(/\.prg$/i, ''), n = 0;
+  for (let m: RegExpExecArray | null; (m = /-unpacked(?:_(\d+))?$/i.exec(base)); base = base.slice(0, m.index)) n += m[1] ? Number(m[1]) : 1;
+  return `${base}-unpacked${n ? `_${n + 1}` : ''}.prg`;
+}
+
 /** The layer report of a run of `name` (a PRG of `size` bytes after its load address), as Sindri's command line prints it. */
 export function unpackLog(run: UnpackRun, name: string, load: number, size: number): string {
   const out = [`${name}: ${rangeText({ start: load, end: load + size - 1 })} (${kb(size)})${run.basic.length ? `, ${run.basic.slice(0, 2).join(' / ')}` : ''}`, `ROMs: ${run.roms}`];

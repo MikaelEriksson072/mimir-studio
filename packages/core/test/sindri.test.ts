@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, openC64File, packedData, packerNames, parsePrg, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
+import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, openC64File, packedData, packerNames, parsePrg, unpackedName, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
 import { findC64Roms, findExomizer, runExomizer, viceRomFolders } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
 import { fromSource } from './helpers/programs';
@@ -232,5 +232,23 @@ describe.skipIf(!roms)('Sindri going on from a VICE snapshot', () => {
     expect(r).toMatchObject({ unpacked: false, snapshot: 0x08c7 });
     expect(packedData(r)).toEqual([]);
     expect(unpackSummary(r)).toMatch(/^Going on from the snapshot \(the CPU at \$08c7\), Sindri peels off no layer \(it stopped: settled/);
+  });
+});
+
+describe('the name of an unpacked file', () => {
+  it('counts the Unpacks instead of repeating -unpacked', () => {
+    expect(unpackedName('game.prg')).toBe('game-unpacked.prg');
+    expect(unpackedName('game-unpacked.prg')).toBe('game-unpacked_2.prg');
+    expect(unpackedName('game-unpacked_2.prg')).toBe('game-unpacked_3.prg');
+    expect(unpackedName('game-unpacked_3.PRG')).toBe('game-unpacked_4.prg');
+    expect(unpackedName('MIMIR TAPE')).toBe('MIMIR TAPE-unpacked.prg');
+  });
+  it('counts the -unpacked-unpacked names of before', () => {
+    expect(unpackedName('game-unpacked-unpacked.prg')).toBe('game-unpacked_3.prg');
+    expect(unpackedName('game-unpacked_2-unpacked.prg')).toBe('game-unpacked_4.prg');
+  });
+  it('leaves names that only look alike', () => {
+    expect(unpackedName('unpacked.prg')).toBe('unpacked-unpacked.prg');
+    expect(unpackedName('game-unpacked-v2.prg')).toBe('game-unpacked-v2-unpacked.prg');
   });
 });
