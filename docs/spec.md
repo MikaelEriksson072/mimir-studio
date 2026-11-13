@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-watch.ts          skriptets watch-lista: det koden skriver, hittat i koden, och värdena (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -215,6 +216,8 @@ interface UserScript {                    // se 10.3
   source: string;
   pads: ScriptPad[];                      // skriptets egna scratchpads (data utanför programmet, t.ex. en logg)
   links?: Addr[];                         // adresser i programmet länkade till skriptet (högerklick i .asm); visas med namnet (linkName)
+  watch?: { expr: string; size?: number; ptr?: boolean }[];  // egna rader i watch-listan (det skriptet skriver hittas i koden)
+  unwatch?: string[];                     // rader listan hittat i koden som tagits bort, med operanden som koden skriver den
 }                                         // id sparas i .mimir.json: patcharna med Patch.script pekar på det
 
 interface Patch {                         // som i 10.2, och:
@@ -2096,6 +2099,34 @@ $06, $08` i `.asm`-filen efter en körning.
   slutet är den en körning som Run (dess ändringar går in i programmet); *Stop* skriver ingenting. Medan man
   felsöker är utdataytan lägre (egen höjd, kan dras), och **scratchpaden som visas är körningens som den är nu**
   (*now, as the run has it*): den följer varje steg, och i hex är de byte det senaste steget ändrade markerade.
+  Panelen har också **watch-listan** (se nedan) mellan registren och stacken.
+- **Watch** (i utdatat efter Init, `script-watch.ts`): minnet skriptet kan ändra, som listan **hittar själv i koden**
+  (`scriptWatches`, ur de assemblerade byten och raderna, medan man skriver): varje instruktion som skriver en adress
+  (STA, STX, STY, SAX och de som läser-ändrar-skriver: INC, DEC, ASL, LSR, ROL, ROR och de odokumenterade) ger byten den
+  skriver, en indexerad (`sta $0400,x`) intervallet den når (256 byte, i nollsidan runt nollsidan) och en som skriver genom
+  en pekare i nollsidan (`sta (dest),y`) pekaren, ett word, med byten den pekar på. En pekare koden bara läser genom
+  (`lda (src),y`) kommer med när koden flyttar den (`inc src+1`). Samma operand är en rad (raderna som skriver den
+  sparas); en pekare tar in skrivningarna av sina två byte, `namn` och `namn+1` blir ett word, och en byte som också
+  skrivs med index ligger i sitt intervall. En operand som skriver flera adresser (en rad i en `.for`) får en rad per
+  adress, med adressen som namn. Det programmets rutiner som skriptet anropar skriver kan inte ses i koden. Raderna har
+  operanden som koden skriver den (`colors_0939`, `$d020`, `counter`), adressen (`$0939,x`, `($fb),y`) och värdet;
+  ett klick på namnet går till raden som skriver det, och ett klick på adressen visar programmets minne i listningen.
+  Verktygstipset säger raderna, vad det är (ett intervall, ett word, en pekare) och vems minne: programmets,
+  nollsidan, skriptets eget (dess kod och data: `counter: .byte 0`) eller en scratchpad. Värdena läses som skriptets
+  kod ser dem (eget minne där dess kod, data och scratchpads är): **innan skriptet körts** som en körning börjar
+  (*at the start*: programmet utan skriptets tidigare ändringar, init, scratchpadsens start, `scriptStartMemory`),
+  **efter en körning** som den lämnade dem (*after the last run*, `ScriptRun.own` är skriptets eget minne efteråt):
+  det som ändrats står som *$00→$02*, och ett intervall säger *2 changed* med en rad om 8 byte där den första ändringen
+  är (ändrade byte markerade, vad de var i verktygstipset), och **medan man felsöker** som körningen har dem nu (*now*),
+  med det senaste steget ändrade markerat; ett intervalls rad följer indexregistret (byten instruktionen skriver nästa
+  står i den) och en pekares byte är där den pekar nu. *Code changed since* står när koden ändrats efter körningen.
+  **Egna rader** läggs till under listan: en adress eller ett namn (`$c000`, `49152`, en etikett, en variabel, en
+  scratchpad, skriptets egna etiketter, `namn+2`; ett av Mimirs namn som analysen sedan döpt om, `colors_0939`, hittar
+  sin adress som i koden) som *byte*, *word*, *pointer* eller *8*–*256 bytes*, och Enter eller *Watch* tar det (en rad
+  som redan finns sägs). De läses om med namnen som de är nu, och en som inte längre hittar sin adress sägs i rött.
+  × tar bort en egen rad; en rad som hittats i koden tas bort ur listan (koden skriver den fortfarande) och
+  *N taken off · put back* tar tillbaka dem. Egna rader (`UserScript.watch`) och det som tagits bort (`UserScript.unwatch`,
+  med operanden som nyckel) sparas med skriptet i projektet och i biblioteket.
 - **Resultatet** (`writeScriptRun`): de byte i programmets minne som körningen ändrade, utom nollsidan och stacken
   (processorns arbetsminne), skrivs in i programmet som skriptets patchar (10.2, `Patch.script` säger vilket skript),
   en per ändring (ändringar högst 8 byte isär och i samma fil blir en), med namnet `skript` eller `skript_xxxx` när de

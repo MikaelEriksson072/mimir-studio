@@ -287,7 +287,7 @@ export function withAddressNames(names: Map<string, Addr>, source: string): Map<
 export interface ScriptAccess extends ScriptRange { line: number; write: boolean; text: string }
 
 /** a line of code without its comment and its strings, and without the label it starts with */
-const codeOf = (line: string) => line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '').replace(/"(?:[^"\\]|\\.)*"/g, '""')
+export const codeOf = (line: string) => line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '').replace(/"(?:[^"\\]|\\.)*"/g, '""')
   .replace(/^\s*(?:[A-Za-z_][\w.]*|![A-Za-z_]\w*|!)\s*:/, '').trim();
 
 /** The script's instructions that read or write the program's memory at an address (not by a pointer: (zp),y and
@@ -436,6 +436,9 @@ export interface ScriptRun {
   other: number;
   /** the program's memory after the run */
   mem: Uint8Array;
+  /** the script's own memory after the run (its code and data, its scratchpads), at its own addresses: what the watch
+   *  list reads there */
+  own: Uint8Array;
   ms: number;
   /** the script's own code it wrote over while it ran (code that changes itself, or an address it writes that lies
    *  where its code is): by line of the code, its first address written and how many writes */
@@ -447,6 +450,37 @@ export const SCRIPT_LIMIT = 200_000_000;
 
 /** where the RTS that ends the script returns to: the run pushes $ffff, so it lands at $0000 with the stack empty */
 const DONE = 0x0000;
+
+/**
+ * Memory as a script's run has it: the program's (`mem`) and the script's own (`own`, at the addresses `mine` marks:
+ * its code and data and its scratchpads), and which of its own bytes are its instructions (`code`). A ScriptMachine is
+ * one; scriptStartMemory makes one as a run starts.
+ */
+export interface ScriptMemory { mem: Uint8Array; own: Uint8Array; mine: Uint8Array; code: Uint8Array }
+
+/**
+ * The memory a run of the script starts with (as ScriptMachine sets it up): the files at their load addresses, the
+ * return of the SYS on the stack, the zero-page bytes of its init; its scratchpads as they start and its assembled
+ * bytes as its own memory. Also for a script that does not check out (what it assembled is its own memory then).
+ * `into`: fill these arrays (they start empty) instead of new ones.
+ */
+export function scriptStartMemory(env: ScriptEnv, script: Pick<UserScript, 'pads' | 'init'>, check: Pick<ScriptCheck, 'mem' | 'written' | 'ops'>, into?: ScriptMemory): ScriptMemory {
+  const m = into ?? { mem: new Uint8Array(0x10000), own: new Uint8Array(0x10000), mine: new Uint8Array(0x10000), code: new Uint8Array(0x10000) };
+  const { mem, own, mine, code } = m;
+  for (const f of env.files) mem.set(f.bytes.subarray(0, Math.max(0, 0x10000 - f.load)), f.load);
+  // each scratchpad as a run starts it: its start content, the rest its fill
+  for (const p of script.pads) {
+    if (!(p.start >= 0 && p.size >= 1 && p.start + p.size <= 0x10000)) continue;
+    own.set(padStart(p), p.start); mine.fill(1, p.start, p.start + p.size);
+  }
+  for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
+  // its instructions' bytes (not its data): a write there changes its code
+  for (let a = 0; a < 0x10000; a++) if (check.ops[a]) code.fill(1, a, Math.min(0x10000, a + OPC[check.mem[a]].len));
+  // called like SYS: the return address on the stack; the init's zero page in place before the run (no change of it)
+  mem[0x1ff] = (DONE - 1) >> 8 & 0xff; mem[0x1fe] = (DONE - 1) & 0xff;
+  for (const z of script.init?.zp ?? []) { mem[z.at & 0xff] = z.value & 0xff; if (z.word) mem[(z.at + 1) & 0xff] = (z.value >> 8) & 0xff; }
+  return m;
+}
 
 /** A byte of the stack, from the top ($01ff) down to the stack pointer: a return address a JSR (or the start of the
  *  run, called like SYS) put there is said, with who made the JSR and where it goes back to. */
@@ -487,12 +521,14 @@ class ScriptBus implements Bus {
   fetch(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
 }
 
-export class ScriptMachine {
+export class ScriptMachine implements ScriptMemory {
   readonly cpu: Cpu;
   /** the program's memory, and the script's own (and which addresses are the script's) */
   readonly mem = new Uint8Array(0x10000);
   readonly own = new Uint8Array(0x10000);
   readonly mine = new Uint8Array(0x10000);
+  /** the script's instructions' bytes (not its data): a write there changes its code */
+  readonly code = new Uint8Array(0x10000);
   /** whether the code running is the script's */
   // (kept in an object of its own: the bus reads it at every byte)
   // (and the address of the instruction running, for a pointer's: ScriptBus)
@@ -517,23 +553,16 @@ export class ScriptMachine {
     if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
     const { mem, own, mine, ctx } = this;
     this.loaded = loadedMask(env.files);
-    for (const f of env.files) mem.set(f.bytes.subarray(0, Math.max(0, 0x10000 - f.load)), f.load);
-    // each scratchpad as a run starts it: its start content, the rest its fill
-    for (const p of script.pads) { own.set(padStart(p), p.start); mine.fill(1, p.start, p.start + p.size); }
-    for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
+    // the files, the scratchpads, the script's code, the SYS return on the stack and the init's zero page
+    scriptStartMemory(env, script, check, this);
     this.inScript = !!mine[check.entry];
-    // its instructions' bytes (not its data): a write there changes its code
-    const codeBytes = new Uint8Array(0x10000);
-    for (let a = 0; a < 0x10000; a++) if (check.ops[a]) codeBytes.fill(1, a, Math.min(0x10000, a + OPC[check.mem[a]].len));
-    const bus = new ScriptBus(mem, own, mine, ctx, codeBytes, this.overCode);
+    const bus = new ScriptBus(mem, own, mine, ctx, this.code, this.overCode);
     const cpu = this.cpu = new Cpu(bus);
-    // called like SYS: the return address on the stack; the registers, the flags and the zero-page bytes the script's
-    // init gives (else A, X and Y 0 and interrupts off). The init's zero page is in place before the run, so it is no
-    // change of the run's
-    mem[0x1ff] = (DONE - 1) >> 8 & 0xff; mem[0x1fe] = (DONE - 1) & 0xff; cpu.s = 0xfd; cpu.pc = check.entry;
+    // called like SYS (the stack holds its return); the registers and the flags the script's init gives (else A, X
+    // and Y 0 and interrupts off)
+    cpu.s = 0xfd; cpu.pc = check.entry;
     const init = script.init;
     cpu.a = (init?.a ?? 0) & 0xff; cpu.x = (init?.x ?? 0) & 0xff; cpu.y = (init?.y ?? 0) & 0xff; cpu.p = (init?.p ?? SCRIPT_P) & 0xff;
-    for (const z of init?.zp ?? []) { mem[z.at & 0xff] = z.value & 0xff; if (z.word) mem[(z.at + 1) & 0xff] = (z.value >> 8) & 0xff; }
     this.at = cpu.pc;
     this.before = mem.slice();
   }
@@ -652,7 +681,7 @@ export class ScriptMachine {
       end: this.end ?? 'limit', at: this.end ? this.at : cpu.pc, instructions: this.instructions, cycles: this.cycles,
       regs: { a: cpu.a, x: cpu.x, y: cpu.y, s: cpu.s, p: cpu.p, pc: cpu.pc },
       pads: this.script.pads.map(p => ({ name: p.name, bytes: this.own.slice(p.start, p.start + p.size) })),
-      changes, other, mem, ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
+      changes, other, mem, own: this.own, ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
     };
   }
 }

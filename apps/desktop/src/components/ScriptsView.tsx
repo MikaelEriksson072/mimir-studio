@@ -6,7 +6,7 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { BLOCK_PAD_FORM, byteLines, checkScript, SCRIPT_TEMPLATES, type ScriptTemplate, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptLink, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptRun, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, byteLines, checkScript, SCRIPT_TEMPLATES, type ScriptTemplate, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, tidyInit, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptLink, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type ScriptZpInit, type UserScript, type WatchSpot } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { Icon } from '../lib/icons';
@@ -16,10 +16,13 @@ import { initValue } from '../lib/scriptinit';
 import { useScripts, type LibraryScript, type PadMode, type ScriptRunKept } from '../store/scripts';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
+import { WatchSection, WatchTable, type WatchItem, type WatchKind, type WatchMode } from './ScriptWatch';
 
 /** a script being debugged: its machine, the code it was assembled from, the registers and its scratchpads' bytes
  *  before the last step (what the step changed is marked) */
-interface Debugging { id: string; m: ScriptMachine; source: string; prev: DebugRegs | null; padsBefore: Uint8Array[] | null }
+interface Debugging { id: string; m: ScriptMachine; source: string; prev: DebugRegs | null; padsBefore: Uint8Array[] | null;
+  /** memory as the run started (the watch list's changes are against it) and before the last step (what it changed) */
+  start: ScriptMemory; before: Pick<ScriptMemory, 'mem' | 'own'> | null }
 /** instructions the debugger runs before it lets the window draw (Continue, Step over and Step out go on in parts) */
 const DEBUG_SLICE = 400_000;
 
@@ -43,7 +46,7 @@ interface ScriptsViewProps {
   onAdd: (s: LibraryScript) => void;
   /** a copy of a template in the project (its scratchpads placed where there is room) */
   onAddTemplate: (t: ScriptTemplate) => void;
-  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init'>>, label: string) => void;
+  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
    *  runUserScript) */
@@ -250,6 +253,18 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   /** the script's links (UserScript.links), by the names its code writes for them */
   const links = useMemo(() => (cur?.links ?? []).map(linkOf), [cur?.links, linkOf]);
   const linkNames = useMemo(() => new Set(links.map(k => k.name)), [links]);
+  // the watch list (spec 10.3): what the code writes, found in it (debugging: in the code that runs), and what the user
+  // added, read as a run starts (from the program without the script's earlier changes), as the last run left it, or now
+  const runEnv = useMemo(() => (cur ? envFor(cur.id) : null), [cur?.id, env, patches]); // eslint-disable-line react-hooks/exhaustive-deps
+  const startMem = useMemo(() => (cur && check && runEnv ? scriptStartMemory(runEnv, cur, check) : null), [runEnv, check, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wCheck = dbg ? dbg.m.check : check, wSource = dbg ? dbg.source : source;
+  const autoSpots = useMemo(() => (cur && wCheck ? scriptWatches(wCheck, wSource, cur.pads) : []), [wCheck, wSource, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** the names an added spot can be written with: the program's, the hardware's, the scratchpads' and the script's own labels */
+  const watchNames = useMemo(() => { const m = new Map(names); for (const [a, n] of wCheck?.labels ?? []) m.set(n, a); return m; }, [names, wCheck]);
+  /** an address or a name typed for the watch list: a name Mimir gave (`colors_0939`) also when the analysis has named
+   *  its bytes anew since (`tbl_0939`), as the code's names are (withAddressNames) */
+  const watchAt = (e: string) => initValue(e, watchNames) ?? initValue(e, withAddressNames(new Map(watchNames), e));
+  const userSpots = useMemo(() => (cur && wCheck ? userWatches(cur.watch ?? [], watchAt, wCheck, cur.pads) : []), [cur?.watch, watchNames, wCheck, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
   // the names the editor completes and the hovers show, for this script: its links first
   useEffect(() => {
     void import('../monaco/providers').then(({ scriptContext }) => { scriptContext.names = names; scriptContext.pads = cur?.pads ?? []; scriptContext.links = linkNames; scriptContext.kinds = kinds; });
@@ -329,7 +344,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   const atBp = dbg && dbgLine != null && bpLines(dbg.id).includes(dbgLine) ? dbgLine : null;
   const busyRef = useRef(false);
   /** the registers and the scratchpads before a step (the panel and the scratchpad mark what it changed) */
-  const keepBefore = (d: Debugging) => { d.prev = regsOf(d.m); d.padsBefore = d.m.script.pads.map(p => d.m.own.slice(p.start, p.start + p.size)); };
+  const keepBefore = (d: Debugging) => { d.prev = regsOf(d.m); d.padsBefore = d.m.script.pads.map(p => d.m.own.slice(p.start, p.start + p.size)); d.before = { mem: d.m.mem.slice(), own: d.m.own.slice() }; };
   /** the debugger stopped somewhere: drawn there, and the line shown; at the end of the run, it is a run */
   const stopped = (d: Debugging) => {
     if (dbgRef.current !== d) return;
@@ -349,7 +364,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     const text = models.current[s.id]?.getValue() ?? s.source;
     const e = envFor(s.id), c = checkScript(e, { source: text, pads: s.pads, init: s.init });
     if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
-    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads, init: s.init }, c), source: text, prev: null, padsBefore: null };
+    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads, init: s.init }, c), source: text, prev: null, padsBefore: null, start: scriptStartMemory(e, s, c), before: null };
     setDbg(d); dbgRef.current = d;
     stopped(d);
   };
@@ -432,6 +447,41 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   // until it has done something, a line says what Run does
   const howTo = !kept && !mine.length;
   const inLibrary = !!cur && library.some(l => l.name.toLowerCase() === cur.name.toLowerCase());
+  // the watch list: what was found in the code, without what the user took off, and what the user added
+  const unwatched = new Set(cur?.unwatch ?? []);
+  const spots = [...autoSpots.filter(w => !unwatched.has(w.key)), ...userSpots];
+  const hiddenSpots = autoSpots.filter(w => unwatched.has(w.key)).length;
+  const watchMode: WatchMode = dbg ? 'now' : kept ? 'run' : 'start';
+  const watchItems: WatchItem[] = (() => {
+    if (dbg) {
+      const m = dbg.m, ref = dbg.before ? { ...dbg.before, mine: m.mine, code: m.code } : null;
+      return spots.map(w => ({ spot: w, view: watchView(w, m, { ref, start: dbg.start, regs: m.cpu }) }));
+    }
+    if (!startMem) return [];
+    if (kept) {
+      const after: ScriptMemory = { mem: kept.run.mem, own: kept.run.own, mine: startMem.mine, code: startMem.code };
+      return spots.map(w => ({ spot: w, view: watchView(w, after, { ref: startMem, start: startMem }) }));
+    }
+    return spots.map(w => ({ spot: w, view: watchView(w, startMem) }));
+  })();
+  /** an address or a name typed put on the watch list (whether it was) */
+  const addWatch = (expr: string, kind: WatchKind): boolean => {
+    if (!cur) return false;
+    const at = watchAt(expr);
+    if (at == null) { toast(`"${expr}" is not an address or a name of the program or the script: write $c000, 49152, a label, a variable or name+2`, 'warn'); return false; }
+    const entry: ScriptWatchEntry = { expr, ...(kind === 'word' ? { size: 2 } : kind === 'pointer' ? { ptr: true } : kind === 'byte' ? {} : { size: +kind }) };
+    const size = entry.ptr ? 2 : entry.size ?? 1;
+    const same = spots.find(w => !w.error && w.at === at && w.size === size && !!w.ptr === !!entry.ptr);
+    if (same) { toast(`${expr} is on the watch list already${same.name !== expr ? ` (as ${same.name})` : ''}`, 'info'); return false; }
+    onEdit(cur.id, { watch: [...(cur.watch ?? []), entry] }, `Watch ${expr} in "${cur.name}"`);
+    return true;
+  };
+  /** a spot off the watch list: one the user added goes, one found in the code is taken off (kept by its operand) */
+  const removeWatch = (w: WatchSpot) => {
+    if (!cur) return;
+    if (w.user) { const rest = (cur.watch ?? []).filter(e => watchEntryKey(e) !== w.key); onEdit(cur.id, { watch: rest.length ? rest : undefined }, `Take ${w.name} off the watch list of "${cur.name}"`); return; }
+    onEdit(cur.id, { unwatch: [...(cur.unwatch ?? []).filter(k => autoSpots.some(a => a.key === k)), w.key] }, `Take ${w.name} off the watch list of "${cur.name}"`);
+  };
   // while debugging, the scratchpad shown is the run's as it is now, with what the last step changed
   const livePad: LivePad | null = (() => {
     if (!dbg || shown.kind !== 'pad') return null;
@@ -528,7 +578,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
           <div className="scr-edit-row">
             <div className="mon-host scr-editor" ref={host} style={{ display: state === 'ready' ? 'block' : 'none' }} />
             {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} readOnly={!!dbg} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
-            {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} atBp={atBp} />}
+            {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} atBp={atBp}
+              watch={watchItems.length ? <WatchTable items={watchItems} mode="now" compact onGoLine={goLine} /> : null} />}
           </div>
           {!outFolded && <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />}
           <button className={cx('scr-out-bar', outFolded && 'folded')} aria-expanded={!outFolded} aria-controls="scr-out"
@@ -538,7 +589,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
             {errors.length > 0 && outFolded && <span className="scr-out-bad">{plural(errors.length, 'error')}</span>}
           </button>
           {!outFolded && <div className="scr-out" id="scr-out" style={{ height: dbg ? dbgOutH : outH }}>
-            <ScriptSide script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onWrite={write} blocks={blocks} cursorBlock={cursorBlock} onCopyBlock={onCopyBlock} />
+            <ScriptSide watch={<WatchSection items={watchItems} mode={watchMode} stale={!!kept && kept.source !== source} hidden={hiddenSpots} onRemove={removeWatch} onAdd={addWatch} onGoLine={goLine} onShow={onShow}
+              onRestore={() => onEdit(cur.id, { unwatch: undefined }, `Put back on the watch list of "${cur.name}" what was taken off`)} />} script={cur} check={check} kept={kept} stale={!!kept && kept.source !== source} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg} onGoLine={goLine} onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onWrite={write} blocks={blocks} cursorBlock={cursorBlock} onCopyBlock={onCopyBlock} />
             <PadView script={cur} mine={mine} would={kept?.safe ? kept.would ?? [] : []} names={names} mode={mode} screen={screen} live={livePad} theme={theme} onMode={(m: PadMode) => set({ mode: m })} onScreen={v => set({ screen: v })}
               onShow={onShow} onCopy={onCopy} onSave={onSave} onSaveText={onSaveText} onEdit={onEdit} onMenu={onMenu} placePad={placePad} toast={toast} />
           </div>}
@@ -638,8 +690,8 @@ function BlockToPad({ blocks, pads, first, into, onCopy, onCancel }: { blocks: r
   );
 }
 
-function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, onGoLine, onEdit, onTakeOut, onSwitchPatch, onWrite, blocks, cursorBlock, onCopyBlock }: {
-  script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; names: ReadonlyMap<string, number>; canWrite: boolean; onGoLine: (n: number) => void;
+function ScriptSide({ watch, script, check, kept, stale, mine, env, names, canWrite, onGoLine, onEdit, onTakeOut, onSwitchPatch, onWrite, blocks, cursorBlock, onCopyBlock }: {
+  watch: React.ReactNode; script: UserScript; check: ScriptCheck; kept?: ScriptRunKept; stale: boolean; mine: Patch[]; env: ScriptEnv; names: ReadonlyMap<string, number>; canWrite: boolean; onGoLine: (n: number) => void;
   onEdit: ScriptsViewProps['onEdit']; onTakeOut: ScriptsViewProps['onTakeOut']; onSwitchPatch: ScriptsViewProps['onSwitchPatch']; onWrite: () => void;
   blocks: readonly BlockChoice[]; cursorBlock: Addr | null; onCopyBlock: ScriptsViewProps['onCopyBlock'];
 }) {
@@ -677,6 +729,7 @@ function ScriptSide({ script, check, kept, stale, mine, env, names, canWrite, on
           </li>))}</ul>
       </section>}
       <InitSection script={script} names={names} problems={check.problems} onEdit={onEdit} />
+      {watch}
       <section className="scr-sec">
         <h4>In the program{stale && !would && <span className="pill mid" title="The code has changed since this run: run it again to update the program">code changed since</span>}<span className="grow" />
           {mine.length > 0 && <button className="btn ghost small" onClick={() => onTakeOut(script.id)} title="Take what the script changed out of the program: the original bytes come back (Ctrl+Z puts it back)"><Icon name="undo" size={13} />Take out</button>}</h4>

@@ -2,7 +2,7 @@
  * (its scratchpads and its changes to the program are kept in the project, the rest of a run is not), the one running
  * and the output's height; and the library of scripts, which every project can take a copy of (kept by the app). */
 import { create } from 'zustand';
-import { b64dec, b64enc, tidyInit, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { b64dec, b64enc, tidyInit, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWatchEntry, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
 import { store } from '../lib/util';
 
 /** what the output shows: a scratchpad (by index), one of the script's changes to the program (its patch's id) or one
@@ -15,9 +15,9 @@ export type PadMode = 'hex' | 'code' | 'text' | 'compare';
  *  would have written (`failed`: what could not have been) */
 export interface ScriptRunKept { run: ScriptRun; source: string; at: number; failed: ScriptWriteFailure[]; safe?: boolean; would?: Patch[] }
 
-/** a script in the library: its code and its scratchpads (without what they held), whether it runs in safe mode and
- *  what its runs start with */
-export interface LibraryScript { name: string; lang: ScriptLang; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit }
+/** a script in the library: its code and its scratchpads (without what they held), whether it runs in safe mode,
+ *  what its runs start with and its watch list (what the user added and took off) */
+export interface LibraryScript { name: string; lang: ScriptLang; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit; watch?: ScriptWatchEntry[]; unwatch?: string[] }
 
 const LIBRARY_KEY = 'kr.scriptLibrary';
 const LIST_FOLDED_KEY = 'kr.scriptListFolded';
@@ -38,14 +38,19 @@ const readSrc = (v: unknown): ScriptPadSource | null => {
   const o = v as Partial<ScriptPadSource> | null;
   return o && (o.form === 'asm' || o.form === 'hex' || o.form === 'text') && typeof o.text === 'string' ? { form: o.form, text: o.text, ...(o.screen === true ? { screen: true } : {}) } : null;
 };
+/** a watch list as the library keeps it (what is not an entry left out) */
+const readWatch = (v: unknown): ScriptWatchEntry[] => (Array.isArray(v) ? v : [])
+  .filter((w): w is ScriptWatchEntry => !!w && typeof w.expr === 'string' && w.expr.length > 0 && (w.size == null || (Number.isInteger(w.size) && w.size >= 1 && w.size <= 256)))
+  .map(w => ({ expr: w.expr, ...(w.size && w.size > 1 ? { size: w.size } : {}), ...(w.ptr === true ? { ptr: true } : {}) }));
 const readData = (v: unknown): Uint8Array | null => { try { return typeof v === 'string' && v ? b64dec(v) : null; } catch { return null; } };
 const readLibrary = (): LibraryScript[] => {
   const v = store.get<unknown>(LIBRARY_KEY, []);
   return Array.isArray(v) ? v.filter((s): s is LibraryScript => !!s && typeof s.name === 'string' && s.name.length > 0 && typeof s.source === 'string' && Array.isArray(s.pads) && s.pads.every(isPad))
     .map(s => {
-      const init = readInit(s.init);
+      const init = readInit(s.init), watch = readWatch(s.watch), unwatch = Array.isArray(s.unwatch) ? s.unwatch.filter((k): k is string => typeof k === 'string') : [];
       return {
         name: s.name, lang: 'kickass', source: s.source, saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}), ...(init ? { init } : {}),
+        ...(watch.length ? { watch } : {}), ...(unwatch.length ? { unwatch } : {}),
         pads: s.pads.map(({ name, start, size, fill, data, src }) => {
           const d = readData(data), w = readSrc(src);
           return { name, start, size, ...(fill ? { fill } : {}), ...(d ? { data: d } : {}), ...(w ? { src: w } : {}) };
@@ -87,7 +92,7 @@ interface ScriptsState {
   setBps: (id: string, lines: number[]) => void;
   set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
-  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'source' | 'pads' | 'safe' | 'init'>) => boolean;
+  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch'>) => boolean;
   removeFromLibrary: (name: string) => void;
 }
 
@@ -103,7 +108,7 @@ export const useScripts = create<ScriptsState>((set, get) => ({
   setTemplatesFolded: v => { store.set(TEMPLATES_FOLDED_KEY, v); set({ templatesFolded: v }); },
   saveToLibrary: s => {
     const lib = get().library, had = lib.some(x => x.name.toLowerCase() === s.name.toLowerCase());
-    const entry: LibraryScript = { name: s.name, lang: s.lang, source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}) };
+    const entry: LibraryScript = { name: s.name, lang: s.lang, source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}), ...(s.watch?.length ? { watch: structuredClone(s.watch) } : {}), ...(s.unwatch?.length ? { unwatch: [...s.unwatch] } : {}) };
     const library = [...lib.filter(x => x.name.toLowerCase() !== s.name.toLowerCase()), entry].sort((a, b) => a.name.localeCompare(b.name));
     storeLibrary(library); set({ library });
     return had;

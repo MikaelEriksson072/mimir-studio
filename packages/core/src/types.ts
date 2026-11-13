@@ -345,7 +345,17 @@ export interface UserScript {
   safe?: boolean;
   /** what its runs start with: registers, flags, zero-page bytes (missing: A, X and Y 0, only I set) */
   init?: ScriptInit;
+  /** memory the user put on its watch list (the list finds what the code writes by itself) */
+  watch?: ScriptWatchEntry[];
+  /** what the watch list found in the code that the user took off it, by the operand as the code writes it
+   *  (WatchSpot.key: `$d020`, `screen,x`, `(dest),y`) */
+  unwatch?: string[];
 }
+
+/** Memory the user put on a script's watch list (spec 10.3): an address or a name as typed (`$c000`, `table+5`,
+ *  `ptr_fb`), read again with the names as they are; a byte, a word (`size` 2), a row of bytes (`size` 3-256) or a
+ *  zero-page pointer (`ptr`: a word, and the bytes it points at). */
+export interface ScriptWatchEntry { expr: string; size?: number; ptr?: boolean }
 
 export interface Project {
   format: 'mimir-project';

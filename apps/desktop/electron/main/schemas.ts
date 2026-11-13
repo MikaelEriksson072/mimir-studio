@@ -135,7 +135,11 @@ const scriptInit = z.object({
   zp: z.array(z.object({ at: z.number().int().min(0).max(0xff), value: z.number().int().min(0).max(0xffff), word: z.boolean().optional() })
     .refine(e => (e.word ? e.at <= 0xfe : e.value <= 0xff), 'a zero-page word past $ff, or a byte with a word\'s value')).max(256).optional(),
 });
-const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144), links: z.array(at).max(256).optional(), safe: z.boolean().optional(), init: scriptInit.optional() };
+/** the watch list: what the user added (an expression, and a byte, a word, a row of bytes or a pointer) and what the
+ *  list found in the code that the user took off (by the operand as the code writes it) */
+const scriptWatch = z.array(z.object({ expr: z.string().min(1).max(200), size: z.number().int().min(1).max(256).optional(), ptr: z.boolean().optional() })).max(256);
+const scriptFields = { name: z.string().min(1).max(64), lang: z.literal('kickass'), source: z.string().max(262144), links: z.array(at).max(256).optional(), safe: z.boolean().optional(), init: scriptInit.optional(),
+  watch: scriptWatch.optional(), unwatch: z.array(z.string().max(300)).max(1024).optional() };
 const serializedScript = z.object({ ...scriptFields, id: z.string().max(64).optional(), pads: z.array(z.object({ ...padFields, bytes: b64.optional(), data: b64.optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
 const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.array(z.object({ ...padFields, bytes: z.instanceof(Uint8Array).optional(), data: z.instanceof(Uint8Array).refine(d => d.length <= 0x10000).optional() }).refine(p => padFits(p) && (!p.bytes || p.bytes.length === p.size), 'a scratchpad past $ffff, or its bytes not as many as it holds')).max(64) });
 /** memory configuration / VIC bank the code in a range runs with (null: back to detection) */

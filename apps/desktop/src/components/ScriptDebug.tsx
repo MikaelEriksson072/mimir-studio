@@ -1,6 +1,7 @@
 /* The script debugger's panel (spec 10.3): where the run is (the script's line, or the program's code it called), the
  * 6510's registers and flags (those the last step changed are marked), the instructions from the program counter on,
- * and the stack from its top down to the stack pointer, with the return addresses said. */
+ * the watch list as the run has it now (what the last step changed marked), and the stack from its top down to the
+ * stack pointer, with the return addresses said. */
 import { disassembleBytes, h2, h4, type Addr, type ScriptMachine, type StackEntry } from '@mimir/core';
 import { cx } from '../lib/util';
 
@@ -41,7 +42,7 @@ function StackRow({ e, top, names, lineAt }: { e: StackEntry; top: boolean; name
   );
 }
 
-export function DebugPanel({ m, prev, names: program, busy, atBp = null }: { m: ScriptMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean; atBp?: number | null }) {
+export function DebugPanel({ m, prev, names: program, busy, atBp = null, watch = null }: { m: ScriptMachine; prev: DebugRegs | null; names: ReadonlyMap<Addr, string>; busy: boolean; atBp?: number | null; watch?: React.ReactNode }) {
   const r = regsOf(m);
   // the script's code names its own addresses by its own labels, the program's code by the program's names
   const names = m.inScript && m.check.labels.size ? new Map([...program, ...m.check.labels]) : program;
@@ -68,6 +69,7 @@ export function DebugPanel({ m, prev, names: program, busy, atBp = null }: { m: 
           </td></tr>
         </tbody>
       </table>
+      {watch && <><h4>Watch</h4>{watch}</>}
       <h4>Stack <span className="muted small">{0xff - r.s} byte{0xff - r.s === 1 ? '' : 's'}</span></h4>
       <table className="dbg-stack" aria-label="Stack">
         <tbody>{stack.map((e, i) => <StackRow key={e.addr} e={e} top={i === stack.length - 1} names={names} lineAt={lineAt} />)}</tbody>

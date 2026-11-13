@@ -6709,6 +6709,70 @@ test('scripts: the debugger goes an instruction at a time with the registers and
   });
 });
 
+test('scripts: the watch list finds what the code writes, shows it after a run and live in the debugger, and takes what the user adds', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  await editor.locator('.view-lines').click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.insertText(['        ldx #1', '!:      lda colors_0939,x', '        eor #$ff', '        sta colors_0939,x', '        dex', '        bpl !-', '        lda #2', '        sta $d020', '        inc counter', '        rts', 'counter: .byte 0'].join('\n'));
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  const section = page.getByRole('region', { name: 'Watch' });
+  const watch = section.getByRole('list', { name: 'Watch' });
+  const names = watch.locator('.wl-name');
+  const head = section.locator('h4');
+
+  await test.step('what the code writes is on the list by itself: a range written with X, a byte, the script\'s own data', async () => {
+    await expect(names).toHaveText(['colors_0939', '$d020', 'counter']);
+    await expect(head).toContainText('at the start');
+    await expect(watch.getByRole('listitem').nth(0).locator('.wl-addr')).toHaveText('$0939,x');
+    await expect(watch.getByRole('listitem').nth(1).locator('.wl-val')).toHaveText('$00');
+  });
+
+  await test.step('after a run: how many bytes of the range changed, and each byte with what it was', async () => {
+    await page.locator('.scr-run').click();
+    await expect(head).toContainText('after the last run');
+    await expect(watch.getByRole('listitem').nth(0).locator('.wl-val')).toHaveText('2 changed');
+    await expect(watch.getByRole('listitem').nth(0).locator('.wl-bytes .wl-chg')).toHaveCount(2);
+    await expect(watch.getByRole('listitem').nth(1).locator('.wl-val')).toHaveText('$00→$02');
+    await expect(watch.getByRole('listitem').nth(2).locator('.wl-val')).toHaveText('$00→$01');
+  });
+
+  await test.step('debugging: the panel has the list as the run has it now, with what the last step changed', async () => {
+    await page.getByRole('button', { name: /^Debug/ }).click();
+    const panel = page.getByRole('complementary', { name: 'Debugger' });
+    const live = panel.getByRole('list', { name: 'Watch' });
+    await expect(live.locator('.wl-name')).toHaveText(['colors_0939', '$d020', 'counter']);
+    await expect(head).toContainText('now');
+    // ldx, lda, eor, sta: the byte the store wrote is marked
+    for (let i = 0; i < 4; i++) await page.keyboard.press('F8');
+    await expect(panel.getByRole('status')).toHaveText(/^Line 5 /);
+    await expect(live.getByRole('listitem').nth(0).locator('.wl-bytes .wl-chg')).toHaveCount(1);
+    await expect(live.getByRole('listitem').nth(0).locator('.wl-val')).toHaveText('1 changed');
+    await page.getByRole('group', { name: 'Debugging' }).getByRole('button', { name: 'Stop' }).click();
+    await expect(panel).toHaveCount(0);
+  });
+
+  await test.step('an address or a name typed goes on the list; one found in the code is taken off and put back', async () => {
+    await section.getByLabel('Watch address').fill('colors_0939+1');
+    await section.getByLabel('Watch size').selectOption('word');
+    await section.getByRole('button', { name: 'Watch', exact: true }).click();
+    await expect(names).toHaveText(['colors_0939', '$d020', 'counter', 'colors_0939+1']);
+    await expect(watch.getByRole('listitem').nth(3).locator('.wl-addr')).toHaveText('$093a');
+    await section.getByRole('button', { name: 'Take $d020 off the watch list' }).click();
+    await expect(names).toHaveText(['colors_0939', 'counter', 'colors_0939+1']);
+    await section.getByRole('button', { name: /^1 taken off/ }).click();
+    await expect(names).toHaveText(['colors_0939', '$d020', 'counter', 'colors_0939+1']);
+    await section.getByLabel('Watch address').fill('no_such_name');
+    await section.getByLabel('Watch address').press('Enter');
+    await expect(toast(page, '"no_such_name" is not an address')).toBeVisible();
+  });
+});
+
 test('the Scripts view, its own button in the activity bar: scripts made, run, shown with what they changed or what is wrong, opened in the Scripts tab, deleted', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });

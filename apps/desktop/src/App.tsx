@@ -1852,7 +1852,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a copy of a library script, under a name of its own in the project */
   const addLibraryScript = (l: LibraryScript) => {
     const name = userScripts.some(s => s.name.toLowerCase() === l.name.toLowerCase()) ? scriptName(userScripts, l.name) : l.name;
-    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}) }, 'Add script from the library');
+    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
     toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}`, 'ok');
   };
   /** a copy of a template in the project (script-templates.ts): its code checked with its scratchpads out of the way,
@@ -1868,7 +1868,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     addUserScript({ id: newId(), name, lang: 'kickass', source: t.source, pads }, 'Add template');
     toast(`"${name}" added from the templates: set its .vars (source, dest, length, the key) and press Ctrl+Enter. With dest = result the program stays as it is`, 'ok');
   };
-  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init'>>, label: string) =>
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
   const setScriptSafe = (id: string, on: boolean) => {
