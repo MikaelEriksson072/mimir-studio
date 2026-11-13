@@ -662,6 +662,109 @@ snapshotens värden, och SID-registren från snapshotens SID-modul (volym och fi
 som skriver tillbaka dem och återvänder, som init: låten går vidare där demot var, och en tangent startar den där igen.
 Exportens `.sid` är blockets egna byte. Spelar init lika bra, eller saknar projektet snapshoten, används init.
 
+**Samplingsspelare (digis, 5.8b).** En samplingsspelare har ingen play-rutin som anropas en gång per bildruta. Init
+startar en CIA-timer vars avbrott (CIA 2:s NMI, eller CIA 1:s IRQ) skriver ett sampel till SID tusentals gånger i
+sekunden, läst ur minnet: volymen på `$d418` (4-bitars sampel), en rösts pulsbredd (PWM) eller annat. Inget av det har
+en hopptabell, och spårningen når ofta inte avbrottet. Voodoo People (1995) kopierar sin NMI till `$0080`, sätter
+`$fffa` dit med KERNAL urkopplad och blandar fyra kanaler sampelsidor (en orderlista på `$ff00`, mönster på `$7c00`–
+`$89ff`, sampel på `$8a00`–`$cfff` och `$e000`–`$feff`) till två rösters pulsbredd, 6158 gånger i sekunden. Analysen
+hittade ingen musik alls där.
+- **Kandidater** (`samplePlayers()` i `music.ts`): bara i ett program där spårad kod lagrar en konstant under 8 i en
+  timers högbyte (`$dc05`, `$dc07`, `$dd05`, `$dd07`: en timer snabbare än `$800` cykler), de rutiner (subrutiner,
+  programmets start, användarens ingångar) vars spårade kod når en lagring av en konstant med bit 7 och en timers bit i
+  `$dc0d`/`$dd0d` (avbrottet slås på), de tre minsta per lagring.
+- **Körningen** (`runDigi()` i `c64/sidrun.ts`): rutinen körs som init med `$01` som programmet startar med (Unpacks
+  `entryPort`, annars `$37`; en snapshots eget). Ett anrop in i ROM:en där `$01` visar den återvänder direkt (en init
+  som rensar skärmen med KERNAL). Sedan tas timern: CIA 2:s när init startat den med avbrottet påslaget och den är
+  snabb nog, annars CIA 1:s (timer A, annars B). Vektorn som init lämnat, som `$01` visar den (`$0318`/`$0314` med
+  KERNAL inne, annars `$fffa`/`$fffe`), ger hanteraren. Den körs som timern anropar den, var `latch + 1`:e cykel, med
+  återhoppet och flaggorna på stacken (och A, X, Y genom KERNAL:s IRQ-ingång), tills `RTI` eller någon av KERNAL:s
+  utgångar (`$ea31`, `$ea7e`, `$ea81`, `$febc`). Avbrottsregistret ger `$81` till hanteraren som läser det. Vektorn läses
+  vid varje avbrott, som processorn gör: Wonderland IV:s NMI är två halvor som pekar `$0318` på varandra (först sampelns
+  låga nibble, sedan den höga), och Macho Programmings byter `$fffb`.
+- **En init som inte återvänder** (programmets start, som sätter upp spelaren och sedan går i sin huvudslinga) tas där
+  den är efter 400 000 cykler (`DigiRun.loop`), med minnet, SID-registren den skrev sist och timern som den lämnade dem.
+  Blocket är då byten runt hanteraren som hanteraren använde (inte programmets kod). Det hanteraren läser och som init
+  ändrat eller som inget laddat (nollsidan, en kopierad hanterare), vektorn, `$01` och SID-registren blir
+  `MusicInfo.resume` (högst 512 byte). Youthquake (1989) och Jerkland II (1994) är sådana.
+- **En sekvenserare i programmets IRQ**: en hanterare som körs men inte spelar, eller skriver till SID i färre än nio av
+  tio avbrott, körs igen med programmets IRQ en gång per bildruta (de IRQ-hanterare spårningen känner, och med en init
+  som inte återvänder den vektor init satt). Spelar det klart mer (en fjärdedel fler avbrott med SID), är det IRQ:n som
+  startar samplen: `digi.irq`. Det prövas också när samplen tystnar under den långa körningen. Wonderland IV:s raster-IRQ
+  (`$16ca`) sätter NMI:ns pekare, slut och takt ur tabeller var tredje bildruta; utan den skriver NMI:n samma värde.
+- **En samplingsspelare** är en körning där init återvänder (eller tas där den är), timern kommer var 41:a–2001:a cykel
+  (fler än ~490 gånger i sekunden: långsammare är en play-rutins), varje avbrott återvänder inom en bildruta, minst var
+  fjärde avbrott skriver till SID (Kalle Kloakks gör det i ungefär hälften), ett register får minst 8 olika värden (ett
+  4-bitars sampel genom `$d418` har 16), och hanteraren läser högst 32 byte från `$0200` som varken laddats eller skrivits
+  av init. En NMI för något annat (som skriver samma värde varje gång) är ingen, och inte heller en som spelar genom en
+  tabell programmet bygger medan det kör (Macho Programmings på `$0400`): ensam spelar den en ton.
+- **Samplen som tystnar**: skriver hanteraren till SID i färre än hälften av avbrotten under den långa körningen, säger
+  skälen när de tystnade (*its samples stop after 14 s*): det som startar dem igen körs inte med (Jerkland II spelar ett
+  sampel i 14 s, Wonderland V ett intro på 11 s, som demona själva gör).
+- **Blocket** är de byte runt init som init och hanteraren använde eller skrev, med luckor under `$800` och fram till kod
+  som körningen inte körde, en annan spelare eller en annan fils byte. Init är rutinen, play är 0 (inget anropas per
+  bildruta). Det init och hanteraren läste utanför blocket (samplen, låten, källan till en kopierad hanterare) blir
+  `MusicInfo.digi.parts`, det de skrev utanför blocket `digi.wrote`. Körningen pågår, som en vanlig spelares, i upp till
+  tre minuter eller tills låten gått runt (30 s utan en byte som används för första gången), och sparas mellan analysens
+  varv.
+- **En vanlig spelare vars init också startar sampel** (digitrummor) behåller sin play och får `digi`.
+- **Samplen är data** (`classify.ts`): byten i `parts` som är data eller grafik blir datablock med skälet *samples and
+  song of the sample player at $1213: its NMI reads them*, vad de än liknar (inga sinuskurvor, fyllnader eller bitmappar
+  där). Kod förblir kod.
+- **Skälen** säger vad körningen såg, t.ex. *a sample player: init $1213 starts CIA 2's timer (every 160 cycles, 6158 Hz)
+  with its NMI at $0080 (vector $fffa)*, *the NMI writes samples to $d402, $d403, $d409, $d40a (pulse width) in every
+  interrupt: 228 different values in 97 s* och *it plays from $7c00-$7dff, $7f00-$cfff, $e000-$ff19 too (28.5 KB: its
+  samples and song)*. Översikten säger *A sample player: its NMI plays 6158 samples a second*, inspektorn visar
+  hanteraren, takten, registren och delarna.
+
+**En samplingsspelare spelas** med sina delar (`musicPlayData(…, digi)`). Utan play läggs en rutin bredvid blocket som
+init (`MusicPlayData.wrapped`): den sätter `$01` som spelarens PRG har det, anropar spelarens init och slår av
+rasteravbrottet (och CIA 1:s avbrott bredvid en NMI). Ett demos init startar ofta sina egna effekter samtidigt (Voodoo
+Peoples sätter `$fffe` till demots IRQ), och den koden finns inte i det som spelas. Med en sekvenserare i programmets
+IRQ sätter rutinen i stället IRQ-vektorn (`$0314` eller `$fffe`) till den och slår på rasteravbrottet, och med en init
+som inte återvänder anropar den rutinen som lägger tillbaka det init lämnade (`resume`, `$01` sist så att SID-registren
+skrivs med I/O synligt) och startar timern igen (latch, avbrottsmask, kontrollregistret med `$11`). Spelarens PRG (`sidPlayer()`) lägger
+då blocket och delarna där de körs när det ryms i PRG:ns utrymme (`$0c00`–`$cfff`), och resten i luckorna där ingen del
+ska ligga, så att ingen flytt skriver över något som ännu inte flyttats. Ett block utan delar ligger som förut i en följd
+från `$0c00`. Drivrutinen läggs utanför delarna, deras platser i PRG:n och det init skriver. Utan play har drivrutinen
+inget rasteravbrott och anropar inget per bildruta. När en låt startas om stoppas båda CIA:ernas avbrott innan init
+körs. Skärmen visar *NO PLAY* och *SAMPLES: ITS NMI, 6158 HZ*. Kontrollen kör det som spelas ensamt med `runDigi()`.
+I DeepSID spelas den som en **RSID-fil** (`musicSidFile()`, en riktig C64:s avbrott, play 0) med blocket och delarna
+från den lägsta till den högsta, nollor emellan. Exportens `.sid` är som förut blockets egna byte (en PSID med play 0).
+Delarna delas där PRG:ns utrymme börjar och slutar, så att det av dem som ligger i det stannar där det körs (Kalle
+Kloakks sampel börjar på `$0a00`, under PRG:ns egen kod: utan delningen fick de 32 KB inte plats).
+
+**Mätt (2026-11-13), med en init som återvänder** på 1785 program: varje utgåvas första program i CSDB:s Year-top20
+(1987–2026) och Onefile-top200, uppackade med Sindri och startade från Sindris start, som appen gör. 194 program har en
+kandidat. Fyra demos (sju program, eftersom listorna har några demos två gånger) har en samplingsspelare: The Megademo (1988, `$c200`, `$0318`, 8210 Hz,
+`$d418`), Kalle Kloakk (1990, `$c000`, NMI på `$9095`, 7758 Hz, `$d418` i 93 % av avbrotten), Amiga Works (1991, `$1220`,
+7408 Hz) och Voodoo People. Inget annat program fick musik. Alla fyra spelar i VICE (6581) som demot självt gör: Kalle
+Kloakks RMS per sekund 1522, 1476, 1475, 1591, 2369 mot demots 1523, 1474, 1476, 1597, 2368, och Voodoo Peoples (8580)
+1461, 1608, 1646, 1714 mot 1134, 1655, 1735, 1603 när demot laddat klart. Exporten bygger alla fyra byte för byte, med den
+inbyggda assemblern och med KickAss.jar. Mot Sindris körning (`mimir measure`) läses 26 byte som kod i stället för 125
+(Voodoo Peoples NMI-källa var kod), och The Megademos åtta NMI-instruktioner räknas som data, som all kod i ett
+musikblock. Steget tar 4,3 s av analysens 558 s på hela korpusen; 0,4–1 s första gången för de fyra, under 0,1 s för
+resten.
+
+**Mätt igen med init som inte återvänder och sekvenserare (2026-11-13)**, samma 1785 program mot koden före
+samplingsspelarna: nio demos (16 program) får musik eller en samplingsspelare till, och alla andra programs musik är
+densamma. Till de fyra ovan kommer Youthquake (1989, init `$0810` som går i en slinga, NMI på `$4fd5`), Wonderland IV
+(1989, init `$1664`, sekvenseraren i IRQ:n på `$16ca`; spelaren på `$1c67` är kvar), Wonderland V (1990, ett intro på
+11 s), Jerkland II (1994, ett sampel på 14 s) och Just Dance 64 (2011, NMI:n skriver röst 2 och 3:s frekvens- och
+kontrollregister 3910 gånger i sekunden). Alla nio spelar i VICE (6581) som demot självt, RMS per sekund:
+- Youthquake 2006, 2342, 1983, 1579 mot 1924, 2178, 2196, 1601;
+- Wonderland IV 2881, 2910, 2958, 2847 mot 2967, 2919, 2914, 2923;
+- Wonderland V 2790, 2962, 3032, 2071 mot 2888, 2876, 3094, 1965, båda tysta efter 11 s (demot går sedan vidare till
+  nästa del);
+- Jerkland II ljud i 13 s och sedan tyst, som demot (14 s);
+- Just Dance 64 1085, 1007, 890, 1034 mot 1151, 991, 930, 1004, med samma tysta stycke efter 9 s.
+
+Macho Programming (2003) tas inte längre: dess NMI spelar genom en tabell på `$0400` som programmet bygger. Ensam gav den
+en ton på 6,8 kHz (nollgenomgångar 6850 i sekunden mot demots 1500). Exporten bygger alla nio byte för byte, med den
+inbyggda assemblern och med KickAss.jar. På de 194 program som har en kandidat tar analysen 46,3 s mot 39,8 s förut. De
+nio demona står för 5 s, mest Wonderland IV (1,2 s med IRQ:n körd i tre minuter), de andra för under 0,3 s var. Övriga
+program kör inget nytt.
+
 `MusicInfo.run` säger vad körningen gav (register, toner, sekunder). Fyndets skäl (`MusicInfo.why`, i inspektorn och analysloggen) säger hur spelaren hittades, t.ex. *Music detected at $1000-$1fff (score 9: JMP init / JMP play table, called from outside, page aligned, writes 13 SID registers, 4 instructions decoded from the table (the trace did not reach them), note frequency table at $14bb, init and play run: 13 SID registers and 3 notes in 3 s)*. En snapshots spelare som spelar vidare har *init does not start it again (11 SID registers and 3 notes in 60 s), play goes on from the snapshot: 22 SID registers and 596 notes in 60 s*, och en som hittats på sin kod men inte spelar *running init and play plays nothing (…)*. Exporten skriver en **PSID v2-fil** (`music/music_1000.sid`, init/play, PAL, 6581) och laddar den idiomatiskt:
 
 ```
@@ -694,7 +797,22 @@ Referenser in i musiken som inte är init/play blir `music.location+$xx`. Använ
 - IRQ:ns ingång före en volymingång som programmet anropar;
 - programmets starttabell och en rutin som anropar play, som inte är spelare;
 - ett `JMP`-par i kod som rensar SID, som inte är någon spelare;
-- notfrekvenstabeller i båda layouterna, och att en ramp, en fyllnad och en sinus inte är det.
+- notfrekvenstabeller i båda layouterna, och att en ramp, en fyllnad och en sinus inte är det;
+- en samplingsspelare som Voodoo Peoples (NMI kopierad till `$0080`, `$fffa` med KERNAL ute, sidor med sampel på
+  `$4000`–`$5fff` till två pulsbreddsregister): init, play 0, takten, registren, blocket med NMI:ns källa, samplen som
+  del och som data, och att den spelar ensam med sina delar; en genom KERNAL:s `$0318` med 4-bitars sampel till volymen
+  i blocket; en vanlig spelare vars init också startar en NMI med trumsampel (den behåller sin play och får `digi`,
+  med samplen som del); en spelare vars init inte återvänder (programmets start går i en slinga): blocket är NMI:n,
+  `resume` har `$01`, vektorn och pekaren i nollsidan, och rutinen bredvid blocket startar CIA 2:s timer igen; en
+  sekvenserare i programmets IRQ som startar ett sampel var 25:e bildruta, med en NMI i två halvor som pekar vektorn på
+  varandra (rutinen sätter `$0314` och slår på rasteravbrottet); en NMI som spelar genom en tabell som inget laddat
+  (ingen spelare); och att en NMI som skriver samma värde varje gång, eller en timer en bildruta lång, inte är någon.
+
+`test/sidplayer.test.ts` spelar en samplingsspelare vars init också startar ett rasteravbrott (en JAM utanför blocket):
+delarna på `$e000` och `$4000` hamnar rätt, NMI:n spelar, rasteravbrottet körs aldrig och skärmen säger *NO PLAY*, i
+Sindris C64 och i riktiga VICE (debugcartridge efter 4096 sampel). Delarna ligger i PRG:n där de körs, eller i luckan
+från `$0c00`. En spelare vars init inte återvänder spelar från det som läggs tillbaka (vektorn, pekaren) med timern
+startad igen: drygt 140 avbrott per bildruta.
 
 `test/sidrun.test.ts` testar körningen: register, toner och använda byte för en spelare, play utan init, och varför en
 körning som inte är någon spelare slutar (init återvänder inte, BRK, ingen SID-skrivning, kod utanför det laddade).

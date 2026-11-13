@@ -160,13 +160,21 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
           ) : music ? (
             <>
               <dl className="kv">
-                <dt>Init</dt><dd className="mono">${h4(music.init)}</dd><dt>Play</dt><dd className="mono">${h4(music.play)}</dd>
+                <dt>Init</dt><dd className="mono">${h4(music.init)}</dd>
+                <dt>Play</dt><dd className={music.digi && !music.play ? '' : 'mono'}>{music.digi && !music.play ? 'none: init starts the samples' : `$${h4(music.play)}`}</dd>
+                {music.digi && <>
+                  <dt>Samples</dt><dd>its {music.digi.nmi ? 'NMI' : 'IRQ'} at <span className="mono">${h4(music.digi.handler)}</span>, {music.digi.hz} a second, to <span className="mono">{music.digi.regs.map(r => `$${h4(r)}`).join(' ')}</span>
+                    {music.digi.irq && <>, started by the program's IRQ at <span className="mono">${h4(music.digi.irq.handler)}</span></>}
+                    {music.digi.loop && <>; init does not return: Mimir puts back what it left ({music.resume?.length ?? 0} bytes)</>}</dd>
+                  {music.digi.parts.length > 0 && <><dt>Also</dt><dd className="mono small">{music.digi.parts.map(([s, e]) => `$${h4(s)}-$${h4(e - 1)}`).join(', ')}</dd></>}
+                </>}
                 <dt>SID regs</dt><dd>{music.sidRegs} written</dd><dt>Evidence</dt><dd>{music.why.join(', ')}</dd>
                 <dt>Export</dt><dd className="mono small">music/music_{h4(music.start)}.sid (PSID v2) via LoadSid</dd>
               </dl>
               {onPlayMusic && <div className="merge-row"><button className="btn small" onClick={() => onPlayMusic(blk.start)}
                 title={musicPlayer === 'deepsid'
                   ? 'DeepSID, the online SID player, plays the .sid the export writes, in a window of its own: its Load SID sends the file to DeepSID\'s server. Settings → Toolchain picks VICE or DeepSID'
+                  : music.digi && !music.play ? 'VICE plays the block\'s bytes with its samples and song: init with song $00 starts the interrupt that plays them, and nothing is called each frame. Settings → Toolchain picks VICE or DeepSID'
                   : 'VICE plays the block\'s bytes (those the .sid holds): init with song $00, then play each frame from a raster interrupt. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before. Settings → Toolchain picks VICE or DeepSID'}>
                 Play in {musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE'}</button></div>}
             </>

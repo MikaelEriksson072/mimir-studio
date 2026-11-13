@@ -296,11 +296,15 @@ function BlocksView({ A, R, cursor, q, setQ, onNavigate, onPlayMusic, musicPlaye
                     </button>);
                   if (b.type !== 'music' || !onPlayMusic) return row;
                   const name = l?.name ?? `music_${h4(b.start)}`;
+                  // a sample player (5.8b): its init starts the interrupt that plays, and its samples go with it
+                  const digi = A.music.find(m => m.start === b.start)?.digi;
+                  const how = musicPlayer === 'deepsid' ? (digi ? ': an RSID of the block and its samples, in DeepSID\'s window' : ': the .sid the export writes, in DeepSID\'s window')
+                    : digi && !b.props.play ? `: init with song $00 starts its ${digi.nmi ? 'NMI' : 'IRQ'}, ${digi.hz} samples a second` : ': init with song $00, then play each frame';
                   return (
                     <div key={b.id} className={cx('blk-row-play', at === b && 'on')}>
                       {row}
                       <button className="icon-btn blk-play" aria-label={`Play ${name} in ${playerName}`} onClick={() => onPlayMusic(b.start)}
-                        title={`Play ${name} in ${playerName}${musicPlayer === 'deepsid' ? ': the .sid the export writes, in DeepSID\'s window' : ': init with song $00, then play each frame'}. Settings → Toolchain picks VICE or DeepSID`}>
+                        title={`Play ${name} in ${playerName}${how}. Settings → Toolchain picks VICE or DeepSID`}>
                         <Icon name="play" size={12} /></button>
                     </div>); })}
               </div>}

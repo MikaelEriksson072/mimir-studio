@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { C64, standInRoms } from '@mimir/sindri';
 import { assemble, h4 } from '../src';
-import { sidPlayer, SID_PLAYER_DATA, SID_PLAYER_LINE, SID_PLAYER_SONG_AT } from '../src/c64/sidplayer';
+import { musicPlayData, sidPlayer, SID_PLAYER_DATA, SID_PLAYER_LINE, SID_PLAYER_SONG_AT } from '../src/c64/sidplayer';
 import { findVice, prepareVice } from '../src/node';
 
 /** what the test tune writes: the song init got, plays since init, $01 and the raster line in play, init's $01 */
@@ -62,19 +62,23 @@ done: rts
   return out;
 }
 
-/** The PRG loaded as LOAD does and started at its SYS, in Sindri's C64; `frames` lets time pass. */
-function boot(prg: Uint8Array) {
+/** The PRG loaded as LOAD does and started at its SYS, in Sindri's C64; `frames` lets time pass. `nmi`: CIA 2's
+ *  interrupt is taken too (on the NMI line's edge). */
+function boot(prg: Uint8Array, nmi = false) {
   const m = new C64(standInRoms());
   m.write(0xdc02, 0xff); m.write(0xdc03, 0x00); // the keyboard's ports, as the KERNAL sets them
   m.ram.set(prg.subarray(2), prg[0] | (prg[1] << 8));
   m.cpu.pc = 0x080d; m.cpu.s = 0xf6; m.cpu.i = 0;
+  let nmiWas = false;
   const frames = (n: number) => {
     const until = m.cycles + n * 63 * 312;
     while (m.cycles < until) {
       const cpu = m.cpu, iWas = cpu.i;
       m.advance(cpu.step());
       if (cpu.jammed) throw new Error(`JAM at $${h4(cpu.pc)}`);
-      if (m.irqLine && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
+      if (nmi && m.nmiLine && !nmiWas) m.advance(cpu.nmi());
+      else if (m.irqLine && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
+      nmiWas = m.nmiLine;
     }
   };
   /** hold a key (keyboard matrix row bit of $dc00, column bit of $dc01) for a few frames, then let go */
@@ -195,10 +199,158 @@ describe('the music block player', () => {
   });
 });
 
+/** A sample player at $1000 (5.8b), as a demo's: init switches the KERNAL out, sets the NMI vector, starts CIA 2's
+ *  timer, and also a raster interrupt of the demo's, its handler at $1f00 outside the block (a JAM there). The NMI
+ *  plays the page of samples at $e000, then the one at $4000, to the volume, and counts its samples at COUNT; with
+ *  `exit`, the 4096th writes $5a to the debug cartridge ($d7ff). */
+function sampleTune(exit = false) {
+  const r = assemble({ 's.asm': `.pc = $1f00
+ .byte $02
+.pc = $1000
+init: sei
+ lda #$35
+ sta $01
+ lda #<nmi
+ sta $fffa
+ lda #>nmi
+ sta $fffb
+ lda #$00
+ sta $fffe
+ lda #$1f
+ sta $ffff
+ lda #$01
+ sta $d01a
+ lda #0
+ sta $${h4(COUNT)}
+ sta $${h4(COUNT + 1)}
+ lda #$7f
+ sta $dd04
+ lda #0
+ sta $dd05
+ lda #$81
+ sta $dd0d
+ lda #$11
+ sta $dd0e
+ rts
+nmi: pha
+ tya
+ pha
+pos: ldy #0
+smp: lda $e000,y
+ sta $d418
+ inc pos+1
+ bne count
+ lda smp+2
+ eor #$a0
+ sta smp+2
+count: inc $${h4(COUNT)}
+ bne done
+ inc $${h4(COUNT + 1)}
+ ${exit ? `lda $${h4(COUNT + 1)}
+ cmp #$10
+ bne done
+ lda #$5a
+ sta $d7ff` : ''}
+done: lda $dd0d
+ pla
+ tay
+ pla
+ rti
+` }, 's.asm');
+  if (r.errors.length) throw new Error(r.errors.map(e => e.msg).join('; '));
+  const data = r.mem.slice(0x1000, r.max + 1);
+  const page = (k: number) => Uint8Array.from({ length: 256 }, (_, i) => ((i * k) >> 3) & 0x0f);
+  return { data, parts: [{ load: 0xe000, data: page(3) }, { load: 0x4000, data: page(5) }] };
+}
+
+describe('the music block player with a sample player', () => {
+  it('puts the samples where they play, starts init and lets its NMI play, with no raster interrupt and nothing called each frame', () => {
+    const t = sampleTune();
+    const d = musicPlayData(t.data, 0x1000, 0x1000, 0, undefined, { nmi: true, hz: 7697, wrote: [], parts: t.parts });
+    expect(d.alone).toBeUndefined();
+    // init is wrapped: $01, the player's init, then the demo's raster interrupt off (and CIA 1's beside an NMI)
+    expect(d.wrapped).toEqual({ at: 0x1000 + t.data.length, bytes: 27, init: 0x1000 });
+    const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, parts: d.parts, digi: d.digi, busy: d.busy, title: 'samples' });
+    expect(p.port).toBe(0x35);
+    // (the NMI as the CPU takes it: on the line's edge)
+    const { m, frames } = boot(p.prg, true);
+    const seen = new Set<number>();
+    for (let k = 0; k < 40; k++) { frames(1); seen.add(m.sidRegs[0x18]); }
+    for (const part of t.parts) expect(m.ram.subarray(part.load, part.load + 256)).toEqual(part.data);
+    expect(m.ram[COUNT + 1]).toBeGreaterThan(8);
+    expect(seen.size).toBeGreaterThan(8);
+    // (the demo's raster interrupt never ran: its handler is a JAM, which frames() throws at; the wrapper switched it off)
+    expect(screenText(m, SID_PLAYER_SONG_AT - 6 * 40 - 6 + 3 * 40, 80)).toMatch(/^\$1000-\$\w{4}  INIT \$\w{4}  NO PLAY +SAMPLES: ITS NMI, 7697 HZ, \$01 = \$35/);
+  });
+
+  it('plays a sample player whose init never returns from what init left: the bytes put back, then its timer started again', () => {
+    // the NMI alone (no init): it plays the page at the pointer $fb (zero page, set by the program's start) to the volume
+    const r = assemble({ 'n.asm': `.pc = $5000
+nmi: pha
+ tya
+ pha
+ ldy #0
+ lda ($fb),y
+ and #$0f
+ sta $d418
+ inc $fb
+ inc $${h4(COUNT)}
+ bne done
+ inc $${h4(COUNT + 1)}
+done: lda $dd0d
+ pla
+ tay
+ pla
+ rti
+` }, 'n.asm');
+    // (noise: $d418 is looked at once a frame, ~154 samples on, which a pattern can step over)
+    let v = 1;
+    const data = r.mem.slice(0x5000, r.max + 1), page = Uint8Array.from({ length: 256 }, () => (v = (v * 1103515245 + 12345) % 0x80000000) >> 27);
+    const resume: [number, number][] = [[1, 0x37], [0x0318, 0x00], [0x0319, 0x50], [0xfb, 0], [0xfc, 0x60], [COUNT, 0], [COUNT + 1, 0], [0xd418, 0x0f]];
+    const d = musicPlayData(data, 0x5000, 0x0810, 0, resume, { nmi: true, hz: 7697, latch: 0x7f, wrote: [], loop: true, timer: { cia: 2, b: false, ctl: 1 }, parts: [{ load: 0x6000, data: page }] });
+    expect(d.resume).toBeDefined();
+    expect(d.alone).toBeUndefined();
+    const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, parts: d.parts, digi: d.digi, busy: d.busy });
+    const { m, frames } = boot(p.prg, true);
+    const seen = new Set<number>();
+    for (let k = 0; k < 40; k++) { frames(1); seen.add(m.sidRegs[0x18]); }
+    // (the timer every 128 cycles: about 154 interrupts a frame, 6 pages of samples in 10 frames)
+    const count = () => m.ram[COUNT] | (m.ram[COUNT + 1] << 8), before = count();
+    frames(10);
+    expect(count() - before).toBeGreaterThan(1400);
+    expect(seen.size).toBeGreaterThan(8);
+  });
+
+  it('stores parts where they run when that is in the PRG, the others in the room left', () => {
+    const t = sampleTune();
+    const p = sidPlayer({ data: t.data, load: 0x1000, init: 0x1000, play: 0, parts: t.parts, digi: { nmi: true, hz: 7697 } });
+    const at = (a: number) => p.prg[2 + a - 0x0801];
+    // the block and the page at $4000 where they run, the one at $e000 in the PRG's room from $0c00 on
+    expect(at(0x1000)).toBe(t.data[0]);
+    expect(p.prg.subarray(2 + 0x4000 - 0x0801, 2 + 0x4100 - 0x0801)).toEqual(t.parts[1].data);
+    expect(p.prg.subarray(2 + SID_PLAYER_DATA - 0x0801, 2 + SID_PLAYER_DATA + 256 - 0x0801)).toEqual(t.parts[0].data);
+  });
+});
+
 const vice = process.env.VICE || findVice();
 
 describe.skipIf(!vice)(`the music block player in the real VICE (${vice ?? 'not found'})`, () => {
   const headless = (dir: string) => ['-config', join(dir, 'vice.ini'), '-default', '-console', '-sounddev', 'dummy', '+confirmonexit', '-debugcart', '-limitcycles', '40000000', '-autostartprgmode', '1'];
+
+  it('plays a sample player: its NMI runs (4096 samples) with the samples in place', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-sidplay-'));
+    try {
+      const t = sampleTune(true);
+      const d = musicPlayData(t.data, 0x1000, 0x1000, 0, undefined, { nmi: true, hz: 7697, wrote: [], parts: t.parts });
+      const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, parts: d.parts, digi: d.digi, busy: d.busy });
+      const prgPath = join(dir, 'samples.prg');
+      await writeFile(prgPath, p.prg);
+      const { argv } = await prepareVice({ args: headless(dir), prgPath });
+      expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status).toBe(0x5a);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it('RUN starts it and play is called each frame on its raster line, with the KERNAL and BASIC as the block needs', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mimir-sidplay-'));

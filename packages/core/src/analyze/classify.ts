@@ -74,6 +74,13 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
   }
   // 8.1b: where a relocated block is loaded, one block that says where it runs (the blocks there say what it is)
   for (const r of ctx.relocs) known.set(r.start, { props: { to: r.to }, reason: `you relocated it: it runs at ${$4(r.to)}-${$4(r.to + r.end - r.start - 1)}` });
+  // 5.8b a sample player's samples and song: the bytes its run read outside its block are its data, whatever else they
+  // look like (no graphics, tables or fills); code stays code
+  const sampleOf = new Map<Addr, MusicInfo>();
+  for (const m of music) for (const [s, e] of m.digi?.parts ?? []) for (let a = s; a < e; a++) {
+    if (owner[a] < 0 || ov[a] || !(tm[a] === T.DATA || typeInfo(tm[a] as TypeId).group === 'gfx')) continue;
+    tm[a] = T.DATA; sampleOf.set(a, m);
+  }
   for (let a = 0; a < 0x10000; a++) if (ov[a] && owner[a] >= 0 && ov[a] !== T.CODE) tm[a] = ov[a];
 
   // ---- 5.11 data objects & classification of remaining data ----
@@ -210,8 +217,12 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
       while (e < 0x10000 && tm[e] === T.DATA && ov[e] === T.DATA && owner[e] === fileA && !ovProps.has(e)) e++;
       const o = ovProps.get(a);
       pushBlock(a, e, T.DATA, Object.assign({}, o ? o.props : {}), 1, 'user override');
+    } else if (t === T.DATA && sampleOf.has(a)) {
+      const m = sampleOf.get(a)!;
+      while (e < 0x10000 && tm[e] === T.DATA && sampleOf.get(e) === m && owner[e] === fileA) e++;
+      pushBlock(a, e, T.DATA, { sub: 'samples' }, 0.9, `samples and song of the sample player at ${$4(m.start)}: its ${m.digi!.nmi ? 'NMI' : 'IRQ'} reads them`);
     } else if (t === T.DATA) {
-      while (e < 0x10000 && tm[e] === T.DATA && ov[e] !== T.DATA && owner[e] === fileA) e++;
+      while (e < 0x10000 && tm[e] === T.DATA && ov[e] !== T.DATA && owner[e] === fileA && !sampleOf.has(e)) e++;
       // split at object starts
       const cuts = [a];
       for (let p = a + 1; p < e; p++) if (objStarts.has(p)) cuts.push(p);
@@ -235,7 +246,7 @@ export function classify(ctx: Ctx, music: MusicInfo[], gfx: GfxCandidate[], mcfg
       }
       // the candidate the block is part of (code can split one into several blocks)
       const g = gfxBlocks.find(x => x.type === t && a >= x.start && a < x.start + x.size);
-      pushBlock(a, e, t, p, o ? 1 : g ? 0.9 : 1, o ? 'user override' : k ? k.reason : g ? g.why : t === T.BASIC ? 'BASIC program lines' : t === T.MUSIC ? 'SID player heuristics' : '');
+      pushBlock(a, e, t, p, o ? 1 : g ? 0.9 : 1, o ? 'user override' : k ? k.reason : g ? g.why : t === T.BASIC ? 'BASIC program lines' : t === T.MUSIC ? (finalMusic[finalMusic.length - 1]?.digi ? 'a sample player: its run' : 'SID player heuristics') : '');
     }
     a = e;
   }

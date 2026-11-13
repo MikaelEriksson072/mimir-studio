@@ -740,6 +740,38 @@ export interface MusicInfo {
   /** a snapshot's player that init no longer starts again: it plays on from the snapshot without init, with these
    *  bytes outside the block (the zero page, its other variables) as they were, [address, value] */
   resume?: [Addr, number][];
+  /** a sample player (digi, 5.8b): init starts a CIA timer whose interrupt writes samples to the SID; `play` is 0
+   *  (nothing is called once a frame), or a frame player's play when its init also starts samples */
+  digi?: DigiInfo;
+}
+
+/** What the run of a sample player found (5.8b). */
+export interface DigiInfo {
+  /** CIA 2's timer and the NMI, else CIA 1's and the IRQ */
+  nmi: boolean;
+  /** samples a second (PAL), and the timer's latch */
+  hz: number;
+  latch: number;
+  /** where the interrupt goes after init (the vector init set, as $01 shows it), and $01 */
+  handler: Addr;
+  vector: Addr;
+  port: number;
+  /** the SID registers the samples go to, the different values written, how long it ran (s) */
+  regs: Addr[];
+  values: number;
+  seconds: number;
+  /** the bytes outside the block init and the handler read: the samples, the song, a copied handler's source
+   *  ([start, end) ranges); they play with the block */
+  parts: [Addr, Addr][];
+  /** the bytes outside the block init and the handler write ([start, end), from $0200): nothing else may be there */
+  wrote: [Addr, Addr][];
+  /** init does not return (the program's start goes on into its main loop): the player plays from what init left,
+   *  `MusicInfo.resume` (put back in place of init), with this timer started again */
+  loop?: true;
+  timer?: { cia: 1 | 2; b: boolean; ctl: number };
+  /** the program's IRQ that starts the samples (a sequencer there, as Wonderland IV's): installed with init when it
+   *  plays; `kernal`: through $0314 */
+  irq?: { handler: Addr; kernal: boolean };
 }
 
 export interface SpriteRef { n: number; ptr: number; addr: Addr }

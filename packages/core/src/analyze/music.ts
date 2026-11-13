@@ -17,14 +17,14 @@
  * longer restarts (it changed its own code, say) plays on from where it was without init, with the bytes outside the
  * block it reads as they were (`MusicInfo.resume`). */
 import type { Ctx } from './context';
-import type { Addr, MusicInfo } from '../types';
+import type { Addr, DigiInfo, MusicInfo } from '../types';
 import { OPC } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
 import { $4, word } from '../util/hex';
-import { plays, runPlayer, USED_READ, USED_RUN, type PlayerRun, type PlayerRunOptions } from '../c64/sidrun';
+import { digiPlays, plays, runDigi, runPlayer, USED_READ, USED_RUN, type DigiRun, type PlayerRun, type PlayerRunOptions } from '../c64/sidrun';
 import { parseVsf } from '../c64/vsf';
 
-export type MusicCtx = Pick<Ctx, 'S' | 'mem' | 'insLen' | 'codeOwner' | 'skip' | 'inlineCalls' | 'xrefs' | 'owner' | 'ovList' | 'loaded' | 'forcedData' | 'L' | 'entryKind'> & Partial<Pick<Ctx, 'files' | 'ev'>>;
+export type MusicCtx = Pick<Ctx, 'S' | 'mem' | 'insLen' | 'codeOwner' | 'skip' | 'inlineCalls' | 'xrefs' | 'owner' | 'ovList' | 'loaded' | 'forcedData' | 'L' | 'entryKind'> & Partial<Pick<Ctx, 'files' | 'ev' | 'project'>>;
 
 /** a player keeps its code together: the table's targets and the code they reach lie this close after it */
 const SPAN = 0x2000;
@@ -104,6 +104,10 @@ export function noteTables(mem: Uint8Array, loaded: (a: Addr) => boolean): { sta
 const RUNS = new Map<string, PlayerRun>(), VERDICTS = new Map<string, PlayerRun>();
 const EMPTY = new Uint8Array(0x10000);
 const RUNS_KEPT = 128, VERDICTS_KEPT = 8192;
+/** runs of sample players (5.8b), by memory, init and how long; one that does not play keeps only its verdict */
+const DIGI_RUNS = new Map<string, DigiRun>(), DIGI_KEPT = 64;
+/** a sample player whose init does not return plays from the bytes init left: at most this many put back */
+const MAX_LOOP_RESUME = 512;
 const keep = (m: Map<string, PlayerRun>, k: string, r: PlayerRun, n: number) => { m.set(k, r); while (m.size > n) m.delete(m.keys().next().value!); };
 const memKey = (m: Uint8Array): string => {
   let h = 0x811c9dc5, g = 0;
@@ -579,10 +583,166 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
       ...(run ? { run: { regs: run.regs, notes: run.notes, seconds: Math.round(run.played / 50) } } : {}), ...(resume ? { resume } : {}),
     });
   }
+  if (S.detectMusic) samplePlayers();
   music.sort((x, y) => x.start - y.start);
   for (const m of music) L('ok', `Music detected at ${$4(m.start)}-${$4(m.end - 1)} (score ${m.score}: ${m.why.join(', ')})`, m.start, 'music');
   for (const o of ovList) if (o.type === 'music' && !music.some(m => m.start === o.start))
     music.push({ start: o.start, end: o.end, init: o.props?.init ?? o.start, play: o.props?.play ?? o.start + 3, sidRegs: 0, score: 0, why: ['marked by user'], file: owner[o.start], user: true });
   return music;
+
+  /* 5.8b Sample players (digis). A routine whose code turns on a CIA timer's interrupt (a constant with bit 7 and a
+   * timer's bit stored into $dc0d or $dd0d), in a program that sets a timer this fast (a latch's high byte below 8),
+   * is run as init (c64/sidrun.ts, runDigi): the timer and the vector init leaves give the handler, which is run as
+   * often as the timer would call it. One that writes samples to the SID is a player. Its block is the bytes around
+   * init that init and the handler used (as a frame player's: gaps under GAP, up to code the run did not run); what
+   * else they read (the samples and the song, a copied handler's source) plays with it as its parts. Voodoo People
+   * (1995) copies its NMI to $0080 and mixes four channels of sample pages into two voices' pulse widths, 6158 times
+   * a second: no JMP table, no play routine, nothing the trace reaches. */
+  function samplePlayers() {
+    const writes = ctx.ev?.writes;
+    if (!writes?.length) return;
+    // ($dc05, $dc07, $dd05, $dd07: the timers' latches, high bytes)
+    if (!writes.some(w => (w.dest & 0xfefd) === 0xdc05 && w.v != null && w.v < 8)) return;
+    const on = writes.filter(w => (w.dest === 0xdc0d || w.dest === 0xdd0d) && w.v != null && (w.v & 0x80) && (w.v & 0x03) && insLen[w.pc]);
+    if (!on.length) return;
+    // the routines whose code reaches each of those stores, the smallest first (the program's start reaches them all)
+    const routines = [...entryKind].filter(([, k]) => k === 'sub' || k === 'entry' || k === 'user' || k === 'ptr' || k === 'guess').map(([e]) => e);
+    const traced = new Map<Addr, Reach>();
+    const tracedReach = (e: Addr) => { let r = traced.get(e); if (!r) traced.set(e, r = reach([e], true)); return r; };
+    const inits: Addr[] = [];
+    for (const w of on) {
+      const around = routines.filter(e => tracedReach(e).ins.has(w.pc)).sort((x, y) => tracedReach(x).ins.size - tracedReach(y).ins.size || x - y);
+      for (const e of around.slice(0, 3)) if (!inits.includes(e)) inits.push(e);
+    }
+    const m0 = memory();
+    const port = snapshot ? undefined : (ctx.project?.entryPort ?? 0x37);
+    // how a run is made: `loop`, an init that does not return taken as it left the player; `irq`, the program's IRQ
+    // run once a frame (a sequencer that starts the samples)
+    type Mode = { loop?: boolean; irq?: { handler: Addr; kernal: boolean } };
+    const runOfDigi = (init: Addr, long: boolean, mode: Mode = {}): DigiRun => {
+      const k = `${key}:${init}:${port ?? '-'}:${long ? 'long' : 'try'}:${mode.loop ? 'loop' : ''}:${mode.irq?.handler ?? ''}`;
+      let r = DIGI_RUNS.get(k);
+      if (r) { DIGI_RUNS.delete(k); DIGI_RUNS.set(k, r); return r; }
+      r = runDigi(m0, { init, frames: long ? LONG_FRAMES : TRY_FRAMES, settle: long ? SETTLE : undefined, port, loaded, ...mode });
+      DIGI_RUNS.set(k, digiPlays(r) ? r : { ...r, used: EMPTY, wrote: EMPTY, after: undefined, handlerUsed: undefined, handlerWrote: undefined });
+      while (DIGI_RUNS.size > DIGI_KEPT) DIGI_RUNS.delete(DIGI_RUNS.keys().next().value!);
+      return r;
+    };
+    // the program's IRQ handlers (the trace's), through $0314 (the KERNAL's entry) unless only $fffe is set to them
+    const irqs = [...entryKind].filter(([, k]) => k === 'irq').map(([h]) => {
+      const vs = ctx.ev?.vectors.get(h);
+      return { handler: h, kernal: !vs || vs.has(0x0314) || !vs.has(0xfffe) };
+    }).filter(q => q.handler < 0xe000 || loaded(q.handler)).slice(0, 3);
+    const ranges = (has: (p: Addr) => boolean): [Addr, Addr][] => {
+      const out: [Addr, Addr][] = [];
+      for (let p = 0x0200; p < 0x10000; p++) {
+        if (!has(p)) continue;
+        const last = out[out.length - 1];
+        if (last && p - last[1] < 0x100) last[1] = p + 1; else out.push([p, p + 1]);
+      }
+      return out;
+    };
+    const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;
+    for (const init of inits) {
+      if (music.some(m => m.digi && m.init === init)) continue;
+      // (an init that does not return, the program's start going on into its main loop: the player as it left it)
+      let t = runOfDigi(init, false, { loop: true });
+      let mode: Mode = t.loop ? { loop: true } : {};
+      // a handler that runs but plays nothing, or plays now and then (a sample init left, which ends), may play what the
+      // program's IRQ starts (a sequencer there): that run, when it plays clearly more
+      // (an init that does not return has set the program's IRQ vector itself, often where the trace did not go)
+      const candidates = (x: DigiRun) => {
+        const set = x.after && ((x.port & 2) ? 0x0314 : 0xfffe), h = set ? x.after![set] | (x.after![set + 1] << 8) : -1;
+        return [...(h >= 0 && loaded(h) && h !== x.handler && !irqs.some(q => q.handler === h) ? [{ handler: h, kernal: set === 0x0314 }] : []), ...irqs];
+      };
+      const better = (long: boolean, x: DigiRun) => {
+        for (const q of candidates(x)) {
+          const y = runOfDigi(init, long, { ...mode, irq: q });
+          if (digiPlays(y) && (!digiPlays(x) || y.sidCalls > x.sidCalls * 1.25)) return { q, y };
+        }
+        return null;
+      };
+      if (!t.stop && t.calls > 0 && (!digiPlays(t) || t.sidCalls * 10 < t.calls * 9)) {
+        const b = better(false, t);
+        if (b) { mode = { ...mode, irq: b.q }; t = b.y; }
+      }
+      if (!digiPlays(t)) continue;
+      // one player once: an outer routine (the program's start) reaches the init of one found already
+      if (music.some(m => m.digi && m.digi.handler === t.handler && m.digi.vector === t.vector)) continue;
+      let r = runOfDigi(init, true, mode);
+      if (!digiPlays(r)) r = t;
+      // samples that stop before the song comes round: what starts them again may be the program's IRQ
+      if (!mode.irq && r.sidCalls * 2 < r.calls) {
+        const b = better(true, r);
+        if (b) { mode = { ...mode, irq: b.q }; r = b.y; }
+      }
+      // what the block is made of: all the run used and wrote, or with `loop` what the handler (and the IRQ) did, as
+      // init's own run went on into the program
+      const u = mode.loop ? r.handlerUsed! : r.used, w = mode.loop ? r.handlerWrote! : r.wrote;
+      const after = r.after, changed = (p: Addr) => !!after && (!loaded(p) || after[p] !== m0[p]);
+      // the block: those bytes around init (with `loop`, around the handler, else the first loaded byte the handler
+      // used), up to code the run did not run, another player or another file's bytes
+      const anchor = !mode.loop ? init : loaded(r.handler) && !changed(r.handler) ? r.handler : (() => { for (let p = 0x0200; p < 0x10000; p++) if (u[p] && loaded(p) && !changed(p)) return p; return -1; })();
+      if (anchor < 0) continue;
+      const fa = owner[anchor];
+      // (bytes init changed are the block's too: what init left is put back over them)
+      const other = (p: Addr) => !loaded(p) || owner[p] !== fa || music.some(m => p >= m.start && p < m.end) || (!!insLen[p] && !(u[p] & USED_RUN));
+      let s = anchor, e = anchor + 1;
+      for (let p = anchor, last = anchor; p < 0x10000 && p - last < GAP && !other(p); p++) if (u[p] || w[p]) { last = p; e = p + 1; }
+      for (let p = anchor - 1, last = anchor; p >= 0x0200 && last - p < GAP && !other(p); p--) if (u[p] || w[p]) { last = p; s = p; }
+      // (a frame player whose init also starts samples, digi drums, keeps its block: the parts are outside that)
+      const same = mode.loop ? undefined : music.find(m => m.init === init);
+      if (same) { s = same.start; e = same.end; }
+      // with `loop`, the bytes the handler uses as init left them, where they are not the program's own (the zero page
+      // init set, a copied handler, the vector, $01) and the SID registers init wrote: put back before the timer starts
+      let resume: [Addr, number][] | undefined;
+      if (mode.loop && after) {
+        resume = [[1, r.port], [r.vector, after[r.vector]], [r.vector + 1, after[r.vector + 1]]];
+        for (let p = 2; p < 0x10000; p++) {
+          if (!u[p] || (p >= 0x0100 && p < 0x0200) || (p >= 0xd000 && p < 0xe000) || p === r.vector || p === r.vector + 1 || !changed(p)) continue;
+          resume.push([p, after[p]]);
+        }
+        if (resume.length > MAX_LOOP_RESUME) continue;
+        r.sid!.forEach((v, k) => { if (v >= 0) resume!.push([0xd400 + k, v]); });
+      }
+      const parts = ranges(p => !!u[p] && (p < s || p >= e) && loaded(p));
+      const put = new Set((resume ?? []).map(([a]) => a));
+      const wrote = ranges(p => (!!w[p] || put.has(p)) && (p < s || p >= e) && (p < 0xd000 || p >= 0xe000));
+      // the registers the samples go to: those written about as often as the one written most, with values that change
+      const most = Math.max(...r.regs.map(x => x.writes));
+      const regs = r.regs.filter(x => x.writes * 2 >= most && x.values >= 2).sort((x, y) => x.reg - y.reg);
+      const values = Math.max(...r.regs.map(x => x.values));
+      const seconds = Math.round(r.played / 50);
+      const info: DigiInfo = {
+        nmi: r.nmi, hz: r.hz, latch: r.latch, handler: r.handler, vector: r.vector, port: r.port, regs: regs.map(x => x.reg), values, seconds, parts, wrote,
+        ...(mode.loop ? { loop: true, timer: r.timer! } : {}), ...(mode.irq ? { irq: mode.irq } : {}),
+      };
+      const partBytes = parts.reduce((n, [a, b]) => n + b - a, 0);
+      const it = r.nmi ? 'NMI' : 'IRQ';
+      const why = [
+        `a sample player: ${mode.loop ? `init ${$4(init)}, which does not return (it goes on into the program), leaves` : `init ${$4(init)} starts`} CIA ${r.nmi ? 2 : 1}'s timer (every ${r.latch + 1} cycles, ${r.hz} Hz) with its ${it} at ${$4(r.handler)} (vector ${$4(r.vector)})`,
+        ...(mode.irq ? [`the program's IRQ at ${$4(mode.irq.handler)} starts the samples (a sequencer there): with it run once a frame the ${it} plays`] : []),
+        `the ${it} writes samples to ${regs.map(x => $4(x.reg)).join(', ')} (${sampleRegs(regs.map(x => x.reg))}) in ${r.sidCalls === r.calls ? 'every interrupt' : `${Math.round(100 * r.sidCalls / r.calls)} % of the interrupts`}: ${values} different values in ${seconds} s`,
+        ...(parts.length ? [`it plays from ${parts.map(([a, b]) => `${$4(a)}-${$4(b - 1)}`).join(', ')} too (${kb(partBytes)}: its samples and song)`] : []),
+        ...(resume ? [`it plays from the ${resume.length} bytes, registers and vector init leaves (put back in place of init)`] : []),
+        ...(r.sidCalls * 2 < r.calls ? [`its samples stop after ${Math.round(r.lastSid / 50)} s: what starts them again (the program's main loop, or an IRQ the run did not find) does not run with it`] : []),
+      ];
+      // a frame player whose init also starts samples (digi drums): that player, with the samples it plays
+      if (same) { same.digi = info; same.why.push(...why); continue; }
+      if (music.some(m => m.start < e && s < m.end)) continue;
+      music.push({ start: s, end: e, init, play: 0, sidRegs: r.regs.length, score: 10, why, file: fa, digi: info, ...(resume ? { resume } : {}) });
+    }
+  }
+}
+
+/** what the SID registers samples go to are: the volume (4-bit samples), pulse widths (PWM), frequencies, ... */
+function sampleRegs(regs: Addr[]): string {
+  const name = (a: Addr) => {
+    const r = a - 0xd400;
+    if (r === 0x18) return 'volume';
+    if (r < 0x15) return ['frequency', 'frequency', 'pulse width', 'pulse width', 'control', 'attack/decay', 'sustain/release'][r % 7];
+    return r === 0x17 ? 'resonance' : 'filter cutoff';
+  };
+  return [...new Set(regs.map(name))].join(', ');
 }
 

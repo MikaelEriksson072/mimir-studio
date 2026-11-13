@@ -133,6 +133,216 @@ ${head.includes('tempo:') ? '' : 'tempo: .byte 0\nrow: .byte 0\n'}notes: .byte 2
 freqlo: .byte ${hex(FREQ.map(f => f & 0xff))}
 freqhi: .byte ${hex(FREQ.map(f => f >> 8))}
 `;
+/** A sample player (5.8b) the program starts with `jsr start` and leaves to its interrupt. `pwm`: as Voodoo People's,
+ *  its NMI copied to $0080 (the vector at $fffa, the KERNAL out) writes pages of samples at $4000-$5fff to two voices'
+ *  pulse widths, 6158 times a second; else through the KERNAL's NMI vector $0318, 4-bit samples right after the code
+ *  to the volume. `samples: false` writes the same value each time (a timer for something else). */
+const samplePlayer = (o: { pwm: boolean; samples?: boolean; latch?: number }) => {
+  const latch = o.latch ?? 0x9f;
+  const timer = ` lda #$${(latch & 0xff).toString(16)}\n sta $dd04\n lda #$${(latch >> 8).toString(16)}\n sta $dd05\n lda #$81\n sta $dd0d\n lda #$01\n sta $dd0e\n rts\n`;
+  const value = o.samples === false ? ' lda #$08\n' : '';
+  if (o.pwm) return `${BASIC} jsr start
+ cli
+loop: jmp loop
+start: sei
+ lda #$35
+ sta $01
+ ldx #0
+copy: lda nmi_src,x
+ sta $80,x
+ inx
+ cpx #nmi_end-nmi_src
+ bne copy
+ lda #$80
+ sta $fffa
+ lda #$00
+ sta $fffb
+ lda #$ff
+ sta $d400
+ sta $d401
+ lda #$41
+ sta $d404
+${timer}nmi_src:
+.pseudopc $80 {
+nmi: pha
+ tya
+ pha
+pos: ldy #0
+smp: lda $4000,y
+${value} sta $d402
+ sta $d403
+ lda $dd0d
+ inc pos+1
+ bne done
+ inc smp+2
+ lda smp+2
+ cmp #$60
+ bne done
+ lda #$40
+ sta smp+2
+done: pla
+ tay
+ pla
+ rti
+}
+nmi_end: brk
+.pc = $4000
+.byte ${hex(Array.from({ length: 0x2000 }, (_, i) => (i * 37 + (i >> 8) * 11) & 0xff))}
+`;
+  return `${BASIC} jsr start
+ cli
+loop: jmp loop
+start: sei
+ lda #<nmi
+ sta $0318
+ lda #>nmi
+ sta $0319
+ lda #0
+ sta pos
+${timer}nmi: pha
+ txa
+ pha
+ ldx pos
+ lda samples,x
+${value} sta $d418
+ inc pos
+ lda $dd0d
+ pla
+ tax
+ pla
+ rti
+pos: .byte 0
+samples: .byte ${hex(Array.from({ length: 256 }, (_, i) => ((i * 5) >> 2) & 0x0f))}
+`;
+};
+/** 4-bit samples at $4000-$47ff */
+const SAMPLES = `.pc = $4000\n.byte ${hex(Array.from({ length: 0x800 }, (_, i) => ((i * 7) ^ (i >> 5)) & 0xff))}\n`;
+/** A sample player the program's start sets up and then loops in (its init never returns), through $0318: the NMI
+ *  plays the pointer at $fb on the volume. */
+const loopingPlayer = `${BASIC} sei
+ lda #<nmi
+ sta $0318
+ lda #>nmi
+ sta $0319
+ lda #0
+ sta $fb
+ lda #$40
+ sta $fc
+ lda #$7f
+ sta $dd04
+ lda #0
+ sta $dd05
+ lda #$81
+ sta $dd0d
+ lda #$01
+ sta $dd0e
+ cli
+loop: inc $d020
+ jmp loop
+nmi: pha
+ tya
+ pha
+ ldy #0
+ lda ($fb),y
+ and #$0f
+ sta $d418
+ inc $fb
+ bne done
+ inc $fc
+ lda $fc
+ cmp #$48
+ bne done
+ lda #$40
+ sta $fc
+done: lda $dd0d
+ pla
+ tay
+ pla
+ rti
+${SAMPLES}`;
+/** A sample player whose samples a sequencer in the program's raster IRQ starts (as Wonderland IV's): init (called)
+ *  sets the NMI and the timer; the NMI is two halves that point $0318 at each other, the low nibble and then the high
+ *  one, while the pointer at $fb has not reached the end page at $fd; the IRQ starts a sample every 25 frames. */
+const sequencedPlayer = `${BASIC} jsr start
+ sei
+ lda #<irqh
+ sta $0314
+ lda #>irqh
+ sta $0315
+ cli
+loop: jmp loop
+start: lda #<nmi1
+ sta $0318
+ lda #>nmi1
+ sta $0319
+ lda #0
+ sta $fb
+ lda #$40
+ sta $fc
+ sta $fd
+ lda #$7f
+ sta $dd04
+ lda #0
+ sta $dd05
+ lda #$81
+ sta $dd0d
+ lda #$01
+ sta $dd0e
+ rts
+nmi1: pha
+ tya
+ pha
+ lda $fc
+ cmp $fd
+ beq q1
+ ldy #0
+ lda ($fb),y
+ sta $02
+ and #$0f
+ sta $d418
+q1: lda #<nmi2
+ sta $0318
+ lda #>nmi2
+ sta $0319
+ lda $dd0d
+ pla
+ tay
+ pla
+ rti
+nmi2: pha
+ lda $fc
+ cmp $fd
+ beq q2
+ lda $02
+ lsr
+ lsr
+ lsr
+ lsr
+ sta $d418
+ inc $fb
+ bne q2
+ inc $fc
+q2: lda #<nmi1
+ sta $0318
+ lda #>nmi1
+ sta $0319
+ lda $dd0d
+ pla
+ rti
+irqh: inc $d019
+ dec count
+ bpl out
+ lda #25
+ sta count
+ lda #0
+ sta $fb
+ lda #$40
+ sta $fc
+ lda #$44
+ sta $fd
+out: jmp $ea81
+count: .byte 0
+${SAMPLES}`;
 const project = (src: string): ProjectInput => ({ name: 'music', files: [fromSource('music.prg', src)] });
 const music = (p: ProjectInput) => analyze(p).music.map((m: MusicInfo) => [m.start, m.init, m.play]);
 
@@ -387,6 +597,136 @@ freqhi: .byte ${hex(FREQ.map(f => f >> 8))}
     // a byte the program writes two values into is no JMP it puts in place (a JMP switched on and off)
     const both = project(program(' lda #$4c\n sta $1000\n lda #0\n jsr $1000\n lda #$2c\n sta $1000\n', 'jsr $1003') + player(' .byte 0, <init, >init\n jmp play\n'));
     expect(music(both).some(([, init]) => init === 0x1006)).toBe(false);
+  });
+
+  it('finds a sample player by running the routine that starts its timer and then its NMI, as the timer calls it (Voodoo People)', () => {
+    const p = project(samplePlayer({ pwm: true }));
+    const A = analyze(p);
+    expect(A.music).toHaveLength(1);
+    const m = A.music[0], start = 0x0814;
+    // init is the routine that starts the timer, nothing is called each frame
+    expect([m.start, m.init, m.play]).toEqual([start, start, 0]);
+    expect(m.digi).toMatchObject({ nmi: true, hz: 6158, latch: 0x9f, handler: 0x0080, vector: 0xfffa, port: 0x35, regs: [0xd402, 0xd403] });
+    expect(m.digi!.values).toBeGreaterThan(200);
+    // the block holds init and the NMI's source the copy loop reads; the samples it plays are its parts
+    expect(m.end).toBeGreaterThan(0x0850);
+    expect(m.end).toBeLessThan(0x0900);
+    expect(m.digi!.parts).toEqual([[0x4000, 0x6000]]);
+    expect(m.why[0]).toBe('a sample player: init $0814 starts CIA 2\'s timer (every 160 cycles, 6158 Hz) with its NMI at $0080 (vector $fffa)');
+    expect(findBlock(A.blocks, start)?.type).toBe('music');
+    // the samples are data, whatever they look like
+    const s = findBlock(A.blocks, 0x4000)!;
+    expect([s.type, s.end, s.props.sub, s.reason]).toEqual(['data', 0x6000, 'samples', 'samples and song of the sample player at $0814: its NMI reads them']);
+    // and they play with the block: init wrapped, nothing to call each frame
+    const d = musicPlayData(A.mem.slice(m.start, m.end), m.start, m.init, m.play, undefined,
+      { nmi: true, hz: m.digi!.hz, wrote: m.digi!.wrote, parts: m.digi!.parts.map(([s0, e]) => ({ load: s0, data: A.mem.slice(s0, e) })) });
+    expect(d.alone).toBeUndefined();
+    expect(d.wrapped?.init).toBe(start);
+    expect(d.play).toBe(0);
+  });
+
+  it('finds a sample player through the KERNAL\'s NMI vector, its 4-bit samples to the volume in its block', () => {
+    const A = analyze(project(samplePlayer({ pwm: false })));
+    expect(A.music).toHaveLength(1);
+    const m = A.music[0];
+    expect([m.init, m.play]).toEqual([0x0814, 0]);
+    expect(m.digi).toMatchObject({ nmi: true, vector: 0x0318, regs: [0xd418], values: 16, parts: [] });
+    // the samples right after the code are the block's
+    expect(m.end).toBe(A.files[0].load + A.files[0].bytes.length);
+    expect(m.why[1]).toMatch(/^the NMI writes samples to \$d418 \(volume\) in every interrupt: 16 different values in \d+ s$/);
+  });
+
+  it('the fixture fixtures/prg/sample-demo.prg, which the e2e tests open, is the sample player as Voodoo People\'s', async () => {
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { makePrg } = await import('../src');
+    const f = fromSource('sample-demo.prg', samplePlayer({ pwm: true })), prg = makePrg(f.load, f.bytes);
+    const path = join(__dirname, '../../../fixtures/prg/sample-demo.prg');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, prg);
+    expect(new Uint8Array(readFileSync(path))).toEqual(prg);
+  });
+
+  it('gives a frame player whose init also starts samples (digi drums) its sample player, and keeps its play', () => {
+    const drums = `init2: lda #<nmi
+ sta $0318
+ lda #>nmi
+ sta $0319
+ lda #$7f
+ sta $dd04
+ lda #0
+ sta $dd05
+ lda #$81
+ sta $dd0d
+ lda #$01
+ sta $dd0e
+ jmp init
+nmi: pha
+ txa
+ pha
+ ldx $02
+ lda $3000,x
+ sta $d418
+ inc $02
+ lda $dd0d
+ pla
+ tax
+ pla
+ rti
+`;
+    const p = project(program(' lda #0\n jsr $1000\n', 'jsr $1003') + player(' jmp init2\n jmp play\n', drums)
+      + `.pc = $3000\n.byte ${hex(Array.from({ length: 256 }, (_, i) => (i * 3) & 0x0f))}\n`);
+    const A = analyze(p);
+    expect(A.music.map(m => [m.start, m.init, m.play])).toEqual([[0x1000, 0x1000, 0x1003]]);
+    expect(A.music[0].run?.notes).toBeGreaterThan(0);
+    expect(A.music[0].digi).toMatchObject({ nmi: true, vector: 0x0318, regs: [0xd418], parts: [[0x3000, 0x3100]] });
+    expect(A.music[0].why).toEqual(expect.arrayContaining(['JMP init / JMP play table', expect.stringMatching(/^a sample player: init \$1000 starts CIA 2's timer/)]));
+  });
+
+  it('plays a sample player whose init never returns from what init left: the bytes it read, its vector, $01, its timer (Youthquake)', () => {
+    const A = analyze(project(loopingPlayer));
+    expect(A.music).toHaveLength(1);
+    const m = A.music[0];
+    expect([m.init, m.play]).toEqual([0x080d, 0]);
+    expect(m.digi).toMatchObject({ loop: true, nmi: true, vector: 0x0318, regs: [0xd418], timer: { cia: 2, b: false, ctl: 1 }, latch: 0x7f, parts: [[0x4000, 0x4800]] });
+    // the block is the NMI's code, not the program's start
+    expect(m.start).toBeGreaterThan(0x0830);
+    expect(m.why[0]).toBe('a sample player: init $080d, which does not return (it goes on into the program), leaves CIA 2\'s timer (every 128 cycles, 7697 Hz) with its NMI at $' + m.start.toString(16).padStart(4, '0') + ' (vector $0318)');
+    // what init left: $01, the vector, the pointer at $fb (the zero page, which nothing loaded)
+    expect(m.resume).toEqual(expect.arrayContaining([[1, 0x37], [0x0318, m.start & 0xff], [0x0319, m.start >> 8], [0xfb, 0], [0xfc, 0x40]]));
+    const d = musicPlayData(A.mem.slice(m.start, m.end), m.start, m.init, m.play, m.resume, { ...m.digi!, parts: m.digi!.parts.map(([s, e]) => ({ load: s, data: A.mem.slice(s, e) })) });
+    expect(d.resume).toBeDefined();
+    expect(d.alone).toBeUndefined();
+    // the wrapper calls the routine that puts the bytes back, then starts CIA 2's timer A again ($7f, $81, $11)
+    const w = [...d.data.subarray(d.wrapped!.at - d.load, d.wrapped!.at - d.load + d.wrapped!.bytes)];
+    expect(w.slice(4, 7)).toEqual([0x20, d.wrapped!.init & 0xff, d.wrapped!.init >> 8]);
+    expect(w.slice(7, 27)).toEqual([0xa9, 0x7f, 0x8d, 0x04, 0xdd, 0xa9, 0x00, 0x8d, 0x05, 0xdd, 0xa9, 0x81, 0x8d, 0x0d, 0xdd, 0xa9, 0x11, 0x8d, 0x0e, 0xdd]);
+  });
+
+  it('plays the samples a sequencer in the program\'s IRQ starts, with an NMI in two halves that point the vector at each other (Wonderland IV)', () => {
+    const A = analyze(project(sequencedPlayer));
+    expect(A.music).toHaveLength(1);
+    const m = A.music[0], irqh = [...A.entryKind].find(([, k]) => k === 'irq')![0];
+    expect([m.init, m.play]).toEqual([0x081f, 0]);
+    expect(m.digi).toMatchObject({ nmi: true, vector: 0x0318, irq: { handler: irqh, kernal: true }, regs: [0xd418], values: 16 });
+    expect(m.why[1]).toBe(`the program's IRQ at $${irqh.toString(16).padStart(4, '0')} starts the samples (a sequencer there): with it run once a frame the NMI plays`);
+    // init is wrapped with the IRQ installed: $0314 to the handler, the raster interrupt on
+    const d = musicPlayData(A.mem.slice(m.start, m.end), m.start, m.init, m.play, undefined, { ...m.digi!, parts: m.digi!.parts.map(([s, e]) => ({ load: s, data: A.mem.slice(s, e) })) });
+    const w = [...d.data.subarray(d.wrapped!.at - d.load, d.wrapped!.at - d.load + d.wrapped!.bytes)];
+    expect(w.slice(8, 23)).toEqual([0xa9, irqh & 0xff, 0x8d, 0x14, 0x03, 0xa9, irqh >> 8, 0x8d, 0x15, 0x03, 0xa9, 0x01, 0x8d, 0x1a, 0xd0]);
+    expect(d.digi?.irq).toEqual({ handler: irqh, kernal: true });
+    expect(d.alone).toBeUndefined();
+  });
+
+  it('takes no sample player that maps its samples through a table the program builds as it runs (Macho Programming)', () => {
+    // the NMI writes the samples to the volume, and the cutoff through a table at $c000, which nothing loaded
+    const src = samplePlayer({ pwm: false }).replace(' sta $d418\n', ' sta $d418\n tax\n lda $c000,x\n sta $d416\n').replace('((i * 5) >> 2) & 0x0f', 'i');
+    expect(analyze(project(src.replace(/samples: \.byte .*/, `samples: .byte ${hex(Array.from({ length: 256 }, (_, i) => i))}`))).music).toEqual([]);
+  });
+
+  it('takes no timer interrupt for a sample player that writes the same value each time, or that comes a frame apart', () => {
+    expect(analyze(project(samplePlayer({ pwm: true, samples: false }))).music).toEqual([]);
+    expect(analyze(project(samplePlayer({ pwm: false, samples: false }))).music).toEqual([]);
+    expect(analyze(project(samplePlayer({ pwm: false, latch: 0x4cc7 }))).music).toEqual([]);
   });
 
   it('does not take a JMP pair in code that clears the SID for a player', () => {

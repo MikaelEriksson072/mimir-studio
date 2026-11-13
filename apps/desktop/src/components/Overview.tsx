@@ -218,11 +218,12 @@ export function AnalysisOverview({ A, project, labels, packing, problems, source
                 <button type="button" key={m.start} className="ov-row ov-music" title={`${m.why.join('\n')}\nClick to go there in the listing`} onClick={go(() => links.addr(m.start))}>
                   <i className="ov-dot" style={{ background: 'var(--g-music)' }} />
                   <span className="mono">{bankAdr(A, m.start)}–${h4(m.end - 1)}</span>
-                  <span className="muted mono">init ${h4(m.init)} · play ${h4(m.play)}</span>
+                  <span className="muted mono">init ${h4(m.init)} · {m.digi && !m.play ? `samples, ${m.digi.nmi ? 'NMI' : 'IRQ'}` : `play $${h4(m.play)}`}</span>
                 </button>))}
               {A.music.length > 3 && <p className="muted">and {A.music.length - 3} more</p>}
             </div> : <p className="muted">{A.S.detectMusic ? 'No SID music found.' : 'Detect SID music is off in Settings → Analysis.'}</p>}
-            {A.music[0]?.run && <p className="muted">Init and play ran: {count(A.music[0].run.notes, 'note')} in {+A.music[0].run.seconds.toFixed(1)} s.</p>}
+            {A.music[0]?.digi ? <p className="muted">A sample player: its {A.music[0].digi.nmi ? 'NMI' : 'IRQ'} plays {A.music[0].digi.hz} samples a second{A.music[0].digi.parts.length ? `, from ${count(A.music[0].digi.parts.reduce((n, [s, e]) => n + e - s, 0), 'byte')} outside the block` : ''}.</p>
+              : A.music[0]?.run && <p className="muted">Init and play ran: {count(A.music[0].run.notes, 'note')} in {+A.music[0].run.seconds.toFixed(1)} s.</p>}
           </Card>
         </div>
       </div>

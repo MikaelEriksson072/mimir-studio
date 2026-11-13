@@ -45,7 +45,7 @@ export {
 export { cc1541Script, cc1541Text, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readKrillDisk, unpackKrillDoynax, unpackKrillZx0, type KrillDisk, type KrillEntry, type KrillFile, type KrillPacker, type KrillUnpacked } from './c64/krill-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
-export { sidPlayer, musicPlayData, type SidPlayer, type SidPlayerOptions, type MusicPlayData } from './c64/sidplayer';
+export { sidPlayer, musicPlayData, musicSidFile, type SidPlayer, type SidPlayerOptions, type MusicPlayData, type MusicPlayDigi } from './c64/sidplayer';
 export { artStudioPicture, ART_STUDIO_LOAD, BITMAP_SIZE, gfxSource, koalaPicture, KOALA_LOAD, SCREEN_SIZE, type GfxFileColors, type GfxFileKind } from './c64/gfxfiles';
 export type { PsidInfo } from './c64/psid';
 

@@ -8,7 +8,7 @@ import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
@@ -2042,15 +2042,27 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const m = A.music.find(x => x.start === b.start);
     const load = spaceAddr(b.start), init = spaceAddr(m?.init ?? b.props.init ?? b.start), play = spaceAddr(m?.play ?? b.props.play ?? b.start + 3);
     const name = R.labels.get(b.start)?.name ?? `music_${h4(load)}`, span = `$${h4(load)}-$${h4(load + b.end - b.start - 1)}`;
-    const d = musicPlayData(A.mem.slice(b.start, b.end), load, init, play, m?.resume);
+    // a sample player (5.8b) plays with the bytes outside its block its run read: its samples and song
+    const dg = m?.digi;
+    const d = musicPlayData(A.mem.slice(b.start, b.end), load, init, play, m?.resume, dg && {
+      ...dg, wrote: dg.wrote.map(([s, e]): [Addr, Addr] => [spaceAddr(s), spaceAddr(e - 1) + 1]),
+      parts: dg.parts.map(([s, e]) => ({ load: spaceAddr(s), data: A.mem.slice(s, e) })),
+      ...(dg.irq ? { irq: { ...dg.irq, handler: spaceAddr(dg.irq.handler) } } : {}),
+    });
     const kept = (m?.resume ?? []).filter(([a]) => a < 0xd400 || a > 0xd418), sidToo = kept.length < (m?.resume?.length ?? 0);
-    const how = d.resume ? `plays on from the snapshot (init no longer starts it again): $${h4(d.resume.at)} puts back the ${kept.length} bytes it reads outside the block${sidToo ? ' and the SID as the snapshot had it' : ''}, then play $${h4(play)} each frame` : null;
+    const partsText = dg?.parts.length ? ` with its samples and song (${dg.parts.map(([s, e]) => `$${h4(spaceAddr(s))}-$${h4(spaceAddr(e - 1))}`).join(', ')})` : '';
+    const it = dg?.nmi ? 'NMI' : 'IRQ';
+    const how = dg?.loop && d.resume ? `its init $${h4(init)} does not return, so $${h4(d.resume.at)} puts back the ${kept.length} bytes, registers and vector it left, and CIA ${dg.timer?.cia ?? 2}'s timer starts again: its ${it} plays ${dg.hz} samples a second${partsText}; nothing is called each frame`
+      : d.resume ? `plays on from the snapshot (init no longer starts it again): $${h4(d.resume.at)} puts back the ${kept.length} bytes it reads outside the block${sidToo ? ' and the SID as the snapshot had it' : ''}, then play $${h4(play)} each frame`
+      : dg && play === 0 ? `init $${h4(init)} starts its ${it}, which plays ${dg.hz} samples a second${partsText}${dg.irq ? `, and the program's IRQ at $${h4(spaceAddr(dg.irq.handler))} starts them` : ''}; nothing is called each frame${d.wrapped ? ` ($${h4(d.wrapped.at)} calls init and ${dg.irq ? 'installs that IRQ' : 'switches off the demo\'s other interrupts'})` : ''}`
+        : dg ? `init $${h4(init)} with song $00 (it starts its ${it} samples too${partsText}), then play $${h4(play)} each frame` : null;
     if (d.problem) toast(`${name} cannot play on from the snapshot: ${d.problem}. It plays with its init $${h4(init)}, which may not start it again`, 'warn');
     // the player's PRG holds the block alone: a run of it on its own tells whether that is enough
     if (d.alone) toast(`${name} may not play: with only its block (${span}) in memory, ${d.alone}. The player may need bytes outside the block, or other entries`, 'warn');
     if (toolchain.musicPlayer === 'deepsid') {
       try {
-        const sid = makePsid(d.data, d.load, d.init, d.play, `${project.name || 'music'} ${h4(load)}`);
+        // (a sample player as an RSID, a real C64's interrupts, with its samples)
+        const sid = musicSidFile(d, `${project.name || 'music'} ${h4(load)}`);
         // DeepSID keeps the file under its name with everyone's: the bytes' hash keeps it apart from other tunes
         let hash = 0x811c9dc5;
         for (const v of sid) hash = Math.imul(hash ^ v, 0x01000193) >>> 0;
@@ -2064,13 +2076,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     }
     try {
       const file0 = project.files[A.owner[b.start]]?.name;
-      const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, title: file0 ? `${name} IN ${file0}` : name });
+      const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, parts: d.parts, digi: d.digi, busy: d.busy, title: file0 ? `${name} IN ${file0}` : name });
       const file = `${name}.prg`;
       const w = await kr.writeExport({ target: 'temp', name: 'play', files: { [file]: p.prg } });
       if (!w) return;
       await kr.run({ prgPath: `${w.dir}/${file}` });
       toast(d.resume ? `VICE plays ${name} (${span}): it ${how}. Any key starts it again from the snapshot`
-        : `VICE plays ${name} (${span}): init $${h4(init)} with song $00, then play $${h4(play)} each frame. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before`, 'ok');
+        : how ? `VICE plays ${name} (${span}): ${how}. Keys 1-9 and 0 start it again with songs $00-$09`
+          : `VICE plays ${name} (${span}): init $${h4(init)} with song $00, then play $${h4(play)} each frame. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before`, 'ok');
       for (const x of p.warnings) toast(x, 'warn');
     } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }
   };

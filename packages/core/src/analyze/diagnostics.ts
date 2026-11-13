@@ -142,7 +142,8 @@ export function diagnostics(ctx: Ctx, blocks: Block[]): void {
   const entropy = (s: Addr, e: Addr) => { const c = new Uint32Array(256); for (let i = s; i < e; i++) c[mem[i]]++; let H = 0; const n = e - s; for (const k of c) if (k) { const p = k / n; H -= p * Math.log2(p); } return H; };
   for (const b of blocks) b.entropy = entropy(b.start, b.end);
   let dataBytes = 0, dataH = 0;
-  for (const b of blocks) if (b.type === 'data' && b.end - b.start >= 256) { dataBytes += b.end - b.start; dataH += b.entropy * (b.end - b.start); }
+  // (a sample player's samples are noisy by nature: 5.8b)
+  for (const b of blocks) if (b.type === 'data' && b.props.sub !== 'samples' && b.end - b.start >= 256) { dataBytes += b.end - b.start; dataH += b.entropy * (b.end - b.start); }
   if (dataBytes >= 2048 && dataH / dataBytes > 7.2) L('warn', `Unclassified data has very high entropy (${(dataH / dataBytes).toFixed(2)} bits/byte). The program is probably crunched; unpack it (Unpack in the app, or mimir unpack) and load the result.`, null, 'data', 'high-entropy');
 }
 

@@ -781,6 +781,28 @@ the reference as a patch in `test/helpers/reference.ts`):
     knows version 146 by its installer's version text. `mimir disks <folder> [--list] [--json]` counts the disks each
     reader takes, for checking the archive. Not done in the cloud: Sindri's 1541 needs the DOS ROM, so GoatLight was not
     run with the disk in Sindri's drive, and the archive was not scanned.
+41. Sample players (digis, spec 8.6, 5.8b) are new: Voodoo People (1995) had no music found. Its player has no JMP
+    table and no play routine: init copies an NMI to `$0080`, points `$fffa` at it and starts CIA 2's timer, and the NMI
+    mixes four channels of sample pages into two voices' pulse widths 6158 times a second, from an order list at `$ff00`.
+    `samplePlayers()` in `music.ts` runs the routines that switch a CIA timer's interrupt on (in a program that sets a
+    timer faster than `$800` cycles) with `runDigi()` (`c64/sidrun.ts`): init, then the handler the vector it leaves
+    gives, as often as the timer calls it. A handler that writes at least 8 different values to a SID register in at
+    least a quarter of its interrupts is a sample player: `MusicInfo.digi` (rate, handler, registers, the bytes outside
+    the block it plays from, `parts`), play 0. The samples are data blocks. Playing it, init is wrapped (`$01`, init,
+    the demo's raster interrupt off) and the player's PRG puts the parts where they run (in place when they fit,
+    the rest in the room left), with no raster interrupt; DeepSID gets an RSID. Voodoo People's player in VICE gives
+    the same sound as the demo itself (RMS and zero crossings per second alike). On 1785 programs (Year-top20 of every
+    year and Onefile-top200, unpacked with Sindri) four demos get a sample player, all playing in VICE as the demos
+    do (The Megademo, Kalle Kloakk, Amiga Works, Voodoo People), and nothing else gets music; the export still rebuilds
+    them byte for byte, and the step costs 0.8 % of the analysis time. Then two more kinds: an init that never returns
+    (the program's start sets the player up and loops: Youthquake, Jerkland II, Wonderland V) is taken where it is after
+    400,000 cycles, and plays from what it left (`MusicInfo.resume`: the bytes the handler reads that init changed, the
+    vector, `$01`, the SID) with its timer started again; samples a sequencer in the program's raster IRQ starts
+    (Wonderland IV) are found by running that IRQ once a frame, and init is wrapped to install it. The run now reads the
+    vector at every interrupt (an NMI in two halves that point it at each other), and a handler that reads bytes nothing
+    loaded (a table the program builds as it runs, Macho Programming's) is not taken: alone it plays a tone. On the
+    corpus nine demos now get a sample player (Just Dance 64's writes voice 2 and 3's frequency and control registers),
+    each playing in VICE as the demo itself does, and every other program's music is the same as before.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

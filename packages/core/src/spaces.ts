@@ -191,7 +191,8 @@ function mergeAnalyses(project: ProjectInput, parts: Split[], results: AnalysisR
     for (const [to, xs] of A.xrefs) { const k = g(to); out.xrefs.set(k, [...(out.xrefs.get(k) ?? []), ...xs.map((x): XRef => ({ ...x, from: at(x.from) }))]); }
     for (const [a, k] of A.entryKind) out.entryKind.set(at(a), k);
     out.basics.push(...A.basics.map(b => ({ ...b, start: at(b.start), end: at(b.end), sys: b.sys == null ? null : g(b.sys), lines: b.lines.map(l => ({ ...l, addr: at(l.addr) })), sysLine: b.sysLine && { ...b.sysLine, addr: at(b.sysLine.addr) }, ...(b.file != null ? { file: file(b.file) } : {}) })));
-    out.music.push(...A.music.map(m => ({ ...m, start: at(m.start), end: at(m.end), init: g(m.init), play: g(m.play), file: file(m.file) })));
+    const range = ([s, e]: [Addr, Addr]): [Addr, Addr] => [at(s), at(e - 1) + 1];
+    out.music.push(...A.music.map(m => ({ ...m, start: at(m.start), end: at(m.end), init: g(m.init), play: g(m.play), file: file(m.file), ...(m.digi ? { digi: { ...m.digi, parts: m.digi.parts.map(range), wrote: m.digi.wrote.map(range) } } : {}) })));
     for (const b of A.vic.banks) out.vic.banks.add(b);
     for (const d of A.vic.d018) out.vic.d018.add(d);
     out.vic.bitmap ||= A.vic.bitmap; out.vic.multicolor ||= A.vic.multicolor;
@@ -466,7 +467,7 @@ export function spaceView(A: AnalysisResult, space: number): AnalysisResult {
     skip: new Set([...A.skip].filter(mine).map(l)), xrefs: mapKeys(A.xrefs, xs => xs.filter(x => mine(x.from)).map(x => ({ ...x, from: l(x.from) }))),
     entryKind: mapKeys(A.entryKind), entry: info.entry == null ? null : l(info.entry),
     basics: A.basics.filter(b => mine(b.start)).map(b => ({ ...b, start: l(b.start), end: l(b.end), sys: b.sys == null ? null : l(b.sys), lines: b.lines.map(x => ({ ...x, addr: l(x.addr) })), sysLine: b.sysLine && { ...b.sysLine, addr: l(b.sysLine.addr) } })),
-    music: A.music.filter(m => mine(m.start)).map(m => ({ ...m, start: l(m.start), end: l(m.end), init: l(m.init), play: l(m.play) })),
+    music: A.music.filter(m => mine(m.start)).map(m => ({ ...m, start: l(m.start), end: l(m.end), init: l(m.init), play: l(m.play), ...(m.digi ? { digi: { ...m.digi, parts: m.digi.parts.map(([s, e]): [Addr, Addr] => [l(s), l(e - 1) + 1]), wrote: m.digi.wrote.map(([s, e]): [Addr, Addr] => [l(s), l(e - 1) + 1]) } } : {}) })),
     vic: part ? part.vic : { ...A.vic, sprites: A.vic.sprites.filter(x => mine(x.addr) || x.addr < SPACE).map(x => ({ ...x, addr: l(x.addr) })) },
     gfx: A.gfx.filter(x => mine(x.start)).map(x => ({ ...x, start: l(x.start) })),
     blocks: A.blocks.filter(b => mine(b.start)).map((b, id) => ({ ...b, id, start: l(b.start), end: l(b.start) + (b.end - b.start), props: { ...b.props, ...(b.props.partner != null ? { partner: l(b.props.partner) } : {}), ...(b.props.init != null ? { init: l(b.props.init) } : {}), ...(b.props.play != null ? { play: l(b.props.play) } : {}) } })),

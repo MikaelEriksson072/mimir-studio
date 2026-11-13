@@ -38,6 +38,7 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   Magic Desk, System 3, Dinamic, Fun Play, Zaxxon and EasyFlash cartridges are checked against real ones.
 - **It recognises what demos and games are made of:**
   - SID players, by their jump table and note frequency table, exported as a `.sid` that Kick Assembler loads with `LoadSid`;
+    sample players (digis), whose NMI or timer IRQ writes samples to the SID, by running them, with their samples;
   - charsets, sprites, bitmaps and screens, from `$d018`, `$dd00` and the sprite pointers;
   - lo/hi pointer tables, sine tables, colour tables and text;
   - timing code: a branch that a CIA timer or the raster points into a delay (a stable raster), marked as a delay,

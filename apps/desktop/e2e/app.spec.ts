@@ -4483,6 +4483,78 @@ test('with DeepSID chosen in Settings, a music block plays there: its .sid goes 
   for (const d of readdirSync(tmpdir()).filter(x => x.startsWith('mimir-deepsid-'))) rmSync(join(tmpdir(), d), { recursive: true, force: true });
 });
 
+test('a sample player (a digi) is found, and plays in VICE with its samples and in DeepSID as an RSID', async ({ app, page }) => {
+  // fixtures/prg/sample-demo.prg (packages/core/test/music.test.ts), as Voodoo People's: `jsr $0814` copies an NMI to
+  // $0080, points $fffa at it and starts CIA 2's timer; the NMI writes the samples at $4000-$5fff to the pulse width
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  test.skip(!existsSync(standIn), 'needs where.exe');
+  const deepSidPage = pathToFileURL(join(repoDir, 'fixtures/deepsid/index.html')).href;
+  await app.evaluate((_e, url) => { process.env.MIMIR_DEEPSID_URL = url; }, deepSidPage);
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/sample-demo.prg')] });
+  await fromFileMenu(page, 'Open PRG files…');
+  await expect(toast(page, 'Loaded sample-demo.prg at $0801')).toBeVisible();
+  await waitForListing(page);
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  const insp = page.locator('aside.insp-col');
+
+  await test.step('the overview and the inspector say what it is: no play routine, its NMI and the samples', async () => {
+    await page.keyboard.press('Control+Shift+P');
+    const q = page.getByRole('textbox', { name: 'Command' });
+    await q.fill('Show the analysis overview');
+    await q.press('Enter');
+    const music = page.getByRole('dialog', { name: 'Analysis overview' }).getByRole('region', { name: 'Music' });
+    await expect(music).toContainText('$0814–$0875');
+    await expect(music).toContainText('init $0814 · samples, NMI');
+    await expect(music).toContainText('A sample player: its NMI plays 6158 samples a second, from 8192 bytes outside the block.');
+    await page.keyboard.press('Escape');
+    await listing(page).click();
+    await goTo(page, '0814');
+    await expect(statusBar(page)).toContainText('$0814 · Music (SID)');
+    await expect(insp).toContainText('none: init starts the samples');
+    await expect(insp).toContainText('its NMI at $0080, 6158 a second, to $d402 $d403');
+    await expect(insp).toContainText('$4000-$5fff');
+    await goTo(page, '4000');
+    await expect(statusBar(page)).toContainText('$4000 · Data');
+    await expect(insp).toContainText('samples and song of the sample player at $0814: its NMI reads them');
+  });
+
+  await test.step('VICE plays it: the samples go where they play, init is wrapped, nothing is called each frame', async () => {
+    await goTo(page, '0814');
+    await insp.getByRole('button', { name: 'Play in VICE' }).click();
+    await expect(toast(page, 'VICE plays music_0814 ($0814-$0875): init $0814 starts its NMI, which plays 6158 samples a second with its samples and song ($4000-$5fff); nothing is called each frame ($0876 calls init and switches off the demo\'s other interrupts). Keys 1-9 and 0 start it again with songs $00-$09')).toBeVisible();
+    const dir = readdirSync(tmpdir()).filter(d => d.startsWith('mimir-play-')).map(d => join(tmpdir(), d)).filter(d => existsSync(join(d, 'music_0814.prg')))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+    const prg = readFileSync(join(dir, 'music_0814.prg')), demo = readFileSync(join(repoDir, 'fixtures/prg/sample-demo.prg'));
+    // the samples in the PRG where they run (it loads from $0801 as the demo does); the block, under the PRG's own code,
+    // from $0c00 on, which the driver moves, with the wrapper after it: $01, jsr $0814
+    expect(prg.subarray(2 + 0x4000 - 0x0801, 2 + 0x6000 - 0x0801)).toEqual(demo.subarray(2 + 0x4000 - 0x0801, 2 + 0x6000 - 0x0801));
+    expect(prg.subarray(2 + 0x0c00 - 0x0801, 2 + 0x0c62 - 0x0801)).toEqual(demo.subarray(2 + 0x0814 - 0x0801, 2 + 0x0876 - 0x0801));
+    expect([...prg.subarray(2 + 0x0c62 - 0x0801, 2 + 0x0c69 - 0x0801)]).toEqual([0xa9, 0x37, 0x85, 0x01, 0x20, 0x14, 0x08]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test.step('DeepSID gets an RSID of the block and the samples, init the wrapper, play 0', async () => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('tab', { name: 'Toolchain' }).click();
+    await page.locator('#set-musicPlayer').selectOption('deepsid');
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await page.locator('nav.activity').getByRole('button', { name: 'Blocks' }).click();
+    const folder = page.getByRole('list', { name: 'Block types' }).locator('.blk-folder-head').filter({ hasText: 'Music (SID)' });
+    if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
+    const play = page.getByRole('group', { name: 'Music (SID) blocks' }).getByRole('button', { name: 'Play music_0814 in DeepSID' });
+    await expect(play).toHaveAttribute('title', 'Play music_0814 in DeepSID: an RSID of the block and its samples, in DeepSID\'s window. Settings → Toolchain picks VICE or DeepSID');
+    await play.click();
+    await expect(toast(page, /^DeepSID plays music_0814 \(\$0814-\$0875\): init \$0814 starts its NMI/)).toBeVisible({ timeout: 30_000 });
+    const got = await app.evaluate(async ({ BrowserWindow }, url) => {
+      const w = BrowserWindow.getAllWindows().find(x => x.webContents.getURL() === url);
+      return w ? await w.webContents.executeJavaScript('window.received') as { magic: string; load: number; init: number; play: number; size: number } : null;
+    }, deepSidPage);
+    expect(got).toMatchObject({ magic: 'RSID', load: 0x0814, init: 0x0876, play: 0, size: 0x7e + 0x6000 - 0x0814 });
+  });
+  for (const d of readdirSync(tmpdir()).filter(x => x.startsWith('mimir-deepsid-'))) rmSync(join(tmpdir(), d), { recursive: true, force: true });
+});
+
 test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctrl+Z goes back; the newest are kept, named, saved and made favourites', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   // a file of its own instead of VICE's settings folder: the user's quicksaves are never touched
