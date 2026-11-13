@@ -15,7 +15,19 @@ export function loadMemory(ctx: Ctx): void {
     if (f.load + f.bytes.length > 0x10000) L('warn', `${f.name} runs past $ffff and was truncated`, f.load, 'load', 'file-truncated');
     if (overlap) L('warn', `${f.name} overlaps ${overlap} bytes of an earlier file; the later file wins`, f.load, 'load', 'file-overlap');
   });
+  dropJunk(ctx);
   placeRelocs(ctx);
+}
+
+/** 11.7: the bytes the user called junk are not loaded: nothing traces, names or writes them (they read as $00, like
+ *  the gap Kick Assembler leaves in the output) */
+function dropJunk(ctx: Ctx): void {
+  const { mem, owner, L } = ctx;
+  for (const j of ctx.project.junk ?? []) {
+    let n = 0;
+    for (let a = Math.max(0, j.start); a < Math.min(0x10000, j.end); a++) if (owner[a] >= 0) { owner[a] = -1; mem[a] = 0; n++; }
+    if (n) L('info', `${span(j.start, j.end)} is junk: left out (${n} byte${n === 1 ? '' : 's'})`, j.start, 'load');
+  }
 }
 
 const span = (s: Addr, e: Addr) => (e - s > 1 ? `${$4(s)}-${$4(e - 1)}` : $4(s));

@@ -58,8 +58,8 @@ let keyCounter = 0;
 export interface Analysis {
   A: AnalysisResult;
   R: RenderResult;
-  /** identifies the analysis inputs (files, overrides, entries, program start, bank zones, relocated blocks, settings, the
-   *  cartridge) */
+  /** identifies the analysis inputs (files, overrides, entries, program start, bank zones, relocated blocks, junk,
+   *  settings, the cartridge) */
   aKey: number;
   renderMs: number;
   /** the project this result was computed for (work that awaits compares it with the latest edit) */
@@ -79,14 +79,14 @@ export function useAnalysis(project: Project, opts: RenderOptions = {}): { analy
   /** the request the last result or error belongs to (a superseded one is dropped and never lands) */
   const [landed, setLanded] = useState(0);
   // Immer keeps unchanged branches referentially equal, so identity tells what changed
-  const last = useRef<{ files: unknown; overrides: unknown; entries: unknown; entryPoint: unknown; entryPort: unknown; bankZones: unknown; relocs: unknown; settings: unknown; cart: unknown; key: number } | null>(null);
+  const last = useRef<{ files: unknown; overrides: unknown; entries: unknown; entryPoint: unknown; entryPort: unknown; bankZones: unknown; relocs: unknown; junk: unknown; settings: unknown; cart: unknown; key: number } | null>(null);
   const aKey = useMemo(() => {
     const l = last.current;
-    if (!l || l.files !== project.files || l.overrides !== project.overrides || l.entries !== project.entries || l.entryPoint !== project.entryPoint || l.entryPort !== project.entryPort || l.bankZones !== project.bankZones || l.relocs !== project.relocs || l.settings !== project.settings || l.cart !== project.cart) {
-      last.current = { files: project.files, overrides: project.overrides, entries: project.entries, entryPoint: project.entryPoint, entryPort: project.entryPort, bankZones: project.bankZones, relocs: project.relocs, settings: project.settings, cart: project.cart, key: ++keyCounter };
+    if (!l || l.files !== project.files || l.overrides !== project.overrides || l.entries !== project.entries || l.entryPoint !== project.entryPoint || l.entryPort !== project.entryPort || l.bankZones !== project.bankZones || l.relocs !== project.relocs || l.junk !== project.junk || l.settings !== project.settings || l.cart !== project.cart) {
+      last.current = { files: project.files, overrides: project.overrides, entries: project.entries, entryPoint: project.entryPoint, entryPort: project.entryPort, bankZones: project.bankZones, relocs: project.relocs, junk: project.junk, settings: project.settings, cart: project.cart, key: ++keyCounter };
     }
     return last.current!.key;
-  }, [project.files, project.overrides, project.entries, project.entryPoint, project.entryPort, project.bankZones, project.relocs, project.settings, project.cart]);
+  }, [project.files, project.overrides, project.entries, project.entryPoint, project.entryPort, project.bankZones, project.relocs, project.junk, project.settings, project.cart]);
 
   // what the effect below is asked to analyse: a new number in the render that commits an edit, so busy shows in that
   // same commit (set in the effect, it would render a task later, and a wait for "analysing" to go could pass before

@@ -33,6 +33,8 @@ interface InspectorProps {
   onToggleExcluded: (at: Addr) => void;
   /** save the block as data/<label>.bin (loaded with .import binary), or write it in the source again */
   onToggleBinary: (at: Addr) => void;
+  /** the block's bytes are junk (spec 11.7): left out of the listing, the source and the output */
+  onJunk: (range: { start: Addr; end: Addr }) => void;
   /** the number format of a data, table or word block (null: the default) and how many items a row (null: the default);
    *  graphics drawn multicolour or hires (null: as the VIC registers say) */
   onFormat: (b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }) => void;
@@ -53,7 +55,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice' }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice' }: InspectorProps) {
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -121,6 +123,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
             <button className="btn small merge-range-btn" onClick={onMergeRange} title="Merge from this block to an end address into one block (M)">Merge range…</button>
             {blk.type !== 'basic' && !loadedRl && <button className="btn small merge-range-btn" onClick={() => onBlockSize(blk.start)} title="Set where this block starts and ends: the blocks next to it give or take the bytes (L)">Size…</button>}
             {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onRelocate({ start: blk.start, end: blk.end })} title="The program copies these bytes to another address and runs them there: read them where they run, written inside .pseudopc (R)">Relocate…</button>}
+            {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onJunk({ start: blk.start, end: blk.end })} title="These bytes are junk: left out of the listing, the source and the output (unlike Include in the build, nothing of them stays). The Junk list in the Explorer puts them back">Junk</button>}
           </div>
           {blk.type === 'code' && A.mcfg && <MemoryFields A={A} blk={blk} cart={B.A.mcfg?.cart} onBankZone={onBankZone} />}
           <label className="field"><span>Label</span>

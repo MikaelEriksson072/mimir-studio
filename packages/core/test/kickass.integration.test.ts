@@ -60,6 +60,8 @@ function cases(): Case[] {
     for (const hexCase of ['lower', 'upper'] as const) out.push({ name: `PETSCII control codes by name (hex ${hexCase} case)`, project: { name: 'controls', files: [parsePrg('controls.prg', all)], overrides, settings: { hexCase } } });
   }
   out.push({ name: 'demo/blocks excluded from the build (BASIC stub, sine table, music)', project: { ...demo(), excluded: [0x0801, 0x09b5, 0x1000] } });
+  // 11.7: junk in the middle (the sine table, part of the fill after it), at the end (the charset), and next to a block left out
+  out.push({ name: 'demo/junk in the middle and at the end, beside an excluded block', project: { ...demo(), junk: [{ start: 0x09b5, end: 0x0b00 }, { start: 0x3000, end: 0x3800 }], excluded: [0x1000] } });
   out.push({ name: 'demo/program start set by the user', project: { ...demo(), entryPoint: 0x0866 } });
   out.push({ name: 'demo/comment lines and blocks', project: { ...demo(), notes: { 0x0810: { text: 'set up the raster IRQ' }, 0x09c1: { text: 'block with "quotes"\nand */ inside', block: true } }, blockComments: { 0x0939: 'two\nlines' } } });
   out.push({
@@ -80,6 +82,7 @@ function cases(): Case[] {
     out.push({ name: 'a relocated block that ends with one relocated from it', project: { ...moved, relocs: [...moved.relocs, { start: 0x200d, end: 0x2011, to: 0xc000 }] } });
     out.push({ name: 'a relocated block left out of the build', project: { ...moved, excluded: [0x1000] } });
     out.push({ name: 'a relocated block saved as a binary file', project: { ...moved, binary: [0x1000] } });
+    out.push({ name: 'junk between the code and a relocated block', project: { ...moved, junk: [{ start: 0x0820, end: 0x1000 }] } });
   }
   out.push({ name: 'all opcodes', project: { name: 'opcodes', files: [allOpcodesProgram(OPC)] } });
   out.push({ name: 'zero-page program (.zp/.abs)', project: { name: 'zp', files: [zeroPageProgram()] } });

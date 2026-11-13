@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript, type JunkArea } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -68,6 +68,8 @@ interface SidebarProps {
   quicksave: QuicksaveProps;
   /** the user's patches (spec 10.2) */
   patches: PatchesProps;
+  /** the bytes the user called junk (spec 11.7) */
+  junk: JunkProps;
   /** the user's scripts (spec 10.3) */
   scripts: ScriptsProps;
   /** play the music block that starts at `start` (the Blocks view's play button), in VICE or DeepSID as `musicPlayer`
@@ -94,6 +96,15 @@ interface ScriptsProps {
   onAdd: (l: LibraryScript) => void;
 }
 
+interface JunkProps {
+  list: readonly JunkArea[];
+  /** the listing where the area was (the bytes after it, or before it) */
+  onGo: (j: JunkArea) => void;
+  /** the area is loaded again: in the listing, the source and the output */
+  onInclude: (j: JunkArea) => void;
+  onIncludeAll: () => void;
+}
+
 interface PatchesProps {
   list: readonly Patch[];
   onGo: (p: Patch) => void; onEdit: (p: Patch) => void; onSave: (p: Patch) => void; onRemove: (p: Patch) => void;
@@ -114,7 +125,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -151,6 +162,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
+        {junk.list.length > 0 && <JunkSection {...junk} A={A} project={project} fileAddr={fileAddr} />}
         <LoadersSection A={A} packed={packing.some(p => p?.verdict === 'packed')} onNavigate={onNavigate} />
         <ProgramStart A={A} R={R} project={project} onNavigate={onNavigate} onSetStart={onSetStart} />
         <SideSection id="map" title="Memory map" summary={`${segs.length} block${segs.length === 1 ? '' : 's'}`}>
@@ -445,6 +457,52 @@ function PatchesSection({ list, onGo, onEdit, onSave, onRemove, onSwitch }: Patc
         ))}
       </div>
       <p className="side-hint">On: written over the loaded bytes. Off: the original bytes are back. The export writes each one's source to patches/ (.asm).</p>
+    </SideSection>
+  );
+}
+
+/** How many of a junk area's bytes its row shows, and its tooltip. */
+const JUNK_ROW_BYTES = 8, JUNK_TIP_BYTES = 64;
+
+/**
+ * The junk areas (spec 11.7) by address: how big each is and the bytes it holds (as the files have them: the listing
+ * does not), a click goes to where it was, and Include again puts it back in the listing, the source and the output.
+ * Only here, in the editor: the exported source has nothing of them.
+ */
+function JunkSection({ list, onGo, onInclude, onIncludeAll, A, project, fileAddr }: JunkProps & { A: AnalysisResult; project: Project; fileAddr: (i: number) => Addr }) {
+  const total = list.reduce((n, j) => n + j.end - j.start, 0);
+  /** the first `n` bytes of `j` as the files have them (a later file wins, as when they load) */
+  const bytesOf = (j: JunkArea, n: number): number[] => {
+    const out: number[] = [];
+    for (let a = j.start; a < Math.min(j.end, j.start + n); a++) {
+      for (let i = project.files.length - 1; i >= 0; i--) {
+        const f = project.files[i], s = fileAddr(i);
+        if (a >= s && a < s + f.bytes.length) { out.push(f.bytes[a - s]); break; }
+      }
+    }
+    return out;
+  };
+  const hex = (bs: number[]) => bs.map(h2).join(' ');
+  return (
+    <SideSection id="junk" title="Junk" summary={`${list.length} area${list.length === 1 ? '' : 's'} · ${fmtBytes(total)}`}
+      actions={list.length > 1 ? <button className="icon-btn" title="Include every junk area again" aria-label="Include all junk again" onClick={onIncludeAll}><Icon name="undo" size={14} /></button> : undefined}>
+      <div role="list" aria-label="Junk">
+        {list.map(j => {
+          const n = j.end - j.start, row = bytesOf(j, JUNK_ROW_BYTES), range = `${bankAdr(A, j.start)}–$${h4(j.end - 1)}`;
+          return (
+            <div key={j.start} role="listitem" className="file-row junk-row" onClick={() => onGo(j)}
+              title={`${range}, ${n} byte${n === 1 ? '' : 's'}: left out of the listing, the source and the output. Click to go to where it was\n\n${hex(bytesOf(j, JUNK_TIP_BYTES))}${n > JUNK_TIP_BYTES ? ' …' : ''}`}>
+              <Icon name="trash" size={14} />
+              <div className="file-meta">
+                <div className="file-name mono">{range}</div>
+                <div className="muted mono small">{fmtBytes(n)} · {hex(row)}{n > JUNK_ROW_BYTES ? ' …' : ''}</div>
+              </div>
+              <button className="icon-btn" title={`Include ${range} again: back in the listing, the source and the output`} aria-label={`Include ${range} again`} onClick={e => { e.stopPropagation(); onInclude(j); }}><Icon name="undo" size={13} /></button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="side-hint">Junk is left out of the listing, the source and the output; unlike Exclude from the build, nothing of it is written. Only here can it be put back.</p>
     </SideSection>
   );
 }

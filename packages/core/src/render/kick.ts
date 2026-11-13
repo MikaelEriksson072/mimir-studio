@@ -20,6 +20,7 @@ import { h4 } from '../util/hex';
 import { kickMnemonic, lineText } from './lines';
 import { hardwareInclude } from './include';
 import { applyZpPairs } from '../zp-pairs';
+import { junkIn } from '../junk';
 
 const ID_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** the words Kick Assembler 5.25 does not take as a label (measured with KickAss.jar; in this case only, `TRUE` is one) */
@@ -657,7 +658,11 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     // the blocks where a relocated block runs are written inside it (8.1b)
     const fb = blocksSorted.filter(b => b.file === fi && !runOf(b.start));
     const fileExcluded: ExcludedRange[] = [];
+    let prevEnd: Addr | null = null;
     for (const b of fb) {
+      // after bytes that are not in the source (junk, 11.7) the next block starts where it is
+      if (prevEnd != null && b.start !== prevEnd) ctx.needSeg = true;
+      prevEnd = b.end;
       if (!excludedStarts.has(b.start)) { renderBlock(body, b, ctx); body.push({ k: 'blank', a: b.end }); continue; }
       // left out of the build: the block stays in the source under #if, and its labels stay defined for the code using them
       const lb = labelAt(b.start), name = `INCLUDE_${lb ? lb.name : h4(b.start)}`;
@@ -680,6 +685,10 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
       fileExcluded.push({ start: b.start, end: b.end, file: fi, name });
     }
     excludedAll.push(...fileExcluded);
+    // junk (11.7): not in the source at all, nor in the output (verify does not compare it)
+    const fileEnd = Math.min(0x10000, f.load + f.bytes.length);
+    const fileJunk = junkIn(project.junk, f.load, fileEnd);
+    excludedAll.push(...fileJunk.map(j => ({ start: j.start, end: j.end, file: fi, name: '', junk: true })));
     // labels inside binary blocks stay defined only where this file refers to them (other files define their own)
     if (binaryStarts.size) body.splice(0, body.length, ...body.filter(l => !binaryDefs.has(l) || usedHere.has(l.a)));
     // notes go above the line holding their address, and above its labels; a loader part's marks above them, and the
@@ -708,9 +717,13 @@ export function render(A: AnalysisResult, project: ProjectInput, opts: RenderOpt
     /** what the head's lines since `from` are (all banks in one source define some once, 13.9c) */
     const part = (from: number, what: HeadPart) => { for (let i = from; i < head.length; i++) (head[i] as { head?: HeadPart }).head = what; };
     let at = 0;
-    const end = Math.min(0x10000, f.load + f.bytes.length);
+    // what the output loads: junk at either end is not in it
+    let from = f.load, end = fileEnd;
+    for (const j of fileJunk) if (j.start <= from && j.end > from) from = j.end;
+    for (const j of [...fileJunk].reverse()) if (j.end >= end && j.start < end) end = j.start;
+    if (from >= end) { from = f.load; end = fileEnd; }
     head.push({ k: 'cmt', a: f.load, text: `${f.name} — re-assembled by Mimir Studio` });
-    head.push({ k: 'cmt', a: f.load, text: `load ${n4(f.load)}-${n4(end - 1)} (${end - f.load} bytes)${A.entry != null && fileOf(A.entry) === fi ? ` · entry ${labelAt(A.entry) ? labelAt(A.entry)!.name : n4(A.entry)}` : ''} · Kick Assembler 5.x` });
+    head.push({ k: 'cmt', a: f.load, text: `load ${n4(from)}-${n4(end - 1)} (${end - from} bytes)${A.entry != null && fileOf(A.entry) === fi ? ` · entry ${labelAt(A.entry) ? labelAt(A.entry)!.name : n4(A.entry)}` : ''} · Kick Assembler 5.x` });
     part(at, 'title'); at = head.length;
     // the loaders found in this file (spec 8.11c); their parts are marked where they start and end
     const fileLoaders = (A.loaders ?? []).filter(l => l.parts.some(p => fileOf(p.start) === fi));

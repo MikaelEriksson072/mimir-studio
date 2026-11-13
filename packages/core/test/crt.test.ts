@@ -314,6 +314,17 @@ describe('every bank at once, each a space of its own (13.9b)', () => {
     expect(spaceRender(R, A, 1).labels.get(0xc000)?.name).toBe('ram_code');
   });
 
+  it('leaves junk out of its own bank only (11.7)', () => {
+    const o = openCartridge('demo.crt', demoCartridge());
+    const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, junk: [{ start: SPACE + 0x8000, end: SPACE + 0x802a }] };
+    expect(splitProject(p, fileSpaces(p)!).map(x => x.input.junk)).toEqual([[], [{ start: 0x8000, end: 0x802a }]]);
+    const A = analyze(p), R = render(A, p);
+    expect(R.files['bank01_8000.asm']).not.toContain('MIMIR STUDIO: BANK 1');
+    expect(R.files['bank00_8000.asm']).toContain('cart_vectors');
+    expect(R.excluded).toEqual([{ start: SPACE + 0x8000, end: SPACE + 0x802a, file: 1, name: '', junk: true }]);
+    expect(verify(A, R).ok).toBe(true);
+  });
+
   it('gives each bank its bookmarks at plain addresses, an area to its end there', () => {
     const o = openCartridge('demo.crt', demoCartridge());
     const p: ProjectInput = { name: 'demo', files: o.files, cart: o.cart, bookmarks: { [SPACE + 0x8000]: { title: 'text', text: '', end: SPACE + 0x802a }, [0x8009]: { title: 'reset', text: '' } } };

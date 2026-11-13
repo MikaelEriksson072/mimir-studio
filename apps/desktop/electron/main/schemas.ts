@@ -142,6 +142,8 @@ const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.a
 const bankZone = z.object({ start: at, end: at, port: z.number().int().min(0).max(255).nullable().optional(), vicBank: z.number().int().min(0).max(3).nullable().optional() });
 /** bytes the program copies elsewhere to run there (spec 8.1b): loaded at start-end (end excluded), run at `to` */
 const reloc = z.object({ start: at, end: at, to: at }).refine(r => r.start < r.end && r.end - r.start <= 0x10000, 'a relocated block needs at least one byte');
+/** bytes the user called junk (spec 11.7): start-end, end excluded */
+const junk = z.array(z.object({ start: at, end: at }).refine(j => j.start < j.end && j.end - j.start <= 0x10000, 'a junk area needs at least one byte')).max(65536);
 
 /** .mimir.json on disk (and a .krproj.json saved before the rename) */
 export const serializedProjectSchema = z.object({
@@ -183,6 +185,8 @@ export const serializedProjectSchema = z.object({
   excluded: z.array(at).max(65536).default([]),
   // project files from before blocks could be saved as binary files have none
   binary: z.array(at).max(65536).default([]),
+  // project files from before junk, and those without any, have none
+  junk: junk.optional(),
   // project files from before cartridges, and those without one, have none
   cart: z.object({ name: fileName, data: z.string() }).optional(),
   settings: settingsSchema.default({}),
@@ -213,6 +217,7 @@ export const projectSchema = z.object({
   relocs: z.array(reloc).max(4096),
   excluded: z.array(at).max(65536),
   binary: z.array(at).max(65536),
+  junk: junk.optional(),
   cart: z.object({ name: fileName, crt: crtBytes }).nullable().optional(),
   settings: settingsSchema,
 });

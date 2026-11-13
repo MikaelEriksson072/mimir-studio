@@ -10,6 +10,7 @@ import {
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, makePsid, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
+  addJunk, removeJunk, type JunkArea,
   checkScript, type ScriptTemplate, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
@@ -76,6 +77,8 @@ const ScriptsView = lazy(() => import('./components/ScriptsView').then(m => ({ d
 const kr = window.kr;
 /** how long a block whose type changed stays framed (the .changed animation in app.css) */
 const CHANGED_MS = 4000;
+/** the Junk list of a project without junk */
+const NO_JUNK: readonly JunkArea[] = [];
 const pickToolchain = (s: Settings): ToolchainSettings => Object.fromEntries(TOOLCHAIN_KEYS.map(k => [k, s[k]])) as ToolchainSettings;
 /** the source shown first and opened in the external editor: the first file's, or a cartridge's banks in one source */
 const mainSource = (R: RenderResult): string => R.main ?? `${R.fileNames[0] || 'main'}.asm`;
@@ -1359,6 +1362,31 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     update(`${on ? 'Write' : 'Save'} $${h4(b.start)}-$${h4(b.end - 1)} ${on ? 'in the source' : 'as a binary file'}`, d => { d.binary = on ? d.binary.filter(x => x !== b.start) : [...d.binary, b.start]; });
     toast(on ? `$${h4(b.start)}–$${h4(b.end - 1)} is written in the source again` : `$${h4(b.start)}–$${h4(b.end - 1)} is saved as data/${name}.bin and loaded with .import binary`, 'ok');
   };
+  /** 11.7: `r` is junk: the analysis takes its bytes as not loaded, so the listing, the source and the output do not
+   *  have them; the Explorer's Junk list puts them back */
+  const markJunk = (r: { start: Addr; end: Addr }) => {
+    const rl = A.relocs.find(x => x.start < r.end && r.start < x.end) ?? relocAt(A, r.start) ?? relocAt(A, r.end - 1);
+    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} is a relocated block: stop relocating it before you call its bytes junk`, 'warn'); return; }
+    let n = 0;
+    for (let a = r.start; a < r.end; a++) if (A.owner[a] >= 0) n++;
+    if (!n) { toast(`$${h4(r.start)}–$${h4(r.end - 1)} is not loaded`, 'warn'); return; }
+    const after = A.blocks.find(b => b.start >= r.end && A.owner[b.start] === A.owner[r.start]);
+    update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as junk`, d => { d.junk = addJunk(d.junk, r.start, r.end); });
+    setSel(null);
+    if (after) setCursor(after.start);
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} is junk (${n} byte${n === 1 ? '' : 's'}): it is not in the listing, the source or the output. The Junk list in the Explorer puts it back`, 'ok');
+  };
+  /** a junk area is loaded again: the listing shows it, the source and the output have it */
+  const includeJunk = (j: JunkArea) => {
+    update(`Include $${h4(j.start)}-$${h4(j.end - 1)} again (no longer junk)`, d => { const rest = removeJunk(d.junk, j.start); if (rest.length) d.junk = rest; else d.junk = undefined; });
+    showChanged(j.start, j.end, 'No longer junk');
+    toast(`$${h4(j.start)}–$${h4(j.end - 1)} is back in the listing, the source and the output`, 'ok');
+  };
+  const includeAllJunk = () => {
+    const n = project.junk?.length ?? 0; if (!n) return;
+    update(`Include all ${n} junk area${n === 1 ? '' : 's'} again`, d => { d.junk = undefined; });
+    toast(`${n} junk area${n === 1 ? ' is' : 's are'} back in the listing, the source and the output`, 'ok');
+  };
   const clearOverride = (r?: { start: Addr; end: Addr }) => {
     const rr = r || targetRange(); if (!rr) return;
     update('Clear override', d => { d.overrides.push({ start: rr.start, end: rr.end, type: 'auto' }); });
@@ -2004,6 +2032,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }
   };
   const goPatch = (p: Patch) => { navigate(p.start, { center: true, listing: true }); setSel({ start: p.start, end: patchEnd(p), multi: true, anchor: p.start, anchorEnd: patchEnd(p) }); setTimeout(() => listRef.current?.focus(), 0); };
+  /** the listing where a junk area was (11.7): the bytes right after it, else those right before it */
+  const goJunk = (j: JunkArea) => {
+    const a = A.owner[j.end] >= 0 ? j.end : j.start > 0 && A.owner[j.start - 1] >= 0 ? j.start - 1 : null;
+    if (a == null) { toast(`Nothing loaded is next to $${h4(j.start)}–$${h4(j.end - 1)}`, 'warn'); return; }
+    navigate(a, { center: true, listing: true });
+  };
   /* ---- cycle counting: the branches the user marks as taken (view state, not in the project) ---- */
   const [taken, setTaken] = useState<ReadonlySet<Addr>>(() => new Set());
   const toggleTaken = (pc: Addr) => setTaken(t => { const n = new Set(t); if (n.has(pc)) n.delete(pc); else n.add(pc); return n; });
@@ -2699,6 +2733,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'fold-all', label: 'Fold all blocks', run: () => foldAll('all') },
     { id: 'unfold-all', label: 'Unfold all blocks', run: () => foldAll('none') },
     { id: 'exclude', label: 'Exclude / include the block at the cursor in the build', run: () => { if (cursor != null) toggleExcluded(cursor); } },
+    { id: 'junk', label: 'Mark the selection or the block at the cursor as junk (left out of everything)', run: () => { const r = sel && sel.multi && sel.end > sel.start ? sel : cursor != null ? findBlock(A.blocks, cursor) : null; if (r) markJunk({ start: r.start, end: r.end }); } },
+    ...(project.junk?.length ? [{ id: 'junk-all', label: `Include all junk again (${project.junk.length} area${project.junk.length === 1 ? '' : 's'})`, run: includeAllJunk }] : []),
     { id: 'binary', label: 'Save the block at the cursor as a binary file (.import binary) / write it in the source', run: () => { if (cursor != null) toggleBinary(cursor); } },
     { id: 'merge-prev', label: 'Merge the block at the cursor with the previous block', run: () => mergeBlock('prev') },
     { id: 'merge-next', label: 'Merge the block at the cursor with the next block', run: () => mergeBlock('next') },
@@ -3004,6 +3040,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { sep: true },
       { label: project.excluded.includes(b?.start ?? -1) ? 'Include block in the build' : 'Exclude block from the build', run: () => toggleExcluded(l.a) },
       { label: project.binary.includes(b?.start ?? -1) ? 'Write block in the source again' : 'Save block as a binary file (.import binary)', run: () => toggleBinary(l.a) },
+      // junk (11.7): the selection's bytes or the block's, left out of the listing, the source and the output
+      ...(inSel && cs ? [{ label: 'Mark selection as junk (left out of everything)', run: () => markJunk({ start: cs.start, end: cs.end }) }]
+        : b ? [{ label: 'Mark block as junk (left out of everything)', run: () => markJunk({ start: b.start, end: b.end }) }] : []),
     ];
     /** Program: where it starts and what the analysis traces, new code, code that runs elsewhere, and the pack */
     const programItems: MenuItem[] = [
@@ -3266,6 +3305,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             d.patches = d.patches.filter(p => d.files.some(f => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length));
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
+          junk={{ list: project.junk ?? NO_JUNK, onGo: goJunk, onInclude: includeJunk, onIncludeAll: includeAllJunk }}
           scripts={{ list: userScripts, checks: scriptChecks, patches: project.patches, onNew: () => newUserScript(), onOpen: id => { openUserScript(id); setDrawer(null); }, onRun: id => void runUserScript(id), onRemove: removeUserScript, onAdd: addLibraryScript }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onShowBlock={b => { showBlock(b); setDrawer(null); }}
@@ -3450,7 +3490,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpPair={pairZp} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>

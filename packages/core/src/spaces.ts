@@ -91,7 +91,7 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
   // a music block's init and play are in its bank too
   const overrides = ranged<Override>(project.overrides).map(os => os.map(o => (o.props?.init != null || o.props?.play != null
     ? { ...o, props: { ...o.props, ...(o.props.init != null ? { init: spaceAddr(o.props.init) } : {}), ...(o.props.play != null ? { play: spaceAddr(o.props.play) } : {}) } } : o)));
-  const bankZones = ranged(project.bankZones);
+  const bankZones = ranged(project.bankZones), junk = ranged(project.junk);
   // a relocated block runs in the bank it is loaded in
   const relocs = ranged(project.relocs).map(rs => rs.map(r => ({ ...r, to: spaceAddr(r.to) })));
   const patches = parts.map((): NonNullable<ProjectInput['patches']> => []);
@@ -101,6 +101,7 @@ export function splitProject(project: ProjectInput, layout: { spaces: number[]; 
     p.input = {
       ...project, files: p.files.map(fi => project.files[fi]), labels: labels[i], comments: comments[i], blockComments: blockComments[i], notes: notes[i], blanks: blanks[i], bookmarks: bookmarks[i],
       entries: entries[i], excluded: excluded[i], binary: binary[i], overrides: overrides[i], bankZones: bankZones[i], relocs: relocs[i], patches: patches[i],
+      ...(project.junk ? { junk: junk[i] } : {}),
       entryPoint: ep != null && spaceOf(ep) === p.space ? spaceAddr(ep) : null,
       ...(p.space ? { bank: p.bank } : {}),
     };
@@ -118,7 +119,7 @@ const CALL_ROUNDS = 4;
 export type SpaceCache = Map<number, { files: readonly FileInput[]; cart: unknown; key: string; calls: Addr[]; A: AnalysisResult }>;
 
 /** what decides a space's analysis besides its files (the same objects while they do not change) */
-const inputKey = (p: ProjectInput): string => JSON.stringify([p.overrides, p.entries, p.entryPoint, p.entryPort, p.bankZones, p.relocs, p.settings, p.calls, p.bank]);
+const inputKey = (p: ProjectInput): string => JSON.stringify([p.overrides, p.entries, p.entryPoint, p.entryPort, p.bankZones, p.relocs, p.junk, p.settings, p.calls, p.bank]);
 
 /** The analysis of a project, a space per bank of its cartridge, merged; one space: `analyze` as it is. */
 export function analyze(project: ProjectInput, cache?: SpaceCache): AnalysisResult {

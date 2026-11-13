@@ -131,6 +131,10 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .patch-row .file-meta .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .patch-row .icon-btn { flex: none; }
 .patch-row.off .file-meta { opacity: 0.55; }
+/* the Junk list (spec 11.7): an area's bytes on one line, the icon muted */
+.junk-row > svg { flex: none; color: var(--fg-3); }
+.junk-row .file-meta .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.junk-row .icon-btn { flex: none; }
 /* an on/off switch (a checkbox with role="switch") */
 .switch { appearance: none; flex: none; position: relative; width: 26px; height: 15px; margin: 0; border-radius: 8px; background: var(--line-2); cursor: pointer; transition: background 0.15s; }
 .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--fg-2); transition: transform 0.15s, background 0.15s; }

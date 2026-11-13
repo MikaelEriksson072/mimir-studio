@@ -934,6 +934,46 @@ test('exclude a block from the build', async ({ page }) => {
   });
 });
 
+test('junk is left out of everything, and the Junk list puts it back (11.7)', async ({ page }) => {
+  await waitForListing(page);
+  await goTo(page, 'sine_09b5');
+
+  await test.step('right-click → Mark block as junk', async () => {
+    await headerRow(page, '09b5').click({ button: 'right' });
+    await fromSubmenu(page, 'Block', 'Mark block as junk (left out of everything)');
+    await expect(toast(page, '$09b5–$0ab4 is junk (256 bytes)')).toBeVisible();
+    await expect(headerRow(page, '09b5')).toHaveCount(0);
+    const text = (await listingRows(page)).map(r => r.text);
+    // nothing of it: no #if, no #define, no .label; the code reads the bare address
+    expect(text.filter(t => /sine_09b5|INCLUDE_/.test(t))).toEqual([]);
+    expect(text.some(t => t.includes('lda $09b5,x'))).toBe(true);
+    expect(text).toContain('.pc = $0ab5 "Data"');
+  });
+
+  await test.step('F7 verifies the rest', async () => {
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+    await expect(page.locator('.bottom .build')).toContainText('(256 bytes left out of the build)');
+  });
+
+  await test.step('the Junk list shows it, and Include again puts it back', async () => {
+    await openSection(page, 'Junk');
+    const list = page.getByRole('list', { name: 'Junk' });
+    await expect(list.getByRole('listitem')).toHaveText([/^\$09b5–\$0ab4\s*256 B · ([0-9a-f]{2} ){7}[0-9a-f]{2} …$/i]);
+    await list.getByRole('button', { name: 'Include $09b5–$0ab4 again' }).click();
+    await expect(toast(page, '$09b5–$0ab4 is back in the listing, the source and the output')).toBeVisible();
+    await expect(headerRow(page, '09b5')).toHaveCount(1);
+    await expect(page.getByRole('region', { name: 'Junk', exact: true })).toHaveCount(0);
+  });
+
+  await test.step('Ctrl+Z makes it junk again', async () => {
+    await listing(page).focus();
+    await page.keyboard.press('Control+z');
+    await expect(headerRow(page, '09b5')).toHaveCount(0);
+    await expect(page.getByRole('list', { name: 'Junk' }).getByRole('listitem')).toHaveCount(1);
+  });
+});
+
 test('text in mixed case', async ({ page }) => {
   await waitForListing(page);
   await goTo(page, 'txt_0985'); // screen codes, upper case set

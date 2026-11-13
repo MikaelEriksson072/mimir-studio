@@ -369,6 +369,9 @@ export interface Project {
   relocs: Reloc[]; // bytes the program copies elsewhere to run there (.pseudopc)
   excluded: Addr[]; // starts of the blocks left out of the build (kept in the source under #if)
   binary: Addr[]; // starts of the blocks written to their own file and loaded with .import binary
+  /** bytes the user called junk (spec 11.7), by address, sorted, none touching: not loaded for the analysis, so not in
+   *  the listing, the source or the output; the Explorer's Junk list puts them back. Missing: none */
+  junk?: JunkArea[];
   bookmarks: Record<Addr, Bookmark>; // the user's notes on addresses (the Bookmarks list); not written to the source
   /** zero-page bytes the user joined into a 16-bit variable, by the low byte's address: true, `$a` low and `$a+1` high
    *  (written `name` and `name+1`); false, two variables even where the analysis made a pointer. Missing: none */
@@ -409,6 +412,8 @@ export interface ProjectInput {
   excluded?: Addr[];
   /** starts of the blocks saved as `data/<name>.bin` and loaded with `.import binary` */
   binary?: Addr[];
+  /** bytes left out of everything (Project.junk): the analysis takes them as not loaded */
+  junk?: JunkArea[];
   /** the user's notes on addresses; they change nothing in the analysis or the output */
   bookmarks?: Record<Addr, Bookmark>;
   /** zero-page bytes joined into (true) or split from (false) a 16-bit variable, by the low byte (Project.zpPairs) */
@@ -461,6 +466,8 @@ export interface SerializedProject {
   excluded?: Addr[];
   /** missing in project files from before blocks could be binary files */
   binary?: Addr[];
+  /** missing in project files from before junk, and in those without any */
+  junk?: JunkArea[];
   /** missing in project files from before bookmarks */
   bookmarks?: Record<Addr, Bookmark>;
   /** missing in project files from before zero-page pairs, and in those without one */
@@ -943,7 +950,8 @@ export interface RenderResult {
   fileNames: string[];
   problems: RenderProblem[];
   usedHw: Set<Addr>;
-  /** blocks left out of the build (project.excluded): their bytes are not in the output, `name` is the #if symbol */
+  /** blocks left out of the build (project.excluded): their bytes are not in the output, `name` is the #if symbol; and
+   *  the junk in each file (project.junk, `junk` set, no name), which the source does not have at all */
   excluded: ExcludedRange[];
   /** the render of each space of a merged analysis (spec 13.9b; verify uses them, not sent to the window) */
   parts?: RenderResult[];
@@ -951,7 +959,10 @@ export interface RenderResult {
   main?: string;
 }
 
-export interface ExcludedRange { start: Addr; end: Addr; file: number; name: string }
+export interface ExcludedRange { start: Addr; end: Addr; file: number; name: string; junk?: boolean }
+
+/** Bytes the user called junk (spec 11.7): `start`..`end`, end excluded. */
+export interface JunkArea { start: Addr; end: Addr }
 
 /* ---------- verification ---------- */
 export type Vfs = Record<string, string | Uint8Array>;
