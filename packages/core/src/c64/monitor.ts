@@ -2,7 +2,8 @@
  * `>C:0801  0b 08 0a 00  9e 32 30 36  34 00 00 00  00 00 00 20   ....2064.......`, 16 bytes in groups of four and then
  * the same bytes as text; `i` writes 40 bytes a row as PETSCII text and `ii` as screen codes (`*C:`). VICE's monitor
  * draws the text with the C64 font; here a byte becomes the character the C64 shows, and `.` when it is a control code
- * or a graphics character. */
+ * or a graphics character. The Memory tab writes every mode as `m` does, the hex and then the text (`hex`), the text
+ * as PETSCII or as screen codes, with as many bytes a row as you pick (`MONITOR_PER_ROW`). */
 import type { Addr } from '../types';
 import { h2, h4 } from '../util/hex';
 import { validLabel } from '../render/kick';
@@ -15,6 +16,9 @@ export interface MonitorRow { a: Addr; n: number }
 
 /** bytes per row as VICE prints them in an 80-column monitor: 16 for `m`, 40 for `i` and `ii` */
 export const MONITOR_ROW: Record<MonitorMode, number> = { m: 16, i: 40, ii: 40 };
+/** the bytes a row the Memory tab offers, in every mode: 8 as in a 40-column monitor, 16 as VICE's `m`, 40 as its `i` */
+export const MONITOR_PER_ROW = [8, 16, 32, 40, 64] as const;
+export type MonitorPerRow = (typeof MONITOR_PER_ROW)[number];
 
 /** The loaded parts of memory (`owner[a] >= 0`), in address order. A cartridge's banks one after the other (13.9b)
  *  are ranges at bank addresses, never one range across two banks. */
@@ -88,7 +92,7 @@ export function monitorChar(b: number, screen: boolean, lower = false): MonitorC
 export const monitorTextOf = (mem: ArrayLike<number>, row: MonitorRow, screen: boolean, lower = false): string =>
   Array.from({ length: row.n }, (_, i) => monitorChar(mem[(row.a + i) % mem.length], screen, lower)?.ch ?? '.').join('');
 
-/** The row's hex column for `m`: groups of four, a short last row padded so the text column stays in place. */
+/** The row's hex column: groups of four, a short last row padded so the text column stays in place. */
 export function monitorHexOf(mem: ArrayLike<number>, row: MonitorRow, perRow = MONITOR_ROW.m): string {
   const groups: string[] = [];
   for (let g = 0; g < perRow; g += 4) {
@@ -102,16 +106,20 @@ export function monitorHexOf(mem: ArrayLike<number>, row: MonitorRow, perRow = M
 /** `>C:0801  ` for `m` and `i`, `*C:0801  ` for `ii`, as VICE starts the rows (a bank address as the address in its bank) */
 export const monitorPrefix = (mode: MonitorMode, a: Addr): string => `${mode === 'ii' ? '*' : '>'}C:${h4(a & 0xffff)}  `;
 
-/** A row as VICE prints it. `lower`: the lower case character set; `perRow`: bytes per `m` row (16, or 8 like a 40-column monitor). */
-export function monitorLine(mem: ArrayLike<number>, row: MonitorRow, mode: MonitorMode, opts: { lower?: boolean; perRow?: number } = {}): string {
-  const text = monitorTextOf(mem, row, mode === 'ii', opts.lower);
-  if (mode !== 'm') return monitorPrefix(mode, row.a) + text.padEnd(MONITOR_ROW[mode]);
-  return `${monitorPrefix(mode, row.a)}${monitorHexOf(mem, row, opts.perRow)}   ${text}`;
+/** How a row is written. `lower`: the lower case character set; `perRow`: bytes a row (VICE's for the mode when left
+ *  out); `hex`: the hex column before the text, as `m` has it (left out: in `m` only, as VICE prints them). */
+export interface MonitorLineOpts { lower?: boolean; perRow?: number; hex?: boolean }
+
+/** A row as VICE prints it, or with the hex column in `i` and `ii` too (`hex`), the text then as PETSCII or as screen codes. */
+export function monitorLine(mem: ArrayLike<number>, row: MonitorRow, mode: MonitorMode, opts: MonitorLineOpts = {}): string {
+  const text = monitorTextOf(mem, row, mode === 'ii', opts.lower), perRow = opts.perRow ?? MONITOR_ROW[mode];
+  if (!(opts.hex ?? mode === 'm')) return monitorPrefix(mode, row.a) + text.padEnd(perRow);
+  return `${monitorPrefix(mode, row.a)}${monitorHexOf(mem, row, perRow)}   ${text}`;
 }
 
 /** The dump of the loaded parts of [start, end) as text, one row a line (what Copy puts on the clipboard). */
-export function monitorText(mem: ArrayLike<number>, ranges: readonly MonitorRange[], mode: MonitorMode, opts: { lower?: boolean; perRow?: number } = {}): string {
-  const perRow = mode === 'm' ? opts.perRow ?? MONITOR_ROW.m : MONITOR_ROW[mode];
+export function monitorText(mem: ArrayLike<number>, ranges: readonly MonitorRange[], mode: MonitorMode, opts: MonitorLineOpts = {}): string {
+  const perRow = opts.perRow ?? MONITOR_ROW[mode];
   return monitorRows(ranges, perRow).map(r => monitorLine(mem, r, mode, { ...opts, perRow })).join('\n');
 }
 

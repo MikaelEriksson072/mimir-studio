@@ -4469,11 +4469,16 @@ Fliken **Memory** (även kommandopaletten) visar det laddade minnet som VICE-mon
 text*, *PETSCII* och *Screen codes*, var och en med monitorns kommando som en tangent (`m`, `i`, `ii`), och bredvid vad vyn
 visar (*Hex and text · 16 bytes a row · upper case*), kommandofältet och *Copy*. Under den grupperna *Layout*, *Text* och
 *Find*:
-- **`m`**: en rad är `>C:0801  0b 08 0a 00  9e 32 30 36  34 00 00 00  00 00 00 20   .....2064...... `, alltså adressen, 16
-  byte i grupper om fyra (8 som i en 40-kolumnsmonitor, valbart) och samma byte som text. En kort sista rad fylls ut så att
-  textkolumnen står kvar.
-- **`i`**: 40 byte per rad som PETSCII-text.
-- **`ii`**: 40 byte per rad som skärmkoder, med `*C:` först. `$80-$ff` visas inverterade.
+- **`m`**: en rad är `>C:0801  0b 08 0a 00  9e 32 30 36  34 00 00 00  00 00 00 20   .....2064...... `, alltså adressen,
+  bytena i hex i grupper om fyra och samma byte som PETSCII-text. En kort sista rad fylls ut så att textkolumnen står kvar.
+- **`i`**: samma rad som `m`, med texten som PETSCII.
+- **`ii`**: samma rad som `m`, med `*C:` först och texten som skärmkoder. `$80-$ff` visas inverterade:
+  `*C:0985  08 05 0c 0c  0f 20 06 12  0f 0d 20 14  08 05 20 0d   HELLO FROM THE M`.
+
+Alla tre lägena ser alltså likadana ut, och bara textkolumnen skiljer (VICE:s egna `i` och `ii` visar bara texten, 40
+byte per rad). *Per row* under *Layout* väljer hur många byte en rad har, i alla lägen: 8 (som i en 40-kolumnsmonitor),
+16 (VICE:s `m`, förvalt), 32, 40 (VICE:s `i` och `ii`) eller 64 (`MONITOR_PER_ROW`). Valet sparas, och en byte står kvar på
+samma rad när man byter läge. En rad som är bredare än vyn scrollas i sidled.
 
 VICE skriver textkolumnen som bytena själva och låter monitorns C64-typsnitt rita dem. Här blir en byte det tecken C64:an
 visar (`monitorChar`), i teckenuppsättningen med versaler och grafik eller, med *Lower case*, den med gemener. `£ ↑ ← π`
@@ -4516,13 +4521,14 @@ Statusen säger vilken träff det är och hur den matchade (*1 of 2 matches · P
   adressen står kvar, och en text utan bokstäver och siffror behåller `txt_<adress>`. Markeringen och etiketten är ett
   ångrasteg.
 
-**Kopiera:** *Copy selection* / *Copy all* lägger raderna på urklipp som VICE skriver dem (`monitorText`), med raderna från
-markeringens början. Raden under vyn beskriver byten under musen eller vid markören: värdet i hex, decimalt och binärt,
+**Kopiera:** *Copy selection* / *Copy all* lägger raderna på urklipp som vyn visar dem (`monitorText` med `hex`), med lika
+många byte per rad och raderna från markeringens början; i `m` med 16 per rad är det exakt det VICE skriver. Raden under vyn beskriver byten under musen eller vid markören: värdet i hex, decimalt och binärt,
 tecknet som PETSCII och som skärmkod, och blocket. *Block colours* färgar byten efter blockets typ som i minneskartan.
 
 **Test:** `packages/core/test/monitor.test.ts` kör riktiga x64sc 3.10 (`-console`, egen konfigurationsfil, `logname`/`log on`
 i monitorn), som laddar demon och skriver `m 0801 08ff`, `i` och `ii`. Radadresserna och hexkolumnen ska vara exakt de VICE
-skriver, och textkolumnen bytena själva. E2e-testet går igenom `m`, `i` och `ii`, markören, piltangenterna, ett kommando,
+skriver, och textkolumnen bytena själva. Ett eget test skriver `i` och `ii` med hexkolumnen och 8, 16, 40 och 64 byte per
+rad. E2e-testet går igenom `m`, `i` och `ii` (`ii` med hex och skärmkoder, 64 per rad), markören, piltangenterna, ett kommando,
 *Copy selection*, *Mark as Bytes*, `Enter` som markerar en text med sitt första ord som etikett och dubbelklicket till
 listningen.
 

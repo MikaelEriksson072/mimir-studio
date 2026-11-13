@@ -65,6 +65,21 @@ describe('the dump', () => {
     expect(monitorText(mem, [{ start: 0x0801, end: 0x0821 }], 'm').split('\n').map(l => l.slice(0, 7))).toEqual(['>C:0801', '>C:0811']);
   });
 
+  it('writes i and ii as m with the hex column, the text as PETSCII or screen codes, and as many bytes a row as asked', () => {
+    expect(monitorLine(mem, { a: 0x0801, n: 8 }, 'i', { perRow: 8, hex: true })).toBe('>C:0801  0b 08 0a 00  9e 32 30 36   .....206');
+    // $9e as a screen code is an inverse ↑
+    expect(monitorLine(mem, { a: 0x0801, n: 8 }, 'ii', { perRow: 8, hex: true })).toBe('*C:0801  0b 08 0a 00  9e 32 30 36   KHJ@↑206');
+    // 64 a row: 16 groups of four, the text after them; the rows of i and ii follow the count too
+    const wide = monitorText(mem, [{ start: 0x0801, end: 0x0900 }], 'ii', { perRow: 64, hex: true }).split('\n');
+    expect(wide.map(l => l.slice(0, 7))).toEqual(['*C:0801', '*C:0841', '*C:0881', '*C:08c1']);
+    const textAt = 9 + 64 * 3 - 1 + 15 + 3;
+    expect(wide[0]).toHaveLength(textAt + 64);
+    // the short last row keeps the text column in place
+    expect(wide[3].slice(textAt)).toHaveLength(63);
+    expect(monitorText(mem, [{ start: 0x0801, end: 0x0821 }], 'i', { perRow: 16 }).split('\n').map(l => l.slice(0, 7))).toEqual(['>C:0801', '>C:0811']);
+    expect(monitorLine(mem, { a: 0x0801, n: 40 }, 'm', { perRow: 40 }).slice(9, 9 + 10 * 13 - 2).split('  ')).toHaveLength(10);
+  });
+
   it('reads VICE commands, addresses and labels', () => {
     const labels = (n: string) => ({ start: 0x0810, screen: 0x0400 } as Record<string, number>)[n];
     expect(parseMonitorCommand('m 0801 08ff')).toEqual({ mode: 'm', start: 0x0801, end: 0x0900 });

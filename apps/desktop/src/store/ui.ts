@@ -1,6 +1,6 @@
 /* Per-user UI preferences, persisted in localStorage. */
 import { create } from 'zustand';
-import { DEFAULT_PACK, type BlockKind, type MonitorMode, type PackPrefs } from '@mimir/core';
+import { DEFAULT_PACK, MONITOR_PER_ROW, type BlockKind, type MonitorMode, type MonitorPerRow, type PackPrefs } from '@mimir/core';
 import { store } from '../lib/util';
 import { bitmapRowsOf, spriteColsOf } from '../lib/gfxview';
 
@@ -44,9 +44,16 @@ export function gfxPrefs(saved: Partial<GfxPrefs>): GfxPrefs {
   p.spriteCols = spriteColsOf(p.spriteCols);
   return p;
 }
-/** the Memory tab: VICE's m (hex and text, 16 or 8 bytes a row), i (PETSCII) or ii (screen codes), which character set, block colours */
-export interface MonPrefs { mode: MonitorMode; perRow: 8 | 16; lower: boolean; colors: boolean }
+/** the Memory tab: VICE's m, i (PETSCII) or ii (screen codes), each as hex and text with `perRow` bytes a row, which
+ *  character set, block colours */
+export interface MonPrefs { mode: MonitorMode; perRow: MonitorPerRow; lower: boolean; colors: boolean }
 const MON_DEFAULTS: MonPrefs = { mode: 'm', perRow: 16, lower: false, colors: false };
+/** The saved Memory settings over the defaults; bytes a row the tab does not offer are 16. */
+export function monPrefs(saved: Partial<MonPrefs>): MonPrefs {
+  const p = { ...MON_DEFAULTS, ...saved };
+  if (!MONITOR_PER_ROW.includes(p.perRow)) p.perRow = MON_DEFAULTS.perRow;
+  return p;
+}
 
 interface UiState {
   theme: Theme;
@@ -132,7 +139,7 @@ export const useUi = create<UiState>((set) => ({
   blkOpen: [],
   bmColors: bmColorsOf(store.get<unknown>('kr.bmColors', [])),
   gfx: gfxPrefs(store.get<Partial<GfxPrefs>>('kr.gfx', {})),
-  mon: { ...MON_DEFAULTS, ...store.get<Partial<MonPrefs>>('kr.mon', {}) },
+  mon: monPrefs(store.get<Partial<MonPrefs>>('kr.mon', {})),
   sizes: store.get<Sizes>('kr.sizes', { side: 272, insp: 312, bottom: 230 }),
   set: patch => set(patch),
 }));

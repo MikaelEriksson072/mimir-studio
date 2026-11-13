@@ -3993,16 +3993,22 @@ test('the Memory tab shows the program as the VICE monitor does: m, i and ii', a
     ]);
   });
 
-  await test.step('ii shows screen codes, in the lower case set too; i shows PETSCII 40 to a row', async () => {
+  await test.step('ii and i are laid out as m: the hex, then the text as screen codes or PETSCII, as many a row as picked', async () => {
     await command('ii 0985');
     await expect(page.getByRole('button', { name: 'Screen codes (ii)' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(row('0985')).toHaveText(/^\*C:0985 {2}HELLO FROM THE MIMIR STUDIO DEMO/);
+    await expect(row('0985')).toHaveText('*C:0985  08 05 0c 0c  0f 20 06 12  0f 0d 20 14  08 05 20 0d   HELLO FROM THE M');
     await page.getByText('Lower case', { exact: true }).click();
-    await expect(row('0985')).toHaveText(/^\*C:0985 {2}hello from the mimir studio demo/);
+    await expect(row('0985')).toHaveText(/ {3}hello from the m$/);
     await page.getByText('Lower case', { exact: true }).click();
+    // 64 a row, in every mode
+    await page.locator('.monv').getByLabel('Bytes per row').selectOption('64');
+    await expect(row('0985')).toContainText('HELLO FROM THE MIMIR STUDIO DEMO');
+    await expect(row('0985').locator('.mon-b')).toHaveCount(64);
     await command('i 0801');
-    await expect(row('0801')).toHaveText(/^>C:0801 {2}\.{5}2064/);
-    await expect(row('0829')).toBeVisible();
+    await expect(row('0801')).toHaveText(/^>C:0801 {2}0b 08 0a 00 {2}9e 32 30 36 .* {3}\.{5}2064/);
+    await expect(row('0841')).toBeVisible();
+    await page.locator('.monv').getByLabel('Bytes per row').selectOption('16');
+    await expect(row('0811')).toBeVisible();
     await command('m nowhere');
     await expect(page.locator('.monv [role="alert"]')).toContainText('neither a hex address nor a label');
   });

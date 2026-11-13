@@ -1,5 +1,6 @@
-/* Memory tab (spec 14.6): the loaded memory as the VICE monitor prints it. `m` shows 16 (or 8) bytes a row in hex
- * with the same bytes as text, `i` 40 bytes a row as PETSCII text and `ii` as screen codes, the inverse ones inverted.
+/* Memory tab (spec 14.6): the loaded memory as the VICE monitor prints it. Every mode is laid out as `m`: the bytes in
+ * hex, in groups of four, and the same bytes as text, 8, 16, 32, 40 or 64 a row (*Per row*, the same in every mode);
+ * the text is PETSCII in `m` and `i` and screen codes in `ii`, the inverse ones inverted.
  * The cursor and the selection are the listing's: a click puts the cursor on a byte, Shift+click or a drag selects,
  * the arrow keys move. The command field takes VICE's commands (`m 0801 08ff`, `ii 0400`); Copy writes the rows as
  * VICE does. Find searches text (as PETSCII and as screen codes) or bytes, marks every hit and steps through them.
@@ -11,8 +12,8 @@
  * editor was in memory (the listing's or Graphics' top, spec 14.6b), and says where it was scrolled to for the tab opened next. */
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  clipRanges, findBlock, findInMemory, h2, h4, kindInfo, loadedRanges, monitorChar, monitorPrefix, monitorRows, monitorText, MONITOR_ROW, nextZero, parseMonitorCommand,
-  type Addr, type AnalysisResult, type FindAs, type MemoryMatch, type MonitorMode, type MonitorRange, type MonitorRow, type RenderResult,
+  clipRanges, findBlock, findInMemory, h2, h4, kindInfo, loadedRanges, monitorChar, monitorPrefix, monitorRows, monitorText, MONITOR_PER_ROW, nextZero, parseMonitorCommand,
+  type Addr, type AnalysisResult, type FindAs, type MemoryMatch, type MonitorMode, type MonitorPerRow, type MonitorRange, type MonitorRow, type RenderResult,
 } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
@@ -21,10 +22,12 @@ import type { Sel } from '../lib/types';
 import { useUi, type MonPrefs } from '../store/ui';
 
 const MODES: ViewMode<MonitorMode>[] = [
-  { key: 'm', label: 'Hex and text', badge: 'm', name: 'Hex and text (m)', title: 'Hex and text, as the monitor command m' },
-  { key: 'i', label: 'PETSCII', badge: 'i', name: 'PETSCII (i)', title: 'PETSCII text, 40 bytes a row, as the monitor command i' },
-  { key: 'ii', label: 'Screen codes', badge: 'ii', name: 'Screen codes (ii)', title: 'Screen codes, 40 bytes a row, as the monitor command ii' },
+  { key: 'm', label: 'Hex and text', badge: 'm', name: 'Hex and text (m)', title: 'Hex and the same bytes as PETSCII text, as the monitor command m' },
+  { key: 'i', label: 'PETSCII', badge: 'i', name: 'PETSCII (i)', title: 'Hex and the same bytes as PETSCII text; the monitor command i shows the text' },
+  { key: 'ii', label: 'Screen codes', badge: 'ii', name: 'Screen codes (ii)', title: 'Hex and the same bytes as screen codes, the inverse ones inverted; the monitor command ii shows the text' },
 ];
+/** the bytes a row offered, with what each is like */
+const PER_ROW_NOTE: Partial<Record<MonitorPerRow, string>> = { 8: ' (40 columns)', 40: ' (as i and ii)' };
 /** what a selection can be marked as from here: text in the character set the dump shows (the lower case one: mixed case) */
 const marks = (lower: boolean): [string, string][] => [
   lower ? ['textmix', 'Text (mixed case)'] : ['text', 'Text'], lower ? ['textscmix', 'Text (screen codes, mixed case)'] : ['textsc', 'Text (screen codes)'],
@@ -71,7 +74,7 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   const prefs = useUi(s => s.mon), setUi = useUi(s => s.set);
   const set = (p: Partial<MonPrefs>) => setUi({ mon: { ...useUi.getState().mon, ...p } });
   const { mode, lower, colors } = prefs;
-  const perRow = mode === 'm' ? prefs.perRow : MONITOR_ROW[mode];
+  const perRow = prefs.perRow;
   const ranges = useMemo(() => loadedRanges(A.owner), [A]);
   /** where a command started the rows (`m 0985`: a row at $0985, as in VICE); null: at each range's start */
   const [origin, setOrigin] = useState<Addr | null>(null);
@@ -314,10 +317,10 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
   // with every bank: each bank's rows under its line, as the dump shows them
   const copy = () => {
     const rs = copyRanges();
-    if (!spaces) { onCopy(monitorText(A.mem, rs, mode, { lower, perRow })); return; }
+    if (!spaces) { onCopy(monitorText(A.mem, rs, mode, { lower, perRow, hex: true })); return; }
     const parts = [...new Set(rs.map(r => Math.floor(r.start / 0x10000)))].map(sp => {
       const mine = rs.filter(r => Math.floor(r.start / 0x10000) === sp);
-      return `${bankLine(bankOf(mine[0].start), mine[0].start, mine[mine.length - 1].end)}\n${monitorText(A.mem, mine, mode, { lower, perRow })}`;
+      return `${bankLine(bankOf(mine[0].start), mine[0].start, mine[mine.length - 1].end)}\n${monitorText(A.mem, mine, mode, { lower, perRow, hex: true })}`;
     });
     onCopy(parts.join('\n'));
   };
@@ -344,11 +347,9 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
     rows.push(
       <div key={i} className="mon-row" style={{ top: i * ROW }}>
         <span className="mon-adr" data-a={a}>{bankTag(a)}{monitorPrefix(mode, a)}</span>
-        {mode === 'm' ? <>
-          <span className="mon-hex">{Array.from({ length: perRow }, (_, k) => (
-            <Fragment key={k}>{k > 0 && (k % 4 === 0 ? '  ' : ' ')}{k < n ? <span data-a={a + k} className={cx('mon-b', cls(a + k))} style={col(a + k)}>{h2(A.mem[a + k])}</span> : '  '}</Fragment>))}</span>
-          <span className="mon-sep">{'   '}</span>
-        </> : null}
+        <span className="mon-hex">{Array.from({ length: perRow }, (_, k) => (
+          <Fragment key={k}>{k > 0 && (k % 4 === 0 ? '  ' : ' ')}{k < n ? <span data-a={a + k} className={cx('mon-b', cls(a + k))} style={col(a + k)}>{h2(A.mem[a + k])}</span> : '  '}</Fragment>))}</span>
+        <span className="mon-sep">{'   '}</span>
         <span className="mon-txt">{text}</span>
       </div>);
   }
@@ -369,9 +370,11 @@ export function MemoryDump({ A, R, cursor, sel, onCursor, onSelect, onClear, onM
         </form>
         <button className="btn small" onClick={copy} title={range ? 'Copy the selected bytes as monitor text' : 'Copy all loaded memory as monitor text'}><Icon name="copy" size={13} />{range ? 'Copy selection' : 'Copy all'}</button></>} />
       <div className="gfxv-bar view-opts">
-        {mode === 'm' && <OptGroup title="Layout">
-          <label className="gfxv-field">Per row<select aria-label="Bytes per row" value={prefs.perRow} onChange={e => set({ perRow: +e.target.value as 8 | 16 })}><option value={16}>16</option><option value={8}>8 (40 columns)</option></select></label>
-        </OptGroup>}
+        <OptGroup title="Layout">
+          <label className="gfxv-field" title="Bytes a row, in every mode">Per row<select aria-label="Bytes per row" value={perRow} onChange={e => set({ perRow: +e.target.value as MonitorPerRow })}>
+            {MONITOR_PER_ROW.map(k => <option key={k} value={k}>{k}{PER_ROW_NOTE[k] ?? ''}</option>)}
+          </select></label>
+        </OptGroup>
         <OptGroup title="Text">
           <label className="check gfxv-mc"><input type="checkbox" checked={lower} onChange={e => set({ lower: e.target.checked })} /><span>Lower case</span></label>
           <label className="check gfxv-mc" title="Colour the bytes by the type of their block, as in the memory map"><input type="checkbox" checked={colors} onChange={e => set({ colors: e.target.checked })} /><span>Block colours</span></label>
