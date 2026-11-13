@@ -69,6 +69,15 @@ const api: KrApi = {
     return () => { ipcRenderer.removeListener(CHANNELS.windowClosing, listener); };
   },
   answerClose: req => invoke(CHANNELS.windowClose, req),
+  gitVersion: () => invoke(CHANNELS.gitVersion),
+  gitStatus: () => invoke(CHANNELS.gitStatus),
+  gitInit: () => invoke(CHANNELS.gitInit),
+  gitStage: req => invoke(CHANNELS.gitStage, req ?? {}),
+  gitUnstage: req => invoke(CHANNELS.gitUnstage, req ?? {}),
+  gitCommit: req => invoke(CHANNELS.gitCommit, req),
+  gitPush: () => invoke(CHANNELS.gitPush),
+  gitRemote: req => invoke(CHANNELS.gitRemote, req),
+  gitDiff: req => invoke(CHANNELS.gitDiff, req),
 };
 
 contextBridge.exposeInMainWorld('kr', api);

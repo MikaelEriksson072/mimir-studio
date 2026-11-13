@@ -192,6 +192,7 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
 - Optional: Java and Kick Assembler (`KickAss.jar`), to build the exported projects and to verify against the real
   assembler.
 - Optional: VICE (`x64sc`), for *Build & Run*.
+- Optional: [Git for Windows](https://git-scm.com/), for the *Git* tab (a project can be a git repository).
 
 The app finds `KickAss.jar` and `x64sc` in the usual folders (for example `C:\C64\...`). You can change them in
 **Settings → Toolchain**.
@@ -223,7 +224,10 @@ it assembles first, with Brokkr or Exomizer as they are: no project, no analysis
 source (`source`), the build (`build`) and the packed file (`packed`) go there, Mimir saves the project as you work, and
 the next start offers to continue it. Without a project you work as before, and Mimir keeps the work for the next
 start; *Save* (`Ctrl+S`) then creates a project and moves the work into its folder, with the last export, build and
-packed file.
+packed file. Tick *Create a git repository (.git) in the folder* in the New project form and the folder becomes a git
+repository (with a `.gitignore` that leaves out `build` and a `.gitattributes` that keeps C64 files binary); the **Git**
+tab next to *Scripts* then shows what changed, stages it, commits it and pushes it to GitHub or another remote (it can
+make an existing project a repository too).
 
 1. **Open a program.** Use the *File* menu: *Smart attach…* opens any of them, each file by its extension (`.prg`,
    `.vsf`, `.crt`, `.d64`, `.g64`, `.tap`, `.t64`, a project, or a Kick Assembler `.asm` that Brokkr packs), or pick the kind: *Open PRG

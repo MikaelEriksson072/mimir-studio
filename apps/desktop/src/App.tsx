@@ -64,7 +64,7 @@ import type { PackProgress, PackResult } from './components/Pack';
 import { ContextMenu } from './components/ContextMenu';
 import { Splitter } from './components/Splitter';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, StartScreen, UnsavedWorkModal } from './components/Start';
+import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, gitNote, StartScreen, UnsavedWorkModal } from './components/Start';
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo, RunRequest, RunResult } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
@@ -73,6 +73,7 @@ import { GFX_KIND } from './lib/overview';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
+const GitView = lazy(() => import('./components/GitView').then(m => ({ default: m.GitView })));
 const DriveView = lazy(() => import('./components/DriveView').then(m => ({ default: m.DriveView })));
 const ScriptsView = lazy(() => import('./components/ScriptsView').then(m => ({ default: m.ScriptsView })));
 
@@ -382,17 +383,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** closed without saving: work without a project is kept for the next start as before, a project's last change goes */
   const closeUnsaved = () => { pending.current = {}; keepUnsavedWork(); setCloseAsk(null); closeWindow(); };
   /** "Save as a project…" before closing: the work made a project, then the window closes */
-  const saveThenClose = async (name: string, parent: string) => { await createFromWork(name, parent); setCloseAsk(null); closeWindow(); };
+  const saveThenClose = async (name: string, parent: string, git: boolean) => { await createFromWork(name, parent, git); setCloseAsk(null); closeWindow(); };
 
   /** the work (or the one the window keeps) made a project, as "Save as a project…" asked; then what waited */
-  const saveFirstAs = async (name: string, parent: string) => {
+  const saveFirstAs = async (name: string, parent: string, git: boolean) => {
     const s = saveFirst;
     if (!kr || !s) return;
     if (s.kept) {
-      const r = await kr.createProject({ name, parent, project: s.kept });
+      const r = await kr.createProject({ name, parent, project: s.kept, git });
       forgetUnsavedWork();
-      toast(`Created the project ${r.home.name} in ${r.home.dir}: the work without a project is saved there`, 'ok');
-    } else await createFromWork(name, parent);
+      const g = gitNote(r);
+      toast(`Created the project ${r.home.name} in ${r.home.dir}${g.text}: the work without a project is saved there`, g.bad ? 'warn' : 'ok');
+    } else await createFromWork(name, parent, git);
     setSaveFirst(null);
     setAfterSave({ go: s.go });
   };
@@ -2627,10 +2629,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return ['the project (its files, labels, comments, bookmarks and patches)', ...(g.exportDir ? [`the export (copied from ${g.exportDir})`] : []), ...(g.buildDir ? ['the last build'] : []), ...(g.packed ? [`the packed file ${packRes?.name}`] : [])];
   };
   /** a project for the work without one: its folder made, the work saved and moved there; it goes on in the project */
-  const createFromWork = async (name: string, parent: string) => {
+  const createFromWork = async (name: string, parent: string, git: boolean) => {
     if (!kr) return;
     const gather = gathered();
-    const r = await kr.createProject({ name, parent, project, gather });
+    const r = await kr.createProject({ name, parent, project, gather, git });
     setHome(r.home);
     forgetUnsavedWork();
     setModal(null);
@@ -2643,7 +2645,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     }
     if (packed) setPackRes(x => x && { ...x, path: packed });
     const moved = [source && 'the export', built && 'the last build', packed && 'the packed file'].filter(Boolean);
-    toast(`Created the project ${r.home.name} in ${r.home.dir}: the work is saved there${moved.length ? `, with ${moved.join(', ')}` : ''}`, 'ok');
+    const g = gitNote(r);
+    toast(`Created the project ${r.home.name} in ${r.home.dir}${g.text}: the work is saved there${moved.length ? `, with ${moved.join(', ')}` : ''}`, g.bad ? 'warn' : 'ok');
   };
   const copyText = async (t: string | undefined, what = 'Copied to clipboard') => { if (!t) return; try { await navigator.clipboard.writeText(t); toast(what, 'ok'); } catch { toast('The clipboard is not available; select the text and copy it manually', 'warn'); } };
   /**
@@ -2840,6 +2843,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-scripts', label: 'Show the scripts: Kick Assembler code that runs in Mimir on a copy of the program', run: () => setUi({ tab: 'scripts' }) },
+    { id: 'tab-git', label: 'Git: stage, commit and push the project (the Git tab)', run: () => setUi({ tab: 'git' }) },
     { id: 'script-new', label: sel && sel.multi && sel.end > sel.start ? 'New script from the selection (runs in Mimir on a copy of the program)' : 'New script (Kick Assembler code that runs in Mimir on a copy of the program)', run: () => newUserScript(sel && sel.multi && sel.end > sel.start ? rangeLines(sel.start, sel.end) : []) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
     { id: 'overview', label: 'Show the analysis overview: what the analysis found, with links to each part', run: () => setModal('overview') },
@@ -3332,7 +3336,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'script', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'script', 'Scripts'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'script' | 'git', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'script', 'Scripts'], ['git', 'git', 'Git'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
 
   return (
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
@@ -3488,6 +3492,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                   setMenu({ x, y, items: [...('children' in m ? [{ header: m.label }, ...m.children] : [m]), ...(bm ? [{ sep: true }, bm] satisfies MenuItem[] : [])] });
                 }} />}
               {tab === 'spec' && <SpecView />}
+              {tab === 'git' && <GitView home={home} saveNow={saveNow} onCreateProject={() => setModal('project')} onTerminal={() => void openTerminal()} toast={toast} />}
               {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}

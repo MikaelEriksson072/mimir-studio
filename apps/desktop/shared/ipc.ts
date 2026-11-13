@@ -46,6 +46,15 @@ export const CHANNELS = {
   settingsSet: 'settings:set',
   settingsLocate: 'settings:locate',
   windowClose: 'window:close',
+  gitVersion: 'git:version',
+  gitStatus: 'git:status',
+  gitInit: 'git:init',
+  gitStage: 'git:stage',
+  gitUnstage: 'git:unstage',
+  gitCommit: 'git:commit',
+  gitPush: 'git:push',
+  gitRemote: 'git:remote',
+  gitDiff: 'git:diff',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
@@ -83,9 +92,10 @@ export interface ProjectStartInfo {
  * the start info gave or one picked with project:parent. `gather`: the work done without a project that moves into it,
  * the folder of the last export (copied to source/), of the last build (build/) and the packed file (packed/).
  */
-export interface ProjectCreateRequest { name: string; parent: string; project: Project; gather?: { exportDir?: string; buildDir?: string; packed?: string } }
-/** `moved`: where the gathered work is now */
-export interface ProjectCreateResult { home: ProjectHome; moved: { source?: string; build?: string; packed?: string } }
+/** `git`: a git repository is made in the new folder too (git:init), with Mimir's .gitignore and .gitattributes */
+export interface ProjectCreateRequest { name: string; parent: string; project: Project; gather?: { exportDir?: string; buildDir?: string; packed?: string }; git?: boolean }
+/** `moved`: where the gathered work is now; `git`: how making the repository went, when it was asked for */
+export interface ProjectCreateResult { home: ProjectHome; moved: { source?: string; build?: string; packed?: string }; git?: GitInitOutcome }
 export interface ProjectParentResult { dir: string }
 
 /** `path` omitted (or not previously used in this session): the main process shows a save dialog. */
@@ -318,6 +328,54 @@ export interface QuicksaveRenameRequest { id: string; name: string }
 /** the kept quicksave `id` made a favourite (`on`), or one no more */
 export interface QuicksaveFavouriteRequest { id: string; on: boolean }
 
+/* ---------------------------------------------------------------------
+ * Git (spec 13.10b): always the repository of the project that is open (its folder, or the repository it is in); the
+ * renderer names files in it, never a folder, a program or a remote's branch.
+ * --------------------------------------------------------------------- */
+
+/** the git found (on PATH, or where Git for Windows installs itself); null: none */
+export type GitVersion = { path: string; version: string } | null;
+/** a change as git status writes it: `.` none, M modified, T type changed, A added, D deleted, R renamed, C copied,
+ *  U in conflict, ? untracked */
+export type GitChange = '.' | 'M' | 'T' | 'A' | 'D' | 'R' | 'C' | 'U' | '?';
+/** a file git sees changed: its path from the repository's root (with /), the change staged (`index`) and the one in
+ *  the folder that is not (`work`); `from`: a rename's or copy's old path */
+export interface GitFile { path: string; from?: string; index: GitChange; work: GitChange; kind: 'changed' | 'untracked' | 'conflict' }
+export interface GitRemote { name: string; url: string }
+export interface GitCommit { hash: string; short: string; author: string; time: number; subject: string }
+export interface GitRepo {
+  /** the repository's folder: the project's, or one above it */
+  root: string;
+  /** the branch checked out; null: a detached HEAD */
+  branch: string | null;
+  /** the commit HEAD is at; null: no commit yet */
+  head: string | null;
+  /** the branch it pushes to and pulls from (origin/main); null: none yet (the first push sets it) */
+  upstream: string | null;
+  /** commits not pushed, and commits on the upstream not here (as of the last fetch) */
+  ahead: number;
+  behind: number;
+  remotes: GitRemote[];
+  files: GitFile[];
+  /** the newest commits, the newest first */
+  log: GitCommit[];
+}
+/** `dir`: the project's folder (null: work without a project); `repo` null: it is in no repository */
+export interface GitStatus { git: GitVersion; dir: string | null; repo: GitRepo | null }
+/** a git command's outcome: what it wrote, its command line and the repository after it */
+export interface GitOpResult { ok: boolean; output: string; argv: string[][]; status: GitStatus }
+/** `paths` from the repository's root; none: every change */
+export interface GitPathsRequest { paths?: string[] }
+export interface GitCommitRequest { message: string }
+/** origin's URL: added, or changed when there is an origin */
+export interface GitRemoteRequest { url: string }
+/** the changes of one file: staged (`git diff --cached`) or not; an untracked file is shown whole */
+export interface GitDiffRequest { path: string; from?: string; staged: boolean }
+export interface GitDiffResult { text: string; truncated: boolean; binary: boolean }
+/** how making a project's repository went: `root` the repository's folder; `nested`: the folder above it that was
+ *  a repository already (the new one is a repository of its own inside it); `ok` false: `message` says why not */
+export interface GitInitOutcome { ok: boolean; root: string; nested: string | null; message: string }
+
 export interface KrApi {
   openProject(req?: ProjectOpenRequest): Promise<ProjectOpenResult | null>;
   saveProject(req: ProjectSaveRequest): Promise<ProjectSaveResult | null>;
@@ -384,4 +442,17 @@ export interface KrApi {
   onCloseAsked(cb: () => void): () => void;
   /** the page's answer: the window closes now, or waits for the page (it asks the user first) */
   answerClose(req: WindowCloseRequest): Promise<void>;
+  /** the git found on this computer; null: none */
+  gitVersion(): Promise<GitVersion>;
+  /** the project's repository: its branch, remotes, changed files and newest commits */
+  gitStatus(): Promise<GitStatus>;
+  /** a repository made in the project's folder, with Mimir's .gitignore and .gitattributes */
+  gitInit(): Promise<GitOpResult>;
+  gitStage(req?: GitPathsRequest): Promise<GitOpResult>;
+  gitUnstage(req?: GitPathsRequest): Promise<GitOpResult>;
+  gitCommit(req: GitCommitRequest): Promise<GitOpResult>;
+  /** the branch pushed to its upstream, or to origin (setting it as the upstream) when it has none */
+  gitPush(): Promise<GitOpResult>;
+  gitRemote(req: GitRemoteRequest): Promise<GitOpResult>;
+  gitDiff(req: GitDiffRequest): Promise<GitDiffResult>;
 }

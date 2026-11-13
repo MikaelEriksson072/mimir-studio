@@ -5,7 +5,7 @@ import { store } from '../lib/util';
 import { bitmapRowsOf, spriteColsOf } from '../lib/gfxview';
 
 export type Theme = 'dark' | 'light';
-export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem' | 'scripts';
+export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem' | 'scripts' | 'git';
 export type BottomTab = 'log' | 'messages' | 'problems' | 'xrefs' | 'irqs' | 'relocs' | 'spindle' | 'bitfire' | 'booze' | 'sparkle' | 'krill' | 'covert' | 'pirateslayer' | 'tape' | 'stats' | 'build';
 export type Activity = 'explorer' | 'blocks' | 'symbols' | 'bookmarks' | 'scripts' | 'pack';
 export interface Sizes { side: number; insp: number; bottom: number }
@@ -92,6 +92,8 @@ interface UiState {
   autoMerge: boolean;
   /** how Pack on the start screen packs a file without a project (the packer, format, kind of file …), for the next time */
   quickPack: PackPrefs;
+  /** New project makes a git repository in the project's folder too (the box as it was ticked last) */
+  newProjectGit: boolean;
   /** the side panel's sections opened in this run (by id); not persisted: every section is closed when the app starts */
   sideOpen: string[];
   /** the Blocks view's folders (a block type each) opened in this run; not persisted: every folder is closed when the app starts */
@@ -110,7 +112,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'textCols', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'diskLook', 'autoMerge', 'quickPack', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'textCols', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'diskLook', 'autoMerge', 'quickPack', 'newProjectGit', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -135,6 +137,7 @@ export const useUi = create<UiState>((set) => ({
   diskLook: store.get<DiskLook>('kr.diskLook', 'mimir') === 'c64' ? 'c64' : 'mimir',
   autoMerge: store.get('kr.autoMerge', true),
   quickPack: { ...DEFAULT_PACK, ...store.get<Partial<PackPrefs>>('kr.quickPack', {}) },
+  newProjectGit: store.get<unknown>('kr.newProjectGit', false) === true,
   sideOpen: [],
   blkOpen: [],
   bmColors: bmColorsOf(store.get<unknown>('kr.bmColors', [])),

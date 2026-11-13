@@ -2593,7 +2593,7 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `project:open` | renderer → main | `{ path? }` → `{ path, project, home }` (dialog om sökväg saknas; en sökväg måste ligga i en mapp vald i sessionen eller vara ett projekt öppnat förut); projektets mapp är där det som skrivs hamnar från och med nu (13.10) |
 | `project:save` | renderer → main | `{ project, path? }` → `{ path }` |
 | `project:start` | renderer → main | → `{ last, resume, recent, parent }`: det startskärmen erbjuder (13.10) |
-| `project:create` | renderer → main | `{ name, parent, project, gather? }` → `{ home, moved }`: ett nytt projekts mapp med projektet sparat i, och arbetet utan projekt flyttat dit |
+| `project:create` | renderer → main | `{ name, parent, project, gather?, git? }` → `{ home, moved, git? }`: ett nytt projekts mapp med projektet sparat i, och arbetet utan projekt flyttat dit; med `git` också ett git-förråd i mappen (13.10b), och `git` i svaret säger hur det gick |
 | `project:parent` | renderer → main | → `{ dir }`: mappen ett nytt projekts mapp läggs i, vald i en mappdialog (`null` om den avbryts) |
 | `project:unsaved` | renderer → main | arbete utan projekt från och med nu |
 | `project:reveal` | renderer → main | projektets mapp i utforskaren |
@@ -2623,6 +2623,14 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `fs:changed` | main → renderer | `{ path }` (fil-watcher) |
 | `window:closing` | main → renderer | fönstret ska stängas (krysset, Alt+F4, File → Exit): sidan svarar med `window:close` inom 2,5 s, annars stängs det ändå (13.10) |
 | `window:close` | renderer → main | `{ close }`: sidans svar, fönstret stängs nu (`true`) eller väntar medan sidan frågar användaren (`false`) |
+| `git:version` | renderer → main | → `{ path, version }` eller `null`: den git som finns (13.10b) |
+| `git:status` | renderer → main | → `{ git, dir, repo }`: projektets förråd, dess gren, uppströmsgren, före/efter, remotes, ändrade filer och de senaste commitarna (`repo` `null`: mappen är inget förråd; `dir` `null`: inget projekt) |
+| `git:init` | renderer → main | ett förråd i projektets mapp, med Mimirs `.gitignore` och `.gitattributes` → `{ ok, output, argv, status }` (som alla steg nedan: vad git skrev, dess kommandorader och förrådet efteråt) |
+| `git:stage` / `git:unstage` | renderer → main | `{ paths? }`: filer från förrådets rot (inga: alla ändringar) |
+| `git:commit` | renderer → main | `{ message }`: det som är stagat, med meddelandet på stdin |
+| `git:push` | renderer → main | grenen till sin uppströmsgren, annars till origin som en gren med samma namn (som då blir uppströmsgren) |
+| `git:remote` | renderer → main | `{ url }`: origin läggs till, eller får en ny URL |
+| `git:diff` | renderer → main | `{ path, from?, staged }` → `{ text, truncated, binary }`: en fils ändringar, stagade eller inte; en ospårad fil visas hel |
 
 ### 13.4b Smart attach
 
@@ -4231,6 +4239,78 @@ sidan tillfrågas, väntar så länge den frågar, fönstret stängs ändå när
 `test/history.test.ts`: vilka steg som är ändringar, efter Ctrl+Z, med inställningar och när historiken
 blir för lång.
 
+### 13.10b Git
+
+Ett projekts mapp kan vara ett **git-förråd**. Formuläret **New project** (startskärmen, och *Create a project from
+this work*) har rutan **Create a git repository (.git) in the folder**; valet sparas av fönstret
+(`localStorage`, `kr.newProjectGit`, avbockad från början) och gäller nästa projekt också. Med den ibockad kör
+huvudprocessen `git init` i den nya mappen när projektet sparats och arbetet flyttats dit, på grenen `main` (om inte
+användarens git säger något annat med `init.defaultBranch`), och skriver där det inte redan finns:
+
+```
+.gitignore       build/          KickAss.jar:s bygge, som görs om vid varje verifiering
+.gitattributes   *.prg binary …  .prg .bin .d64 .g64 .crt .tap .t64 .vsf .sid .kla .art .64c .png
+```
+
+`.gitattributes` behövs: git för Windows (`core.autocrlf`) tar en fil utan nollbyte för text, och en `.prg` som råkar
+sakna nollbyte skulle få `$0d` framför varje `$0a` när den checkas ut. Projektet skapas vad som än händer med förrådet;
+notisen säger *as a git repository*, eller varför det inte gick. Ligger mappen redan i ett förråd blir det nya ett eget
+inuti det (notisen säger vilket). Utan git (ingen `git.exe` på PATH eller i `Program Files\Git\cmd`) är rutan
+avstängd och säger det.
+
+**Fliken Git** (bredvid *Scripts*; kommandopaletten *Git: stage, commit and push the project*) visar projektets förråd
+— projektets mapp eller förrådet den ligger i:
+
+- **Huvudet**: grenen, uppströmsgrenen (`→ origin/main`), `↑n` commitar som inte är pushade och `↓n` på
+  uppströmsgrenen som inte finns här (enligt den senaste fetchen), **Push** och **Refresh**. Push finns när förrådet har
+  en remote: med en uppströmsgren pushar den dit (`git push`), annars till `origin` (eller den enda remoten) som en gren
+  med samma namn, som blir uppströmsgren (`git push -u origin HEAD`). Den är avstängd när det inte finns något att
+  pusha.
+- **Commit-rutan**: meddelandet (Ctrl+Enter committar; ett utkast per förråd ligger kvar medan en annan flik visas)
+  och **Commit n**, som kräver något stagat. Meddelandet går till git på stdin (`git commit --file=- --cleanup=whitespace`):
+  vilken text som helst, rader som börjar med `#` också.
+- **Staged**, **Changes** (och **Conflicts** när det finns): filerna med gits bokstav (M ändrad, A ny, D borttagen, R
+  omdöpt, U ospårad, ! i konflikt), namnet och mappen. Knappen på raden eller ett dubbelklick stagar eller avstagar
+  filen; **Stage all** och **Unstage all** tar alla. Före den första commiten tas en fil ur indexet
+  (`git rm --cached`), efter den återställs indexet från HEAD (`git reset`).
+- **Remote**: remotarna med sina URL:er; utan någon ett fält för origins URL (https, ssh, git, file eller
+  `user@host:path`), och pennan byter origins URL. Git för Windows inloggning (Git Credential Manager) frågar själv
+  första gången det pushas; en terminal frågar aldrig (`GIT_TERMINAL_PROMPT=0`), och en push som inte är klar efter
+  5 minuter avbryts.
+- **Commits**: de 20 senaste, med kort hash, rubrik och när.
+- **Utdata**: vad git skrev vid det senaste steget, med kommandoraden (öppen när det misslyckades; notisen säger
+  gits felrad).
+- Till höger **den valda filens ändringar** (`git diff`, stagade eller inte; en ospårad fil visas hel, en binär fil
+  sägs vara binär), högst 512 KB. En fil som stagas följer med till den stagade sidan.
+
+Projektfilen sparas (som inför att fönstret stängs) innan något stagas eller committas, så det som går in är arbetet
+som det är. Fliken tittar på förrådet igen när den visas, när fönstret får fokus, efter varje steg och var fjärde
+sekund medan den visas. Utan projekt säger den att git arbetar i ett projekts mapp och erbjuder *Create a project from
+this work…*; i en mapp som inte är ett förråd erbjuder den **Create a git repository** (samma `git init`, `.gitignore`
+och `.gitattributes`). Pull, grenar och resten görs i terminalen (knappen *Terminal* i flikens fot). Flikraden
+(14.1) har fått Git: dess text göms som Scripts när editorn är högst 1245 px bred och fliken inte är vald, och
+gränserna för radens steg ligger nu vid 1650, 1540, 1245, 820 och 536 px (standardfönstret, 1480 px, har kvar
+verktygen i raden).
+
+**Säkerhet.** Huvudprocessen (`electron/main/git.ts`, `GitService`) kör den git den hittar med argumentlistor, aldrig
+genom ett skal, och alltid i förrådet för det projekt som är öppet: renderaren namnger filer i det, aldrig en mapp, ett
+program, en remote att pusha till eller en gren. Sökvägarna prövas (relativa, inget `..`) och går till git som de är
+(`--literal-pathspecs`, `--pathspec-from-file` med NUL mellan, så varken jokertecken eller kommandoradens längd spelar
+in); en URL som börjar med `-` eller inte är en URL tas inte emot. Ett kommando i taget (två samtidigt skulle mötas vid
+gits `index.lock`), och `git status` tar inga lås (`--no-optional-locks`). Gits utdata läses i `shared/git.ts`
+(`git status --porcelain=v2 --branch -z`, `git remote -v`, `git log`).
+
+**Test:** `test/git.test.ts`: statusraderna (alla slags poster, sökvägar med mellanslag, ett förråd utan commitar, en
+lös HEAD), remotarna och loggen, vilka sökvägar och URL:er som tas emot, att git hittas, och `GitService` mot den
+riktiga git i temp-mappar med en egen git-konfiguration: förrådet på `main` med `.gitignore` och `.gitattributes`
+(`build` utelämnad), en sökväg läst som den är (`a*` är inget jokertecken), stage och unstage före och efter den
+första commiten, ett meddelande med `#`-rader, ändringarna stagade och inte, en ospårad och en binär fil, origin
+tillagd och bytt, push som sätter uppströmsgrenen och push dit sedan (till ett nakent förråd via `file://`), och ett
+förråd inuti ett annat med användarens `.gitignore` kvar. `e2e/git.spec.ts`: ett nytt projekt med rutan ibockad blir ett
+förråd, en PRG öppnas, fliken listar filerna och visar en fils ändringar, en fil och sedan alla stagas, Ctrl+Enter
+committar, origin läggs till och Push pushar och sätter uppströmsgrenen, och en ändring som sparas i projektfilen syns
+som ändrad och blir en commit att pusha; utan projekt säger fliken att det behövs ett och visar formuläret med rutan.
+
 ## 14. UI/UX-specifikation
 
 ### 14.1 Layout (ett fönster)
@@ -4300,13 +4380,14 @@ hjulet tillbaka, visar hela kartan igen. Geometrin står i `apps/desktop/src/lib
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:
-- **Under 1585 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.
-- **Under 1475 px:** listningens verktyg (bakåt, framåt, föregående och nästa block, *Go to*, *Find*, *Data as code*,
+- **Under 1650 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.
+- **Under 1540 px:** listningens verktyg (bakåt, framåt, föregående och nästa block, *Go to*, *Find*, *Data as code*,
   *Offset*, *Cycles*, vänsterkolumnen *Adr*/*Line*) visar bara sina ikoner. Namnen finns kvar för skärmläsare och i
   verktygstipsen.
-- **Under 1180 px:** flikarna blir smalare, och knapparna för föregående och nästa block lämnar raden (`Ctrl+↑` / `Ctrl+↓`
-  och kommandopaletten finns kvar). SPEC.md visar bara sin ikon (aktivitetsfältet öppnar den också), Scripts likaså när
-  den inte är vald, och källfliken början av sitt namn.
+- **Under 1245 px:** flikarna blir smalare (5 px på var sida om innehållet, flikarna med bara en ikon 4 px), och
+  knapparna för föregående och nästa block lämnar raden (`Ctrl+↑` / `Ctrl+↓` och kommandopaletten finns kvar). SPEC.md
+  visar bara sin ikon (aktivitetsfältet öppnar den också), Scripts och Git likaså när de inte är valda, och källfliken
+  början av sitt namn.
 - **Under 820 px:** verktygen flyttar in i menyn **⋯** (*Listing tools*). Där är *Data as code*, *Cycles* och
   vänsterkolumnens val bockade när de är på, och samma knapp stänger menyn.
 
@@ -4315,9 +4396,13 @@ flyttades de tre översta upp med dess bredd och de smala flikarna gav plats åt
 editorbredd från 440 till 1420 px. Standardfönstret (1480 px, editorn 824–840 px) har verktygen i raden, och raden får
 plats utan att något kapas i varje fönsterbredd (ett e2e-test går igenom 2000–1100 px). Fliken *Scripts* (10.3) flyttade
 gränserna igen (1505, 1395 och 1090 px blev 1585, 1475 och 1180 px); 820 px står kvar, eftersom standardfönstret ska ha
-verktygen i raden, och Scripts visar i stället bara sin ikon i det smala läget när den inte är vald. Raden har minst
-16 px över i varje editorbredd från 380 till 2000 px (24 px vid 825 px, 39 px i standardfönstret).
-- **Under 520 px:** de andra flikarna än den valda visar bara sin ikon, med namnet som verktygstips.
+verktygen i raden, och Scripts visar i stället bara sin ikon i det smala läget när den inte är vald. Fliken *Git*
+(13.10b) flyttade de tre översta gränserna med sin bredd (65 px: 1585, 1475 och 1180 px blev 1650, 1540 och 1245 px),
+visar bara sin ikon i det smala läget när den inte är vald, och de smala flikarna fick 5 px utfyllnad i stället för 6
+(ikonflikarna 4 px), så att standardfönstret har kvar verktygen i raden (editorn är där 824 px: fönstret är 1480 px med
+sin ram); den lägsta gränsen flyttades från 520 till 536 px. Raden har minst 16 px över i varje editorbredd från 380
+till 2000 px (16 px vid 822 px, 18 px i standardfönstret, 23 px vid 537 px).
+- **Under 536 px:** de andra flikarna än den valda visar bara sin ikon, med namnet som verktygstips.
 
 Källflikens filnamn kortas med "…" (högst 12 em, 8 em på smal rad). Verktygen syns därmed också i smala fönster, där
 de tidigare var dolda.

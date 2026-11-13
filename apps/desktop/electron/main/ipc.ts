@@ -26,7 +26,9 @@ import { openedPrg } from './project-fs';
 import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema, windowCloseSchema,
+  gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRemoteSchema,
 } from './schemas';
+import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
 
 export interface IpcDeps {
@@ -43,6 +45,8 @@ export interface IpcDeps {
   history: QuicksaveHistory;
   /** the project of this run, the projects opened last and what was worked on last */
   projects: ProjectStore;
+  /** git in the repository of the project that is open */
+  git: GitService;
 }
 
 const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undefined;
@@ -70,7 +74,7 @@ async function pickPaths(e: IpcMainInvokeEvent, options: OpenDialogOptions): Pro
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { policy, settings, watcher, recent, quicksave, history, projects } = deps;
+  const { policy, settings, watcher, recent, quicksave, history, projects, git } = deps;
   quicksave.watch(quicksaveFiles(settings.get().viceQuicksave));
   // the quicksave there is now (from before the app started, or in a newly set file) joins the kept ones
   const keepCurrent = () => quicksaveInfo(quicksaveFiles(settings.get().viceQuicksave)).then(i => (i.found && i.saved ? history.add(i.path, i.saved) : null)).catch(() => null);
@@ -132,7 +136,13 @@ export function registerIpc(deps: IpcDeps): void {
     projects.rememberParent(parent);
     enter(home);
     if (moved.source) watcher.watch(moved.source);
-    return { home, moved };
+    // a repository asked for: the project is made whatever happens to it, and the result says how it went
+    if (!req.git) return { home, moved };
+    const version = await git.version();
+    const outcome = version
+      ? await initRepository(version.path, home.dir).then(r => r.outcome, (e: unknown) => ({ ok: false, root: home.dir, nested: null, message: e instanceof Error ? e.message : String(e) }))
+      : { ok: false, root: home.dir, nested: null, message: 'Git is not installed: Mimir found no git.exe on PATH or in Program Files' };
+    return { home, moved, git: outcome };
   });
   handle(CHANNELS.projectUnsaved, z.undefined().or(z.object({}).strict()), () => { projects.unsaved(); });
   // the page's answer when its window is to close (closing.ts)
@@ -321,6 +331,17 @@ export function registerIpc(deps: IpcDeps): void {
   // the ROM comes from the VICE in the settings, never from a path the renderer gives
   handle(CHANNELS.viceCharRom, z.undefined().or(z.object({}).strict()), () => readCharRom(charRomFiles(settings.get().vicePath)));
   handle(CHANNELS.deepSidPlay, deepSidPlaySchema, req => playInDeepSid(req));
+  // git (13.10b): always in the repository of the project that is open, never in a folder the renderer names
+  const none = z.undefined().or(z.object({}).strict());
+  handle(CHANNELS.gitVersion, none, () => git.version());
+  handle(CHANNELS.gitStatus, none, () => git.status());
+  handle(CHANNELS.gitInit, none, () => git.init());
+  handle(CHANNELS.gitStage, gitPathsSchema.optional(), req => git.stage(req?.paths));
+  handle(CHANNELS.gitUnstage, gitPathsSchema.optional(), req => git.unstage(req?.paths));
+  handle(CHANNELS.gitCommit, gitCommitSchema, req => git.commit(req.message));
+  handle(CHANNELS.gitPush, none, () => git.push());
+  handle(CHANNELS.gitRemote, gitRemoteSchema, req => git.remote(req.url));
+  handle(CHANNELS.gitDiff, gitDiffSchema, req => git.diff(req));
   handle(CHANNELS.settingsGet, z.undefined().or(z.object({}).strict()), () => settings.get());
   handle(CHANNELS.settingsSet, toolchainSettingsSchema.partial(), req => {
     const next = settings.set(req);

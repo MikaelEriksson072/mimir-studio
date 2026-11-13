@@ -8,7 +8,7 @@ import { cx, errorText } from '../lib/util';
 import { forgetUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from '../store/project';
 import { useUi } from '../store/ui';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
-import type { ProjectStartInfo, RecentProject } from '../../shared/ipc';
+import type { GitVersion, ProjectCreateResult, ProjectStartInfo, RecentProject } from '../../shared/ipc';
 import { Logo } from './Logo';
 import { Modal } from './Modal';
 import { QuickPack } from './QuickPack';
@@ -26,6 +26,15 @@ function when(ms: number): string {
   return days <= 0 ? `today ${time}` : days === 1 ? `yesterday ${time}` : days < 7 ? `${days} days ago` : d.toLocaleDateString();
 }
 
+/** What the note after a new project says about the git repository asked for with it ('' when none was), and whether
+ *  making it went wrong (the project is there all the same). */
+export function gitNote(r: ProjectCreateResult): { text: string; bad: boolean } {
+  const g = r.git;
+  if (!g) return { text: '', bad: false };
+  if (!g.ok) return { text: `. The git repository was not made: ${g.message}`, bad: true };
+  return { text: `, as a git repository${g.nested ? ` of its own inside the repository ${g.nested}` : ''} (the Git tab stages, commits and pushes)`, bad: false };
+}
+
 /** `parent` and `name` joined as Windows (or the folder's own separators) writes them */
 const joinPath = (parent: string, name: string) => { const sep = parent.includes('/') && !parent.includes('\\') ? '/' : '\\'; return `${parent.replace(/[\\/]+$/, '')}${sep}${name}`; };
 
@@ -37,7 +46,8 @@ interface NewProjectProps {
   /** what moves into it (creating a project from the work without one) */
   moving?: string[];
   submit: string;
-  onCreate: (name: string, parent: string) => Promise<void>;
+  /** `git`: a git repository is made in the folder too */
+  onCreate: (name: string, parent: string, git: boolean) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -47,6 +57,12 @@ export function NewProjectForm({ name: name0, parent: parent0, moving, submit, o
   const [parent, setParent] = useState(parent0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** a git repository in the folder too: the box as it was ticked last */
+  const git = useUi(s => s.newProjectGit);
+  /** the git found (undefined: still looking; null: none, and the box cannot be ticked) */
+  const [gitFound, setGitFound] = useState<GitVersion | undefined>(kr ? undefined : null);
+  useEffect(() => { let gone = false; kr?.gitVersion().then(v => { if (!gone) setGitFound(v); }, () => { if (!gone) setGitFound(null); }); return () => { gone = true; }; }, []);
+  const withGit = git && !!gitFound;
   const problem = projectNameProblem(name);
   const n = name.trim();
   const change = async () => {
@@ -56,7 +72,7 @@ export function NewProjectForm({ name: name0, parent: parent0, moving, submit, o
     e?.preventDefault();
     if (problem || busy) return;
     setBusy(true); setError(null);
-    try { await onCreate(n, parent); } catch (err) { setError(errorText(err)); setBusy(false); }
+    try { await onCreate(n, parent, withGit); } catch (err) { setError(errorText(err)); setBusy(false); }
   };
   return (
     <form className="new-project" onSubmit={create} aria-label="New project">
@@ -72,6 +88,14 @@ export function NewProjectForm({ name: name0, parent: parent0, moving, submit, o
           : <span className={cx(n && 'bad')}>{problem}</span>}
         {moving && moving.length > 0 && <div className="np-moving">Moves there: {moving.join(', ')}.</div>}
       </div>
+      <label className={cx('check np-git', gitFound === null && 'off')} title={gitFound ? `${gitFound.path} (git ${gitFound.version})` : undefined}>
+        <input type="checkbox" checked={withGit} disabled={!gitFound} onChange={e => useUi.getState().set({ newProjectGit: e.target.checked })} />
+        <span>Create a git repository (.git) in the folder
+          <small className="muted">{gitFound === null
+            ? ' — git is not installed: Mimir found no git.exe on PATH or in Program Files (Git for Windows, git-scm.com)'
+            : <> — with a <span className="mono">.gitignore</span> that leaves out <span className="mono">build</span> and a <span className="mono">.gitattributes</span> that keeps C64 files binary. The Git tab stages, commits and pushes.</>}</small>
+        </span>
+      </label>
       {error && <div className="np-error" role="alert">{error}</div>}
       <div className="np-foot"><span className="grow" /><button type="button" className="btn" onClick={onCancel}>Cancel</button><button type="submit" className="btn primary" disabled={!!problem || busy}>{busy ? 'Creating…' : submit}</button></div>
     </form>
@@ -224,19 +248,19 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
     else void run(() => quickWork());
   };
   /** "Save as a project…": the work without a project made a project in a folder of its own, then Quick work */
-  const saveThenQuickWork = async (name: string, parent: string) => {
+  const saveThenQuickWork = async (name: string, parent: string, git: boolean) => {
     if (!kr || !quickAsk) return;
-    const r = await kr.createProject({ name, parent, project: quickAsk.kept });
+    const r = await kr.createProject({ name, parent, project: quickAsk.kept, git });
     forgetUnsavedWork();
     setQuickAsk(null);
-    await quickWork(`Created the project ${r.home.name} in ${r.home.dir}: the work without a project is saved there. Quick work: open a PRG, a snapshot or a cartridge to start`);
+    await quickWork(`Created the project ${r.home.name} in ${r.home.dir}${gitNote(r).text}: the work without a project is saved there. Quick work: open a PRG, a snapshot or a cartridge to start`);
   };
-  const create = async (name: string, parent: string) => {
+  const create = async (name: string, parent: string, git: boolean) => {
     if (!kr) return;
     const project = createProject({ name, files: [], settings: settings() });
-    const r = await kr.createProject({ name, parent, project });
+    const r = await kr.createProject({ name, parent, project, git });
     enter(project, r.home);
-    onStarted(`Created the project ${r.home.name} in ${r.home.dir}: open a PRG, a snapshot or a cartridge to start`);
+    onStarted(`Created the project ${r.home.name} in ${r.home.dir}${gitNote(r).text}: open a PRG, a snapshot or a cartridge to start`);
   };
   const forget = async (r: RecentProject) => {
     if (!kr || !info) return;
@@ -295,7 +319,7 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
           </div>}
           {last?.kind === 'project' && !last.exists && <div className="start-missing" role="status">The project you worked on last, {last.home.name}, is not in {last.home.dir} any more.</div>}
           {creating
-            ? <NewProjectForm name="" parent={info.parent} submit="Create project" onCreate={(n, p) => create(n, p)} onCancel={() => setCreating(false)} />
+            ? <NewProjectForm name="" parent={info.parent} submit="Create project" onCreate={(n, p, g) => create(n, p, g)} onCancel={() => setCreating(false)} />
             : <div className="start-actions">
               <button className={cx('btn', !lastProject && !unsaved && 'primary')} disabled={busy} onClick={() => setCreating(true)}><Icon name="plus" size={14} />New project…</button>
               <button className="btn" disabled={busy} onClick={() => void run(() => openProject())}><Icon name="upload" size={14} />Open project…</button>

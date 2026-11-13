@@ -235,6 +235,7 @@ export const projectCreateSchema = z.object({
   parent: z.string().min(1).max(4096),
   project: projectSchema,
   gather: z.object({ exportDir: z.string().max(4096), buildDir: z.string().max(4096), packed: z.string().max(4096) }).partial().strict().optional(),
+  git: z.boolean().optional(),
 });
 export const projectForgetSchema = z.object({ file: z.string().min(1).max(4096) }).strict();
 /** the page's answer when its window is to close (closing.ts) */
@@ -282,3 +283,11 @@ export const quicksaveSaveSchema = z.object({ id: quicksaveId }).strict();
 export const quicksaveFavouriteSchema = z.object({ id: quicksaveId, on: z.boolean() }).strict();
 export const viceAttachSchema = z.object({ host: z.string().max(255).optional(), port: z.number().int().min(1).max(65535).optional() }).default({});
 export const viceCommandSchema = z.object({ command: z.string().max(4096) });
+
+/* Git (spec 13.10b): files of the project's repository, from its root; the folder and the remote's branch come from
+ * the main process */
+const gitPath = z.string().min(1).max(4096);
+export const gitPathsSchema = z.object({ paths: z.array(gitPath).min(1).max(20000).optional() }).strict();
+export const gitCommitSchema = z.object({ message: z.string().min(1).max(64 * 1024) }).strict();
+export const gitRemoteSchema = z.object({ url: z.string().min(1).max(2048) }).strict();
+export const gitDiffSchema = z.object({ path: gitPath, from: gitPath.optional(), staged: z.boolean() }).strict();
