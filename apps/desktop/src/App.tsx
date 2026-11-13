@@ -32,6 +32,7 @@ import { blockMc, gfxColsFor, gfxListing } from './lib/gfxlines';
 import { gfxLayout } from './lib/gfxview';
 import { blockView } from './lib/blockfolders';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
+import { operandName, renameText, type NameRef } from './lib/rename';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
@@ -2046,6 +2047,22 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (at == null && pickedDef && pickedDef.at === cursor) { startDefRename(pickedDef, pickedLine ?? pickedDef.line); return; }
     const p = lineAddr(at); if (p == null) return; const a = A.codeOwner[p] >= 0 ? A.codeOwner[p] : p; setLabelError(null); setEditing({ kind: 'label', addr: a, value: R.labels.get(a)?.name ?? '' }); setUi({ tab: 'listing' });
   };
+  /** the label (or zero-page variable) of a line's operand, which Shift+N renames: `l` the line (else the cursor's),
+   *  `cell` the byte of a data line clicked (else the one at the cursor when bytes are selected) */
+  const operandOf = (l: ListingLine | null = curLine, cell: Cell | null = l === curLine && sel?.bytes && cursor != null ? cellAt(curLine, cursor) : null): NameRef | null => {
+    // a `.label` line of the file head clicked last: the cursor line under it is not the one the user means
+    if (l === curLine && pickedDef && pickedDef.at === cursor) return null;
+    return operandName(l, R, cell);
+  };
+  /** Shift+N: rename what the operand names from its line (`lda l_3000,y` renames l_3000), as at the label itself; the
+   *  editor opens under the line */
+  const startOperandRename = (l: ListingLine | null = curLine, cell?: Cell | null) => {
+    const o = operandOf(l, cell), i = l ? view.lines.indexOf(l) : -1;
+    if (!o || i < 0) { toast('The operand of the cursor line names no label or zero-page variable (N renames the line\'s own label)', 'info'); return; }
+    setLabelError(null);
+    setEditing({ kind: 'label', addr: o.addr, value: o.name, line: i, ...(o.zp ? { zp: true } : {}) });
+    setUi({ tab: 'listing' });
+  };
   /** `;`: the comment at the end of a line; `z`: of a zero-page variable's `.label` line (Project.comments at its address) */
   const startComment = (at?: Addr, z: { addr: Addr; line: number } | null = pickedZp(at)) => {
     if (z) { setEditing({ kind: 'comment', addr: z.addr, value: project.comments[z.addr] || '', zp: true, line: z.line }); setUi({ tab: 'listing' }); return; }
@@ -2664,7 +2681,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'block-prev', label: 'Go to the start of the block, or the block before', key: 'Ctrl+↑', run: () => jumpBlock(-1) },
     { id: 'select-range', label: 'Select address range… (e.g. $2000-$27ff)', run: () => setModal('goto') },
     { id: 'back', label: 'Navigate back', key: 'Esc', run: goBack },
-    { id: 'rename', label: 'Rename label at cursor', key: 'N', run: startRename },
+    { id: 'rename', label: 'Rename label at cursor (the line\'s own)', key: 'N', run: startRename },
+    { id: 'rename-operand', label: 'Rename the label the cursor line\'s operand names (lda l_3000: l_3000)', key: 'Shift+N', run: () => startOperandRename() },
     { id: 'comment', label: 'Comment at the end of the cursor line', key: ';', run: () => startComment() },
     { id: 'note-line', label: 'Insert comment line above the cursor line (//)', key: '/', run: () => startNote(false) },
     { id: 'note-block', label: 'Insert comment block above the cursor line (/* */)', key: '*', run: () => startNote(true) },
@@ -2850,7 +2868,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text', S: 'split', J: e.shiftKey ? 'join-prev' : 'join-next', L: 'block-size', V: 'text-cols' };
+      const single: Record<string, string> = { B: 'bookmark', F: 'fold', G: 'goto', M: 'merge-range', R: 'relocate', P: 'patch', N: e.shiftKey ? 'rename-operand' : 'rename', ';': 'comment', '/': 'note-line', '*': 'note-block', U: 'auto', E: 'entry', X: 'xrefs', C: 'mark-code', D: 'mark-bytes', W: 'mark-words', T: 'mark-text', S: 'split', J: e.shiftKey ? 'join-prev' : 'join-next', L: 'block-size', V: 'text-cols' };
       if (single[key]) run(single[key]);
     };
     window.addEventListener('keydown', onKey);
@@ -2935,6 +2953,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const span = (s: Addr, e: Addr) => `$${h4(s)}${e - s > 1 ? `-$${h4(e - 1)}` : ''}`;
     const oneByte = !!(cs?.bytes && inSel && cs.anchor === cs.start && cs.anchorEnd === cs.end);
     const def = labelDefAt(l) ?? (zl ? { addr: zl.addr, zp: true } : null);
+    // the label N renames (the line's own: a `.label` line's, else the one at the line's address, or none yet there) and
+    // the label or zero-page variable the operand names, which Shift+N renames (a data line's: the byte's clicked)
+    const own: Addr | null = def ? def.addr : l.a != null ? (A.codeOwner[l.a] >= 0 ? A.codeOwner[l.a] : l.a) : null;
+    const ownLabel = own == null ? undefined : def?.zp ? R.zp.get(own) : R.labels.get(own);
+    const ownName: NameRef | null = own != null && ownLabel ? { addr: own, zp: !!def?.zp, name: ownLabel.name } : null;
+    const op = def ? null : operandName(l, R, cell);
+    const opName = op && !(!op.zp && op.addr === own) ? op : null;
     const p = l.a != null ? patchAt(project.patches, l.a) : undefined;
     // in a selection of more than one line: the bookmark on its first line, a new one on its area
     const area = inSel ? selArea(cs) : null, bmAt = area ? bookmarkOnLine(area.start) : l.a != null ? bookmarkOnLine(l.a) : null;
@@ -3045,9 +3070,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           { label: `Remove patch${p.off ? '' : ' (the original bytes come back)'}`, run: () => removePatch(p) },
         ] }] satisfies MenuItem[] : []),
         { sep: true },
-        def
-          ? { label: def.zp ? 'Rename zero-page variable…' : 'Rename label…', key: 'N', icon: 'pencil', run: () => startDefRename(def, zl?.line ?? view.lines.indexOf(l)) }
-          : { label: 'Rename label…', key: 'N', icon: 'pencil', run: () => startRename(l.a) },
+        // each rename item says what it renames: the line's own label (N), and the label or zero-page variable its operand
+        // names (Shift+N) where that is another one
+        { label: renameText(ownName, own), key: 'N', icon: 'pencil', run: () => (def ? startDefRename(def, zl?.line ?? view.lines.indexOf(l)) : startRename(l.a)) },
+        ...(opName ? [{ label: renameText(opName, opName.addr), key: 'Shift+N', icon: 'pencil', run: () => startOperandRename(l, cell ?? null) }] satisfies MenuItem[] : []),
         // a zero-page variable's .label line, or an instruction that uses one: join it with a neighbour into 16 bits, or split it
         { label: '16-bit variable', children: zpPairItems(zl ? zl.addr : zpOperand(l)) },
         // on a zero-page variable's .label line (or its comment lines) these comment the variable

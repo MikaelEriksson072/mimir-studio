@@ -2294,11 +2294,89 @@ test('rename a zero-page variable from its .label line', async ({ page }) => {
     await expect(editor.locator('input')).toHaveValue('fx_ptr');
     await editor.locator('input').press('Escape');
     await zpRow('fx_ptr').click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Rename zero-page variable…' }).click();
+    await page.getByRole('menuitem', { name: 'Rename zero-page variable fx_ptr…' }).click();
     await editor.locator('input').fill('');
     await editor.locator('input').press('Enter');
     await expect(toast(page, 'Zero-page variable $fb: automatic name restored')).toBeVisible();
     await expect(zpRow('ptr_fb')).toHaveCount(1);
+  });
+});
+
+test('rename the label an operand names from its line: Shift+N and the context menu', async ({ page }) => {
+  await waitForListing(page);
+  const OLD_OP = 'colors_0939', NEW_OP = 'raster_colors';
+  const refs = occurrences(await listingRows(page), OLD_OP);
+  // the block header, the label line and `lda colors_0939,y`
+  expect(refs).toBeGreaterThanOrEqual(3);
+  const editor = page.locator('.edit-pop');
+  // loop_08bc: lda colors_0939,y (a line with a label of its own and one in its operand)
+  const ldaRow = (name: string) => listing(page).locator('.row.k-ins', { hasText: `lda ${name},y` });
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+
+  await test.step('the context menu names the label of each rename item: the line\'s own (N) and its operand\'s (Shift+N)', async () => {
+    await goTo(page, 'loop_08bc');
+    await ldaRow(OLD_OP).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Rename loop_08bc…' })).toBeVisible();
+    await page.getByRole('menuitem', { name: `Rename ${OLD_OP}…` }).click();
+    // the editor opens under the line, as at the label itself
+    await expect(editor.locator('label')).toHaveText('Label at $0939');
+    await expect(editor.locator('input')).toHaveValue(OLD_OP);
+    const row = await ldaRow(OLD_OP).boundingBox(), pop = await editor.boundingBox();
+    expect(Math.abs(pop!.y - (row!.y + row!.height))).toBeLessThan(8);
+  });
+
+  await test.step('a name in use is refused, a new one renames every reference and the cursor stays on the line', async () => {
+    await editor.locator('input').fill('loop_08bc');
+    await editor.locator('input').press('Enter');
+    await expect(editor).toContainText('"loop_08bc" is already used at $08bc.');
+    await editor.locator('input').fill(NEW_OP);
+    await editor.locator('input').press('Enter');
+    await expect(editor).toBeHidden();
+    await expect(toast(page, `Renamed to ${NEW_OP}; all references updated`)).toBeVisible();
+    await expect(statusBar(page)).toContainText('$08bc · loop_08bc');
+    await expect(undo).toHaveAttribute('title', `Undo: Rename $0939 to ${NEW_OP} (Ctrl+Z)`);
+    const rows = await listingRows(page);
+    expect(occurrences(rows, OLD_OP)).toBe(0);
+    expect(occurrences(rows, NEW_OP)).toBe(refs);
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  });
+
+  await test.step('N renames the line\'s own label, Shift+N the operand\'s', async () => {
+    await page.keyboard.press('n');
+    await expect(editor.locator('label')).toHaveText('Label at $08bc');
+    await expect(editor.locator('input')).toHaveValue('loop_08bc');
+    await editor.locator('input').press('Escape');
+    await page.keyboard.press('Shift+N');
+    await expect(editor.locator('label')).toHaveText('Label at $0939');
+    await expect(editor.locator('input')).toHaveValue(NEW_OP);
+    await editor.locator('input').press('Escape');
+    await expect(editor).toBeHidden();
+  });
+
+  await test.step('Ctrl+Z brings the old name back', async () => {
+    await page.keyboard.press('Control+z');
+    await expect(undo).toHaveAttribute('title', 'Nothing to undo');
+    await expect(ldaRow(OLD_OP)).toHaveCount(1);
+  });
+
+  await test.step('a zero-page variable in the operand, and the byte clicked in a data line', async () => {
+    await goTo(page, '$0908');
+    await listing(page).locator('.row.k-ins', { hasText: 'sta ptr_fb+1' }).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Add label at $0908…' })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Rename zero-page variable ptr_fb…' }).click();
+    await expect(editor).toHaveClass(/zp/);
+    await expect(editor.locator('label')).toContainText('Zero-page variable at $fb');
+    await expect(editor.locator('input')).toHaveValue('ptr_fb');
+    await editor.locator('input').press('Escape');
+    // .byte <fx_0919, <fx_091a, <fx_091e, <fx_0927: the third byte's
+    await goTo(page, 'ptrlo_0931');
+    await listing(page).locator('.row.k-dat', { hasText: '.byte <fx_0919' }).locator('.cell').nth(2).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Rename ptrlo_0931…' })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Rename fx_091e…' }).click();
+    await expect(editor.locator('label')).toHaveText('Label at $091e');
+    await expect(editor.locator('input')).toHaveValue('fx_091e');
+    await editor.locator('input').press('Escape');
   });
 });
 
