@@ -69,7 +69,7 @@ import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo, RunRequest, RunResult } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
 import { AnalysisOverview, type OverviewLinks } from './components/Overview';
-import { GFX_KIND } from './lib/overview';
+import { GFX_KIND, snapshotPc } from './lib/overview';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
 const SpecView = lazy(() => import('./components/SpecView').then(m => ({ default: m.SpecView })));
@@ -282,7 +282,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   }, [A, offsetBases, project.cart]);
   /** where file `i` starts, in its bank */
   const fileAddr = (i: number): Addr => (A.spaces?.find(x => x.files.includes(i))?.space ?? 0) * SPACE + (project.files[i]?.load ?? 0);
-  useEffect(() => { if (cursor == null && A.entry != null) { setCursor(A.entry); setScrollReq({ addr: A.entry, center: true, n: Date.now() }); } }, [A]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** where VICE's CPU was when it saved the snapshot the analysis is of (spec 13.7): a snapshot opens there */
+  const snapPc = useMemo(() => snapshotPc(A.files, A.owner), [A.files, A.owner]);
+  // a new analysis with nowhere to be: the listing and the .asm go to the program start, a snapshot's to its PC (in
+  // the bytes opened, else the start)
+  useEffect(() => {
+    const at = snapPc?.loaded ? snapPc.pc : A.entry;
+    if (cursor == null && at != null) { setCursor(at); setScrollReq({ addr: at, center: true, n: Date.now() }); }
+  }, [A]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** a notice in the corner, kept in the Messages tab: an error stays until it is dismissed (or four newer ones push it
    *  out), the others go after 4.2 s, a long one after up to 9 s, so there is time to read it */
@@ -592,7 +599,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const show = [loader && 'loaders', start && 'start'].filter((x): x is string => !!x);
     const now = useUi.getState().sideOpen;
     if (show.some(x => !now.includes(x))) setUi({ sideOpen: [...new Set([...now, ...show])] });
-  }, [A, rProject, project, setUi]);
+    // a snapshot added to a project: the listing and the .asm go to its PC (a new project's start there by itself)
+    const snap = l.add ? snapshotPc(A.files.filter((_, i) => mine.has(i)), A.owner) : null;
+    if (snap?.loaded) navigate(snap.pc, { center: true });
+  }, [A, rProject, project, setUi, navigate]);
   /* ---- VICE's quicksave snapshot: Alt+F11 in VICE writes it, F9 here opens it, and each new one opens by itself ---- */
   const openQuicksave = async () => {
     if (!kr) return needDesktop();
@@ -3584,7 +3594,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />
       </div>}
-      {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} packing={packing} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
+      {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} links={overviewLinks} onClose={() => setModal(null)} />}
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}

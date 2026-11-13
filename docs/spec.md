@@ -3759,6 +3759,18 @@ Ligger BASIC-raden på `$0801` med en SYS in i RAM, blir SYS-adressen programsta
 Analysen hittar BASIC-raden också i en fil som börjar före `$0801`, men bara när dess SYS går in i samma fil. Toasten
 säger vad snapshoten är, varifrån analysen spårar och programstarten.
 
+**Mimir följer VICE:s PC.** När snapshoten är analyserad står listningen och `.asm`-källan på raden där CPU:n var när
+VICE sparade snapshoten (`snapshotPc` i `lib/overview.ts`), inte vid programstarten. Markören står där, raden är i
+mitten av listningen, och i `.asm` står Monacos egen markör på raden, så piltangenterna går vidare därifrån. (Monacos
+markör följer listningens markör överallt, utom när den redan står på en rad med den adressen.) Så blir det också
+när en snapshot läggs till ett projekt med Shift, och när ett projekt som öppnades från en snapshot öppnas igen.
+- **Explorer → Program start** har en rad till: *snapshot PC* med adressen och etiketten (eller den närmaste före,
+  `irq_08b7+16`). Ett klick går dit, och tipset visar registren som VICE:s monitor visar dem efter `r`.
+- **Översikten (14.1b)** har kortet *Snapshot PC*.
+- **En PC utanför de byte som öppnades** stannar på programstarten. Det gäller en PC i KERNAL- eller BASIC-ROM, i I/O, i
+  teckensets-ROM (med snapshotens `$01`) och i nollsidan eller stacken utan inställningen. Explorer och översikten
+  säger var PC:n ligger.
+
 **Packad data i snapshoten.** Sindri fortsätter från snapshotens maskin (RAM, CPU, VIC-II och CIA-kretsarna) och
 packar upp det som ännu var packat, till exempel ett spel bakom sin trainermeny; notisen säger var den packade datan
 låg, och *Unpack* ger programmet (8.11b, *Snapshots*).
@@ -3783,7 +3795,10 @@ CIA-timrarna och avbrotten, nollsidan och diskenheterna. Sedan fortsätter progr
 **Test:** `fixtures/vsf/raster-demo.vsf` är en snapshot från x64sc 3.10 av demon, stoppad i dess raster-IRQ
 (`make-raster-demo.mon` beskriver hur den gjordes). `test/vsf.test.ts` läser den, och projektet från `$0200`
 verifieras byte för byte (också med riktiga KickAss.jar). Testet täcker även äldre format, KERNAL urkopplad, andra
-maskiner och trasiga filer. E2e-testet öppnar snapshoten via dialogen och verifierar med `F7`.
+maskiner och trasiga filer. E2e-testet öppnar snapshoten via dialogen och verifierar med `F7`. Före det kontrollerar
+det att listningens markör står på `$08c7`, att Monacos markör står på samma rad i `.asm` och att Explorers rad
+*snapshot PC* går dit. `overview.test.ts` testar `snapshotPc` med en PC i RAM, i KERNAL-ROM och i stacken, och
+stacken med inställningen på också.
 `patchSnapshot` testas så: det byggda programmet ger samma snapshot, och ändrade byte hamnar bara i C64MEM:s RAM.
 `vice.integration.test.ts` startar riktiga x64sc med snapshoten, där programmet vid PC `$08c7` har bytts mot kod som
 gör ramen och bakgrunden röda. VICE:s skärmbild visar att det fortsätter där. Ett e2e-test kör Build & Run med ett
@@ -4575,6 +4590,10 @@ på ett stycke går dit i listningen. Raden **Open** har snabblänkar till flika
 Sedan kommer analysens delar, ett kort var:
 - **Packed** (bara när en fil är packad eller kan vara det, över hela bredden): vad packningsanalysen säger och knappen
   *Unpack* (eller *Unpack with …*), och en länk till dekrunchern.
+- **Snapshot PC** (bara för en VICE-snapshot, 13.7): var CPU:n var när VICE sparade den. Kortet visar adressen och
+  etiketten som en länk till listningen, som redan står där, och registren som VICE:s monitor visar dem
+  (`A $41  X $00  Y $0a  SP $ed  $01 $37  NV-BDIZC 00100100`). En PC i ROM, I/O eller utanför RAM-et som öppnades
+  visas utan länk, med var den ligger.
 - **Program start**: startadressen och dess etikett (en länk till listningen), hur analysen vet den (satt av dig,
   snapshotens BASIC SYS, där uppackaren lämnade programmet, SYS i BASIC-raden, cartridgens startvektor eller
   laddadressen när ingen SYS finns), BASIC-raden med SYS och länken *Program start in the Explorer*.

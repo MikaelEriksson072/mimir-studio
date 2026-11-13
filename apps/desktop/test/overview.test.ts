@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { analyze, parsePrg, showcaseProject, type Block, type Project } from '@mimir/core';
-import { blockMap, GFX_KIND, problemCounts, routinesOf, startOf, typeRows } from '../src/lib/overview';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { analyze, openC64File, parsePrg, parseVsf, showcaseProject, type Block, type Project } from '@mimir/core';
+import { blockMap, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, snapshotPc, startOf, typeRows } from '../src/lib/overview';
 
 // the showcase: a BASIC stub, code, four sprites, a font, a bitmap, music and tables
 const p = showcaseProject();
@@ -59,5 +61,32 @@ describe('the overview of the analysis', () => {
     expect(handlers).toBeGreaterThan(0);
     expect(problemCounts([{ lvl: 'err', msg: '', addr: null, cat: '' }, { lvl: 'hint', msg: '', addr: null, cat: '' }, { lvl: 'hint', msg: '', addr: null, cat: '' }, { lvl: 'info', msg: '', addr: null, cat: '' }]))
       .toEqual({ err: 1, warn: 0, hint: 2 });
+  });
+
+  it("says where VICE's PC was in a snapshot, and whether the listing has it", () => {
+    // fixtures/vsf/raster-demo.vsf: x64sc 3.10 stopped in the demo's raster IRQ at $08c7, $01 = $37
+    const vsf = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/vsf/raster-demo.vsf')));
+    const open = (b: Uint8Array, zeroPage = false) => { const f = openC64File('raster-demo.vsf', b, { zeroPage }); return analyze({ name: 'raster-demo', files: [f], entries: f.entries ?? [] }); };
+    const A1 = open(vsf);
+    const s = snapshotPc(A1.files, A1.owner)!;
+    expect(s).toMatchObject({ pc: 0x08c7, sp: 0xed, port: 0x37, loaded: true, where: null });
+    expect(regsText(s)).toMatch(/^A \$[0-9a-f]{2} {2}X \$[0-9a-f]{2} {2}Y \$[0-9a-f]{2} {2}SP \$ed {2}\$01 \$37 {2}NV-BDIZC [01]{8}$/);
+    // a PRG has none
+    expect(snapshotPc(A.files, A.owner)).toBeNull();
+    // the PC elsewhere: in the KERNAL ROM ($01 = $37), in the stack (opened only with the setting)
+    const at = (pc: number) => { const b = vsf.slice(), cpu = parseVsf(b).modules.find(m => m.name === 'MAINCPU')!; b[cpu.offset + 12] = pc & 0xff; b[cpu.offset + 13] = pc >> 8; return b; };
+    const rom = open(at(0xea31));
+    expect(snapshotPc(rom.files, rom.owner)).toMatchObject({ pc: 0xea31, loaded: false, where: 'the KERNAL ROM' });
+    const stack = open(at(0x0140));
+    expect(snapshotPc(stack.files, stack.owner)).toMatchObject({ pc: 0x0140, loaded: false, where: 'the zero page or the stack, which are not opened' });
+    const zp = open(at(0x0140), true);
+    expect(snapshotPc(zp.files, zp.owner)).toMatchObject({ pc: 0x0140, loaded: true });
+  });
+
+  it('names an address by the label at it, or the nearest one before it', () => {
+    const labels = new Map([[0x1000, { name: 'irq' }], [0x2000, { name: 'far' }]]);
+    expect(nameNear(labels, 0x1000)).toBe('irq');
+    expect(nameNear(labels, 0x1010)).toBe('irq+16');
+    expect(nameNear(labels, 0x1100)).toBeNull();
   });
 });

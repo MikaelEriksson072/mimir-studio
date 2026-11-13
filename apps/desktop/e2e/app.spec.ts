@@ -3066,6 +3066,29 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
   await expect(start).toContainText(/\$0810\s*start/);
   await expect(start).toContainText('set by you');
   await expect(start).toContainText('VICE restarts the snapshot as it was taken (PC $08c7, $01 = $37); the start is for the analysis');
+
+  await test.step('the listing and the .asm are where VICE\'s PC was when it saved the snapshot, not at the program start', async () => {
+    await expect(statusBar(page)).toContainText('$08c7');
+    await expect(listing(page).locator('.row.cur')).toBeInViewport();
+    await expect(listing(page).locator('.row.cur .adr')).toHaveText('08c7');
+    const pc = start.locator('.start-at', { hasText: 'snapshot PC' });
+    await expect(pc).toContainText('$08c7');
+    await expect(pc).toHaveAttribute('title', /^Where the CPU was when VICE saved the snapshot \(A \$\w\w {2}X \$\w\w {2}Y \$\w\w {2}SP \$\w\w {2}\$01 \$37 {2}NV-BDIZC [01]{8}\)/);
+    // in the .asm, the line is marked and Monaco's own cursor is on it
+    await page.getByRole('tab', { name: 'raster-demo.asm' }).click();
+    const host = page.locator('.mon-host');
+    await expect(host.locator('.mon-cur')).toBeVisible();
+    await expect.poll(() => host.evaluate(el => {
+      const top = (x: Element | null | undefined) => (x ? Math.round(x.getBoundingClientRect().top) : NaN);
+      return top(el.querySelector('.cursors-layer .cursor')) === top(el.querySelector('.mon-cur'));
+    })).toBe(true);
+    // elsewhere and back: the PC row goes there again
+    await page.getByRole('tab', { name: 'Listing', exact: true }).click();
+    await goTo(page, 'start');
+    await expect(statusBar(page)).toContainText('$0810');
+    await pc.click();
+    await expect(statusBar(page)).toContainText('$08c7');
+  });
   await goTo(page, 'irq_08b7');
   await expect(statusBar(page)).toContainText('$08b7 · irq_08b7');
   await page.keyboard.press('F7');

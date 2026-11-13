@@ -98,6 +98,32 @@ test('the overview of the analysis opens after a load, and its links go where th
     await expect(statusBar(page)).toContainText('sel $2000–$203f');
   });
 
+  await test.step('a VICE snapshot: the PC it was saved at, with the registers, and the listing is there', async () => {
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
+    await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
+    await expect(overview).toBeVisible({ timeout: 30_000 });
+    const pc = overview.getByRole('region', { name: 'Snapshot PC' });
+    await expect(pc).toContainText('$08c7');
+    await expect(pc).toContainText('Where the CPU was when VICE saved the snapshot: the listing and the .asm are there.');
+    await expect(pc).toContainText(/A \$\w\w {2}X \$\w\w {2}Y \$\w\w {2}SP \$\w\w {2}\$01 \$37 {2}NV-BDIZC [01]{8}/);
+    // the program start is the BASIC SYS, as before
+    await expect(overview.getByRole('region', { name: 'Program start' })).toContainText('$0810');
+    await expect(statusBar(page)).toContainText('$08c7');
+    // the program start's link goes there, the PC's back
+    await overview.getByRole('region', { name: 'Program start' }).getByRole('button', { name: /\$0810/ }).click();
+    await expect(overview).toBeHidden();
+    await expect(statusBar(page)).toContainText('$0810');
+    await palette();
+    await pc.getByRole('button').click();
+    await expect(overview).toBeHidden();
+    await expect(statusBar(page)).toContainText('$08c7');
+    // a PRG has none
+    await open('raster-demo.prg');
+    await expect(overview).toBeVisible();
+    await expect(overview.getByRole('region', { name: 'Snapshot PC' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+  });
+
   await test.step('the box at its foot turns it off: the next file opens without it, and Settings says so', async () => {
     await palette();
     await overview.getByLabel('Show this overview when a file is opened').uncheck();

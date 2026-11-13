@@ -1,9 +1,49 @@
 /* What the overview of the analysis says (spec 14.1b), part by part: worked out from the analysis and the project
  * alone, so the window (components/Overview.tsx) only lays it out and links each part to where it is. */
 // (no DOM here, nor the store: the unit tests type-check it for Node)
-import { kindInfo, type Addr, type AnalysisResult, type Block, type Project, type TypeGroup } from '@mimir/core';
+import { areaAt, kindInfo, parseVsf, snapshotConfig, type Addr, type AnalysisResult, type Block, type Project, type TypeGroup } from '@mimir/core';
 import { blockFolders, type BlockFolder } from './blockfolders';
 import type { UiProblem } from './types';
+
+/** where VICE's CPU was when it saved the snapshot the project was opened from (spec 13.7) */
+export interface SnapshotPc {
+  pc: Addr;
+  a: number; x: number; y: number; sp: number; status: number;
+  /** $01 */
+  port: number;
+  /** the PC is in the bytes opened, so the listing and the .asm have its line; else `where` says where it is */
+  loaded: boolean;
+  where: string | null;
+}
+
+const AREA: Record<string, string> = { basic: 'the BASIC ROM', kernal: 'the KERNAL ROM', io: 'I/O', char: 'the character ROM', cart: 'the cartridge ROM' };
+
+/** The CPU of the first snapshot among the files (as the analysis has them: `owner` says which bytes are opened), or
+ *  null when there is none or it has no MAINCPU module. A PC in ROM, in I/O or below the RAM opened (the zero page and
+ *  the stack, without the setting) is not in the listing. */
+export function snapshotPc(files: readonly { vsf?: Uint8Array }[], owner: ArrayLike<number>): SnapshotPc | null {
+  const vsf = files.find(f => f.vsf)?.vsf;
+  if (!vsf) return null;
+  let s;
+  try { s = parseVsf(vsf); } catch { return null; }
+  if (!s.cpu) return null;
+  const { pc } = s.cpu;
+  const area = areaAt(pc, snapshotConfig(s), false);
+  const loaded = area === 'ram' && owner[pc] >= 0;
+  const where = loaded ? null : area !== 'ram' ? AREA[area] ?? area : pc < 0x0200 ? 'the zero page or the stack, which are not opened' : 'bytes not opened';
+  return { ...s.cpu, port: s.port.data, loaded, where };
+}
+
+/** The label at `a`, else the nearest one before it in the 256 bytes below (`name+3`); null when there is none. */
+export function nameNear(labels: ReadonlyMap<Addr, { name: string }>, a: Addr): string | null {
+  for (let d = 0; d < 256 && a - d >= 0; d++) { const l = labels.get(a - d); if (l) return d ? `${l.name}+${d}` : l.name; }
+  return null;
+}
+
+/** the registers as VICE's monitor shows them after `r`: A X Y SP, $01 and the flags NV-BDIZC */
+export const regsText = (s: SnapshotPc): string =>
+  `A ${hx(s.a)}  X ${hx(s.x)}  Y ${hx(s.y)}  SP ${hx(s.sp)}  $01 ${hx(s.port)}  NV-BDIZC ${s.status.toString(2).padStart(8, '0')}`;
+const hx = (n: number) => `$${n.toString(16).padStart(2, '0')}`;
 
 /** where the program starts, and how the analysis knows (a sentence); `basic`: the BASIC line with the SYS */
 export interface StartInfo { addr: Addr; from: string; basic: string | null }

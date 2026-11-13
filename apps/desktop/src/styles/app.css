@@ -433,6 +433,7 @@ main.main { container: editor / inline-size; }
 /* how Build & Run starts the program: RUN, sys <start> or the monitor */
 .start-vice { display: flex; gap: 5px; align-items: baseline; margin-top: 6px; line-height: 1.4; }
 .start-vice .icon { flex: none; position: relative; top: 1px; }
+.start-pc { padding: 3px 6px; }
 .fold { flex: none; width: 18px; height: 18px; margin-left: -6px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: none; color: var(--fg-3); cursor: pointer; padding: 0; }
 .fold:hover { background: var(--row-hover); color: var(--fg); }
 .hdr-folded { font: 11px/16px var(--font-ui); color: var(--fg-3); padding: 0 6px; border-radius: 4px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
@@ -1216,6 +1217,7 @@ main.main { container: editor / inline-size; }
 .ov-card p { margin: 0; }
 .ov-packed { border-color: color-mix(in srgb, var(--warn) 55%, transparent); background: color-mix(in srgb, var(--warn) 7%, var(--panel-2)); }
 .ov-packed h3 { color: var(--warn); }
+.ov-pc { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .ov-link { padding: 0; border: 0; background: none; color: var(--accent-hi); font: inherit; text-align: left; cursor: pointer; }
 .ov-link:hover { text-decoration: underline; }
 .ov-big { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 20px; font-weight: 600; }

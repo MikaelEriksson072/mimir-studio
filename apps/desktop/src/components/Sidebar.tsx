@@ -6,6 +6,7 @@ import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBa
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
+import { nameNear, regsText, snapshotPc } from '../lib/overview';
 import { bankAdr, cx, fmtBytes, groupOfKind } from '../lib/util';
 import type { MountedDisk, MountedTape } from '../lib/types';
 import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
@@ -806,6 +807,7 @@ function ProgramStart({ A, R, project, onNavigate, onSetStart }: Pick<SidebarPro
   // a project opened from a snapshot: where the CPU was when it was taken
   const vsf = project.files.find(f => f.vsf)?.vsf;
   const snapshot = useMemo(() => { if (!vsf) return null; try { const s = parseVsf(vsf); return [s.cpu ? `PC $${h4(s.cpu.pc)}` : null, `$01 = $${h2(s.port.data)}`].filter(Boolean).join(', '); } catch { return null; } }, [vsf]);
+  const snap = useMemo(() => snapshotPc(A.files, A.owner), [A.files, A.owner]);
   const vice = viceStartText(A, project.entryPoint, snapshot, project.entryPort);
   const apply = () => {
     const t = parseGoto(v, n => { for (const [a, l] of R.labels) if (l.name === n) return a; return undefined; });
@@ -819,6 +821,12 @@ function ProgramStart({ A, R, project, onNavigate, onSetStart }: Pick<SidebarPro
         <i style={{ background: 'var(--g-code)' }} /><span className="mono">${h4(A.entry)}</span><span className="seg-name">{name ?? ''}</span>
         <span className={cx('pill', user && 'user')}>{user ? 'set by you' : detected ? detected.from : ''}</span>
       </button>}
+      {snap && (snap.loaded
+        ? <button className="seg-row start-at" title={`Where the CPU was when VICE saved the snapshot (${regsText(snap)}): click to go there in the listing and the .asm`} onClick={() => onNavigate(snap.pc)}>
+          <i style={{ background: 'var(--accent)' }} /><span className="mono">${h4(snap.pc)}</span><span className="seg-name">{nameNear(R.labels, snap.pc) ?? ''}</span>
+          <span className="pill">snapshot PC</span>
+        </button>
+        : <div className="small muted start-pc">Snapshot PC ${h4(snap.pc)}, in {snap.where}</div>)}
       <div className="start-row">
         <input className="mono" aria-label="Program start address" value={v} placeholder="$0810 or a label" spellCheck={false}
           onChange={e => { setV(e.target.value); setErr(''); }} onKeyDown={e => { if (e.key === 'Enter') apply(); }} />

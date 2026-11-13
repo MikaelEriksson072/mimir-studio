@@ -7,7 +7,7 @@ import { Fragment, type ReactNode } from 'react';
 import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type PackingInfo, type Project } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { IconName } from '../lib/icon-paths';
-import { blockMap, count, GFX_KIND, problemCounts, routinesOf, startOf, typeRows } from '../lib/overview';
+import { blockMap, count, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, startOf, typeRows, type SnapshotPc } from '../lib/overview';
 import type { UiProblem } from '../lib/types';
 import { bankAdr, cx, fmtBytes, GROUP_LABEL } from '../lib/util';
 import type { BottomTab, EditorTab } from '../store/ui';
@@ -31,6 +31,8 @@ export interface OverviewLinks {
 
 interface OverviewProps {
   A: AnalysisResult; project: Project; labels: ReadonlyMap<Addr, { name: string }>;
+  /** the project was opened from a VICE snapshot: where its CPU was when it was saved */
+  snap?: SnapshotPc | null;
   packing: readonly (PackingInfo | null)[]; problems: readonly UiProblem[];
   /** the .asm file the source tab shows first */
   source: string;
@@ -60,7 +62,7 @@ function Card({ icon, title, n, wide, className, children }: { icon: IconName; t
 const Link = ({ onClick, title, className, children }: { onClick: () => void; title?: string; className?: string; children: ReactNode }) =>
   <button type="button" className={cx('ov-link', className)} title={title} onClick={onClick}>{children}</button>;
 
-export function AnalysisOverview({ A, project, labels, packing, problems, source, unpackLabel, busy, scripts, auto, onAuto, links, onClose }: OverviewProps) {
+export function AnalysisOverview({ A, project, labels, snap, packing, problems, source, unpackLabel, busy, scripts, auto, onAuto, links, onClose }: OverviewProps) {
   /** every link closes the window, then goes there */
   const go = (f: () => void) => () => { onClose(); f(); };
   const start = startOf(A, project);
@@ -123,6 +125,16 @@ export function AnalysisOverview({ A, project, labels, packing, problems, source
                 {p.decruncher != null && <Link onClick={go(() => links.addr(p.decruncher!))}>The decruncher</Link>}
               </div>
             </Card>))}
+
+          {snap && <Card icon="chip" title="Snapshot PC" className="ov-pc">
+            {snap.loaded
+              ? <Link className="ov-big" title="Go to the PC in the listing (the .asm is there too)" onClick={go(() => links.addr(snap.pc))}>
+                <span className="mono">{bankAdr(A, snap.pc)}</span>{nameNear(labels, snap.pc) && <span className="ov-label mono">{nameNear(labels, snap.pc)}</span>}</Link>
+              : <span className="ov-big"><span className="mono">${h4(snap.pc)}</span></span>}
+            <p className="muted">{snap.loaded ? 'Where the CPU was when VICE saved the snapshot: the listing and the .asm are there.'
+              : `Where the CPU was when VICE saved the snapshot, in ${snap.where}: the listing is at the program start.`}</p>
+            <p className="ov-basic mono" title="The registers when the snapshot was saved, as VICE's monitor shows them">{regsText(snap)}</p>
+          </Card>}
 
           <Card icon="target" title="Program start">
             {start ? <>

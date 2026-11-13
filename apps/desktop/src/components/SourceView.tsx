@@ -207,7 +207,12 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     // the editor just shown has no size until its observer measures it, a frame later: measured now, so the line is
     // shown at once (and without the smooth scroll, which needs the window to draw frames)
     if (!e.getLayoutInfo().height) e.layout();
-    suppress.current = true; e.revealLineInCenterIfOutsideViewport(idx + 1, monaco.editor.ScrollType.Immediate); suppress.current = false;
+    suppress.current = true;
+    // the editor's own cursor goes to the line too (arrow keys go on from there), unless it is on a line of that
+    // address already (a click or a selection in the editor moved the cursor here)
+    const pos = e.getPosition(), on = pos ? lines[pos.lineNumber - 1] : undefined;
+    if (!on || on.a == null || cursor < on.a || cursor >= on.a + Math.max(1, 'n' in on ? on.n : 0)) e.setPosition({ lineNumber: idx + 1, column: 1 });
+    e.revealLineInCenterIfOutsideViewport(idx + 1, monaco.editor.ScrollType.Immediate); suppress.current = false;
   }, [state, cursor, cur?.path, R]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the scripts at the file's lines (spec 10.3): their name after the line, what each does with it in the hover
