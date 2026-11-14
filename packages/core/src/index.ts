@@ -42,7 +42,7 @@ export {
   unpackCovertExomizer, unpackCovertExomizer3Raw, unpackCovertFile, unpackCovertPucrunch,
   type CovertCall, type CovertDisk, type CovertEntry, type CovertFile, type CovertPacker, type CovertScript, type CovertTool, type CovertUnpacked,
 } from './c64/covert-disk';
-export { cc1541Script, cc1541Text, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readKrillDisk, unpackKrillDoynax, unpackKrillZx0, type KrillDisk, type KrillEntry, type KrillFile, type KrillPacker, type KrillUnpacked } from './c64/krill-disk';
+export { cc1541Script, cc1541Text, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readKrillDisk, unpackKrillDoynax, unpackKrillTinyCrunch, unpackKrillZx0, type KrillDisk, type KrillEntry, type KrillFile, type KrillPacker, type KrillUnpacked } from './c64/krill-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
 export { sidPlayer, musicPlayData, musicSidFile, type SidPlayer, type SidPlayerOptions, type MusicPlayData, type MusicPlayDigi } from './c64/sidplayer';

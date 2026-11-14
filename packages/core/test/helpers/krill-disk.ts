@@ -176,3 +176,35 @@ export function packKrillDoynax(data: number[], dest: number): number[] {
   w.end();
   return [dest & 0xff, dest >> 8, ...w.out];
 }
+
+/** TinyCrunch as revision 166 of the loader reads it (Space Beer's resident unpacker): the last byte first, then where
+ *  it unpacks to less 1 (the low byte first), then a token a byte: literals of up to 64, copies of 2 from up to 63 back,
+ *  of 2-17 from up to 2048 back, and the end (0); a greedy packer over all but the last byte. */
+export function packKrillTinyCrunch(data: number[], dest: number): number[] {
+  const body = data.slice(0, -1), out: number[] = [];
+  let lit: number[] = [];
+  const flush = () => { while (lit.length) { const n = Math.min(lit.length, 64); out.push(0x7f + n, ...lit.slice(0, n)); lit = lit.slice(n); } };
+  for (let i = 0; i < body.length;) {
+    let len = 0, off = 0;
+    for (let o = 1; o <= Math.min(i, 2048); o++) {
+      let n = 0;
+      while (i + n < body.length && n < 17 && body[i + n] === body[i + n - o]) n++;
+      if (n > len) { len = n; off = o; }
+    }
+    // a copy of 2 from 1793-2048 back would be the token 0, the end
+    if (len < 2 || (len === 2 && off > 63 && 0x800 - off < 0x100)) { lit.push(body[i++]); continue; }
+    flush();
+    if (len === 2 && off <= 63) out.push(0xff - off);
+    else { const v = 0x800 - off; out.push(((len - 2) << 3) | (v >> 8), v & 0xff); }
+    i += len;
+  }
+  flush();
+  out.push(0);
+  return [data[data.length - 1], (dest - 1) & 0xff, (dest - 1) >> 8, ...out];
+}
+
+/** `data` packed with TinyCrunch to unpack in place, ending at `end`, the file loaded so that it ends there too */
+export function packKrillTinyCrunchInPlace(data: number[], end: number): { bytes: number[]; load: number } {
+  const bytes = packKrillTinyCrunch(data, end - data.length);
+  return { bytes, load: end - bytes.length };
+}

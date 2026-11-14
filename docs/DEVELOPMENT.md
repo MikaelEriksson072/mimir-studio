@@ -803,6 +803,26 @@ the reference as a patch in `test/helpers/reference.ts`):
     loaded (a table the program builds as it runs, Macho Programming's) is not taken: alone it plays a tone. On the
     corpus nine demos now get a sample player (Just Dance 64's writes voice 2 and 3's frequency and control registers),
     each playing in VICE as the demo itself does, and every other program's music is the same as before.
+42. Krill's loader built with TinyCrunch (spec 13.5k) is read: Fossil's Space Beer (Year-top20 2019, #1) said Krill's
+    loader but gave no Krill script tab, so its files could not be opened one by one. Its loader (revision 166) unpacks
+    with ChristopherJam's TinyCrunch from a resident routine at `$0374`, read from the demo's memory after its boot
+    installed the loader (Sindri, `onStep`): the last byte first, where it unpacks to less 1, then a token a byte (end,
+    far copy, literal, near copy). `unpackKrillTinyCrunch` follows that routine, in place over the file as the loader
+    does: Space Beer's J reads its end from a 0 its own unpacking wrote over the stream's last bytes. All 15 packed
+    files are byte for byte what the demo's routine makes of them on Sindri's Cpu and what the demo had in memory after
+    each load when Sindri ran it from its disk with the 1541 (3 billion cycles). Any byte is a token, so the first rule
+    (the stream ends with the file, or the unpacking ends past it) took 889 disks of the archive, mostly old demos
+    whose boot "ends" on its first byte; now an end read from the unpacking has to be one it wrote over the file, and a
+    literal of fewer than 64 bytes is never followed by another (a packer makes them one; none of the files checked
+    against the demos' own unpackers has one). That leaves 76 disks (of the 403 the Krill reader takes; ZX0 and Doynax
+    LZ still 327, the other readers the same), 11 releases. Krill's loader (its receive loop in memory after the boot,
+    most printing "KRILL'S LOADER, REVISION 164/166/184" as they install it) is on Space Beer, Limbo Living, 1981,
+    Pixels 35, Artificial Intelligence, Seaworld, Secam, Strawberry Strings and Attitude #1 (IDE64); on HeartMix side B
+    it is not confirmed (Sindri found no loader from the side's first file); Hardhat Construction Co's game has a
+    TinyCrunch unpacker of its own and loads its levels itself (read all the same, as Krill's). Checked in Sindri runs
+    at the moment the loader's unpacker returns: Secam 70/70, 1981 8/8, Pixels 35 10/10 and the 32 files Strawberry
+    Strings loaded before it reset, byte for byte. Fixture `fixtures/d64/krill-tc-demo.d64` (the raster demo packed
+    with the test helper's TinyCrunch writer), unit tests in `test/krill-disk.test.ts`, an e2e test that mounts it.
 
 Fixes 3–10 were found by the fast-check fuzz test, which covers more inputs (entries, comments, renames, every override
 kind, every setting, two-file projects) than the prototype harness did. Fix 11 was found while writing the e2e tests,

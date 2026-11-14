@@ -330,8 +330,8 @@ export function SparklePanel({ disk, onCopy, onOpenChunk, onSaveFiles }: { disk:
 
 /** The Krill script tab (spec 13.5k): a disk for Krill's loader, its directory's files a row each in the directory's
  *  order (the order the loader loads them in); a row opens the file as a PRG, unpacked when it is packed with the
- *  loader's ZX0 or (version 146) Doynax LZ, + adds it. Copy script gives cc1541's command line that writes the disk again, Save files… every file as
- *  it is on the disk and unpacked, with that command line. */
+ *  loader's ZX0, (version 146) Doynax LZ or (revision 166) TinyCrunch, + adds it. Copy script gives cc1541's command
+ *  line that writes the disk again, Save files… every file as it is on the disk and unpacked, with that command line. */
 export function KrillPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
   const d = disk.krill!;
   const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length;
@@ -339,7 +339,7 @@ export function KrillPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: Mo
   const notes = (f: KrillFile) => {
     const e = d.entries[f.entry], u = f.unpacked;
     return [
-      u ? `packed with ${packer}, ${d.packer === 'doynax' ? `unpacked in place${u.overwritten ? `, over ${u.overwritten} byte${u.overwritten === 1 ? '' : 's'} of its stream still to be read` : ''}` : u.inplace ? 'in place' : 'with an end'}` : f.basic ? 'a BASIC program: loaded with LOAD and RUN' : `not packed with ${packer}: as it is on the disk`,
+      u ? `packed with ${packer}, ${d.packer === 'doynax' || (d.packer === 'tinycrunch' && u.inplace) ? `unpacked in place${u.overwritten ? `, over ${u.overwritten} byte${u.overwritten === 1 ? '' : 's'} of its stream still to be read` : ''}` : d.packer === 'tinycrunch' ? 'unpacked elsewhere' : u.inplace ? 'in place' : 'with an end'}` : f.basic ? 'a BASIC program: loaded with LOAD and RUN' : `not packed with ${packer}: as it is on the disk`,
       `from ${f.sectors[0][0]}/${f.sectors[0][1]}`,
       e.blocks !== f.sectors.length && `the directory shows ${e.blocks} block${e.blocks === 1 ? '' : 's'} (${f.sectors.length})`,
     ].filter(Boolean).join(' · ');

@@ -102,7 +102,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     writes the disk again (the names as PETSCII bytes, the blocks the directory shows, the dirart's lines), and *Save
     files…* saves every file as it is on the disk and unpacked, with that command line. Version 146 of the loader,
     whose files are packed with Doynax LZ, is read the same way (GoatLight, 2015: both sides, every packed file byte for
-    byte what the demo's own unpacker makes of it);
+    byte what the demo's own unpacker makes of it), and so is revision 166 built with TinyCrunch (Fossil's Space Beer,
+    2019: all 15 parts byte for byte what the demo had in memory after loading each of them, run from its disk in Sindri);
   - the files of a disk for Cadaver's Covert Bitops loader (versions 2 and 3): the files of its directory, loaded by
     name, unpacked as the loader unpacks them (exomizer level 1/2/3, exomizer3 raw, pucrunch), the load calls read from
     the code on the disk (which also say where a raw file goes), and which of Cadaver's tools laid the disk out

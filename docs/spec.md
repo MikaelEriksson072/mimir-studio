@@ -3522,8 +3522,9 @@ efter namn, sedan tomma namn som laddar nästa fil i katalogen (fil 2–6 i kata
   råkar packas upp.
 - En katalogpost utan sektorer (spår 0, eller 18/0, BAM:en) är en rad i en dir-art. En post som börjar där en tidigare
   gör är samma fil (en loop-fil).
-- Version 146 med Doynax LZ (GoatLight) läses också, se 13.5l. Byggen av loadern med andra uppackare (Exomizer och
-  andra, som Still Standing och Meetro 2024) läses inte här, och inte heller diskar som laddar efter spår och sektor.
+- Version 146 med Doynax LZ (GoatLight) läses också, se 13.5l, och revision 166 med TinyCrunch (Space Beer), se nedan.
+  Byggen av loadern med andra uppackare (Exomizer och andra, som Still Standing och Meetro 2024) läses inte här, och
+  inte heller diskar som laddar efter spår och sektor.
 
 **Skriptet** (`cc1541Script`): först kommentarsrader om vad disken är och hur loadern laddar, och en rad per katalogpost
 (filnamnet, var den laddas, vart den packas upp; en rad utan fil, samma fil som en tidigare). Sedan cc1541:s kommandorad:
@@ -3545,8 +3546,9 @@ efter namn, sedan tomma namn som laddar nästa fil i katalogen (fil 2–6 i kata
   in place* eller *with an end*, *a BASIC program: loaded with LOAD and RUN*, var den börjar, *the directory shows 0
   blocks (16)*).
 - Ett klick på raden öppnar filen som en PRG: uppackad där den packas upp, annars som den laddas. **+** lägger till den.
-- **Copy script** kopierar cc1541:s kommandorad. **Save files…** sparar varje fil som den är på disken (`.zx0`) och
-  uppackad (`.prg`) i en mapp man väljer, med kommandoraden som `<disk>-cc1541.sh`.
+- **Copy script** kopierar cc1541:s kommandorad. **Save files…** sparar varje fil som den är på disken (`.zx0`, `.dnx`
+  med Doynax LZ, `.tc` med TinyCrunch) och uppackad (`.prg`) i en mapp man väljer, med kommandoraden som
+  `<disk>-cc1541.sh`.
 
 **Mätt:**
 - *Nightfall* (100 %-versionen): 27 filer, startprogrammet och 26 packade på plats (den största, `$0a`, från 10 914 till
@@ -3574,6 +3576,41 @@ kopior (också 16-bitars längder, långa offset och en upprepad offset), filer 
 filnamnen, PRG:erna, cc1541-namnen och kommandoraden, och andra loaders diskar. `fixtures/d64/krill-demo.d64` är en av
 diskarna: ett BASIC-startprogram, rasterdemot packat med slut, en fil packad på plats under ett dir-art-namn och en rad
 dir-art. `e2e/app.spec.ts` (*a mounted disk for Krill's loader*) monterar den.
+
+**Revision 166 med TinyCrunch** (Fossil, *Space Beer*, 2019). Mimir sa att startprogrammet hade Krills loader men läste
+inga filer på disken, så det fanns ingen Krill script-flik och filerna gick inte att öppna en och en: loadern är byggd
+med ChristopherJams TinyCrunch, som läsaren inte kände. Formatet är läst ur den residenta uppackaren i demots minne
+(`$0374–$03ef`, efter att startprogrammet installerat loadern), `unpackKrillTinyCrunch()`, `KrillDisk.packer`
+`'tinycrunch'`, filerna `.tc`:
+- först den sista byten filen packas upp till, sedan vart den packas upp − 1 (2 byte, den låga först), sedan strömmen:
+  en byte per token, inga bitar;
+- `$00` avslutar (den sista byten skrivs sist); `$01–$7f` en kopia på (token >> 3) + 2 byte från upp till 2048 bakåt
+  (`$800` minus tokens 3 låga bitar och nästa byte); `$80–$bf` en literal på token − `$7f` byte; `$c0–$ff` en kopia på 2
+  byte från `$ff` − token bakåt (1–63);
+- den packas upp på plats och läser strömmen där filen laddats: när skrivningen når byte i strömmen som inte lästs än
+  läser den det den skrev. Space Beers J läser sitt slut ur en 0 som den skrev 9 byte före filens eget slut, och
+  slutar 9 byte efter det.
+- En fil räknas när strömmen slutar med filen, eller där uppackningen skrivit över filens sista byte (slutet en 0 den
+  skrev); den kopierar bara byte den packat upp (TinyCrunch packar en fil för sig); och en literal på färre än 64 byte
+  följs aldrig av en till (en packare gör dem till en). Eftersom varje byte är en token räcker inte mindre: utan de
+  två sista reglerna togs 889 diskar i arkivet, mest gamla demos som Activas Ghostbusters Demo, vars startprogram
+  "slutar" med sin första byte långt från filen.
+- **Kontroll:** alla 15 packade filer på Space Beer är byte för byte vad demots egen uppackare gör av dem på Sindris
+  6510 (med blockväntan ersatt med `rts`), och vad demot hade i minnet efter varje laddning när Sindri körde det från
+  disken med 1541:an (alla 15 delar, J också).
+- **Hela referensarkivet** (277 850 diskar): 76 diskar med TinyCrunch, 11 utgåvor (Krill-läsaren tar 403, med ZX0 och
+  Doynax LZ samma 327 som förut, de andra läsarna samma som förut): Space Beer, Limbo Living (Fossil), 1981 (Desire),
+  Pixels 35, Artificial Intelligence, Seaworld, Secam, Strawberry Strings, HeartMix sida B, Attitude #1 (IDE64) och
+  spelet Hardhat Construction Co (två versioner). Krills loader, revision 164, 166 eller 184, finns i minnet efter
+  startprogrammet på alla utom HeartMix sida B (inte bekräftat: Sindri fann ingen loader från sidans första fil) och
+  Hardhat, vars spel har en egen TinyCrunch-uppackare och laddar sina banor själv; dess filer läses ändå (som Krills).
+  I Sindri, i ögonblicket då loaderns uppackare returnerar: Secam 70 av 70, 1981 8 av 8, Pixels 35 10 av 10 och de 32
+  filer Strawberry Strings hann ladda innan det startade om, byte för byte.
+- **Test:** `test/krill-disk.test.ts` med en egen TinyCrunch-skrivare i `test/helpers/krill-disk.ts`: tokens mot en
+  ström skriven för hand, alla sorters token, på plats, ett slut som uppackningen skrivit (som J), byte som inte är en
+  sådan fil (också två korta literaler i rad och ett startprogram som "slutar" på sin första byte), och disken.
+  `fixtures/d64/krill-tc-demo.d64` (rasterdemot packat på plats, en fil som packas upp på annat ställe) monteras av
+  `e2e/app.spec.ts` (*a mounted disk for Krill's loader built with TinyCrunch*).
 
 ### 13.5l Diskar för Covert Bitops-loadern (makedisks och maked64:s kommandofil) – och GoatLight
 

@@ -4,8 +4,8 @@ import type { IconName } from './icon-paths';
 /** The mounted .d64 or .g64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build &
  *  Run (with the files the project opened from it built and written back); `spindle`: its jobs, when it is a Spindle 3
  *  disk (the Spindle script tab lists them); `bitfire`: its files, when it is a Bitfire disk (the Bitfire script tab
- *  lists them); `krill`: its directory's files, when they are packed with the ZX0 of Krill's loader or (version 146)
- *  Doynax LZ (the Krill script tab lists them); `covert`: its directory's files, when the Covert Bitops loader's code is
+ *  lists them); `krill`: its directory's files, when they are packed with the ZX0 of Krill's loader, (version 146)
+ *  Doynax LZ or (revision 166) TinyCrunch (the Krill script tab lists them); `covert`: its directory's files, when the Covert Bitops loader's code is
  *  on it or they are packed as that loader reads them (the Covert script tab lists them); `pirateslayer`: Electronic Arts' copy protection on it (the Pirate Slayer tab); `sides`: the
  *  release's next disks or sides from its folder (or dropped with it), in order: Sindri turns to them when the program
  *  asks */

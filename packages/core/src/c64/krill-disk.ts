@@ -31,20 +31,36 @@
  *   a length of 256 ends the stream;
  * - the loader unpacks in place, reading the stream where the file loaded: when writing reaches bytes of the stream
  *   that are still to be read (GoatLight's C1 has three), it reads what it wrote, and so does this.
- * Such a file has to end where its stream ends. Builds with other unpackers (Exomizer, Pucrunch, ByteBoozer,
- * Levelcrush) are not read here.
+ * Such a file has to end where its stream ends.
+ * Revision 166 (2018) built with ChristopherJam's TinyCrunch, as Fossil's Space Beer (2019) has it, unpacks with a
+ * resident routine of its own (at $0374 there); read from that routine, and every file of the disk is byte for byte what
+ * the demo's own routine makes of it (run on Sindri's Cpu), and what it unpacked when Sindri ran the demo from its disk:
+ * - the last byte the file unpacks to, then where it unpacks to less 1 (2 bytes, the low byte first), then the stream
+ *   of bytes, a token each and no bits:
+ * - $00 ends it (the last byte then goes after the rest); $01-$7f a copy of (token >> 3) + 2 bytes from up to 2048 back:
+ *   $800 less the token's 3 low bits and the next byte; $80-$bf a literal of token - $7f bytes; $c0-$ff a copy of 2
+ *   bytes from $ff - token back (1-63);
+ * - it unpacks in place, reading the stream where the file loaded: when writing reaches bytes of the stream still to be
+ *   read, it reads what it wrote (Space Beer's J reads its end from a 0 it wrote 9 bytes before the file's own end).
+ * Such a file ends where its stream ends, or its unpacking ends past it, over its last bytes (the end a 0 it wrote); it
+ * copies only bytes it unpacked, as TinyCrunch packs a file on its own; and a literal of fewer than 64 bytes is never
+ * followed by another, as a packer makes them one. Any byte being a token, other bytes unpack so now and then without
+ * those rules (889 disks of the reference archive did, Activa's Ghostbusters Demo among them). Builds with other
+ * unpackers (Exomizer, Pucrunch, ByteBoozer, Levelcrush) are not read here.
  * A disk counts as one when at least two of its files unpack so, twice as many as the files that neither unpack nor are
  * BASIC programs at $0801 (the boot program loads with LOAD; those are not tried): a disk packed another way has a file
  * that happens to unpack now and then. */
 import type { Addr } from '../types';
 import { diskSectors, parseD64, petsciiName, sectorOffset, sectorsOnTrack, type D64FileType } from './d64';
 
-/** the unpackers this reads files of: the loader's ZX0 (version 184 on) and Doynax LZ (version 146) */
-export type KrillPacker = 'zx0' | 'doynax';
+/** the unpackers this reads files of: the loader's ZX0 (version 184 on), Doynax LZ (version 146) and TinyCrunch
+ *  (revision 166) */
+export type KrillPacker = 'zx0' | 'doynax' | 'tinycrunch';
 /** each packer as the script and the app name it, and the extension of a file packed with it */
 export const KRILL_PACKER: Record<KrillPacker, { name: string; ext: string }> = {
   zx0: { name: 'its ZX0', ext: 'zx0' },
   doynax: { name: 'Doynax LZ (version 146)', ext: 'dnx' },
+  tinycrunch: { name: 'TinyCrunch', ext: 'tc' },
 };
 
 export interface KrillUnpacked {
@@ -53,7 +69,8 @@ export interface KrillUnpacked {
   inplace: boolean;
   /** what it is packed with (when it is not the ZX0) */
   packer?: KrillPacker;
-  /** bytes of its stream that the unpacking wrote over before it read them (Doynax LZ, unpacking in place) */
+  /** bytes of its stream that the unpacking wrote over before it read them (Doynax LZ and TinyCrunch, unpacking in
+   *  place) */
   overwritten?: number;
 }
 
@@ -203,6 +220,48 @@ export function unpackKrillDoynax(data: Uint8Array, load: Addr): KrillUnpacked |
   } catch { return null; }
 }
 
+/** A file packed with TinyCrunch, as revision 166 of Krill's loader unpacks it: in place, reading the stream where the
+ *  file loaded; null when it is not one. `data` starts with the last byte it unpacks to, then where it unpacks to less
+ *  1 (the low byte first). */
+export function unpackKrillTinyCrunch(data: Uint8Array, load: Addr): KrillUnpacked | null {
+  if (data.length < 4 || load + data.length > 0x10000) return null;
+  const mem = new Uint8Array(0x10000);
+  mem.set(data, load);
+  const end = load + data.length, last = data[0], start = (data[1] | (data[2] << 8)) + 1;
+  let src = load + 3, dst = start, overwritten = 0;
+  const byte = () => { if (src >= end) throw new RangeError('past the end'); return mem[src++]; };
+  const put = (v: number) => {
+    if (dst > 0xffff) throw new RangeError('past $ffff');
+    if (dst >= src && dst < end && mem[dst] !== v) overwritten++;
+    mem[dst++] = v;
+  };
+  // a copy takes bytes it unpacked, before where it writes
+  const copy = (back: number, n: number) => {
+    if (back < 1 || dst - back < start) throw new RangeError('before the start');
+    for (let i = 0; i < n; i++) put(mem[dst - back]);
+  };
+  try {
+    // a literal of fewer than 64 bytes is never followed by another (a packer makes them one), which bytes that are no
+    // such file soon do
+    let shortLiteral = false;
+    for (;;) {
+      const t = byte();
+      if (!t) break;
+      const literal = t >= 0x80 && t < 0xc0;
+      if (literal && shortLiteral) return null;
+      shortLiteral = literal && t < 0xbf;
+      if (t < 0x80) { const lo = byte(); copy(0x800 - (((t & 7) << 8) | lo), (t >> 3) + 2); }
+      else if (literal) for (let n = t - 0x7f; n > 0; n--) put(byte());
+      else copy(0xff - t, 2);
+    }
+    // the end was the stream's last byte, or a 0 the unpacking wrote over the stream, going on past the file's end
+    const wroteEnd = src - 1 >= start && src - 1 < dst;
+    put(last);
+    if (src !== end && !(wroteEnd && dst >= end)) return null;
+  } catch { return null; }
+  return { start, end: dst, bytes: mem.slice(start, dst), inplace: start < end && dst > load, packer: 'tinycrunch', overwritten };
+}
+
 /** The most common value, the smallest of those as common; `none` for none. */
 function mode(values: number[], none: number): number {
   const count = new Map<number, number>();
@@ -212,8 +271,10 @@ function mode(values: number[], none: number): number {
   return best;
 }
 
-/** The directory and files of a disk for Krill's loader whose files are packed with its ZX0 or Doynax LZ; null when it
- *  is not one. */
+const UNPACK: Record<KrillPacker, (data: Uint8Array, load: Addr) => KrillUnpacked | null> = { zx0: unpackKrillZx0, doynax: unpackKrillDoynax, tinycrunch: unpackKrillTinyCrunch };
+
+/** The directory and files of a disk for Krill's loader whose files are packed with its ZX0, Doynax LZ or TinyCrunch;
+ *  null when it is not one. */
 export function readKrillDisk(disk: Uint8Array): KrillDisk | null {
   let image: Uint8Array, img: ReturnType<typeof parseD64>;
   try { image = diskSectors(disk); img = parseD64(image); } catch { return null; }
@@ -254,9 +315,10 @@ export function readKrillDisk(disk: Uint8Array): KrillDisk | null {
     return e;
   });
   const files = entries.flatMap(e => (e.file ? [e.file] : []));
-  // the loader's ZX0, else Doynax LZ (an older build): the first that the disk's files are packed with
-  const packer = (['zx0', 'doynax'] as const).find(p => {
-    for (const f of files) f.unpacked = f.basic ? null : p === 'zx0' ? unpackKrillZx0(f.bytes, f.load) : unpackKrillDoynax(f.bytes, f.load);
+  // the loader's ZX0, else Doynax LZ or TinyCrunch (older builds): the first that the disk's files are packed with
+  // (TinyCrunch last: any byte is a token of it, so it takes the most)
+  const packer = (['zx0', 'doynax', 'tinycrunch'] as const).find(p => {
+    for (const f of files) f.unpacked = f.basic ? null : UNPACK[p](f.bytes, f.load);
     const packed = files.filter(f => f.unpacked).length, other = files.filter(f => !f.unpacked && !f.basic).length;
     return packed >= 2 && packed >= 2 * other;
   });
@@ -336,7 +398,7 @@ export function cc1541Script(disk: KrillDisk, name: string): string[] {
     }
     const u = f.unpacked;
     const what = u ? `unpacks to $${hx(u.start, 4)}-$${hx(u.end - 1, 4)} (${u.end - u.start} bytes)${u.overwritten ? `, writing over ${u.overwritten} byte${u.overwritten === 1 ? '' : 's'} of its stream before they are read` : ''}`
-      : f.basic ? 'a BASIC program, loaded with LOAD and RUN' : `not packed with ${disk.packer === 'zx0' ? "the loader's ZX0" : 'Doynax LZ'}`;
+      : f.basic ? 'a BASIC program, loaded with LOAD and RUN' : `not packed with ${disk.packer === 'zx0' ? "the loader's ZX0" : disk.packer === 'doynax' ? 'Doynax LZ' : 'TinyCrunch'}`;
     out.push(`#   ${label} ${krillFileName(f).padEnd(16)} loads at $${hx(f.load, 4)}-$${hx(f.end - 1, 4)} (${f.bytes.length} bytes), ${what}`);
   }
   const lines = [`cc1541 -n "${cc1541Text(disk.headerRaw)}" -i "${cc1541Text(disk.idRaw, false)}"${disk.interleave !== 10 ? ` -S ${disk.interleave}` : ''}`];

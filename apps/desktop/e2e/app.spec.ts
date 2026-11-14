@@ -6133,6 +6133,44 @@ test("a mounted disk for Krill's loader: its files in the Krill script tab, unpa
   });
 });
 
+test("a mounted disk for Krill's loader built with TinyCrunch (revision 166): its files opened unpacked from the Krill script tab", async ({ app, page }) => {
+  // fixtures/d64/krill-tc-demo.d64 (packages/core/test/krill-disk.test.ts): a BASIC boot program, the raster demo packed
+  // with TinyCrunch in place, as Fossil's Space Beer has its parts, and a file unpacking elsewhere
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/krill-tc-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted krill-tc-demo.d64: "TINY CRUNCH", 3 files, a disk for Krill\'s loader with 2 files packed with TinyCrunch')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText("Krill's loader: 2 files in the directory packed with TinyCrunch, loaded in the directory's order");
+  const files = page.getByRole('table', { name: 'Krill files' });
+
+  await test.step('the tab lists the files, where they load and where they unpack to', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Krill script' }).click();
+    await expect(page.locator('.spindle-head').first()).toContainText("Files of krill-tc-demo.d64 (Krill's loader, TinyCrunch): 3 files, 2 unpacked");
+    await expect(files.locator('tbody tr td:nth-child(3)')).toHaveText(['$0801–$080d', '$2cd6–$37ff', '$dd0d–$dfff']);
+    await expect(files.locator('tbody tr td:nth-child(4)')).toHaveText(['—', '$0801–$37ff', '$c000–$c7cf']);
+    await expect(files.locator('tbody tr td:nth-child(6)')).toHaveText(['file00_0801.prg', 'file01_0801.tc', 'file02_c000.tc']);
+    await expect(files.locator('tbody tr td:nth-child(7)')).toHaveText([
+      'a BASIC program: loaded with LOAD and RUN · from 1/0', 'packed with TinyCrunch, unpacked in place · from 1/1', 'packed with TinyCrunch, unpacked elsewhere · from 1/13',
+    ]);
+  });
+
+  await test.step('a row opens its file unpacked, as a PRG at where it unpacks to', async () => {
+    await files.getByRole('row', { name: /file01_0801/ }).click();
+    await expect(toast(page, 'Loaded file01_0801.prg at $0801')).toBeVisible();
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+  });
+
+  await test.step("it copies cc1541's command line with the files as .tc", async () => {
+    await page.getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, 'Copied the cc1541 command line')).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text[0]).toBe("# cc1541 command line, rebuilt by Mimir Studio from krill-tc-demo.d64 (Krill's loader, TinyCrunch): 3 files, 2 of them packed.");
+    expect(text).toContain('  -f "a" -w file01_0801.tc \\');
+  });
+});
+
 test('a mounted disk for the Covert Bitops loader: its files in the Covert script tab, opened unpacked, makedisk\'s command file copied and saved', async ({ workDir, app, page }) => {
   // fixtures/d64/covert-demo.d64 (packages/core/test/covert-disk.test.ts): a BASIC boot that loads "01" by its letters,
   // the raster demo packed with exomizer level, a Pucrunch file, an Exomizer 3 file and one as it is, laid out by makedisk

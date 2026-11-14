@@ -6,8 +6,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cc1541Script, cc1541Text, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, makeD64, parseD64, readBitfireDisk, readBoozeDisk, readKrillDisk, readSparkleDisk, readSpindleDisk, unpackDali, unpackKrillDoynax, unpackKrillZx0 } from '../src';
-import { KrillDoynax, KrillZx0, makeKrillDisk, packKrillDoynax, packKrillInPlace, packKrillZx0, type FakeKrillEntry } from './helpers/krill-disk';
+import { cc1541Script, cc1541Text, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, makeD64, parseD64, readBitfireDisk, readBoozeDisk, readKrillDisk, readSparkleDisk, readSpindleDisk, unpackDali, unpackKrillDoynax, unpackKrillTinyCrunch, unpackKrillZx0 } from '../src';
+import { KrillDoynax, KrillZx0, makeKrillDisk, packKrillDoynax, packKrillInPlace, packKrillTinyCrunch, packKrillTinyCrunchInPlace, packKrillZx0, type FakeKrillEntry } from './helpers/krill-disk';
 
 /** the bytes of literals and copies (an offset of 0: the last one again), as a plain decoder makes them */
 function expand(steps: ([number[]] | [number, number])[]): number[] {
@@ -272,5 +272,113 @@ describe("Krill's loader's Doynax LZ (version 146)", () => {
     expect(cc1541Script(d, 'goat.d64')[0]).toBe("# cc1541 command line, rebuilt by Mimir Studio from goat.d64 (Krill's loader, Doynax LZ (version 146)): 3 files, 2 of them packed.");
     // ZX0 is tried first: the ZX0 fixture stays a ZX0 disk
     expect(readKrillDisk(new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/d64/krill-demo.d64'))))!.packer).toBe('zx0');
+  });
+});
+
+describe("Krill's loader's TinyCrunch (revision 166)", () => {
+  it('reads a token a byte: literals, copies of 2 from near, longer copies from far, the end and the last byte', () => {
+    // the last byte ($99) and where it unpacks to less 1 ($0fff), then a literal of 2 ($81 'A' 'B'), a copy of 2 from 1
+    // back ($fe), one of 3 from 4 back ($0f: length 3, offset bits 7; $fc: $800 - $7fc), the end; the last byte after it
+    const u = unpackKrillTinyCrunch(Uint8Array.from([0x99, 0xff, 0x0f, 0x81, 0x41, 0x42, 0xfe, 0x0f, 0xfc, 0x00]), 0x8000);
+    expect(u).toMatchObject({ start: 0x1000, end: 0x1008, inplace: false, packer: 'tinycrunch', overwritten: 0 });
+    expect([...u!.bytes]).toEqual([0x41, 0x42, 0x42, 0x42, 0x41, 0x42, 0x42, 0x99]);
+    // a byte more after the end is not this file
+    expect(unpackKrillTinyCrunch(Uint8Array.from([0x99, 0xff, 0x0f, 0x81, 0x41, 0x42, 0xfe, 0x0f, 0xfc, 0x00, 0x00]), 0x8000)).toBeNull();
+  });
+
+  it('unpacks literals of 64, copies of up to 17 bytes from up to 2048 back', () => {
+    const plain = [...mixed(9000, 7), ...Array.from({ length: 300 }, (_, i) => (i * 97 + 13) & 0xff), ...mixed(2000, 7)];
+    const packed = packKrillTinyCrunch(plain, 0x2000);
+    // every kind of token is in it
+    const u = unpackKrillTinyCrunch(Uint8Array.from(packed), 0x9000);
+    expect(u).toMatchObject({ start: 0x2000, end: 0x2000 + plain.length, overwritten: 0 });
+    expect([...u!.bytes]).toEqual(plain);
+    expect(packed).toContain(0xbf);
+    // in place, ending where the file ends
+    const { bytes, load } = packKrillTinyCrunchInPlace(plain, 0xd000);
+    const p = unpackKrillTinyCrunch(Uint8Array.from(bytes), load);
+    expect(p).toMatchObject({ start: 0xd000 - plain.length, end: 0xd000, inplace: true });
+    expect([...p!.bytes]).toEqual(plain);
+  });
+
+  it('unpacks in place, reading an end it wrote over its stream, past the file\'s end, as Space Beer\'s J does', () => {
+    // at $1003 a literal of 2 ($07 $00), then a copy of 6 from 1 back ($27 $ff), which writes 0s over $1008-$100a, the
+    // stream's last 3 bytes: the token at $1008 is then a 0 it wrote, the end, and the last byte ($55) goes at $100b
+    const stream = [0x55, 0x02, 0x10, 0x81, 0x07, 0x00, 0x27, 0xff, 0xaa, 0xbb, 0xcc];
+    const u = unpackKrillTinyCrunch(Uint8Array.from(stream), 0x1000);
+    expect(u).toMatchObject({ start: 0x1003, end: 0x100c, inplace: true, overwritten: 3 });
+    expect([...u!.bytes]).toEqual([0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55]);
+    // the unpacking has to reach the file's end then: with two bytes more it ends inside the file
+    expect(unpackKrillTinyCrunch(Uint8Array.from([...stream, 0xdd, 0xee]), 0x1000)).toBeNull();
+    // loaded elsewhere the stream goes on from $aa
+    expect(unpackKrillTinyCrunch(Uint8Array.from(stream), 0x4000)).toBeNull();
+  });
+
+  it('is no packed file for other bytes', () => {
+    expect(unpackKrillTinyCrunch(new TextEncoder().encode('MIMIR STUDIO READS KRILL DISKS'), 0x2000)).toBeNull();
+    expect(unpackKrillTinyCrunch(Uint8Array.from([0x99, 0xff, 0x0f]), 0x2000)).toBeNull();
+    // a copy from before where it unpacks to (TinyCrunch packs a file on its own)
+    expect(unpackKrillTinyCrunch(Uint8Array.from([0x99, 0xff, 0x0f, 0x80, 0x41, 0xfd, 0x00]), 0x8000)).toBeNull();
+    // a copy from 0 back ($ff)
+    expect(unpackKrillTinyCrunch(Uint8Array.from([0x99, 0xff, 0x0f, 0x81, 0x41, 0x42, 0xff, 0x00]), 0x8000)).toBeNull();
+    // a literal of fewer than 64 bytes and then another (a packer makes them one); after one of 64 there can be one
+    expect(unpackKrillTinyCrunch(Uint8Array.from([0x99, 0xff, 0x0f, 0x80, 0x41, 0x80, 0x42, 0x00]), 0x8000)).toBeNull();
+    const lit64 = Array.from({ length: 64 }, (_, i) => i);
+    expect(unpackKrillTinyCrunch(Uint8Array.from([0x99, 0xff, 0x0f, 0xbf, ...lit64, 0x80, 0x42, 0x00]), 0x8000)).toMatchObject({ start: 0x1000, end: 0x1000 + 66 });
+    // an end at the stream's start, as a boot program's first bytes can be: the last byte alone, far from the file, is
+    // not an end the unpacking wrote over the file (Seaworld's and Artificial Intelligence's boots, in the archive)
+    expect(unpackKrillTinyCrunch(Uint8Array.from([0x0b, 0x08, 0x64, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31]), 0x0801)).toBeNull();
+    // past $ffff
+    expect(unpackKrillTinyCrunch(Uint8Array.from(packKrillTinyCrunch(mixed(300, 1), 0xff00)), 0x8000)).toBeNull();
+  });
+
+  it('reads a disk whose files are packed with it, as Space Beer\'s are, and names them .tc', () => {
+    const a = packKrillTinyCrunchInPlace(mixed(3000, 1), 0x4000), b = packKrillTinyCrunch(mixed(1500, 2), 0xc000);
+    const disk = makeKrillDisk([
+      { name: 'SPACE', load: 0x0801, bytes: [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0, 0, 0, 0x60] },
+      { name: 'A', load: a.load, bytes: a.bytes },
+      { name: 'B', load: 0xe000 - b.length, bytes: b },
+    ]);
+    const d = readKrillDisk(disk)!;
+    expect(d.packer).toBe('tinycrunch');
+    expect(d.files.map(f => [krillFileName(f), f.unpacked?.start ?? null, f.unpacked?.end ?? null, f.unpacked?.inplace ?? null])).toEqual([
+      ['file00_0801.prg', null, null, null], ['file01_3448.tc', 0x4000 - 3000, 0x4000, true], ['file02_c000.tc', 0xc000, 0xc000 + 1500, false],
+    ]);
+    expect([...krillFilePrg(d.files[2])]).toEqual([0x00, 0xc0, ...mixed(1500, 2)]);
+    expect(cc1541Script(d, 'beer.d64')[0]).toBe("# cc1541 command line, rebuilt by Mimir Studio from beer.d64 (Krill's loader, TinyCrunch): 3 files, 2 of them packed.");
+    // ZX0 and Doynax LZ are tried first: those disks stay what they are
+    expect(readKrillDisk(new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/d64/krill-demo.d64'))))!.packer).toBe('zx0');
+    const dnx = packKrillDoynax(mixed(3000, 1), 0x2000), dnx2 = packKrillDoynax(mixed(1500, 2), 0xc000);
+    expect(readKrillDisk(makeKrillDisk([{ name: 'A', load: 0x6000 - dnx.length, bytes: dnx }, { name: 'B', load: 0xe000 - dnx2.length, bytes: dnx2 }]))!.packer).toBe('doynax');
+  });
+});
+
+describe('the TinyCrunch disk fixture', () => {
+  it('is fixtures/d64/krill-tc-demo.d64, which the e2e tests mount: the raster demo packed in place, a file unpacking elsewhere', () => {
+    const demo = [...readFileSync(join(__dirname, '../../../fixtures/prg/raster-demo.prg'))];
+    const boot = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0, 0, 0, 0x60];
+    // the raster demo packed in place, ending where it ends, as Space Beer's files mostly are; a file unpacking to $c000
+    // from one that loads below $e000
+    const start = demo[0] | (demo[1] << 8), raster = packKrillTinyCrunchInPlace(demo.slice(2), start + demo.length - 2);
+    const other = packKrillTinyCrunch(mixed(2000, 5), 0xc000);
+    const disk = makeKrillDisk([
+      { name: 'TC DEMO', load: 0x0801, bytes: boot },
+      { name: 'A', load: raster.load, bytes: raster.bytes },
+      { name: 'B', load: 0xe000 - other.length, bytes: other },
+    ], { header: 'TINY CRUNCH', id: [0x31, 0x39, 0xa0, 0x32, 0x41] });
+    const path = join(__dirname, '../../../fixtures/d64/krill-tc-demo.d64');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, disk);
+    expect(new Uint8Array(readFileSync(path))).toEqual(disk);
+    const d = readKrillDisk(disk)!;
+    expect(d.packer).toBe('tinycrunch');
+    expect(d.files.map(f => [krillFileName(f), f.load, f.unpacked?.start ?? null, f.unpacked?.end ?? null, f.unpacked?.inplace ?? null])).toEqual([
+      ['file00_0801.prg', 0x0801, null, null, null], ['file01_0801.tc', raster.load, 0x0801, 0x0801 + demo.length - 2, true], ['file02_c000.tc', 0xe000 - other.length, 0xc000, 0xc000 + 2000, false],
+    ]);
+    expect([...krillFilePrg(d.files[1])]).toEqual(demo);
+    // no other reader takes it
+    expect(readBitfireDisk(disk)).toBeNull();
+    expect(readSpindleDisk(disk)).toBeNull();
+    expect(readBoozeDisk(disk)).toBeNull();
+    expect(readSparkleDisk(disk)).toBeNull();
   });
 });
