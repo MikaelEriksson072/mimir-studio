@@ -1,6 +1,6 @@
 /* Hover (registers, labels, opcodes) and go-to-definition (Ctrl+click, F12) for Kick sources. */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { driveSymbol, findBlock, h4, kindInfo, OPC, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptPad } from '@mimir/core';
+import { driveSymbol, findBlock, h4, kindInfo, OPC, padName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptPad } from '@mimir/core';
 import { KICKASS } from './kickass-language';
 
 /** The analysis shown in the editor; SourceView keeps it current. */
@@ -8,7 +8,13 @@ export const monacoContext: { A: AnalysisResult | null; R: RenderResult | null }
 
 /** The script shown in the Scripts tab (models of the `script:` scheme): the names its code may use, its scratchpads,
  *  the names of its links (UserScript.links) and what kind of block each of the program's labels is on. */
-export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly ScriptPad[]; links: ReadonlySet<string>; kinds: ReadonlyMap<string, string> } = { names: new Map(), pads: [], links: new Set(), kinds: new Map() };
+export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly ScriptPad[]; links: ReadonlySet<string>; kinds: ReadonlyMap<string, string>;
+  /** a store's line written into a scratchpad too (its index; -1: a new one): ScriptsView's, null while the code cannot
+   *  be changed (debugging) */
+  padStore: ((line: number, pad: number) => void) | null } = { names: new Map(), pads: [], links: new Set(), kinds: new Map(), padStore: null };
+
+/** the command a store's code actions run (scriptContext.padStore) */
+export const PAD_STORE_CMD = 'mimir.script.padStore';
 
 /** what a script's code may write besides names: Kick Assembler's directives and functions */
 const SCRIPT_WORDS = ['.byte', '.word', '.text', '.fill', '.const', '.var', '.label', '.eval', '.for', '.while', '.if', 'else', '.print', '.error', '.encoding', '.align', '.pseudopc',
@@ -128,6 +134,26 @@ export function registerProviders(monaco: typeof Monaco): void {
       return null;
     },
   });
+  // a script's store (sta $ff40,x) written into a scratchpad too: the light bulb on its line, a click or Ctrl+. gives a
+  // scratchpad of the script's or a new one, and the line that writes into it goes in after it (ScriptsView)
+  monaco.editor.registerCommand(PAD_STORE_CMD, (_: unknown, line: number, pad: number) => scriptContext.padStore?.(line, pad));
+  monaco.languages.registerCodeActionProvider(KICKASS, {
+    provideCodeActions(model, range) {
+      const none = { actions: [], dispose() { } };
+      if (model.uri.scheme !== 'script' || !scriptContext.padStore) return none;
+      const pads = scriptContext.pads, st = padStoreAt(model.getLinesContent(), range.startLineNumber, pads);
+      if (!st || 'why' in st) return none;
+      const done = new Set(st.into.map(i => i.pad));
+      const act = (title: string, pad: number) => ({ title, kind: 'quickfix', isPreferred: false, command: { id: PAD_STORE_CMD, title, arguments: [st.line, pad] } });
+      return {
+        actions: [
+          ...pads.flatMap((p, i) => done.has(p.name) ? [] : [act(`Also write into ${p.name}: ${padStoreLine(st, p.name).trim()}`, i)]),
+          act(`Also write into a new scratchpad: ${padStoreLine(st, padName(pads)).trim()}`, -1),
+        ],
+        dispose() { },
+      };
+    },
+  }, { providedCodeActionKinds: ['quickfix'] });
   monaco.languages.registerDefinitionProvider(KICKASS, {
     provideDefinition(model, pos) {
       const w = model.getWordAtPosition(pos); if (!w) return null;

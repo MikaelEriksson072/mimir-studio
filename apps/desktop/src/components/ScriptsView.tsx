@@ -6,7 +6,7 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { checkScript, SCRIPT_TEMPLATES, type ScriptTemplate, h4, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot } from '@mimir/core';
+import { checkScript, SCRIPT_TEMPLATES, type ScriptTemplate, h4, padName, padStoreAt, padStoreLine, padStoreReach, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
@@ -100,7 +100,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   const pauseReq = useRef(false);
   const dbgRef = useRef(dbg); dbgRef.current = dbg;
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
-  const keys = useRef({ step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { } });
+  const keys = useRef({ step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, padStoreMenu: (_line: number, _x: number, _y: number) => { }, padStore: (_line: number, _pad: number | null) => { } });
   /** the breakpoints of each model, as decorations (they move with the lines as the code is edited) */
   const bpIds = useRef<Record<string, string[]>>({});
 
@@ -127,9 +127,25 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
         fontSize: 13, lineHeight: 20, minimap: { enabled: false }, scrollBeyondLastLine: false, renderLineHighlight: 'all',
         smoothScrolling: true, padding: { top: 8 }, guides: { indentation: false }, stickyScroll: { enabled: false }, mouseWheelZoom: true,
         tabSize: 8, insertSpaces: true, quickSuggestions: { other: true, comments: false, strings: false }, wordBasedSuggestions: 'off', acceptSuggestionOnEnter: 'off', tabCompletion: 'off', suggestOnTriggerCharacters: true,
-        glyphMargin: true,
+        glyphMargin: true, lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.OnCode },
       });
       ed.current = editor;
+      // a store (sta $ff40,x) written into a scratchpad too: a right-click on its line, or its light bulb (providers.ts)
+      const storeKey = editor.createContextKey<boolean>('mimirPadStore', false);
+      const onStore = () => { const m = editor.getModel(), p = editor.getPosition(); storeKey.set(!!m && !!p && !!padStoreAt(m.getLinesContent(), p.lineNumber, curRef.current?.pads ?? [])); };
+      editor.onDidChangeCursorPosition(onStore); editor.onDidChangeModel(onStore);
+      const ctxAt = { x: 0, y: 0, set: false };
+      editor.onContextMenu(ev => { ctxAt.x = ev.event.posx; ctxAt.y = ev.event.posy; ctxAt.set = true; });
+      editor.addAction({
+        id: 'mimir.pad-store', label: 'Also write into a scratchpad…', contextMenuGroupId: 'navigation', contextMenuOrder: 0, precondition: 'mimirPadStore && !editorReadonly',
+        run: e => {
+          const pos = e.getPosition(); if (!pos) return;
+          let { x, y } = ctxAt;
+          if (!ctxAt.set) { const v = e.getScrolledVisiblePosition(pos), r = e.getDomNode()?.getBoundingClientRect(); x = (r?.left ?? 0) + (v?.left ?? 0); y = (r?.top ?? 0) + (v?.top ?? 0) + 20; }
+          ctxAt.set = false;
+          keys.current.padStoreMenu(pos.lineNumber, x, y);
+        },
+      });
       editor.onDidChangeModelContent(() => {
         const s = curRef.current, m = editor.getModel();
         if (applying.current || !s || !m) return;
@@ -286,6 +302,68 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     e.pushUndoStop(); e.focus();
   };
 
+  /** a new scratchpad's place: not over the code, another scratchpad, or memory the code reads and writes as the
+   *  program's (as Add in the Scratchpads tab) */
+  const newPadAt = (s: UserScript, size: number): Addr => {
+    const taken = [...(check?.code ?? []), ...s.pads.map(x => ({ start: x.start, end: x.start + x.size })), ...(check?.access ?? [])];
+    const last = s.pads[s.pads.length - 1];
+    return scriptPlace(env.files, size, taken, last ? last.start + last.size : undefined)?.at ?? 0xc000;
+  };
+  /** the store on `line` (sta $ff40,x) written into a scratchpad too (its index; null: a new one): `sta pad2,x` goes in
+   *  on the line after it (after the copies it has), one step of the project with a new scratchpad, and the
+   *  scratchpad is shown */
+  const padStoreInto = (line: number, pi: number | null) => {
+    const s = curRef.current, e = ed.current, monaco = monacoRef.current; if (!s) return;
+    if (dbgRef.current) { toast('The code cannot be changed while it is being debugged: stop first', 'info'); return; }
+    const m = models.current[s.id], inEditor = !!e && !!monaco && !!m && e.getModel() === m;
+    const lines = inEditor ? m!.getLinesContent() : (live[s.id] ?? s.source).split(/\r?\n/);
+    const st = padStoreAt(lines, line, s.pads);
+    if (!st) { toast(`Line ${line} writes nothing to memory: a store (sta, stx, sty) can be written into a scratchpad too`, 'info'); return; }
+    if ('why' in st) { toast(`Line ${line} cannot be written into a scratchpad too: ${st.why}`, 'warn'); return; }
+    let pads = s.pads, i = pi ?? -1;
+    if (!pads[i]) { pads = [...pads, { name: padName(pads), start: newPadAt(s, 0x100), size: 0x100 }]; i = pads.length - 1; }
+    const pad = pads[i], had = st.into.find(k => k.pad === pad.name);
+    if (had) { goLine(had.line); toast(`Line ${had.line} writes it into ${pad.name} already`, 'info'); return; }
+    const copy = padStoreLine(st, pad.name);
+    let text: string;
+    if (inEditor) {
+      const col = m!.getLineMaxColumn(st.after), end = new monaco!.Selection(st.after + 1, copy.length + 1, st.after + 1, copy.length + 1);
+      e!.executeEdits('pad-store', [{ range: new monaco!.Range(st.after, col, st.after, col), text: m!.getEOL() + copy, forceMoveMarkers: true }], [end]);
+      e!.pushUndoStop(); e!.revealLineInCenterIfOutsideViewport(st.after + 1); e!.focus();
+      text = m!.getValue();
+    } else {
+      text = [...lines.slice(0, st.after), copy, ...lines.slice(st.after)].join('\n');
+      setLive(l => ({ ...l, [s.id]: text }));
+    }
+    // the line (and a new scratchpad) go into the project at once, as one step
+    if (pending.current?.id === s.id) { clearTimeout(pending.current.timer); pending.current = null; }
+    const what = `${st.mn} ${st.operand}${st.index ? `,${st.index}` : ''}`;
+    onEdit(s.id, { source: text, ...(pads !== s.pads ? { pads } : {}) }, pads !== s.pads ? `Add scratchpad ${pad.name} for ${what} of "${s.name}"` : `Write ${what} of "${s.name}" into ${pad.name} too`);
+    set({ outTab: 'pads', pad: i, outFolded: false });
+    toast(`${copy.trim()} on line ${st.after + 1}: ${pad.name} (${$(pad.start)}) gets what ${what} writes`, 'ok');
+  };
+  /** the menu of a store's line: the scratchpads to write it into too (a check on those it is written into) and a new one */
+  const padStoreMenu = (line: number, x: number, y: number) => {
+    const s = curRef.current; if (!s) return;
+    if (dbgRef.current) { toast('The code cannot be changed while it is being debugged: stop first', 'info'); return; }
+    const m = models.current[s.id];
+    const st = padStoreAt(m ? m.getLinesContent() : (live[s.id] ?? s.source).split(/\r?\n/), line, s.pads);
+    if (!st || 'why' in st) { padStoreInto(line, null); return; }
+    const reach = padStoreReach(st);
+    onMenu(x, y, [
+      { header: `Also write what ${st.mn} ${st.operand}${st.index ? `,${st.index}` : ''} writes into` },
+      ...s.pads.map((p, i): MenuItem => {
+        const had = st.into.find(k => k.pad === p.name);
+        return { label: `${p.name} · ${$(p.start)}, ${plural(p.size, 'byte')}${had ? ` · line ${had.line} does` : p.size < reach ? ` · ,${st.index} reaches ${reach}` : ''}`, checked: !!had, run: () => padStoreInto(line, i) };
+      }),
+      { label: `A new scratchpad, ${padName(s.pads)}`, icon: 'plus', run: () => padStoreInto(line, null) },
+    ]);
+  };
+  // the light bulb's code actions write a store into a scratchpad through this (none while debugging: the code is fixed)
+  useEffect(() => {
+    void import('../monaco/providers').then(({ scriptContext }) => { scriptContext.padStore = dbg ? null : (line, pad) => keys.current.padStore(line, pad < 0 ? null : pad); });
+  }, [dbg]);
+
   /** Run: the code as the editor has it, in the worker (App's runUserScript, the same as Run in the Scripts view of the side panel) */
   const run = () => {
     const s = curRef.current; if (!s || running) return;
@@ -398,7 +476,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     setDbg(null); dbgRef.current = null; busyRef.current = false; setDbgBusy(false);
     if (!quiet) toast(curRef.current?.safe ? 'Debugging stopped (safe mode: nothing goes into the program in any case)' : 'Debugging stopped: nothing went into the program (Run, or debugging to the end, writes the changes)', 'info');
   };
-  keys.current = { step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp };
+  keys.current = { step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, padStoreMenu, padStore: padStoreInto };
 
   // the library, and below it the templates Mimir comes with
   const libraryList = <>

@@ -2287,6 +2287,18 @@ $06, $08` i `.asm`-filen efter en körning.
   den valda); ett klick på en rad visar den till höger, och en prick står på dem som senaste körningen ändrade (där
   körningens byte inte är vad en körning börjar den med). Flyttas eller ändras storleken på en glöms vad den höll. Vad en körning lämnar i dem
   sparas med skriptet.
+- **En store till en scratchpad med ett klick** (`script-padstore.ts`, 2026-11-14): på en rad som `sta $ff40,x` visar
+  editorn en glödlampa (klick eller `Ctrl+.`) med *Also write into pad1: sta pad1,x* för var och en av skriptets
+  scratchpads och *Also write into a new scratchpad: sta pad2,x*, och högerklick ger *Also write into a scratchpad…* med
+  samma val i appens meny (scratchpads som redan får den bockade: *line 6 does*; ett sådant val säger det och skriver
+  inget). Valet sätter in raden `sta pad1,x` efter store-raden (efter de kopior som redan står där), lika långt indragen
+  som instruktionen (en etikett före den blir mellanslag), med mnemonic och indexregister skrivna som där; en ny
+  scratchpad (256 byte) placeras som *Add* gör. Raden och den nya scratchpaden är ett steg i projektet (*Ctrl+Z* i
+  editorn tar raden), och fliken Scratchpads visar den. Byte `i` i scratchpaden är då vad storen skriver på `$ff40+i`.
+  Det gäller STA, STX, STY och SAX med en adress, `,x` eller `,y` där instruktionen har den formen för en 16-bitarsadress
+  (scratchpads ligger aldrig i nollsidan); för `stx $40,y`, `sty $40,x`, en store genom en pekare (`sta ($fb),y`), en
+  instruktion som ändrar byten där den är (`inc`) och de instabila (`shx`) säger ett meddelande varför, och en rad som
+  inte skriver minne har inget val. Inte medan skriptet felsöks.
 - **Visningen:** en ändring eller en scratchpad (klick på raden) visas som *Hex* (16 byte en rad, 8 när det är smalt),
   *Code* (disassemblerad vid sin adress, med programmets namn) eller *Text* (32 tecken en rad), texten som PETSCII
   eller skärmkoder. En ändring säger hur många byte som skiljer sig från originalet (originalet i verktygstipset) och

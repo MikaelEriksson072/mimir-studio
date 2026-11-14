@@ -7645,6 +7645,100 @@ test('scripts: an address the code writes where its own code is, is an error on 
   });
 });
 
+test('scripts: a store (sta $ff40,x) is written into a scratchpad too with a click: the editor\'s menu or the light bulb gives a new scratchpad or one of the script\'s, and its line goes in after the store', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const code = async (lines: string[]) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(lines.join('\n'));
+  };
+  /** the editor's lines in order (Monaco keeps its line elements in no order of the page's), as typed */
+  const rawLines = () => page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.scr-editor .view-line')]
+    .sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top)).map(l => (l.textContent ?? '').replace(/ /g, ' ')));
+  // (typed text gets Monaco's indentation on top of its own: the lines are compared without it)
+  const codeLines = async () => (await rawLines()).map(l => l.trim());
+  const indent = (l: string) => /^ */.exec(l)![0].length;
+  const store = editor.locator('.view-line', { hasText: 'sta $ff40,x' });
+  /** the editor's menu on a line, and its item for a store */
+  const storeMenu = async (on = store) => {
+    await on.click({ button: 'right' });
+    const item = page.getByRole('menuitem', { name: 'Also write into a scratchpad…' });
+    await expect(item).toBeVisible();
+    await page.waitForTimeout(400);
+    await item.click();
+  };
+  const pads = page.getByRole('table', { name: 'Scratchpads' }).locator('.pad-row:not(.pad-head)');
+  await code(['        ldx #$3f', 'loop_4016:', '        txa', '        eor #$a5', '        sta $ff40,x', '        dex', '        cpx #$ff', '        bne loop_4016', '        rts']);
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+
+  await test.step('a right-click on the store: a new scratchpad, and sta pad1,x on the line after it', async () => {
+    await storeMenu();
+    await expect(page.locator('.ctx')).toContainText('Also write what sta $ff40,x writes into');
+    await page.locator('.ctx').getByRole('menuitem', { name: 'A new scratchpad, pad1' }).click();
+    await expect(toast(page, /^sta pad1,x on line 6: pad1 \(\$[0-9a-f]{4}\) gets what sta \$ff40,x writes$/)).toBeVisible();
+    await expect.poll(codeLines).toEqual(['ldx #$3f', 'loop_4016:', 'txa', 'eor #$a5', 'sta $ff40,x', 'sta pad1,x', 'dex', 'cpx #$ff', 'bne loop_4016', 'rts']);
+    // under the store, as far in as it
+    const raw = await rawLines();
+    expect(indent(raw[5])).toBe(indent(raw[4]));
+    await expect(page.getByRole('tablist', { name: 'Output of the script' }).getByRole('tab', { name: /^Scratchpads/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(pads).toHaveCount(1);
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+
+  await test.step('the light bulb on the store\'s line: another new scratchpad, its line after the first copy; pad1 is not offered again', async () => {
+    await store.click();
+    const bulb = editor.locator('.lightBulbWidget');
+    await expect(bulb).toBeVisible();
+    await bulb.click();
+    await expect(page.getByRole('option', { name: /Also write into a new scratchpad: sta pad2,x/ })).toBeVisible();
+    await expect(page.getByRole('option', { name: /into pad1/ })).toHaveCount(0);
+    // Monaco blocks the pointer over the page until the mouse moves, as a hand on the mouse does
+    const option = page.getByRole('option', { name: /Also write into a new scratchpad: sta pad2,x/ }), box = (await option.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 3 });
+    await option.click();
+    await expect.poll(async () => (await codeLines()).slice(4, 8)).toEqual(['sta $ff40,x', 'sta pad1,x', 'sta pad2,x', 'dex']);
+    await expect(pads).toHaveCount(2);
+  });
+
+  await test.step('the menu checks the scratchpads it is written into; one of them again is said, not written twice', async () => {
+    await storeMenu();
+    await expect(page.locator('.ctx')).toContainText('line 6 does');
+    await expect(page.locator('.ctx')).toContainText('line 7 does');
+    const ctx = page.locator('.ctx');
+    await expect(ctx.getByRole('menuitemcheckbox', { name: /^pad1 / })).toBeChecked();
+    await expect(ctx.getByRole('menuitemcheckbox', { name: /^pad2 / })).toBeChecked();
+    await ctx.getByRole('menuitemcheckbox', { name: /^pad1 / }).click();
+    await expect(toast(page, 'Line 6 writes it into pad1 already')).toBeVisible();
+    expect((await codeLines()).length).toBe(11);
+    // a line that writes nothing has no such item
+    await editor.locator('.view-line', { hasText: 'eor #$a5' }).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Cut' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Also write into a scratchpad…' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+  });
+
+  await test.step('a run: both scratchpads hold what the store wrote', async () => {
+    await page.getByRole('button', { name: /^Run/ }).click();
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await outTab(page, 'Scratchpads');
+    for (const name of ['pad1', 'pad2']) {
+      const row = pads.filter({ has: page.getByRole('button', { name: `Remove scratchpad ${name}` }) });
+      await row.locator('.pad-dot-cell').click();
+      await expect(row).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('.scr-dump')).toContainText('a5 a4 a7 a6 a1 a0 a3 a2');
+    }
+  });
+
+  await test.step('a store through a pointer says why it cannot be written into a scratchpad too', async () => {
+    await code(['        ldy #0', '        lda #1', '        sta ($fb),y', '        rts']);
+    await storeMenu(editor.locator('.view-line', { hasText: 'sta ($fb),y' }));
+    await expect(toast(page, /^Line 3 cannot be written into a scratchpad too: the address comes from the pointer \(\$fb\)/)).toBeVisible();
+  });
+});
+
 test('scripts: the line a breakpoint stopped on is marked; a block goes into a scratchpad as its type is; a block\'s end is a name', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
