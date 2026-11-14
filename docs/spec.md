@@ -2327,8 +2327,8 @@ $06, $08` i `.asm`-filen efter en körning.
   skriver den, med `.encoding` och `PET_RETURN` definierat), **tecken** som `.byte`-rader om 8 (ett tecken, `// char
   $00` före), **sprites** om 3 (en rad, 21 och den 64:e byten, `// sprite 0`), **bitmap** om 8 (en cell, `// row 0`
   var 40:e), **skärm** om 40 (en rad), och **annan data som hex**. Varje form prövas: den måste ge blockets byte exakt
-  på scratchpadens adress. En rad som inte gör det (ett namn bara .asm-filens huvud har, som `music.init`) skrivs som
-  sina byte (`.byte $20, $00, $10  // was jsr music.init`), och går inget annat blir det hex. En ny scratchpad blir lika
+  på scratchpadens adress. En rad som inte gör det (ett namn som skriptet inte har) skrivs som sina byte (`.byte $20,
+  $00, $10  // was jsr …`), och går inget annat blir det hex. En ny scratchpad blir lika
   stor som blocket; en befintlig växer till blockets storlek när inget av skriptets ligger efter den, annars får den
   blockets första byte som hex.
 - **Blockens slut som namn:** varje block vars start har en etikett ger skriptet också `etikett_end`, adressen efter
@@ -2336,6 +2336,15 @@ $06, $08` i `.asm`-filen efter en körning.
   end of the table (the address after it)*), och en loop kan gå till `cpx #colors_0939_end-colors_0939`. Har programmet
   redan ett namn som heter så gäller programmets, och slutnamnet läggs inte till. Ett skript som använder ett slutnamn
   märks i .asm på blockets etikettrad.
+- **Musiken som LoadSid ger den:** när .asm-filen laddar musiken med `.var music = LoadSid(…)` skriver listningen
+  adresser i den som `music.location+$1ae1`, `music.init` och `music.play`. Skriptet har samma namn (`musicNames`):
+  `music.location` (där den ligger), `.init`, `.play` och `.size` (dess längd i byte), under `.var`:ens namn (`music`,
+  eller `music_1000` när programmet har fler än en musik), så att en rad kopierad från listningen assembleras som den
+  står och ett block med `jsr music.play` kopieras till en scratchpad som kod. Namnen finns oavsett inställningen, så att
+  ett skript skrivet med den på assembleras med den av. `music.size` är ett tal, ingen adress: det räknas inte som
+  programmets minne som skriptet använder, debuggern och bevakningslistan skriver ingen adress med det. Editorn föreslår
+  resten efter `music.` (*.location*, *.init*, …) och visar namnet helt när muspekaren är över det (*music: its play
+  routine*).
 - **Scratchpad till scratchpad:** *Copy to…* i visningen kopierar byten som visas (det körningen lämnade, annars
   startinnehållet) till en annan av skriptets scratchpads som dess startinnehåll, eller till en ny (*A new scratchpad
   (a copy)*, samma storlek och fill). Har skriptet ingen annan heter knappen *Copy to a new pad* och gör kopian direkt.

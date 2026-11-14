@@ -1,7 +1,7 @@
 /* What the script editor suggests where the cursor is (spec 10.3): words that start with what is typed, the right
  * kind for the place, and nothing for an index register. */
 import { describe, expect, it } from 'vitest';
-import { scriptSuggestions } from '../src/monaco/providers';
+import { dottedNameAt, scriptSuggestions } from '../src/monaco/providers';
 
 const names = new Map([['tabell', 0x0939], ['SID_POT_X', 0xd419], ['VIC_SPR0_X', 0xd000], ['loop_0870', 0x0870], ['text_out', 0x2000], ['pad1', 0xc800], ['pad1_end', 0xc900]]);
 const pads = [{ name: 'pad1' }];
@@ -49,6 +49,27 @@ describe('script suggestions', () => {
     expect(got.filter(s => s.label === 'tabell')).toHaveLength(1);
     expect(scriptSuggestions('        lda ', 'te', names, pads, more).find(s => s.label === 'text_out')).toEqual({ label: 'text_out', kind: 'name', detail: '$2000 · text' });
     expect(scriptSuggestions('        lda ', 'SID', names, pads)).toEqual([{ label: 'SID_POT_X', kind: 'hardware', detail: '$d419 · hardware' }]);
+  });
+
+  it('give the rest of a name with a dot after its first part (LoadSid\'s music.location, …), and find it whole', () => {
+    const music = new Map([...names, ['music.location', 0x1000], ['music.init', 0x1000], ['music.play', 0x1003], ['music.size', 0x0a00]]);
+    const kinds = new Map([['music.play', 'music: its play routine']]);
+    const got = (before: string, typed: string) => scriptSuggestions(before, typed, music, pads, { kinds });
+    expect(got('        sta music.', '').map(s => s.label).sort()).toEqual(['.init', '.location', '.play', '.size']);
+    expect(got('        jsr music.', 'p')).toEqual([{ label: '.play', kind: 'name', detail: '$1003 · music: its play routine' }]);
+    expect(got('        lda music.', 'lo').map(s => s.label)).toEqual(['.location']);
+    // a name that has no such names, a number, and a directive where a mnemonic goes, as before
+    expect(got('        lda tabell.', '')).toEqual([]);
+    expect(got('        lda $1000.', '')).toEqual([]);
+    expect(got('        .', 'by').map(s => s.label)).toEqual(['.byte']);
+    // typed from its start it is found whole
+    expect(got('        sta ', 'mus').map(s => s.label).sort()).toEqual(['music.init', 'music.location', 'music.play', 'music.size']);
+    // the hover takes the name whole, wherever in it the mouse is
+    const line = '        sta music.location+$1ae1,y  // lda.abs';
+    expect(dottedNameAt(line, line.indexOf('music') + 1)).toBe('music.location');
+    expect(dottedNameAt(line, line.indexOf('location') + 3)).toBe('music.location');
+    expect(dottedNameAt(line, line.indexOf('$1ae1'))).toBeNull();
+    expect(dottedNameAt('        lda.abs $0000,y', 9)).toBe('lda.abs');
   });
 
   it('find a name by a part of it after a _ from two letters on, and give them all on Ctrl+Space', () => {

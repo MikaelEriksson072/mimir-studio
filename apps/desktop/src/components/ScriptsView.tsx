@@ -232,8 +232,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   const source = cur ? live[cur.id] ?? cur.source : '';
   const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, pads: cur.pads, init: cur.init }) : null, [env, source, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
   const names = useMemo(() => cur ? scriptNames(env, cur.pads) : new Map<string, number>(), [env, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** a name for an address (the first of the names the script may use that has it) */
-  const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a)) m.set(a, n); return m; }, [names]);
+  /** a name for an address (the first of the names the script may use that has it; not a number such as music.size) */
+  const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a) && !env.values?.has(n)) m.set(a, n); return m; }, [names, env]);
   /** the script's links (UserScript.links), by the names its code writes for them */
   const links = useMemo(() => (cur?.links ?? []).map(linkOf), [cur?.links, linkOf]);
   const linkNames = useMemo(() => new Set(links.map(k => k.name)), [links]);
@@ -244,7 +244,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   const wCheck = dbg ? dbg.m.check : check, wSource = dbg ? dbg.source : source;
   const autoSpots = useMemo(() => (cur && wCheck ? scriptWatches(wCheck, wSource, cur.pads) : []), [wCheck, wSource, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
   /** the names an added spot can be written with: the program's, the hardware's, the scratchpads' and the script's own labels */
-  const watchNames = useMemo(() => { const m = new Map(names); for (const [a, n] of wCheck?.labels ?? []) m.set(n, a); return m; }, [names, wCheck]);
+  const watchNames = useMemo(() => { const m = new Map(names); for (const n of env.values ?? []) m.delete(n); for (const [a, n] of wCheck?.labels ?? []) m.set(n, a); return m; }, [names, env, wCheck]);
   /** an address or a name typed for the watch list: a name Mimir gave (`colors_0939`) also when the analysis has named
    *  its bytes anew since (`tbl_0939`), as the code's names are (withAddressNames) */
   const watchAt = (e: string) => initValue(e, watchNames) ?? initValue(e, withAddressNames(new Map(watchNames), e));

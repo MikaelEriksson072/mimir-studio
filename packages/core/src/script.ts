@@ -10,7 +10,8 @@
  * scratchpads (data kept outside the program, a log, say) is kept with the script.
  * ===================================================================== */
 import { Cpu, type Bus } from '@mimir/sindri';
-import type { Addr, AnalysisResult, Block, BlockKind, Cartridge, FileInput, ListingLine, LoadedFile, Patch, Project, RenderResult, ScriptInit, ScriptPad, ScriptPadSource, Settings, UserScript } from './types';
+import type { Addr, AnalysisResult, Block, BlockKind, Cartridge, FileInput, ListingLine, LoadedFile, MusicInfo, Patch, Project, RenderResult, ScriptInit, ScriptPad, ScriptPadSource, Settings, UserScript } from './types';
+import { musicVarName } from './render/kick';
 import { monitorChar } from './c64/monitor';
 import { assemble } from './verify/kick-subset-assembler';
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
@@ -33,6 +34,29 @@ export interface ScriptEnv {
   names: ReadonlyMap<string, Addr>;
   /** the end names among `names`, with their block: `tbl_001_end` → the block tbl_001 starts */
   ends?: ReadonlyMap<string, ScriptRange>;
+  /** the names among `names` that are a number, not an address (`music.size`): no memory of the program they name */
+  values?: ReadonlySet<string>;
+}
+
+/** what of a music LoadSid gives the source: where it is loaded, its init and play routines (addresses) and its length */
+export type MusicField = 'location' | 'init' | 'play' | 'size';
+
+/**
+ * The music as the source has it when it loads it with LoadSid (`.var music = LoadSid(…)`, `jsr music.play`,
+ * `sta music.location+$1ae1,y`): `music.location`, `.init`, `.play` and `.size`, under the .var's name (`music`, or
+ * `music_1000` when the program has more than one), so that a line copied from the listing assembles in a script as
+ * it is. Given whatever the setting: a script written while it was on still assembles with it off.
+ */
+export function musicNames(music: readonly Pick<MusicInfo, 'start' | 'end' | 'init' | 'play'>[]): Map<string, { value: number; field: MusicField }> {
+  const out = new Map<string, { value: number; field: MusicField }>();
+  for (const m of music) {
+    const v = musicVarName(m, music.length);
+    out.set(`${v}.location`, { value: m.start, field: 'location' });
+    out.set(`${v}.init`, { value: m.init, field: 'init' });
+    out.set(`${v}.play`, { value: m.play, field: 'play' });
+    out.set(`${v}.size`, { value: m.end - m.start, field: 'size' });
+  }
+  return out;
 }
 
 /**
@@ -51,13 +75,15 @@ export function blockEndNames(R: Pick<RenderResult, 'labels'>, blocks: readonly 
   return out;
 }
 
-/** The env of a project: its files (with the patches that are on) and the names its listing gives. */
-export function scriptEnv(project: { files: readonly FileInput[]; cart?: Cartridge | null }, R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, blocks: readonly Pick<Block, 'start' | 'end'>[] = []): ScriptEnv {
+/** The env of a project: its files (with the patches that are on) and the names its listing gives, its music's too. */
+export function scriptEnv(project: { files: readonly FileInput[]; cart?: Cartridge | null }, R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, blocks: readonly Pick<Block, 'start' | 'end'>[] = [], music: readonly Pick<MusicInfo, 'start' | 'end' | 'init' | 'play'>[] = []): ScriptEnv {
   const l = fileSpaces(project);
   const files = project.files.filter((_, i) => !l || l.spaces[i] === 0).map(f => ({ load: f.load, bytes: f.bytes }));
   const names = programNames(R, settings), ends = blockEndNames(R, blocks, names);
   for (const [n, r] of ends) names.set(n, r.end);
-  return { files, names, ...(ends.size ? { ends } : {}) };
+  const values = new Set<string>();
+  for (const [n, f] of musicNames(music)) { names.set(n, f.value); if (f.field === 'size') values.add(n); }
+  return { files, names, ...(ends.size ? { ends } : {}), ...(values.size ? { values } : {}) };
 }
 
 /** which addresses the files hold */
@@ -350,7 +376,7 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
   let pc = free ?? 0xc000;
   let asm = at(pc);
   const padNames = new Set(script.pads.flatMap(p => [p.name, `${p.name}_end`]));
-  const used = [...asm.external].filter(([n]) => !padNames.has(n)).map(([name, line]) => ({ name, line, at: names.get(name)! }));
+  const used = [...asm.external].filter(([n]) => !padNames.has(n) && !env.values?.has(n)).map(([name, line]) => ({ name, line, at: names.get(name)! }));
   let place: ScriptCheck['place'] = 'own';
   if (!setsItsPlace(script.source) && !asm.errors.length) {
     let n = 0; while (pc + n < 0x10000 && asm.written[pc + n]) n++;

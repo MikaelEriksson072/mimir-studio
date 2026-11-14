@@ -1,6 +1,6 @@
 /* User scripts (spec 10.3): checked with the program's names, run on a copy of its memory, scratchpads kept. */
 import { describe, expect, it } from 'vitest';
-import { analyze, blockEndNames, blockPad, checkScript, makeDemo, parsePrg, scriptNames, createProject, deserializeProject, disassembleBytes, freePlace, initEmpty, linkName, padData, padDiff, padNow, padStart, padText, SCRIPT_P, tidyInit, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
+import { analyze, blockEndNames, blockPad, checkScript, makeDemo, parsePrg, scriptNames, createProject, deserializeProject, disassembleBytes, freePlace, initEmpty, linkName, musicNames, padData, padDiff, padNow, padStart, padText, SCRIPT_P, tidyInit, newScript, planPatch, render, runScript, ScriptMachine, scriptEnv, scriptPatches, serializeProject, switchPatch, withoutScriptPatches, withPatch, writeScriptRun, type ScriptEnv, type UserScript } from '../src';
 import { fromSource } from './helpers/programs';
 
 const KEY = 0x5a;
@@ -421,6 +421,37 @@ describe('user scripts', () => {
     // a loop over a table from its label to its end
     const run = runScript(e, script('        ldx #0\n!:      lda colors_0939,x\n        sta pad1,x\n        inx\n        cpx #colors_0939_end-colors_0939\n        bne !-\n        rts'));
     expect([...run.pads[0].bytes]).toEqual([...A.mem.subarray(0x0939, 0x0949)]);
+  });
+
+  it('know the music as LoadSid gives it in the source: music.location, .init, .play and .size', () => {
+    const d = makeDemo(), p = createProject({ name: 'demo', files: [parsePrg(d.name, d.prg)] });
+    const A = analyze(p), R = render(A, p), e = scriptEnv(p, R, p.settings, A.blocks, A.music);
+    expect(A.music).toHaveLength(1);
+    const m = A.music[0], size = m.end - m.start;
+    expect(['location', 'init', 'play', 'size'].map(f => e.names.get(`music.${f}`))).toEqual([m.start, m.init, m.play, size]);
+    expect(e.values).toEqual(new Set(['music.size']));
+    // a line copied from the listing assembles as it is: a page of the music read, a byte of it changed
+    const s = script(['        ldy #0', '!:      lda music.location,y', '        sta pad1,y', '        iny', '        cpy #16', '        bne !-',
+      '        lda #<music.size', '        sta pad1+16', '        lda #>music.size', '        sta pad1+17', '        inc music.location+$10', '        rts'].join('\n'),
+      [{ name: 'pad1', start: 0xc800, size: 18 }]);
+    const c = checkScript(e, s);
+    expect(c.problems).toEqual([]);
+    // music.size is a number, no memory of the program the script uses
+    expect(c.uses).toEqual([{ name: 'music.location', line: 2, at: m.start }]);
+    const run = runScript(e, s, c);
+    expect([...run.pads[0].bytes]).toEqual([...A.mem.subarray(m.start, m.start + 16), size & 0xff, size >> 8]);
+    expect(run.changes).toHaveLength(1);
+    expect(run.changes[0]).toMatchObject({ start: m.start + 0x10, end: m.start + 0x11 });
+    expect(run.changes[0].bytes[0]).toBe((A.mem[m.start + 0x10] + 1) & 0xff);
+    // without the music the name is unknown, as it was
+    expect(new Set(checkScript(scriptEnv(p, R, p.settings, A.blocks), s).problems.map(x => x.msg))).toEqual(new Set(['Unknown symbol "music"']));
+    // a block copied into a scratchpad keeps the listing's jsr music.play
+    expect(blockPad(A.blocks.find(b => b.start === 0x08b7)!, R.lines, A.mem, 0xc000, scriptNames(e, []), p.settings).src.text).toMatch(/\n\s+jsr music\.play/);
+    // more than one music: each under its own .var, as the source names them
+    expect([...musicNames([m, { start: 0x8a00, end: 0x8b00, init: 0x8a00, play: 0x8a06 }])].slice(4)).toEqual([
+      ['music_8a00.location', { value: 0x8a00, field: 'location' }], ['music_8a00.init', { value: 0x8a00, field: 'init' }],
+      ['music_8a00.play', { value: 0x8a06, field: 'play' }], ['music_8a00.size', { value: 0x100, field: 'size' }],
+    ]);
   });
 
   it('disassemble a scratchpad with the program\'s names', () => {

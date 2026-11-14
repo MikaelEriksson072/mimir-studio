@@ -7329,6 +7329,53 @@ test('scripts: the bottom panel cannot be dragged over the code and the output; 
   expect(Math.abs((await box('section.bottom')).h - shown)).toBeLessThan(4);
 });
 
+test('scripts: the music as the source loads it with LoadSid (music.location, .init, .play, .size) is known, suggested and shown', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const lines = () => editor.locator('.view-line').allTextContents().then(ls => ls.map(l => l.replace(/ /g, ' ').trim()).filter(Boolean));
+
+  await test.step('a loop copied from the listing, writing past music.location, assembles as it is', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(['        ldy #$00', 'loop:   lda.abs $0000,y', '        sta music.location+$1ae1,y', '        iny', '        bne loop', '        lda #<music.size', '        rts'].join('\n'));
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await expect(page.locator('.scr-check')).toHaveAttribute('title', /The script assembles with the program's names/);
+  });
+
+  await test.step('after music. the editor gives the rest, and Tab takes one', async () => {
+    await page.keyboard.press('Control+End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('        jsr music.');
+    const rows = page.locator('.suggest-widget .monaco-list-row');
+    await expect(rows).toHaveCount(4);
+    expect((await rows.allTextContents()).map(t => t.match(/^\.\w+/)?.[0]).sort()).toEqual(['.init', '.location', '.play', '.size']);
+    await page.keyboard.type('p');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText('music: its play routine');
+    await page.keyboard.press('Tab');
+    await expect.poll(lines).toContain('jsr music.play');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+
+  await test.step('the hover shows the name whole: its address and what of the music it is', async () => {
+    await page.keyboard.press('Control+f');
+    await page.keyboard.type('music.loc');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
+    // the cursor in the name, and Monaco's Show Hover there (Ctrl+K Ctrl+I), as the pointer would
+    await page.keyboard.press('Control+k');
+    await page.keyboard.press('Control+i');
+    const hover = page.locator('.monaco-hover').filter({ hasText: 'music.location' });
+    await expect(hover).toContainText('music.location — $1000', { timeout: 10_000 });
+    await expect(hover).toContainText('music: where it is loaded (LoadSid)');
+  });
+});
+
 test('scripts: the output folds down; scratchpads filled from the .asm, set to start with Kick Assembler, hex or text, copied to one another and compared in a heat map', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });

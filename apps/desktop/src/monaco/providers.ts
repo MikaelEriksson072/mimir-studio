@@ -29,7 +29,8 @@ export interface ScriptSuggestion { label: string; kind: 'link' | 'pad' | 'name'
  * What a script's code may write where the cursor is. First on a line the mnemonics and directives that start with
  * what is typed; in an operand the names: the script's links first, then its scratchpads, the program's labels and
  * variables, the hardware's names and the functions, each that starts with what is typed or, from two letters on, has
- * a part (after a `_`) that does (`tab` finds my_table); with nothing typed (Ctrl+Space) all of them. After an
+ * a part (after a `_`) that does (`tab` finds my_table); with nothing typed (Ctrl+Space) all of them. After a name and
+ * a dot the rest of the names that start so (`music.` → `.location`, `.init`, `.play`, `.size`). After an
  * instruction's comma nothing (the index register: `x` is not SID_POT_X), nor in a comment.
  */
 export function scriptSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[], more: { links?: ReadonlySet<string>; kinds?: ReadonlyMap<string, string> } = {}): ScriptSuggestion[] {
@@ -41,7 +42,14 @@ export function scriptSuggestions(before: string, typed: string, names: Readonly
   // a part of a name after a `_` that starts with what is typed (two letters at least: `x` finds no SID_POT_X)
   const inPart = (s: string) => t.length >= 2 && /^[a-z_]/.test(t) && s.toLowerCase().split('_').slice(1).some(p => p.startsWith(t));
   // a directive where a mnemonic goes (not `music.init` or a number)
-  if (dot) return AT_MNEMONIC.test(before.slice(0, -1)) ? SCRIPT_WORDS.filter(x => x[0] === '.' && starts(x)).map(label => ({ label, kind: 'word' as const })) : [];
+  if (dot && AT_MNEMONIC.test(before.slice(0, -1))) return SCRIPT_WORDS.filter(x => x[0] === '.' && starts(x)).map(label => ({ label, kind: 'word' as const }));
+  // after a name and its dot the rest of the names that start with them (`music.` → `.location`)
+  if (dot) {
+    const head = /(?<![\w.$%!])([A-Za-z_]\w*)\.$/.exec(before)?.[1];
+    if (!head) return [];
+    return [...names].filter(([n]) => n.startsWith(`${head}.`) && starts(n.slice(head.length)))
+      .map(([n, a]) => ({ label: n.slice(head.length), kind: 'name' as const, detail: `$${h4(a)} · ${more.kinds?.get(n) ?? 'label'}` }));
+  }
   if (AT_MNEMONIC.test(before)) return typed ? [...new Set(OPC.filter(o => !o.ill).map(o => o.mn.toLowerCase()))].filter(starts).map(label => ({ label, kind: 'mnemonic' as const })) : [];
   const fits = (s: string) => !typed || starts(s) || inPart(s);
   const own = new Set(pads.flatMap(p => [p.name, `${p.name}_end`]));
@@ -57,6 +65,12 @@ export function scriptSuggestions(before: string, typed: string, names: Readonly
   }
   for (const x of SCRIPT_WORDS) if (x[0] !== '.' && fits(x)) out.push({ label: x, kind: 'word' });
   return out;
+}
+
+/** the name with a dot in it (`music.location`) that the character at `at` of a line is in, or null */
+export function dottedNameAt(line: string, at: number): string | null {
+  for (const m of line.matchAll(/(?<![\w$%!])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+/g)) if (at >= m.index! && at < m.index! + m[0].length) return m[0];
+  return null;
 }
 
 export function registerProviders(monaco: typeof Monaco): void {
@@ -78,6 +92,11 @@ export function registerProviders(monaco: typeof Monaco): void {
     provideHover(model, pos) {
       const w = model.getWordAtPosition(pos); if (!w) return null;
       const name = w.word;
+      // in a script: a name with a dot in it, as a whole (`music.location`: LoadSid's music)
+      if (model.uri.scheme === 'script') {
+        const d = dottedNameAt(model.getLineContent(pos.lineNumber), pos.column - 1), a = d != null ? scriptContext.names.get(d) : undefined;
+        if (d != null && a != null) return { contents: [{ value: `**${d}** — $${h4(a)}` }, { value: scriptContext.kinds.get(d) ?? 'a name of the program' }] };
+      }
       // a script's scratchpad
       const pad = model.uri.scheme === 'script' ? scriptContext.pads.find(p => p.name === name || `${p.name}_end` === name) : undefined;
       if (pad) return { contents: [{ value: `**${name}** — $${h4(name === pad.name ? pad.start : pad.start + pad.size)}` }, { value: `scratchpad ${pad.name}: $${h4(pad.start)}-$${h4(pad.start + pad.size - 1)}, ${pad.size} bytes${name === pad.name ? '' : ' (the address after it)'}` }] };

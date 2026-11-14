@@ -12,7 +12,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, type ScriptTemplate, linkName, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -28,6 +28,8 @@ import { cx, errorText, filesKey, ROW, store, uid } from './lib/util';
 /** what the Scripts tab folded in when it opened, to bring back when another tab opens */
 interface ScriptsFold { sidePanel: boolean; panelOpen: boolean; inspector: InspectorMode }
 const SCRIPTS_FOLD_KEY = 'kr.scriptsFold';
+/** what each of the music's names in a script is (the editor's suggestions and hovers say it) */
+const MUSIC_FIELD_TEXT: Record<MusicField, string> = { location: 'music: where it is loaded (LoadSid)', init: 'music: its init routine', play: 'music: its play routine', size: 'music: its length in bytes, no address' };
 import { blockStep, foldLines } from './lib/fold';
 import { closeWindow, holdClose, whenClosing } from './lib/closing';
 import { blockMc, gfxColsFor, gfxListing } from './lib/gfxlines';
@@ -1780,10 +1782,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const userScripts = project.userScripts ?? [];
   /** the script running (the Scripts view's button has a spinner meanwhile) */
   const scriptRunning = useScripts(s => s.running);
-  const scriptsEnv = useMemo(() => scriptEnv(project, R, S, A.blocks), [project.files, project.cart, R, A, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
+  const scriptsEnv = useMemo(() => scriptEnv(project, R, S, A.blocks, A.music), [project.files, project.cart, R, A, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
   /** what a script runs on: the program without what its earlier runs changed (a decryption runs on the bytes as they
    *  were, not on what it decrypted the last time) */
-  const scriptEnvFor = (id: string) => { const { project: p, R: r, S: s, A: a } = latest.current; return scriptEnv({ ...p, ...withoutScriptPatches(p, id) }, r, s, a.blocks); };
+  const scriptEnvFor = (id: string) => { const { project: p, R: r, S: s, A: a } = latest.current; return scriptEnv({ ...p, ...withoutScriptPatches(p, id) }, r, s, a.blocks, a.music); };
   /** a script in the project (made, or copied from the library), shown in the Scripts tab */
   const addUserScript = (s: UserScript, what: string) => {
     update(`${what} "${s.name}"`, d => { d.userScripts = [...(d.userScripts ?? []), s]; });
@@ -2023,6 +2025,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     for (const z of R.zp.values()) if (!z.off) m.set(z.name, 'zero-page variable');
     // a block's end (tbl_001_end): the address after it
     for (const [n, r] of scriptsEnv.ends ?? []) { const b = findBlock(A.blocks, r.start); m.set(n, `end of the ${b ? kindInfo(b.type).label.toLowerCase() : 'block'} (the address after it)`); }
+    // the music as LoadSid gives it in the source (music.location, …)
+    for (const [n, f] of musicNames(A.music)) m.set(n, MUSIC_FIELD_TEXT[f.field]);
     return m;
   }, [R, A, scriptsEnv]);
   /** the program's blocks a scratchpad can be filled from (Scripts → Scratchpads → From a block…) */

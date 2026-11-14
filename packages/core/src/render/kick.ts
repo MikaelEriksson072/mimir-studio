@@ -28,6 +28,9 @@ const ID_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const KEYWORDS = new Set(['true', 'false', 'null', 'var', 'const']);
 /** A valid, non-mnemonic Kick Assembler identifier. */
 export const validLabel = (name: string): boolean => ID_RE.test(name) && !ENC[name.toUpperCase()] && !KEYWORDS.has(name) && name.length <= 64;
+/** The .var the source loads a music into with LoadSid (`music.init`): `music`, or `music_1000` when the program has
+ *  more than one */
+export const musicVarName = (m: Pick<MusicInfo, 'start'>, count: number): string => count > 1 ? `music_${h4(m.start)}` : 'music';
 
 /** Per-file render state, also passed to operand formatting. */
 interface RenderCtx {
@@ -223,7 +226,7 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
   const binaryStarts = new Set(project.binary || []);
   // music saved as a binary file is not loaded with LoadSid, so references to it cannot use music.init/play
   const musicFor = (a: Addr) => S.musicAsSid ? A.music.find(m => a >= m.start && a < m.end && !binaryStarts.has(findBlock(A.blocks, m.start)?.start ?? -1)) : null;
-  const musicVar = (m: MusicInfo) => A.music.length > 1 ? `music_${h4(m.start)}` : 'music';
+  const musicVar = (m: MusicInfo) => musicVarName(m, A.music.length);
   const musicPath = (m: MusicInfo) => `music/${opts.binPrefix ?? ''}music_${h4(m.start)}.sid`;
   // the names other banks give addresses this one does not have (13.9b): its file head defines those it uses
   const foreign = project.foreign || {};
