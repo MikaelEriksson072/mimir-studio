@@ -111,7 +111,7 @@ export function ScriptOutput(props: ScriptOutputProps) {
           title={folded ? 'Show the output: Init, the watch list, what the script changed, the scratchpads, the last run and the problems' : 'Fold the output down: the code gets the room'}>
           <Icon name="down" size={14} className={folded ? 'flip' : ''} /></button>
       </div>
-      {!folded && <div className={cx('scr-out', `scr-out-${outTab}`)} id="scr-out" role="tabpanel" aria-labelledby={`scr-tab-${outTab}`} aria-label={label} style={{ height }}>
+      {!folded && <div className={cx('scr-out', `scr-out-${outTab}`)} id="scr-out" role="tabpanel" aria-labelledby={`scr-tab-${outTab}`} aria-label={label} style={{ maxHeight: height }}>
         {outTab === 'init' && <InitSection script={script} names={props.names} problems={check.problems} onEdit={props.onEdit} />}
         {outTab === 'watch' && watch}
         {outTab === 'program' && <ProgramPane {...props} would={would} />}

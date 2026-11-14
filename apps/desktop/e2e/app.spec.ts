@@ -7244,6 +7244,40 @@ test('scripts: Init sets the registers, the flags and zero-page bytes a run star
   });
 });
 
+test('scripts: the bottom panel cannot be dragged over the code and the output; it gives way and gets its height back in the listing', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  await expect(page.locator('.scr-out')).toBeVisible();
+  // the Scripts tab folds the bottom panel in: a tab of it opens it again
+  const bottom = page.locator('section.bottom');
+  await bottom.getByRole('tab', { name: /^Analysis log/ }).click();
+  await expect(bottom).not.toHaveClass(/collapsed/);
+  const splitter = page.locator('main.main > .splitter.h');
+  const drag = async (dy: number) => {
+    const b = (await splitter.boundingBox())!, x = b.x + b.width / 2, y = b.y + b.height / 2;
+    await page.mouse.move(x, y); await page.mouse.down();
+    await page.mouse.move(x, y + dy, { steps: 20 }); await page.mouse.up();
+  };
+  const box = (sel: string) => page.locator(sel).evaluate(e => { const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: r.height }; });
+
+  // as high as it goes (520 px kept): it stops where the code has 140 px and the output 60 px, above both
+  await drag(-600);
+  const out = await box('.scr-out'), code = await box('.scr-edit-row'), panel = await box('section.bottom');
+  expect(code.h).toBeGreaterThanOrEqual(139);
+  expect(out.h).toBeGreaterThanOrEqual(59);
+  expect(out.bottom).toBeLessThanOrEqual(panel.top);
+  expect(panel.h).toBeLessThan(520);
+  // dragged down, it moves at once (from the height it has, not the one kept)
+  await drag(40);
+  expect((await box('section.bottom')).top).toBeGreaterThan(panel.top + 30);
+  const shown = (await box('section.bottom')).h;
+  // a tab with room shows it at the height it was dragged to
+  await page.getByRole('tab', { name: 'Listing' }).click();
+  await expect(bottom).not.toHaveClass(/collapsed/);
+  expect(Math.abs((await box('section.bottom')).h - shown)).toBeLessThan(4);
+});
+
 test('scripts: the output folds down; scratchpads filled from the .asm, set to start with Kick Assembler, hex or text, copied to one another and compared in a heat map', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });

@@ -2296,7 +2296,11 @@ $06, $08` i `.asm`-filen efter en körning.
   visas.
 - **Utdatat fälls ner** med pilen längst till höger i flikraden (*Output*): flikraden står kvar och koden får resten
   av höjden; ett klick på pilen eller en flik fäller upp det med samma höjd som förut. Nedfälld säger flikarna
-  fortfarande vad de håller, och raden hur många fel koden har. När fönstret är lågt ger utdatat vika först: koden behåller 140 px.
+  fortfarande vad de håller, och raden hur många fel koden har. När fönstret är lågt eller bottenpanelen hög ger
+  utdatat vika först: koden behåller 140 px och utdatat 60 px. Bottenpanelen (*Analysis log*, …) kan inte dras över
+  dem: verktygsraden, raderna under den, 140 px kod, utdatats flikrad och 60 px utdata är editorytans minsta höjd, så
+  bottenpanelen ger vika i stället (ner till sin flikrad) och får tillbaka höjden den hade i en annan flik. En
+  dragkant dras vidare från höjden panelen har, inte den som sparats.
 - **Vad en scratchpad börjar med** (`ScriptPad.data`, och `ScriptPad.src` för hur det skrevs): utan det börjar
   scratchpaden med sin fill, med det börjar den med de byten från sin första byte och fill efter dem. *Edit start* i
   visningen öppnar en editor med tre former: **Kick Assembler** (assembleras vid scratchpadens adress med programmets
@@ -4671,7 +4675,9 @@ lyser upp under pekaren (`StatusBar.tsx`).
 till höger på vyns rubrik (*Collapse side panel*), knappen för vyn som visas i aktivitetsraden och *Toggle side panel*
 i kommandopaletten. Ihopfälld försvinner panelen och dess dragkant, och editorn med listningen får deras bredd (276 px
 med standardbredden). Aktivitetsraden står kvar, och en vys knapp visar panelen igen med den vyn, liksom `Ctrl+B`, *Demo*,
-en monterad disk och Pack-kommandona. Bottenpanelen fälls ihop med `Ctrl+J` och pilen till höger på dess flikrad. Båda
+en monterad disk och Pack-kommandona. Bottenpanelen fälls ihop med `Ctrl+J` och pilen till höger på dess flikrad, och
+dras mellan 120 och 520 px i kanten ovanför; en vy som behöver sin plats (Scripts-fliken, 10.3) får den, och panelen ger
+vika ner till sin flikrad i stället för att täcka vyn. Båda
 valen sparas per användare med de andra (`sidePanel`, `panelOpen` i `apps/desktop/src/store/ui.ts`), så de står kvar
 efter en omstart. I ett smalt fönster (under 900 px) öppnar och stänger `Ctrl+Shift+B` sidopanelens låda.
 

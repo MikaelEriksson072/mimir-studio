@@ -561,7 +561,8 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
             {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} atBp={atBp}
               watch={watchItems.length ? <WatchTable items={watchItems} mode="now" compact onGoLine={goLine} /> : null} />}
           </div>
-          {!outFolded && <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH'; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, useScripts.getState()[k] - d)) }); }} />}
+          {/* the output gives way when the window is low or the bottom panel high: a drag goes on from the height it has */}
+          {!outFolded && <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH', h = useScripts.getState()[k]; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, Math.min(h, document.getElementById('scr-out')?.offsetHeight ?? h) - d)) }); }} />}
           <ScriptOutput script={cur} check={check} kept={kept} stale={stale} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg}
             folded={outFolded} height={dbg ? dbgOutH : outH} watchCount={spots.length} live={livePad} where={where} theme={theme}
             watch={<WatchSection items={watchItems} mode={watchMode} stale={stale} hidden={hiddenSpots} onRemove={removeWatch} onAdd={addWatch} onGoLine={goLine} onShow={onShow}

@@ -691,7 +691,9 @@ main.main { container: editor / inline-size; }
 .spec-body .diagram text { font-family: var(--font-ui); }
 
 /* ---------- bottom panel ---------- */
-.bottom { height: var(--bottom-h); display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-top: 1px solid var(--line); flex: none; }
+/* it keeps the height it was dragged to, but gives way (down to its tab row) to a view above that needs its room: the
+   Scripts tab's code and output, whose least height the editor area takes (.editor:has(> .scripts)) */
+.bottom { height: var(--bottom-h); display: flex; flex-direction: column; min-height: 31px; background: var(--panel); border-top: 1px solid var(--line); flex: 0 1 auto; }
 .bottom-body { flex: 1; min-height: 0; overflow: auto; }
 .bottom.collapsed { height: auto; }
 .bottom.collapsed .bottom-body { display: none; }
@@ -1251,6 +1253,11 @@ main.main { container: editor / inline-size; }
 
 /* ---- the Scripts tab (spec 10.3): the list of scripts, the editor, and the output with the scratchpads ---- */
 .scripts { flex: 1; min-height: 0; display: flex; }
+/* the Scripts tab's least height (its toolbar, notes and links, 140px of code, the output's tab row and 60px of output)
+   is the editor area's, so the bottom panel cannot be dragged over it: the list and the code row count with no height
+   of their own (the list scrolls, Monaco takes what it is given), and the output with its least */
+.editor:has(> .scripts) { min-height: auto; }
+.scr-list, .scr-edit-row { contain: size; }
 .scripts-empty p { max-width: 560px; margin: 0; }
 .scr-list { width: 150px; flex: none; display: flex; flex-direction: column; gap: 1px; padding: 6px; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
 .scr-list-head { display: flex; align-items: center; gap: 6px; padding: 2px 2px 6px 6px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
@@ -1279,8 +1286,9 @@ main.main { container: editor / inline-size; }
 .tb-sep { width: 1px; height: 18px; flex: none; margin: 0 2px; background: var(--line-2); }
 /* the output under a script's editor (10.3): a tab row as the window's bottom panel has (Init, Watch, In the program,
    Scratchpads, Last run, Problems), each tab saying what it holds, the last run's end at its right; under it the tab
-   shown, with the panel's whole width. It keeps the height it was dragged to, but gives way first when the window is
-   low: the code keeps 140px */
+   shown, with the panel's whole width. It keeps the height it was dragged to (its max-height), but gives way first when
+   the window is low or the bottom panel high: the code keeps 140px, the output 60px. Growing with all but nothing of
+   the room and no height of its own, it is counted with its least in the editor area's least height */
 .scr-out-tabs { border-top: 1px solid var(--line); }
 .scr-out-tabs .tab { gap: 7px; }
 .scr-out-tabs .tab.last { color: var(--fg-2); }
@@ -1297,7 +1305,7 @@ main.main { container: editor / inline-size; }
 .scr-run-stat.ok > .icon { color: var(--ok); }
 .scr-run-stat.warn { color: var(--warn); }
 .scr-run-stat .pill { flex: none; margin-left: 0; }
-.scr-out { flex: 0 1 auto; display: flex; flex-direction: column; min-height: 60px; background: var(--panel); container: scrout / inline-size; }
+.scr-out { flex: 1000 1 0; display: flex; flex-direction: column; min-height: 60px; background: var(--panel); container: scrout / inline-size; }
 .scr-out > .scr-pane-body { flex: 1; }
 /* a tab: a bar with what it is about and its tools, and its content under it */
 .scr-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }

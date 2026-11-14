@@ -224,6 +224,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [drawer, setDrawer] = useState<'side' | 'insp' | null>(null);
   const navHist = useRef<{ back: Addr[]; fwd: Addr[] }>({ back: [], fwd: [] });
   const listRef = useRef<HTMLDivElement | null>(null);
+  /** the bottom panel: dragging goes on from the height it has, which is less than the one kept when it gives way */
+  const bottomRef = useRef<HTMLElement | null>(null);
   const colors = useCanvasColors(theme);
 
   // folded blocks (by start address) show only their header; the view maps addresses to the visible lines
@@ -3546,8 +3548,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             </Suspense>
           </ErrorBoundary>
         </div>
-        {tab !== 'spec' && panelOpen && <Splitter dir="h" onDrag={d => setUi({ sizes: { ...useUi.getState().sizes, bottom: Math.max(120, Math.min(520, useUi.getState().sizes.bottom - d)) } })} />}
-        {tab !== 'spec' && <section className={cx('bottom', !panelOpen && 'collapsed')} aria-label="Panels">
+        {/* the panel gives way to a view that needs its room (the Scripts tab), so a drag goes on from the height it has,
+            not the one kept: dragged up as far as it goes, it is kept as high as it was shown */}
+        {tab !== 'spec' && panelOpen && <Splitter dir="h" onDrag={d => { const s = useUi.getState().sizes; setUi({ sizes: { ...s, bottom: Math.max(120, Math.min(520, Math.min(s.bottom, bottomRef.current?.offsetHeight ?? s.bottom) - d)) } }); }} />}
+        {tab !== 'spec' && <section ref={bottomRef} className={cx('bottom', !panelOpen && 'collapsed')} aria-label="Panels">
           <div className="tabs small" role="tablist">
             {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'messages' ? messages.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : k === 'sparkle' ? (disk?.sparkle?.bundles.length ?? 0) : k === 'krill' ? (disk?.krill?.files.length ?? 0) : k === 'covert' ? (disk?.covert?.files.length ?? 0) : k === 'tape' ? (tape?.img.files.length ?? 0) : null; return (
               <button key={k} role="tab" aria-selected={shownBottom === k} className={cx('tab', shownBottom === k && 'on')} onClick={() => setUi({ bottom: k, panelOpen: true })}>{l}{n != null && <span className={cx('count', k === 'problems' && problems.some(p => p.lvl === 'err') && 'bad')}>{n}</span>}</button>); })}
