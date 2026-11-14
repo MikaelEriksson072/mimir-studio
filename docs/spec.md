@@ -2857,8 +2857,8 @@ sist därifrån, eller programmet före, som ett klick gör; är inget öppnat �
 det sista säger en toast *That was the last program on …*. Bandet (13.5e) fungerar likadant, och Alt-pilarna går på
 den disk eller det band som filen som öppnades sist kom från (utan någon: disken, annars bandet).
 
-**Disken som på en C64.** Settings → General → *The disk in the Explorer* väljer mellan *Mimir's list* (förvalt, som
-ovan) och *As on a C64*: katalogen visas då som skärmen en C64 visar efter `LOAD"$",8` och `LIST`, ljusblått på blått
+**Disken som på en C64.** Settings → General → *The disk and the tape in the Explorer* väljer mellan *Mimir's list*
+(förvalt, som ovan) och *As on a C64* (för bandet: 13.5e, *Bandet som på en C64*): katalogen visas då som skärmen en C64 visar efter `LOAD"$",8` och `LIST`, ljusblått på blått
 inom den ljusblå ramen, med VICE:s teckensnitts-ROM (Toolchain → VICE; utan den Mimirs egna bokstäver och siffror,
 utan grafik, och det sägs under skärmen) och markören som blinkar efter `READY.`. Bilden ritas pixel för pixel när
 panelen är minst lika bred som C64:ans pixlar, annars utjämnad. `packages/core/src/c64/dirlist.ts` bygger raderna som
@@ -3220,6 +3220,51 @@ uppackade programmet inte gå att bygga byte för byte (Build & Run: *Build fail
 Unpack inte heller någon programstart. Var de enda två filerna i projektet blir det uppackade ett projekt för sig, med
 starten och `$01` från Sindri. SEQ-filer, slutmarkören och filer utan känd laddadress (en TinyHeader-fil vars bootladdare inte kunde
 läsas) listas men öppnas inte. Under listan står hur många TapeTool-filer och sträckor med okänd turbodata bandet har.
+
+**Bandet som på en C64.** Samma inställning som disken, Settings → General → *The disk and the tape in the Explorer* →
+*As on a C64* (13.5), visar bandet som en C64 visar det, i dess teckensnitt och färger med samma ritning som katalogen
+(`components/C64Screen.tsx`). Ett band har ingen katalog: skärmen är det KERNAL:n skriver när `LOAD` söker igenom
+bandet till slutet efter ett namn som ingen fil har, utskrivet med katalogens skärmeditor
+(`packages/core/src/c64/tapelist.ts`, `tapeScreen`):
+
+- `PRESS PLAY ON TAPE`, `OK` när PLAY trycks och `SEARCHING`, var och ett efter en RETURN (`OK` med en efter sig också),
+  som meddelandena vid `$f0bd` i KERNAL:n har dem; `FOR` och namnet som LOAD fick är utelämnade.
+- KERNAL:n läser varje block på bandet till bandbufferten vid `$033c` och tar det för ett huvud när första byten är 1,
+  3 eller 4 (FAH vid `$f72c`): `FOUND` efter en RETURN, sedan byte 5–20 i bufferten genom CHROUT, alla 16 med
+  utfyllnaden, så att namnens färgkoder, RVS, citattecken, markörrörelser, DEL, CLR och `$0e` verkar som på C64:an. Ett
+  programs datablock som börjar med 1, 3 eller 4 tas också för ett huvud och skriver en egen `FOUND`-rad: dess byte
+  5–20, eller (ett block kortare än 21 byte) det som blocket skrev över huvudet före det, med kontrollsumman efter sista
+  byten (DATA4 med datan `04 10 20 30 41` blir `FOUND EATA4`).
+- En datafils block (typ 2) hoppas över. Slutmarkören (typ 5) och ett datablock som börjar med 5 avslutar sökandet på
+  en C64 med `?DEVICE NOT PRESENT  ERROR` (KERNAL:n lämnar typen som felnummer); skärmen fortsätter förbi dem, som ett
+  nytt `LOAD` skulle.
+- En turboladdares filer är inga KERNAL-block och syns inte. Ett T64-arkivs filer gör det (VICE:s bandfällor lägger
+  varje posts huvud i bufferten), men inte dess C64S-ögonblicksbilder.
+
+Skärmen slutar efter sista `FOUND`, utan `READY.` och utan markör: C64:an söker fortfarande. Raderna som en fil skrev ut
+(dess `FOUND` och datablockets) är ett element över bilden: klick eller `Enter` öppnar filen, **+** lägger till den,
+`↑` `↓` och markeringen av filerna i projektet som i listan; KERNAL:ns meddelanden och filer som inte öppnas (SEQ) går
+inte att öppna. Efter en CLR i ett namn visas skärmen från toppen, som C64:an har den. Under skärmen står, med raderna
+från Mimirs lista, filerna som inte är på den, och varför: en turboladdares filer (*which the KERNAL does not see*),
+data utan huvud, en T64:s ögonblicksbilder och namn som andra namns kontrollkoder skrev över (Barbarians bootfil
+börjar med vit färg och CLR, så bara det sista namnet syns). Slutmarkören står inte där: en C64 visar inget av den.
+Bandets längd och huvudraden visas inte. **Aa** bredvid utmatningsknappen byter teckenuppsättning.
+
+**Test:** `test/tapelist.test.ts` jämför skärmen cell för cell (skärmkod och färg) med x64sc 3.10:s, äkta
+datasettemulering, `LOAD"ZZZ"` och PLAY tryckt från VICE:s monitor (`tapectrl 1`), för band med udda namn (färgkoder,
+RVS, citattecken, shiftade tecken, 16 tecken, CLR, markör upp, RETURN, DEL, gemener), en datafil, datablock som börjar
+som huvuden och slutmarkören (`test/helpers/tapelist-tapes.ts`, VICE:s rader i `test/helpers/tapelist-vice.ts`), och
+för `fixtures/tap/cyberload-demo.tap` (bootfilens datablock ger `FOUND :EP[…`) och `fixtures/t64/mimir-demo.t64`.
+Mot VICE stämmer också raderna på band ur C64Tapes-org: *Galactic Attack* (där CODE:s datablock börjar med 4 och
+skriver `FOUND .8@KS↑π`) och *Crush, Crumble and Chomp* sida 2 (KRAK:s datablock ger ett tomt `FOUND`, ARAC:s börjar
+med 5 och avslutar sökandet). VICE:s sökning missar då och då ett block efter en `FOUND`, ett annat varje gång samma
+band körs (också med monitorn bara var 20:e sekund), så raderna är tagna ur körningar som läste dem; en körning som
+missade DATA4:s huvud men läste dess datablock skrev `FOUND ENEAKY ONE`, DATA1:s datablock med DATA4:s kontrollsumma
+över sig, som bufferten här säger. `fixtures/tap/mimir-demo.tap` (TapeTools bootfil, huvud och data i en kopia
+var) jämförs inte: efter `FOUND MIMIR TAPE` tömmer VICE skärmen och står på `READY.`. På arkivets 921 band (874 med
+KERNAL-filer) ger skärmen 1 200 `FOUND`-rader, 8 av dem från datablock; 314 band har namn med kontrollkoder, och på 9
+skriver ett namns koder över ett annat (oftast en CLR i bootfilens namn). `e2e/app.spec.ts` (*the tape as a C64 finds
+its files*): inställningen, raderna, öppna, lägga till en turbofil under skärmen, Aa och tillbaka till listan.
 
 **Tape-fliken** (bottenpanelen, bara med ett band i datasetten) visar allt på bandet i bandordning: tid, offset i
 TAP-filen, format, namn, laddadress, antal byte och anmärkningar (kopior, kod i huvudet, TapeTools namnbyte, block, RLE,

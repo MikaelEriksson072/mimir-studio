@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -13,6 +13,7 @@ import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
 import { useUi, type Activity } from '../store/ui';
 import { useScripts, type LibraryScript } from '../store/scripts';
 import { BookmarksView, type BookmarkEditing } from './Bookmarks';
+import { C64Screen, screenItems } from './C64Screen';
 import { DiskScreen } from './DiskScreen';
 import { MemoryStrip, type CanvasColors } from './Heatmap';
 import { PackView, type PackViewProps } from './Pack';
@@ -716,32 +717,64 @@ const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetoo
 
 /** The tape in the datasette (13.5e), its files in tape order with where each starts. A file opens with a click (a KERNAL
  *  file with loader code in its header opens with the header as a second file); + adds it to the project. A T64 tape
- *  archive (13.5j) lists its directory, each file by its entry number. */
+ *  archive (13.5j) lists its directory, each file by its entry number. As on a C64 (Settings → General) the KERNAL's
+ *  files are the FOUND lines LOAD prints as it searches the tape (core's tapeScreen), where Aa switches the character
+ *  set; a turbo loader's files, which the KERNAL does not see, are listed under the screen. */
 function TapeSection({ tape, open, onEject, onOpenFromTape, onShowTape }: { tape: MountedTape; open: ReadonlySet<TapeFile>; onEject: () => void; onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void }) {
   const { img } = tape;
   const tt = img.files.filter(f => f.format === 'tapetool').length;
   const t64 = img.t64;
-  return (
-    <SideSection id="tape" title="Tape" summary={tape.name} actions={<button className="icon-btn" title={`Eject ${tape.name}`} aria-label="Eject tape" onClick={onEject}><Icon name="eject" size={14} /></button>}>
-      <div className="disk-head mono small" title={tape.path ?? tape.name}><Icon name="tape" size={13} /><span className="disk-title">{tape.name}</span><span className="muted">{t64 ? 'T64' : tapeTime(img.seconds)}</span></div>
-      <div className="disk-list" role="list" aria-label={`Files on ${tape.name}`}>
-        {img.files.map((f, i) => {
-          const can = tapeOpens(f);
-          const where = f.load != null ? `$${h4(f.load)}-$${h4((f.load + Math.max(1, f.data.length) - 1) & 0xffff)}` : `${f.data.length} bytes`;
-          const why = !can ? (f.type === 'SEQ' ? 'A SEQ file: data, not a program' : f.type === 'END' ? 'The end-of-tape marker' : f.t64 && f.load == null ? 'A C64S memory snapshot, not a program' : f.load == null ? 'Its load address is not on the tape: the boot loader knows it' : 'It holds no data') : '';
-          const title = `${f.errors.length ? `${f.errors.join('; ')}. ` : ''}${f.note ? `${f.note}. ` : ''}${can ? `Open ${f.name} (${TAPE_FORMAT[f.format]}, ${where}${f.headerCode ? ', with its header: the tape buffer at $033c holds code' : ''})${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : why}`;
-          return (
-            <div key={i} role="listitem" className={cx('disk-row tape-row', !can && 'off', f.errors.length > 0 && 'bad', open.has(f) && 'on')} aria-current={open.has(f) || undefined} title={title}
-              tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (can && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromTape(f, false); } }}>
-              <span className="mono small disk-blocks" title={t64 ? `Entry ${f.id} of the directory` : undefined}>{t64 ? f.id : tapeTime(f.seconds)}</span>
-              <span className="mono disk-name">{f.format === 'tapetool' ? f.name : `"${f.name}"`}{f.headerCode ? <span className="muted"> +header</span> : null}</span>
-              <span className="mono small muted">{f.format === 't64' ? (f.load == null ? 'FRZ' : f.type) : f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}</span>
-              {can ? <button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFromTape(f, true); }}><Icon name="plus" size={13} /></button> : <span />}
-            </div>
-          );
-        })}
-        {!img.files.length && <div className="muted small">{t64 ? 'No files in the T64’s directory.' : 'No files in a format known here (KERNAL, TapeTool, Turbo Tape, Freeload, US Gold, Cyberload).'}</div>}
+  const c64 = useUi(s => s.diskLook) === 'c64';
+  const [lower, setLower] = useState<{ bytes: Uint8Array; lower: boolean } | null>(null);
+  const screen = useMemo(() => (c64 ? tapeScreen(img) : null), [c64, img]);
+  const lowerNow = screen ? (lower?.bytes === tape.bytes ? lower.lower : screen.lower) : null;
+  const items = useMemo(() => (screen ? screenItems<TapeFile>(screen.rows, part => { const p = screen.parts[part]; return p.kind === 'found' ? img.files[p.file] ?? null : null; }, tapeOpens) : []), [screen, img]);
+  // under the screen: the files the KERNAL does not see (a turbo loader's) and those other names printed over, not the
+  // end-of-tape marker, which the C64 shows nothing of either
+  const off = useMemo(() => { const shown = new Set(items.map(i => i.file)); return img.files.filter(f => !shown.has(f) && !(f.format === 'cbm' && f.type === 'END')); }, [items, img]);
+  const where = (f: TapeFile) => (f.load != null ? `$${h4(f.load)}-$${h4((f.load + Math.max(1, f.data.length) - 1) & 0xffff)}` : `${f.data.length} bytes`);
+  const titleOf = (f: TapeFile) => {
+    const can = tapeOpens(f);
+    const why = !can ? (f.type === 'SEQ' ? 'A SEQ file: data, not a program' : f.type === 'END' ? 'The end-of-tape marker' : f.t64 && f.load == null ? 'A C64S memory snapshot, not a program' : f.load == null ? 'Its load address is not on the tape: the boot loader knows it' : 'It holds no data') : '';
+    return `${f.errors.length ? `${f.errors.join('; ')}. ` : ''}${f.note ? `${f.note}. ` : ''}${can ? `Open ${f.name} (${TAPE_FORMAT[f.format]}, ${where(f)}${f.headerCode ? ', with its header: the tape buffer at $033c holds code' : ''})${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : why}`;
+  };
+  const row = (f: TapeFile, i: number) => {
+    const can = tapeOpens(f);
+    return (
+      <div key={i} role="listitem" className={cx('disk-row tape-row', !can && 'off', f.errors.length > 0 && 'bad', open.has(f) && 'on')} aria-current={open.has(f) || undefined} title={titleOf(f)}
+        tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (can && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromTape(f, false); } }}>
+        <span className="mono small disk-blocks" title={t64 ? `Entry ${f.id} of the directory` : undefined}>{t64 ? f.id : tapeTime(f.seconds)}</span>
+        <span className="mono disk-name">{f.format === 'tapetool' ? f.name : `"${f.name}"`}{f.headerCode ? <span className="muted"> +header</span> : null}</span>
+        <span className="mono small muted">{f.format === 't64' ? (f.load == null ? 'FRZ' : f.type) : f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}</span>
+        {can ? <button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFromTape(f, true); }}><Icon name="plus" size={13} /></button> : <span />}
       </div>
+    );
+  };
+  const actions = <>
+    {screen && <button className={cx('icon-btn c64-case', lowerNow && 'on')} aria-pressed={!!lowerNow}
+      title={lowerNow ? 'Upper case and graphics, as Commodore+Shift switches the C64 back' : 'Lower and upper case, as Commodore+Shift switches the C64'}
+      aria-label="Lower case character set" onClick={() => setLower({ bytes: tape.bytes, lower: !lowerNow })}>Aa</button>}
+    <button className="icon-btn" title={`Eject ${tape.name}`} aria-label="Eject tape" onClick={onEject}><Icon name="eject" size={14} /></button>
+  </>;
+  const why = (f: TapeFile) => (f.format === 't64' ? (f.load == null ? 'C64S snapshots, which VICE does not find' : 'names that control codes in other names printed over')
+    : f.format !== 'cbm' ? 'files in a turbo loader’s format, which the KERNAL does not see' : f.type === 'DATA' ? 'data without a header' : 'names that control codes in other names printed over');
+  const offWhy = [...new Set(off.map(why))].join('; ');
+  return (
+    <SideSection id="tape" title="Tape" summary={tape.name} actions={actions}>
+      {screen ? <>
+        <C64Screen rows={screen.rows} lower={!!lowerNow} cursor={null} items={items} label={`Files on ${tape.name}, as a C64 finds them`}
+          open={open} onOpen={onOpenFromTape} listKeys={listKeys} titleOf={titleOf} labelOf={f => `FOUND ${f.name}`} nameOf={f => f.name} />
+        {off.length > 0 && <>
+          <div className="side-hint c64-off">Not on the screen: {offWhy}</div>
+          <div className="disk-list" role="list" aria-label={`Files on ${tape.name} that are not on the C64's screen`}>{off.map(f => row(f, img.files.indexOf(f)))}</div>
+        </>}
+      </> : <>
+        <div className="disk-head mono small" title={tape.path ?? tape.name}><Icon name="tape" size={13} /><span className="disk-title">{tape.name}</span><span className="muted">{t64 ? 'T64' : tapeTime(img.seconds)}</span></div>
+        <div className="disk-list" role="list" aria-label={`Files on ${tape.name}`}>
+          {img.files.map(row)}
+          {!img.files.length && <div className="muted small">{t64 ? 'No files in the T64’s directory.' : 'No files in a format known here (KERNAL, TapeTool, Turbo Tape, Freeload, US Gold, Cyberload).'}</div>}
+        </div>
+      </>}
       {(img.unknown.length > 0 || tt > 0) && (
         <div className="disk-spindle">
           <span>{tt ? <><b>TapeTool tape:</b> {tt} turbo file{tt === 1 ? '' : 's'} its boot loader reads{img.unknown.length ? '; ' : ''}</> : null}

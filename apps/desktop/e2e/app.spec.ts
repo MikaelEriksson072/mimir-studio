@@ -1342,7 +1342,7 @@ test('the disk as a C64 lists it (Settings → General), and Mimir\'s list again
   const look = async (value: 'c64' | 'mimir') => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await settings.getByRole('tab', { name: 'General', exact: true }).click();
-    await settings.getByLabel('The disk in the Explorer').selectOption(value);
+    await settings.getByLabel('The disk and the tape in the Explorer').selectOption(value);
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await expect(settings).toBeHidden();
   };
@@ -5856,6 +5856,66 @@ test('a Cyberload tape: its four stages read as files in the Explorer and the Ta
   await table.getByRole('row', { name: /"DEMO"/ }).click();
   await expect(toast(page, 'Loaded DEMO.prg at $0801')).toBeVisible();
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+});
+
+test('the tape as a C64 finds its files (Settings → General), a turbo loader\'s files under the screen, and Mimir\'s list again', async ({ app, page }) => {
+  // fixtures/tap/cyberload-demo.tap: the KERNAL boot file "CYBER DEMO", whose data block starts as a header does and
+  // prints a FOUND of its own, then Cyberload's files, which the KERNAL does not see. LOAD's search of it on a C64 is
+  // checked cell by cell against VICE in packages/core/test/tapelist.test.ts
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/cyberload-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted cyberload-demo\.tap/)).toBeVisible();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  const look = async (value: 'c64' | 'mimir') => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await settings.getByLabel('The disk and the tape in the Explorer').selectOption(value);
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+  };
+  const screen = page.getByRole('list', { name: 'Files on cyberload-demo.tap, as a C64 finds them' });
+  const off = page.getByRole('list', { name: 'Files on cyberload-demo.tap that are not on the C64\'s screen' });
+  const tape = page.getByRole('region', { name: 'Tape' });
+
+  await test.step('LOAD\'s search: the KERNAL\'s messages, a FOUND for the boot file and one for its data block', async () => {
+    await look('c64');
+    await expect(page.getByRole('list', { name: 'Files on cyberload-demo.tap', exact: true })).toHaveCount(0);
+    await expect(tape.locator('.disk-head')).toHaveCount(0);
+    await expect.poll(() => screen.getByRole('listitem').evaluateAll(l => l.map(e => e.getAttribute('aria-label'))))
+      .toEqual(['PRESS PLAY ON TAPE OK SEARCHING', 'FOUND CYBER DEMO']);
+    // the boot file's item is both its FOUND lines, the data block's too
+    await expect(screen.getByRole('listitem').nth(1)).toHaveAttribute('style', /height: 33\.3333%/);
+    // 18 columns of 8 pixels (PRESS PLAY ON TAPE), 6 rows of 8, no cursor: the C64 is still searching
+    expect(await tape.locator('.c64-screen canvas').evaluate((c: HTMLCanvasElement) => [c.width, c.height])).toEqual([144, 48]);
+    await expect(tape.locator('.c64-cursor')).toHaveCount(0);
+    await expect(tape.locator('.c64-off')).toHaveText('Not on the screen: files in a turbo loader’s format, which the KERNAL does not see');
+    await expect(off.getByRole('listitem')).toHaveText([/"file_0002"\s*Cyberload/, /"file_c000"\s*Cyberload/, /"file_e000"\s*Cyberload/, /"DEMO"\s*Cyberload/]);
+  });
+
+  await test.step('the FOUND line opens the boot file, + under the screen adds a turbo file; Aa switches the character set', async () => {
+    await screen.getByRole('listitem', { name: 'FOUND CYBER DEMO' }).click();
+    await expect(toast(page, 'Loaded CYBER DEMO.prg at $029f, CYBER DEMO-header.prg at $033c')).toBeVisible();
+    await expect(screen.getByRole('listitem', { name: 'FOUND CYBER DEMO' })).toHaveAttribute('aria-current', 'true');
+    await off.getByRole('button', { name: 'Add DEMO to this project' }).click();
+    await expect(toast(page, 'Loaded DEMO.prg at $0801')).toBeVisible();
+    await expectFiles(page, ['CYBER DEMO.prg', 'CYBER DEMO-header.prg', 'DEMO.prg']);
+    await expect(off.getByRole('listitem').filter({ hasText: '"DEMO"' })).toHaveAttribute('aria-current', 'true');
+    const aa = tape.getByRole('button', { name: 'Lower case character set' });
+    await aa.click();
+    await expect(aa).toHaveAttribute('aria-pressed', 'true');
+    await aa.click();
+    await expect(aa).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  await test.step('Mimir\'s list again', async () => {
+    await look('mimir');
+    await expect(screen).toHaveCount(0);
+    await expect(off).toHaveCount(0);
+    await expect(tape.getByRole('button', { name: 'Lower case character set' })).toHaveCount(0);
+    await expect(page.getByRole('list', { name: 'Files on cyberload-demo.tap', exact: true }).getByRole('listitem')).toHaveCount(5);
+  });
 });
 
 test('a T64 in the datasette: its directory in the Explorer and the Tape tab, Save files…, Build & Run writing it again and Sindri reading it', async ({ app, page, workDir }) => {

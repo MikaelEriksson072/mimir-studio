@@ -370,7 +370,14 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
 - **Disk and tape lists** (spec 13.5). `listKeys` in `Sidebar.tsx` moves the focus between the rows that open and stops
   the event, so the window's key handler does not move the listing's cursor too. `diskOpen` / `tapeOpen` (the
   `diskFileOf` / `tapeOf` entries of the project's files) mark the rows; `lastFrom` remembers the file opened last
-  from either, and `openNextFrom` (Alt+↓ / Alt+↑, commands `medium-next` / `medium-prev`) steps from it.
+  from either, and `openNextFrom` (Alt+↓ / Alt+↑, commands `medium-next` / `medium-prev`) steps from it. As on a C64
+  (`ui.diskLook`), both are drawn by `C64Screen.tsx` from rows of core's screen editor (`ScreenEditor` in
+  `c64/dirlist.ts`): the disk's `directoryScreen` (DiskScreen.tsx) and the tape's `tapeScreen` (`c64/tapelist.ts`,
+  in `TapeSection`); `screenItems` makes a file's consecutive rows one item. To check either against VICE, run x64sc
+  with `-remotemonitor` and a `-keybuf` (`load"$",8\nlist\n`, or `load"zzz"\n` and `tapectrl 1` from the monitor for a
+  tape), `bsave` `$0400-$07e7` and `$d800-$dbe7`, and always `quit`. On a tape VICE's search now and then misses a
+  block after a FOUND, a different one each run (also with the monitor entered only every 20 s): run a tape a few times
+  and take each row from a run that read it.
 - **All banks in Graphics and Memory** (spec 13.9b). With *All banks in one .asm* (`settings.cartOneSource`) and more
   than one bank, the two tabs get the merged `AnalysisResult` at bank addresses instead of `spaceView`'s 64 KB:
   `MemoryDump` puts a line over each bank (`spaces`), `MemoryGfx` lays out only the banks' loaded memory

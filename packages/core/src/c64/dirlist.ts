@@ -93,8 +93,9 @@ export function directoryProgram(image: Uint8Array): { bytes: Uint8Array; part: 
 
 const COLOR_CODES: Record<number, number> = { 0x05: 1, 0x1c: 2, 0x1e: 5, 0x1f: 6, 0x81: 8, 0x90: 0, 0x95: 9, 0x96: 10, 0x97: 11, 0x98: 12, 0x99: 13, 0x9a: 14, 0x9b: 15, 0x9c: 4, 0x9e: 7, 0x9f: 3 };
 
-/** The C64's screen editor as CHROUT drives it, on a screen that grows downwards instead of scrolling. */
-class Screen {
+/** The C64's screen editor as CHROUT drives it, on a screen that grows downwards instead of scrolling (the tape's
+ *  screen, tapelist.ts, prints with it too). */
+export class ScreenEditor {
   rows: DirScreenRow[] = [];
   /** the rows that go on from the row above: a logical line of two rows */
   cont: boolean[] = [];
@@ -203,7 +204,7 @@ export function directoryScreen(image: Uint8Array): DirScreen {
     while (at(p + y) !== 0 && y < 255) y++;
     p += y + 1;
   }
-  const s = new Screen();
+  const s = new ScreenEditor();
   for (const p of starts) {
     s.part = partAt(p);
     s.out(0x0d);
