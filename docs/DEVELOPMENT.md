@@ -860,6 +860,18 @@ reference never sees them; the round-trip, fuzz and real KickAss.jar tests cover
 memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the differential test runs with it off, and
 `test/banks.test.ts`, the fuzz test (random zones, on and off) and the KickAss.jar test cover it.
 
+44. IFFL files (spec 13.5m) are new: the second file of The Last Ninja +10DI (Cryonix) "could not be unpacked". It is
+    no program but an IFFL file: its first sector is a table of 42 lengths (127 low bytes, then 127 high bytes) and the
+    parts the game loads by number follow, so opening it gave a "program" at `$3a9f` (the table's first two bytes) that
+    Sindri ran into a JAM. `readIfflDisk` (`packages/core/src/c64/iffl-disk.ts`) takes a file whose lengths end exactly
+    where it ends; a part is a chain of `exomizer level` pieces (end address high byte first, the stream read forwards
+    and written from the end backwards), Exomizer 2 (protocol 0) or 3 (protocol 39) per file, read with Brokkr's
+    `readStream`. The first reading had the address as a start and the data forwards: every stream ended where its part
+    did all the same, and only the round start addresses the other way gave (`$0800`, `$b000`) and Hokuto Force's
+    crack of the same game showed it. The app has an *IFFL parts* tab (a row a part, opened as a PRG a piece), an
+    Explorer line, and a click on the file in the directory shows the tab instead of opening a program. On the archive's
+    games: 28 disks of 9 releases, parts unpacked in 7.
+
 ## Roadmap
 
 M3 VICE binary monitor (`vice:attach` / `vice:command` already exist as stubs), M4 structs/macros/local labels,

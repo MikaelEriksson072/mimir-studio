@@ -54,6 +54,8 @@ interface SidebarProps {
   onShowKrill: () => void;
   /** open the Covert script tab (a disk for the Covert Bitops loader: its files, the calls, the tool's command file) */
   onShowCovert: () => void;
+  /** open the IFFL parts tab (a disk with an IFFL file: the parts a game loads from it) */
+  onShowIffl: () => void;
   onShowPirateSlayer: () => void;
   /** per file: packed (or maybe packed), else null */
   packing: (PackingInfo | null)[];
@@ -142,7 +144,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -175,7 +177,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowPirateSlayer={onShowPirateSlayer} />}
+        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} />}
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
@@ -609,7 +611,7 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
  *  screen after LOAD"$",8 and LIST, where Aa switches the character set. A PRG opens with a click or Enter; + adds it
  *  to the project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
  *  ("The work is not saved" → Save as a project…) */
-function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowPirateSlayer: () => void }) {
+function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowIffl: () => void; onShowPirateSlayer: () => void }) {
   const { img } = disk;
   // Settings → General: the directory as a C64 lists it, and its character set switched as Commodore+Shift does (for
   // this disk; null: as the listing leaves it)
@@ -678,6 +680,12 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
         <div className="disk-spindle">
           <span><b>Krill's loader:</b> {disk.krill.files.filter(f => f.unpacked).length} files in the directory packed with {KRILL_PACKER[disk.krill.packer].name}, loaded in the directory's order</span>
           <button className="btn small" onClick={onShowKrill}>Krill script</button>
+        </div>
+      )}
+      {disk.iffl && (
+        <div className="disk-spindle">
+          <span><b>IFFL:</b> {disk.iffl.files.map(f => `"${f.name}"`).join(', ')} {disk.iffl.files.length === 1 ? 'is' : 'are'} no program but {disk.iffl.files.reduce((a, f) => a + f.parts.length, 0)} parts in one file, which the game loads by number</span>
+          <button className="btn small" onClick={onShowIffl}>IFFL parts</button>
         </div>
       )}
       {disk.covert && (

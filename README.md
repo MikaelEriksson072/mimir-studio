@@ -95,6 +95,10 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     its address. The *Sparkle script* tab lists them by the number a part loads them with (`lda #number / jsr $0160`),
     *Copy script* copies the Sparkle loader script (`.sls`) rebuilt from the disk, and *Save files…* saves the files
     with that script;
+  - the parts of an IFFL file, the one file a cracked game loads all its parts from by number (a table of lengths in
+    its first sector, then the parts, each a chain of pieces packed with Exomizer 2 or 3: The Last Ninja +10DI from
+    Cryonix, Hokuto Force's and Onslaught's IFFLDATA). It is no program, so a click on it shows the *IFFL parts* tab,
+    where a part opens unpacked, a PRG a piece, and *Save parts…* saves them all
   - the files of a disk for Krill's loader packed with its ZX0 (Artline Designs' Nightfall and Morph, Offence's Tunnel
     Vision, Extend's Fishbomb and more): the loader has no load script, as a part loads a file by its name or the next
     one in the directory, so the directory is the order, often under a dirart. The *Krill script* tab lists the files
@@ -259,7 +263,7 @@ make an existing project a repository too).
    **Build & Run** it in VICE (`F5`), or in Retro Debugger or C64 Debugger (`Shift+F5`, set in *Settings → Toolchain*).
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
-the Spindle, Bitfire, Booze, Sparkle, Krill and Covert scripts and Pirate Slayer (when there is one), statistics and the build output. With a
+the Spindle, Bitfire, Booze, Sparkle, Krill and Covert scripts, the IFFL parts and Pirate Slayer (when there is one), statistics and the build output. With a
 disk mounted, Build & Run writes the files the project opened from it back into a copy of the disk as they were built
 (a G64's sectors encoded again in place, its copy protection untouched), and autostarts that copy when the project
 starts with the disk's first program, so the disk's own boot loads them.

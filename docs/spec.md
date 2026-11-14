@@ -3881,6 +3881,48 @@ loader*) monterar den. `test/krill-disk.test.ts` har Doynax LZ (en egen skrivare
 `test/loaders.test.ts` version 2 och Krills version 146. `packages/cli/test/cli.test.ts` kör `mimir disks` på
 fixture-diskarna.
 
+### 13.5m IFFL-filer (en fil med alla delar ett spel laddar)
+
+En IFFL-fil ("integrated file flexible loader") är en enda DOS-fil som håller alla delar ett crackat spel laddar, den ena
+efter den andra: spelets loader ber om en del efter dess nummer, och driven går längs filens sektorkedja till den. Filen
+är inget program: den har ingen laddadress (dess första byte är en tabell) och är ofta större än en C64:s minne, så den
+går varken att köra eller packa upp som ett program. Den som öppnade den fick förut ett "program" på en adress som
+tabellens två första byte råkade ge (The Last Ninja +10DI från Cryonix: `$3a9f-$248cd`), och Unpack svarade att inget
+packades upp. `readIfflDisk()` (`packages/core/src/c64/iffl-disk.ts`) läser diskens IFFL-filer (`IfflDisk`,
+`IfflFile`, `IfflPart`, `IfflPiece`).
+
+- **Formatet** är det som de senaste årens IFFL-crackar har (Hokuto Force, Onslaught och Excess kallar filen
+  `IFFLDATA`, Cryonix ger den spelets namn): filens första sektor, 254 byte, är tabellen med delarnas längder, först
+  deras 127 låga byte och sedan deras 127 höga, oanvända poster 0. Delarna följer från byte 254 utan något mellan sig.
+- **Regeln:** en fil räknas som IFFL när minst två längder är satta, ingen är satt efter en osatt, och längderna slutar
+  precis där filen slutar. Summan är det som skiljer en sådan fil från alla andra.
+- **En del** är det loadern läser i ett svep: oftast en kedja av bitar, var och en en `exomizer level`-fil som den är:
+  var biten slutar i minnet (höga byten först) och sedan strömmen, som läses framåt medan driven skickar den och skrivs
+  från slutet och bakåt. Strömmen är Exomizer 2:s (protokoll 0: Hokuto Force, Onslaught, Excess) eller Exomizer 3:s
+  (protokoll 39: Cryonix), samma för filens alla delar: den som läser flest delar till deras slut. En del är uppackad när
+  dess bitar följer på varandra till delens slut och ingen är längre än minnet under sitt slut; andra delar (en
+  highscore-tabell, data i spelets eget format som hela Mickey's Space Adventure) behålls som de är lagrade.
+  Strömmarna läses med Brokkrs Exomizer-läsare (`readStream`).
+- **I appen:** Explorerns disk säger *IFFL: "namn" is no program but N parts in one file…* med knappen *IFFL parts*.
+  Ett klick på filen i katalogen öppnar inte ett program utan fliken, med en toast som säger varför. Fliken **IFFL
+  parts** har en rad per del i tabellens ordning (delens nummer är det loadern ber om): var i filen den börjar, vart
+  dess bitar packas upp, byte före och efter, filnamn och hur den är packad. En rad öppnar delens bitar uppackade, en
+  PRG per bit på dess adress (`iffl01_part04_0700.prg`), + lägger till dem i projektet. En del som inte är packad har
+  ingen adress och kan bara sparas. *Save parts…* sparar varje del som den är lagrad (`.exo`, annars `.bin`) och
+  bitarna uppackade. IFFL-filen läses bredvid det disken annars är (en loaders disk kan ha en också).
+- **Mätt på referensarkivets spel** (138 235 diskar): 28 diskar har en sådan fil, av 9 släpp. I 7 av dem packas delarna
+  upp (alla utom highscore-tabeller och liknande): The Last Ninja +10DI (Cryonix) 42 av 42 delar, 235 630 byte; Skate
+  or Die 6 av 7 (21 bitar); Double Dragon 3 11 av 11; Hokuto Forces Last Ninja 11 av 11 (51 bitar) och Last Ninja II 13
+  och 18; Planet X2 13 av 13; Charlie Chaplin 30 av 30; Platman Worlds 30 av 38; Yoomp64 34 av 38. Mickey's Space
+  Adventure (3 sidor) har delar i eget format och listas som lagrade.
+- **Kontrollen:** nivåerna i två crackar av The Last Ninja, packade med olika Exomizer och delade i olika bitar
+  (Hokuto Force och Cryonix), packas upp till samma byte där bitarna överlappar: en nivås `$0700-$5400` så när som på
+  5 byte av 19 712, dess `$9e00-$afff` och `$0800-$15xx` helt. Ingen del har jämförts med en körning där spelet
+  laddar den: Sindris körningar stannar i crackarnas menyer.
+- **Tester:** `packages/core/test/iffl-disk.test.ts` (en egen `exomizer level`-skrivare med Brokkrs cruncher: bitarna
+  bakifrån med båda Exomizer, kedjor, det som avvisas; tabellen; `fixtures/d64/iffl-demo.d64` med raster-demot som en
+  del, en del av två bitar och en opackad tabell) och ett e2e-test som klickar på filen, öppnar delar och sparar dem.
+
 ### 13.6 Terminal
 
 **Terminal** i titelraden (och kommandopaletten) öppnar ett terminalfönster i mappen du arbetar i: den senast
@@ -4646,7 +4688,7 @@ som ändrad och blir en commit att pusha; utan projekt säger fliken att det beh
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), skräp (11.7, när det finns), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista, en mapp per blocktyp. Ett klick på ett block går till det i listningen; Shift+klick visar det markerat i typens egen vy (`blockView`): sprites, charset, bitmapp och skärmmatris i Graphics ritade som sin typ (multicolor som blocket, en bitmapp så hög som den är, rutnätet flyttat så att en cell börjar vid blocket), text i Memory som `i` (PETSCII) eller `ii` (skärmkoder) med raderna från dess första byte, övriga data (bytes, ord, tabeller, musik, fill) i Memory som `m`, och kod, BASIC och flyttad kod markerad i listningen. Varje rads tips säger vart Shift+klick går. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Scripts**: projektets skript, att köra, öppna och ta bort (10.3). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
-| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Krill script (filerna på en disk för Krills loader och cc1541:s kommandorad, 13.5k), Covert script (filerna på en disk för Covert Bitops-loadern, anropen i koden och makedisks eller maked64:s kommandofil, 13.5l), Pirate Slayer (13.5h), Tape (13.5e), Statistics, Build output |
+| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Krill script (filerna på en disk för Krills loader och cc1541:s kommandorad, 13.5k), IFFL parts (delarna i en disks IFFL-fil, 13.5m), Covert script (filerna på en disk för Covert Bitops-loadern, anropen i koden och makedisks eller maked64:s kommandofil, 13.5l), Pirate Slayer (13.5h), Tape (13.5e), Statistics, Build output |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, antal meddelanden, analystid, verifieringsstatus. Det som går att göra något med är knappar (se nedan) |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.

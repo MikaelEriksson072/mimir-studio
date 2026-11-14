@@ -3,7 +3,7 @@
  * the Covert Bitops loader, Pirate Slayer
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, KRILL_PACKER, krillFileName, type KrillFile, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, KRILL_PACKER, krillFileName, type KrillFile, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   refsShown, shownAddress, shownTarget,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
@@ -320,6 +320,43 @@ export function SparklePanel({ disk, onCopy, onOpenChunk, onSaveFiles }: { disk:
               <td className="mono">{name}</td>
               <td className="muted">{notes(b, c, k)}</td>
               <td><button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenChunk(b, c, true); }}><Icon name="plus" size={13} /></button></td>
+            </tr>
+          );
+        }))}
+      </tbody></table>
+    </div>
+  );
+}
+
+/** The IFFL parts tab (spec 13.5m): a disk's IFFL files, each one file that holds the parts a game loads behind a
+ *  table of their lengths; a part a row, in the table's order (its number is what the game's loader asks for). A part
+ *  is a chain of pieces packed with Exomizer, each with where it ends in memory: a row opens the part's pieces unpacked,
+ *  a PRG each at where it unpacks to, + adds them; a part that is not packed so has no address and is only saved.
+ *  Save parts… writes every part as it is stored and its pieces unpacked. */
+export function IfflPanel({ disk, onOpenPart, onSaveParts }: { disk: MountedDisk; onOpenPart: (f: IfflFile, p: IfflPart, add: boolean) => void; onSaveParts: () => void }) {
+  const d = disk.iffl!;
+  const n = d.files.reduce((a, f) => a + f.parts.length, 0), unpacked = d.files.reduce((a, f) => a + f.parts.filter(p => p.pieces).length, 0);
+  const packers = [...new Set(d.files.flatMap(f => (f.packer ? [IFFL_PACKER[f.packer].name] : [])))];
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>IFFL parts of {disk.name}: {d.files.map(f => `"${f.name}"`).join(', ')}, {n} part{n === 1 ? '' : 's'}, {unpacked} unpacked{packers.length ? ` (${packers.join(', ')})` : ''} <span className="muted">· an IFFL file is one file with all the parts a game loads: its first sector is the table of their lengths, and the game's loader asks for a part by its number. It is no program, so it does not run or unpack as one: open its parts here</span></span>
+        <button className="btn small" onClick={onSaveParts} title="Save every part to a folder: as it is stored in the file and, when it is packed, its pieces unpacked as PRGs"><Icon name="download" size={14} />Save parts…</button>
+      </div>
+      <table className="tbl" aria-label="IFFL parts"><thead><tr><th>Part</th><th>In file</th><th>At</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
+        {d.files.flatMap(f => f.parts.map(p => {
+          const name = ifflPartName(f, p), u = p.pieces, to = u?.map(x => `$${h4(x.start)}–$${h4(x.end - 1)}`).join(', ');
+          const packer = f.packer ? IFFL_PACKER[f.packer].name : 'Exomizer';
+          return (
+            <tr key={`${f.entry}-${p.n}`} title={u ? `Open part ${p.n} unpacked: ${u.length === 1 ? `${ifflPieceName(f, p, u[0])}, a PRG at $${h4(u[0].start)}` : `its ${u.length} pieces, a PRG each (${to})`}` : `${name} is not packed with ${packer}: it has no address of its own, Save parts… saves it as it is stored`} onClick={() => u && onOpenPart(f, p, false)}>
+              <td className="mono">{p.n}</td>
+              <td className="mono">"{f.name}"</td>
+              <td className="mono">${p.offset.toString(16).padStart(5, '0')}</td>
+              <td className="mono">{to ?? <span className="muted">—</span>}</td>
+              <td className="mono">{u ? `${p.bytes.length} → ${u.reduce((a, x) => a + x.bytes.length, 0)}` : p.bytes.length}</td>
+              <td className="mono">{name}</td>
+              <td className="muted">{u ? `packed with ${packer}${u.length > 1 ? `, ${u.length} pieces` : ''}: unpacked as it loads, from its end backwards` : `not packed with ${packer}: as it is stored`}</td>
+              <td>{u && <button className="icon-btn" title={`Add part ${p.n} unpacked to this project`} aria-label={`Add part ${p.n} unpacked to this project`} onClick={e => { e.stopPropagation(); onOpenPart(f, p, true); }}><Icon name="plus" size={13} /></button>}</td>
             </tr>
           );
         }))}
@@ -749,4 +786,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['covert', 'Covert script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['iffl', 'IFFL parts'], ['covert', 'Covert script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

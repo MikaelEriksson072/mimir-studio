@@ -6220,6 +6220,57 @@ test("a mounted disk for Krill's loader: its files in the Krill script tab, unpa
   });
 });
 
+test('a mounted disk with an IFFL file: the file opens as its parts in the IFFL parts tab, unpacked, and they are saved', async ({ workDir, app, page }) => {
+  // fixtures/d64/iffl-demo.d64 (packages/core/test/iffl-disk.test.ts): a BASIC boot program and IFFLDATA, one file with
+  // a table of lengths and three parts: the raster demo packed with Exomizer 3, a part of two pieces, a table not packed
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/iffl-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted iffl-demo.d64: "IFFL DEMO", 2 files; "IFFLDATA" is an IFFL file with 3 parts (the IFFL parts tab)')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText('IFFL: "IFFLDATA" is no program but 3 parts in one file, which the game loads by number');
+  const parts = page.getByRole('table', { name: 'IFFL parts' });
+
+  await test.step('the file in the directory does not open as a program: it shows its parts', async () => {
+    await page.getByRole('list', { name: 'Files on iffl-demo.d64' }).getByRole('listitem').filter({ hasText: 'IFFLDATA' }).click();
+    await expect(toast(page, '"IFFLDATA" is an IFFL file, not a program: 3 parts the game loads by number, packed with Exomizer 3. Open them in the IFFL parts tab')).toBeVisible();
+    await expect(page.getByRole('tab', { name: /IFFL parts/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /IFFL parts/ })).toContainText('3');
+    await expect(page.locator('.spindle-head').first()).toContainText('IFFL parts of iffl-demo.d64: "IFFLDATA", 3 parts, 2 unpacked (Exomizer 3)');
+    await expect(parts.locator('tbody tr td:nth-child(1)')).toHaveText(['0', '1', '2']);
+    await expect(parts.locator('tbody tr td:nth-child(3)').first()).toHaveText('$000fe');
+    await expect(parts.locator('tbody tr td:nth-child(4)')).toHaveText(['$0801–$37ff', '$c000–$c7cf, $2000–$2257', '—']);
+    await expect(parts.locator('tbody tr td:nth-child(6)')).toHaveText(['iffl01_part00.exo', 'iffl01_part01.exo', 'iffl01_part02.bin']);
+    await expect(parts.locator('tbody tr td:nth-child(7)')).toHaveText(['packed with Exomizer 3: unpacked as it loads, from its end backwards', 'packed with Exomizer 3, 2 pieces: unpacked as it loads, from its end backwards', 'not packed with Exomizer 3: as it is stored']);
+  });
+
+  await test.step('a row opens its part unpacked, a PRG a piece; + adds a part', async () => {
+    await parts.getByRole('row', { name: /iffl01_part00/ }).click();
+    await expect(toast(page, 'Loaded iffl01_part00_0801.prg at $0801')).toBeVisible();
+    // the raster demo, as it was before it was packed
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await parts.getByRole('button', { name: 'Add part 1 unpacked to this project' }).click();
+    await expectFiles(page, ['iffl01_part00_0801.prg', 'iffl01_part01_c000.prg', 'iffl01_part01_2000.prg']);
+  });
+
+  await test.step('Save parts… saves every part as it is stored and its pieces unpacked', async () => {
+    const out = join(workDir, 'iffl-parts');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save parts…' }).click();
+    await expect(toast(page, /^Saved 3 IFFL parts of iffl-demo\.d64 to .* \(2 of them unpacked as well\)$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['iffl01_part00.exo', 'iffl01_part00_0801.prg', 'iffl01_part01.exo', 'iffl01_part01_2000.prg', 'iffl01_part01_c000.prg', 'iffl01_part02.bin']);
+    expect(readFileSync(join(out, 'iffl01_part00_0801.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+    expect(readFileSync(join(out, 'iffl01_part02.bin')).toString('latin1')).toBe('000500 ABC 000400 DEF 000300 GHI ');
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /IFFL parts/ })).toHaveCount(0);
+  });
+});
+
 test("a mounted disk for Krill's loader built with TinyCrunch (revision 166): its files opened unpacked from the Krill script tab", async ({ app, page }) => {
   // fixtures/d64/krill-tc-demo.d64 (packages/core/test/krill-disk.test.ts): a BASIC boot program, the raster demo packed
   // with TinyCrunch in place, as Fossil's Space Beer has its parts, and a file unpacking elsewhere
