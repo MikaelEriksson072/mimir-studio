@@ -5812,16 +5812,18 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
     expect(tap.subarray(tap.length - 50000)).toEqual(orig.subarray(orig.length - 50000));
   });
 
-  await test.step('Sindri plays the tape for the boot file: its loader loads the raster demo, which Unpack takes', async () => {
+  await test.step('Sindri plays the tape for the boot file: its loader loads the raster demo, which Unpack takes in place of the boot file and its header', async () => {
     const bar = page.locator('.pack-bar');
     await expect(bar).toContainText('MIMIR TAPE.prg is packed.', { timeout: 60_000 });
     await expect(bar).toContainText(/the program starts at \$0810/);
     await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
-    await expect(toast(page, /^Unpacked MIMIR TAPE\.prg: \d+ bytes at \$0801-\$37ff$/)).toBeVisible({ timeout: 60_000 });
+    await expect(toast(page, /^Unpacked MIMIR TAPE\.prg with its header MIMIR TAPE-header\.prg: \d+ bytes at \$0801-\$37ff$/)).toBeVisible({ timeout: 60_000 });
     const done = page.locator('.unpack-bar');
+    await expect(done).toContainText('(in place of MIMIR TAPE.prg and MIMIR TAPE-header.prg)');
     await done.getByText('Layer report').click();
     await expect(done.locator('.unpack-log')).toContainText(/Tape: datasette: the tape stood after the file \([\d.]+ s\), played [\d.]+ s/);
-    await expectFiles(page, ['MIMIR TAPE-unpacked.prg', 'MIMIR TAPE-header.prg']);
+    // one KERNAL file in two: the header goes with the boot file, so the unpacked program is a project of its own
+    await expectFiles(page, ['MIMIR TAPE-unpacked.prg']);
   });
 
   await test.step('ejecting the tape takes the section and the tab away', async () => {
@@ -5829,6 +5831,31 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
     await expect(files).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /^Tape/ })).toHaveCount(0);
   });
+});
+
+test('a Cyberload tape: its four stages read as files in the Explorer and the Tape tab, the fourth stage\'s file opens', async ({ app, page }) => {
+  // fixtures/tap/cyberload-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, then Cyberload's stages in
+  // its formats with bytes of our own, the raster demo the fourth stage's file "DEMO"
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/cyberload-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted cyberload-demo\.tap \(\d+ s\): 5 files \(1 KERNAL, 4 Cyberload\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on cyberload-demo.tap' });
+  await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"CYBER DEMO"\s*\+header\s*PRG/, /"file_0002"\s*Cyberload/, /"file_c000"\s*Cyberload/, /"file_e000"\s*Cyberload/, /"DEMO"\s*Cyberload/]);
+  // every stretch read: nothing left for Sindri alone
+  await expect(page.locator('.disk-spindle')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['KERNAL PRG', 'Cyberload', 'Cyberload', 'Cyberload', 'Cyberload']);
+  await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$029f–$033a', '$0002–$0394', '$c000–$c257', '$e000–$e257', '$0801–$37ff']);
+  await expect(table.locator('tbody tr').nth(2).locator('td').nth(6)).toHaveText(/^second stage: its address and length XOR \$9c, its bytes XOR \$7a/);
+  await expect(table.locator('tbody tr').nth(3).locator('td').nth(6)).toHaveText('third stage, 3 blocks; the loader calls $e003 after it');
+  await expect(table.locator('tbody tr').nth(4).locator('td').nth(6)).toHaveText('fourth stage (LOAD by name), sync $aa, 48 blocks, read with a timer of 510 cycles');
+  await table.getByRole('row', { name: /"DEMO"/ }).click();
+  await expect(toast(page, 'Loaded DEMO.prg at $0801')).toBeVisible();
+  await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
 test('a T64 in the datasette: its directory in the Explorer and the Tape tab, Save files…, Build & Run writing it again and Sindri reading it', async ({ app, page, workDir }) => {

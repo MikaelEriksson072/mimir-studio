@@ -52,9 +52,10 @@ const header = (type: number, start: number, end: number, name: string, rest: Ui
 };
 
 /** the boot file's loader, in the tape buffer at $0351: it waits for the sync byte $aa and $69, reads PROGRAM's bytes
- *  to $1000 (a pulse on the FLAG line; CIA1's timer A, one shot from 367 cycles, has run out after a 1) and starts it */
+ *  to $1000 (a pulse on the FLAG line; CIA1's timer A, one shot from 367 cycles, has run out after a 1) and starts it;
+ *  with `pause`, 3.3 s after it stopped the motor (Cyberload fades the sound out before it starts Tusker) */
 const end = 0x1000 + PROGRAM.prg.length - 2;
-const LOADER = asm(`
+const loader = (pause = false) => asm(`
 * = $0351
 loader: sei
        lda #$7f
@@ -86,7 +87,17 @@ check: lda sm+1
        bne next
        lda #$37
        sta $01
-       jmp $1000
+${pause ? `       ldx #0
+       ldy #0
+       lda #10
+wait:  dex
+       bne wait
+       dey
+       bne wait
+       sec
+       sbc #1
+       bne wait
+` : ''}       jmp $1000
 getbyte: lda #1
 gb:    jsr edge
        rol a
@@ -105,11 +116,12 @@ e2:    lda #$19
        pla
        rts
 `);
+const LOADER = loader();
 
 /** a tape: the boot file (`data` at `load`, the loader in its header), then PROGRAM as turbo data after a leader */
-function bootTape(load: number, data: Uint8Array): Uint8Array {
+function bootTape(load: number, data: Uint8Array, boot = LOADER): Uint8Array {
   const out: number[] = [];
-  kernal(out, header(3, load, load + data.length, 'BOOT', LOADER.prg.subarray(2)), data);
+  kernal(out, header(3, load, load + data.length, 'BOOT', boot.prg.subarray(2)), data);
   const t: number[] = [];
   for (let i = 0; i < 64; i++) turbo(t, [0xff, 0xc3]);
   turbo(t, [0xaa, 0x69, ...PROGRAM.prg.subarray(2), 0]);
@@ -160,6 +172,17 @@ describe('the datasette', () => {
       }
     });
   }
+
+  it('waits a while after the loader stops the motor with more on the tape: it can pause before it starts the program', () => {
+    // 3.3 s with the motor off and nothing written, more than a layer takes to settle (1.5 million cycles); no keys, as
+    // after the first layer (the presses Sindri makes before anything is unpacked would wait it out as well)
+    for (const r of [null, roms]) {
+      if (r === roms && !roms) continue;
+      const res = unpack(prgOf(0x02a7, viaMain()), { roms: r, tape: bootTape(0x02a7, viaMain(), loader(true)), keys: false });
+      expect(res.unpacked).toBe(true);
+      expect(res.saved!.entry).toBe(0x1000);
+    }
+  });
 
   it('leaves the pointers a tape LOAD leaves: the start in $c1, the end in $ae and in $ac', () => {
     // budget boot files (Mastertronic's, Codemasters') clear the memory from ($ac) up to $0800

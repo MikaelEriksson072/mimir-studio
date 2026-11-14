@@ -2,7 +2,7 @@
  * through (the interrupt entries, the jump table's indirect jumps); everything else is a JAM, and Sindri
  * traps the routines it knows (CHROUT, GETIN, clear screen, BASIC RUN, ...) before the CPU gets there.
  * initStandIn() sets up RAM and I/O as a C64 has them after it starts. */
-import type { C64, Roms } from './c64.ts';
+import { POWER_ON, type C64, type Roms } from './c64.ts';
 
 /** the RAM vectors $0314-$0333 as RESTOR sets them */
 export const KERNAL_VECTORS = [
@@ -46,10 +46,12 @@ export function standInRoms(): Roms {
   return { kernal, basic, chargen: new Uint8Array(0x1000), source: 'stand-ins (no ROM files)' };
 }
 
-/** RAM, colour RAM and I/O as the KERNAL and BASIC leave them after power-on, at the READY prompt. */
-export function initStandIn(m: C64): void {
+/** RAM, colour RAM and I/O as the KERNAL and BASIC leave them after power-on (with `power` in RAM), at the READY
+ *  prompt: the KERNAL clears $0002-$0101 and $0200-$03ff, BASIC's NEW $0800-$0802, the rest is as it was. */
+export function initStandIn(m: C64, power: Uint8Array = POWER_ON): void {
   const ram = m.ram;
-  ram.fill(0);
+  ram.set(power);
+  ram.fill(0, 0x0002, 0x0102); ram.fill(0, 0x0200, 0x0400); ram.fill(0, 0x0800, 0x0803);
   const w = (a: number, v: number) => { ram[a] = v & 0xff; ram[a + 1] = v >> 8; };
   m.ddr = 0x2f; m.port = 0x37; m.updateMap();
   ram[0] = 0x2f; ram[1] = 0x37;

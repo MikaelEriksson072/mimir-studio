@@ -217,11 +217,14 @@ const KNOWN: Known[] = [
   },
   {
     id: 'cyberload', name: 'Cyberload',
-    how: 'tape: a pulse on the FLAG line, then whether CIA1\'s timer A, one shot from about 500 cycles, has run out; the bytes in several stages, each loading the next with its own speed. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite … (TapeTool\'s bit reading is the same)',
+    how: 'tape: a pulse on the FLAG line, then whether CIA1\'s timer A, one shot from about 500 cycles, has run out, the top bit first, a pilot of $0f bytes before each sync byte; four stages, each loading the next: the loader in the tape header stores bytes with a bit after each, the code it leaves in the zero page reads the third stage (XOR keys), which reads blocks with an address of their own in an IRQ, and the fourth, in the game too, loads files by name. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite, Accolade, Microprose … (TapeTool\'s bit reading is the same)',
     signs: [
       { pat: pat('A9 10 2C 0D DC F0 FB AD 04 DC CD 04 DC F0 01 18 A9 19 8D 0E DC 08'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA1\'s timer A (one shot) has run out' },
       // its boot file, started through the IRQ vector at $029f, decrypts the loader in the tape header
       { pat: pat('A0 .. 59 50 03 99 50 03 88 D0 .. 49 .. 8D 0D DC'), role: 'tape', what: 'the boot: decrypts the loader in the tape header ($0350 on) and starts it' },
+      // the third and fourth stages read the tape in an IRQ on the FLAG line (Tusker's $f800 and $fd00)
+      { pat: pat('AD 0D DC 4A A9 11 8D 0E DC'), role: 'tape', what: 'reads a bit in its IRQ: whether CIA1\'s timer A (one shot) ran out before the pulse, then starts it again', weak: true },
+      { pat: pat('C9 0F D0 0E A9 18 8D .. .. A9 00 8D .. .. A9 01 85'), role: 'tape', what: 'finds the pilot byte $0f bit by bit, then goes on to whole bytes (it writes its own branches)' },
     ],
     text: 'CYBERLOAD',
   },

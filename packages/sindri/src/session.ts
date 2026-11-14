@@ -15,7 +15,7 @@
  * loaders' alike. With a tape, the datasette plays it from where the file ended: the program's own tape loader reads
  * it, and the KERNAL's LOAD from the tape reads on from there (a T64's files only LOAD reads). Then the newest layer is
  * the unpacked program. An intro that waits before anything was unpacked gets keys pressed (space and fire first). */
-import { BASIC, BOOT, C64, KERNAL, LOADED, ZP, type MachineState, type Roms } from './c64.ts';
+import { BASIC, BOOT, C64, KERNAL, LOADED, POWER_ON, ZP, type MachineState, type Roms } from './c64.ts';
 import { OP_IRQ, OP_NMI } from './cpu.ts';
 import { LEN } from './opcodes.ts';
 import { initStandIn, KERNAL_VECTORS, standInRoms } from './standin.ts';
@@ -273,7 +273,7 @@ const hex4 = (v: number) => '$' + v.toString(16).padStart(4, '0');
  * motor turned in the drive's start-up), and its drive would run through the C64's start-up, with the C64's reset
  * holding the serial lines low: the same disk could unpack differently in the first run and in later ones.
  */
-const bootCache = new Map<string, MachineState | null>();
+const bootCache = new Map<string, { state: MachineState; leftover: Uint8Array } | null>();
 const driveCache = new Map<string, DriveState>();
 const DRIVE_BOOT = 2_500_000;
 /** a C64 that does not get to the READY prompt in this many cycles does not start (20 s) */
@@ -285,6 +285,13 @@ const DRIVE_PATIENCE = 10_000_000;
 const LOADS = 256;
 /** a program waiting while the tape plays is loading, not settled, until the tape ends; then for this long (5 s) */
 const TAPE_END_PATIENCE = 5_000_000;
+/** a run stops at this many layers: programs have a few dozen (37 at most on 1 771 tapes, disks and one-file demos of
+ *  the archive), but a loader that starts itself over again and again makes two each time, and each layer costs more
+ *  than the one before (Ping Pong's, whose code the KERNAL's READY. wrote over on the screen: 35 000 in six minutes) */
+const MAX_LAYERS = 500;
+/** a program that stopped the tape with more on it is not settled for this long (5 s) after: a tape loader can pause
+ *  between its loads and the program (Cyberload fades the sound out for 2.5 s before it jumps into Tusker) */
+const TAPE_PAUSE_PATIENCE = 5_000_000;
 
 /** Unpack a PRG (load address first). */
 export function unpack(file: Uint8Array, options: UnpackOptions = {}): UnpackResult {
@@ -377,6 +384,8 @@ class Session {
   /** the file's name as LOAD left it below $a000 (with a disk), what was there before, and whether the program loaded
    *  a file by it */
   private loadName: { at: number; bytes: Uint8Array; before: Uint8Array; icount: number; used: boolean } | null = null;
+  /** the bytes the start-up left as the C64 powered them on (POWER_ON), not $00 (null: going on from a snapshot) */
+  private leftover: Uint8Array | null = null;
   /** the datasette, the tape's KERNAL files, the one the file came from, and where the tape stood at the start */
   private tape: Datasette | null = null;
   private tapeKernal: TapeFile[] = [];
@@ -384,6 +393,8 @@ class Session {
   private tapeStart = 0;
   /** since when the tape has been at its end with the motor on */
   private tapeEnded = 0;
+  /** when the motor was last seen running with tape left to play (0: not yet) */
+  private tapeRan = 0;
 
   constructor(file: Uint8Array, o: UnpackOptions) {
     if (file.length < 3) throw new Error('not a PRG: shorter than 3 bytes');
@@ -433,7 +444,8 @@ class Session {
     if (!bootCache.has(key)) bootCache.set(key, bootC64(roms));
     const booted = bootCache.get(key);
     if (!booted) { this.stop('not-started', 'the C64 did not get through boot'); return; }
-    m.restore(booted);
+    m.restore(booted.state);
+    this.leftover = booted.leftover;
     this.typeLine('LOAD');
     this.setPhase('load');
   }
@@ -483,7 +495,7 @@ class Session {
   private tapeBuffer(f: TapeFile | null): void {
     const m = this.m;
     if (!f) return;
-    for (let i = 0; i < 192; i++) { m.ram[0x033c + i] = f.header[i]; m.wid[0x033c + i] = LOADED; m.wtime[0x033c + i] = m.icount; }
+    for (let i = 0; i < 192; i++) { m.ram[0x033c + i] = f.header[i]; m.wid[0x033c + i] = LOADED; m.wtime[0x033c + i] = m.icount; m.firstTouch[0x033c + i] ||= m.icount; }
   }
 
   /** The KERNAL keeps the IRQ vector at $029f/$02a0 while it reads the tape (its own reading IRQ is in $0314 then).
@@ -563,6 +575,7 @@ class Session {
   private bootStandIn(): void {
     const m = this.m;
     initStandIn(m);
+    this.leftover = standInLeftover();
     // from a tape: its header in the tape buffer, and the IRQ vector as LOAD from the tape leaves it
     if (this.tapeFile) { this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
     const end = this.loadFile();
@@ -648,6 +661,7 @@ class Session {
         m.ram[a] = v;
         m.wid[a] = LOADED;
         m.wtime[a] = m.icount;
+        m.firstTouch[a] ||= m.icount;
       }
       if (a === 0xae) lo = v; else if (a === 0xaf) hi = v;
       lo = (lo + 1) & 0xff;
@@ -833,6 +847,7 @@ class Session {
 
   /** A new layer starts at `pc`. */
   private enter(pc: number, basic: boolean): void {
+    if (this.layers.length >= MAX_LAYERS) { this.stop('budget', `${MAX_LAYERS} layers: it keeps jumping into code it wrote (a loader starting itself over, say)`); return; }
     const m = this.m, cpu = m.cpu, parent = this.cur!;
     parent.activity = activity(m, this.eid, parent.id, parent.icount);
     this.keep(parent);
@@ -940,11 +955,11 @@ class Session {
     // the tape plays: the program is loading (leaders and gaps between files take seconds), until a while after its end
     const t = this.tape;
     if (t?.motor && t.t64 == null) {
-      if (!t.atEnd) { this.progressAt = now; this.tapeEnded = 0; } else {
+      if (!t.atEnd) { this.progressAt = now; this.tapeEnded = 0; this.tapeRan = now; } else {
         if (!this.tapeEnded) this.tapeEnded = now;
         if (now - this.tapeEnded < TAPE_END_PATIENCE) this.progressAt = now;
       }
-    }
+    } else if (t && !t.atEnd && this.tapeRan && now - this.tapeRan < TAPE_PAUSE_PATIENCE) this.progressAt = now;
     if (!this.holdUntil && now - this.progressAt >= this.settleCycles) this.settled();
   }
 
@@ -1459,15 +1474,47 @@ class Session {
       if (k < 2 || k >= prg.length || (a >= this.loadAt && a < this.loadAt + this.data.length)) continue;
       if (prg[k] === n.bytes[i] && this.m.wtime[a] <= n.icount) prg[k] = n.before[i];
     }
+    // the bytes the C64 left as it powered them on and nothing wrote before the program started (nor loaded while it
+    // ran) are no part of it: $00, as if the RAM had started out empty, not VICE's stripes of $00 and $ff
+    const left = this.leftover, touched = this.m.firstTouch;
+    if (left) for (let a = range.start; a <= range.end; a++) {
+      const t = touched[a], k = 2 + a - range.start;
+      if (!left[a] || prg[k] !== POWER_ON[a] || (t && (t < l.icount || l.loaded.some(r => a >= r.start && a <= r.end)))) continue;
+      prg[k] = 0;
+    }
     const basicStart = s.ram[0x2b] | (s.ram[0x2c] << 8);
     const entry = l.basic ? findSys(a => s.ram[a], basicStart) ?? basicStart : l.entry;
     return { layer: index, prg, start: range.start, end: range.end, entry, basic: l.basic, port: s.port, interrupts: !(s.p & 4) };
   }
 }
 
-/** Power a C64 on and run it to the READY prompt waiting for a key: its state then, or null when it does not get there. */
-function bootC64(roms: Roms): MachineState | null {
+/** Power a C64 on and run it to the READY prompt waiting for a key: its state then, and the bytes it left as they were
+ *  powered on (POWER_ON), or null when it does not get there. */
+function bootC64(roms: Roms): { state: MachineState; leftover: Uint8Array } | null {
+  // which bytes the start-up leaves as they were: those where it ends otherwise from RAM that was all $00 (the
+  // KERNAL's RAM test writes every byte from $0400 to $9fff and puts back what was there)
+  const state = startUp(roms, POWER_ON), zeros = state && startUp(roms, new Uint8Array(0x10000));
+  if (!state || !zeros) return null;
+  const leftover = new Uint8Array(0x10000);
+  for (let a = 0; a < 0x10000; a++) if (state.ram[a] !== zeros.ram[a]) leftover[a] = 1;
+  return { state, leftover };
+}
+
+let standIns: Uint8Array | null = null;
+/** the bytes the stand-ins' start-up leaves as they were powered on (as bootC64 finds them) */
+function standInLeftover(): Uint8Array {
+  if (standIns) return standIns;
+  const a = new C64(standInRoms()), b = new C64(standInRoms());
+  initStandIn(a); initStandIn(b, new Uint8Array(0x10000));
+  standIns = new Uint8Array(0x10000);
+  for (let i = 0; i < 0x10000; i++) if (a.ram[i] !== b.ram[i]) standIns[i] = 1;
+  return standIns;
+}
+
+/** Power a C64 on with this in its RAM and run it to the READY prompt: its state then, or null when it does not get there. */
+function startUp(roms: Roms, ram: Uint8Array): MachineState | null {
   const m = new C64(roms), cpu = m.cpu;
+  m.ram.set(ram);
   // power on: the port is all inputs (every ROM visible), SP = $fd after the reset sequence
   m.ddr = 0; m.port = 0; m.updateMap();
   cpu.s = 0xfd; cpu.p = 0x24;

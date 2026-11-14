@@ -1362,7 +1362,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Novaload, IRQ-versionen (Novagen) | avbrottet som läser bandet och väntar på synkbyten `$aa` (`cmp #$aa / beq / lda #$02 / bne / lda #$37 / sta … / lda #$7f / sta zp / lda $dc0d / pla / tay / pla / rti`) och lagringen med pip på SID:en och summa (`ldy zp / sta (zp),y / sta $d401 / clc / adc zp / sta zp / iny / sty zp / bne`). Elite, Encore, US Golds Americana, Epyx, System 3, MicroProse … (21 band; texten NOVALOAD i minnet) |
 | Freeload (Ocean) | bitläsningen i avbrottet: bit 1 i CIA1:s timer A:s höga byte (`lda $dc05 / ldy #$19 / sty $dc0e / eor #$02 / lsr / lsr / rol`, delad med US Golds laddare och räknas bara med det egna), och väntan på ledaren `$40` och synken `$5a` (`cmp #$40 / beq / cmp #$5a / beq`). Ocean, Imagine, Mastertronic, Domark, CRL, Gremlin (texten FREELOAD i minnet) |
 | US Golds bandladdare | Freeloads bitläsning med ledaren `$20` och synken `$ff` (`cmp #$20 / beq / cmp #$ff / beq`): 720, Masters of the Universe, Super Huey II, Turbo Out Run |
-| Cyberload | bitläsningen `lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e / php` (TapeTool har samma utan `php`, och med `pha` före), och bootfilens dekryptering av laddaren i bandhuvudet (`ldy #… / eor $0350,y / sta $0350,y / dey / bne / eor #… / sta $dc0d`). Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite (texten "CYBERLOAD NOW LOADING …" i skärmkoder i bootfilen) |
+| Cyberload | bitläsningen `lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e / php` (TapeTool har samma utan `php`, och med `pha` före), och bootfilens dekryptering av laddaren i bandhuvudet (`ldy #… / eor $0350,y / sta $0350,y / dey / bne / eor #… / sta $dc0d`). Tredje och fjärde steget läser bandet i ett avbrott: bitläsningen `lda $dc0d / lsr / lda #$11 / sta $dc0e` (svag) och sökandet efter ledarbyten `$0f` bit för bit innan det går över till hela byte genom att skriva om sina egna grenar (`cmp #$0f / bne / lda #$18 / sta … / lda #$00 / sta … / lda #$01 / sta zp`), så att Tuskers `$f800` och `$fd00` också heter Cyberload. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite, Accolade, MicroProse (texten "CYBERLOAD NOW LOADING …" i skärmkoder i bootfilen). Bandformaten i 13.5e |
 | Interceptor Micros laddare | bitläsningen `sty $d020 / eor #$02 / lsr / lsr / ror`, minst signifikanta biten först, väntan på ledaren `$a0` (`cmp #$a0 / bne / lda #$27 / sta $0119`), och bootkoden i bandhuvudet som läser laddaren med KERNAL:ns `$f84a` och dekrypterar den till stacksidan (`lda $00ff,y / eor …,y / sta $00ff,y / dey / bne`). Activision, Thalamus Hits, Electric Dreams, Domark (texten "(C) INTERCEPTOR MICROS 1987") |
 | Mastertronics bandladdare | bitläsningen `lda #$10 / bit $dc0d / beq / lda #$11 / sta $dd0e / lda $dd0d / lsr / bit $dc0d / rol` (CIA2:s timer A som one-shot från `$01b6`) och 9 bitar per byte (`ldx #$09 / jsr … / inc $d020 / dex / bne`). Mastertronic, M.A.D., Codemasters, Firebirds och Silverbirds budgetband, Durell (17 band) |
 | Firebirds bandladdare | avbrottet `lda $dc0d / pha / and #$01 / ora zp / sta zp / pla / clc / and #$10 / beq / lda #$19 / sta $dd0e / lda $dd0d / lsr / rol` (FLAG-linjen, sedan CIA2:s timer A) och väntan på en ledarbyte och dess komplement (`cmp zp / beq / eor #$ff / cmp zp / bne`, svag). Firebird, Silverbird. Den piper inte (ingen SID-skrivning), så den kallas inte Bleepload |
@@ -3174,15 +3174,51 @@ utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
   byten först, slutet ett förbi), datan och en XOR-kontrollsumma. Formaten lärdes ur Sindris körningar av banden:
   byten laddaren lagrade medan motorn gick, hittade i bandets bitar (8.11c). Utan namn heter en Freeload-fil
   `file_<start>`. Kontrollsumman skiljer filerna från data som råkar ha ledaren och synken.
+- **Cyberload** (System 3, Thalamus, Activision, Accolade, Electronic Arts, MicroProse, Gremlin, Virgin …): en puls
+  längre än CIA1:s timer A (one-shot, oftast cirka 500 cykler) är en 1, högsta biten först, och varje synkbyte har en
+  ledare av `$0f`-byte före sig (minst fyra här). Laddaren laddar i fyra steg efter KERNAL-bootfilen, var och ett i ett
+  eget format; de lärdes ur Tuskers och The Last Ninjas steg, körda i Sindri med bandet, och det de läser stämmer byte
+  för byte med det Cyberloads egen kod lagrade i körningen.
+  - *Första steget* (som laddaren i bandhuvudet läser när den dekrypterat sig): synken `$f0`, sedan en byte att lägga
+    till adressen den lagrar på (den börjar på `$ffd5`, så den första går till nollsidan) och byte, var och en följd av
+    en bit: 1 lagra och fortsätt, 0 lagra inte (den blir kvar på stacken) och en bit till, 1 en ny byte att lägga till,
+    0 slut. Det lägger andra stegets kod i nollsidan och sin egen igen i bandbufferten, med bandhuvudets första 21 byte
+    som de var (det är så det känns igen, och var `$033c` ligger), och dess RTS tar de två sista byten den lämnade på
+    stacken: in i nollsidan (`$0002`). Filen är dess byte från den första den lagrar till den sista, med det bootfilen
+    lämnade emellan (IRQ-vektorn `$0314/$0315` som KERNAL:ns LOAD lade tillbaka från `$029f/$02a0`).
+  - *Andra steget* (koden i nollsidan): synken `$f0`, adress och längd XOR en nyckel, byten XOR en annan, ingen
+    kontrollsumma; längden ska ta sträckan till dess slut. Koden dekrypterar sig själv med byten vid `$0314`, så
+    nycklarna läses genom att köra den på Sindris 6510 tills den anropar bytläsaren i bandbufferten (`ldx #0 / jsr … /
+    eor #k1 / sta $02,x / inx / cpx #4 / bcc / jsr … / eor #k2`): `$ae`/`$d2` på de flesta band, `$9c`/`$7a` på
+    Firebirds (HERO, Ubik's Musik), andra på The Last Ninja.
+  - *Tredje steget* (i ett avbrott på FLAG-linjen): block med synken `$cc` och ett huvud på 8 byte: adressen, antal
+    byte (0: 256), en byte som gör XOR av huvudet och datan 0, flaggor (bit 7: laddaren anropar adressen i huvudets två
+    sista byte efter blocket), en byte, den adressen; sedan datan. Block som fortsätter där det förra slutade blir en
+    fil (`file_<start>`), som slutar med ett block med bit 7 (anteckningen säger vart laddaren hoppar) eller där
+    adressen inte fortsätter. Ett block vars summa inte stämmer tas bara där det fortsätter filen, med ett fel.
+  - *Fjärde steget*, Cyberloads LOAD med namn (också i spelets minne, för dess nivåer): en synkbyte som spelet väljer
+    (`$aa` på de flesta, `$55` på Myth; inte de andra stegens `$cc` och `$f0`), ett huvud med 16 byte namn,
+    laddadress och längd, på de senare banden (Tuskers) ett ord vars 1,5 gånger är timern datan läses med, och XOR av
+    huvudet; en byte till på de senare; sedan datan 256 byte i taget, var och en följd av XOR av allt sedan huvudet.
+    Vilket huvud det är visar sig på att blocken stämmer. Namnet ska vara tecken man kan skriva, med mellanslag eller
+    nollor efter (`D`, `0B`, `0:MINI-PUTT`, Accolades `TITLE.GRA`): data av en och samma byte om och om igen har XOR 0
+    vad den än är, och togs annars för huvuden.
 - **Okänd turbodata.** Det som återstår mellan KERNAL-blocken och pauserna med två pulslängder (en 1 som är 1,3–3 gånger
   så lång som en 0) och som inte är en ledare (fyra bytevärden som utgör 90 %) listas som turbodata som inget format här
-  läser, med sina två pulslängder. Den läses av Sindri (13.5f).
+  läser, med sina två pulslängder. Den läses av Sindri (13.5f). En sträcka med för få pulser av den andra längden för
+  att den ska synas (ett block av nästan bara 0-bitar, som Cyberloads block av en tom del av en bild, när bandet står
+  still mellan blocken) läses med längderna från sträckan före, när nio av tio av dess pulser har dem.
 
 Explorer listar filerna i bandordning med var de börjar (m:ss), namnet (`+header` när bandbufferten har kod), typen
 (KERNAL-filer `PRG`/`BASIC`/`SEQ`) eller formatet, och ett klick öppnar en fil som ett nytt projekt, **+** lägger till
 den. En KERNAL-fil vars huvud har kod öppnas med huvudet som en andra fil, `<namn>-header.prg` vid `$033c-$03fb`
 (bandbufferten): där ligger bandladdarens kod, som ska återassembleras med datan. Huvudfilen körs inte av Sindri (den
-är inget program). SEQ-filer, slutmarkören och filer utan känd laddadress (en TinyHeader-fil vars bootladdare inte kunde
+är inget program). **Unpack** av bootfilen ersätter både den och huvudfilen med det uppackade programmet: de är en
+KERNAL-fil i två, och Sindri körde dem tillsammans. Annars skulle huvudfilen ligga kvar under programmet där det täcker
+bandbufferten (Tuskers första steg, `$029f-$07e7`, och spelet, `$0200-$fd94`), den senare filen vinna de byten, och det
+uppackade programmet inte gå att bygga byte för byte (Build & Run: *Build failed verification*); med två filer satte
+Unpack inte heller någon programstart. Var de enda två filerna i projektet blir det uppackade ett projekt för sig, med
+starten och `$01` från Sindri. SEQ-filer, slutmarkören och filer utan känd laddadress (en TinyHeader-fil vars bootladdare inte kunde
 läsas) listas men öppnas inte. Under listan står hur många TapeTool-filer och sträckor med okänd turbodata bandet har.
 
 **Tape-fliken** (bottenpanelen, bara med ett band i datasetten) visar allt på bandet i bandordning: tid, offset i
@@ -3195,9 +3231,17 @@ Mätt på användarens arkiv (921 band i C64Tapes-org, kommersiella spel): 45 s 
 KERNAL-filer varav en med läsfel (Froggy: ett skadat datablock), 46 Turbo Tape-filer, 723 Freeload-filer och 613 från
 US Golds laddare (på 132 band, 126 av dem utan något kvar som inte läses) och ingen falsk TapeTool-fil; 639 band har
 turbodata från en laddare som inte är känd här (765 före Freeload och US Gold), 47 har ingen KERNAL-fil (andra sidor).
-I *Preservers/Tap* (1 009 band): 793 Freeload-filer och 996 US Gold-filer på 156 band. `test/tap.test.ts` läser det
+I *Preservers/Tap* (1 009 band): 793 Freeload-filer och 996 US Gold-filer på 156 band. Cyberload (2026-11-14): i
+C64Tapes-org 487 filer på 41 band (30 första och andra steg, 90 filer av tredje stegets block, 337 av det fjärde),
+ingen med fel; sträckorna med okänd turbodata gick från 11 921 till 7 294 och 37 band har inget kvar (Tusker: bootfilen
+och 20 filer, de fyra stegen och nivåerna D–P). I Preservers 1 493 filer på 90 band (tre med block vars summa inte
+stämmer, med rena pulser: skadade band), 11 890 sträckor till 9 488. Inga filer i andra format försvann; sträckor av
+nästan bara 0-bitar gav 6 nya US Gold-filer. Kvar på Creatures, Hawkeye och Snare är Thalamus egen nivåladdare (anropad
+vid `$01a0`), inte Cyberload. `test/tap.test.ts` läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
-relokeringen, TapeTool och Turbo Tape, och fixturen `fixtures/tap/mimir-demo.tap`.
+relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
+kod för andra steget), och fixturerna `fixtures/tap/mimir-demo.tap` och `fixtures/tap/cyberload-demo.tap` (de fyra
+stegen, rasterdemot fjärde stegets fil `DEMO`).
 
 ### 13.5f Datasetten i Sindri och i VICE
 
@@ -3213,8 +3257,27 @@ vars underflöde redan väntar), före BASIC hinner använda vektorer som filen 
 KERNAL:n gör när den startar motorn, annars slår KERNAL:ns IRQ på motorn så fort PLAY är nedtryckt. Pekarna som en LOAD
 från bandet lämnar sätts också: starten i `$c1/$c2`, slutet i `$ae/$af` och `$ac/$ad` (Mastertronics och Codemasters
 bootfiler rensar minnet från (`$ac`) upp till `$0800`, och stannade direkt utan dem). Ett program som
-väntar medan bandet spelar laddar, inte vilar; efter bandets slut väntar Sindri 5 s till. Tiden räcker till resten av
-bandet och 30 s till. Lagerrapporten säger var bandet stod och hur långt det spelade (`Tape: datasette: …`), och
+väntar medan bandet spelar laddar, inte vilar; efter bandets slut väntar Sindri 5 s till. Ett program som stängt av
+motorn med mer kvar på bandet vilar inte heller förrän 5 s efter: Cyberload tonar ut ljudet i 2,5 s mellan laddningen och
+Tusker, och Sindri sparade laddaren vid `$fd03` (som läser delarna från bandet igen) i stället för spelet vid `$6440`.
+Tiden räcker till resten av bandet och 30 s till. Sindris RAM slås på som VICE:s (x64sc 3.10, `POWER_ON`): fyra byte
+`$00` och fyra `$ff` från `$0002`, inverterat var annan 16 KB, som startrutinen lämnar utom `$0002-$0101` och
+`$0200-$03ff`. Cyberloads andra steg jämför RAM:et under KERNAL:n vid `$f37a-$f478` med sig självt och raderar nollsidan,
+sig självt med, när det är en och samma byte överallt; med RAM som började som bara `$00` kom Tusker inte längre än
+laddarens första steg. Där inget skrev före lagrets start (eller laddade under det) har det sparade programmet `$00`,
+inte ränderna, som förut. En körning stannar vid 500 lager (`budget`): program har några dussin, men en laddare som
+startar om sig själv gång på gång gör två lager varje gång, vart och ett långsammare än det förra (Ping Pong, vars kod
+READY. skrev över på skärmen: Sindris LOAD från bandet skriver inte KERNAL:ns meddelanden, så READY. hamnar på rad 8 och
+inte rad 14 som i VICE).
+
+Mätt mot Sindri före ändringarna (november 2026) på 1 771 filer ur arkivet: de 161 enfilsdemona i Onefile-top200 är
+oförändrade; av 350 demodiskar ur Year-top20 är 307 oförändrade, 42 har samma omfång med andra byte (räknade ur RAM som
+inget skrev, nu som i VICE) och en (Memento Mori, Spindle-sida 3 ensam) stannar i en JAM vid `$0300` som VICE; av 1 260
+band är 1 087 oförändrade, 75 kommer till ett senare lager (bland dem Cyberloads spel, som stannade i laddarens första
+steg: Tusker, 3D Pool, Antiriad, Back to the Future II, Bad Dudes, Arkanoid II), 5 packas upp som inte gjorde det
+(Germany 1985, Hercules, Chase H.Q. sida B med flera), 73 har samma omfång med andra byte, 13 ett annat omfång eller
+start, 2 sparar ett tidigare lager (Apollo 18: spelets start `$0900`, inte rutinen vid `$759d` som det anropar) och 2
+(Ping Pong) stannar vid 500 lager med laddaren sparad, som förut. Lagerrapporten säger var bandet stod och hur långt det spelade (`Tape: datasette: …`), och
 läsningar från bandet räknas som laddning när ett lager sparar det det laddade. Den sparade porten är programmets: bit 4,
 som PLAY håller låg, räknas inte. Mätt på bootfilerna från de 98 första sidorna bland de första 100 banden i arkivet: 93 spelar bandet i mer än 5 s
 (80 innan pekarna sattes; de 13 är budgetband som Mastertronics, Codemasters och Zeppelins, som nu läser 18–416 s),

@@ -111,8 +111,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     tool's command file and command line that write the disk again, and *Save files…* saves every file as it is on the
     disk and unpacked, with the command file; `mimir disks <folder>` counts the disks each loader's reader takes;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
-    Gold's loader and Martin Piper's TapeTool (the TinyHeader file its boot loader reads, files in checksum blocks in
-    any order, RLE packed blocks) are
+    Gold's loader, Cyberload (all four stages: the loader's own two, the third's blocks with an address of their own and
+    the files the fourth loads by name, the game's levels too) and Martin Piper's TapeTool (the TinyHeader file its boot
+    loader reads, files in checksum blocks in any order, RLE packed blocks) are
     listed in the Explorer with where each starts, and a tape boot file opens with its header, where its loader's code
     is (the tape buffer at `$033c`). The *Tape* tab lists everything on the tape, turbo data of a loader not known here
     too; a TapeTool tape gets the TapeTool command lines that write it again (byte for byte for TapeTool's own example

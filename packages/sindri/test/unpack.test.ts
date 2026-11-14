@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { FILE_ARG, FILE_RAN, FILE_READ, FILE_WRITTEN, unpack, type UnpackResult } from '../src/index.ts';
+import { FILE_ARG, FILE_RAN, FILE_READ, FILE_WRITTEN, POWER_ON, unpack, type UnpackResult } from '../src/index.ts';
 import { findRoms } from '../src/node.ts';
 import { asm, basic, byteLines, SYS_LINE } from './asm.ts';
 import { coded, noise, pack, PROGRAM } from './packers.ts';
@@ -170,10 +170,96 @@ ${byteLines(part2)}
 `).prg, irq: first.labels.irq };
 }
 
+describe('the RAM as the C64 powers on', () => {
+  it('is VICE\'s: four bytes of $00 and four of $ff from $0002, inverted in every other 16 KB', () => {
+    // as x64sc 3.10 had it at Tusker's second stage (its random bit flips aside)
+    const at = (a: number) => [...POWER_ON.subarray(a, a + 8)];
+    expect(at(0x0000)).toEqual([0, 0, 0xff, 0xff, 0xff, 0xff, 0, 0]);
+    expect(at(0x8000)).toEqual([0, 0, 0xff, 0xff, 0xff, 0xff, 0, 0]);
+    expect(at(0x4000)).toEqual([0xff, 0xff, 0, 0, 0, 0, 0xff, 0xff]);
+    expect(at(0xf370)).toEqual([0xff, 0xff, 0, 0, 0, 0, 0xff, 0xff]);
+  });
+});
+
+describe('a run that never settles into a program', () => {
+  it('stops at 500 layers when the program keeps jumping into code it just wrote', () => {
+    // two routines, at $c000 and $c100, each copying the other into place from the PRG and jumping there (as Ping
+    // Pong's loader starts itself over): each jump is into code the running layer wrote, a new layer every time
+    const p = asm(`${SYS_LINE}
+       ldx #13
+cp:    lda ra,x
+       sta $c000,x
+       dex
+       bpl cp
+       jmp $c000
+ra:    .byte $a2,13,$bd,<rb,>rb,$9d,$00,$c1,$ca,$10,$f7,$4c,$00,$c1
+rb:    .byte $a2,13,$bd,<ra,>ra,$9d,$00,$c0,$ca,$10,$f7,$4c,$00,$c0
+`);
+    const r = unpack(p.prg, { roms: null });
+    expect(r.stop.reason).toBe('budget');
+    expect(r.stop.detail).toMatch(/^500 layers: it keeps jumping into code it wrote/);
+    expect(r.layers.length).toBe(500);
+  });
+});
+
 for (const mode of roms ? ['stand-ins', 'ROMs'] as const : ['stand-ins'] as const) {
   const go = (prg: Uint8Array) => unpack(prg, { roms: mode === 'ROMs' ? roms : null });
 
   describe(`unpacking with the ${mode}`, () => {
+    it('starts with the RAM as VICE powers it on, not one byte all over: a loader that looks goes on (Cyberload, Tusker)', () => {
+      // Cyberload's second stage compares the RAM under the KERNAL with itself and wipes itself when it is all one byte
+      const p = asm(`${SYS_LINE}
+       sei
+       lda #$34
+       sta $01
+       ldy #$ff
+       lda $f379,y
+chk:   cmp $f379,y
+       bne ok
+       dey
+       bne chk
+       lda #$37
+       sta $01
+hang:  jmp hang
+ok:    lda #$37
+       sta $01
+       ldx #5
+cp:    lda prog,x
+       sta $1000,x
+       dex
+       bpl cp
+       jmp $1000
+prog:  .byte $ee,$20,$d0,$4c,$00,$10
+`);
+      const r = go(p.prg);
+      expect(r.unpacked).toBe(true);
+      expect(r.saved!.entry).toBe(0x1000);
+    });
+
+    it('saves $00 where nothing wrote, not the stripes the RAM powered on with, and keeps what was written', () => {
+      // the code at $1000 and 129 bytes of $ff at $1080 are one program; $1006-$107f between them were never written
+      const p = asm(`${SYS_LINE}
+       ldx #5
+cp:    lda prog,x
+       sta $1000,x
+       dex
+       bpl cp
+       lda #$ff
+       ldx #$80
+fill:  sta $1080,x
+       dex
+       bpl fill
+       jmp $1000
+prog:  .byte $ee,$20,$d0,$4c,$00,$10
+`);
+      const r = go(p.prg), s = r.saved!;
+      expect([s.start, s.end, s.entry]).toEqual([0x1000, 0x1100, 0x1000]);
+      expect([...s.prg.subarray(2, 8)]).toEqual([0xee, 0x20, 0xd0, 0x4c, 0x00, 0x10]);
+      expect(s.prg.subarray(8, 2 + 0x80).every(b => b === 0)).toBe(true);
+      // ($ff written where the RAM powered on with $ff too is the program's)
+      expect(s.prg.subarray(2 + 0x80).every(b => b === 0xff)).toBe(true);
+    });
+
     it('follows a decruncher that runs at $0100 to the program', () => {
       const r = go(pack(PROGRAM).prg);
       expectProgram(r);

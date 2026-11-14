@@ -4,7 +4,7 @@
  * falling edge to the next: version 0 a byte per pulse in units of 8 cycles (0: a pause longer than that), version 1
  * the same with 0 followed by the exact cycles in 3 bytes, version 2 (the C16's) half waves, two to a pulse.
  *
- * Files are read in three formats:
+ * Files are read in these formats:
  * - the KERNAL's own (CBM): a leader of short pulses, then each byte as a long and a medium pulse and 9 bit pairs (8 bits
  *   from the lowest, then odd parity; short + medium is a 0, medium + short a 1), a block ending with long + short. A file
  *   is a header block of 192 bytes (type, start, end, the name, and the rest of the tape buffer at $033c, where many tape
@@ -17,9 +17,13 @@
  *   written with checksum blocks is a block per page, in any order, and files can be interleaved;
  * - Turbo Tape 64 (and the Action Replay 7.2's "Turbo Tape 250"): a 0 and a 1 around 263 cycles apart, the top bit
  *   first, a leader of $02 and the sync bytes $09 … $01; a header (1, start, end, a byte, the name) and a data block (0,
- *   the bytes, an XOR checksum).
+ *   the bytes, an XOR checksum);
+ * - Freeload (Ocean's) and US Gold's loader: a pilot byte, a sync byte, [a name,] start, end, the data and their XOR;
+ * - Cyberload (System 3's, Thalamus', Activision's, Accolade's …): a pilot of $0f before every sync byte, the loader's
+ *   four stages each in a format of its own (cyberFirst, cyberSecond, cyberBlocks, cyberNamedFiles).
  * Anything else that holds data is the turbo data of a loader not known here: the boot program's loader reads it, so
  * Sindri does, running the boot program with the tape in its datasette (13.5f). */
+import { Cpu, type Bus } from '@mimir/sindri';
 import { petsciiName } from './d64';
 import { isT64, readT64, type T64Entry, type T64Info } from './t64';
 
@@ -82,7 +86,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
 }
 
 /** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 't64';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'cyberload' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -399,6 +403,15 @@ function twoLengths(c: Uint32Array, from: number, to: number): { short: number; 
   return { short: Math.min(x, y), long: Math.max(x, y) };
 }
 
+/** The two lengths of the stretch before, for a stretch with too few pulses of a second length for twoLengths (a block
+ *  of mostly 0 bits, as Cyberload's blocks of an empty part of a picture): when nine in ten of its pulses are of them. */
+function sameLengths(c: Uint32Array, from: number, to: number, prev: { short: number; long: number } | null): { short: number; long: number } | null {
+  if (!prev) return null;
+  let near = 0;
+  for (let i = from; i < to; i++) if (Math.abs(c[i] - prev.short) <= prev.short * 0.2 || Math.abs(c[i] - prev.long) <= prev.long * 0.2) near++;
+  return near >= (to - from) * 0.9 ? prev : null;
+}
+
 /** The bits of a stretch, a 1 for a pulse longer than `threshold`. */
 function bitsOf(c: Uint32Array, r: Region, threshold: number): Uint8Array {
   const out = new Uint8Array(r.to - r.from);
@@ -688,6 +701,262 @@ function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
   return out;
 }
 
+/* ---- Cyberload ---- */
+
+/* Cyberload (System 3, Thalamus, Hewson, Activision …) loads in stages after the KERNAL boot file, each with a pulse
+ * longer than CIA1's timer A (one shot, about 500 cycles on most tapes) a 1, the top bit first, and a pilot of $0f
+ * bytes before every sync byte. Its first two stages load the loader itself; the third reads blocks with an address
+ * of their own, the fourth (in the game's memory too, for its levels) is a LOAD by name. Learned from the code of
+ * Tusker's and The Last Ninja's stages as Sindri ran them with the tape. */
+
+/** pilot bytes a Cyberload sync needs before it (its own tapes have 6 to 8) */
+const CYBER_LEAD = 4;
+
+/** where the first sync byte `sync` after a Cyberload pilot is in `bits` from bit `from` on (the bit after it), or -1 */
+function cyberSync(bits: Uint8Array, from: number, sync: number): number {
+  let reg = 0;
+  for (let k = from; k < bits.length; k++) {
+    reg = ((reg << 1) | bits[k]) & 0xff;
+    if (reg === sync && cyberPilot(bits, k - 7) >= 0) return k + 1;
+  }
+  return -1;
+}
+
+/**
+ * Cyberload's first stage, which the boot file's loader in the tape header reads (after it decrypts itself): the pilot,
+ * $f0, then a byte to add to where it stores (it starts at $ffd5, so the first goes to the zero page) and bytes, each
+ * followed by a bit: 1 store it and go on, 0 do not (the loader leaves it on the stack) and a second bit, 1 another
+ * byte to add, 0 the end. It stores the second stage's code in the zero page and its own again in the tape buffer, the
+ * tape header's first 21 bytes as they were (that is how it is known), and returns through the bytes it left on the
+ * stack into the zero page. The file is its bytes from the first stored to the last, those between as the boot file
+ * left them (0 where it has none); the second stage's two XOR keys are read from its code.
+ */
+function cyberFirst(p: TapPulses, bits: Uint8Array, r: Region, boot: TapeFile | undefined): { file: TapeFile; keys: [number, number] | null; end: number } | null {
+  const head = boot?.header;
+  if (!head) return null;
+  let at = cyberSync(bits, 0, 0xf0);
+  if (at < 0) return null;
+  const syncAt = cyberPilot(bits, at - 8);
+  const bit = () => (at < bits.length ? bits[at++] : -1);
+  const byte = () => { const v = msbByte(bits, at); at += 8; return v; };
+  const segs: { off: number; bytes: number[] }[] = [], left: number[] = [];
+  let seg = { off: byte(), bytes: [] as number[] };
+  for (let n = 0; n < 0x10000; n++) {
+    const v = byte(), b = bit();
+    if (v < 0 || b < 0) return null;
+    if (b) { seg.bytes.push(v); continue; }
+    left.push(v);
+    segs.push(seg);
+    const more = bit();
+    if (more < 0) return null;
+    if (!more) break;
+    seg = { off: byte(), bytes: [] };
+  }
+  // where each segment goes: the one that holds the tape header's start is at $033c
+  let rel = 0;
+  const offs = segs.map(s => { rel += s.off; const o = rel; rel += s.bytes.length; return o; });
+  const hs = segs.findIndex(s => s.bytes.length >= 21 && s.bytes.slice(0, 21).every((v, i) => v === head[i]));
+  if (hs < 0) return null;
+  const base = (0x033c - offs[hs]) & 0xffff;
+  const placed = segs.map((s, i) => ({ load: (base + offs[i]) & 0xffff, bytes: s.bytes })).filter(s => s.bytes.length);
+  const load = Math.min(...placed.map(s => s.load)), end = Math.max(...placed.map(s => s.load + s.bytes.length));
+  if (end > 0x10000 || end - load > 0x1000) return null;
+  // memory as the first stage leaves it: the boot file, its header in the tape buffer, the IRQ vector the KERNAL's
+  // LOAD put back from $029f/$02a0 (the boot file's bytes there), what it stored
+  const mem = new Uint8Array(0x10000);
+  if (boot.load != null) mem.set(boot.data.subarray(0, 0x10000 - boot.load), boot.load);
+  mem.set(head, 0x033c);
+  mem[0x0314] = mem[0x029f]; mem[0x0315] = mem[0x02a0];
+  for (const s of placed) mem.set(s.bytes, s.load);
+  const data = mem.slice(load, end);
+  const span = (s: { load: number; bytes: number[] }) => s.bytes.length === 1 ? `$${hex4(s.load)}` : `$${hex4(s.load)}-$${hex4(s.load + s.bytes.length - 1)}`;
+  // the RTS that ends it takes the last two it left on the stack
+  const entry = left.length >= 2 ? (((left[left.length - 2] << 8) | left[left.length - 1]) + 1) & 0xffff : null;
+  const ret = entry != null ? `; its RTS takes the last two bytes it left on the stack: $${hex4(entry)}` : '';
+  const keys = entry != null ? cyberKeys(mem, entry) : null;
+  return {
+    keys, end: at,
+    file: {
+      format: 'cyberload', name: `file_${hex4(load)}`, type: 'PRG', load, end, data,
+      at: r.from + syncAt, offset: p.offsets[r.from + syncAt] ?? 0, seconds: (p.times[r.from + syncAt] ?? 0) / TAPE_CLOCK, to: r.from + Math.min(at, bits.length),
+      errors: [], note: `first stage: stores ${placed.map(span).join(', ')} (the bytes between as the boot file left them)${ret}`,
+    },
+  };
+}
+
+/**
+ * The second stage's two XOR keys: its code in the zero page decrypts itself (with the bytes the boot file left at
+ * $0314), so it runs here on Sindri's 6510, from where the first stage returns into it until it calls the byte reader
+ * in the tape buffer, and the keys are read from it then (ldx #0, jsr byte, eor #k1, sta $02,x, inx, cpx #4, bcc,
+ * jsr byte, eor #k2). The ROMs it may read stand in as bytes that differ (it checks the RAM under the KERNAL is not
+ * one byte all over, as a freezer's would be); I/O reads 0.
+ */
+function cyberKeys(mem: Uint8Array, entry: number): [number, number] | null {
+  for (let a = 0xa000; a < 0x10000; a++) mem[a] = (a * 7) & 0xff;
+  mem[1] = 0x37;
+  const io = (a: number) => a >= 0xd000 && a < 0xe000;
+  const bus: Bus = { read: a => (io(a) ? 0 : mem[a]), write: (a, v) => { if (!io(a)) mem[a] = v; }, fetch: a => mem[a] };
+  const cpu = new Cpu(bus);
+  cpu.pc = entry; cpu.s = 0xf0;
+  for (let n = 0; n < 200000 && !cpu.jammed; n++) {
+    if (cpu.pc >= 0x033c && cpu.pc < 0x0400) {
+      for (let i = 2; i + 16 < 0x100; i++) {
+        const b = (k: number) => mem[i + k];
+        if (b(0) === 0x20 && b(3) === 0x49 && b(5) === 0x95 && b(7) === 0xe8 && b(8) === 0xe0 && b(9) === 0x04 && b(10) === 0x90 && b(12) === 0x20 && b(15) === 0x49) return [b(4), b(16)];
+      }
+      return null;
+    }
+    cpu.step();
+  }
+  return null;
+}
+
+/** Cyberload's second stage, which the first stage's code in the zero page reads: the pilot, $f0, where it goes and
+ *  how many bytes (each XOR the first key), the bytes (XOR the second), up to where the stretch ends. */
+function cyberSecond(p: TapPulses, bits: Uint8Array, r: Region, from: number, keys: [number, number]): TapeFile | null {
+  let at = cyberSync(bits, from, 0xf0);
+  if (at < 0) return null;
+  const syncAt = cyberPilot(bits, at - 8);
+  const head = Array.from({ length: 4 }, (_, i) => msbByte(bits, at + 8 * i) ^ keys[0]);
+  at += 32;
+  const load = head[0] | (head[1] << 8), len = head[2] | (head[3] << 8);
+  // no checksum: the length has to take the stretch to its end (a byte or two of lead-out after it)
+  const left = (bits.length - at) / 8 - len;
+  if (!len || load + len > 0x10000 || left < 0 || left > 4) return null;
+  const data = Uint8Array.from({ length: len }, (_, i) => msbByte(bits, at + 8 * i) ^ keys[1]);
+  at += 8 * len;
+  return {
+    format: 'cyberload', name: `file_${hex4(load)}`, type: 'PRG', load, end: load + len, data,
+    at: r.from + syncAt, offset: p.offsets[r.from + syncAt] ?? 0, seconds: (p.times[r.from + syncAt] ?? 0) / TAPE_CLOCK, to: r.from + at,
+    errors: [], note: `second stage: its address and length XOR $${keys[0].toString(16).padStart(2, '0')}, its bytes XOR $${keys[1].toString(16).padStart(2, '0')} (the keys in the first stage's code)`,
+  };
+}
+
+/** A block of Cyberload's third stage: the pilot, $cc, eight header bytes (where it goes, how many bytes (0: 256), a
+ *  byte that makes the XOR of the header and the data 0, flags (bit 7: the loader calls the address in the last two
+ *  header bytes after the block), a byte, that address), the bytes. */
+interface CyberBlock { at: number; to: number; load: number; bytes: Uint8Array; flags: number; call: number; ok: boolean }
+
+/** where the pilot of $0f bytes before the sync byte at bit `at` starts, or -1 when it is shorter than CYBER_LEAD */
+function cyberPilot(bits: Uint8Array, at: number): number {
+  let n = 0;
+  while (msbByte(bits, at - 8 * (n + 1)) === 0x0f) n++;
+  return n >= CYBER_LEAD ? at - 8 * n : -1;
+}
+
+/** the third stage's blocks in a stretch (bits from pulse `base` on) */
+function cyberBlocks(bits: Uint8Array, base: number): CyberBlock[] {
+  const out: CyberBlock[] = [];
+  let reg = 0;
+  for (let k = 0; k < bits.length; k++) {
+    reg = ((reg << 1) | bits[k]) & 0xff;
+    if (reg !== 0xcc || cyberPilot(bits, k - 7) < 0) continue;
+    let at = k + 1;
+    const head = Array.from({ length: 8 }, (_, i) => msbByte(bits, at + 8 * i));
+    at += 64;
+    const n = head[2] || 256;
+    if (head.includes(-1) || at + 8 * n > bits.length) continue;
+    const bytes = new Uint8Array(n);
+    let x = head.reduce((a, v) => a ^ v, 0);
+    for (let i = 0; i < n; i++, at += 8) { bytes[i] = msbByte(bits, at); x ^= bytes[i]; }
+    out.push({ at: base + cyberPilot(bits, k - 7), to: base + at, load: head[0] | (head[1] << 8), bytes, flags: head[4], call: head[6] | (head[7] << 8), ok: x === 0 });
+    k = at - 1; reg = 0;
+  }
+  return out;
+}
+
+/** The third stage's files: blocks that follow on from each other in memory, up to one after which the loader calls
+ *  code. A block that does not check is taken (with an error) only where it goes on from the one before. */
+function cyberBlockFiles(p: TapPulses, blocks: CyberBlock[]): TapeFile[] {
+  const groups: CyberBlock[][] = [];
+  for (const b of blocks.sort((x, y) => x.at - y.at)) {
+    const g = groups[groups.length - 1], last = g?.[g.length - 1];
+    const follows = !!last && !(last.flags & 0x80) && ((last.load + last.bytes.length) & 0xffff) === b.load;
+    if (follows) g.push(b);
+    else if (b.ok && b.load + b.bytes.length <= 0x10000) groups.push([b]);
+  }
+  return groups.filter(g => g.some(b => b.ok)).map(g => {
+    const load = g[0].load, data = new Uint8Array(g.reduce((a, b) => a + b.bytes.length, 0));
+    let o = 0;
+    for (const b of g) { data.set(b.bytes.subarray(0, Math.max(0, Math.min(b.bytes.length, 0x10000 - load - o))), o); o += b.bytes.length; }
+    const last = g[g.length - 1];
+    const call = last.flags & 0x80 ? `; the loader calls $${hex4(last.call)} after it` : '';
+    return {
+      format: 'cyberload' as const, name: `file_${hex4(load)}`, type: 'PRG' as const, load, end: Math.min(0x10000, load + data.length), data: data.subarray(0, Math.min(data.length, 0x10000 - load)),
+      at: g[0].at, offset: p.offsets[g[0].at] ?? 0, seconds: (p.times[g[0].at] ?? 0) / TAPE_CLOCK, to: last.to,
+      errors: g.filter(b => !b.ok).map(b => `checksum: the block at $${hex4(b.load)} could not be read cleanly`),
+      note: `third stage, ${g.length} block${g.length === 1 ? '' : 's'}${call}`,
+    };
+  });
+}
+
+/**
+ * The fourth stage's files, Cyberload's LOAD by name: the pilot, a sync byte of the game's own ($aa on most tapes,
+ * $55 on Myth's; not the other stages' $cc and $f0), a header (16 name bytes, the load address, the length; on later
+ * tapes, as Tusker's, a word whose 1.5 times is the timer the data is read with), the XOR of the header; a byte on the
+ * later ones; then the data, 256 bytes at a time, each followed by the XOR of all bytes since the header's. Which
+ * header it is shows where the blocks check.
+ */
+function cyberNamedFiles(p: TapPulses, bits: Uint8Array, r: Region, threshold: number): TapeFile[] {
+  const out: TapeFile[] = [], c = p.cycles;
+  const byteAt = (at: number, t: number) => {
+    if (at < r.from || at + 8 > r.to) return -1;
+    let v = 0;
+    for (let i = 0; i < 8; i++) v = (v << 1) | (c[at + i] > t ? 1 : 0);
+    return v;
+  };
+  let reg = 0;
+  for (let k = 0; k < bits.length; k++) {
+    // the sync byte, after three pilot bytes (cyberPilot wants more)
+    reg = ((reg << 1) | bits[k]) >>> 0;
+    const sync = reg & 0xff;
+    if (reg >>> 8 !== 0x0f0f0f || sync === 0x0f || sync === 0xcc || sync === 0xf0) continue;
+    const pilot = cyberPilot(bits, k - 7);
+    if (pilot < 0) continue;
+    const head = Array.from({ length: 23 }, (_, i) => msbByte(bits, k + 1 + 8 * i));
+    if (head.includes(-1)) continue;
+    const load = head[16] | (head[17] << 8), len = head[18] | (head[19] << 8), speed = head[20] | (head[21] << 8);
+    if (!len || load + len > 0x10000) continue;
+    // a name of characters one can type, padded with spaces or zeros ("D", "0B", "0:MINI-PUTT", Accolade's "TITLE.GRA"):
+    // data of a byte over and over (whose XOR is 0 whatever it is) is not taken for a header
+    const typed = (v: number) => (v >= 0x20 && v < 0x60) || v === 0xa0 || (v >= 0xc1 && v <= 0xda);
+    let named = 16;
+    while (named > 0 && (head[named - 1] === 0x00 || head[named - 1] === 0x20 || head[named - 1] === 0xa0)) named--;
+    if (!named || !head.slice(0, named).every(typed)) continue;
+    let best: { data: Uint8Array; bad: number[]; to: number; speed: number | null } | null = null;
+    for (const later of [false, true]) {
+      if (head.slice(0, later ? 23 : 21).reduce((a, v) => a ^ v, 0) !== 0) continue;
+      // the later header's speed: a timer the loader can count down in a pulse's time
+      if (later && (speed < 100 || speed > 2000)) continue;
+      const t = later ? speed * 1.5 : threshold;
+      let at = r.from + k + 1 + 8 * (later ? 23 : 21), x = 0;
+      if (later) { x = byteAt(at, t); at += 8; }
+      const data = new Uint8Array(len), bad: number[] = [];
+      let whole = true;
+      for (let o = 0; o < len && whole; o += 256) {
+        for (let i = o; i < Math.min(len, o + 256); i++, at += 8) { const v = byteAt(at, t); if (v < 0) { whole = false; break; } data[i] = v; x ^= v; }
+        const sum = byteAt(at, t);
+        at += 8;
+        if (sum < 0) whole = false;
+        else if ((x ^= sum) !== 0) { bad.push(load + o); x = 0; }
+      }
+      if (!whole || bad.length > len / 512) continue;
+      if (!best || bad.length < best.bad.length) best = { data, bad, to: at, speed: later ? speed : null };
+    }
+    if (!best) continue;
+    const raw = Uint8Array.from(head.slice(0, 16));
+    const blocks = Math.ceil(len / 256);
+    out.push({
+      format: 'cyberload', name: petsciiName(raw.subarray(0, named).map(v => (v === 0x20 ? 0xa0 : v))).trimEnd(), raw, type: 'PRG', load, end: load + len, data: best.data,
+      at: r.from + pilot, offset: p.offsets[r.from + pilot] ?? 0, seconds: (p.times[r.from + pilot] ?? 0) / TAPE_CLOCK, to: best.to,
+      errors: best.bad.map(a => `checksum: the block at $${hex4(a)} could not be read cleanly`),
+      note: `fourth stage (LOAD by name), sync $${sync.toString(16).padStart(2, '0')}, ${blocks} block${blocks === 1 ? '' : 's'}${best.speed ? `, read with a timer of ${Math.round(best.speed * 1.5)} cycles` : ''}`,
+    });
+    k = best.to - r.from - 1; reg = 0;
+  }
+  return out;
+}
+
 /* ---------------------------------------------------------------------------------------------------------------- */
 
 /** Read a .tap image: its files in every format known here, and the stretches with data none of them reads. A .t64
@@ -699,9 +968,16 @@ export function readTape(u8: Uint8Array): TapeImage {
   const files = cbmFiles(p, cbm);
   const unknown: TapeUnknown[] = [];
   let tapetool = null as TapeImage['tapetool'];
+  const cyber: CyberBlock[] = [];
+  let before: { short: number; long: number } | null = null;
+  /** the boot files a Cyberload first stage was read after, and the second stage's keys from one in the stretch before */
+  const firsts = new Set<TapeFile>();
+  let keys: [number, number] | null = null;
   for (const r of regions(p, cbm)) {
-    const two = twoLengths(p.cycles, r.from, r.to);
+    const two: { short: number; long: number } | null = twoLengths(p.cycles, r.from, r.to) ?? sameLengths(p.cycles, r.from, r.to, before);
+    if (two) before = two;
     const found: TapeFile[] = [];
+    let blocks: CyberBlock[] = [];
     if (two) {
       const bits = bitsOf(p.cycles, r, (two.short + two.long) / 2);
       const tt = tapeToolBlocks(bits, r.from);
@@ -713,11 +989,24 @@ export function readTape(u8: Uint8Array): TapeImage {
         for (let at = last.to - r.from; at + 8 <= bits.length; at += 8) { const v = msbByte(bits, at); if (v !== 0xff && v !== 0xc3) break; out++; }
         tapetool = { speed: tapetool?.speed ?? Math.round(two.short / 8) * 8, leadOut: Math.round(out / 2) };
       }
-      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from));
+      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
+      // Cyberload's first stage in the stretch after its boot file, and the second after it with the keys it holds
+      if (keys) { const f = cyberSecond(p, bits, r, 0, keys); if (f) found.push(f); keys = null; }
+      const boot = files.filter(f => f.format === 'cbm' && f.headerCode && f.to <= r.from).pop();
+      const first = boot && !firsts.has(boot) && r.from - boot.to < 50000 ? cyberFirst(p, bits, r, boot) : null;
+      if (first) {
+        firsts.add(boot!);
+        found.push(first.file);
+        const second = first.keys ? cyberSecond(p, bits, r, first.end, first.keys) : null;
+        if (second) found.push(second);
+        else keys = first.keys;
+      }
+      blocks = cyberBlocks(bits, r.from);
+      cyber.push(...blocks);
     }
     files.push(...found);
     // what no format took: unknown turbo data, when there is enough of it to hold some
-    const taken = found.map(f => [f.at, f.to] as const).sort((a, b) => a[0] - b[0]);
+    const taken = [...found, ...blocks.filter(b => b.ok)].map(f => [f.at, f.to] as const).sort((a, b) => a[0] - b[0]);
     let from = r.from;
     for (const [a, b] of [...taken, [r.to, r.to] as const]) {
       if (a - from >= 2000) {
@@ -727,6 +1016,8 @@ export function readTape(u8: Uint8Array): TapeImage {
       from = Math.max(from, b);
     }
   }
+  // Cyberload's blocks make files across stretches: the loader stops the tape between them
+  files.push(...cyberBlockFiles(p, cyber));
   files.sort((a, b) => a.at - b.at);
   return { version: p.version, pulses: p.cycles.length, seconds: p.times[p.times.length - 1] / TAPE_CLOCK, files, unknown, tapetool };
 }

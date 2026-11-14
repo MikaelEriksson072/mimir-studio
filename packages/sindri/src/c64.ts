@@ -20,6 +20,18 @@ export const BOOT = -2, LOADED = -1;
 
 export const CYCLES_PER_LINE = 63, LINES = 312;
 
+/**
+ * RAM as the C64 powers it on, as VICE's x64sc (3.10) fills it by default: four bytes of $00 and four of $ff ($0000-
+ * $0001 the first two $00), the pattern inverted in every other 16 KB ($4000-$7fff, $c000-$ffff); VICE also flips a
+ * bit now and then, which is left out. A real C64 has stripes of its own, never the same byte everywhere, and loaders
+ * look: Cyberload's second stage wipes itself when the RAM under the KERNAL at $f37a-$f478 is all one byte (Tusker).
+ */
+export const POWER_ON: Uint8Array = (() => {
+  const ram = new Uint8Array(0x10000);
+  for (let a = 0; a < 0x10000; a++) ram[a] = (((a + 2) >> 2) & 1 ? 0xff : 0) ^ ((a >> 14) & 1 ? 0xff : 0);
+  return ram;
+})();
+
 /** read-modify-write instructions (their last two cycles write) and those whose last cycle writes (stores, pushes) */
 const RMW = new Set([
   0x06, 0x0e, 0x16, 0x1e, 0x46, 0x4e, 0x56, 0x5e, 0x26, 0x2e, 0x36, 0x3e, 0x66, 0x6e, 0x76, 0x7e, 0xe6, 0xee, 0xf6, 0xfe,
@@ -289,6 +301,9 @@ export class C64 implements Bus {
   readonly firstArg = new Uint32Array(0x10000);
   readonly firstRead = new Uint32Array(0x10000);
   readonly firstWrite = new Uint32Array(0x10000);
+  /** when each byte was first written in this machine (by the CPU, LOAD or Sindri; 0 = never): a byte never written
+   *  still holds what the C64 started up with (POWER_ON, where the start-up left it) */
+  readonly firstTouch = new Uint32Array(0x10000);
   /** the tag new writes get */
   tag = BOOT;
   /** the CPU runs ROM code (or C64 set-up code in RAM): its writes below $0400 are the system's (keyboard buffer,
@@ -440,6 +455,7 @@ export class C64 implements Bus {
     this.wid[a] = this.inRom && a < 0x400 ? BOOT : this.tag;
     this.wtime[a] = this.icount;
     if (!this.firstWrite[a]) this.firstWrite[a] = this.icount;
+    if (!this.firstTouch[a]) this.firstTouch[a] = this.icount;
     this.ram[a] = v;
   }
 

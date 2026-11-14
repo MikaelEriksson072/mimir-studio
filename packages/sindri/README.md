@@ -24,6 +24,15 @@ both CIAs with timers, interrupts and the keyboard and joysticks, and the SID re
 C64 ROMs it starts the machine, types `LOAD`, loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
 autostarts through the vectors or the stack, and packers that call the KERNAL work as they do on the real machine.
 
+The RAM powers on as VICE (x64sc 3.10) fills it by default (`POWER_ON`): four bytes of `$00` and four of `$ff` from
+`$0002` on, inverted in every other 16 KB; the start-up then clears `$0002-$0101` and `$0200-$03ff` and leaves the rest
+(its RAM test puts back every byte it tries). A real C64 has stripes of its own, never one byte everywhere, and
+loaders look: Cyberload's second stage (Tusker, System 3) compares the RAM under the KERNAL at `$f37a-$f478` with
+itself and wipes the zero page, itself with it, when it is all one byte. Before November 2026 Sindri's RAM started out
+all `$00`, and Tusker stopped there with nothing but the loader's first stage. A saved program has `$00`, not the
+stripes, where nothing wrote before its layer started (nor loaded while it ran), as before: the C64 is started twice,
+once from empty RAM, and the bytes that end otherwise are the ones the start-up left as they powered on.
+
 Raster code that times itself to the cycle needs the CPU to take an IRQ in the same cycle as a C64 does, measured in
 VICE 3.10 with test programs after a cycle-exact raster sync (`test/timing.test.ts`). The 6510 polls the IRQ line in
 an instruction's last cycle with the level it had a cycle before, so a raster IRQ that comes in the last cycle waits
@@ -193,7 +202,10 @@ With a tape (a TAP image, given instead of the file or with `--tape`) a datasett
   `$c1/$c2`, the end in `$ae/$af` and `$ac/$ad` (Mastertronic's and Codemasters' boot files clear memory from (`$ac`)
   up to `$0800`, and stopped at once without them);
 - a program waiting while the tape plays is loading, not settled, until a while (5 s) after the tape's end, and the
-  time limit grows to the rest of the tape and half a minute more. The report's `Tape:` line says where the tape stood
+  time limit grows to the rest of the tape and half a minute more. One that stopped the motor with more on the tape is
+  not settled for 5 s after either: Cyberload fades the sound out for 2.5 s between loading Tusker and starting it,
+  and Sindri took that for the program, saving the loader at `$fd03` (which loads the parts again from the tape) in
+  place of the game at `$6440`. The report's `Tape:` line says where the tape stood
   and how far it played; pulses read count as loading for the parts a layer loaded and ran. The saved port is the
   program's: bit 4, which PLAY holds low, is left out.
 
@@ -449,7 +461,9 @@ load is saved as it started. A boot file that reads the drive's clock with `M-R`
 layers, stop and saved program in the first run in a process, which starts the C64 and the drive up, and in the next.
 The datasette tests build a tape (a KERNAL boot file with a loader in its header, then a program as turbo data) and run
 its boot file with the stand-ins and the ROMs, started through `$0302` and through the IRQ vector at `$029f`: its loader
-reads the program from the tape and starts it, with the pointers a tape LOAD leaves. A T64's tests read a directory
+reads the program from the tape and starts it, with the pointers a tape LOAD leaves, and starts it after a pause of
+3.3 s with the motor off too. Programs that look at the RAM under the KERNAL go on as on a C64, and a program saved
+with a gap nothing wrote has `$00` there and the `$ff` it wrote where the RAM powered on with `$ff`. A T64's tests read a directory
 with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of text, and run a boot file that loads
 `PART2` with LOAD from the tape, once after it and once before it on the T64, with the stand-ins and the ROMs.
 
@@ -468,6 +482,11 @@ with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of te
   on exact VIC timing (sprite DMA, the cycle within a raster line) may not get through; badlines take the bus from
   cycle 11 to 54 of the line (from its first read on), CIA timers are read in the instruction's last cycle and never
   read 0. What the drive writes stays in memory; the image is not changed.
+- A run stops at 500 layers (`budget`, *500 layers: it keeps jumping into code it wrote*): programs have a few dozen at
+  most, but a loader that starts itself over and over makes two each time, each slower than the last. Ping Pong
+  (Konami, tape) does: Sindri's LOAD from the tape does not print the KERNAL's messages (PRESS PLAY ON TAPE, OK,
+  SEARCHING, FOUND, LOADING), so READY. lands on row 8 of the screen, not on row 14 as in VICE, over the boot file's
+  bytes there, which its loader copies to `$7000` and runs.
 - An intro that waits for something other than the keys it tries stays where it is; `-e` can start the program behind
   it. A trainer menu that shows an answer only in colour, or with fewer than eight characters in a row (a marker that
   moves, a YES), is taken as one that does not react: each key is pressed once there.

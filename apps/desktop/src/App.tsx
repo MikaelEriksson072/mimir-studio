@@ -699,7 +699,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     showSection('tape');
     // a T64 tape archive (13.5j): its directory's files, no pulses
     if (img.t64) { toast(`Inserted ${name} (a T64${img.t64.name ? `, "${img.t64.name}"` : ''}): ${img.files.length} file${img.files.length === 1 ? '' : 's'}`, 'ok'); return; }
-    const LABEL: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', t64: 'T64' };
+    const LABEL: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', cyberload: 'Cyberload', t64: 'T64' };
     const kinds = (Object.keys(LABEL) as TapeFile['format'][]).map(k => { const n = img.files.filter(f => f.format === k).length; return n ? `${n} ${LABEL[k]}` : ''; }).filter(Boolean).join(', ');
     toast(`Inserted ${name} (${Math.round(img.seconds)} s): ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kinds ? ` (${kinds})` : ''}${img.unknown.length ? `, and turbo data of a loader Sindri runs` : ''}`, 'ok');
   };
@@ -1064,20 +1064,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  `port`: $01 as the program starts at `start` (Sindri's saved.port), kept with the start when it is not $37 */
   const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined, port: number | null = null): string => {
     const out = withId(parsePrg(unpackedName(f.name), prg));
+    // a tape's boot file opened with its header, the tape buffer (13.5f), is one KERNAL file in two: Sindri ran them
+    // together, so the unpacked program takes the place of both. Kept, the header would lie under the program where
+    // it loads over the tape buffer (Tusker's first stage, $029f-$07e7), the later file winning those bytes, and the
+    // unpacked file could not be built byte for byte; and with two files Unpack would set no program start
+    const tf = tapeOf.current.get(f.id);
+    const head = tf && !tf.header ? project.files.find(x => { const t = tapeOf.current.get(x.id); return x.id !== f.id && !!t?.header && t.file === tf.file; }) : undefined;
+    const alone = project.files.length === (head ? 2 : 1);
     const entry = start != null && start >= out.load && start < out.load + out.bytes.length ? start : null;
-    const entryPort = entry != null && port != null && port !== 0x37 && project.files.length === 1 ? port : null;
-    if (project.files.length === 1) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry, ...(entryPort != null ? { entryPort } : {}) }, home ? `Unpack ${f.name}` : undefined); resetView(); }
+    const entryPort = entry != null && port != null && port !== 0x37 && alone ? port : null;
+    if (alone) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry, ...(entryPort != null ? { entryPort } : {}) }, home ? `Unpack ${f.name}` : undefined); resetView(); }
     else update(`Unpack ${f.name}`, d => {
-      // a patch written over the packed file has nothing to stand on in the unpacked one
-      const was = d.files[i];
+      // a patch written over the packed file (or its header) has nothing to stand on in the unpacked one
+      const gone = [d.files[i], ...(head ? [head] : [])].map(x => ({ start: x.load, end: x.load + x.bytes.length }));
       d.files[i] = out;
-      d.patches = d.patches.filter(p => !(p.start >= was.load && patchEnd(p) <= was.load + was.bytes.length));
+      if (head) d.files = d.files.filter(x => x.id !== head.id);
+      d.patches = d.patches.filter(p => !gone.some(g => p.start >= g.start && patchEnd(p) <= g.end));
     });
     // the program the packer hid is loaded now: its loader and its start show in the Explorer as a load's do (14.1)
-    afterLoad([out.id], project.files.length > 1, true);
+    afterLoad([out.id], !alone, true);
     const at = `$${h4(out.load)}-$${h4(out.load + out.bytes.length - 1)}`;
-    toast(`Unpacked ${f.name}: ${out.bytes.length} bytes at ${at}`, 'ok');
-    return `${out.name}, ${at}${entry != null ? `, starting at $${h4(entry)}${entryPort != null ? ` with $01 = $${h2(entryPort)}` : ''}${project.files.length === 1 ? ' (set as the program start)' : ''}` : ''}`;
+    toast(`Unpacked ${f.name}${head ? ` with its header ${head.name}` : ''}: ${out.bytes.length} bytes at ${at}`, 'ok');
+    return `${out.name}, ${at}${head ? ` (in place of ${f.name} and ${head.name})` : ''}${entry != null ? `, starting at $${h4(entry)}${entryPort != null ? ` with $01 = $${h2(entryPort)}` : ''}${alone ? ' (set as the program start)' : ''}` : ''}`;
   };
   /** `auto`: the file was just opened, with *Unpack packed files when they are opened* on */
   const unpackFile = async (i: number, auto = false) => {

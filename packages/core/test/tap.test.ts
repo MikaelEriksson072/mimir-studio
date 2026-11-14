@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePrg, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackPrg } from '../src';
 import { blockFile, demoTape, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
+import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
 const demo = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/prg/raster-demo.prg')));
@@ -230,6 +231,105 @@ describe('Freeload and US Gold\'s loader', () => {
     const t = withTurbo(makeTap({ files: [] }), bad.pulses);
     const at = t.length - 16 * 8 - 8 + 3;
     t[at] = t[at] === 0x23 ? 0x2f : 0x23;
+    const again = readTape(t);
+    expect(again.files).toEqual([]);
+    expect(again.unknown).toHaveLength(1);
+  });
+});
+
+describe('Cyberload', () => {
+  const cyber = () => new TurboWriter(48, 90);
+  const pause = cyberPause;
+  const bootTape = () => makeTap({ files: [{ name: 'boot', load: 0x029f, data: bytes(156, 6), header: Uint8Array.from({ length: 171 }, (_, i) => (i * 13 + 5) & 0xff) }] });
+
+  it('reads its four stages: the first after the boot file, the second with the keys in its code, blocks, files by name', () => {
+    const boot = readTape(bootTape()).files[0];
+    expect(boot.headerCode).toBe(true);
+    const w = cyber();
+    // the first stage: the second stage's code in the zero page, the tape header again, a part of its own; its RTS
+    // takes $0001 off the stack, into $0002
+    cyberFirstStage(w, [{ load: 0x0002, bytes: secondStageCode(0x9c, 0x7a) }, { load: 0x033c, bytes: boot.header!.subarray(0, 40) }, { load: 0x0392, bytes: [1, 2, 3] }], [0xff, 0x00, 0x01]);
+    cyberSecondStage(w, 0xc000, bytes(600, 7), 0x9c, 0x7a);
+    pause(w);
+    // the third stage: a file of three blocks the loader calls into, one whose blocks are a stretch each (the tape
+    // stops between them), the second all 0 bits
+    cyberBlocks(w, 0xe000, bytes(600, 8), { call: 0xe003 });
+    pause(w);
+    const zeros = new Uint8Array(512);
+    zeros.set(bytes(256, 9));
+    cyberBlocks(w, 0x4000, zeros, { pause });
+    // the fourth: the later header (with the speed, Tusker's), the earlier (The Last Ninja's), Myth's sync byte $55,
+    // Accolade's names padded with zeros
+    cyberNamedFile(w, { name: 'GAME', load: 0x0801, data: bytes(1000, 10), speed: 340 });
+    pause(w);
+    cyberNamedFile(w, { name: '0B', load: 0xb000, data: bytes(700, 11) });
+    pause(w);
+    cyberNamedFile(w, { name: 'M', load: 0xeffe, data: bytes(300, 12), speed: 340, sync: 0x55 });
+    pause(w);
+    cyberNamedFile(w, { name: 'TITLE.GRA', load: 0x2000, data: bytes(256, 13), pad: 0 });
+    const img = readTape(withTurbo(bootTape(), w.pulses));
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors])).toEqual([
+      ['cbm', 'BOOT', 0x029f, 0x029f + 156, []],
+      ['cyberload', 'file_0002', 0x0002, 0x0395, []],
+      ['cyberload', 'file_c000', 0xc000, 0xc000 + 600, []],
+      ['cyberload', 'file_e000', 0xe000, 0xe000 + 600, []],
+      ['cyberload', 'file_4000', 0x4000, 0x4000 + 512, []],
+      ['cyberload', 'GAME', 0x0801, 0x0801 + 1000, []],
+      ['cyberload', '0B', 0xb000, 0xb000 + 700, []],
+      ['cyberload', 'M', 0xeffe, 0xeffe + 300, []],
+      ['cyberload', 'TITLE.GRA', 0x2000, 0x2000 + 256, []],
+    ]);
+    const [, first, second, blocks, zero, game] = img.files;
+    // the first stage's bytes where it stored them, the boot file's between
+    expect([...first.data.subarray(0, 23)]).toEqual(secondStageCode(0x9c, 0x7a));
+    expect(first.data.subarray(0x029f - 2, 0x0314 - 2)).toEqual(boot.data.subarray(0, 0x0314 - 0x029f));
+    expect([...first.data.subarray(0x0392 - 2)]).toEqual([1, 2, 3]);
+    expect(first.note).toMatch(/stores \$0002-\$0018, \$033c-\$0363, \$0392-\$0394.*: \$0002$/);
+    expect(second.data).toEqual(bytes(600, 7));
+    expect(second.note).toMatch(/XOR \$9c, its bytes XOR \$7a/);
+    expect(blocks.data).toEqual(bytes(600, 8));
+    expect(blocks.note).toBe('third stage, 3 blocks; the loader calls $e003 after it');
+    expect(zero.data).toEqual(zeros);
+    expect(game.data).toEqual(bytes(1000, 10));
+    expect(game.note).toBe('fourth stage (LOAD by name), sync $aa, 4 blocks, read with a timer of 510 cycles');
+    expect(img.files[6].note).toBe('fourth stage (LOAD by name), sync $aa, 3 blocks');
+    expect(tapeFileName(game)).toBe('GAME.prg');
+  });
+
+  it('is fixtures/tap/cyberload-demo.tap, which the e2e tests insert: the four stages, the demo the fourth one\'s file', () => {
+    const tape = cyberloadDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/cyberload-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, tape);
+    expect(new Uint8Array(readFileSync(path))).toEqual(tape);
+    const img = readTape(tape);
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors])).toEqual([
+      ['cbm', 'CYBER DEMO', 0x029f, 0x029f + 156, []],
+      ['cyberload', 'file_0002', 0x0002, 0x0395, []],
+      ['cyberload', 'file_c000', 0xc000, 0xc000 + 600, []],
+      ['cyberload', 'file_e000', 0xe000, 0xe000 + 600, []],
+      ['cyberload', 'DEMO', 0x0801, 0x0801 + demo.length - 2, []],
+    ]);
+    expect(img.files[4].data).toEqual(demo.subarray(2));
+  });
+
+  it('says which blocks do not check, and takes no header from data of one byte over and over', () => {
+    const w = cyber();
+    cyberBlocks(w, 0x1000, bytes(768, 2), { bad: 0x1100 });
+    pause(w);
+    // a "header" of $0f bytes after the pilot: its XOR is 0, as the blocks' after it are
+    for (let i = 0; i < 300; i++) w.byte(0x0f);
+    w.byte(0x0f);
+    for (let i = 0; i < 2000; i++) w.byte(0x00);
+    const img = readTape(withTurbo(makeTap({ files: [] }), w.pulses));
+    expect(img.files.map(f => [f.name, f.load, f.data.length, f.errors])).toEqual([['file_1000', 0x1000, 768, ['checksum: the block at $1100 could not be read cleanly']]]);
+    // a file by name whose header does not check is turbo data no format reads
+    const u = cyber();
+    cyberNamedFile(u, { name: 'GAME', load: 0x0801, data: bytes(3000, 3), speed: 340 });
+    const t = withTurbo(makeTap({ files: [] }), u.pulses);
+    const at = t.length - u.pulses.length + 8 * 9 + 3;
+    t[at] = t[at] === 48 ? 90 : 48;
     const again = readTape(t);
     expect(again.files).toEqual([]);
     expect(again.unknown).toHaveLength(1);
