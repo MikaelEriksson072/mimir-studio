@@ -54,6 +54,8 @@ interface RenderCtx {
   /** the instruction whose operand this is, and how it uses the address (bank tracking names by what it reaches) */
   pc?: Addr;
   write?: boolean;
+  /** the byte whose operand or value this is (10.4: where a view offset shows it, which bytes are its own) */
+  from?: Addr;
   /** how many relocated blocks' .pseudopc the block is inside (8.1b): it gets no .pc of its own there */
   reloc?: number;
 }
@@ -289,11 +291,15 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
   function addrTokens(a: Addr, ctx: RenderCtx): Token[] {
     a &= 0xffff;
     if (offs.length) {
-      // 10.4: the area a view offset shows its bytes at is theirs (code loaded there too keeps its own references);
-      // where they are loaded their labels (named where they are shown) do not fit, so the address is written as it is
+      // 10.4: the area a view offset shows its bytes at is theirs (bytes loaded there too keep their own references).
+      // The bytes' references to themselves go with them, as their branches do (jmp $5026 in $5000-$5036 shown at
+      // $2000 is jmp l_2026); for the others, where the bytes are loaded their labels (named where they are shown) do
+      // not fit, so the address is written as it is
       const sh = shownTarget(offs, a);
-      if (sh && !(ctx.pc != null && shownTarget([sh.o], ctx.pc))) return shownTokens(sh.o, sh.at, a, ctx.zpWidth);
-      if (offAt(a)) return [{ t: 'num', s: a < 0x100 && ctx.zpWidth ? n2(a) : n4(a), to: a }];
+      if (sh && !(ctx.from != null && shownTarget([sh.o], ctx.from))) return shownTokens(sh.o, sh.at, a, ctx.zpWidth);
+      const o = offAt(a);
+      if (o && ctx.from != null && offAt(ctx.from) === o) return shownTokens(o, a, shownOf(a), ctx.zpWidth);
+      if (o) return [{ t: 'num', s: a < 0x100 && ctx.zpWidth ? n2(a) : n4(a), to: a }];
     }
     const m = musicFor(a);
     if (m) {
@@ -372,7 +378,7 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
     const d = decode(mem, pc);
     const opTok: Token[] = [];
     let ext: ForcedMode = '';
-    const c: RenderCtx = Object.assign({}, ctx, { isCall: o.flow === 'jsr' || o.flow === 'jmp', zpWidth: MODE_LEN[o.mode] === 2, pc, write: o.access === 'write' });
+    const c: RenderCtx = Object.assign({}, ctx, { isCall: o.flow === 'jsr' || o.flow === 'jmp', zpWidth: MODE_LEN[o.mode] === 2, pc, from: pc, write: o.access === 'write' });
     switch (o.mode) {
       case 'imp': case 'acc': break;
       case 'imm': {
@@ -418,7 +424,8 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
     }
     if (o.ill) ctx.useIll?.();
     const cm: string[] = [];
-    if (A.smc.has(pc)) cm.push(`self-modified by ${n4(A.smc.get(pc)!)}`);
+    // (by the instruction's address in the listing: where a view offset shows it, 10.4)
+    if (A.smc.has(pc)) cm.push(`self-modified by ${n4(shownOf(A.smc.get(pc)!))}`);
     const into = delayBranch.get(pc);
     if (into) cm.push(`0-${into.most} bytes into the delay, by ${timerName(into)}`);
     if (delayAt.has(pc)) cm.push('delay');
@@ -617,7 +624,7 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
           dataRows(out, b.start, b.end, ctx, {
             item: i => {
               const v = mem[lt.lo + (i - b.start)] | (mem[lt.hi + (i - b.start)] << 8);
-              const tk = addrTokens(v, ctx);
+              const tk = addrTokens(v, Object.assign({}, ctx, { from: i }));
               if (tk[0].t === 'num') return numTok(mem[i]);
               return tk.length > 1 || /[+-]/.test(tk[0].s) ? [{ t: 'p', s: (lt.part === 'lo' ? '<' : '>') + '(' }, ...tk, { t: 'p', s: ')' }] : [{ t: 'p', s: lt.part === 'lo' ? '<' : '>' }, ...tk];
             }, row: 4,
@@ -634,7 +641,7 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
           const v = mem[q] | (mem[q + 1] << 8);
           if (fmt) return [{ t: 'num', s: fmt === 'bin' ? '%' + v.toString(2).padStart(16, '0') : fmt === 'dec' ? String(v) : n4(v) }];
           // a bare number is widened to 4 digits; offsets in `label+n` must stay as they are
-          const tk = addrTokens(v, Object.assign({}, ctx, { zpWidth: false }));
+          const tk = addrTokens(v, Object.assign({}, ctx, { zpWidth: false, from: q }));
           return tk.length === 1 && tk[0].t === 'num' ? [Object.assign({}, tk[0], { s: n4(v) })] : tk;
         };
         let p = b.start;

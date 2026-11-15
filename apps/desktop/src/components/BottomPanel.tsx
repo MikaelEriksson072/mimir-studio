@@ -4,7 +4,7 @@
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
   BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, KRILL_PACKER, krillFileName, type KrillFile, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
-  refsShown, shownAddress, shownTarget,
+  refsShown, shownAddress, shownTarget, viewOffsetAt,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -87,6 +87,8 @@ export function XrefPanel({ A, R, cursor, onNavigate, S }: { A: AnalysisResult; 
   if (A.insLen[ins]) { const d = decode(A.mem, ins); if (d.target != null) outgoing.push(d.target); }
   // an instruction outside the bytes shown elsewhere that targets where they are shown goes to them
   const goes = outgoing.length ? (shownTarget(voffs, outgoing[0]) && !shownTarget(voffs, ins) ? shownTarget(voffs, outgoing[0])!.at : outgoing[0]) : null;
+  // and one inside them that targets their own bytes goes where they are shown, as the listing writes it
+  const mine = viewOffsetAt(voffs, ins), goesAt = goes != null && mine && goes >= mine.start && goes < mine.end ? shown(goes) : outgoing[0];
   return (
     <div className="xref">
       <div className="xref-head">References to <b className="mono">{label ? label.name : '$' + h4(shown(ins))}</b> <span className="muted">(${h4(shown(ins))}{shown(ins) !== ins ? `, loaded at $${h4(ins)}` : ''})</span> — {to.length}</div>
@@ -95,7 +97,7 @@ export function XrefPanel({ A, R, cursor, onNavigate, S }: { A: AnalysisResult; 
           {to.map((x, i) => <tr key={i} onClick={() => onNavigate(x.from)}><td className="mono link-cell">${h4(shown(x.from))}</td><td><span className={cx('kind', `kind-${x.kind}`)}>{XREF_KIND[x.kind] || x.kind}</span></td><td className="mono">{text(x.from)}</td></tr>)}
         </tbody></table>
       ) : <div className="empty small">No references. Entry points, vectors and data reached only through computed addresses have none.</div>}
-      {goes != null && <div className="xref-out">This instruction targets <button className="addr-link" onClick={() => onNavigate(goes)}>${h4(outgoing[0])}</button>{R.labels.get(goes) ? <span className="mono"> {R.labels.get(goes)!.name}</span> : (hwSymbol(outgoing[0]) ? <span className="mono syn-hw"> {hwSymbol(outgoing[0])!.text}</span> : null)}</div>}
+      {goes != null && <div className="xref-out">This instruction targets <button className="addr-link" onClick={() => onNavigate(goes)}>${h4(goesAt)}</button>{R.labels.get(goes) ? <span className="mono"> {R.labels.get(goes)!.name}</span> : (hwSymbol(outgoing[0]) ? <span className="mono syn-hw"> {hwSymbol(outgoing[0])!.text}</span> : null)}</div>}
     </div>
   );
 }

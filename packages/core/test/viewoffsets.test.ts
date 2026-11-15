@@ -131,6 +131,66 @@ describe('a view offset in the listing', () => {
   });
 });
 
+describe('a view offset whose bytes refer to themselves', () => {
+  // code written for $5000 shown at $2000: its jumps, calls, reads, writes and words into its own bytes go with them,
+  // as its branches do; the jump from outside to where it is loaded and its call to the routine after it do not
+  const src = `
+.pc = $0801 "Basic"
+.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00
+.pc = $080d "Code"
+start:  jmp $5000
+.pc = $5000 "Block"
+        sei
+        jsr sub
+loop:   lda tab,x
+        sta smc+1
+smc:    lda #0
+        jsr $ffe4
+        beq loop
+        jsr after
+        jmp loop
+sub:    rts
+tab:    .byte 1,2,3,4
+vec:    .word sub, loop
+after:  rts
+`;
+  const files = [fromSource('self.prg', src)];
+  const OFF = { start: 0x5000, end: 0x5020, to: 0x2000 };
+  const p: ProjectInput = { name: 'self', files, labels: {}, comments: {}, settings: {}, overrides: [{ start: 0x5000, end: 0x5018, type: 'code' }, { start: 0x5018, end: 0x501c, type: 'data' }, { start: 0x501c, end: 0x5020, type: 'words' }], viewOffsets: [OFF] };
+  const A = analyze(p);
+  const R = render(A, p, { viewOffsets: true });
+  const text = listingText(R);
+
+  it('writes them where the bytes are shown', () => {
+    // its call, its branch and its jump back to the loop
+    expect(text).toContain('jsr sub_2017');
+    expect(text).toContain('beq l_2004');
+    expect(text).toContain('jmp l_2004');
+    // a read of its table, the store into its own code, and its words
+    expect(text).toContain('lda tbl_2018,x');
+    expect(text).toContain('sta smc_200a+1');
+    expect(text).toContain('self-modified by $2007');
+    expect(text).toContain('.word sub_2017');
+    expect(text).toContain('.word l_2004');
+    // where the bytes are loaded is only in the headers and the mark above them, and in the jump from outside; the
+    // routine after them is where it is loaded
+    const body = text.split('\n').filter(l => !/^\/\/ (----|====)/.test(l)).join('\n');
+    expect(body.match(/\$50[01][0-9a-f]|_50[01][0-9a-f]/g)).toEqual(['$5000']);
+    expect(text).toContain('jsr sub_5020');
+    expect(text).toContain('jmp $5000');
+    expect(verify(A, R).ok).toBe(true);
+  });
+
+  it('leaves the .asm as without the offset', () => {
+    const plain = render(A, { ...p, viewOffsets: undefined });
+    expect(R.files).toEqual(plain.files);
+    const asm = R.files['self.asm'] as string;
+    expect(asm).toContain('jmp l_5004');
+    expect(asm).toContain('.word sub_5017');
+    expect(asm).not.toMatch(/_20[01][0-9a-f]|shown at/);
+  });
+});
+
 describe('a view offset over loaded bytes', () => {
   // the code at $1000 is shown where a routine of the program is loaded ($0900): references from elsewhere go to the
   // bytes shown, and the routine loaded there keeps its own

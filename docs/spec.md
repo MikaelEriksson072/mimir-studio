@@ -2433,8 +2433,12 @@ dem när det körs. Den kräver därför inte att ingenting är laddat där byte
   `RenderResult.viewOffsets` säger vilka offsets listningen visar. Analysens etiketter i byten får namn efter adressen
   där de visas (`l_1003` blir `l_2003`), och varje referens in i området där de visas får en etikett på byten den går
   till (`sub_2009`, på instruktionens första byte). Referenser dit skrivs med dem (`jmp code_2000`, `jsr sub_2009`,
-  `lda l_200d,x`), en branch inne i byten likaså, medan referenser till där byten laddas skrivs som adressen (`lda
-  $1000,x` i kopieringsloopen), eftersom etiketterna där har värdet där de visas. Ligger laddad kod där byten visas
+  `lda l_200d,x`), en branch inne i byten likaså. Byten följer med i sina egna referenser till sig själva, som i sina
+  branchar: kod skriven för $5000 och visad på $2000 har `jmp l_2026` för sin `jmp $5026`, och likaså anrop, läsningar,
+  skrivningar (`sta smc_200a+1`), adresser som värden (`lda #<irq_c0a7`), ord i en tabell bland dem och kommentaren
+  *self-modified by*; korsreferenserna säger *This instruction targets $2026*. Andra referenser till där byten laddas
+  skrivs som adressen (`lda $1000,x` i kopieringsloopen), eftersom etiketterna där har värdet där de visas, och
+  referenser från byten till byte efter dem står kvar där de laddas. Ligger laddad kod där byten visas
   behåller den sina egna referenser, och ett namn den redan har får laddadressen efter sig (`sub_0903_1003`).
   Användarens namn står kvar på byten, i listningen och i `.asm`-filen (där referenserna till området där de visas
   skrivs som adressen, `jsr $2009`). Byten har adressen där de visas i adresskolumnen (kursivt i accentfärgen, med

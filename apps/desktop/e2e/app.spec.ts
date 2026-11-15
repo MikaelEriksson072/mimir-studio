@@ -2884,6 +2884,28 @@ test('a view offset shows code at the address it runs at, in the listing only: t
   });
 });
 
+test('code shown at another address takes its references to its own bytes along, as its branches (10.4)', async ({ page }) => {
+  // the raster demo's code at $0810-$08ff, written for where it is loaded, shown at $c000: its call and the IRQ address
+  // it sets go where the bytes are shown, references to bytes after them stay where those are loaded
+  await waitForListing(page);
+  await goTo(page, '$0813');
+  await page.keyboard.press('o');
+  const dialog = page.getByRole('dialog', { name: 'Show at another address' });
+  await dialog.getByLabel('End (included)').fill('$08ff');
+  await dialog.getByLabel('Shown at (or offset)').fill('$c000');
+  await dialog.getByRole('button', { name: 'Show there' }).click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(async () => rowAt(await listingRows(page), 'c003')?.text).toMatch(/^jsr sub_c056/);
+  const rows = await listingRows(page);
+  expect(rowAt(rows, 'c029')?.text).toMatch(/^lda #<irq_c0a7/);
+  expect(rowAt(rows, 'c0df')?.text).toMatch(/self-modified by \$c0e4/);
+  expect(rowAt(rows, '090a')?.text).toMatch(/^jsr sub_0916/);
+  // the cross-references say where the call goes as the listing writes it
+  await goTo(page, '$0813');
+  await page.keyboard.press('x');
+  await expect(page.locator('.xref-out')).toHaveText('This instruction targets $c056 sub_c056');
+});
+
 test('relocate code the program copies elsewhere: Problems finds the copy, the listing reads it where it runs, names go along', async ({ app, page }) => {
   // fixtures/prg/moved-demo.prg (packages/core/test/reloc.test.ts): 10 SYS2061, a loop that copies $1000-$1010 to $2000
   // and jumps there, and at $1000 code assembled to run at $2000
