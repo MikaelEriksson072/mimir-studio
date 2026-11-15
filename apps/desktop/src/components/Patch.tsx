@@ -1,16 +1,16 @@
-/* Patch (spec 10.2): new code written over a range of the loaded bytes. The code is Kick Assembler, assembled at the
- * range's start as it is typed, with the program's labels, zero-page variables and the hardware symbols at hand. The
+/* Patch (spec 10.2): new code written over a range of the loaded bytes. The code is in the patch's language (Kick
+ * Assembler or 64tass, the project's assembler's when the patch is made), assembled at the range's start as it is typed, with the program's labels, zero-page variables and the hardware symbols at hand. The
  * editor shows each line's address and bytes beside it, as an assembler listing does; the cursor starts on the first
  * instruction, Tab and Shift+Tab go to the next and the previous one, and Enter keeps the indent. The code may not be
  * longer than the range unless "Overwrite past the range" is ticked; a shorter one leaves the rest to the fill.
  * Nothing changes until "Apply patch", and Ctrl+Z takes it back. */
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { cycleText, h2, h4, instructionCycles, OPC, patchEnd, planPatch, type Addr, type AnalysisResult, type PatchFill, type PatchLine, type PatchPlan, type PatchTime, type Project, type RenderResult } from '@mimir/core';
+import { cycleText, h2, h4, instructionCycles, LANG_TITLE, OPC, patchEnd, patchIn64tass, planPatch, splitLabel, withoutComment, type Addr, type ScriptLang, type AnalysisResult, type PatchFill, type PatchLine, type PatchPlan, type PatchTime, type Project, type RenderResult } from '@mimir/core';
 import { cx } from '../lib/util';
 import { Modal } from './Modal';
 
 /** what the dialog starts with: the range, and the code (the listing's lines, or the patch being edited) */
-export interface PatchDraft { start: Addr; end: Addr; name: string; source: string; fill: PatchFill; over: boolean; cycles: boolean; id?: string }
+export interface PatchDraft { start: Addr; end: Addr; name: string; source: string; lang: ScriptLang; fill: PatchFill; over: boolean; cycles: boolean; id?: string }
 
 interface PatchModalProps {
   A: AnalysisResult; R: RenderResult; project: Project; draft: PatchDraft;
@@ -23,14 +23,19 @@ const hex = (b: Uint8Array) => [...b.subarray(0, SHOWN)].map(h2).join(' ') + (b.
 
 /** where the instruction (or directive) on a line starts, after a label and the indent; null: none (a label alone,
  *  a comment, an empty line) */
-export function instructionAt(line: string): number | null {
-  const code = line.replace(/\/\/.*$/, '').replace(/\s+$/, '');
-  const label = /^\s*[A-Za-z_]\w*:/.exec(code);
-  const from = label ? label[0].length : 0;
+export function instructionAt(line: string, lang: ScriptLang = 'kickass'): number | null {
+  const code = withoutComment(line, lang).replace(/\s+$/, '');
+  const { label, lead } = splitLabel(code, lang);
+  const from = label ? lead.length : 0;
   const m = /\S/.exec(code.slice(from));
   return m ? from + m.index : null;
 }
-const labelOnly = (line: string) => /^\s*[A-Za-z_]\w*:\s*(\/\/.*)?$/.test(line);
+/** (inside PatchEditor, `instructionAt` is this for the patch's language) */
+const instructionAtIn = instructionAt;
+/** a line with a label and nothing else (but a comment) */
+const labelOnly = (line: string, lang: ScriptLang) => { const s = splitLabel(withoutComment(line, lang).replace(/\s+$/, ''), lang); return !!s.label && !s.rest; };
+/** a line that starts with a label */
+const hasLabel = (line: string, lang: ScriptLang) => !!splitLabel(line, lang).label;
 
 export function PatchModal({ A, R, project, draft, onApply, onClose }: PatchModalProps) {
   const [name, setName] = useState(draft.name);
@@ -39,7 +44,16 @@ export function PatchModal({ A, R, project, draft, onApply, onClose }: PatchModa
   const [over, setOver] = useState(draft.over);
   const [cycles, setCycles] = useState(draft.cycles);
   const { start, end } = draft, size = end - start;
-  const plan = useMemo(() => planPatch(A, R, project, { name, start, end, source, fill, over, cycles, id: draft.id }), [A, R, project, name, start, end, source, fill, over, cycles, draft.id]);
+  // the code's language: as the patch was written; one in Kick Assembler in a 64tass project can be moved there
+  const [lang, setLang] = useState<ScriptLang>(draft.lang);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const projectLang: ScriptLang = project.settings.assembler === '64tass' ? '64tass' : 'kickass';
+  const moveTo64tass = () => {
+    const r = patchIn64tass(A, R, project, { name, start, end, source, fill, over, cycles, id: draft.id });
+    if ('error' in r) { setMoveError(`It stays in Kick Assembler: ${r.error}`); return; }
+    setMoveError(null); setSource(r.source); setLang('64tass');
+  };
+  const plan = useMemo(() => planPatch(A, R, project, { name, start, end, source, fill, over, cycles, id: draft.id, lang }), [A, R, project, name, start, end, source, fill, over, cycles, draft.id, lang]);
   const ok = !('error' in plan);
   const apply = () => { if (ok) onApply(plan); };
   const keys = (e: KeyboardEvent) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); apply(); } };
@@ -62,13 +76,19 @@ export function PatchModal({ A, R, project, draft, onApply, onClose }: PatchModa
           <label className="field"><span>Fill the rest with</span>
             <select id="patch-fill" value={fill} onChange={e => setFill(e.target.value as PatchFill)}><option value="nop">NOP ($ea)</option><option value="keep">the bytes that are there</option></select></label>
         </div>
-        <PatchEditor value={source} onChange={setSource} start={start} end={end} lines={plan.lines} code={plan.code} errorLine={'error' in plan ? plan.line : undefined} original={!draft.id}
+        <PatchEditor key={lang} value={source} onChange={setSource} lang={lang} start={start} end={end} lines={plan.lines} code={plan.code} errorLine={'error' in plan ? plan.line : undefined} original={!draft.id}
           time={cycles ? plan.time ?? null : undefined} />
         <label className="check small"><input type="checkbox" id="patch-cycles" checked={cycles} onChange={e => setCycles(e.target.checked)} />
           <span>Keep the cycle count: the patch must take as many cycles as the original, run straight through (the NOP fill counts too), with instructions that take a fixed time (no branches, no indexed reads that can cross a page)</span></label>
         <label className="check small"><input type="checkbox" id="patch-over" checked={over} onChange={e => setOver(e.target.checked)} />
           <span>Overwrite past the range: the code may be longer than the {size} bytes, and writes over the bytes after it</span></label>
         {ok ? sum : <div className="err-text small" role="alert">{plan.error}</div>}
+        <div className="patch-lang small" role="note">
+          <span>The code is <b>{LANG_TITLE[lang]}</b>{lang !== projectLang ? `, though the project's source is ${LANG_TITLE[projectLang]}: the export writes this patch as its bytes` : ''}.</span>
+          {lang === 'kickass' && projectLang === '64tass' && <button className="btn small" id="patch-to-64tass" onClick={moveTo64tass}
+            title="Write the code in 64tass, as the project's source is: only when it writes the same bytes">Write in 64tass</button>}
+          {moveError && <span className="warn-text" role="alert">{moveError}</span>}
+        </div>
         <p className="muted small">The patch is written over the loaded bytes, and the listing marks them. Explorer → Patches switches it off and on and saves it as a PRG; the export writes its source to patches/ (.asm, which assembles on its own). Ctrl+Z takes it back.</p>
       </div>
       <div className="modal-foot"><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button>
@@ -79,6 +99,8 @@ export function PatchModal({ A, R, project, draft, onApply, onClose }: PatchModa
 
 interface PatchEditorProps {
   value: string; onChange: (v: string) => void;
+  /** what the code is written in */
+  lang: ScriptLang;
   /** the range: lines whose bytes go past its end are marked */
   start: Addr; end: Addr;
   /** each line's address and length, and the code's bytes from `start`, as far as the assembler got */
@@ -133,14 +155,15 @@ function followLines<T>(prev: readonly string[], next: readonly string[], per: r
 }
 
 /** an original line's instruction as the Original column shows it (without the indent and the comment) */
-const bare = (line: string) => line.replace(/\/\/.*$/, '').trim();
+const bare = (line: string, lang: ScriptLang) => withoutComment(line, lang).trim();
 
 /**
  * The code with an assembler listing's columns beside it: each line's address and its first bytes. In a new patch
  * the lines start as the original's; typing at the start of an original instruction writes over all of it, editing
  * one changes it, and either way the original moves to the Original column on the right, out of the code.
  */
-function PatchEditor({ value, onChange, start, end, lines, code, errorLine, original, time }: PatchEditorProps) {
+function PatchEditor({ value, onChange, lang, start, end, lines, code, errorLine, original, time }: PatchEditorProps) {
+  const instructionAt = (line: string) => instructionAtIn(line, lang);
   const counting = time !== undefined;
   const ta = useRef<HTMLTextAreaElement>(null), gut = useRef<HTMLDivElement>(null);
   const [cur, setCur] = useState(0);
@@ -149,13 +172,13 @@ function PatchEditor({ value, onChange, start, end, lines, code, errorLine, orig
   /** per line: the original line it still is or was edited from (null: a line of the user's) */
   const origin = useRef<(string | null)[]>(original ? text.map(l => (instructionAt(l) != null ? l : null)) : text.map(() => null));
   const change = (next: string) => { origin.current = followLines(text, next.split('\n'), origin.current); onChange(next); };
-  const moved = text.map((l, i) => { const o = origin.current[i]; return o != null && l !== o ? bare(o) : null; });
+  const moved = text.map((l, i) => { const o = origin.current[i]; return o != null && l !== o ? bare(o, lang) : null; });
   const anyMoved = moved.some(Boolean);
   /** where each line starts in the text */
   const offsets = useMemo(() => { const o = [0]; for (const l of value.split('\n')) o.push(o[o.length - 1] + l.length + 1); return o; }, [value]);
   const lineAt = (pos: number) => { let i = 0; while (i + 1 < offsets.length - 1 && offsets[i + 1] <= pos) i++; return i; };
   // a new line is indented like the code's instructions
-  const indent = (() => { for (const l of text) if (instructionAt(l) != null && !/^\s*[A-Za-z_]\w*:/.test(l)) return /^\s*/.exec(l)![0]; return '        '; })();
+  const indent = (() => { for (const l of text) if (instructionAt(l) != null && !hasLabel(l, lang)) return /^\s*/.exec(l)![0]; return '        '; })();
   const lineH = () => { const el = ta.current; return el ? parseFloat(getComputedStyle(el).lineHeight) || 20 : 20; };
   const show = (i: number) => {
     const el = ta.current; if (!el) return;
@@ -198,7 +221,7 @@ function PatchEditor({ value, onChange, start, end, lines, code, errorLine, orig
       // a new line at the instructions' indent (as typed: Ctrl+Z in the editor takes it back)
       e.preventDefault();
       const l = text[lineAt(pos)];
-      const lead = instructionAt(l) != null && !/^\s*[A-Za-z_]\w*:/.test(l) ? /^\s*/.exec(l)![0] : indent;
+      const lead = instructionAt(l) != null && !hasLabel(l, lang) ? /^\s*/.exec(l)![0] : indent;
       if (!document.execCommand('insertText', false, '\n' + lead)) el.setRangeText('\n' + lead, el.selectionStart, el.selectionEnd, 'end');
     }
   };
@@ -220,7 +243,7 @@ function PatchEditor({ value, onChange, start, end, lines, code, errorLine, orig
               const ln = lines?.[i] ?? null, hasCode = !!ln && ln.len > 0;
               const cy = counting && hasCode && code ? lineCycles(code, start, ln!) : null;
               return <div key={i} className={cx('pe-gl', i === cur && 'cur', errorLine === i + 1 && 'err', hasCode && ln!.addr + ln!.len > end && 'past')}>
-                <span className="pe-adr">{ln && (hasCode || labelOnly(l)) ? h4(ln.addr) : ''}</span><span className="pe-hex">{hasCode ? bytesOf(ln!) : ''}</span>
+                <span className="pe-adr">{ln && (hasCode || labelOnly(l, lang)) ? h4(ln.addr) : ''}</span><span className="pe-hex">{hasCode ? bytesOf(ln!) : ''}</span>
                 {counting && <span className={cx('pe-cy', cy?.varies && 'varies')}>{cy?.text ?? ''}</span>}
               </div>;
             })}
@@ -229,7 +252,7 @@ function PatchEditor({ value, onChange, start, end, lines, code, errorLine, orig
         <div className="pe-code">
           <div className="pe-band" style={{ transform: `translateY(${cur * 20 - top}px)` }} />
           {errorLine != null && errorLine <= text.length && <div className="pe-band err" style={{ transform: `translateY(${(errorLine - 1) * 20 - top}px)` }} />}
-          <textarea id="patch-code" ref={ta} className="mono" value={value} spellCheck={false} wrap="off" aria-label={`Code at $${h4(start)} (Kick Assembler)`}
+          <textarea id="patch-code" ref={ta} className="mono" value={value} spellCheck={false} wrap="off" aria-label={`Code at $${h4(start)} (${LANG_TITLE[lang]})`}
             onChange={e => change(e.target.value)} onKeyDown={onKeyDown} onSelect={sync} onKeyUp={sync} onClick={sync}
             onScroll={e => setTop(e.currentTarget.scrollTop)} />
         </div>

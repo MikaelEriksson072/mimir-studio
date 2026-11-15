@@ -82,4 +82,18 @@ describe('script suggestions', () => {
     expect(labels('        lda ', '')).toEqual(expect.arrayContaining(['tabell', 'SID_POT_X', 'pad1', 'loop_0870', 'sin']));
     expect(labels('        lda tabell,', '')).toEqual([]);
   });
+  it('in 64tass: its directives and functions, a label at the start of the line, ; for a comment', () => {
+    const t = (before: string, typed: string) => scriptSuggestions(before, typed, names, pads, { lang: '64tass' }).map(s => s.label).sort();
+    expect(t('        ', 'ld')).toEqual(['lda', 'ldx', 'ldy']);
+    expect(t('loop    ', 'ro')).toEqual(['rol', 'ror']);
+    expect(t('+       ', 'rt')).toEqual(['rti', 'rts']);
+    expect(t('        .', 'en')).toEqual(['.enc', '.endc', '.endif', '.endnamespace']);
+    expect(t('        lda ', 'T')).toEqual(['tabell', 'text_out', 'true']);
+    expect(t('        lda ', 'le')).toEqual(['len']);
+    expect(t('        lda tabell,', 'x')).toEqual([]);
+    expect(t('loop    sta pad1,', '')).toEqual([]);
+    expect(t('        nop ; ', 'ta')).toEqual([]);
+    // Kick Assembler's comment is no comment in 64tass, nor 64tass's in Kick Assembler
+    expect(labels('        nop ; ', 'ta')).toEqual(['tabell', 'tan']);
+  });
 });

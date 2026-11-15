@@ -1997,7 +1997,8 @@ Statusraden visar totalen. Markerade brancher är visningsläge och sparas inte 
 
 ### 10.2 Patchar
 
-En patch är ny kod som användaren skriver över ett intervall av de laddade bytena (`packages/core/src/patch.ts`).
+En patch är ny kod som användaren skriver över ett intervall av de laddade bytena (`packages/core/src/patch.ts`), i
+Kick Assembler eller 64tass: det språk projektets assembler har när patchen görs (`Patch.lang`, 11.8).
 
 - **Dialogen** (`P` på en markering, högerklick, kommandopaletten) heter *Patch $xxxx–$yyyy* och har:
   - ett namn (förslag `patch_xxxx`), unikt i projektet och också namnet på PRG-filen;
@@ -2075,7 +2076,8 @@ En patch är ny kod som användaren skriver över ett intervall av de laddade by
 
 ### 10.3 Skript
 
-Ett skript är Kick Assembler-kod som användaren skriver i Mimir för att arbeta med programmets byte, till exempel
+Ett skript är kod (Kick Assembler eller 64tass: det språk projektets assembler har när skriptet görs, `UserScript.lang`,
+11.8) som användaren skriver i Mimir för att arbeta med programmets byte, till exempel
 för att ändra en tabell eller köra en dekrypteringsloop över ett block (`packages/core/src/script.ts`). Skriptet
 sparas i projektet (`Project.userScripts`) och körs i Mimir. **Det skriptet ändrar i programmets byte går in i
 programmet:** listningen, källkoden, exporten och Build & Run har de nya byten. **Skriptets egen kod går aldrig in i
@@ -2708,8 +2710,35 @@ sätten, med varje banks etiketter (`al 8009 .bank00:start`).
 with*), som användaren kan ändra. CLI:t: `--assembler kick|64tass`, och `mimir verify … --64tass [exe]` bygger också med
 riktiga 64tass.
 
-**Skript och patchar** skrivs tills vidare i Kick Assemblers syntax även i ett 64tass-projekt (de körs i Mimir och
-assembleras av den inbyggda Kick-assemblern); en patch som exporteras som egen källa (`patches/`) är Kick-källa.
+**Skript och patchar** (10.2, 10.3) skrivs i projektets språk: en patch eller ett skript får det språk projektets
+assembler har när det görs (`Patch.lang`, `UserScript.lang`: `kickass` eller `64tass`, `code-lang.ts`) och behåller
+det, så ett skript i Kick Assembler assembleras fortfarande som Kick i ett projekt som bytts till 64tass (och tvärtom);
+skriptbiblioteket har språket med sig. Kod i 64tass assembleras av den inbyggda 64tass-assemblern med programmets namn,
+som riktiga 64tass läser den (uppmätt): en mnemonic med gemener i början av raden är instruktionen, ett annat ord där
+en etikett (med eller utan kolon); `_namn` är lokal till kodetiketten före (en konstant öppnar ingen ny) och nås som
+`loop._namn`; `.warn` skriver ut (i skriptets utdata som Kicks `.print`) och `.error` stoppar. Varje rads adress i
+patchdialogen kommer från assemblern (`linePcs`): en etikett av Mimirs före varje rad, som för Kick, skulle bli den som
+de lokala etiketterna hör till. Patchdialogen läser raderna i patchens språk (kommentaren, etiketten i början), och en ny
+patch får listningens rader i projektets språk (med `.cpu "6502i"` när de har en odokumenterad opkod). Exporten skriver
+varje patch för projektets assembler (`patches/<namn>.asm`: `64tass -a -C --cbm-prg -o <namn>.prg <namn>.asm`, namnen
+som `namn = $xxxx`); en patch i det andra språket som sina bytes, med koden som kommentar. Ett skripts kopior av block
+till scratchpads (koden som listningen skriver den: `; etikett:`, `PET_RETURN = $0d`, `.enc "none"`, `.cpu "6502i"`),
+scratchpadarnas startinnehåll, bevakningslistan (`sta @w $0400,x`), *Also write into a scratchpad*, editorns förslag
+(64tass direktiv och funktioner, `;`, en etikett utan kolon) och färgningen (`tass64`) följer skriptets språk.
+
+**Mallarna** (10.3) är skrivna i Kick Assembler och skrivs som 64tass när skriptet görs i ett 64tass-projekt
+(`templateSource`, `kickToTass` i `code-convert.ts`): `//` blir `;`, `.var`/`.const` blir `namn = värde` (med
+likhetstecknet där det stod), `!:`/`!+` de anonyma `+` (och `-` när en `!-` går bakåt), `.if (…) { } else { }` blir
+`.if`/`.else`/`.endif`, `.if (…) .error "…"` blir `.cerror (…), "…"`, `lda.abs` `lda @w`, de odokumenterade opkoderna
+får 64tass namn och `.cpu "6502i"`. Testerna kör varje mall i båda språken (samma körningar, samma byte) och bygger
+dem med riktiga 64tass.
+
+**Write in 64tass.** Ett skript i Kick Assembler i ett 64tass-projekt visar sitt språk markerat bredvid kontrollen, och
+knappen *Write in 64tass* skriver om koden och scratchpadarnas startinnehåll (`kickToTass`). Skriptet flyttas bara när
+det ger samma byte på samma adresser och startar på samma ställe (`scriptIn64tass`); det som inte går att skriva om
+(`.for`, makron, funktioner, texter, tecken inom `' '`, namngivna `!`-etiketter) sägs med sin rad, och skriptet stannar
+i Kick Assembler. Patchdialogen har samma knapp för en patch i Kick Assembler (`patchIn64tass`: samma byte över
+intervallet). Ctrl+Z tar tillbaka det.
 
 **Uppmätt:** riktiga 64tass bygger alla integrationsfall (demot i alla inställningsvarianter, binära block, snapshots,
 showcasen, texter i alla kodningar, PETSCII-styrkoder, utelämnade block och skräp, relokerade block, alla opkoder,
@@ -4960,7 +4989,7 @@ export default {
 
 ### 14.3 Monaco-integration
 
-- Språket `tass64` (Monarch) för ett projekt skrivet för 64tass (11.8): `;`-kommentarer och `.comment`, 64tass direktiv och funktioner, etiketter i början av raden, `@w`/`@b`, mnemonics med 64tass namn. Hover och gå till definition gäller båda språken (i 64tass också `namn = värde` och `namn .namespace`).
+- Språket `tass64` (Monarch) för ett projekt skrivet för 64tass (11.8): `;`-kommentarer och `.comment`, 64tass direktiv och funktioner, etiketter i början av raden, `@w`/`@b`, mnemonics med 64tass namn. Hover och gå till definition gäller båda språken (i 64tass också `namn = värde` och `namn .namespace`); ett skript i 64tass har också förslagen och glödlampan (*Also write into a scratchpad*) i sitt språk.
 - Språket `kickass` (Monarch): kommentarer, `#import`, direktiv (`.pc`, `.byte`, `.word`, `.text`, `.fill`, `.label`, `.var`, `.encoding`, `.macro` …), makron (`BasicUpstart2`, `LoadSid`), etikettdefinitioner, dokumenterade och odokumenterade mnemonics (olika färger), hårdvarusymboler, tal (`$`, `%`, decimal), strängar, `#<`/`#>`.
 - **Hover:** hårdvaruregister visar adress och beskrivning; etiketter visar adress, blocktyp och antal referenser.
 - **Gå till definition** (Ctrl+klick, F12) på etiketter.
@@ -5271,7 +5300,7 @@ Demo, går igenom turen med F2, hittar alla blocktyper i Blocks-vyn och verifier
 | **M3 VICE live** | Binary monitor: brytpunkter, minnes-/registervy, dynamisk täckning, hot reload |
 | **M4 Strukturer** | Användardefinierade structs, makroigenkänning (upprepade kodmönster → `.macro`), lokala etiketter (`!loop:`), scopes per rutin |
 | **M5 Format** | `.d64`-import, `.sid`-import (PSID/RSID), `.crt`, Koala/Art Studio-export av bitmappar |
-| **M6 Fler mål** | Export till 64tass (klar, 11.8), ACME, ca65; skript och patchar i 64tass-syntax; plugin-API för egna heuristiker |
+| **M6 Fler mål** | Export till 64tass med skript och patchar i 64tass (klart, 11.8), ACME, ca65; plugin-API för egna heuristiker |
 
 ## 18. Risker och öppna frågor
 

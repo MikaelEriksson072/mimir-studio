@@ -274,8 +274,10 @@ export interface Patch {
   start: Addr;
   /** the end of the range it replaces (excluded); with `over` the code may run past it */
   end: Addr;
-  /** the code as the user wrote it (Kick Assembler) */
+  /** the code as the user wrote it, in `lang` */
   source: string;
+  /** what the code is written in: 64tass, else (missing) Kick Assembler */
+  lang?: '64tass';
   fill: PatchFill;
   over: boolean;
   /** what it writes from `start`: the code, then the fill */
@@ -294,8 +296,9 @@ export interface Patch {
   script?: string;
 }
 
-/** The language a user script is written in (spec 10.3); Kick Assembler so far. */
-export type ScriptLang = 'kickass';
+/** The language a user script or a patch is written in (spec 10.2, 10.3): Kick Assembler or 64tass, as the project's
+ *  assembler was when it was made (code-lang.ts). */
+export type ScriptLang = 'kickass' | '64tass';
 
 /**
  * A scratchpad of a user script: memory of the script's own at an address, cleared to `fill` before each run, whose
@@ -1059,6 +1062,9 @@ export interface AssembleResult {
   starts: Uint8Array;
   /** 1 at an instruction's first byte (not a data directive's), in the entry file */
   ops: Uint8Array;
+  /** (64tass) the program counter at each line of the entry file the final pass assembled, and where it ended */
+  linePcs?: Map<number, number>;
+  endPc?: number;
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {

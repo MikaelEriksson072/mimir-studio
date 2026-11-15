@@ -147,12 +147,12 @@ export function exportFiles(project: Project, R: RenderResult, S: Settings, veri
   const notes = notesExport(project, R, S, generated);
   if (notes) out[notes[0]] = notes[1];
   out[`${project.name}.mimir.json`] = JSON.stringify(serializeProject(project), null, 1);
-  // the input files as they were loaded; each patch as a Kick Assembler source of its own
+  // the input files as they were loaded; each patch as a source of its own, for the project's assembler
   for (const f of projectUnpatched(project)) out[`original/${f.name}`] = makePrg(f.load, f.bytes);
   if (project.cart) out[`original/${project.cart.name}`] = project.cart.crt;
   for (const p of project.patches ?? []) {
     const from = project.files.find(f => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length)?.name;
-    out[`patches/${patchFileName(p.name, 'asm')}`] = patchSource(R, S, p, from);
+    out[`patches/${patchFileName(p.name, 'asm')}`] = patchSource(R, S, p, from, assemblerOf(S));
   }
   if (verified && verified.ok) for (const r of verified.results) if (r.prg) out[`${S.outDir}/${r.path.replace(/\.asm$/, '.prg')}`] = r.prg;
   const crt = verified && verified.ok ? builtCartridge(project, verified.results.map(r => r.prg)) : null;

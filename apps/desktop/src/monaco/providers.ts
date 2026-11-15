@@ -1,6 +1,7 @@
-/* Hover (registers, labels, opcodes) and go-to-definition (Ctrl+click, F12) for Kick sources. */
+/* Hover (registers, labels, opcodes) and go-to-definition (Ctrl+click, F12) for the sources of both assemblers, and
+ * a script's suggestions and light bulb in its language (Kick Assembler or 64tass). */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptPad } from '@mimir/core';
+import { driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptLang, type ScriptPad } from '@mimir/core';
 import { KICKASS } from './kickass-language';
 import { TASS64 } from './tass-language';
 
@@ -17,7 +18,9 @@ export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly
 /** the command a store's code actions run (scriptContext.padStore) */
 export const PAD_STORE_CMD = 'mimir.script.padStore';
 
-/** what a script's code may write besides names: Kick Assembler's directives and functions */
+/** what a script's code may write besides names: Kick Assembler's directives and functions, and 64tass's */
+const TASS_WORDS = ['.byte', '.word', '.text', '.null', '.fill', '.if', '.elsif', '.else', '.endif', '.warn', '.error', '.cerror', '.cwarn', '.enc', '.cpu', '.logical', '.here',
+  '.block', '.bend', '.namespace', '.endnamespace', '.comment', '.endc', 'len', 'format', 'true', 'false'];
 const SCRIPT_WORDS = ['.byte', '.word', '.text', '.fill', '.const', '.var', '.label', '.eval', '.for', '.while', '.if', 'else', '.print', '.error', '.encoding', '.align', '.pseudopc',
   'round', 'floor', 'ceil', 'abs', 'min', 'max', 'mod', 'pow', 'sqrt', 'sin', 'cos', 'tan', 'toRadians', 'toDegrees', 'toIntString', 'toHexString', 'toBinaryString', 'PI', 'true', 'false'];
 
@@ -30,6 +33,9 @@ const AT_MNEMONIC = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?$/;
 /** an instruction's operand after a comma: `,x` or `,y` (the index register), never a name */
 const AT_INDEX = /^\s*(?:(?:![A-Za-z_]\w*|!|[A-Za-z_]\w*)\s*:\s*)?[A-Za-z]{3}(?:\.[A-Za-z]+)?\s+[^/]*,\s*$/;
 
+/** the same for 64tass: a label at the start of the line, with or without its colon (`loop`, `+`), then the mnemonic */
+const TASS_AT_MNEMONIC = /^(?:\s*|(?:[A-Za-z_]\w*:?|[+-])\s+)$/;
+const TASS_AT_INDEX = /^(?:(?:[A-Za-z_]\w*:?|[+-])\s+|\s+)[A-Za-z]{3}\s+[^;]*,\s*$/;
 export interface ScriptSuggestion { label: string; kind: 'link' | 'pad' | 'name' | 'hardware' | 'mnemonic' | 'word'; detail?: string }
 
 /**
@@ -40,8 +46,9 @@ export interface ScriptSuggestion { label: string; kind: 'link' | 'pad' | 'name'
  * a dot the rest of the names that start so (`music.` → `.location`, `.init`, `.play`, `.size`). After an
  * instruction's comma nothing (the index register: `x` is not SID_POT_X), nor in a comment.
  */
-export function scriptSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[], more: { links?: ReadonlySet<string>; kinds?: ReadonlyMap<string, string> } = {}): ScriptSuggestion[] {
-  if (/\/\//.test(before) || AT_INDEX.test(before)) return [];
+export function scriptSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[], more: { links?: ReadonlySet<string>; kinds?: ReadonlyMap<string, string>; lang?: ScriptLang } = {}): ScriptSuggestion[] {
+  const tass = more.lang === '64tass', words = tass ? TASS_WORDS : SCRIPT_WORDS, atMnemonic = tass ? TASS_AT_MNEMONIC : AT_MNEMONIC;
+  if ((tass ? before.includes(';') : /\/\//.test(before)) || (tass ? TASS_AT_INDEX : AT_INDEX).test(before)) return [];
   const dot = before.endsWith('.');
   const t = (dot ? '.' : '') + typed.toLowerCase();
   // a word that starts with what is typed and is more than it (a word typed in full needs no box)
@@ -49,7 +56,7 @@ export function scriptSuggestions(before: string, typed: string, names: Readonly
   // a part of a name after a `_` that starts with what is typed (two letters at least: `x` finds no SID_POT_X)
   const inPart = (s: string) => t.length >= 2 && /^[a-z_]/.test(t) && s.toLowerCase().split('_').slice(1).some(p => p.startsWith(t));
   // a directive where a mnemonic goes (not `music.init` or a number)
-  if (dot && AT_MNEMONIC.test(before.slice(0, -1))) return SCRIPT_WORDS.filter(x => x[0] === '.' && starts(x)).map(label => ({ label, kind: 'word' as const }));
+  if (dot && atMnemonic.test(before.slice(0, -1))) return words.filter(x => x[0] === '.' && starts(x)).map(label => ({ label, kind: 'word' as const }));
   // after a name and its dot the rest of the names that start with them (`music.` → `.location`)
   if (dot) {
     const head = /(?<![\w.$%!])([A-Za-z_]\w*)\.$/.exec(before)?.[1];
@@ -57,7 +64,7 @@ export function scriptSuggestions(before: string, typed: string, names: Readonly
     return [...names].filter(([n]) => n.startsWith(`${head}.`) && starts(n.slice(head.length)))
       .map(([n, a]) => ({ label: n.slice(head.length), kind: 'name' as const, detail: `$${h4(a)} · ${more.kinds?.get(n) ?? 'label'}` }));
   }
-  if (AT_MNEMONIC.test(before)) return typed ? [...new Set(OPC.filter(o => !o.ill).map(o => o.mn.toLowerCase()))].filter(starts).map(label => ({ label, kind: 'mnemonic' as const })) : [];
+  if (atMnemonic.test(before)) return typed ? [...new Set(OPC.filter(o => !o.ill).map(o => o.mn.toLowerCase()))].filter(starts).map(label => ({ label, kind: 'mnemonic' as const })) : [];
   const fits = (s: string) => !typed || starts(s) || inPart(s);
   const own = new Set(pads.flatMap(p => [p.name, `${p.name}_end`]));
   const out: ScriptSuggestion[] = [];
@@ -70,7 +77,7 @@ export function scriptSuggestions(before: string, typed: string, names: Readonly
     const kind = own.has(n) ? 'pad' : isHardware(n) ? 'hardware' : 'name';
     out.push({ label: n, kind, detail: `$${h4(a)} · ${kind === 'pad' ? 'scratchpad' : kind === 'hardware' ? 'hardware' : more.kinds?.get(n) ?? 'label'}` });
   }
-  for (const x of SCRIPT_WORDS) if (x[0] !== '.' && fits(x)) out.push({ label: x, kind: 'word' });
+  for (const x of words) if (x[0] !== '.' && fits(x)) out.push({ label: x, kind: 'word' });
   return out;
 }
 
@@ -82,7 +89,7 @@ export function dottedNameAt(line: string, at: number): string | null {
 
 export function registerProviders(monaco: typeof Monaco): void {
   // a script's code: what fits where the cursor is (scriptSuggestions); Tab takes one, Enter always ends the line
-  monaco.languages.registerCompletionItemProvider(KICKASS, {
+  for (const lang of [KICKASS, TASS64]) monaco.languages.registerCompletionItemProvider(lang, {
     triggerCharacters: ['.'],
     provideCompletionItems(model, pos) {
       if (model.uri.scheme !== 'script') return { suggestions: [] };
@@ -92,7 +99,7 @@ export function registerProviders(monaco: typeof Monaco): void {
       const K = monaco.languages.CompletionItemKind;
       const kind = { link: K.Reference, pad: K.Struct, name: K.Variable, hardware: K.Constant, mnemonic: K.Keyword, word: K.Function } as const;
       const order = { link: '0', pad: '1', name: '2', hardware: '3', mnemonic: '4', word: '5' } as const;
-      return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads, scriptContext).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
+      return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads, { ...scriptContext, lang: lang === TASS64 ? '64tass' : 'kickass' }).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
     },
   });
   // (the hover and go-to-definition serve both assemblers' sources: Kick Assembler's and 64tass's, spec 11.8)
@@ -140,11 +147,11 @@ export function registerProviders(monaco: typeof Monaco): void {
   // a script's store (sta $ff40,x) written into a scratchpad too: the light bulb on its line, a click or Ctrl+. gives a
   // scratchpad of the script's or a new one, and the line that writes into it goes in after it (ScriptsView)
   monaco.editor.registerCommand(PAD_STORE_CMD, (_: unknown, line: number, pad: number) => scriptContext.padStore?.(line, pad));
-  monaco.languages.registerCodeActionProvider(KICKASS, {
+  for (const lang of [KICKASS, TASS64]) monaco.languages.registerCodeActionProvider(lang, {
     provideCodeActions(model, range) {
       const none = { actions: [], dispose() { } };
       if (model.uri.scheme !== 'script' || !scriptContext.padStore) return none;
-      const pads = scriptContext.pads, st = padStoreAt(model.getLinesContent(), range.startLineNumber, pads);
+      const pads = scriptContext.pads, st = padStoreAt(model.getLinesContent(), range.startLineNumber, pads, lang === TASS64 ? '64tass' : 'kickass');
       if (!st || 'why' in st) return none;
       const done = new Set(st.into.map(i => i.pad));
       const act = (title: string, pad: number) => ({ title, kind: 'quickfix', isPreferred: false, command: { id: PAD_STORE_CMD, title, arguments: [st.line, pad] } });

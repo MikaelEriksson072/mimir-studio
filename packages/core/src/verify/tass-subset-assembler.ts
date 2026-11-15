@@ -125,8 +125,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       let label: string | undefined, rest = line;
       if (line && !/^\s/.test(line)) {
         // at the start of a line: a label (`name:`, `name`, `+`, `-`), else `*` or a directive
+        // (a mnemonic there, in lower case, is the instruction, as 64tass reads `lda #1` at the start of a line)
         const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*|[+-])(:?)(?=\s|$|=)/);
-        if (m) { label = m[1]; rest = line.slice(m[0].length); }
+        if (m && !(!m[2] && /^[a-z]{3}$/.test(m[1]) && TASS_ENC[m[1].toUpperCase()])) { label = m[1]; rest = line.slice(m[0].length); }
       }
       const body = rest.trim();
       if (inComment) { if (/^\.endc(omment)?$/.test(body)) inComment = false; return; }
@@ -281,7 +282,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     len: (x: Value) => { if (x instanceof Uint8Array || typeof x === 'string' || Array.isArray(x)) return x.length; throw new Error(`len() of a ${typeName(x)}`); },
     format: (f: string, ...args: Value[]) => format(f, args),
   };
+  /** the code label a local label (`_loop`) belongs to: the last one before it (a constant opens no new scope) */
+  let scope = '';
   const lookup = (name: string): Value | undefined => {
+    if (name.startsWith('_') && scope) { const v = lookup(`${scope}.${name}`); if (v !== undefined) return v; }
     for (let i = spaces.length; i >= 0; i--) { const k = keyIn(spaces.slice(0, i), name); if (syms.has(k)) return syms.get(k); }
     if (name in builtins) return builtins[name];
     const ext = names?.get(name);
@@ -374,6 +378,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   // byte goes, and `outer` the offsets of the .logical blocks around
   let off = 0, outer: number[] = [], first = -1;
   const lines = new Int32Array(0x10000), starts = new Uint8Array(0x10000), ops = new Uint8Array(0x10000);
+  /** the program counter at each line of the entry file the final pass assembles (not those of an .if not taken) */
+  const linePcs = new Map<number, number>();
+  const prints: string[] = [];
+  let endPc = 0;
   let fresh = false;
   const emit = (b: number, st: Stmt) => {
     b &= 0xff;
@@ -396,7 +404,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
 
   const runPass = (final: boolean) => {
     mem = new Uint8Array(0x10000); written = new Uint8Array(0x10000); blocks = [];
-    pc = opts.pc ?? 0; off = 0; outer = []; enc = 'none'; cpu = '6502'; unresolved = []; missing = false; first = -1; spaces = [];
+    pc = opts.pc ?? 0; off = 0; outer = []; enc = 'none'; cpu = '6502'; unresolved = []; missing = false; first = -1; spaces = []; scope = '';
     anonPrev = anon; anon = [];
     let changed = false;
     const defs = new Set<string>();
@@ -430,16 +438,20 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           continue;
         }
         if (!active()) continue;
-        // a label: an anonymous one, `name = value`, `name := value`, a namespace, or the address here
+        if (final && st.file === entryPath) linePcs.set(st.line, pc);
+        // a label: an anonymous one, `name = value`, `name := value`, a namespace, or the address here; one that
+        // starts with _ is local to the code label before it (`loop._x`)
         if (st.label === '+' || st.label === '-') anon.push({ dir: st.label, v: pc });
         else if (st.label) {
-          if ((m = s.match(/^(:?)=(?!=)\s*(.+)$/))) { const v = ev(P(m[2])); if (v != null) define(st.label, v, st, m[1] === ':'); report(st); continue; }
+          const local = st.label.startsWith('_') && scope ? `${scope}.${st.label}` : st.label;
+          if ((m = s.match(/^(:?)=(?!=)\s*(.+)$/))) { const v = ev(P(m[2])); if (v != null) define(local, v, st, m[1] === ':'); report(st); continue; }
           if (/^\.(namespace|block)\b/.test(s)) {
             define(st.label, { space: keyIn(spaces, st.label) } as Space, st);
             spaces = [...spaces, st.label];
             continue;
           }
-          define(st.label, pc, st);
+          define(local, pc, st);
+          if (!st.label.startsWith('_')) scope = st.label;
         }
         if (!s) continue;
         if (/^\.(endnamespace|bend|endblock)$/.test(s)) { if (!spaces.length) E(`${s} without .namespace`, st); else spaces = spaces.slice(0, -1); continue; }
@@ -462,6 +474,16 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             else { from = typeof args[k] === 'string' ? args[k].codePointAt(0) : numberOf(args[k]); to = typeof args[k + 1] === 'string' ? args[k + 1].codePointAt(0) : numberOf(args[k + 1]); k += 2; }
             const at = numberOf(args[k++]);
             for (let c = from; c <= to; c++) table.set(String.fromCodePoint(c), (at + c - from) & 0xff);
+          }
+          continue;
+        }
+        // a message (64tass prints it as a warning; a script's output shows it as Kick Assembler's .print), an error
+        if ((m = s.match(/^\.(warn|error)\b\s*(.*)$/))) {
+          const parts = splitTop(m[2], ',').filter(a => a !== '').map(a => ev(P(a)));
+          report(st);
+          if (final && parts.every(p => p != null)) {
+            const text = parts.map(p => (typeof p === 'string' ? p : typeof p === 'number' || typeof p === 'boolean' ? String(numberOf(p)) : '')).join('');
+            if (m[1] === 'warn') prints.push(text); else E(text || '.error', st);
           }
           continue;
         }
@@ -545,6 +567,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     }
     if (cond.length && final) E(`.if without .endif (${cond.length} open)`);
     if (outer.length && final) E(`.logical without .here (${outer.length} open)`);
+    if (final) endPc = pc;
     return changed;
   };
   for (pass = 1; pass <= 12; pass++) { const ch = runPass(false); if (!ch && !missing && pass > 1) break; }
@@ -558,5 +581,5 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
   // the memory map: each `* =` with a name as its comment (`* = $0810 ; Code`), to the next one
   const blockList = blocks.filter(b => b.name).map((b, i, arr) => ({ start: b.start, name: b.name, end: i + 1 < arr.length ? arr[i + 1].start - 1 : max }));
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints: [], first, external, lines, starts, ops };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts, ops, linePcs, endPc };
 }

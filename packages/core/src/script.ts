@@ -1,6 +1,7 @@
 /* =====================================================================
- * User scripts (spec 10.3): Kick Assembler code the user writes in Mimir to work on the program's bytes, such as
- * running a decryption loop over a block. A script is assembled with the built-in assembler, with the program's
+ * User scripts (spec 10.3): code the user writes in Mimir to work on the program's bytes, such as running a decryption
+ * loop over a block, in Kick Assembler or 64tass (its `lang`: the project's assembler's when it was made, code-lang.ts).
+ * A script is assembled with the built-in assembler of its language, with the program's
  * labels and zero-page variables (as the listing names them), the hardware names and its scratchpads at hand, and
  * run in Sindri's 6510 on a copy of memory as LOAD leaves it: the files at their load addresses, plain RAM (no ROMs,
  * no I/O, no interrupts). It starts at its `start` label, else at its first byte, and ends at its last RTS (it is
@@ -13,7 +14,7 @@ import { Cpu, type Bus } from '@mimir/sindri';
 import type { Addr, AnalysisResult, Block, BlockKind, Cartridge, FileInput, ListingLine, LoadedFile, MusicInfo, Patch, Project, RenderResult, ScriptInit, ScriptPad, ScriptPadSource, Settings, UserScript } from './types';
 import { musicVarName } from './render/kick';
 import { monitorChar } from './c64/monitor';
-import { assemble } from './verify/kick-subset-assembler';
+import { assembleIn, codeLabels, codeOfLine, langIs, langOf, lineComment, needsTassCpu, setsItsPlace, splitLabel, type ScriptLang } from './code-lang';
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
 import { fileSpaces } from './spaces';
 import { OPC } from './cpu/opcodes';
@@ -173,21 +174,27 @@ export function scriptName(taken: readonly { name: string }[], base = 'script'):
 export const padName = (pads: readonly ScriptPad[]): string => { for (let i = 1; ; i++) if (!pads.some(p => p.name === `pad${i}`)) return `pad${i}`; };
 
 /**
- * A new script: a comment that says what happens when it runs, `body` (lines of the listing, say) and the RTS that
- * ends it. No `* =`: Mimir finds a place for its code. No scratchpad: one is added for data kept outside the program.
+ * A new script in `lang` (the project's assembler's): a comment that says what happens when it runs, `body` (lines of
+ * the listing, say) and the RTS that ends it. No `* =`: Mimir finds a place for its code. No scratchpad: one is added
+ * for data kept outside the program. A line of the body that starts at the left edge is indented, unless it is a
+ * label (or, in 64tass, a definition or a directive that stays there).
  */
-export function newScript(taken: readonly { name: string }[], body: readonly string[] = [], id = Math.random().toString(36).slice(2, 10)): UserScript {
+export function newScript(taken: readonly { name: string }[], body: readonly string[] = [], id = Math.random().toString(36).slice(2, 10), lang: ScriptLang = 'kickass'): UserScript {
   const name = scriptName(taken);
-  const indent = '        ';
-  const lines = body.length ? body.map(l => (/^\S/.test(l) && !/^[!A-Za-z_]\w*:/.test(l) ? indent + l : l)) : [`${indent}// your code here: the program's labels, variables and tables can be used`];
+  const indent = '        ', c = lineComment(lang), tass = langIs(lang) === '64tass';
+  // (64tass: a word at the start of a line that is not an instruction is a label there, `loop`, `_l`, `+`)
+  const keep = (l: string) => (tass ? !!splitLabel(l, lang).label || /^[.*;]/.test(l) : /^[!A-Za-z_]\w*:/.test(l));
+  const lines = body.length ? body.map(l => (/^\S/.test(l) && !keep(l) ? indent + l : l)) : [`${indent}${c} your code here: the program's labels, variables and tables can be used`];
+  // (64tass assembles an undocumented opcode only with .cpu "6502i")
+  if (tass && needsTassCpu(lines)) lines.unshift(`${indent}.cpu "6502i"`);
   const source = [
-    `// ${name}: runs in Mimir, from its first line to its last RTS. What it changes in the`,
-    '// program\'s bytes goes into the program and its .asm; this code itself never does.',
+    `${c} ${name}: runs in Mimir, from its first line to its last RTS. What it changes in the`,
+    `${c} program's bytes goes into the program and its .asm; this code itself never does.`,
     ...lines,
     `${indent}rts`,
     '',
   ].join('\n');
-  return { id, name, lang: 'kickass', source, pads: [] };
+  return { id, name, lang: langIs(lang), source, pads: [] };
 }
 
 export interface ScriptProblem {
@@ -312,24 +319,25 @@ export function withAddressNames(names: Map<string, Addr>, source: string): Map<
  */
 export interface ScriptAccess extends ScriptRange { line: number; write: boolean; text: string }
 
-/** a line of code without its comment and its strings, and without the label it starts with */
-export const codeOf = (line: string) => line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '').replace(/"(?:[^"\\]|\\.)*"/g, '""')
-  .replace(/^\s*(?:[A-Za-z_][\w.]*|![A-Za-z_]\w*|!)\s*:/, '').trim();
+/** a line of code without its comment and its strings, and without the label it starts with (code-lang.ts) */
+export const codeOf = (line: string, lang?: ScriptLang): string => codeOfLine(line, lang);
 
 /** The script's instructions that read or write the program's memory at an address (not by a pointer: (zp),y and
  *  (zp,x) can go anywhere), from its assembled bytes and its lines. */
-function programAccesses(asm: { mem: Uint8Array; ops: Uint8Array; lines: Int32Array }, source: string): ScriptAccess[] {
+function programAccesses(asm: { mem: Uint8Array; ops: Uint8Array; lines: Int32Array }, source: string, lang?: ScriptLang): ScriptAccess[] {
   const src = source.split(/\r?\n/);
-  // the script's own labels: where its code and data are (an operand naming one is the script's own memory)
-  const own = new Set([...source.matchAll(/^\s*([A-Za-z_]\w*)\s*:/gm)].map(m => m[1]));
-  const ownRef = (text: string) => /![A-Za-z_+-]|(^|[\s(,#<>+\-*/])\*(?=\s*(?:[+\-),]|$))/.test(text) || [...text.matchAll(/[A-Za-z_]\w*/g)].some(m => own.has(m[0]));
+  // the script's own labels: where its code and data are (an operand naming one is the script's own memory); a
+  // local or anonymous one (Kick Assembler's !loop, 64tass's + and -) and * are its own too
+  const own = codeLabels(source, lang), tass = langIs(lang) === '64tass';
+  const ownRef = (text: string) => (tass ? /(^|[\s(,#<>])[+-]+(?=\s*(?:[),]|$))/ : /![A-Za-z_+-]/).test(text) || /(^|[\s(,#<>+\-*/])\*(?=\s*(?:[+\-),]|$))/.test(text)
+    || [...text.matchAll(/[A-Za-z_]\w*/g)].some(m => own.has(m[0]));
   const out: ScriptAccess[] = [];
   for (let a = 0; a < 0x10000; a++) {
     if (!asm.ops[a]) continue;
     const o = OPC[asm.mem[a]];
     const reach = o.mode === 'abs' ? 1 : o.mode === 'abx' || o.mode === 'aby' ? 256 : o.mode === 'ind' ? 2 : 0;
     if (!reach || (!o.access && o.mode !== 'ind')) continue;
-    const line = asm.lines[a], text = codeOf(src[line - 1] ?? '');
+    const line = asm.lines[a], text = codeOf(src[line - 1] ?? '', lang);
     if (ownRef(text.replace(/^\S+/, ''))) continue;
     const v = asm.mem[(a + 1) & 0xffff] | asm.mem[(a + 2) & 0xffff] << 8;
     out.push({ start: v, end: Math.min(0x10000, v + reach), line, write: o.access === 'write' || o.access === 'rmw', text });
@@ -340,19 +348,14 @@ function programAccesses(asm: { mem: Uint8Array; ops: Uint8Array; lines: Int32Ar
 /** whether a line of code names a scratchpad (or the address after it) */
 const namesPad = (text: string, pad: ScriptPad) => new RegExp(`(^|[^\\w.])(${pad.name}|${pad.name}_end)(?!\\w)`).test(text);
 
-/** whether the script's first line of code says where it goes (`* =` or `.pc =`) */
-const setsItsPlace = (source: string): boolean => {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').split(/\r?\n/).map(l => l.replace(/\/\/.*$/, '').trim()).find(l => l);
-  return !!code && /^(?:\*|\.pc)\s*=/.test(code);
-};
-
 /**
  * Assemble the script and check it and its scratchpads: it can run when nothing is an error. Without a `* =` of its
  * own the code goes where scriptPlace finds room, away from the program's names it uses; its code and scratchpads are
  * memory of its own, so the only trouble an address can make is a name of the program that the script uses where
  * its own bytes are (it would read itself there): that is an error on the line that uses the name.
  */
-export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'>): ScriptCheck {
+export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>): ScriptCheck {
+  const lang = langIs(script.lang);
   const problems: ScriptProblem[] = [];
   checkInit(script.init, problems);
   const err = (msg: string, line?: number, pad?: number) => problems.push({ level: 'error', msg, ...(line ? { line } : {}), ...(pad != null ? { pad } : {}) });
@@ -370,7 +373,7 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
   });
   const pads = good.map(p => ({ start: p.start, end: p.start + p.size }));
   const names = withAddressNames(scriptNames(env, script.pads), script.source);
-  const at = (pc: number) => assemble({ 'script.asm': script.source }, 'script.asm', { names, pc });
+  const at = (pc: number) => assembleIn(lang, { 'script.asm': script.source }, 'script.asm', { names, pc });
   // assembled once where it may go, to learn how big it is and which of the program's names it uses
   const free = freePlace(env.files, 0x100, pads);
   let pc = free ?? 0xc000;
@@ -378,17 +381,17 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
   const padNames = new Set(script.pads.flatMap(p => [p.name, `${p.name}_end`]));
   const used = [...asm.external].filter(([n]) => !padNames.has(n) && !env.values?.has(n)).map(([name, line]) => ({ name, line, at: names.get(name)! }));
   let place: ScriptCheck['place'] = 'own';
-  if (!setsItsPlace(script.source) && !asm.errors.length) {
+  if (!setsItsPlace(script.source, lang) && !asm.errors.length) {
     let n = 0; while (pc + n < 0x10000 && asm.written[pc + n]) n++;
     const elsewhere = maskRanges(asm.written).filter(r => r.start !== pc);
     // not where the code reads or writes the program's memory (`sta $0400,x` over the code would change the code)
-    const reached = programAccesses(asm, script.source);
+    const reached = programAccesses(asm, script.source, lang);
     const p = scriptPlace(env.files, Math.max(1, n), [...pads, ...elsewhere, ...used.map(u => ({ start: u.at, end: u.at + 1 })), ...reached], free ?? undefined);
     if (!p) err('There is no room for the script\'s code: it uses the program\'s memory all over. Give it an address with * = at its top.');
     else { place = p.free ? 'free' : 'program'; if (p.at !== pc) { pc = p.at; asm = at(pc); } }
   }
   // (a line that names a scratchpad and reaches into it means the scratchpad)
-  const access = programAccesses(asm, script.source).filter(x => !good.some(p => p.start < x.end && x.start < p.start + p.size && namesPad(x.text, p)));
+  const access = programAccesses(asm, script.source, lang).filter(x => !good.some(p => p.start < x.end && x.start < p.start + p.size && namesPad(x.text, p)));
   for (const e of asm.errors) err(e.msg, e.file === 'script.asm' && e.line > 0 ? e.line : undefined);
   const code = maskRanges(asm.written);
   const bytes = code.reduce((n, r) => n + r.end - r.start, 0);
@@ -575,7 +578,7 @@ export class ScriptMachine implements ScriptMemory {
   /** how many times the script wrote over each byte of its own code */
   readonly overCode = new Uint32Array(0x10000);
 
-  constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
+  constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
     if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
     const { mem, own, mine, ctx } = this;
     this.loaded = loadedMask(env.files);
@@ -713,7 +716,7 @@ export class ScriptMachine implements ScriptMemory {
 }
 
 /** Run a script that checked ok to its end (ScriptMachine), in one go. */
-export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT): ScriptRun {
+export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT): ScriptRun {
   const m = new ScriptMachine(env, script, check, limit);
   m.runUntil(null);
   return m.result();
@@ -770,11 +773,11 @@ export interface PadDataError { error: string; line?: number }
  * with a line end as RETURN ($0d), or screen codes with a line end as spaces to the next row of 40. What it does not
  * write from its first byte to its last is `fill`.
  */
-export function padData(src: ScriptPadSource, at: Addr, size: number, names: ReadonlyMap<string, Addr>, fill = 0): { bytes: Uint8Array } | PadDataError {
+export function padData(src: ScriptPadSource, at: Addr, size: number, names: ReadonlyMap<string, Addr>, fill = 0, lang?: ScriptLang): { bytes: Uint8Array } | PadDataError {
   const tooBig = (n: number): PadDataError => ({ error: `It is ${n} bytes, and the scratchpad holds ${size}: make the scratchpad bigger, or write less.` });
   if (src.form === 'asm') {
     if (!src.text.trim()) return { bytes: new Uint8Array(0) };
-    const asm = assemble({ 'pad.asm': src.text }, 'pad.asm', { names, pc: at });
+    const asm = assembleIn(lang, { 'pad.asm': src.text }, 'pad.asm', { names, pc: at });
     const e = asm.errors[0];
     if (e) return { error: e.msg, ...(e.file === 'pad.asm' && e.line > 0 ? { line: e.line } : {}) };
     let lo = -1, hi = -1;
@@ -862,50 +865,56 @@ export const BLOCK_PAD_FORM: Readonly<Partial<Record<BlockKind, string>>> = {
 };
 
 /** a line of a block as the listing writes it, and where its bytes are (none for a comment or a label) */
-interface CodeLine { text: string; a?: Addr; n?: number }
+interface CodeLine { text: string; a?: Addr; n?: number; ill?: boolean }
 
-/** The block's lines as the listing writes them, with the program's names kept: its own label lines as comments (so
- *  the names stay the program's, and the bytes the same), a branch as `*±n` from where it is (so it branches the same
- *  way at any address); lines of no bytes (.pc, .pseudopc) left out, but a text's `.encoding` kept. */
+/** The block's lines as the listing writes them (in S.assembler's language), with the program's names kept: its own
+ *  label lines as comments (so the names stay the program's, and the bytes the same), a branch as `*±n` from where it
+ *  is (so it branches the same way at any address); lines of no bytes (.pc, .pseudopc) left out, but a text's
+ *  `.encoding` (64tass: `.enc`) kept. */
 function listingLines(lines: readonly ListingLine[], start: Addr, end: Addr, mem: Uint8Array, S: LineTextSettings, encoding: boolean): CodeLine[] {
   const out: CodeLine[] = [];
+  const c = S.assembler === '64tass' ? ';' : '//', enc = S.assembler === '64tass' ? '.enc' : '.encoding';
   for (const l of lines) {
     if (l.k === 'file' || l.k === 'hdr' || l.k === 'gfx' || l.k === 'blank' || !('a' in l) || l.a < start || l.a >= end) continue;
-    if (l.k === 'lbl') { out.push({ text: `// ${l.name}:` }); continue; }
+    if (l.k === 'lbl') { out.push({ text: `${c} ${l.name}:` }); continue; }
     if (l.k === 'cmt') { if (l.zp == null && !l.mark) out.push({ text: lineText(l, S) }); continue; }
-    if (l.k === 'dir' && !l.n) { if (encoding && l.tok[0]?.s === '.encoding') out.push({ text: lineText(l, S) }); continue; }
+    if (l.k === 'dir' && !l.n) { if (encoding && l.tok[0]?.s === enc) out.push({ text: lineText(l, S) }); continue; }
     let t = lineText(l, S);
     if (l.k === 'ins' && OPC[mem[l.a]].mode === 'rel') {
       const off = (((mem[(l.a + 1) & 0xffff] ^ 0x80) - 0x80) + 2);
-      const m = /^(\s*[A-Za-z]{3}(?:\.[A-Za-z]+)?\s+)([^\s/]+)(.*)$/.exec(t);
-      if (m) t = `${m[1]}*${off >= 0 ? '+' : ''}${off}${m[3].includes('//') ? m[3].replace('//', `// ${m[2]} ·`) : `  // ${m[2]}`}`;
+      const m = /^(\s*[A-Za-z]{3}(?:\.[A-Za-z]+)?\s+)([^\s/;]+)(.*)$/.exec(t);
+      if (m) t = `${m[1]}*${off >= 0 ? '+' : ''}${off}${m[3].includes(c) ? m[3].replace(c, `${c} ${m[2]} ·`) : `  ${c} ${m[2]}`}`;
     }
-    out.push({ text: t, ...('n' in l && l.n > 0 ? { a: l.a, n: l.n } : {}) });
+    out.push({ text: t, ...('n' in l && l.n > 0 ? { a: l.a, n: l.n } : {}), ...(l.k === 'ins' && OPC[mem[l.a]].ill ? { ill: true } : {}) });
   }
   return out;
 }
 
-/** The PETSCII control codes a text uses by name (`PET_RETURN`), defined as the source's head defines them */
-function petsciiConsts(text: string): string[] {
+/** The PETSCII control codes a text uses by name (`PET_RETURN`), defined as the source's head defines them; in 64tass
+ *  also the CPU of the undocumented opcodes when a line has one */
+function petsciiConsts(text: string, lang: ScriptLang = 'kickass', ill = false): string[] {
   const used = new Set(text.match(/\bPET_[A-Z0-9_]+\b/g) ?? []);
-  return Object.entries(PETSCII_CONTROLS).filter(([, c]) => used.has(c.name)).map(([b, c]) => `.const ${c.name} = @"\\$${h2(+b)}"`);
+  const tass = langIs(lang) === '64tass';
+  return [...(tass && ill ? ['.cpu "6502i"'] : []),
+    ...Object.entries(PETSCII_CONTROLS).filter(([, c]) => used.has(c.name)).map(([b, c]) => (tass ? `${c.name} = $${h2(+b)}` : `.const ${c.name} = @"\\$${h2(+b)}"`))];
 }
 
 /** The lines as Kick Assembler that gives `bytes` exactly at `at`: a line that does not assemble (a name only the
  *  source's head has, `music.init`) or gives other bytes is written as its bytes (`.byte`, the line as a comment), so
  *  the rest stays as it was. null: it cannot be made to. */
-function exactCode(lines: CodeLine[], bytes: Uint8Array, start: Addr, at: Addr, names: ReadonlyMap<string, Addr>, mem: Uint8Array): string | null {
-  const ls = lines.slice();
+function exactCode(lines: CodeLine[], bytes: Uint8Array, start: Addr, at: Addr, names: ReadonlyMap<string, Addr>, mem: Uint8Array, lang: ScriptLang = 'kickass'): string | null {
+  const ls = lines.slice(), c = lineComment(lang);
   const raw = (i: number) => {
     const l = ls[i];
     if (l.a == null || l.n == null) { ls.splice(i, 1); return true; }
-    if (l.text.trimStart().startsWith('.byte $') && l.text.includes('// was')) return false;
-    ls[i] = { ...l, text: `${byteLines(mem.subarray(l.a, l.a + l.n), 16)[0]}  // was ${l.text.replace(/\s*\/\/.*$/, '').trim()}` };
+    if (l.text.trimStart().startsWith('.byte $') && l.text.includes(`${c} was`)) return false;
+    const code = l.text.slice(0, l.text.includes(c) ? l.text.indexOf(c) : undefined).trim();
+    ls[i] = { a: l.a, n: l.n, text: `${byteLines(mem.subarray(l.a, l.a + l.n), 16)[0]}  ${c} was ${code}` };
     return true;
   };
   for (let k = 0; k <= lines.length + 1; k++) {
-    const body = ls.map(l => l.text).join('\n'), head = petsciiConsts(body);
-    const r = padData({ form: 'asm', text: [...head, body].join('\n') }, at, bytes.length, names);
+    const body = ls.map(l => l.text).join('\n'), head = petsciiConsts(body, lang, ls.some(l => l.ill));
+    const r = padData({ form: 'asm', text: [...head, body].join('\n') }, at, bytes.length, names, 0, lang);
     if ('error' in r) {
       const i = (r.line ?? 0) - 1 - head.length;
       if (i < 0 || i >= ls.length || !raw(i)) return null;
@@ -919,11 +928,11 @@ function exactCode(lines: CodeLine[], bytes: Uint8Array, start: Addr, at: Addr, 
   return null;
 }
 
-/** `.byte` lines of `per` bytes, a comment line before each `group` bytes (`// char $00`) */
-function byteGroups(bytes: Uint8Array, per: number, group: number, head: (i: number) => string): string {
+/** `.byte` lines of `per` bytes, a comment line before each `group` bytes (`// char $00`, 64tass `; char $00`) */
+function byteGroups(bytes: Uint8Array, per: number, group: number, head: (i: number) => string, lang: ScriptLang = 'kickass'): string {
   const out: string[] = [];
   for (let g = 0; g < bytes.length; g += group) {
-    out.push(`// ${head(g / group)}`);
+    out.push(`${lineComment(lang)} ${head(g / group)}`);
     out.push(...byteLines(bytes.subarray(g, Math.min(bytes.length, g + group)), per, '        '));
   }
   return out.join('\n');
@@ -938,13 +947,13 @@ function byteGroups(bytes: Uint8Array, per: number, group: number, head: (i: num
  * always does.
  */
 export function blockPad(block: Pick<Block, 'start' | 'end' | 'type' | 'props'>, lines: readonly ListingLine[], mem: Uint8Array, at: Addr, names: ReadonlyMap<string, Addr>, S: LineTextSettings): BlockPad {
-  const bytes = mem.slice(block.start, block.end), n = bytes.length;
-  const exact = (src: ScriptPadSource) => { const r = padData(src, at, n, names); return 'bytes' in r && r.bytes.length === n && r.bytes.every((b, i) => b === bytes[i]); };
+  const bytes = mem.slice(block.start, block.end), n = bytes.length, lang = langOf(S.assembler);
+  const exact = (src: ScriptPadSource) => { const r = padData(src, at, n, names, 0, lang); return 'bytes' in r && r.bytes.length === n && r.bytes.every((b, i) => b === bytes[i]); };
   const asm = (text: string, what: string): BlockPad => ({ bytes, src: { form: 'asm', text }, what });
   const tries: BlockPad[] = [];
   const t = block.type;
   const listing = (encoding: boolean, what: string): BlockPad | null => {
-    const text = exactCode(listingLines(lines, block.start, block.end, mem, S, encoding), bytes, block.start, at, names, mem);
+    const text = exactCode(listingLines(lines, block.start, block.end, mem, S, encoding), bytes, block.start, at, names, mem, lang);
     return text == null ? null : asm(text, what);
   };
   if (t === 'code') { const c = listing(false, 'code'); if (c) return c; }
@@ -952,10 +961,10 @@ export function blockPad(block: Pick<Block, 'start' | 'end' | 'type' | 'props'>,
     const screen = (block.props.enc ?? 'petscii').startsWith('screen');
     tries.push({ bytes, src: { form: 'text', text: padText(bytes, 'text', at, screen), ...(screen ? { screen } : {}) }, what: `text (${screen ? 'screen codes' : 'PETSCII'})` });
     if (!exact(tries[0].src)) { const c = listing(true, 'text, as the listing writes it'); if (c) return c; }
-  } else if (t === 'charset') tries.push(asm(byteGroups(bytes, 8, 8, i => `char $${h2(i & 0xff)}${i > 255 ? ` (${i})` : ''}`), 'characters, 8 bytes a line'));
-  else if (t === 'sprite') tries.push(asm(byteGroups(bytes, 3, 64, i => `sprite ${i}`), 'sprites, 3 bytes a line'));
-  else if (t === 'bitmap') tries.push(asm(byteGroups(bytes, 8, 320, i => `row ${i}`), 'a bitmap, 8 bytes (a cell) a line'));
-  else if (t === 'screen') tries.push(asm(byteGroups(bytes, 40, 1000, i => `screen ${i}`), 'a screen, 40 bytes (a row) a line'));
+  } else if (t === 'charset') tries.push(asm(byteGroups(bytes, 8, 8, i => `char $${h2(i & 0xff)}${i > 255 ? ` (${i})` : ''}`, lang), 'characters, 8 bytes a line'));
+  else if (t === 'sprite') tries.push(asm(byteGroups(bytes, 3, 64, i => `sprite ${i}`, lang), 'sprites, 3 bytes a line'));
+  else if (t === 'bitmap') tries.push(asm(byteGroups(bytes, 8, 320, i => `row ${i}`, lang), 'a bitmap, 8 bytes (a cell) a line'));
+  else if (t === 'screen') tries.push(asm(byteGroups(bytes, 40, 1000, i => `screen ${i}`, lang), 'a screen, 40 bytes (a row) a line'));
   for (const c of tries) if (exact(c.src)) return c;
   return { bytes, src: { form: 'hex', text: padText(bytes, 'hex', at) }, what: 'hex' };
 }
@@ -997,15 +1006,17 @@ export interface ScriptWriteFailure extends ScriptRange { error: string }
  * user left it out. A change that cannot be a patch (in a patch of the user's, across a relocated block's edge) is
  * not written and said why.
  */
-export function writeScriptRun(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'zp'>, project: PatchedProject & { settings: Pick<Settings, 'hexCase'> },
+export function writeScriptRun(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'zp'>, project: PatchedProject & { settings: Pick<Settings, 'hexCase'> & Partial<Pick<Settings, 'assembler'>> },
   script: Pick<UserScript, 'id' | 'name'>, run: Pick<ScriptRun, 'changes'>, earlier: readonly Pick<Patch, 'start' | 'end' | 'off'>[] = []): { files: Project['files']; patches: Patch[]; written: Patch[]; failed: ScriptWriteFailure[] } {
   let cur: PatchedProject & { settings: Pick<Settings, 'hexCase'> } = project;
+  // (the patches' .byte lines are the same in both languages: written as the project's source is)
+  const lang = langOf(project.settings.assembler);
   const written: Patch[] = [], failed: ScriptWriteFailure[] = [];
   for (const c of run.changes) {
     const base = run.changes.length === 1 ? script.name : `${script.name}_${h4(c.start)}`;
     let name = base;
     for (let k = 2; cur.patches.some(p => p.name.toLowerCase() === name.toLowerCase()); k++) name = `${base}_${k}`;
-    const plan = planPatch(A, R, cur, { name, start: c.start, end: c.end, source: byteLines(c.bytes).join('\n'), fill: 'keep', over: false });
+    const plan = planPatch(A, R, cur, { name, start: c.start, end: c.end, source: byteLines(c.bytes).join('\n'), fill: 'keep', over: false, lang });
     if ('error' in plan) { failed.push({ start: c.start, end: c.end, error: plan.error }); continue; }
     const off = earlier.some(p => p.off && p.start === c.start && p.end === c.end);
     const patch: Patch = { ...plan.patch, script: script.id, ...(off ? { off: true } : {}) };

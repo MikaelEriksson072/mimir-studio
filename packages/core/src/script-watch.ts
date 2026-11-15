@@ -6,8 +6,9 @@
  * data and scratchpads are, the program's everywhere else.
  * ===================================================================== */
 import type { Addr, ScriptPad, ScriptWatchEntry } from './types';
-import { OPC, type AddrMode } from './cpu/opcodes';
+import { OPC, tassName, type AddrMode } from './cpu/opcodes';
 import { codeOf, type ScriptCheck, type ScriptMemory } from './script';
+import type { ScriptLang } from './code-lang';
 import { h2, h4 } from './util/hex';
 
 /** whose memory an address is while the script runs: the program's, its zero page, the script's own code and data,
@@ -59,10 +60,12 @@ export function watchSpace(check: Pick<ScriptCheck, 'written'>, pads: readonly P
 /** the operand of an instruction's line as written, without its index and its parentheses (`screen` of
  *  `sta screen,x`, `dest` of `sta (dest),y`); null: the line is not that instruction written plainly */
 function operandOf(code: string, mn: string, mode: AddrMode): string | null {
-  const m = new RegExp(`(?:^|\\s)${mn}(?:\\.[a-z]+)?\\s+(.+)$`, 'i').exec(code);
+  // (the mnemonic as either language names it: 64tass's isb for ISC; Kick Assembler's lda.abs, 64tass's lda @w)
+  const names = [...new Set([mn, tassName(mn)])].join('|');
+  const m = new RegExp(`(?:^|\\s)(?:${names})(?:\\.[a-z]+)?\\s+(.+)$`, 'i').exec(code);
   if (!m) return null;
   // (the closing brace of a block on the same line is not the operand's)
-  let t = m[1].replace(/\s*\}+\s*$/, '').trim();
+  let t = m[1].replace(/\s*\}+\s*$/, '').replace(/^@[wbl]\s*/i, '').trim();
   const shape: Partial<Record<AddrMode, RegExp>> = {
     zpx: /^(.+?)\s*,\s*x$/i, abx: /^(.+?)\s*,\s*x$/i, zpy: /^(.+?)\s*,\s*y$/i, aby: /^(.+?)\s*,\s*y$/i,
     izy: /^\(\s*(.+?)\s*\)\s*,\s*y$/i, izx: /^\(\s*(.+?)\s*,\s*x\s*\)$/i,
@@ -84,7 +87,7 @@ const addrText = (a: Addr, zp: boolean) => (zp ? `$${h2(a)}` : `$${h4(a)}`);
  * bytes written as `name` and `name+1` are a word, and a byte written also with an index is in its range. A write the
  * code makes through the program's routines it calls cannot be known here. In the order of their first lines.
  */
-export function scriptWatches(check: Pick<ScriptCheck, 'mem' | 'ops' | 'lines' | 'written'>, source: string, pads: readonly Pick<ScriptPad, 'name' | 'start' | 'size'>[]): WatchSpot[] {
+export function scriptWatches(check: Pick<ScriptCheck, 'mem' | 'ops' | 'lines' | 'written'>, source: string, pads: readonly Pick<ScriptPad, 'name' | 'start' | 'size'>[], lang?: ScriptLang): WatchSpot[] {
   const src = source.split(/\r?\n/);
   interface Found { at: number; kind: 'byte' | 'range' | 'ptr'; index?: 'x' | 'y'; zp: boolean; core: string | null; line: number; how: string; write: boolean }
   const found: Found[] = [];
@@ -106,7 +109,7 @@ export function scriptWatches(check: Pick<ScriptCheck, 'mem' | 'ops' | 'lines' |
       case 'izx': if (o.access) f = { at: lo, kind: 'ptr', zp: true }; break;
     }
     if (!f) continue;
-    const line = check.lines[a], how = codeOf(src[line - 1] ?? '');
+    const line = check.lines[a], how = codeOf(src[line - 1] ?? '', lang);
     found.push({ ...f, core: operandOf(how, o.mn, o.mode), line, how, write });
   }
   // an operand that writes more than one address (a line in a .for, `*+1` on several lines) is named by address

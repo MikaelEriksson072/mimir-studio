@@ -52,7 +52,7 @@ const readLibrary = (): LibraryScript[] => {
     .map(s => {
       const init = readInit(s.init), watch = readWatch(s.watch), unwatch = Array.isArray(s.unwatch) ? s.unwatch.filter((k): k is string => typeof k === 'string') : [];
       return {
-        name: s.name, lang: 'kickass', source: s.source, saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}), ...(init ? { init } : {}),
+        name: s.name, lang: s.lang === '64tass' ? '64tass' : 'kickass', source: s.source, saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}), ...(init ? { init } : {}),
         ...(watch.length ? { watch } : {}), ...(unwatch.length ? { unwatch } : {}),
         pads: s.pads.map(({ name, start, size, fill, data, src }) => {
           const d = readData(data), w = readSrc(src);

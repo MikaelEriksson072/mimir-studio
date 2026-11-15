@@ -12,7 +12,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -166,7 +166,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** analysis settings from the project, toolchain paths from the app */
   const S: Settings = useMemo(() => ({ ...A.S, ...toolchain }), [A.S, toolchain]);
   /** the assembler the project's source is written for (spec 11.8) */
-  const asm = assemblerOf(S), words = asmWords(asm);
+  const asm = assemblerOf(S), words = asmWords(asm), codeLang = langOf(asm);
   // the newest analysis, project and settings, for work that awaits (verify, build, export) and must not use a stale
   // render: an export right after a settings change runs with the settings of the analysis it waited for
   const latest = useRef({ A, R, aKey, project, rProject, S, final });
@@ -1743,7 +1743,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return out;
   };
   const editPatch = (p: Patch) => {
-    setPatchDraft({ start: p.start, end: p.end, name: p.name, source: p.source, fill: p.fill, over: p.over, cycles: !!p.cycles, id: p.id });
+    setPatchDraft({ start: p.start, end: p.end, name: p.name, source: p.source, lang: patchLang(p), fill: p.fill, over: p.over, cycles: !!p.cycles, id: p.id });
     setModal('patch');
   };
   /** P: the selection, else the line at the cursor (a range with a patch in it edits that patch) */
@@ -1754,7 +1754,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (hit.length === 1) { editPatch(hit[0]); return; }
     if (hit.length > 1) { toast(`The selection holds ${hit.length} patches (${hit.map(p => `"${p.name}"`).join(', ')}): edit them one at a time`, 'warn'); return; }
     if (A.owner[r.start] < 0) { toast(`$${h4(r.start)} is not part of any loaded file`, 'warn'); return; }
-    setPatchDraft({ start: r.start, end: r.end, name: `patch_${h4(r.start)}`, source: rangeLines(r.start, r.end).join('\n'), fill: 'nop', over: false, cycles: false });
+    // (in the project's language, as the listing writes the lines; 64tass needs .cpu "6502i" for an undocumented opcode)
+    const ill = codeLang === '64tass' && R.lines.some(l => l.k === 'ins' && l.a >= r.start && l.a < r.end && OPC[A.mem[l.a]].ill);
+    setPatchDraft({ start: r.start, end: r.end, name: `patch_${h4(r.start)}`, source: [...(ill ? ['        .cpu "6502i"'] : []), ...rangeLines(r.start, r.end)].join('\n'), lang: codeLang, fill: 'nop', over: false, cycles: false });
     setModal('patch');
   };
   const closePatch = () => { setModal(null); setPatchDraft(null); setTimeout(() => listRef.current?.focus(), 0); };
@@ -1784,7 +1786,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
 
-  /* ---- user scripts (spec 10.3): Kick Assembler code that runs in Mimir; what a run changes in the program's bytes
+  /* ---- user scripts (spec 10.3): code that runs in Mimir (Kick Assembler or 64tass, the project's assembler's when
+   * it is made); what a run changes in the program's bytes
    * goes into the program as the script's patches, the script's code never ---- */
   const userScripts = project.userScripts ?? [];
   /** the script running (the Scripts view's button has a spinner meanwhile) */
@@ -1801,7 +1804,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a new script; `lines`: code of the listing it starts with (the selection); `links`: addresses linked to it */
   const newUserScript = (lines: string[] = [], links: Addr[] = []) => {
-    const s: UserScript = { ...newScript(userScripts, lines, newId()), ...(links.length ? { links } : {}) };
+    const s: UserScript = { ...newScript(userScripts, lines, newId(), codeLang), ...(links.length ? { links } : {}) };
     addUserScript(s, 'New script');
     toast(`Script "${s.name}" made. Write its code and press Ctrl+Enter: what it changes in the program goes into the program and its .asm`, 'ok');
   };
@@ -1812,7 +1815,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const n = bytes.length, where = `${n} byte${n === 1 ? '' : 's'} from $${h4(spaceAddr(from))}`;
     const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, pad: i, outTab: 'pads', outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
     if (id == null) {
-      const base = newScript(userScripts, [], newId());
+      const base = newScript(userScripts, [], newId(), codeLang);
       const start = scriptPlace(scriptsEnv.files, n, checkScript(scriptsEnv, base).code)?.at ?? 0xc000;
       const s: UserScript = { ...base, pads: [{ name: 'pad1', start, size: n, data: bytes }] };
       addUserScript(s, 'New script with a scratchpad');
@@ -1844,10 +1847,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const b = A.blocks.find(x => x.start === blockStart); if (!b) return;
     const n = b.end - b.start, name = R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`;
     const show = (sid: string, i: number) => { useScripts.getState().set({ selected: sid, pad: i, outTab: 'pads', outFolded: false, ...(useScripts.getState().mode === 'compare' ? { mode: 'hex' as const } : {}) }); setUi({ tab: 'scripts' }); };
-    const typed = (at: Addr, pads: readonly ScriptPad[]) => blockPad(b, R.lines, A.mem, at, scriptNames(scriptsEnv, pads), S);
+    // (written in the script's language: the listing's lines as that assembler writes them, checked byte for byte)
+    const typed = (at: Addr, pads: readonly ScriptPad[], lang: UserScript['lang'] = codeLang) => blockPad(b, R.lines, A.mem, at, scriptNames(scriptsEnv, pads), { ...S, assembler: asmOfLang(lang) });
     const said = (bp: BlockPad, padName: string, sname: string) => `Block ${name} ($${h4(spaceAddr(b.start))}-$${h4(spaceAddr(b.end - 1))}, ${n} bytes) copied into ${padName} of "${sname}" as ${bp.what}: a run starts it with them`;
     if (id == null) {
-      const base = newScript(userScripts, [], newId()), c = checkScript(scriptsEnv, base);
+      const base = newScript(userScripts, [], newId(), codeLang), c = checkScript(scriptsEnv, base);
       const start = scriptPlace(scriptsEnv.files, n, [...c.code, ...c.access])?.at ?? 0xc000;
       const bp = typed(start, []);
       const s: UserScript = { ...base, pads: [{ name: 'pad1', start, size: n, data: bp.bytes, src: bp.src }] };
@@ -1861,7 +1865,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (pad == null) {
       const last = s.pads[s.pads.length - 1], pn = padName(s.pads);
       const start = scriptPlace(scriptsEnv.files, n, others(-1), last ? last.start + last.size : undefined)?.at ?? 0xc000;
-      const bp = typed(start, s.pads);
+      const bp = typed(start, s.pads, s.lang);
       editUserScript(id, { pads: [...s.pads, { name: pn, start, size: n, data: bp.bytes, src: bp.src }] }, `Copy block ${name} into a new scratchpad ${pn} of "${s.name}"`);
       show(id, s.pads.length);
       toast(said(bp, `the new scratchpad ${pn} ($${h4(start)})`, s.name), 'ok');
@@ -1872,7 +1876,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const fits = p.size >= n || (p.start + n <= 0x10000 && !others(pad).some(r => r.start < p.start + n && p.start < r.end));
     const { bytes: _b, src: _s, data: _d, ...keep } = p;
     if (fits) {
-      const bp = typed(p.start, s.pads);
+      const bp = typed(p.start, s.pads, s.lang);
       editUserScript(id, { pads: s.pads.map((x, k) => (k === pad ? { ...keep, size: Math.max(p.size, n), data: bp.bytes, src: bp.src } : x)) }, `Copy block ${name} into scratchpad ${p.name} of "${s.name}"`);
       show(id, pad);
       toast(`${said(bp, p.name, s.name)}${n > p.size ? ` (${p.name} is ${n} bytes now)` : ''}`, 'ok');
@@ -1923,18 +1927,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  then each scratchpad placed where there is room, away from the code and from what the code reaches */
   const addTemplateScript = (t: ScriptTemplate) => {
     const name = scriptName(userScripts, t.name);
-    const c = checkScript(scriptsEnv, { source: t.source, pads: t.pads.map(p => ({ ...p, start: 0xffff, size: 1 })) });
+    const source = templateSource(t, codeLang);
+    const c = checkScript(scriptsEnv, { source, lang: codeLang, pads: t.pads.map(p => ({ ...p, start: 0xffff, size: 1 })) });
     const pads: ScriptPad[] = [];
     for (const p of t.pads) {
       const taken = [...c.code, ...c.access, ...pads.map(q => ({ start: q.start, end: q.start + q.size }))];
       pads.push({ ...p, start: scriptPlace(scriptsEnv.files, p.size, taken)?.at ?? 0xc000 });
     }
-    addUserScript({ id: newId(), name, lang: 'kickass', source: t.source, pads }, 'Add template');
+    addUserScript({ id: newId(), name, lang: codeLang, source, pads }, 'Add template');
     // what it decrypts goes into its scratchpad: the output shows the scratchpads
     if (pads.length) useScripts.getState().set({ outTab: 'pads', outFolded: false });
-    toast(`"${name}" added from the templates: set its .vars (source, dest, length, the key) and press Ctrl+Enter. With dest = result the program stays as it is`, 'ok');
+    toast(`"${name}" added from the templates: set its settings (source, dest, length, the key) and press Ctrl+Enter. With dest = result the program stays as it is`, 'ok');
   };
-  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) =>
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
   const setScriptSafe = (id: string, on: boolean) => {
@@ -2006,11 +2011,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
     if (useScripts.getState().running) { toast('A script is running: wait for it, or stop it in the Scripts tab', 'info'); return; }
     const source = text ?? s.source, env = scriptEnvFor(id);
-    const c = checkScript(env, { source, pads: s.pads, init: s.init });
+    const c = checkScript(env, { source, lang: s.lang, pads: s.pads, init: s.init });
     if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); toast(`"${s.name}" does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}`, 'warn'); return; }
     useScripts.getState().set({ running: id });
     try {
-      const r = await runScriptInWorker(env, { source, pads: s.pads, init: s.init });
+      const r = await runScriptInWorker(env, { source, lang: s.lang, pads: s.pads, init: s.init });
       useScripts.getState().set({ running: null });
       finishScriptRun(id, r, source, write);
     } catch (e) {
@@ -2926,9 +2931,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-source', label: `Show generated ${ASSEMBLERS[asm].name} source`, run: () => setUi({ tab: 'source' }) },
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
-    { id: 'tab-scripts', label: 'Show the scripts: Kick Assembler code that runs in Mimir on a copy of the program', run: () => setUi({ tab: 'scripts' }) },
+    { id: 'tab-scripts', label: `Show the scripts: ${LANG_TITLE[codeLang]} code that runs in Mimir on a copy of the program`, run: () => setUi({ tab: 'scripts' }) },
     { id: 'tab-git', label: 'Git: stage, commit and push the project (the Git tab)', run: () => setUi({ tab: 'git' }) },
-    { id: 'script-new', label: sel && sel.multi && sel.end > sel.start ? 'New script from the selection (runs in Mimir on a copy of the program)' : 'New script (Kick Assembler code that runs in Mimir on a copy of the program)', run: () => newUserScript(sel && sel.multi && sel.end > sel.start ? rangeLines(sel.start, sel.end) : []) },
+    { id: 'script-new', label: sel && sel.multi && sel.end > sel.start ? 'New script from the selection (runs in Mimir on a copy of the program)' : `New script (${LANG_TITLE[codeLang]} code that runs in Mimir on a copy of the program)`, run: () => newUserScript(sel && sel.multi && sel.end > sel.start ? rangeLines(sel.start, sel.end) : []) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
     { id: 'overview', label: 'Show the analysis overview: what the analysis found, with links to each part', run: () => setModal('overview') },
   ];
@@ -3578,7 +3583,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 }} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'git' && <GitView home={home} saveNow={saveNow} onCreateProject={() => setModal('project')} onTerminal={() => void openTerminal()} toast={toast} />}
-              {tab === 'scripts' && <ScriptsView scripts={userScripts} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
+              {tab === 'scripts' && <ScriptsView scripts={userScripts} lang={codeLang} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}

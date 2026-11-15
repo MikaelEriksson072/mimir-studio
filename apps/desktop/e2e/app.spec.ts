@@ -7954,7 +7954,7 @@ test('scripts: templates that decrypt and encrypt have a section of their own in
 
   await test.step('a copy in the project: its comment and settings, its scratchpad result placed, ready to run', async () => {
     await list.getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
-    await expect(toast(page, /"xor_key" added from the templates: set its \.vars/)).toBeVisible();
+    await expect(toast(page, /"xor_key" added from the templates: set its settings/)).toBeVisible();
     await expect(page.getByLabel('Script name')).toHaveValue('xor_key');
     await expect(page.locator('.scr-editor .view-lines')).toContainText('XOR with a key byte');
     await expect(page.locator('.scr-check')).toHaveText('Ready to run');

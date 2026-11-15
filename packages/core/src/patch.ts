@@ -1,9 +1,12 @@
 /* Patches (spec 10.2): code the user writes over a range of the loaded bytes. It is assembled with the built-in
- * Kick-subset assembler at the range's start, with the program's labels, zero-page variables and the hardware
- * symbols at hand, and written over the bytes of the file that holds the range. A patch keeps the bytes it wrote
- * over, so it can be edited, switched off and removed again, and it can be saved as a PRG file of its own. */
-import type { Addr, AnalysisResult, Cartridge, FileInput, LoadedFile, Patch, PatchFill, Project, RenderResult, Settings } from './types';
+ * assembler of its language (Kick Assembler or 64tass, as the project's assembler was when the patch was made:
+ * code-lang.ts) at the range's start, with the program's labels, zero-page variables and the hardware symbols at
+ * hand, and written over the bytes of the file that holds the range. A patch keeps the bytes it wrote over, so it can
+ * be edited, switched off and removed again, and it can be saved as a PRG file of its own. */
+import type { Addr, AnalysisResult, AssemblerId, Cartridge, FileInput, LoadedFile, Patch, PatchFill, Project, RenderResult, ScriptLang, Settings } from './types';
 import { assemble } from './verify/kick-subset-assembler';
+import { assembleTass } from './verify/tass-subset-assembler';
+import { definedNames, langIs, langOf, LANG_TITLE, usedWords, withoutComment } from './code-lang';
 import { hardwareInclude } from './render/include';
 import { makePrg } from './c64/prg';
 import { newId } from './project';
@@ -35,6 +38,8 @@ export interface PatchRequest {
   cycles?: boolean;
   /** the patch this edits: it is written again over the bytes it found, and only other patches are in the way */
   id?: string;
+  /** what the code is written in (missing: Kick Assembler) */
+  lang?: ScriptLang;
 }
 
 /** Where a line of the code is: the address its code starts at and how many bytes it is (0: a label, a comment). */
@@ -146,47 +151,50 @@ export function unpatchedFiles<F extends Pick<LoadedFile, 'load' | 'bytes'>>(fil
 export const projectUnpatched = <F extends FileInput>(project: { files: readonly F[]; patches?: readonly Patch[]; cart?: Cartridge | null }): F[] =>
   unpatchedFiles(project.files, project.patches ?? [], patchFiles(project));
 
-/** the names the code defines itself (labels, .label/.const/.var): the program's own of those names are left out */
-function ownNames(source: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of source.matchAll(/^\s*([A-Za-z_]\w*)\s*:/gm)) out.add(m[1]);
-  for (const m of source.matchAll(/\.(?:label|const|var)\s+([A-Za-z_]\w*)/g)) out.add(m[1]);
-  return out;
-}
-
 /** the names code may use: the hardware symbols, and the program's labels and zero-page variables as the listing
  *  names them */
 export function programNames(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>): Map<string, Addr> {
   const out = new Map<string, Addr>();
-  for (const m of hardwareInclude(settings).matchAll(/^\.label\s+(\w+)\s*=\s*\$([0-9a-f]+)/gim)) out.set(m[1], parseInt(m[2], 16));
+  for (const m of hardwareInclude({ hexCase: settings.hexCase }).matchAll(/^\.label\s+(\w+)\s*=\s*\$([0-9a-f]+)/gim)) out.set(m[1], parseInt(m[2], 16));
   for (const [a, l] of R.labels) if (!out.has(l.name)) out.set(l.name, a);
   for (const [a, z] of R.zp) if (!z.off && !out.has(z.name)) out.set(z.name, a);
   return out;
 }
 
-/** the words of the code that can be names: not in comments or strings, not directives, numbers or local labels */
-function usedNames(source: string): Set<string> {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/.*$/gm, '').replace(/"(?:[^"\\]|\\.)*"/g, '""');
-  return new Set([...code.matchAll(/(?<![.\w$%!])[A-Za-z_]\w*/g)].map(m => m[0]));
-}
-
 /** the label put before line `i` of the code, which tells where the line goes */
 const lineLabel = (i: number) => `__mimir_line_${i}`;
 
+/** a patch's language */
+export const patchLang = (p: Pick<Patch, 'lang'>): ScriptLang => langIs(p.lang);
+
 /**
- * Assemble `source` at `start`, with the program's labels and zero-page variables (as the listing names them) and the
- * hardware symbols at hand; a name the code defines itself wins. Gives each line's address and length, and the bytes
- * from `start`, as far as the assembler got even when there is an error.
+ * Assemble `source` at `start` in its language, with the program's labels and zero-page variables (as the listing
+ * names them) and the hardware symbols at hand; a name the code defines itself wins. Gives each line's address and
+ * length, and the bytes from `start`, as far as the assembler got even when there is an error.
  */
-export function assemblePatch(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, start: Addr, source: string): PatchCode & { error?: string; line?: number } {
-  const own = ownNames(source);
-  const names = [...programNames(R, settings)].filter(([n]) => !own.has(n)).map(([n, a]) => `.label ${n} = $${h4(a)}`);
-  // each line of the code after a label of its own: the label's value is where the line goes
+export function assemblePatch(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, start: Addr, source: string, lang?: ScriptLang): PatchCode & { error?: string; line?: number } {
+  const own = definedNames(source, lang);
+  const program = [...programNames(R, settings)].filter(([n]) => !own.has(n));
   const user = source.split('\n');
-  const head = ['#import "names.asm"', `.pc = $${h4(start)} "patch"`];
-  const body = user.flatMap((l, i) => [`${lineLabel(i)}:`, l]);
-  const asm = assemble({ 'patch.asm': [...head, ...body, `${lineLabel(user.length)}:`].join('\n'), 'names.asm': names.join('\n') }, 'patch.asm');
-  const at = (i: number) => { const v = asm.symbols.get(lineLabel(i)); return typeof v === 'number' ? v : null; };
+  const tass = langIs(lang) === '64tass';
+  let asm: ReturnType<typeof assemble>, at: (i: number) => number | null, lineOf: (e: { file: string; line: number }) => number | undefined;
+  if (tass) {
+    // 64tass: the names from outside, and where each line is from the assembler (a label of Mimir's before each
+    // line would be the label a local one, `_loop`, belongs to)
+    asm = assembleTass({ 'patch.asm': source }, 'patch.asm', { names: new Map(program), pc: start });
+    const pcs = asm.linePcs ?? new Map<number, number>();
+    at = i => (i >= user.length ? asm.endPc ?? null : pcs.get(i + 1) ?? null);
+    lineOf = e => (e.file === 'patch.asm' && e.line > 0 && e.line <= user.length ? e.line : undefined);
+  } else {
+    const names = program.map(([n, a]) => `.label ${n} = $${h4(a)}`);
+    // each line of the code after a label of its own: the label's value is where the line goes
+    const head = ['#import "names.asm"', `.pc = $${h4(start)} "patch"`];
+    const body = user.flatMap((l, i) => [`${lineLabel(i)}:`, l]);
+    asm = assemble({ 'patch.asm': [...head, ...body, `${lineLabel(user.length)}:`].join('\n'), 'names.asm': names.join('\n') }, 'patch.asm');
+    at = i => { const v = asm.symbols.get(lineLabel(i)); return typeof v === 'number' ? v : null; };
+    // a line of the code is line head + 2i + 2 of the file (after its label)
+    lineOf = e => { const b = e.file === 'patch.asm' ? e.line - head.length - 1 : -1; return b >= 0 && b < body.length ? (b >> 1) + 1 : undefined; };
+  }
   const lines = user.map((_, i): PatchLine | null => {
     const a = at(i);
     if (a == null) return null;
@@ -198,13 +206,11 @@ export function assemblePatch(R: Pick<RenderResult, 'labels' | 'zp'>, settings: 
   const out = { lines, code: asm.mem.slice(start, start + n) };
   const err = asm.errors[0];
   if (err) {
-    // a line of the code is line head + 2i + 2 of the file (after its label)
-    const b = err.file === 'patch.asm' ? err.line - head.length - 1 : -1;
-    const line = b >= 0 && b < body.length ? (b >> 1) + 1 : undefined;
+    const line = lineOf(err);
     return { ...out, error: `${line ? `Line ${line}: ` : ''}${err.msg}`, ...(line ? { line } : {}) };
   }
   if (asm.min >= 0) {
-    if (asm.min !== start) return { ...out, error: `The code must start at $${h4(start)}: it writes at $${h4(asm.min)} (a .pc or * = in it moves it).` };
+    if (asm.min !== start) return { ...out, error: `The code must start at $${h4(start)}: it writes at $${h4(asm.min)} (${tass ? 'a * =' : 'a .pc or * ='} in it moves it).` };
     for (let a = start; a <= asm.max; a++) if (!asm.written[a]) return { ...out, error: `The code leaves $${h4(a)} unwritten; write it all in one piece from $${h4(start)}.` };
   }
   return out;
@@ -221,7 +227,7 @@ export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'z
   // a patch is written in the bank the C64 starts in or in a project of one space (13.9b)
   if (start >= 0x10000) return { error: 'Patches can only be written in bank 0 of a cartridge so far.' };
   if (!(start >= 0 && start < end && end <= 0x10000)) return { error: 'The range is empty.' };
-  const asm = assemblePatch(R, project.settings, start, req.source);
+  const asm = assemblePatch(R, project.settings, start, req.source, req.lang);
   let time: PatchTime | undefined;
   const fail = (error: string): PatchError => ({ lines: asm.lines, code: asm.code, error, ...(time ? { time } : {}) });
   if (asm.error) return { lines: asm.lines, code: asm.code, error: asm.error, ...(asm.line ? { line: asm.line } : {}) };
@@ -247,7 +253,7 @@ export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'z
   const other = project.patches.find(p => p.id !== req.id && p.start < start + len && patchEnd(p) > start);
   if (other) return fail(`It would write over the patch "${other.name}" ($${h4(other.start)}-$${h4(patchEnd(other) - 1)}${other.off ? ', switched off' : ''}).`);
   if (time?.varies) {
-    const { line, why } = time.varies, text = line ? req.source.split('\n')[line - 1]?.replace(/\/\/.*$/, '').trim() : '';
+    const { line, why } = time.varies, text = line ? withoutComment(req.source.split('\n')[line - 1] ?? '', req.lang).trim() : '';
     const has = time.originalVaries.length ? `the original's that vary are ${time.originalVaries.join(', ')}` : 'the original has none';
     return { ...fail(`${line ? `Line ${line}: ${text} ` : 'An instruction '}${why}, and ${has}. Keeping the cycle count allows an instruction whose time varies only as one of the original's.`), ...(line ? { line } : {}) };
   }
@@ -263,7 +269,7 @@ export function planPatch(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'z
   if (!f) return fail(`$${h4(start)}-$${h4(start + len - 1)} is not inside one loaded file.`);
   const old = f.bytes.slice(at - f.load, at - f.load + len);
   // with `keep` the bytes after the code stay as they are: the patch writes only the code
-  const patch: Patch = { id: edited?.id ?? newId(), name, start, end, source: req.source, fill: req.fill, over: req.over, bytes, old, ...(req.cycles ? { cycles: true } : {}), ...(edited?.off ? { off: true } : {}), ...(at !== start ? { at } : {}) };
+  const patch: Patch = { id: edited?.id ?? newId(), name, start, end, source: req.source, ...(langIs(req.lang) === '64tass' ? { lang: '64tass' as const } : {}), fill: req.fill, over: req.over, bytes, old, ...(req.cycles ? { cycles: true } : {}), ...(edited?.off ? { off: true } : {}), ...(at !== start ? { at } : {}) };
   return { patch, lines: asm.lines, code: asm.code, past: Math.max(0, n - size), ...(time ? { time } : {}) };
 }
 
@@ -307,29 +313,34 @@ function patchTime(files: readonly Pick<LoadedFile, 'load' | 'bytes'>[], req: Pa
 }
 
 /**
- * The patch as a Kick Assembler source of its own (patches/<name>.asm in the export): the names its code uses as
- * `.label` lines, then the code at its address and the fill, which assembles to the bytes the patch writes. When the
- * code no longer gives those bytes with the program's names (a label renamed since, say), the source has the bytes as
- * `.byte` lines and the code as a comment. `from`: the name of the file the patch is written over.
+ * The patch as a source of its own for the project's assembler `asm` (patches/<name>.asm in the export): the names
+ * its code uses as `.label` lines (64tass: `name = value`), then the code at its address and the fill, which assembles
+ * to the bytes the patch writes. When the code no longer gives those bytes with the program's names (a label renamed
+ * since, say), or it is written in the other assembler's language, the source has the bytes as `.byte` lines and the
+ * code as a comment. `from`: the name of the file the patch is written over.
  */
-export function patchSource(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, p: Patch, from?: string): string {
+export function patchSource(R: Pick<RenderResult, 'labels' | 'zp'>, settings: Pick<Settings, 'hexCase'>, p: Patch, from?: string, asm: AssemblerId = 'kick'): string {
+  const tass = asm === '64tass', c = tass ? ';' : '//', file = patchFileName(p.name, 'asm');
   const head = [
-    `// Patch "${p.name}" by Mimir Studio: $${h4(p.start)}-$${h4(patchEnd(p) - 1)}${from ? ` of ${from}` : ''}, ${p.bytes.length} byte${p.bytes.length === 1 ? '' : 's'} written over the original${p.off ? ' (switched off: not in the sources)' : ''}`,
-    `// It assembles on its own to a PRG that loads at $${h4(p.start)}: java -jar KickAss.jar ${patchFileName(p.name, 'asm')}`, ''];
-  const pc = `.pc = $${h4(p.start)} "${p.name.replace(/["\\]/g, "'")}"`;
-  const now = assemblePatch(R, settings, p.start, p.source), n = now.code.length;
+    `${c} Patch "${p.name}" by Mimir Studio: $${h4(p.start)}-$${h4(patchEnd(p) - 1)}${from ? ` of ${from}` : ''}, ${p.bytes.length} byte${p.bytes.length === 1 ? '' : 's'} written over the original${p.off ? ' (switched off: not in the sources)' : ''}`,
+    `${c} It assembles on its own to a PRG that loads at $${h4(p.start)}: ${tass ? `64tass -a -C --cbm-prg -o ${patchFileName(p.name)} ${file}` : `java -jar KickAss.jar ${file}`}`, ''];
+  const pc = tass ? `* = $${h4(p.start)}                               ; ${p.name}` : `.pc = $${h4(p.start)} "${p.name.replace(/["\\]/g, "'")}"`;
+  const lang = patchLang(p), mine = lang === langOf(asm);
+  const now = assemblePatch(R, settings, p.start, p.source, lang), n = now.code.length;
   const same = !now.error && n <= p.bytes.length && now.code.every((b, i) => b === p.bytes[i]) && p.bytes.subarray(n).every(b => b === NOP);
-  if (same) {
-    const all = programNames(R, settings), own = ownNames(p.source);
-    const defs = [...usedNames(p.source)].filter(u => all.has(u) && !own.has(u)).sort().map(u => `.label ${u} = $${h4(all.get(u)!)}`);
+  if (same && mine) {
+    const all = programNames(R, settings), own = definedNames(p.source, lang);
+    const defs = [...usedWords(p.source, lang)].filter(u => all.has(u) && !own.has(u)).sort().map(u => (tass ? `${u} = $${h4(all.get(u)!)}` : `.label ${u} = $${h4(all.get(u)!)}`));
     const indent = /^([ \t]+)\S/m.exec(p.source)?.[1] ?? '        ', rest = p.bytes.length - n;
-    return [...head, ...(defs.length ? ['// the names the code uses, from the program and the C64 hardware', ...defs, ''] : []), pc,
-      p.source.replace(/\s+$/, ''), ...(rest ? [`${indent}.fill ${rest}, $ea              // the rest of the range: NOP`] : []), ''].join('\n');
+    return [...head, ...(defs.length ? [`${c} the names the code uses, from the program and the C64 hardware`, ...defs, ''] : []), pc,
+      p.source.replace(/\s+$/, ''), ...(rest ? [`${indent}.fill ${rest}, $ea              ${c} the rest of the range: NOP`] : []), ''].join('\n');
   }
   const rows: string[] = [];
   for (let i = 0; i < p.bytes.length; i += 8) rows.push(`        .byte ${[...p.bytes.subarray(i, i + 8)].map(b => `$${h2(b)}`).join(', ')}`);
-  return [...head, '// The code no longer assembles to these bytes with the program\'s names (a label renamed since?),',
-    '// so here are the bytes the patch writes. The code as it was written:', ...p.source.split('\n').map(l => `//   ${l}`), '', pc, ...rows, ''].join('\n');
+  const why = same
+    ? [`${c} The code is written in ${LANG_TITLE[lang]}, so here are the bytes it writes. The code as it was written:`]
+    : [`${c} The code no longer assembles to these bytes with the program's names (a label renamed since?),`, `${c} so here are the bytes the patch writes. The code as it was written:`];
+  return [...head, ...why, ...p.source.split('\n').map(l => `${c}   ${l}`), '', pc, ...rows, ''].join('\n');
 }
 
 /** The project with the patch added or edited: written over the files when it is on (an edited one keeps on or off). */

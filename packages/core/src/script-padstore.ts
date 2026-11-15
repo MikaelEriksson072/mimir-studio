@@ -7,6 +7,7 @@
  * stores (SHX) are said why not. */
 import type { ScriptPad } from './types';
 import { codeOf } from './script';
+import { splitLabel, startsInBlockComment, type ScriptLang } from './code-lang';
 
 /** A store of a line of a script's code that can be written into a scratchpad too. */
 export interface PadStore {
@@ -35,31 +36,15 @@ const STORES = new Set(['STA', 'STX', 'STY', 'SAX']);
 const NO_ABS_INDEX: Record<string, string> = { STX: 'y', STY: 'x', SAX: 'y' };
 const RMW = new Set(['INC', 'DEC', 'ASL', 'LSR', 'ROL', 'ROR', 'SLO', 'RLA', 'SRE', 'RRA', 'DCP', 'ISC', 'ISB']);
 const UNSTABLE = new Set(['AHX', 'SHA', 'SHX', 'SHY', 'TAS', 'SHS']);
-/** the start of a line up to its mnemonic: spaces and a label (`loop:`, `!:`, `!loop:`) */
-const LEAD = /^\s*(?:(?:[A-Za-z_][\w.]*|![A-Za-z_]\w*|!)\s*:\s*)?/;
-
-/** whether line `n` (from 1) starts in a block comment that an earlier line opened */
-function startsInComment(lines: readonly string[], n: number): boolean {
-  let open = false;
-  for (let i = 0; i < n - 1 && i < lines.length; i++) {
-    const l = lines[i];
-    for (let k = 0; k < l.length; k++) {
-      if (open) { if (l[k] === '*' && l[k + 1] === '/') { open = false; k++; } continue; }
-      if (l[k] === '"') { const e = l.indexOf('"', k + 1); if (e < 0) break; k = e; continue; }
-      if (l[k] === '/' && l[k + 1] === '/') break;
-      if (l[k] === '/' && l[k + 1] === '*') { open = true; k++; }
-    }
-  }
-  return open;
-}
 
 interface Store { mn: string; up: string; operand: string; index: string; kind: 'plain' | 'index' | 'izx' | 'izy' }
 
-/** a line's instruction that writes memory (its comment, strings and label left out), or null */
-function storeOf(raw: string): Store | null {
-  const m = /^([A-Za-z]{3})(?:\.[A-Za-z]+)?(?:\s+(.*))?$/.exec(codeOf(raw));
+/** a line's instruction that writes memory (its comment, strings and label left out), or null; 64tass's `@w` before
+ *  the address is not part of it */
+function storeOf(raw: string, lang?: ScriptLang): Store | null {
+  const m = /^([A-Za-z]{3})(?:\.[A-Za-z]+)?(?:\s+(.*))?$/.exec(codeOf(raw, lang));
   if (!m) return null;
-  const up = m[1].toUpperCase(), op = (m[2] ?? '').trim();
+  const up = m[1].toUpperCase(), op = (m[2] ?? '').trim().replace(/^@[wbl]\s*/i, '');
   if (!STORES.has(up) && !RMW.has(up) && !UNSTABLE.has(up)) return null;
   // an RMW of the accumulator (asl, rol a) writes no memory; nor does an immediate operand
   if (!op || /^[aA]$/.test(op) || op.startsWith('#')) return null;
@@ -77,10 +62,10 @@ const padIs = (operand: string, pads: readonly Pick<ScriptPad, 'name'>[]) => pad
  * The store on line `line` (from 1) of a script's code (its lines), for a copy of it into a scratchpad: what it is
  * and where the copy goes, or why it cannot be copied; null when the line has no instruction that writes memory.
  */
-export function padStoreAt(lines: readonly string[], line: number, pads: readonly Pick<ScriptPad, 'name'>[]): PadStoreFind | null {
+export function padStoreAt(lines: readonly string[], line: number, pads: readonly Pick<ScriptPad, 'name'>[], lang?: ScriptLang): PadStoreFind | null {
   const raw = lines[line - 1];
-  if (raw == null || startsInComment(lines, line)) return null;
-  const s = storeOf(raw);
+  if (raw == null || startsInBlockComment(lines, line, lang)) return null;
+  const s = storeOf(raw, lang);
   if (!s) return null;
   const at = s.up === 'SAX' ? 'sax' : s.mn;
   if (UNSTABLE.has(s.up)) return { line, why: `${at} is an unstable store (what it writes depends on the address): copy it by hand` };
@@ -90,12 +75,13 @@ export function padStoreAt(lines: readonly string[], line: number, pads: readonl
   const own = pads.find(p => words.includes(p.name) || words.includes(`${p.name}_end`));
   if (own) return { line, why: `it writes into the scratchpad ${own.name} already` };
   if (s.index && NO_ABS_INDEX[s.up] === s.index.toLowerCase()) return { line, why: `${s.mn} has no ,${s.index} form for an address above the zero page, where a scratchpad is: the copy would not assemble` };
-  const lead = LEAD.exec(raw)?.[0] ?? '';
+  // the start of the line up to its mnemonic: spaces and a label (`loop:`, `!:`, 64tass `loop`, `+`)
+  const lead = splitLabel(raw, lang).lead;
   const indent = lead.replace(/[^\t]/g, ' ');
   // the copies right after it (sta pad1,x; sta pad2,x): a new one goes after them
   const into: PadStore['into'] = [];
   for (let n = line + 1; n <= lines.length; n++) {
-    const c = storeOf(lines[n - 1]), pad = c && (c.kind === 'index' || c.kind === 'plain') ? padIs(c.operand, pads) : null;
+    const c = storeOf(lines[n - 1], lang), pad = c && (c.kind === 'index' || c.kind === 'plain') ? padIs(c.operand, pads) : null;
     if (!c || !pad || c.up !== s.up || c.index.toLowerCase() !== s.index.toLowerCase()) break;
     into.push({ pad, line: n });
   }

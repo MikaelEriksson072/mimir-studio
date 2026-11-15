@@ -1,19 +1,7 @@
 /* The script templates (spec 10.3): each decrypts what a reference of its method encrypted, into a scratchpad, into a
  * table of the program and in place, and encrypts it back to the same bytes. */
 import { describe, expect, it } from 'vitest';
-import { checkScript, runScript, SCRIPT_TEMPLATES, type ScriptEnv, type ScriptRun, type UserScript } from '../src';
-
-const tpl = (name: string) => SCRIPT_TEMPLATES.find(t => t.name === name)!;
-/** the template's source with some of its .vars set (the rest of the line, its comment, kept) */
-const withVars = (source: string, vars: Record<string, string | number | boolean>): string => {
-  let s = source;
-  for (const [k, v] of Object.entries(vars)) {
-    const re = new RegExp(`^(\\.var\\s+${k}\\s*=\\s*)(\\S+)`, 'm');
-    expect(re.test(s), `.var ${k}`).toBe(true);
-    s = s.replace(re, (_, head: string) => `${head}${typeof v === 'number' ? `$${v.toString(16)}` : v}`);
-  }
-  return s;
-};
+import { checkScript, runScript, SCRIPT_TEMPLATES, templateSource, type ScriptEnv, type ScriptRun, type UserScript } from '../src';
 
 const N = 300;
 const PLAIN = Array.from({ length: N }, (_, i) => (i * 37 + (i >> 3) * 11 + 5) & 0xff);
@@ -25,18 +13,6 @@ const envOf = (enc: number[]): ScriptEnv => {
   return { files: [{ load: AT, bytes }], names: new Map([['crypted', AT], ['crypted_end', AT + N], ['table', TABLE]]) };
 };
 const RESULT = 0xc000;
-const scriptOf = (name: string, source: string): UserScript => ({
-  id: name, name, lang: 'kickass', source, pads: tpl(name).pads.map(p => ({ ...p, start: RESULT })),
-});
-const run = (enc: number[], name: string, vars: Record<string, string | number | boolean>): ScriptRun => {
-  const e = envOf(enc), s = scriptOf(name, withVars(tpl(name).source, vars));
-  const c = checkScript(e, s);
-  expect(c.problems).toEqual([]);
-  const r = runScript(e, s, c);
-  expect(r.end).toBe('rts');
-  expect(r.overCode).toBeUndefined();
-  return r;
-};
 const padOf = (r: ScriptRun) => [...r.pads[0].bytes.subarray(0, N)];
 /** what the run left in the program at `at` (N bytes) */
 const progAt = (r: ScriptRun, at: number) => [...r.mem.subarray(at, at + N)];
@@ -79,15 +55,43 @@ const stepsOn = (b: number, steps: Step[], back = false) => {
   return b;
 };
 
-describe('script templates', () => {
+// each test in both languages: the templates as they are written (Kick Assembler) and as 64tass (templateSource)
+describe.each(['kickass', '64tass'] as const)('script templates in %s', lang => {
+  const tass = lang === '64tass';
+  const tpl = (name: string) => { const t = SCRIPT_TEMPLATES.find(x => x.name === name)!; return { ...t, source: templateSource(t, lang) }; };
+  /** the template's source with some of its settings set (64tass: `name = value`) */
+  const withVars = (source: string, vars: Record<string, string | number | boolean>): string => {
+    let s = source;
+    for (const [k, v] of Object.entries(vars)) {
+      const re = new RegExp(tass ? `^(${k}\\s*=\\s*)(\\S+)` : `^(\\.var\\s+${k}\\s*=\\s*)(\\S+)`, 'm');
+      expect(re.test(s), `${k} =`).toBe(true);
+      s = s.replace(re, (_, head: string) => `${head}${typeof v === 'number' ? `$${v.toString(16)}` : v}`);
+    }
+    return s;
+  };
+  const scriptOf = (name: string, source: string): UserScript => ({
+    id: name, name, lang, source, pads: tpl(name).pads.map(p => ({ ...p, start: RESULT })),
+  });
+  const run = (enc: number[], name: string, vars: Record<string, string | number | boolean>): ScriptRun => {
+    const e = envOf(enc), s = scriptOf(name, withVars(tpl(name).source, vars));
+    const c = checkScript(e, s);
+    expect(c.problems).toEqual([]);
+    const r = runScript(e, s, c);
+    expect(r.end).toBe('rts');
+    expect(r.overCode).toBeUndefined();
+    return r;
+  };
+
   it('each assembles as it comes, with its scratchpad, and has the settings every template has', () => {
     expect(SCRIPT_TEMPLATES.map(t => t.name)).toEqual(['xor_key', 'xor_key_string', 'xor_rolling_key', 'xor_chain', 'add_key', 'steps']);
-    for (const t of SCRIPT_TEMPLATES) {
+    for (const t0 of SCRIPT_TEMPLATES) {
+      const t = tpl(t0.name);
       const e = envOf(PLAIN), s = scriptOf(t.name, t.source);
       const c = checkScript(e, s);
       expect(c.problems, t.name).toEqual([]);
-      expect(t.source.split('\n')[0]).toMatch(/^\/\/ =+$/);
-      for (const v of ['source', 'dest', 'length']) expect(t.source).toMatch(new RegExp(`^\\.var ${v}\\s+= `, 'm'));
+      expect(t.source.split('\n')[0]).toMatch(tass ? /^; =+$/ : /^\/\/ =+$/);
+      for (const v of ['source', 'dest', 'length']) expect(t.source).toMatch(new RegExp(tass ? `^${v}\\s+= ` : `^\\.var ${v}\\s+= `, 'm'));
+      if (tass) expect(t.source).not.toMatch(/\/\/|\.var|\.const|!\+|!:|\{|\}/);
       expect(t.source).toContain('Seen in');
       // it runs as it comes (the program's first $100 bytes into the scratchpad)
       expect(runScript(e, s, c).end).toBe('rts');
@@ -190,7 +194,7 @@ describe('script templates', () => {
     const enc = xorKey(PLAIN, 0x5a);
     bytes.set(enc, AT - 0x200);
     const e: ScriptEnv = { files: [{ load: 0x0200, bytes }], names: new Map([['crypted', AT], ['buffer', 0x8000]]) };
-    const s: UserScript = { id: 'x', name: 'x', lang: 'kickass', source: withVars(tpl('xor_key').source, { source: 'crypted', dest: 'buffer', length: N, key: 0x5a }).replace(/^\.if \(dest >= result.*$/m, ''), pads: [] };
+    const s: UserScript = { id: 'x', name: 'x', lang, source: withVars(tpl('xor_key').source, { source: 'crypted', dest: 'buffer', length: N, key: 0x5a }).replace(tass ? /^\.cerror \(dest >= result.*$/m : /^\.if \(dest >= result.*$/m, ''), pads: [] };
     const c = checkScript(e, s);
     expect(c).toMatchObject({ ok: true, place: 'program' });
     expect(c.code.some(r => r.start < 0x8000 + N && r.end > 0x8000)).toBe(true);

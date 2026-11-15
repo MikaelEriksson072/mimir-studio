@@ -11,6 +11,7 @@ import { bankAdr, cx, fmtBytes, groupOfKind } from '../lib/util';
 import type { MountedDisk, MountedTape } from '../lib/types';
 import type { QuicksaveEntry, QuicksaveInfo } from '../../shared/ipc';
 import { useUi, type Activity } from '../store/ui';
+import { useAssembler } from '../lib/assembler';
 import { useScripts, type LibraryScript } from '../store/scripts';
 import { BookmarksView, type BookmarkEditing } from './Bookmarks';
 import { C64Screen, screenItems } from './C64Screen';
@@ -405,6 +406,8 @@ function QuicksaveSection({ info, follow, onOpen, onFollow, ...kept }: Quicksave
  *  changes go into the program), opens in the Scripts tab or is deleted; + makes a new one, and the library's can be
  *  added. */
 function ScriptsSideView({ list, checks, patches, onNew, onOpen, onRun, onRemove, onAdd }: ScriptsProps) {
+  // (new scripts are written in the project's assembler's language)
+  const langName = useAssembler() === '64tass' ? '64tass' : 'Kick Assembler';
   const running = useScripts(s => s.running), runs = useScripts(s => s.runs), library = useScripts(s => s.library);
   const status = (sc: UserScript): { text: string; bad?: boolean } => {
     if (running === sc.id) return { text: 'running…' };
@@ -425,9 +428,9 @@ function ScriptsSideView({ list, checks, patches, onNew, onOpen, onRun, onRemove
   return (
     <section className="side-inner scripts-side" aria-label="Scripts">
       <div className="side-title">Scripts <span className="muted">{list.length}</span><span className="grow" />
-        <button className="icon-btn" title="New script: Kick Assembler code that runs in Mimir (it opens in the Scripts tab)" aria-label="New script" onClick={onNew}><Icon name="plus" size={14} /></button></div>
+        <button className="icon-btn" title={`New script: ${langName} code that runs in Mimir (it opens in the Scripts tab)`} aria-label="New script" onClick={onNew}><Icon name="plus" size={14} /></button></div>
       <div className="scripts-side-body">
-        {!list.length && <p className="side-hint">A script is Kick Assembler code that runs here in Mimir on the program's bytes: what it changes goes into the program and the source, its own code does not. + makes one.</p>}
+        {!list.length && <p className="side-hint">A script is {langName} code that runs here in Mimir on the program's bytes: what it changes goes into the program and the source, its own code does not. + makes one.</p>}
         <div role="list" aria-label="Scripts in the project">
           {list.map(sc => {
             const st = status(sc), ok = !!checks.get(sc.id)?.ok, changed = scriptPatches(patches, sc.id).length > 0;

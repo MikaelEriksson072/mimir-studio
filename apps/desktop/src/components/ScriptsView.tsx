@@ -1,12 +1,13 @@
-/* The Scripts tab (spec 10.3): the project's scripts, Kick Assembler code that runs in Mimir on the program's bytes.
- * The code is written in Monaco with the Kick Assembler highlighting; it is checked as it is typed (assembled with
+/* The Scripts tab (spec 10.3): the project's scripts, code that runs in Mimir on the program's bytes, each in its own
+ * language (Kick Assembler or 64tass: the project's assembler's when it was made; a Kick Assembler script can be moved
+ * to 64tass when it gives the same bytes). The code is written in Monaco with the language's highlighting; it is checked as it is typed (assembled with
  * the program's names and the scratchpads at hand) and runs only when it checks out. What a run changes in the
  * program's bytes goes into the program as the script's patches (the listing, the source, the export and Build & Run
  * have the new bytes; the script's code is never in them); its scratchpads keep data outside the program, which can
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { checkScript, SCRIPT_TEMPLATES, type ScriptTemplate, h4, padName, padStoreAt, padStoreLine, padStoreReach, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot } from '@mimir/core';
+import { checkScript, LANG_TITLE, SCRIPT_TEMPLATES, scriptIn64tass, type ScriptLang, type ScriptTemplate, h4, padName, padStoreAt, padStoreLine, padStoreReach, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
@@ -30,6 +31,8 @@ type MonacoNs = typeof Monaco;
 
 export interface ScriptsViewProps {
   scripts: readonly UserScript[];
+  /** the language new scripts and templates are written in: the project's assembler's */
+  lang: ScriptLang;
   /** what the scripts are checked with (the program's names, its loaded bytes) */
   env: ScriptEnv;
   /** what a script runs on: the program without what its earlier runs changed */
@@ -46,7 +49,7 @@ export interface ScriptsViewProps {
   onAdd: (s: LibraryScript) => void;
   /** a copy of a template in the project (its scratchpads placed where there is room) */
   onAddTemplate: (t: ScriptTemplate) => void;
-  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) => void;
+  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
    *  runUserScript) */
@@ -77,7 +80,7 @@ export interface ScriptsViewProps {
 const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock }: ScriptsViewProps) {
+export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock }: ScriptsViewProps) {
   const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -132,7 +135,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
       ed.current = editor;
       // a store (sta $ff40,x) written into a scratchpad too: a right-click on its line, or its light bulb (providers.ts)
       const storeKey = editor.createContextKey<boolean>('mimirPadStore', false);
-      const onStore = () => { const m = editor.getModel(), p = editor.getPosition(); storeKey.set(!!m && !!p && !!padStoreAt(m.getLinesContent(), p.lineNumber, curRef.current?.pads ?? [])); };
+      const onStore = () => { const m = editor.getModel(), p = editor.getPosition(); storeKey.set(!!m && !!p && !!padStoreAt(m.getLinesContent(), p.lineNumber, curRef.current?.pads ?? [], curRef.current?.lang)); };
       editor.onDidChangeCursorPosition(onStore); editor.onDidChangeModel(onStore);
       const ctxAt = { x: 0, y: 0, set: false };
       editor.onContextMenu(ev => { ctxAt.x = ev.event.posx; ctxAt.y = ev.event.posy; ctxAt.set = true; });
@@ -233,8 +236,10 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     if (!cur) { e.setModel(null); return; }
     if (pending.current && pending.current.id !== cur.id) flush();
     let m = models.current[cur.id];
+    // (the highlighting, the hover and the suggestions of the script's language)
+    const language = cur.lang === '64tass' ? 'tass64' : 'kickass';
     if (!m) {
-      m = monaco.editor.createModel(cur.source, 'kickass', monaco.Uri.parse(`script:///${cur.id}.asm`)); models.current[cur.id] = m;
+      m = monaco.editor.createModel(cur.source, language, monaco.Uri.parse(`script:///${cur.id}.asm`)); models.current[cur.id] = m;
       // the breakpoints it had when the tab was last open
       bpIds.current[cur.id] = []; setBps(cur.id, useScripts.getState().bps[cur.id] ?? []);
     }
@@ -242,11 +247,12 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
       const vs = e.getModel() === m ? e.saveViewState() : null; applying.current = true; m.setValue(cur.source); applying.current = false; if (vs) e.restoreViewState(vs);
       setLive(l => { const { [cur.id]: _, ...rest } = l; return rest; });
     }
+    if (m.getLanguageId() !== language) monaco.editor.setModelLanguage(m, language);
     if (e.getModel() !== m) e.setModel(m);
-  }, [state, cur?.id, cur?.source, scripts]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state, cur?.id, cur?.source, cur?.lang, scripts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const source = cur ? live[cur.id] ?? cur.source : '';
-  const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, pads: cur.pads, init: cur.init }) : null, [env, source, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
+  const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, lang: cur.lang, pads: cur.pads, init: cur.init }) : null, [env, source, cur?.lang, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
   const names = useMemo(() => cur ? scriptNames(env, cur.pads) : new Map<string, number>(), [env, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
   /** a name for an address (the first of the names the script may use that has it; not a number such as music.size) */
   const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a) && !env.values?.has(n)) m.set(a, n); return m; }, [names, env]);
@@ -258,7 +264,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
   const runEnv = useMemo(() => (cur ? envFor(cur.id) : null), [cur?.id, env, patches]); // eslint-disable-line react-hooks/exhaustive-deps
   const startMem = useMemo(() => (cur && check && runEnv ? scriptStartMemory(runEnv, cur, check) : null), [runEnv, check, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
   const wCheck = dbg ? dbg.m.check : check, wSource = dbg ? dbg.source : source;
-  const autoSpots = useMemo(() => (cur && wCheck ? scriptWatches(wCheck, wSource, cur.pads) : []), [wCheck, wSource, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
+  const autoSpots = useMemo(() => (cur && wCheck ? scriptWatches(wCheck, wSource, cur.pads, cur.lang) : []), [wCheck, wSource, cur?.pads, cur?.lang]); // eslint-disable-line react-hooks/exhaustive-deps
   /** the names an added spot can be written with: the program's, the hardware's, the scratchpads' and the script's own labels */
   const watchNames = useMemo(() => { const m = new Map(names); for (const n of env.values ?? []) m.delete(n); for (const [a, n] of wCheck?.labels ?? []) m.set(n, a); return m; }, [names, env, wCheck]);
   /** an address or a name typed for the watch list: a name Mimir gave (`colors_0939`) also when the analysis has named
@@ -317,7 +323,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     if (dbgRef.current) { toast('The code cannot be changed while it is being debugged: stop first', 'info'); return; }
     const m = models.current[s.id], inEditor = !!e && !!monaco && !!m && e.getModel() === m;
     const lines = inEditor ? m!.getLinesContent() : (live[s.id] ?? s.source).split(/\r?\n/);
-    const st = padStoreAt(lines, line, s.pads);
+    const st = padStoreAt(lines, line, s.pads, s.lang);
     if (!st) { toast(`Line ${line} writes nothing to memory: a store (sta, stx, sty) can be written into a scratchpad too`, 'info'); return; }
     if ('why' in st) { toast(`Line ${line} cannot be written into a scratchpad too: ${st.why}`, 'warn'); return; }
     let pads = s.pads, i = pi ?? -1;
@@ -347,7 +353,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     const s = curRef.current; if (!s) return;
     if (dbgRef.current) { toast('The code cannot be changed while it is being debugged: stop first', 'info'); return; }
     const m = models.current[s.id];
-    const st = padStoreAt(m ? m.getLinesContent() : (live[s.id] ?? s.source).split(/\r?\n/), line, s.pads);
+    const st = padStoreAt(m ? m.getLinesContent() : (live[s.id] ?? s.source).split(/\r?\n/), line, s.pads, s.lang);
     if (!st || 'why' in st) { padStoreInto(line, null); return; }
     const reach = padStoreReach(st);
     onMenu(x, y, [
@@ -419,14 +425,24 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     const line = d.m.lineAt() ?? d.m.callLine();
     if (line) ed.current?.revealLineInCenterIfOutsideViewport(line);
   };
+  /** the script (in Kick Assembler) written in 64tass, the project's language: only when it gives the same bytes */
+  const moveTo64tass = () => {
+    const s = curRef.current; if (!s || dbgRef.current) return;
+    flush();
+    const text = models.current[s.id]?.getValue() ?? s.source;
+    const r = scriptIn64tass(envFor(s.id), { source: text, pads: s.pads, init: s.init });
+    if ('error' in r) { toast(`"${s.name}" stays in Kick Assembler: ${r.error}${r.line ? ` (line ${r.line})` : ''}`, 'warn'); if (r.line) goLine(r.line); return; }
+    onEdit(s.id, { source: r.source, lang: '64tass', pads: r.pads }, `Write script "${s.name}" in 64tass`);
+    toast(`"${s.name}" is written in 64tass now, with the same bytes as its Kick Assembler code (Ctrl+Z takes it back)`, 'ok');
+  };
   /** start debugging: the run set up, stopped before its first instruction */
   const startDebug = () => {
     const s = curRef.current; if (!s || running || dbgRef.current) return;
     flush();
     const text = models.current[s.id]?.getValue() ?? s.source;
-    const e = envFor(s.id), c = checkScript(e, { source: text, pads: s.pads, init: s.init });
+    const e = envFor(s.id), c = checkScript(e, { source: text, lang: s.lang, pads: s.pads, init: s.init });
     if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
-    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, pads: s.pads, init: s.init }, c), source: text, prev: null, padsBefore: null, start: scriptStartMemory(e, s, c), before: null };
+    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, lang: s.lang, pads: s.pads, init: s.init }, c), source: text, prev: null, padsBefore: null, start: scriptStartMemory(e, s, c), before: null };
     setDbg(d); dbgRef.current = d;
     stopped(d);
   };
@@ -490,7 +506,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
       <div className="empty-project scripts-empty">
         <Icon name="prompt" size={30} />
         <h2>No scripts yet</h2>
-        <p>A script is Kick Assembler code that runs here in Mimir on the program's bytes. Use the program's labels, variables and tables in it, call its routines or paste its code (a decryption loop, say): what it changes in the program's bytes goes into the program and the source, while the script's own code stays out of the export and Build &amp; Run.</p>
+        <p>A script is {LANG_TITLE[lang]} code (the project's assembler's) that runs here in Mimir on the program's bytes. Use the program's labels, variables and tables in it, call its routines or paste its code (a decryption loop, say): what it changes in the program's bytes goes into the program and the source, while the script's own code stays out of the export and Build &amp; Run.</p>
         <div className="empty-actions"><button className="btn primary" onClick={onNew}><Icon name="plus" size={14} />New script</button></div>
         <p className="muted small">Or select lines in the listing, right-click and pick <b>Program → New script from selection</b>, or add one from the library, or start from a template (a decryption: XOR with a key, a chain, add, several steps).</p>
       </div>
@@ -561,7 +577,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
     <div className="scripts">
       {listFolded ? <div className="scr-list folded" role="navigation" aria-label="Scripts in the project, folded in">
         <button className="icon-btn" onClick={() => setListFolded(false)} aria-label="Unfold the script list" title="Unfold the list of the project's scripts and the library"><Icon name="side-show" size={16} /></button>
-        <button className="icon-btn" onClick={onNew} aria-label="New script" title="New script: Kick Assembler code that runs in Mimir"><Icon name="plus" size={15} /></button>
+        <button className="icon-btn" onClick={onNew} aria-label="New script" title={`New script: ${LANG_TITLE[lang]} code that runs in Mimir`}><Icon name="plus" size={15} /></button>
         <span className="scr-rail-sep" />
         {scripts.map(s => (
           <button key={s.id} className={cx('icon-btn scr-rail-item', s.id === cur?.id && 'on')} aria-label={s.name} aria-pressed={s.id === cur?.id} onClick={() => { flush(); set({ selected: s.id, pad: 0, change: null }); }}
@@ -569,7 +585,7 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
         ))}
       </div> : <div className="scr-list">
         <div className="scr-list-head"><span>Project</span><span className="grow" />
-          <button className="icon-btn" onClick={onNew} aria-label="New script" title="New script: Kick Assembler code that runs in Mimir"><Icon name="plus" size={15} /></button>
+          <button className="icon-btn" onClick={onNew} aria-label="New script" title={`New script: ${LANG_TITLE[lang]} code that runs in Mimir`}><Icon name="plus" size={15} /></button>
           <button className="icon-btn" onClick={() => setListFolded(true)} aria-label="Fold the script list" title="Fold the list in to a strip: the editor gets its room (the strip still switches scripts)"><Icon name="side-hide" size={15} /></button></div>
         <div role="listbox" aria-label="Scripts">
           {scripts.map(s => (
@@ -588,6 +604,11 @@ export function ScriptsView({ scripts, env, envFor, patches, theme, linkOf, kind
             onClick={() => { const p = check.problems.find(x => x.line); if (p?.line) goLine(p.line); }}>
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}
           </span>
+          {/* the script's language; one in Kick Assembler in a 64tass project can be moved there */}
+          <span className={cx('pill scr-lang', cur.lang !== lang && 'other')} aria-label="Language"
+            title={cur.lang === lang ? `Written in ${LANG_TITLE[cur.lang]}, as the project's source is` : `Written in ${LANG_TITLE[cur.lang]}: it is assembled as ${LANG_TITLE[cur.lang]}, though the project's source is ${LANG_TITLE[lang]}`}>{LANG_TITLE[cur.lang]}</span>
+          {cur.lang === 'kickass' && lang === '64tass' && !dbg && <button className="btn small scr-move" onClick={moveTo64tass}
+            title="Write the script in 64tass, as the project's source is: its code and its scratchpads' start content converted, and only when they give the same bytes as now (Ctrl+Z takes it back)">Write in 64tass</button>}
           <span className="grow" />
           <label className={cx('scr-safe', cur.safe && 'on')} title={cur.safe
             ? 'Safe mode is on: a run leaves the program and its .asm as they are and lists what it would change (Would change); Write into the program puts that in. Switch it off and runs write into the program again'

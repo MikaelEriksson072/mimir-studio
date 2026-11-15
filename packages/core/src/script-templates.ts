@@ -5,7 +5,8 @@
  * `dest` (where the result goes: the scratchpad `result`, a label of the program or `source` itself), `length` and
  * the key. Adding one to a project makes a copy of it (and its scratchpads, placed where there is room).
  * ===================================================================== */
-import type { ScriptPadSource } from './types';
+import type { ScriptLang, ScriptPadSource } from './types';
+import { kickToTass } from './code-convert';
 
 export interface ScriptTemplate {
   /** the name a copy gets in the project (made unique there) */
@@ -41,7 +42,7 @@ const WHERE = [
 
 const CHECKS = [
   '',
-  part('checks: an .error stops the script before it runs'),
+  part('checks: these stop the script before it runs'),
   '.if (length < 1 || length > $10000) .error "length must be 1 to $10000 bytes"',
   '// (take this line out if you remove the scratchpad result)',
   '.if (dest >= result && dest < result_end && dest + length > result_end) .error "length is more than the scratchpad result holds: make result bigger (its size under Scratchpads) or length smaller"',
@@ -134,7 +135,7 @@ const BACKWARDS = [
 ];
 
 const USE = [
-  'Set the .vars under settings and run it (Ctrl+Enter). With dest = result the',
+  'Set the values under settings and run it (Ctrl+Enter). With dest = result the',
   'program stays as it is and the scratchpad result shows the decrypted bytes',
   '(as code, hex or text); with a label of the program as dest (or source, in',
   'place) the bytes go into the program and its .asm, as a patch of this script.',
@@ -577,3 +578,11 @@ const steps: ScriptTemplate = {
 
 /** The templates, in the order the Scripts tab lists them. */
 export const SCRIPT_TEMPLATES: readonly ScriptTemplate[] = [xorKey, xorString, xorRolling, xorChain, addKey, steps];
+
+/** A template's source in a language: as it is written (Kick Assembler), or as 64tass (kickToTass; the tests check
+ *  that each gives the same bytes in both). */
+export function templateSource(t: Pick<ScriptTemplate, 'source'>, lang: ScriptLang = 'kickass'): string {
+  if (lang !== '64tass') return t.source;
+  const r = kickToTass(t.source);
+  return 'source' in r ? r.source : t.source;
+}

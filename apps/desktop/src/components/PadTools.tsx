@@ -1,17 +1,19 @@
-/* A user script's scratchpads (spec 10.3): the editor of what one holds when a run starts (Kick Assembler, hex or
- * text), and two compared byte by byte, with a heat map of where they differ and the rows that do. */
+/* A user script's scratchpads (spec 10.3): the editor of what one holds when a run starts (code in the script's
+ * language, Kick Assembler or 64tass, hex or text), and two compared byte by byte, with a heat map of where they differ and the rows that do. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { h2, h4, padData, padDiff, padText, type ScriptPad, type ScriptPadSource } from '@mimir/core';
+import { h2, h4, LANG_TITLE, padData, padDiff, padText, type ScriptLang, type ScriptPad, type ScriptPadSource } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
 import { heatLayout } from '../lib/heatmap';
 
 const FORMS: { form: ScriptPadSource['form']; label: string; hint: string }[] = [
-  { form: 'asm', label: 'Kick Assembler', hint: 'Code and data at the scratchpad\'s address, with the program\'s names: .byte, .word, .text, .fill, instructions, labels of its own' },
+  { form: 'asm', label: 'code', hint: 'Code and data at the scratchpad\'s address, with the program\'s names: .byte, .word, .text, .fill, instructions, labels of its own' },
   { form: 'hex', label: 'Hex', hint: 'Bytes in hex: 01 02 ff, $01,$02 or 0102ff; a line that starts with an address (a hex dump\'s) puts its bytes there, its text column is left out' },
   { form: 'text', label: 'Text', hint: 'A byte a character, PETSCII (a line end is RETURN, $0d) or screen codes (a line end fills the row of 40 with spaces)' },
 ];
 
+/** (code: in the script's language, its comments as it writes them) */
+const placeholder = (form: ScriptPadSource['form'], lang: ScriptLang): string => (form === 'asm' && lang === '64tass' ? PLACEHOLDER.asm.replace(/\/\/ /g, '; ') : PLACEHOLDER[form]);
 const PLACEHOLDER: Record<ScriptPadSource['form'], string> = {
   asm: '// what the scratchpad holds when a run starts, from its first byte:\n        .byte $01, $02, $03\n        .word my_table          // a label of the program: its address\n        .text "HELLO"\n        .fill 16, $ff\n        lda #0                  // code too',
   hex: '01 02 03 ff\n$c800  a9 00 8d 20 d0',
@@ -23,8 +25,10 @@ const PLACEHOLDER: Record<ScriptPadSource['form'], string> = {
  * many bytes, or the error and its line), and Set keeps it (Ctrl+Enter); a form picked turns what is written into it.
  * Clear leaves only the fill.
  */
-export function PadEditor({ pad, names, onSet, onCancel }: {
+export function PadEditor({ pad, names, lang, onSet, onCancel }: {
   pad: ScriptPad; names: ReadonlyMap<string, number>;
+  /** the script's language: code is written in it */
+  lang: ScriptLang;
   /** the start content (null: none, only the fill) and how it was written */
   onSet: (data: Uint8Array | null, src: ScriptPadSource | null) => void; onCancel: () => void;
 }) {
@@ -32,7 +36,7 @@ export function PadEditor({ pad, names, onSet, onCancel }: {
   const [src, setSrc] = useState<ScriptPadSource>(first);
   const area = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { area.current?.focus(); }, []);
-  const read = useMemo(() => padData(src, pad.start, pad.size, names, pad.fill ?? 0), [src, pad.start, pad.size, pad.fill, names]);
+  const read = useMemo(() => padData(src, pad.start, pad.size, names, pad.fill ?? 0, lang), [src, pad.start, pad.size, pad.fill, names, lang]);
   const ok = 'bytes' in read;
   /** another form: what is written turned into it, when it reads (else the text stays, to be put right) */
   const toForm = (form: ScriptPadSource['form'], screen = !!src.screen) => {
@@ -44,7 +48,7 @@ export function PadEditor({ pad, names, onSet, onCancel }: {
     <div className="pad-edit" role="group" aria-label={`What ${pad.name} starts with`}>
       <div className="pad-edit-head">
         <div className="seg" role="group" aria-label="Written as">
-          {FORMS.map(f => <button key={f.form} className={cx(src.form === f.form && 'on')} aria-pressed={src.form === f.form} title={f.hint} onClick={() => toForm(f.form)}>{f.label}</button>)}
+          {FORMS.map(f => <button key={f.form} className={cx(src.form === f.form && 'on')} aria-pressed={src.form === f.form} title={f.hint} onClick={() => toForm(f.form)}>{f.form === 'asm' ? LANG_TITLE[lang] : f.label}</button>)}
         </div>
         {src.form === 'text' && <div className="seg" role="group" aria-label="Characters as">
           <button className={cx(!src.screen && 'on')} aria-pressed={!src.screen} onClick={() => toForm('text', false)}>PETSCII</button>
@@ -55,7 +59,7 @@ export function PadEditor({ pad, names, onSet, onCancel }: {
             : `${read.line ? `Line ${read.line}: ` : ''}${read.error}`}
         </span>
       </div>
-      <textarea ref={area} className="pad-edit-text mono" aria-label={`${pad.name} at the start`} spellCheck={false} value={src.text} placeholder={PLACEHOLDER[src.form]}
+      <textarea ref={area} className="pad-edit-text mono" aria-label={`${pad.name} at the start`} spellCheck={false} value={src.text} placeholder={placeholder(src.form, lang)}
         onChange={e => setSrc({ ...src, text: e.target.value })}
         onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); set(); } else if (e.key === 'Escape') { e.preventDefault(); onCancel(); } }} />
       <div className="scr-view-actions">

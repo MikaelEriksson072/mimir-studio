@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, byteLines, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, byteLines, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { Icon } from '../lib/icons';
@@ -190,11 +190,11 @@ function PadsPane(p: ScriptOutputProps) {
     setPads([...script.pads, { name, start, size: 0x100 }], `Add scratchpad ${name} to "${script.name}"`);
     set({ pad: script.pads.length });
   };
-  /** a scratchpad changed in the list: start content written in Kick Assembler is for its address, so it is assembled
+  /** a scratchpad changed in the list: start content written as code (in the script's language) is for its address, so it is assembled
    *  again where the scratchpad is now (when it still reads; else it keeps its bytes) */
   const moved = (old: ScriptPad, q: ScriptPad): ScriptPad => {
     if (q.start === old.start || q.src?.form !== 'asm') return q;
-    const r = padData(q.src, q.start, q.size, names, q.fill ?? 0);
+    const r = padData(q.src, q.start, q.size, names, q.fill ?? 0, script.lang);
     return 'bytes' in r ? { ...q, ...(r.bytes.length ? { data: r.bytes } : {}) } : q;
   };
   // which scratchpads the last run changed (a dot in the list)
@@ -215,7 +215,7 @@ function PadsPane(p: ScriptOutputProps) {
           <button className="btn ghost small" onClick={addPad} title="A scratchpad: memory of the script's own at an address, for data kept outside the program (a log, say) that can be saved as a file. It is cleared before each run; its name (and name_end) are labels in the code"><Icon name="plus" size={13} />Add</button>
         </div>
         <div className="scr-master-body">
-          {fromBlock && <BlockToPad blocks={blocks} pads={script.pads} first={cursorBlock} into={shown ? i : null}
+          {fromBlock && <BlockToPad blocks={blocks} pads={script.pads} lang={script.lang} first={cursorBlock} into={shown ? i : null}
             onCopy={(start, into) => { onCopyBlock(start, script.id, into); setFromBlock(false); }} onCancel={() => setFromBlock(false)} />}
           {!script.pads.length && <p className="scr-empty">None. Add one to keep data outside the program, a log the script writes, say, and save it as a file.</p>}
           {script.pads.length > 0 && <div className="pad-table" role="table" aria-label="Scratchpads">
@@ -278,7 +278,7 @@ function ProblemsPane({ check, where, onGoLine }: { check: ScriptCheck; where: s
 }
 
 /** Which block goes into which scratchpad (a new one, or one of the script's), and what it becomes there. */
-function BlockToPad({ blocks, pads, first, into, onCopy, onCancel }: { blocks: readonly BlockChoice[]; pads: readonly ScriptPad[]; first: Addr | null; into: number | null; onCopy: (start: Addr, pad: number | null) => void; onCancel: () => void }) {
+function BlockToPad({ blocks, pads, lang, first, into, onCopy, onCancel }: { blocks: readonly BlockChoice[]; pads: readonly ScriptPad[]; lang: UserScript['lang']; first: Addr | null; into: number | null; onCopy: (start: Addr, pad: number | null) => void; onCancel: () => void }) {
   const [start, setStart] = useState<Addr | null>(first != null && blocks.some(b => b.start === first) ? first : blocks[0]?.start ?? null);
   const [pad, setPad] = useState<string>(into != null ? String(into) : 'new');
   const b = blocks.find(x => x.start === start), n = b ? b.end - b.start : 0, p = pad === 'new' ? null : pads[+pad];
@@ -291,7 +291,7 @@ function BlockToPad({ blocks, pads, first, into, onCopy, onCancel }: { blocks: r
         <option value="new">a new scratchpad</option>
         {pads.map((x, i) => <option key={i} value={i}>{x.name} ({rangeText({ start: x.start, end: x.start + x.size })})</option>)}
       </select></label>
-      {b && <p className="muted small">As {BLOCK_PAD_FORM[b.kind] ?? 'hex'}{b.kind === 'code' ? ' (Kick Assembler, the program\'s names kept)' : ''}. {p ? (p.size < n ? `${p.name} becomes ${n} bytes, when there is room after it.` : `In place of what ${p.name} starts with now.`) : `A new scratchpad of ${n} bytes.`}</p>}
+      {b && <p className="muted small">As {BLOCK_PAD_FORM[b.kind] ?? 'hex'}{b.kind === 'code' ? ` (${LANG_TITLE[lang]}, the program's names kept)` : ''}. {p ? (p.size < n ? `${p.name} becomes ${n} bytes, when there is room after it.` : `In place of what ${p.name} starts with now.`) : `A new scratchpad of ${n} bytes.`}</p>}
       <div className="pad-from-act">
         <button className="btn small primary" disabled={!b} onClick={() => b && onCopy(b.start, p ? +pad : null)}><Icon name="copy" size={13} />Copy</button>
         <button className="btn small" onClick={onCancel}>Cancel</button>
@@ -427,7 +427,7 @@ function PadRow({ pad, on, changed, bad, warn, onShow, onChange, onRemove }: { p
   const commit = () => {
     const a = num(start), n = num(size), f = num(fill);
     if (!(a >= 0 && a <= 0xffff) || !(n >= 1 && a + n <= 0x10000) || !(f >= 0 && f <= 255) || !name.trim()) { setName(pad.name); setStart($(pad.start)); setSize($(pad.size)); setFill('$' + h2(pad.fill ?? 0)); return; }
-    // its start content goes with it (written in Kick Assembler, PadsPane assembles it again where it is now)
+    // its start content goes with it (written as code, PadsPane assembles it again where it is now)
     const q: ScriptPad = { name: name.trim(), start: a, size: n, ...(f ? { fill: f } : {}), ...(pad.data ? { data: pad.data } : {}), ...(pad.src ? { src: pad.src } : {}) };
     if (q.name === pad.name && q.start === pad.start && q.size === pad.size && (q.fill ?? 0) === (pad.fill ?? 0)) return;
     // what the last run left belongs to the old place and size
@@ -550,7 +550,7 @@ function PadView({ script, target, empty, names, live, theme, onShow, onCopy, on
         {atStart && !isEditing && <span className="pill scr-start-pill" title={pad!.data?.length ? `What a run starts it with: ${pad!.data.length} bytes set (Edit), the rest its fill. It has not run since` : 'What a run starts it with: its fill (Edit sets what it holds)'}>at the start{pad!.data?.length ? ` · ${pad!.data.length} set` : ''}</span>}
         <span className="grow" />
         {isEditing ? <span className="pill mid scr-edit-pill">editing the start</span> : <>
-          {pad && <button className="btn small ghost scr-pad-edit-btn" onClick={() => setEditing(`${script.id}/${pi}`)} title="Set what the scratchpad holds when a run starts: Kick Assembler (code and data), hex or text"><Icon name="pencil" size={13} /><span className="lbl">Edit start</span></button>}
+          {pad && <button className="btn small ghost scr-pad-edit-btn" onClick={() => setEditing(`${script.id}/${pi}`)} title={`Set what the scratchpad holds when a run starts: ${LANG_TITLE[script.lang]} (code and data), hex or text`}><Icon name="pencil" size={13} /><span className="lbl">Edit start</span></button>}
           <div className="seg" role="group" aria-label="Show as">
             {(['hex', 'code', 'text', ...(pad ? ['compare' as const] : [])] as const).map(m => <button key={m} className={cx(showAs === m && 'on')} aria-pressed={showAs === m} onClick={() => onMode(m)}
               title={m === 'compare' ? 'Set the scratchpad against another one, or against what a run starts it with: a heat map shows where the bytes differ' : undefined}>{m === 'hex' ? 'Hex' : m === 'code' ? 'Code' : m === 'text' ? 'Text' : 'Compare'}</button>)}
@@ -562,12 +562,12 @@ function PadView({ script, target, empty, names, live, theme, onShow, onCopy, on
             : showAs !== 'code' && <div className="seg" role="group" aria-label="Text as"><button className={cx(!screen && 'on')} aria-pressed={!screen} onClick={() => onScreen(false)} title="The bytes as PETSCII">PETSCII</button><button className={cx(screen && 'on')} aria-pressed={screen} onClick={() => onScreen(true)} title="The bytes as screen codes">Screen</button></div>}
         </>}
       </div>
-      {isEditing ? <PadEditor key={`${script.id}/${pi}`} pad={pad!} names={names} onSet={setStart} onCancel={() => setEditing(null)} />
+      {isEditing ? <PadEditor key={`${script.id}/${pi}`} pad={pad!} names={names} lang={script.lang} onSet={setStart} onCancel={() => setEditing(null)} />
         : showAs === 'compare' && bytes && vsBytes ? <PadCompare a={bytes} b={vsBytes} aName={pad!.name} bName={vsPad ? vsPad.name : 'start'} at={at} theme={theme} />
         : bytes ? <pre className="scr-dump mono" aria-label={`${title} as ${showAs}`}>{marked ?? text}</pre>
         : <p className="scr-empty scr-view-empty">Empty until the script runs: Run fills it.</p>}
       {bytes && !isEditing && <div className="scr-view-actions">
-        <button className="btn small" onClick={() => onCopy(byteLines(bytes).join('\n'), `${bytes.length} bytes as .byte lines`)} title="Copy the bytes as Kick Assembler .byte lines"><Icon name="copy" size={13} /><span className="lbl">Copy as .byte</span></button>
+        <button className="btn small" onClick={() => onCopy(byteLines(bytes).join('\n'), `${bytes.length} bytes as .byte lines`)} title="Copy the bytes as .byte lines (Kick Assembler and 64tass alike)"><Icon name="copy" size={13} /><span className="lbl">Copy as .byte</span></button>
         {patch ? <>
           <span className="grow" />
           <button className="btn small" onClick={() => onShow(patch.start, patchEnd(patch))} title="Select these bytes in the listing"><Icon name="target" size={13} /><span className="lbl">Show in listing</span></button>
