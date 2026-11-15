@@ -32,6 +32,15 @@ export class Cpu {
 
   constructor(bus: Bus) { this.bus = bus; }
 
+  /** the cycles the last instruction took over its opcode's own: a page crossing (1), a taken branch (1, 2 across a page) */
+  get penalty(): number { return this.extra; }
+
+  /**
+   * The last instruction was a taken branch that stayed in its page: it polls for an interrupt in its second cycle, as a
+   * two-cycle instruction does, so an IRQ that comes in its second or third cycle waits for the next instruction.
+   */
+  get quickBranch(): boolean { return (this.lastOp & 0x1f) === 0x10 && this.extra === 1; }
+
   get p(): number { return this.n | (this.v << 6) | 0x20 | (this.d << 3) | (this.i << 2) | (this.z << 1) | this.c; }
   set p(value: number) {
     this.n = value & 0x80; this.v = (value >> 6) & 1; this.d = (value >> 3) & 1;

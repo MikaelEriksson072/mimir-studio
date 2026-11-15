@@ -7,12 +7,13 @@ import {
 } from '@mimir/core';
 
 /** How a project is packed until the user changes something: the whole build, self-extracting, started where
- *  Build & Run starts it (the SYS of the BASIC line, else the program start). */
-export function packDefaults(A: Pick<AnalysisResult, 'basics' | 'entry' | 'files'>, project: Pick<Project, 'entryPoint'>): PackPrefs {
+ *  Build & Run starts it (the SYS of the BASIC line, else the program start), with the $01 the program start has (the
+ *  one Sindri found it started with, as Build & Run sets it: a program that starts under the BASIC ROM needs it). */
+export function packDefaults(A: Pick<AnalysisResult, 'basics' | 'entry' | 'files'>, project: Pick<Project, 'entryPoint' | 'entryPort'>): PackPrefs {
   const sys = basicSys(A);
   const ep = project.entryPoint;
   if (sys != null && (ep == null || ep === sys)) return { ...DEFAULT_PACK, start: 'sys' };
-  return { ...DEFAULT_PACK, start: 'jmp', jmp: ep ?? A.entry ?? A.files[0]?.load ?? null };
+  return { ...DEFAULT_PACK, start: 'jmp', jmp: ep ?? A.entry ?? A.files[0]?.load ?? null, ...(ep != null && project.entryPort != null ? { ramExit: project.entryPort } : {}) };
 }
 
 /** the SYS of the first file's BASIC line, if it has one */

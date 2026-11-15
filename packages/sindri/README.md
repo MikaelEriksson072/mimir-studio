@@ -392,6 +392,13 @@ loader got no name (Sindri stopped at the load in the ones tried). On 100 demo d
 kept every layer and start; 92 saved the same bytes, and in 8 the saved program has the name below `$a000`, where the
 program itself moved memory out and back again, as it would on a C64. That gives 332 fingerprints of 138 packers.
 
+Brokkr's self-extracting files are named too, by their format: `Brokkr / Exomizer format`, `Brokkr / own format` and
+`Brokkr / fast format`, each with its start (`stage 1`) and its resident decruncher (`depacker`). Brokkr packed 151
+programs in each format that had room for them, with and without the border flash, and Sindri unpacked all 737 files
+to the program they were made from, with its start and its `$01`; the code that ran gave 23 fingerprints, each at least
+85% like every run of its kind. The nearest of them is 15% like any other packer's, so no name given before changes.
+That gives 355 fingerprints of 141 packers.
+
 ## Compared with unp64
 
 On 550 intros and demos from a C64 archive, with VICE's ROMs:

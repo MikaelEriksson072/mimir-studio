@@ -165,6 +165,144 @@
    "seen": 1
   },
   {
+   "name": "Brokkr / Exomizer format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "98d0c6c68820914606d020b0a220b0e8d0e0904c207d85a57d85469020b0a9a6e0b0bd20aa207d85a57d6585a98518a698d0c6c688b191cad0a5f0c64c4ca985bd4ab0f00ad03860f00a2085add0cecead6006d04820682a906006d0202a8560",
+   "seen": 138
+  },
+  {
+   "name": "Brokkr / Exomizer format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "98d0c6c68820914606d020b0a220b0e8d0e090d0a985584c208520854638b0207d85a57d85469020b0a9a6e0b0bd20aa207d85a57d6585a98518a698d0c6c688b0b191cad0a5f0c64c20b04ca985bd4ab0f00ad03860f00a2085add0cecead6006d04820682a906006d0202a8560",
+   "seen": 120
+  },
+  {
+   "name": "Brokkr / Exomizer format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "98d0c6c68820918d4606d020b0a220b0e8d0e090a98558a985a98520207d85a57d85469020b0a9a6e0b0bd20aa207d85a57d6585a98518a698d0c6c688b191cad0a5f0c64c4ca985bd4ab0f00ad03860f00a2085add0cecead6006d04820682a906006d0202a8560",
+   "seen": 36
+  },
+  {
+   "name": "Brokkr / Exomizer format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "98d0c6c68820918d4606d020b0a220b0e8d0e090584c207d85a57d85469020b0a9a6e0b0bd20aa207d85a57d6585a98518a698d0c6c688b191cad0a5f04ca985bd4ab0f00ad03860f00a2085add0cecead6006d04820682a906006d0202a8560",
+   "seen": 6
+  },
+  {
+   "name": "Brokkr / Exomizer format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "98d0c6c68820914606d020b0a220b0e8d0e090a985584c207d85a57d85469020b0a9a6e0b0bd20aa207d85a57d6585a98518a698d0c6c688b191cad0a5f0c64c4ca985bd4ab0f00ad0f00a2085add0cecead6006d04820682a906006d0202a8560",
+   "seen": 4
+  },
+  {
+   "name": "Brokkr / Exomizer format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "98d0c6c68820918d4606d020b0a220b0e8d0e090584c207d85a57d85469020b0a9a6e0b0bd20aa207d85a57d6585a98518a698d0c6c688b191cad0a5f0c64c4ca985bd4ab0f00ad03860f0add0cecead6006d04820682a906006d0202a8560",
+   "seen": 2
+  },
+  {
+   "name": "Brokkr / Exomizer format (stage 1)",
+   "kind": "mover",
+   "opcodes": "add0cead6006d04820682a9060202a856078a9854ca0b99988d0a0b99988d0a28a29d08585a59da59da9204a9009a8b99da985a988300a2690186585a56585e8e0d0a04c",
+   "seen": 236
+  },
+  {
+   "name": "Brokkr / Exomizer format (stage 1)",
+   "kind": "decoder",
+   "opcodes": "add0cead6006d04820682a9060202a856078a9854ca0b99988d0a0a2f0b999c8d0eeeecad0a2f0b999c8cad0a28a29d08585a59da59da9204a9009a8b99da985a988300a2690186585a56585e8e0d0a04c",
+   "seen": 38
+  },
+  {
+   "name": "Brokkr / Exomizer format (stage 1)",
+   "kind": "mover",
+   "opcodes": "add0cead6006d04820682a9060202a8560784ca0b99988d0a28a29d08585a59da59da9204a9009a8b99da985a988300a2690186585a56585e8e0d0a04c",
+   "seen": 24
+  },
+  {
+   "name": "Brokkr / Exomizer format (stage 1)",
+   "kind": "mover",
+   "opcodes": "add0cead6006d04820682a9060202a856078a9854ca0b99988d0a0b99988d0a2868620858a29d08585a59da59da9204a9009a8b99da985a988300a2690186585a56585e8e0d0a0a9854c",
+   "seen": 8
+  },
+  {
+   "name": "Brokkr / fast format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "2030c990c990c99029d0a9854ca2209069859849386585a5e985a5e585b0c64caa29858aa2862090aa29858aa220208590a220208590a5386985a56585a6c49088b191cad04c98f088b191ca98d0c6c64ca5d0c6c6a2a1604a4a4a4a3dddf07d8560187d852018658560",
+   "seen": 151
+  },
+  {
+   "name": "Brokkr / fast format (stage 1)",
+   "kind": "mover",
+   "opcodes": "78a9854ca0b99988d0a0b99988d0a04c",
+   "seen": 67
+  },
+  {
+   "name": "Brokkr / fast format (stage 1)",
+   "kind": "mover",
+   "opcodes": "784ca0b99988d0a0b99988d0a04c",
+   "seen": 40
+  },
+  {
+   "name": "Brokkr / fast format (stage 1)",
+   "kind": "decoder",
+   "opcodes": "78a9854ca0b99988d0a0a2f0b999c8d0eeeecad0a2f0b999c8cad0a04c",
+   "seen": 17
+  },
+  {
+   "name": "Brokkr / fast format (stage 1)",
+   "kind": "decoder",
+   "opcodes": "784ca0b99988d0a0a2f0b999c8d0eeeecad0a2f0b999c8cad0a04c",
+   "seen": 4
+  },
+  {
+   "name": "Brokkr / own format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "ae20b0a2adf08eb18da9e90e69aa202eadb08a4d4ab08a0990aea98d8d208a2aaa90a28e8e9198d0c6c6884e10a9854cadd0a22090a22090a220add0adc990a90a0a0a0a0a698da98d1869aa202eadc99029f0aaa9854a858a0a0a698da98dcaf08ece30a9eed08a69aa202626a2cad0a5186585aef0eeb19198f088cad0ced0e88e4cc6c64ca98d4a8d2090e8202e2ee8d060243006d0add0cecead2a852626062610bd858e4a4a4a4a49386548a51865aab0bd85bd90bd85bd85a538e5b04969aaa538fd85a5fd85a538e5aaa5e5908586a5e585a5e585b0a585a58568b069a29d60",
+   "seen": 240
+  },
+  {
+   "name": "Brokkr / own format (depacker)",
+   "kind": "decruncher",
+   "opcodes": "ae20b0a2adf08eb18da9e90e69aa202eadb08a4d4ab08a0990aea98d8d208a2aaa90a28e8e9198d0c6c6884e10a985584cadd0a22090a22090a220add0adc990a90a0a0a0a0a698da98d1869aa202eadc99029f0aaa9854a858a0a0a698da98dcaf08ece30a9eed08a69aa202626a2cad0a5186585aef0eeb19198f088cad0ced0e88e4cc6c64ca98d4a8d2090e8202e2ee8d060243006d0add0cecead2a852626062610bd858e4a4a4a4a49386548a9a2469018656a66cad085a585a538e5aaa5e5908586a5e585a5e585b0a585a58568b069a29d60",
+   "seen": 40
+  },
+  {
+   "name": "Brokkr / own format (stage 1)",
+   "kind": "decruncher",
+   "opcodes": "78a9854ca2a0bd9de8d0eeee88d0bd9de8e0d0a0b99988d0a985a29d9de8d0ca8686a9858585aaa0a59da59d8a4a90e6a518658590e6e8d0eeee88d0ad85ad85a985a985a98585a04c",
+   "seen": 212
+  },
+  {
+   "name": "Brokkr / own format (stage 1)",
+   "kind": "decruncher",
+   "opcodes": "78a9854ca2a0bd9de8d0eeee88d0bd9de8e0d0a0b99988d0a985a29d9de8d0ca8686ad85ad85a985a985a98585a04c",
+   "seen": 38
+  },
+  {
+   "name": "Brokkr / own format (stage 1)",
+   "kind": "decoder",
+   "opcodes": "784ca2a0bd9de8d0eeee88d0bd9de8e0d0a0a2f0b999c8d0eeeecad0a2f0b999c8cad0a985a29d9de8d0ca8686a9858585aaa0a59da59d8a4a90e6a518658590e6e8d0eeee88d0ad85ad85a985a985a98585a04c",
+   "seen": 16
+  },
+  {
+   "name": "Brokkr / own format (stage 1)",
+   "kind": "decruncher",
+   "opcodes": "784ca2a0bd9de8d0eeee88d0bd9de8e0d0a985a29d9de8d0ca8686a9858585aaa0a59da59d8a4a90e6a518658590e6e8d0eeee88d0ad85ad85a985a985a98585a04c",
+   "seen": 8
+  },
+  {
+   "name": "Brokkr / own format (stage 1)",
+   "kind": "decoder",
+   "opcodes": "78a985a2a0bd9de8d0eeee88d0bd9de8e0d0a0f088b99998d0a2f088b99998d0cececad0a985a29d9de8d0ca8686a9858585aaa0a59da59d8a4a90e6a518658590e6e8d0eeee88d0ad85ad85a985a985a98585a04c",
+   "seen": 4
+  },
+  {
+   "name": "Brokkr / own format (stage 1)",
+   "kind": "decruncher",
+   "opcodes": "78a9854ca2a0bd9de8d0eeee88d0bd9de8e0d0a985a29d9de8d0ca8686ad85ad85a985a985a98585a04c",
+   "seen": 2
+  },
+  {
    "name": "BYG Compactor v2.x",
    "kind": "decruncher",
    "opcodes": "186991e6d0e660c6ceeee6e6d0e6b16020aa2091c8d0e6cad020a6f0c9f0c9f020d0a985582020aaf029f02020cad0f020aaf029f020852020cad0f0",

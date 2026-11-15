@@ -63,4 +63,19 @@ describe('the signature list', () => {
     expect(identify(LAYERS.ss008e, SIGNATURES.filter(s => s.name === AR))).toBeNull();
     expect(identify(LAYERS.ar008e, SIGNATURES.filter(s => s.name === SS))).toBeNull();
   });
+  it("names Brokkr's decrunchers by their format, each kept apart from the others and from every other packer", () => {
+    // Brokkr's self-extracting files, 737 of them made from 151 programs and unpacked again: the start and the resident
+    // decruncher of each format, as they ran with the layouts and options that change their code
+    const formats = ['Brokkr / Exomizer format', 'Brokkr / own format', 'Brokkr / fast format'];
+    for (const f of formats) {
+      const own = SIGNATURES.filter(s => s.name.startsWith(f)), rest = SIGNATURES.filter(s => !s.name.startsWith(f));
+      expect(own.map(s => s.name.slice(f.length)).sort().filter((n, i, a) => n !== a[i - 1])).toEqual([' (depacker)', ' (stage 1)']);
+      // far from 80% alike: no file named after another packer can come to be named Brokkr, or the other way round
+      for (const s of own) expect(identify(s.opcodes, rest, 0.6), s.opcodes).toBeNull();
+    }
+    // its decruncher for Exomizer's format is Brokkr's own code, not Exomizer's
+    const exomizer = SIGNATURES.filter(s => /^Exomizer/.test(s.name));
+    expect(exomizer.length).toBeGreaterThan(0);
+    for (const s of SIGNATURES.filter(s => s.name.startsWith(formats[0]))) expect(identify(s.opcodes, exomizer, 0.3)).toBeNull();
+  });
 });

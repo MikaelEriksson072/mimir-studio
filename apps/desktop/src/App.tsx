@@ -3353,7 +3353,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
 
   const rKey = useMemo(() => filesKey(R), [R]);
   const stale = !!build && build.key !== rKey;
-  const packPrefs = useMemo(() => project.pack ?? packDefaults(A, project), [project.pack, project.entryPoint, A]); // eslint-disable-line react-hooks/exhaustive-deps
+  const packPrefs = useMemo(() => project.pack ?? packDefaults(A, project), [project.pack, project.entryPoint, project.entryPort, A]); // eslint-disable-line react-hooks/exhaustive-deps
   const packKey = packKeyOf(packPrefs, rKey);
   const kickProblems: KickProblem[] = !stale && build?.kick ? build.kick.problems : [];
   const problems: UiProblem[] = useMemo(() => [

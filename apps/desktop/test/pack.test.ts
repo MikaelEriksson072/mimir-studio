@@ -1,7 +1,7 @@
 /* The Pack view's command and warnings with Pack from: the whole build but for the bytes before an address. */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PACK, type BasicInfo, type PackPrefs } from '@mimir/core';
-import { packCommand, packWarning } from '../src/lib/pack';
+import { packCommand, packDefaults, packWarning } from '../src/lib/pack';
 
 const P = (o: Partial<PackPrefs> = {}): PackPrefs => ({ ...DEFAULT_PACK, ...o });
 // a snapshot's RAM from $0200, its BASIC line at $0801 with SYS 2064 (Pack reads only where the program and its SYS are)
@@ -27,5 +27,23 @@ describe('Pack from', () => {
     expect(packWarning(P({ from: 0x0900, start: 'basic' }), { basics })).toBe('Pack from $0900 leaves out the start of the BASIC program that RUN starts: pack from $0801 or lower.');
     // crunched data starts nothing
     expect(packWarning(P({ from: 0x0900, mode: 'mem' }), { basics })).toBeNull();
+  });
+});
+
+describe('How a project is packed until something is changed', () => {
+  const A = { basics, entry: 0x0810, files: [{ load: 0x0801 }] } as never;
+  it('starts where Build & Run starts it', () => {
+    expect(packDefaults(A, { entryPoint: null })).toEqual(P());
+    expect(packDefaults(A, { entryPoint: 2064 })).toEqual(P());
+    expect(packDefaults(A, { entryPoint: 0x4000 })).toEqual(P({ start: 'jmp', jmp: 0x4000 }));
+    expect(packDefaults({ basics: [], entry: 0x0810, files: [{ load: 0x0801 }] } as never, { entryPoint: null })).toEqual(P({ start: 'jmp', jmp: 0x0810 }));
+  });
+
+  it('with the $01 Sindri found the program started with: one unpacked from under the BASIC ROM is packed to start there again', () => {
+    // Cybernoid II's game starts at $a2ab with $01 = $36
+    expect(packDefaults(A, { entryPoint: 0xa2ab, entryPort: 0x36 })).toEqual(P({ start: 'jmp', jmp: 0xa2ab, ramExit: 0x36 }));
+    expect(packDefaults(A, { entryPoint: 0xa2ab, entryPort: null })).toEqual(P({ start: 'jmp', jmp: 0xa2ab }));
+    // the SYS of the BASIC line runs with BASIC in
+    expect(packDefaults(A, { entryPoint: 2064, entryPort: 0x36 })).toEqual(P());
   });
 });
