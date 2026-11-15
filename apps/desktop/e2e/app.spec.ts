@@ -2136,6 +2136,26 @@ test('a program that waits for a key in front of more packing: Unpack again runs
   await expect(bar).toHaveCount(0);
 });
 
+test('a program whose name starts with a - is verified after Unpack: its source does not start with a -', async ({ app, page, workDir }) => {
+  // Booze Design's Uncensored loads "- THE DEMO -": its source was -_THE_DEMO_--unpacked.asm, which the build refuses
+  // as an option to the assembler, and F7 said Verification failed: invalid source file name
+  await waitForListing(page);
+  const prg = join(workDir, '- THE DEMO -.prg');
+  writeFileSync(prg, readFileSync(join(repoDir, 'fixtures/prg/packed-demo.prg')));
+  const bar = page.locator('.pack-bar');
+  await stubDialogs(app, { open: [prg] });
+  await page.keyboard.press('Control+o');
+  await expect(bar).toContainText('- THE DEMO -.prg is packed.');
+  await expect(bar).toContainText('the program starts at $0810', { timeout: 30_000 });
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(page.locator('.unpack-bar')).toContainText('Unpacked - THE DEMO -.prg: - THE DEMO --unpacked.prg, $0801-$37ff, starting at $0810 (set as the program start).', { timeout: 30_000 });
+  await waitForListing(page);
+  await page.keyboard.press('F7');
+  await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  await expect(toast(page, 'Verification failed')).toHaveCount(0);
+  await expect(page.locator('pre.build-log')).toContainText('built-in Kick-subset assembler: THE_DEMO_--unpacked.asm');
+});
+
 test('a program Unpack saved under the BASIC ROM keeps its $01 with the start: Build & Run starts it through a stub', async ({ app, page }) => {
   // fixtures/prg/packed-rom.prg (packages/core/test/sindri.test.ts), as Cybernoid 2's game starts at $a2ab with $01 =
   // $36: with $37 the CPU would run BASIC's ROM there. VICE itself is not started: a Windows program that ends at once

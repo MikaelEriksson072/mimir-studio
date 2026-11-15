@@ -7,6 +7,7 @@
 import type { Addr, AssemblerId, Cartridge } from '../types';
 import type { CartMode } from './memconfig';
 import { h2, h4 } from '../util/hex';
+import { safeStem } from '../util/names';
 import type { ParsedPrg } from './prg';
 
 const MAGIC = 'C64 CARTRIDGE   ';
@@ -238,7 +239,7 @@ export function chipFromPrg(c: Crt, chip: CrtChip, prg: Uint8Array | null): Uint
 export const crtSourceName = (base: string): string => `${base}.crt.asm`;
 export const crtOutputName = (base: string): string => `${base}.crt`;
 /** the file name the source of a project's cartridge has (and the image it writes), from the .crt it was opened from */
-export const crtBase = (cart: Pick<Cartridge, 'name'>): string => cart.name.replace(/\.crt$/i, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'cartridge';
+export const crtBase = (cart: Pick<Cartridge, 'name'>): string => safeStem(cart.name.replace(/\.crt$/i, ''), 'cartridge');
 
 export interface CartSourceOptions {
   /** the output folder of the build (Settings.outDir), where the chips' PRGs are */

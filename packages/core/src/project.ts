@@ -3,6 +3,7 @@ import { LEGACY_PROJECT_FORMAT, type Cartridge, type FileInput, type LoadedFile,
 import { DEFAULT_SETTINGS } from './model';
 import { makeDemo } from './demo';
 import { parsePrg } from './c64/prg';
+import { safeStem } from './util/names';
 
 export const newId = (): string =>
   typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 9);
@@ -14,8 +15,8 @@ export const b64enc = (u8: Uint8Array): string => {
 };
 export const b64dec = (s: string): Uint8Array => { const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
 
-/** File name -> project name usable as a Kick source file name. */
-export const projectNameFor = (fileName: string): string => fileName.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'project';
+/** File name -> project name usable as a source file name (never starting with a -, see safeStem). */
+export const projectNameFor = (fileName: string): string => safeStem(fileName.replace(/\.[^.]*$/, ''), 'project');
 
 export const withId = (f: FileInput): LoadedFile => ({ id: f.id || newId(), name: f.name, load: f.load, bytes: f.bytes, ...(f.vsf ? { vsf: f.vsf } : {}), ...(f.chip != null ? { chip: f.chip } : {}) });
 

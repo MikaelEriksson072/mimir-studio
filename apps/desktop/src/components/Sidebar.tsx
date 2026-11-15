@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -603,8 +603,8 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
         })}
       </div>
       <label className="check small cart-one" title={asm === '64tass'
-        ? `Every bank in one 64tass source, ${name.replace(/\.crt$/i, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'cartridge'}.crt.asm, which writes the whole cartridge by itself: the header, then each CHIP packet with its chip's code where it runs (.logical), each bank in a namespace (the same names can be in several banks). Off: a source per chip and one for the image`
-        : `Every bank in one Kick Assembler source, ${name.replace(/\.crt$/i, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'cartridge'}.crt.asm, which writes the whole cartridge by itself: each chip in a segment, each bank in a namespace (the same names can be in several banks), the header and CHIP packets last. Off: a source per chip and one for the image`}>
+        ? `Every bank in one 64tass source, ${crtSourceName(crtBase({ name }))}, which writes the whole cartridge by itself: the header, then each CHIP packet with its chip's code where it runs (.logical), each bank in a namespace (the same names can be in several banks). Off: a source per chip and one for the image`
+        : `Every bank in one Kick Assembler source, ${crtSourceName(crtBase({ name }))}, which writes the whole cartridge by itself: each chip in a segment, each bank in a namespace (the same names can be in several banks), the header and CHIP packets last. Off: a source per chip and one for the image`}>
         <input type="checkbox" checked={one} onChange={e => onOneSource(e.target.checked)} /> All banks in one .asm
       </label>
       <div className="side-hint">{cartModeName(crt.mode)} · every bank is in the listing, one after the other · a click goes to a bank, + adds one, × leaves one out · the export and Build &amp; Run rebuild the whole .crt</div>

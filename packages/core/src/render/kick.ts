@@ -17,6 +17,7 @@ import { findBlock } from '../analyze/classify';
 import { spindleCondition, spindleName, spindleScript } from '../analyze/spindle';
 import { boozeScript } from '../analyze/booze';
 import { h4 } from '../util/hex';
+import { sourceStem } from '../util/names';
 import { lineText } from './lines';
 import { hardwareInclude } from './include';
 import {
@@ -772,7 +773,7 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
   const outFiles: Record<string, string | Uint8Array> = {};
   const fileLines: Record<string, Line[]> = {};
   const listing: ListingLine[] = [];
-  const fileNames = A.files.map((f, i) => (f.name || `file${i}`).replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_') || `file${i}`);
+  const fileNames = A.files.map((f, i) => sourceStem(f.name, i));
   const used = new Set<string>();
   fileNames.forEach((n, i) => { let m = n, k = 2; while (used.has(m)) m = `${n}_${k++}`; used.add(m); fileNames[i] = m; });
   const allUsedHw = new Set<Addr>();

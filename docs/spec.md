@@ -2553,6 +2553,14 @@ raster-demo/
 └─ out/raster-demo.prg          verifierad om-assemblerad PRG
 ```
 
+**Filnamnen** kommer ur filernas namn (`sourceStem`). Filändelsen tas bort, och varje följd av andra tecken än
+bokstäverna A–Z, siffror, `_` och `-` blir ett `_`. Ett namn börjar aldrig med `-`, eftersom assemblerns kommandorad
+(byggskripten och appens bygge) läser `-x.asm` som en flagga: 64tass vägrar, och appens bygge avvisar namnet. Ett
+inledande `-` tas därför bort, tillsammans med de `_` som stod för mellanslagen efter det. Booze Designs "- THE DEMO -"
+blir alltså `THE_DEMO_-.asm`; förut blev det `-_THE_DEMO_-.asm`, och Verify misslyckades efter Unpack. Blir inget kvar
+heter källan `file0`, `file1` och så vidare. Projektets namn (`projectNameFor`) och en cartridges källa (`crtBase`)
+följer samma regel (`safeStem`).
+
 **Byggskripten** genereras från verktygsinställningarna (`buildScripts`). I källvyn kan `build.bat` och `build.sh`
 redigeras, men inte de andra filerna, som kommer ur listningen. Ändringen sparas i projektet (`Project.scripts`, en
 stund efter sista tangenttrycket och när man byter fil) och ångras med `Ctrl+Z`. Exporten skriver då den versionen

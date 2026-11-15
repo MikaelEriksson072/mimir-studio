@@ -1,6 +1,7 @@
 /* Files of an exported Kick Assembler or 64tass project besides the generated sources (spec 11.4, 11.8). */
 import type { BuildScript, Cartridge, FileInput, Project, RenderResult, Settings, VerifyResult, Vfs } from './types';
 import { h4 } from './util/hex';
+import { sourceStem } from './util/names';
 import { assemblerOf, isTass, TASS_FIXED_ARGS } from './render/dialect';
 import { makePrg } from './c64/prg';
 import { cartridgeSource, chipFromPrg, crtBase, crtOutputName, crtSourceName, describeCrt, parseCrt, rebuildCrt, type Crt } from './c64/crt';
@@ -17,7 +18,7 @@ export interface CartBuild { entry: string; output: string; one: boolean; chips:
 export const cartBuild = (project: { cart?: Cartridge | null; files?: readonly FileInput[]; settings?: Partial<Settings> }): CartBuild | null => {
   if (!project.cart) return null;
   const base = crtBase(project.cart), one = !!project.settings?.cartOneSource;
-  const chips = one ? (project.files ?? []).filter(f => f.chip != null).map(f => f.name.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_')) : [];
+  const chips = one ? (project.files ?? []).flatMap((f, i) => (f.chip != null ? [sourceStem(f.name, i)] : [])) : [];
   return { entry: crtSourceName(base), output: crtOutputName(base), one, chips };
 };
 

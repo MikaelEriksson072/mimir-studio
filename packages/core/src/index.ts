@@ -101,4 +101,5 @@ export {
   parseExomizer, rangeCover, shellWord, type ExomizerArea, type ExomizerReport, type PackCheck, type PackFile, type PackPart,
 } from './pack';
 export { splitArgs } from './util/args';
+export { safeStem, sourceStem } from './util/names';
 export { fileOffsetBases, offsetText } from './offsets';
