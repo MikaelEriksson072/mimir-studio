@@ -1915,6 +1915,7 @@ test('the Editor button opens the export in the external editor, with its first 
   }, subl);
   const spawned = () => app.evaluate(() => (globalThis as unknown as { spawned: { file: string; args: string[]; cwd: string }[] }).spawned);
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Packers & editor' }).click();
   await page.locator('#set-editorPath').fill(subl);
   await expect(page.locator('#set-editorArgs')).toHaveValue('{dir} {file}');
   await page.getByRole('button', { name: 'Save settings' }).click();
@@ -1965,8 +1966,10 @@ test('Settings → Choose folder… finds the program in the folder picked', asy
   await page.getByRole('button', { name: 'Settings' }).click();
   const settings = page.getByRole('dialog', { name: 'Settings' });
   const choose = (label: string) => settings.getByRole('button', { name: `Choose folder for ${label}`, exact: true });
+  const toPage = (name: string) => settings.getByRole('tab', { name, exact: true }).click();
 
   await test.step('VICE: the folder it was unpacked to', async () => {
+    await toPage('VICE & music');
     await answer([join(work, 'C64', 'vice')]);
     await choose('VICE emulator (x64sc)').click();
     await expect(settings.locator('#set-vicePath')).toHaveValue(x64sc);
@@ -1974,15 +1977,18 @@ test('Settings → Choose folder… finds the program in the folder picked', asy
   });
 
   await test.step('Kick Assembler and Exomizer: the folder, and its win32 folder', async () => {
+    await toPage('Assemblers');
     await answer([join(work, 'C64', 'KickAssembler')]);
     await choose('KickAss.jar').click();
     await expect(settings.locator('#set-kickJar')).toHaveValue(jar);
+    await toPage('Packers & editor');
     await answer([join(work, 'C64')]);
     await choose('Exomizer').click();
     await expect(settings.locator('#set-exomizerPath')).toHaveValue(exo);
   });
 
   await test.step('the dialog opens at the folder of the path set, above its bin folder', async () => {
+    await toPage('VICE & music');
     await answer();
     await choose('VICE emulator (x64sc)').click();
     await expect.poll(asked).toEqual([expect.objectContaining({ defaultPath: join(work, 'C64', 'vice', 'GTK3VICE-3.10-win64') })]);
@@ -1990,6 +1996,7 @@ test('Settings → Choose folder… finds the program in the folder picked', asy
   });
 
   await test.step('not in the folder: a file dialog opens there for it', async () => {
+    await toPage('Packers & editor');
     await answer([join(work, 'C64', 'tools')], [other]);
     await choose('External unpacker (optional)').click();
     await expect(settings.locator('#set-unpackerPath')).toHaveValue(other);
@@ -1997,6 +2004,7 @@ test('Settings → Choose folder… finds the program in the folder picked', asy
   });
 
   await test.step('that dialog cancelled: the field keeps its path and says what was not there', async () => {
+    await toPage('Assemblers');
     await answer([join(work, 'C64', 'tools')]);
     await choose('Java executable').click();
     await expect(settings.getByRole('status').filter({ hasText: `java.exe is not in ${join(work, 'C64', 'tools')} or the folders in it` })).toBeVisible();
@@ -2007,6 +2015,7 @@ test('Settings → Choose folder… finds the program in the folder picked', asy
   const retro = make('C64', 'RetroDebugger-v1.0.0', 'C64Debugger.exe');
   const c64d = make('C64', 'C64Debug', 'C64Debugger.exe');
   await test.step('Retro Debugger and C64 Debugger: the folder with C64Debugger.exe', async () => {
+    await toPage('Debuggers');
     await answer([join(work, 'C64', 'RetroDebugger-v1.0.0')]);
     await choose('Retro Debugger').click();
     await expect(settings.locator('#set-retroDebuggerPath')).toHaveValue(retro);
@@ -2098,6 +2107,7 @@ test('a packed PRG is reported and unpacked with Sindri, or an external unpacker
   await test.step('an external unpacker set in Settings runs instead', async () => {
     await page.getByRole('button', { name: 'Dismiss the unpacker result' }).click();
     await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Packers & editor' }).click();
     await expect(page.locator('#set-unpackerPath')).toHaveValue('');
     await page.locator('#set-unpackerPath').fill(process.execPath);
     await page.locator('#set-unpackerArgs').fill(`"${fake}" {in}`);
@@ -2883,6 +2893,7 @@ test('the installed app unpacks with Sindri: no unp64 comes with it', async ({ a
 
   await test.step('a fresh profile has no external unpacker', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Packers & editor' }).click();
     await expect(page.locator('#set-unpackerPath')).toHaveValue('');
     await expect(page.locator('#set-unpackerArgs')).toHaveValue('{in}');
     await page.getByRole('button', { name: 'Cancel' }).click();
@@ -3267,7 +3278,7 @@ test('open a VICE snapshot like a PRG', async ({ app, page }) => {
     await page.getByRole('button', { name: 'Settings' }).click();
     const settings = page.getByRole('dialog', { name: 'Settings' });
     await settings.getByRole('tab', { name: 'Analysis', exact: true }).click();
-    await settings.getByLabel('VICE snapshots: include the zero page and the stack').check();
+    await settings.getByLabel('Include the zero page and the stack').check();
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await expect(settings).toBeHidden();
     await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
@@ -3924,6 +3935,7 @@ test('pack with Exomizer: the whole build or chosen blocks, checked with desfx, 
 
   await test.step('Settings points at an Exomizer (the installed app at its own)', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Packers & editor' }).click();
     const installed = process.env.MIMIR_E2E_EXE;
     if (installed) await expect(page.locator('#set-exomizerPath')).toHaveValue(join(dirname(installed), 'resources', 'exomizer', 'exomizer.exe'));
     else await expect(page.locator('#set-exomizerPath')).toHaveValue(/exomizer(\.exe)?$/i);
@@ -4623,9 +4635,9 @@ test('with DeepSID chosen in Settings, a music block plays there: its .sid goes 
   await expect(toast(page, 'Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop')).toBeVisible();
   await waitForListing(page);
 
-  await test.step('Settings → Toolchain picks DeepSID for music blocks (VICE until then)', async () => {
+  await test.step('Settings → Toolchain → VICE & music picks DeepSID for music blocks (VICE until then)', async () => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('tab', { name: 'Toolchain' }).click();
+    await page.getByRole('tab', { name: 'VICE & music' }).click();
     const player = page.locator('#set-musicPlayer');
     await expect(player).toHaveValue('vice');
     await player.selectOption('deepsid');
@@ -4728,7 +4740,7 @@ test('a sample player (a digi) is found, and plays in VICE with its samples and 
 
   await test.step('DeepSID gets an RSID of the block and the samples, init the wrapper, play 0', async () => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('tab', { name: 'Toolchain' }).click();
+    await page.getByRole('tab', { name: 'VICE & music' }).click();
     await page.locator('#set-musicPlayer').selectOption('deepsid');
     await page.getByRole('button', { name: 'Save settings' }).click();
     await page.locator('nav.activity').getByRole('button', { name: 'Blocks' }).click();
@@ -4756,6 +4768,7 @@ test('a VICE quicksave (Alt+F11 in VICE) opens by itself, F9 opens it again, Ctr
   const status = section.getByRole('status', { name: 'Latest VICE quicksave' });
   const open = section.getByRole('button', { name: /Open the latest quicksave/ });
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'VICE & music' }).click();
   await page.locator('#set-viceQuicksave').fill(qs);
   await page.getByRole('button', { name: 'Save settings' }).click();
 
@@ -5303,6 +5316,7 @@ test('Build & Run in a debugger (Shift+F5): Settings picks Retro Debugger or C64
 
   await test.step('Retro Debugger: -wait, then the start PRG and -jmp to its load address', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
+    await settings.getByRole('tab', { name: 'Debuggers' }).click();
     await expect(settings.locator('#set-debugger')).toHaveValue('retro');
     await expect(settings.locator('#set-debuggerWait')).toHaveValue('3000');
     await settings.locator('#set-retroDebuggerPath').fill(standIn);
@@ -5326,6 +5340,7 @@ test('Build & Run in a debugger (Shift+F5): Settings picks Retro Debugger or C64
 
   await test.step('C64 Debugger: -alwaysjmp, and the command palette names it', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
+    await settings.getByRole('tab', { name: 'Debuggers' }).click();
     await settings.locator('#set-debugger').selectOption('c64d');
     await settings.locator('#set-c64DebuggerPath').fill(standIn);
     await settings.getByRole('button', { name: 'Save settings' }).click();
@@ -5360,6 +5375,7 @@ test('Build & Run in a debugger (Shift+F5): Settings picks Retro Debugger or C64
 
   await test.step('Retro Debugger does not read VICE\'s snapshots, and says who does', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
+    await settings.getByRole('tab', { name: 'Debuggers' }).click();
     await settings.locator('#set-debugger').selectOption('retro');
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await expect(settings).toBeHidden();

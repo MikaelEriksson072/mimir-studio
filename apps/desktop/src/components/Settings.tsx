@@ -1,6 +1,8 @@
-/* Settings: toolchain (stored by the main process), analysis and the assembler output (stored in the project), and
- * the app's own preferences (General, kept by the window). */
-import { useState, type ReactNode } from 'react';
+/* Settings: pages in a list on the left, grouped by where they are kept: the app's own preferences (General, kept by
+ * the window), the project's analysis and assembler output (saved in the project) and the toolchain (stored by the main
+ * process), split into Assemblers, VICE & music, Debuggers and Packers & editor. Each setting has a line saying what it
+ * does and the rest of its explanation behind More; the search box looks through every page. */
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
 import type { DiskLook, InspectorMode } from '../store/ui';
@@ -29,12 +31,51 @@ export interface AppPrefs {
   autoMerge: boolean;
 }
 const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true, diskLook: 'mimir', autoMerge: true };
+type PrefBool = { [K in keyof AppPrefs]: AppPrefs[K] extends boolean ? K : never }[keyof AppPrefs];
+
+type PageId = 'general' | 'analysis' | 'output' | 'assemblers' | 'vice' | 'debuggers' | 'tools';
+type Group = 'App' | 'Project' | 'Toolchain';
+const GROUPS: readonly Group[] = ['App', 'Project', 'Toolchain'];
+
+/** the page the dialog opens at: the one it was last on, while the app runs */
+let lastPage: PageId = 'general';
+
+/** one setting: its label, a line under it, and the rest of what there is to say behind More */
+interface Item {
+  /** the setting's key; its control is set-<id>, the line under it set-<id>-help */
+  id: string;
+  label: string;
+  help?: string;
+  /** behind More; a new line starts a paragraph */
+  more?: string;
+  /** more text the search looks through (a select's options) */
+  words?: string;
+  /** a checkbox, its label beside it */
+  check?: boolean;
+  control: ReactNode;
+  /** under the control (what Choose folder… did not find) */
+  after?: ReactNode;
+}
+interface Section { title?: string; items: Item[]; grid?: boolean; note?: string }
+interface Page { id: PageId; label: string; group: Group; where: string; sections: Section[]; foot?: string }
+
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** `editors`: Sublime Text and Visual Studio Code where they are installed (the desktop app finds them) */
 export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSave, onClose }: { settings: Settings; prefs: AppPrefs; desktop: boolean; editors: EditorInfo[]; onSave: (s: Settings, prefs: AppPrefs) => void; onClose: () => void }) {
   const [s, setS] = useState<Settings>(settings);
   const [prefs, setPrefs] = useState<AppPrefs>(prefs0);
-  const [tab, setTab] = useState<'toolchain' | 'analysis' | 'output' | 'general'>('toolchain');
+  const [page, setPageState] = useState<PageId>(lastPage);
+  const setPage = (p: PageId) => { lastPage = p; setPageState(p); };
+  const [query, setQuery] = useState('');
+  /** the settings whose More is turned the other way from how the search left it */
+  const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
+  const mainRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { searchRef.current?.focus(); }, []);
+  useEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [page, query]);
+  useEffect(() => { setFlipped(new Set()); }, [query]);
+
   const set = <K extends Key>(k: K, v: Settings[K]) => setS(o => ({ ...o, [k]: v }));
   /** Choose folder…: what was not found in the folder picked (the field then keeps its path) */
   const [missing, setMissing] = useState<Partial<Record<LocateKey, string>>>({});
@@ -48,111 +89,265 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
       setMissing(m => ({ ...m, [k]: err instanceof Error ? err.message : String(err) }));
     }
   };
-  /** a path to a program or file, with Choose folder… in the desktop app; labelled by id: a label around the row would
-   *  take its buttons into the field's name */
-  const path = (k: LocateKey, label: string, help?: ReactNode, o: { placeholder?: string; extra?: ReactNode } = {}) => (
-    <div className="field"><label htmlFor={`set-${k}`}>{label}</label>
-      <div className="field-row"><input id={`set-${k}`} className="mono" value={String(s[k])} placeholder={o.placeholder} onChange={e => { set(k, e.target.value); setMissing(m => ({ ...m, [k]: undefined })); }} spellCheck={false} />
-        {o.extra}
-        {desktop && kr && <button type="button" className="btn small" aria-label={`Choose folder for ${label}`} title={`Choose the folder it is in: Mimir finds ${label} there`} onClick={() => void locate(k)}>Choose folder…</button>}</div>
-      {missing[k] && <small className="warn-text" role="status">{missing[k]}</small>}
-      {help && <small className="muted">{help}</small>}</div>
-  );
-  const txt = (k: Key, label: string, help?: string) => <label className="field"><span>{label}</span><input id={`set-${k}`} className="mono" value={String(s[k])} onChange={e => set(k, e.target.value as never)} spellCheck={false} />{help && <small className="muted">{help}</small>}</label>;
-  const chk = (k: Key, label: string, help?: string) => <label className="check"><input id={`set-${k}`} type="checkbox" checked={!!s[k]} onChange={e => set(k, e.target.checked as never)} /><span>{label}{help && <small className="muted"> — {help}</small>}</span></label>;
+
+  // ---- the controls, each with its label, line and More ----
+  const described = (k: string, help?: string, more?: string) => (help || more ? `set-${k}-help` : undefined);
+  const chk = (k: Key, label: string, help?: string, more?: string): Item => ({ id: k, label, help, more, check: true,
+    control: <input id={`set-${k}`} type="checkbox" checked={!!s[k]} aria-describedby={described(k, help, more)} onChange={e => set(k, e.target.checked as never)} /> });
+  const pchk = (k: PrefBool, label: string, help?: string, more?: string): Item => ({ id: k, label, help, more, check: true,
+    control: <input id={`set-${k}`} type="checkbox" checked={prefs[k]} aria-describedby={described(k, help, more)} onChange={e => setPrefs(p => ({ ...p, [k]: e.target.checked }))} /> });
+  const sel = (k: Key, label: string, opts: [string | number, string][], help?: string, more?: string): Item => ({ id: k, label, help, more, words: opts.map(o => o[1]).join(' '),
+    control: <select id={`set-${k}`} value={String(s[k])} aria-describedby={described(k, help, more)} onChange={e => set(k, (isNaN(+e.target.value) ? e.target.value : +e.target.value) as never)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select> });
+  const psel = <K extends 'inspector' | 'diskLook'>(k: K, label: string, opts: [AppPrefs[K], string][], help?: string, more?: string): Item => ({ id: k, label, help, more, words: opts.map(o => o[1]).join(' '),
+    control: <select id={`set-${k}`} value={prefs[k]} aria-describedby={described(k, help, more)} onChange={e => setPrefs(p => ({ ...p, [k]: e.target.value as AppPrefs[K] }))}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select> });
+  const txt = (k: Key, label: string, help?: string, more?: string): Item => ({ id: k, label, help, more,
+    control: <input id={`set-${k}`} className="mono" value={String(s[k])} aria-describedby={described(k, help, more)} onChange={e => set(k, e.target.value as never)} spellCheck={false} /> });
+  /** a path to a program or file, with Choose folder… in the desktop app (labelled by id: a label around the row would
+   *  take its buttons into the field's name) */
+  const path = (k: LocateKey, label: string, help?: string, more?: string, o: { placeholder?: string; extra?: ReactNode } = {}): Item => ({ id: k, label, help, more,
+    control: <div className="field-row"><input id={`set-${k}`} className="mono" value={String(s[k])} placeholder={o.placeholder} aria-describedby={described(k, help, more)} onChange={e => { set(k, e.target.value); setMissing(m => ({ ...m, [k]: undefined })); }} spellCheck={false} />
+      {o.extra}
+      {desktop && kr && <button type="button" className="btn small" aria-label={`Choose folder for ${label}`} title={`Choose the folder it is in: Mimir finds ${label} there`} onClick={() => void locate(k)}>Choose folder…</button>}</div>,
+    after: missing[k] && <small className="warn-text" role="status">{missing[k]}</small> });
+
   const tass = s.assembler === '64tass';
-  const sel = (k: Key, label: string, opts: [string | number, string][], help?: string) => <label className="field"><span>{label}</span><select id={`set-${k}`} value={String(s[k])} onChange={e => set(k, (isNaN(+e.target.value) ? e.target.value : +e.target.value) as never)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>{help && <small className="muted">{help}</small>}</label>;
+  const kept = desktop ? 'Kept by the app, for every project.' : 'Running outside the desktop app.';
+  const inProject = 'Saved in the project; a file you open next keeps them.';
+  const tools = desktop ? 'Kept by the app, for every project. Mimir starts each program with a list of arguments, never through a shell.' : 'Running outside the desktop app: these paths only fill in the exported build scripts.';
+  const chooseFolder = desktop && kr ? 'Choose folder… looks for the program in the folder you pick, in its bin (or win32) folder and in the folders in it, so the folder a zip unpacked to will do. When it is not there, a file dialog opens in that folder.' : undefined;
+  const editorFound = desktop ? (editors.length ? `, here ${editors[0].name}` : ', and neither was found') : '';
+
+  const pages: Page[] = [
+    { id: 'general', label: 'General', group: 'App', where: desktop ? kept : 'Running outside the desktop app: there is no start screen.', sections: [
+      { title: 'Starting and opening files', items: [
+        pchk('startScreen', 'Show the start screen when Mimir starts', 'Continue, a new project, open one, or work without a project.',
+          'Off: Mimir goes on with what you worked on last (the start screen still comes when that project is gone). The project button in the title bar shows it at any time.'),
+        pchk('overview', 'Show an overview of the analysis when a file is opened', 'Once the analysis is done, a window says what it found, with links to each part.',
+          'It shows the program start, packing, loaders, problems, the blocks by type, code, graphics and music, with links to each part and to the listing, the .asm source, Graphics and Memory. A link, a click outside it or Esc closes it. The command palette shows it at any time.'),
+        pchk('autoUnpack', 'Unpack packed files when they are opened', 'As Unpack does, without the click.',
+          'When Sindri (or the external unpacker in Toolchain → Packers & editor) finds a file you open packed, it is unpacked at once. In a project, Ctrl+Z brings the packed file back. A file Sindri cannot unpack stays as it was opened.'),
+      ] },
+      { title: 'Listing', items: [
+        pchk('gfxPictures', 'Show graphics as pictures in the listing', 'Sprites, charsets and bitmaps are drawn as they look instead of as .byte rows.',
+          'They are drawn in the colours of the Graphics tab, multicolour as the VIC registers say or as set for the block. Click a character, a sprite or a bitmap cell to select its bytes. The source and the export still write .byte.'),
+        pchk('autoMerge', 'Auto merge when marking blocks', 'A range marked as a type joins the blocks of that type right before and after it.',
+          'Marking a selection or a block as a type (C Code, D Bytes, W Words, T Text and the others in Mark as) merges it with the block right before and the block right after it when they are of that type (text in the same encoding) and in the same file: one block. Code merged so is one block, not a block per routine. Off: the marked range is a block of its own. Ctrl+Z takes a merge back.'),
+      ] },
+      { title: 'Panels', items: [
+        psel('inspector', 'Inspector (the panel on the right)', [['open', 'Always open'], ['auto', 'Folded in: opens when you need it, folds in when you click outside it']],
+          'Folded in, it is a strip at the right edge and the listing gets its room.',
+          'A click on the strip, or on the start of a block (its header in the listing), opens the inspector over the editor; a click outside it or Esc folds it in again. The button at the top of the inspector switches between the two.'),
+        psel('diskLook', 'The disk and the tape in the Explorer', [['mimir', "Mimir's list: blocks or time, name and type in Mimir's font"], ['c64', 'As on a C64: LOAD"$",8 and LIST, LOAD from the tape, in the C64\'s font and colours']],
+          'As on a C64: the screen a C64 shows after LOAD"$",8 and LIST, or while LOAD searches a tape.',
+          'The directory is light blue on blue, the names in PETSCII with their graphics, and whatever their control codes do (colours, RETURN, DEL), as the 1541 and BASIC list them.\n'
+          + 'A tape has no directory: its screen is what LOAD prints as it searches the tape to its end, PRESS PLAY ON TAPE, OK, SEARCHING and a FOUND line for each header the KERNAL reads (a data block that starts as a header does gets one too), the names\' control codes acting. The files of a turbo loader, which the KERNAL does not see, are listed under it.\n'
+          + 'The letters come from VICE\'s character ROM (Toolchain → VICE & music); without it, from Mimir\'s own C64 letters, with no graphics. A click on a file opens it as in Mimir\'s list; Aa beside the eject button switches the character set, as Commodore+Shift does. The screen is as wide as the side panel: drag its edge to see it larger.'),
+      ] },
+    ] },
+    { id: 'analysis', label: 'Analysis', group: 'Project', where: inProject, sections: [
+      { title: 'What to look for', items: [
+        chk('detectMusic', 'Detect SID music', 'JMP init/play tables, the code they reach (traced or not), SID register writes and note tables.'),
+        chk('detectGfx', 'Detect graphics', 'From $d018/$dd00/sprite pointer writes, then sizes and alignment.'),
+        chk('detectText', 'Detect text', 'PETSCII printed through KERNAL, screen codes copied to screen RAM.'),
+      ] },
+      { title: 'Tracing the code', items: [
+        chk('illegal', 'Trace undocumented opcodes', 'LAX, SAX, DCP, ISC… common in demos.'),
+        chk('codeIslands', 'Decode unreached code that reads as a routine', 'Data nothing traced reaches becomes code when it reads as a routine.',
+          'That is 6 or more documented instructions ending in RTS or JMP, with no BRK and its branches inside it. Mark it as data (D) where it is not code.'),
+        chk('bankTracking', 'Follow the memory configuration ($01) and VIC bank', 'I/O, KERNAL and BASIC accesses are named only where they are banked in.',
+          '$dd00 and the $dd02 trick select the VIC bank. Off: accesses to I/O addresses inside the loaded bytes are written as labels, and Problems says why.'),
+        chk('deepAnalysis', 'Deep analysis (slower)', 'Traces guesses on trial and keeps those that run into no problem. A large program takes a second or two.',
+          'On for new projects: the normal analysis shows at once and the deep one takes its place when it is done.\n'
+          + 'It traces guesses (pointer-table targets, interrupt handlers, the load address, code islands further into a data block that call known code, the target a JMP the code changes has as loaded) on trial and keeps them when they run into no problem (an interrupt handler or the load address without the side of a branch that does); does not follow a JSR or JMP into ROM or past a routine that never returns; decides branches by the flags set before them; and analyses again until it decides the same.'),
+      ] },
+      { title: 'VICE snapshots', items: [
+        chk('snapshotZeroPage', 'Include the zero page and the stack', 'Opens the RAM from $0002 instead of $0200, for code that runs there. Applies to the next snapshot you open.',
+          'A PC or IRQ handler there is traced. Zero-page variables are then labels of the loaded bytes.'),
+      ] },
+    ] },
+    { id: 'output', label: 'Assembler output', group: 'Project', where: inProject, sections: [
+      { title: 'Assembler', items: [
+        sel('assembler', 'Assembler', [['kick', 'Kick Assembler 5.x (KickAss.jar)'], ['64tass', '64tass 1.57 (Turbo Assembler syntax)']],
+          'The source the listing shows, the export writes, and Verify and Build & Run assemble.',
+          '64tass: comments with ;, * = for an address, .logical for a relocated block, .if for a block left out of the build, the music read from its .sid with binary(), texts with .enc "none" or "screen" (letters as 64tass\'s -a tables have them: lower case for the upper case on the C64\'s screen), the undocumented opcodes by 64tass\'s names with .cpu "6502i"; it is built with -a -C.\n'
+          + 'Patches and scripts keep the assembler they were written for; new ones are written for this one.'),
+        sel('hwInclude', 'Hardware registers and KERNAL routines', [['import', `Names from include/c64-hardware.asm (${tass ? '.include' : '#import'})`], ['inline', `Names defined in the .asm file (${tass ? 'name = $d020' : '.label'} lines)`], ['none', 'Real addresses ($d020, $ffd2), without include/c64-hardware.asm']],
+          'With real addresses the listing and the export write `sta $d020` instead of `sta VIC_BORDER_COLOR`, and the comment still names the register (hover shows its name).'),
+      ] },
+      { title: 'Layout', grid: true, items: [
+        sel('hexCase', 'Hex digits', [['lower', '$d020'], ['upper', '$D020']]),
+        sel('bytesPerRow', 'Bytes per .byte row', [[8, '8'], [16, '16'], [4, '4']]),
+        sel('indent', 'Indent', [[8, '8 spaces'], [4, '4 spaces'], [2, '2 spaces']]),
+        sel('commentCol', 'Comment column', [[40, '40'], [48, '48'], [32, '32']]),
+      ], note: tass ? 'Mnemonics are always written in lower case (64tass runs with -C, case-sensitive), the undocumented ones by 64tass\'s names (isb, asr, sbx, ane, sha, shs, lds) with .cpu "6502i" at the top.' : 'Mnemonics are always written in lower case: Kick Assembler 5.x rejects upper-case mnemonics.' },
+      { title: 'Comments', items: [
+        chk('hwComments', 'Comment hardware register accesses', 'What the register or KERNAL routine does, with names or with real addresses.'),
+        chk('addrComments', 'Add the original address to every line'),
+        sel('notesFormat', 'Bookmarks and comments in the export', [['html', 'NOTES.html: a formatted page with the code in colour (open it in a browser)'], ['txt', 'NOTES.txt: plain text'], ['none', 'No document']],
+          'Written only when the project has bookmarks or comments.', 'Both formats list them by address, each with its place in the .asm file and the code around it.'),
+      ] },
+      { title: 'Export', items: [
+        tass ? chk('basicUpstart', 'Write the BASIC stub as one BASIC line', 'As `.word (+), 10` and `.null $9e, format("%d", start)`, when the stub is that line.')
+          : chk('basicUpstart', 'Use BasicUpstart2() when the BASIC stub matches it'),
+        tass ? chk('musicAsSid', 'Export detected music as a .sid file read with binary()', 'music.init, music.play and music.data, as with Kick Assembler.')
+          : chk('musicAsSid', 'Export detected music as a .sid file loaded with LoadSid()'),
+        chk('gfxBinary', 'Export charsets and bitmaps as binary files', tass ? 'Read with `.binary`.' : 'Read with `.import binary`.'),
+      ] },
+    ] },
+    { id: 'assemblers', label: 'Assemblers', group: 'Toolchain', where: tools, foot: chooseFolder, sections: [
+      { title: 'Kick Assembler', items: [
+        path('javaPath', 'Java executable', 'Kick Assembler needs Java 8 or later.', 'Choose folder…: the JDK or JRE folder (java is in its bin folder), or the folder with several in it.'),
+        path('kickJar', 'KickAss.jar', 'Verify and Build & Run assemble with this jar when it exists.'),
+        txt('kickArgs', 'Extra Kick Assembler arguments', '`-vicesymbols` writes a VICE label file next to the PRG.'),
+      ] },
+      { title: '64tass', items: [
+        path('tassPath', '64tass', 'Verify and Build & Run assemble a project written for 64tass (Assembler output) with it.',
+          'The installed app comes with 64tass 1.57.2900 (resources\\64tass in its folder) and uses it unless you pick another.'),
+        txt('tassArgs', 'Extra 64tass arguments', '`-Wall` shows more warnings in Problems.', 'Mimir always gives -a -C --cbm-prg, the output and a VICE label file (--vice-labels -l).'),
+      ] },
+      { title: 'Build', items: [
+        txt('outDir', 'Output folder', 'The folder in the export\'s folder the build writes the PRG and its VICE labels to.'),
+      ] },
+    ] },
+    { id: 'vice', label: 'VICE & music', group: 'Toolchain', where: tools, foot: chooseFolder, sections: [
+      { title: 'VICE', items: [
+        path('vicePath', 'VICE emulator (x64sc)', 'Build & Run (F5) starts the program in it. Sindri and the C64 look of the Explorer use its ROMs.', 'Choose folder…: the VICE folder (x64sc is in it or in its bin folder).'),
+        txt('viceArgs', 'Extra VICE arguments'),
+        path('viceQuicksave', 'VICE quicksave snapshot', 'F9 opens the newest. Empty: the one Alt+F11 writes.',
+          'Empty: C64SC.vsf (x64sc) or C64.vsf (x64) in VICE\'s settings folder (%APPDATA%\\vice), where Snapshot → Quicksave snapshot (Alt+F11) writes it. The Explorer can open each new one by itself.'),
+      ] },
+      { title: 'Music', items: [
+        sel('musicPlayer', 'Play music blocks in', [['vice', 'VICE: a PRG with a player that calls init and play'], ['deepsid', 'DeepSID (deepsid.chordian.net): the .sid file, online']],
+          'Play music (the block\'s right-click menu, the inspector, the command palette) plays the block here.',
+          'VICE: keys 1-9 and 0 start songs $00-$09, + and - the next and the one before, the border shows the raster time of play.\n'
+          + 'DeepSID: a window of its own opens with DeepSID, and the .sid the export writes goes to its Load SID, which sends the file to DeepSID\'s server (it keeps it there to play it) and plays it with DeepSID\'s emulator; needs the internet.'),
+      ] },
+    ] },
+    { id: 'debuggers', label: 'Debuggers', group: 'Toolchain', where: tools, foot: chooseFolder, sections: [
+      { items: [
+        sel('debugger', 'Build & Run in a debugger (Shift+F5)', [['retro', 'Retro Debugger'], ['c64d', 'C64 Debugger']],
+          'Shift+F5 builds and verifies as F5 does, then starts the program in this debugger instead of VICE.',
+          'It starts the program the way VICE does: RUN, sys <start> with $01 as it starts, or (a program over BASIC\'s work area or the screen) as from VICE\'s monitor; the drive reads the disk first; with the build\'s labels. The debugger loads a copy of the PRG with a little start code next to the program, which does what VICE types.\n'
+          + 'Retro Debugger 1.0.0 stops its emulation with a disk or a tape on its command line, so they are left out (a program that boots from a disk or a tape needs C64 Debugger or VICE); C64 Debugger does not start a cartridge (Retro Debugger and VICE do).\n'
+          + 'A VICE snapshot is restarted in C64 Debugger: Mimir writes it again as that debugger reads one (VICE 3.1\'s format, as its C64 PAL or C64 NTSC model, which the debugger must be set to), with the disk in it, and passes it to the debugger, a running one too. Retro Debugger does not read VICE\'s snapshots.'),
+      ] },
+      { title: 'Retro Debugger', items: [
+        path('retroDebuggerPath', 'Retro Debugger', 'Its program is C64Debugger.exe. Starts cartridges; leaves out disks and tapes.', 'Choose folder…: the Retro Debugger folder.'),
+        txt('retroDebuggerArgs', 'Extra Retro Debugger arguments', '`-layout <id>` starts with that layout, `-unpause` runs the code even when the debugger pauses it.'),
+        { id: 'debuggerWait', label: 'Wait before the start (ms)', help: 'Raise it when the screen stays blank: the program started before READY.',
+          more: 'Retro Debugger loads the program and jumps to its start this long after it starts (-wait), when the C64 should be at READY. C64 Debugger waits for READY by itself.',
+          control: <input id="set-debuggerWait" className="mono" type="number" min={0} max={60000} step={500} value={s.debuggerWait} aria-describedby="set-debuggerWait-help" onChange={e => set('debuggerWait', Math.max(0, Math.min(60000, Math.round(Number(e.target.value) || 0))))} /> },
+      ] },
+      { title: 'C64 Debugger', items: [
+        path('c64DebuggerPath', 'C64 Debugger', 'Its program is C64Debugger.exe. Takes disks and VICE snapshots; no cartridges.', 'Choose folder…: the C64 Debugger folder (C64Debugger.exe is in it).'),
+        txt('c64DebuggerArgs', 'Extra C64 Debugger arguments', '`-layout <id>` starts with that layout.'),
+      ] },
+    ] },
+    { id: 'tools', label: 'Packers & editor', group: 'Toolchain', where: tools, foot: chooseFolder, sections: [
+      { title: 'Unpacking', items: [
+        path('unpackerPath', 'External unpacker (optional)', 'Empty: Sindri, the built-in unpacker, unpacks packed (crunched) PRGs.',
+          'Sindri runs the program in an emulated C64, with the ROMs of the VICE in VICE & music (or of another VICE it finds), and reports each layer it peels off. An external unpacker such as unp64 runs instead, on a copy of the PRG in a folder of its own.'),
+        txt('unpackerArgs', 'External unpacker arguments', '`{in}` is the packed PRG, `{out}` a name for the result.', 'Without {out} the file it writes is picked up. unp64: {in} · exomizer: desfx -o {out} {in}'),
+      ] },
+      { title: 'Packing', items: [
+        path('exomizerPath', 'Exomizer', 'The Pack view packs with it when Exomizer is chosen there instead of Brokkr, the built-in cruncher. Empty: Brokkr only.',
+          'The installed app comes with Exomizer 3.1.1 (resources\\exomizer in its folder) and uses it unless you pick another.'),
+      ] },
+      { title: 'Editor', items: [
+        path('editorPath', 'External editor', 'The Editor button opens the export\'s folder in it, with its first .asm file open.',
+          `It exports the project first when it has not been. Empty: the first found of Sublime Text and Visual Studio Code${editorFound}. Choose folder… finds Sublime Text, Visual Studio Code or Notepad++ in the folder; another editor is picked in the file dialog that then opens.`,
+          { placeholder: editors[0]?.path ?? 'Sublime Text or Visual Studio Code', extra: editors.map(e => <button key={e.path} type="button" className="btn small" title={`Use ${e.path}`} onClick={() => set('editorPath', e.path)}>{e.name}</button>) }),
+        txt('editorArgs', 'External editor arguments', '`{dir}` is the export\'s folder, `{file}` its first .asm file.', 'Sublime Text and Visual Studio Code: {dir} {file} (the folder, with the file open in it) · Notepad++: {file}'),
+      ] },
+    ] },
+  ];
+
+  // ---- the search: every word typed is somewhere in the setting, its section or its page ----
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const searching = words.length > 0;
+  const hitRe = searching ? new RegExp(`(${words.map(escapeRe).join('|')})`, 'gi') : null;
+  const matches = (p: Page, sec: Section, it: Item) => {
+    const all = [p.group, p.label, sec.title, it.label, it.help, it.more, it.words].filter(Boolean).join(' ').toLowerCase();
+    return words.every(w => all.includes(w));
+  };
+  const found = pages.map(p => ({ p, sections: p.sections.map(sec => ({ sec, items: sec.items.filter(it => matches(p, sec, it)) })).filter(x => x.items.length) }));
+  const hits = (id: PageId) => found.find(f => f.p.id === id)!.sections.reduce((n, x) => n + x.items.length, 0);
+
+  /** text with `code` in the code font and the words searched for marked */
+  const rich = (t: string): ReactNode => t.split(/`([^`]+)`/).map((part, i) => {
+    const marked = hitRe ? part.split(hitRe).map((x, j) => (j % 2 ? <mark key={j} className="set-hit">{x}</mark> : x)) : part;
+    return i % 2 ? <code key={i} className="set-code">{marked}</code> : <Fragment key={i}>{marked}</Fragment>;
+  });
+
+  const row = (it: Item) => {
+    const auto = searching && !!it.more && words.some(w => it.more!.toLowerCase().includes(w));
+    const open = auto !== flipped.has(it.id);
+    const toggle = () => setFlipped(f => { const n = new Set(f); if (n.has(it.id)) n.delete(it.id); else n.add(it.id); return n; });
+    const help = (it.help || it.more) && (
+      <div className="set-help" id={`set-${it.id}-help`}>
+        {it.help && rich(it.help)}
+        {it.more && <>{it.help && ' '}<button type="button" className="linkish set-more-btn" aria-expanded={open} onClick={toggle}>{open ? 'Less' : 'More'}<span className="sr-only"> about {it.label}</span></button></>}
+      </div>);
+    const more = it.more && open && <div className="set-more">{it.more.split('\n').map((para, i) => <p key={i}>{rich(para)}</p>)}</div>;
+    return it.check
+      ? <div key={it.id} className="set-row check-row"><label className="check">{it.control}<span className="set-label">{rich(it.label)}</span></label>{help}{more}</div>
+      : <div key={it.id} className="field set-row"><label className="set-label" htmlFor={`set-${it.id}`}>{rich(it.label)}</label>{it.control}{it.after}{help}{more}</div>;
+  };
+  const sections = (list: { sec: Section; items: Item[] }[]) => list.map(({ sec, items }, i) => (
+    <section key={sec.title ?? i} className="set-sec">
+      {sec.title && <h3>{rich(sec.title)}</h3>}
+      <div className={cx(sec.grid && 'set-grid')}>{items.map(row)}</div>
+      {sec.note && !searching && <p className="set-note">{sec.note}</p>}
+    </section>));
+
+  const go = (id: PageId) => { setQuery(''); setPage(id); };
+  const order = pages.map(p => p.id);
+  const navKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = order.indexOf(page);
+    const to = e.key === 'ArrowDown' ? order[(i + 1) % order.length] : e.key === 'ArrowUp' ? order[(i - 1 + order.length) % order.length] : e.key === 'Home' ? order[0] : e.key === 'End' ? order[order.length - 1] : null;
+    if (!to) return;
+    e.preventDefault();
+    go(to);
+    document.getElementById(`set-tab-${to}`)?.focus();
+  };
+  const current = pages.find(p => p.id === page)!;
+
   return (
-    <Modal title="Settings" onClose={onClose} wide>
-      <div className="seg wide" role="tablist">{([['toolchain', 'Toolchain'], ['analysis', 'Analysis'], ['output', 'Assembler output'], ['general', 'General']] as const).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{l}</button>)}</div>
-      <div className="modal-body">
-        {tab === 'toolchain' && <>
-          {path('javaPath', 'Java executable', 'Kick Assembler needs Java 8 or later. Choose folder…: the JDK or JRE folder (java is in its bin folder), or the folder with several in it.')}
-          {path('kickJar', 'KickAss.jar', 'Verify and Build & Run assemble with this jar when it exists.')}
-          {txt('kickArgs', 'Extra Kick Assembler arguments', '-vicesymbols writes a VICE label file next to the PRG.')}
-          {path('tassPath', '64tass', 'Verify and Build & Run assemble a project written for 64tass (Assembler output) with it. The installed app comes with 64tass 1.57.2900 (resources\\64tass in its folder) and uses it unless you pick another.')}
-          {txt('tassArgs', 'Extra 64tass arguments', 'Mimir always gives -a -C --cbm-prg, the output and a VICE label file (--vice-labels -l). -Wall shows more warnings in Problems.')}
-          {path('vicePath', 'VICE emulator (x64sc)', 'Choose folder…: the VICE folder (x64sc is in it or in its bin folder).')}
-          {txt('viceArgs', 'Extra VICE arguments')}
-          {sel('debugger', 'Build & Run in a debugger (Shift+F5)', [['retro', 'Retro Debugger'], ['c64d', 'C64 Debugger']],
-            'Shift+F5 builds and verifies as F5 does, then starts the program in this debugger instead of VICE, the way VICE starts it: RUN, sys <start> with $01 as it starts, or (a program over BASIC\'s work area or the screen) as from VICE\'s monitor; the drive reads the disk first; with the build\'s labels. The debugger loads a copy of the PRG with a little start code next to the program, which does what VICE types. Retro Debugger 1.0.0 stops its emulation with a disk or a tape on its command line, so they are left out (a program that boots from a disk or a tape needs C64 Debugger or VICE); C64 Debugger does not start a cartridge (Retro Debugger and VICE do). A VICE snapshot is restarted in C64 Debugger: Mimir writes it again as that debugger reads one (VICE 3.1\'s format, as its C64 PAL or C64 NTSC model, which the debugger must be set to), with the disk in it, and passes it to the debugger, a running one too. Retro Debugger does not read VICE\'s snapshots.')}
-          {path('retroDebuggerPath', 'Retro Debugger', 'Choose folder…: the Retro Debugger folder (its program is C64Debugger.exe).')}
-          {txt('retroDebuggerArgs', 'Extra Retro Debugger arguments', '-layout <id> starts with that layout, -unpause runs the code even when the debugger pauses it.')}
-          <label className="field"><span>Retro Debugger: wait before the start (ms)</span>
-            <input id="set-debuggerWait" className="mono" type="number" min={0} max={60000} step={500} value={s.debuggerWait} onChange={e => set('debuggerWait', Math.max(0, Math.min(60000, Math.round(Number(e.target.value) || 0))))} />
-            <small className="muted">Retro Debugger loads the program and jumps to its start this long after it starts (-wait), when the C64 should be at READY. Raise it when the program starts before READY (the screen stays blank). C64 Debugger waits for READY by itself.</small></label>
-          {path('c64DebuggerPath', 'C64 Debugger', 'Choose folder…: the C64 Debugger folder (C64Debugger.exe is in it).')}
-          {txt('c64DebuggerArgs', 'Extra C64 Debugger arguments', '-layout <id> starts with that layout.')}
-          {sel('musicPlayer', 'Play music blocks in', [['vice', 'VICE: a PRG with a player that calls init and play'], ['deepsid', 'DeepSID (deepsid.chordian.net): the .sid file, online']],
-            'Play music (the block\'s right-click menu, the inspector, the command palette) plays the block here. VICE: keys 1-9 and 0 start songs $00-$09, + and - the next and the one before, the border shows the raster time of play. DeepSID: a window of its own opens with DeepSID, and the .sid the export writes goes to its Load SID, which sends the file to DeepSID\'s server (it keeps it there to play it) and plays it with DeepSID\'s emulator; needs the internet.')}
-          {path('viceQuicksave', 'VICE quicksave snapshot', 'Empty: C64SC.vsf (x64sc) or C64.vsf (x64) in VICE\'s settings folder (%APPDATA%\\vice), where Snapshot → Quicksave snapshot (Alt+F11) writes it. F9 opens the newest, and the Explorer can open each new one by itself.')}
-          {txt('outDir', 'Output folder')}
-          {path('unpackerPath', 'External unpacker (optional)', 'Empty: Sindri, the built-in unpacker, unpacks packed (crunched) PRGs. It runs the program in an emulated C64, with the ROMs of the VICE above (or of another VICE it finds), and reports each layer it peels off. An external unpacker such as unp64 runs instead, on a copy of the PRG in a folder of its own.')}
-          {txt('unpackerArgs', 'External unpacker arguments', '{in} is the packed PRG, {out} a name for the result; without {out} the file it writes is picked up. unp64: {in} · exomizer: desfx -o {out} {in}')}
-          {path('editorPath', 'External editor', <>The Editor button opens the export's folder in it, with its first .asm file open (and exports the project first when it has not been). Empty: the first found of Sublime Text and Visual Studio Code{desktop ? (editors.length ? `, here ${editors[0].name}` : ', and neither was found') : ''}. Choose folder… finds Sublime Text, Visual Studio Code or Notepad++ in the folder; another editor is picked in the file dialog that then opens.</>,
-            { placeholder: editors[0]?.path ?? 'Sublime Text or Visual Studio Code', extra: editors.map(e => <button key={e.path} type="button" className="btn small" title={`Use ${e.path}`} onClick={() => set('editorPath', e.path)}>{e.name}</button>) })}
-          {txt('editorArgs', 'External editor arguments', "{dir} is the export's folder, {file} its first .asm file. Sublime Text and Visual Studio Code: {dir} {file} (the folder, with the file open in it) · Notepad++: {file}")}
-          {path('exomizerPath', 'Exomizer', 'Packs in the Pack view when Exomizer is chosen there instead of Brokkr, the built-in cruncher. The installed app comes with Exomizer 3.1.1 (resources\\exomizer in its folder) and uses it unless you pick another. Empty: Brokkr only.')}
-          {desktop && kr && <p className="muted small">Choose folder… looks for the program in the folder you pick, in its bin (or win32) folder and in the folders in it, so the folder a zip unpacked to will do. When it is not there, a file dialog opens in that folder. Save settings keeps it.</p>}
-          <p className="muted small">{desktop ? 'Stored by the app (not in the project). The main process starts Java, 64tass, VICE, an external unpacker, Exomizer and the editor with argument lists, never through a shell.' : 'Running outside the desktop app: these paths only fill in the exported build scripts.'}</p>
-        </>}
-        {tab === 'analysis' && <>
-          {chk('illegal', 'Trace undocumented opcodes', 'LAX, SAX, DCP, ISC… common in demos')}
-          {chk('detectMusic', 'Detect SID music', 'JMP init/play tables, the code they reach (traced or not), SID register writes and note tables')}
-          {chk('detectGfx', 'Detect graphics', 'from $d018/$dd00/sprite pointer writes, then sizes and alignment')}
-          {chk('detectText', 'Detect text', 'PETSCII printed through KERNAL, screen codes copied to screen RAM')}
-          {chk('codeIslands', 'Decode unreached code that reads as a routine', 'data nothing traced reaches becomes code when it is 6+ documented instructions ending in RTS or JMP (no BRK, branches inside it); mark it as data (D) where it is not')}
-          {chk('deepAnalysis', 'Deep analysis (slower)', 'on for new projects: the normal analysis shows at once and the deep one takes its place when it is done. It traces guesses (pointer-table targets, interrupt handlers, the load address, code islands further into a data block that call known code, the target a JMP the code changes has as loaded) on trial and keeps them when they run into no problem (an interrupt handler or the load address without the side of a branch that does); does not follow a JSR or JMP into ROM or past a routine that never returns; decides branches by the flags set before them; and analyses again until it decides the same. A large program takes a second or two')}
-          {chk('bankTracking', 'Follow the memory configuration ($01) and VIC bank', 'names I/O, KERNAL and BASIC accesses only where they are banked in; $dd00 and the $dd02 trick select the VIC bank')}
-          {chk('snapshotZeroPage', 'VICE snapshots: include the zero page and the stack', 'opens the RAM from $0002 instead of $0200, for code that runs there (a PC or IRQ handler there is traced). Zero-page variables are then labels of the loaded bytes. Applies to the next snapshot you open')}
-        </>}
-        {tab === 'output' && <>
-          {sel('assembler', 'Assembler', [['kick', 'Kick Assembler 5.x (KickAss.jar)'], ['64tass', '64tass 1.57 (Turbo Assembler syntax)']],
-            'The source the listing shows, the export writes and Verify and Build & Run assemble. Saved in the project. 64tass: comments with ;, * = for an address, .logical for a relocated block, .if for a block left out of the build, the music read from its .sid with binary(), texts with .enc "none" or "screen" (letters as 64tass\'s -a tables have them: lower case for the upper case on the C64\'s screen), the undocumented opcodes by 64tass\'s names with .cpu "6502i"; it is built with -a -C. Scripts and patches are still written in Kick Assembler\'s syntax.')}
-          <div className="grid2">
-            {sel('hexCase', 'Hex digits', [['lower', '$d020'], ['upper', '$D020']])}
-            {sel('bytesPerRow', 'Bytes per .byte row', [[8, '8'], [16, '16'], [4, '4']])}
-            {sel('indent', 'Indent', [[8, '8 spaces'], [4, '4 spaces'], [2, '2 spaces']])}
-            {sel('commentCol', 'Comment column', [[40, '40'], [48, '48'], [32, '32']])}
+    <Modal title="Settings" onClose={onClose} className="settings-modal">
+      <div className="set-wrap">
+        <nav className="set-nav">
+          <input ref={searchRef} type="search" className="set-search" placeholder="Search settings" aria-label="Search settings" value={query} spellCheck={false}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }} />
+          <div role="tablist" aria-orientation="vertical" aria-label="Settings pages" onKeyDown={navKey}>
+            {GROUPS.map(g => <Fragment key={g}>
+              <div className="set-group">{g}</div>
+              {pages.filter(p => p.group === g).map(p => {
+                const n = searching ? hits(p.id) : 0;
+                return <button key={p.id} id={`set-tab-${p.id}`} role="tab" type="button" aria-selected={!searching && page === p.id} aria-controls="set-panel" tabIndex={page === p.id ? 0 : -1}
+                  className={cx('set-tab', searching && !n && 'dim')} onClick={() => go(p.id)}>
+                  <span>{p.label}</span>{searching && n > 0 && <span className="set-count">{n}</span>}</button>;
+              })}
+            </Fragment>)}
           </div>
-          {sel('hwInclude', 'Hardware registers and KERNAL routines', [['import', `Names from include/c64-hardware.asm (${tass ? '.include' : '#import'})`], ['inline', `Names defined in the .asm file (${tass ? 'name = $d020' : '.label'} lines)`], ['none', 'Real addresses ($d020, $ffd2), without include/c64-hardware.asm']])}
-          <p className="muted small">With real addresses the listing and the export write <span className="mono">sta $d020</span> instead of <span className="mono">sta VIC_BORDER_COLOR</span>, and the comment below still names the register (hover shows its name). Saved in the project; a PRG you open next keeps it.</p>
-          {chk('basicUpstart', tass ? 'Write the BASIC line as .word (+), 10 and .null $9e, format("%d", start) when the stub is that line' : 'Use BasicUpstart2() when the BASIC stub matches it')}
-          {chk('musicAsSid', tass ? 'Export detected music as a .sid file read with binary() (music.init, music.play, music.data)' : 'Export detected music as a .sid file loaded with LoadSid()')}
-          {chk('gfxBinary', `Export charsets and bitmaps as binary files with ${tass ? '.binary' : '.import binary'}`)}
-          {chk('hwComments', 'Comment hardware register accesses', 'what the register or KERNAL routine does, with names or with real addresses')}
-          {chk('addrComments', 'Add the original address to every line')}
-          {sel('notesFormat', 'Bookmarks and comments in the export', [['html', 'NOTES.html: a formatted page with the code in colour (open it in a browser)'], ['txt', 'NOTES.txt: plain text'], ['none', 'No document']])}
-          <p className="muted small">Written only when the project has bookmarks or comments. Both formats list them by address, each with its place in the .asm file and the code around it.</p>
-          <p className="muted small">{tass ? 'Mnemonics are always written in lower case (64tass runs with -C, case-sensitive), the undocumented ones by 64tass\'s names (isb, asr, sbx, ane, sha, shs, lds) with .cpu "6502i" at the top.' : 'Mnemonics are always written in lower case: Kick Assembler 5.x rejects upper-case mnemonics.'}</p>
-        </>}
-        {tab === 'general' && <>
-          <label className="check"><input id="set-startScreen" type="checkbox" checked={prefs.startScreen} onChange={e => setPrefs(p => ({ ...p, startScreen: e.target.checked }))} />
-            <span>Show the start screen when Mimir starts<small className="muted"> — continue, a new project, open one, or work without a project. Off: Mimir goes on with what you worked on last (the start screen still comes when that project is gone). The project button in the title bar shows it at any time</small></span></label>
-          <label className="check"><input id="set-overview" type="checkbox" checked={prefs.overview} onChange={e => setPrefs(p => ({ ...p, overview: e.target.checked }))} />
-            <span>Show an overview of the analysis when a file is opened<small className="muted"> — once the analysis is done, a window in the middle says what it found (the program start, packing, loaders, problems, the blocks by type, code, graphics and music), with links to each part and to the listing, the .asm source, Graphics and Memory. A link, a click outside it or Esc closes it. The command palette shows it at any time</small></span></label>
-          <label className="check"><input id="set-autoMerge" type="checkbox" checked={prefs.autoMerge} onChange={e => setPrefs(p => ({ ...p, autoMerge: e.target.checked }))} />
-            <span>Auto merge when marking blocks<small className="muted"> — marking a selection or a block as a type (C Code, D Bytes, W Words, T Text and the others in Mark as) merges it with the block right before and the block right after it when they are of that type (text in the same encoding) and in the same file: one block. Code merged so is one block, not a block per routine. Off: the marked range is a block of its own. Ctrl+Z takes a merge back</small></span></label>
-          <label className="field"><span>Inspector (the panel on the right)</span>
-            <select id="set-inspector" value={prefs.inspector} onChange={e => setPrefs(p => ({ ...p, inspector: e.target.value as InspectorMode }))}>
-              <option value="open">Always open</option>
-              <option value="auto">Folded in: opens when you need it, folds in when you click outside it</option>
-            </select>
-            <small className="muted">Folded in, the inspector is a strip at the right edge and the listing gets its room. A click on the strip, or on the start of a block (its header in the listing), opens the inspector over the editor; a click outside it or Esc folds it in again. The button at the top of the inspector switches between the two.</small></label>
-          <label className="check"><input id="set-gfxPictures" type="checkbox" checked={prefs.gfxPictures} onChange={e => setPrefs(p => ({ ...p, gfxPictures: e.target.checked }))} />
-            <span>Show graphics as pictures in the listing<small className="muted"> — sprites, charsets and bitmaps are drawn as they look (in the colours of the Graphics tab, multicolour as the VIC registers say or as set for the block) instead of as .byte rows. Click a character, a sprite or a bitmap cell to select its bytes. The source and the export still write .byte</small></span></label>
-          <label className="field"><span>The disk and the tape in the Explorer</span>
-            <select id="set-diskLook" value={prefs.diskLook} onChange={e => setPrefs(p => ({ ...p, diskLook: e.target.value as DiskLook }))}>
-              <option value="mimir">Mimir's list: blocks or time, name and type in Mimir's font</option>
-              <option value="c64">As on a C64: LOAD"$",8 and LIST, LOAD from the tape, in the C64's font and colours</option>
-            </select>
-            <small className="muted">As on a C64, the directory is the screen a C64 shows after LOAD"$",8 and LIST: light blue on blue, the names in PETSCII with their graphics, and whatever their control codes do (colours, RETURN, DEL), as the 1541 and BASIC list them. A tape has no directory: its screen is what LOAD prints as it searches the tape to its end, PRESS PLAY ON TAPE, OK, SEARCHING and a FOUND line for each header the KERNAL reads (a data block that starts as a header does gets one too), the names' control codes acting; the files of a turbo loader, which the KERNAL does not see, are listed under it. The letters come from VICE's character ROM (Toolchain → VICE); without it, from Mimir's own C64 letters, with no graphics. A click on a file opens it as in Mimir's list; Aa beside the eject button switches the character set, as Commodore+Shift does. The screen is as wide as the side panel: drag its edge to see it larger. Mimir's list, or Restore defaults, shows the disk and the tape as before.</small></label>
-          <label className="check"><input id="set-autoUnpack" type="checkbox" checked={prefs.autoUnpack} onChange={e => setPrefs(p => ({ ...p, autoUnpack: e.target.checked }))} />
-            <span>Unpack packed files when they are opened<small className="muted"> — when Sindri (or the external unpacker in Toolchain) finds a file you open packed, it is unpacked at once, as Unpack does, without the click (in a project, Ctrl+Z brings the packed file back). A file Sindri cannot unpack stays as it was opened</small></span></label>
-          <p className="muted small">{desktop ? 'Kept by the app (not in the project).' : 'Running outside the desktop app: there is no start screen.'}</p>
-        </>}
+        </nav>
+        <div className="set-main" id="set-panel" ref={mainRef} role={searching ? 'region' : 'tabpanel'} aria-label={searching ? 'Settings found' : undefined} aria-labelledby={searching ? undefined : `set-tab-${page}`}>
+          {searching
+            ? (found.some(f => f.sections.length)
+              ? found.filter(f => f.sections.length).map(({ p, sections: list }) => (
+                <div key={p.id} className="set-found">
+                  <button type="button" className="set-crumb" title={`Open ${p.label}`} onClick={() => go(p.id)}>{p.group} › {p.label}</button>
+                  {sections(list)}
+                </div>))
+              : <p className="set-none">No setting matches “{query.trim()}”.</p>)
+            : <>
+              <header className="set-head"><h2>{current.label}</h2><p>{current.where}</p></header>
+              {sections(current.sections.map(sec => ({ sec, items: sec.items })))}
+              {current.foot && <p className="set-note set-foot">{current.foot}</p>}
+            </>}
+        </div>
       </div>
-      <div className="modal-foot"><button className="btn ghost" onClick={() => { setS({ ...DEFAULT_SETTINGS }); setPrefs(DEFAULT_PREFS); }}>Restore defaults</button><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(s, prefs)}>Save settings</button></div>
+      <div className="modal-foot"><button className="btn ghost" title="Every setting on every page back to its default (Save settings keeps it)" onClick={() => { setS({ ...DEFAULT_SETTINGS }); setPrefs(DEFAULT_PREFS); }}>Restore defaults</button><span className="grow" /><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" onClick={() => onSave(s, prefs)}>Save settings</button></div>
     </Modal>
   );
 }

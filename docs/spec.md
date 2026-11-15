@@ -2777,6 +2777,19 @@ Verifieringen är produktens kvalitetsgrind:
 
 ### 13.1 Inställningar
 
+Dialogen **Settings** (Ctrl+,) har sina sidor i en lista till vänster, i tre grupper efter var inställningarna sparas:
+**App** (*General*: startskärmen, översikten efter analysen, uppackning när filen öppnas, grafik som bilder, auto merge,
+inspektorn och disken och bandet i Explorer; sparas av appen), **Project** (*Analysis* och *Assembler output*; sparas i
+projektet, och en fil som öppnas härnäst behåller dem) och **Toolchain** (sparas av appen, för alla projekt; tabellen
+nedan): *Assemblers* (Java, KickAss.jar, 64tass, utdatamappen), *VICE & music* (VICE, dess quicksave, var musikblock
+spelas), *Debuggers* (Shift+F5, Retro Debugger, C64 Debugger) och *Packers & editor* (den externa uppackaren, Exomizer,
+den externa editorn). En sida har rubriker för sina delar, och varje inställning har en rad som säger vad den gör; resten
+av förklaringen ligger bakom *More*. Sökrutan överst letar i alla sidor: de inställningar där varje ord som skrivits finns
+(i namnet, raden, *More*, ett val, delens eller sidans namn) visas under sin sida med orden markerade, *More* är öppen där
+ordet står, listan visar antalet träffar per sida, och en sidrubrik går till sidan. Esc tömmer rutan innan det stänger
+dialogen. Dialogen öppnas på sidan den senast stod på medan appen körs, först *General*; ↑ ↓ byter sida i listan. Ett
+fönster under 720 px har sidorna på en rad över sidan. Meddelanden som säger *Settings → Toolchain* pekar på gruppen.
+
 | Inställning | Standard (Windows) | Användning |
 |---|---|---|
 | Java | `java` | Körs med `-jar` |
