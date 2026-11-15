@@ -58,7 +58,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     loader file of a Warp*25 backup (the MK4's too) and the loader in a tape backup's header. Novaload, which the
     7.2's Nova transfer reads, is known as well;
   - the big publishers' tape loaders, learned from their tapes: Novaload (and its IRQ version), Ocean's Freeload, US
-    Gold's, Cyberload, Interceptor Micros', Mastertronic's and Firebird's, each by its own code that reads the tape;
+    Gold's, Mega-Save, Cyberload, Interceptor Micros', Mastertronic's and Firebird's, each by its own code that reads
+    the tape;
   - the Super Snapshot's loaders (V5): its turbo, LOAD and SAVE for the 1541 and the 1581 (it reads the Action Replay's
     Warp*25 files with the Action Replay's code, which then counts as the turbo's), the disk copier and the file copier,
     in the cartridge's banks, and the loader a backup saved as two files starts with (the Action Replay's split freezes
@@ -115,7 +116,7 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     tool's command file and command line that write the disk again, and *Save files…* saves every file as it is on the
     disk and unpacked, with the command file; `mimir disks <folder>` counts the disks each loader's reader takes;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
-    Gold's loader, Cyberload (all four stages: the loader's own two, the third's blocks with an address of their own and
+    Gold's loader, Mega-Save (Palace's, Hewson's, Level 9's …), Cyberload (all four stages: the loader's own two, the third's blocks with an address of their own and
     the files the fourth loads by name, the game's levels too) and Martin Piper's TapeTool (the TinyHeader file its boot
     loader reads, files in checksum blocks in any order, RLE packed blocks) are
     listed in the Explorer with where each starts, and a tape boot file opens with its header, where its loader's code

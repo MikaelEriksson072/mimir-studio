@@ -1362,6 +1362,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Novaload, IRQ-versionen (Novagen) | avbrottet som läser bandet och väntar på synkbyten `$aa` (`cmp #$aa / beq / lda #$02 / bne / lda #$37 / sta … / lda #$7f / sta zp / lda $dc0d / pla / tay / pla / rti`) och lagringen med pip på SID:en och summa (`ldy zp / sta (zp),y / sta $d401 / clc / adc zp / sta zp / iny / sty zp / bne`). Elite, Encore, US Golds Americana, Epyx, System 3, MicroProse … (21 band; texten NOVALOAD i minnet) |
 | Freeload (Ocean) | bitläsningen i avbrottet: bit 1 i CIA1:s timer A:s höga byte (`lda $dc05 / ldy #$19 / sty $dc0e / eor #$02 / lsr / lsr / rol`, delad med US Golds laddare och räknas bara med det egna), och väntan på ledaren `$40` och synken `$5a` (`cmp #$40 / beq / cmp #$5a / beq`). Ocean, Imagine, Mastertronic, Domark, CRL, Gremlin (texten FREELOAD i minnet) |
 | US Golds bandladdare | Freeloads bitläsning med ledaren `$20` och synken `$ff` (`cmp #$20 / beq / cmp #$ff / beq`): 720, Masters of the Universe, Super Huey II, Turbo Out Run |
+| Mega-Save | väntan på ledaren `$63` och synkbyten `$64`…`$ff` i laddaren i bandhuvudet (`cmp #$63 / bne / ldy #$64 / jsr … / cmp #$63 / beq / cpy zp / bne`), och bitläsningen i bootfilen (`lda $dc0d / and #$10 / beq / lda $dd0d / stx $dd07 / lsr / lsr / lda #$19 / sta $dd0f / rts`: en puls startar om CIA2:s timer B, svag). Palace (Cauldron), Hewson, Level 9, Alligata, Llamasoft, CRL (TAPCleans namn; Final TAP kallade den CHR, efter Cauldron, Hewson och Rainbird) |
 | Cyberload | bitläsningen `lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e / php` (TapeTool har samma utan `php`, och med `pha` före), och bootfilens dekryptering av laddaren i bandhuvudet (`ldy #… / eor $0350,y / sta $0350,y / dey / bne / eor #… / sta $dc0d`). Tredje och fjärde steget läser bandet i ett avbrott: bitläsningen `lda $dc0d / lsr / lda #$11 / sta $dc0e` (svag) och sökandet efter ledarbyten `$0f` bit för bit innan det går över till hela byte genom att skriva om sina egna grenar (`cmp #$0f / bne / lda #$18 / sta … / lda #$00 / sta … / lda #$01 / sta zp`), så att Tuskers `$f800` och `$fd00` också heter Cyberload. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite, Accolade, MicroProse (texten "CYBERLOAD NOW LOADING …" i skärmkoder i bootfilen). Bandformaten i 13.5e |
 | Interceptor Micros laddare | bitläsningen `sty $d020 / eor #$02 / lsr / lsr / ror`, minst signifikanta biten först, väntan på ledaren `$a0` (`cmp #$a0 / bne / lda #$27 / sta $0119`), och bootkoden i bandhuvudet som läser laddaren med KERNAL:ns `$f84a` och dekrypterar den till stacksidan (`lda $00ff,y / eor …,y / sta $00ff,y / dey / bne`). Activision, Thalamus Hits, Electric Dreams, Domark (texten "(C) INTERCEPTOR MICROS 1987") |
 | Mastertronics bandladdare | bitläsningen `lda #$10 / bit $dc0d / beq / lda #$11 / sta $dd0e / lda $dd0d / lsr / bit $dc0d / rol` (CIA2:s timer A som one-shot från `$01b6`) och 9 bitar per byte (`ldx #$09 / jsr … / inc $d020 / dex / bne`). Mastertronic, M.A.D., Codemasters, Firebirds och Silverbirds budgetband, Durell (17 band) |
@@ -3199,6 +3200,15 @@ utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
   byten först, slutet ett förbi), datan och en XOR-kontrollsumma. Formaten lärdes ur Sindris körningar av banden:
   byten laddaren lagrade medan motorn gick, hittade i bandets bitar (8.11c). Utan namn heter en Freeload-fil
   `file_<start>`. Kontrollsumman skiljer filerna från data som råkar ha ledaren och synken.
+- **Mega-Save** (Palace, Hewson, Level 9, Alligata, Llamasoft, CRL …; Tazz, Cauldron, Firelord, Iridis Alpha): laddaren
+  i bootfilens bandhuvud (`$0351`, startad av bootfilen vid `$02a7`) startar om CIA2:s timer B vid varje puls, en
+  one-shot från `$0107`, `$016e` eller `$01fa` cykler (de tre hastigheterna), och en 1 är att den hann ta slut; högsta
+  biten först. Varje fil: `$20`-byte, en ledare av `$63` (minst åtta här; banden har hundratals, en tabell med byten 0
+  till 255 i annan data har en), synkbyten `$64`…`$ff`, en byte som inte är 0, ett huvud på 10 byte (start, slut, ett
+  förbi, `$0000` till minnets slut, var programmet startas, en flagga för att ladda nästa fil och en för att hoppa dit,
+  två till), datan och en XOR-kontrollsumma. Filen heter `file_<start>`; Tape-flikens anteckning säger vad laddaren gör
+  sedan: går vidare till nästa fil, startar den på adressen, eller RUN (BASIC länkas om och RUN skrivs i
+  tangentbordsbufferten). Formatet lästes ur Tazz bootkod; en fil vars summa inte stämmer behålls, med felet.
 - **Cyberload** (System 3, Thalamus, Activision, Accolade, Electronic Arts, MicroProse, Gremlin, Virgin …): en puls
   längre än CIA1:s timer A (one-shot, oftast cirka 500 cykler) är en 1, högsta biten först, och varje synkbyte har en
   ledare av `$0f`-byte före sig (minst fyra här). Laddaren laddar i fyra steg efter KERNAL-bootfilen, var och ett i ett
@@ -3307,7 +3317,9 @@ ingen med fel; sträckorna med okänd turbodata gick från 11 921 till 7 294 och
 och 20 filer, de fyra stegen och nivåerna D–P). I Preservers 1 493 filer på 90 band (tre med block vars summa inte
 stämmer, med rena pulser: skadade band), 11 890 sträckor till 9 488. Inga filer i andra format försvann; sträckor av
 nästan bara 0-bitar gav 6 nya US Gold-filer. Kvar på Creatures, Hawkeye och Snare är Thalamus egen nivåladdare (anropad
-vid `$01a0`), inte Cyberload. `test/tap.test.ts` läser det
+vid `$01a0`), inte Cyberload. Mega-Save (2026-11-15): i båda samlingarna (1 931 band) 292 filer på 76 band, alla med
+en summa som stämmer (alla bootfilernas laddare är samma kod, bara hastigheten skiljer); sträckorna med okänd turbodata
+gick från 16 782 till 16 491 och band med inget kvar från 655 till 728. Inga filer i andra format ändrades. `test/tap.test.ts` läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
 kod för andra steget), och fixturerna `fixtures/tap/mimir-demo.tap` och `fixtures/tap/cyberload-demo.tap` (de fyra

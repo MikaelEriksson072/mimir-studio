@@ -19,6 +19,8 @@
  *   first, a leader of $02 and the sync bytes $09 … $01; a header (1, start, end, a byte, the name) and a data block (0,
  *   the bytes, an XOR checksum);
  * - Freeload (Ocean's) and US Gold's loader: a pilot byte, a sync byte, [a name,] start, end, the data and their XOR;
+ * - Mega-Save (Palace's, Hewson's, Level 9's, Alligata's …): a pilot of $63, the sync bytes $64 … $ff, a byte, a header
+ *   of 10 bytes (start, end, …), the data and their XOR;
  * - Cyberload (System 3's, Thalamus', Activision's, Accolade's …): a pilot of $0f before every sync byte, the loader's
  *   four stages each in a format of its own (cyberFirst, cyberSecond, cyberBlocks, cyberNamedFiles).
  * Anything else that holds data is the turbo data of a loader not known here: the boot program's loader reads it, so
@@ -86,7 +88,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
 }
 
 /** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'cyberload' | 't64';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'cyberload' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -701,6 +703,53 @@ function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
   return out;
 }
 
+/* ---- Mega-Save ---- */
+
+/* Mega-Save (TAPClean's name; Final TAP's CHR, after Cauldron, Hewson and Rainbird): the loader in the boot file's tape
+ * header waits for a pulse on the FLAG line and restarts CIA2's timer B, one shot from $0107, $016e or $01fa cycles
+ * (the three speeds), whose underflow is a 1, the top bit first. Each file: a pilot of $63, the sync bytes $64 … $ff, a
+ * byte that is not 0, 10 header bytes (start, end, where it starts the program, a flag to load the next file, a flag to
+ * jump there, two more), the data and their XOR. Learned from the boot of Tazz; Palace's, Hewson's, Level 9's,
+ * Alligata's, Llamasoft's tapes and others have it. */
+
+/** the sync bytes after the pilot; the pilot bytes it needs before them (its tapes have hundreds; a table of the
+ *  bytes 0 to 255 in another loader's data has one) */
+const MEGA_SYNC = 0xff - 0x64 + 1;
+const MEGA_PILOT = 8;
+
+function megaSaveFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
+  const out: TapeFile[] = [];
+  let reg = 0;
+  for (let k = 0; k < bits.length; k++) {
+    reg = ((reg << 1) | bits[k]) & 0xffff;
+    if (reg !== 0x6364) continue;
+    const syncAt = k - 15;
+    let lead = 1;
+    while (lead < MEGA_PILOT && msbByte(bits, syncAt - 8 * lead) === 0x63) lead++;
+    if (lead < MEGA_PILOT) continue;
+    let at = k + 1, n = 1;
+    while (n < MEGA_SYNC && msbByte(bits, at) === 0x64 + n) { at += 8; n++; }
+    // all 156 bytes counting up; the loader starts over when the byte after them is 0
+    if (n < MEGA_SYNC) continue;
+    const take = () => { const v = msbByte(bits, at); at += 8; return v; };
+    if (take() <= 0) continue;
+    const head = Array.from({ length: 10 }, take);
+    if (head.includes(-1)) continue;
+    const start = head[0] | (head[1] << 8), stop = head[2] | (head[3] << 8) || 0x10000;
+    if (stop <= start) continue;
+    const data = new Uint8Array(stop - start);
+    let x = 0, whole = true;
+    for (let i = 0; i < data.length; i++) { const v = take(); if (v < 0) { whole = false; break; } data[i] = v; x ^= v; }
+    const sum = take();
+    const errors = !whole ? ['the data runs past the end of the turbo stretch'] : sum !== x ? ['checksum: the data could not be read cleanly'] : [];
+    // what the boot's loader does after it: the next file, a jump, or RUN (BASIC relinked, RUN typed into the keyboard buffer)
+    const note = head[6] ? 'the loader goes on to the next file' : head[7] ? `the loader starts it at $${hex4(head[4] | (head[5] << 8))}` : 'the loader RUNs it';
+    out.push({ format: 'megasave', name: `file_${hex4(start)}`, type: 'PRG', load: start, end: stop, data, note, at: base + syncAt, offset: p.offsets[base + syncAt] ?? 0, seconds: (p.times[base + syncAt] ?? 0) / TAPE_CLOCK, to: base + Math.min(at, bits.length), errors });
+    k = at - 1; reg = 0;
+  }
+  return out;
+}
+
 /* ---- Cyberload ---- */
 
 /* Cyberload (System 3, Thalamus, Hewson, Activision …) loads in stages after the KERNAL boot file, each with a pulse
@@ -989,7 +1038,7 @@ export function readTape(u8: Uint8Array): TapeImage {
         for (let at = last.to - r.from; at + 8 <= bits.length; at += 8) { const v = msbByte(bits, at); if (v !== 0xff && v !== 0xc3) break; out++; }
         tapetool = { speed: tapetool?.speed ?? Math.round(two.short / 8) * 8, leadOut: Math.round(out / 2) };
       }
-      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
+      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from), ...megaSaveFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
       // Cyberload's first stage in the stretch after its boot file, and the second after it with the keys it holds
       if (keys) { const f = cyberSecond(p, bits, r, 0, keys); if (f) found.push(f); keys = null; }
       const boot = files.filter(f => f.format === 'cbm' && f.headerCode && f.to <= r.from).pop();

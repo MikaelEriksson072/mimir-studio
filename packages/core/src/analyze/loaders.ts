@@ -216,6 +216,14 @@ const KNOWN: Known[] = [
     ],
   },
   {
+    id: 'megasave', name: 'Mega-Save',
+    how: 'tape: a pulse on the FLAG line restarts CIA2\'s timer B, one shot from $0107, $016e or $01fa cycles (its three speeds), whose underflow is a 1, the top bit first; a pilot of $63, the sync bytes $64 … $ff, a byte that is not 0, 10 header bytes (start, end, where it starts the program, a flag to load the next file and one to jump there), the data and their XOR. The loader is in the tape header ($0351), the boot file ($02a7) starts it. Palace\'s, Hewson\'s, Level 9\'s, Alligata\'s and Llamasoft\'s tapes, among others (TAPClean\'s name; Final TAP called it CHR, after Cauldron, Hewson and Rainbird)',
+    signs: [
+      { pat: pat('C9 63 D0 .. A0 64 20 .. .. C9 63 F0 .. C4 .. D0'), role: 'tape', what: 'waits for the pilot byte $63, then the sync bytes $64 … $ff' },
+      { pat: pat('AD 0D DC 29 10 F0 F9 AD 0D DD 8E 07 DD 4A 4A A9 19 8D 0F DD 60'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then whether CIA2\'s timer B has run out (it starts it again)', weak: true },
+    ],
+  },
+  {
     id: 'cyberload', name: 'Cyberload',
     how: 'tape: a pulse on the FLAG line, then whether CIA1\'s timer A, one shot from about 500 cycles, has run out, the top bit first, a pilot of $0f bytes before each sync byte; four stages, each loading the next: the loader in the tape header stores bytes with a bit after each, the code it leaves in the zero page reads the third stage (XOR keys), which reads blocks with an address of their own in an IRQ, and the fourth, in the game too, loads files by name. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite, Accolade, Microprose … (TapeTool\'s bit reading is the same)',
     signs: [

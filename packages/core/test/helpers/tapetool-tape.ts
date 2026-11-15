@@ -92,6 +92,31 @@ export function pilotFile(w: TurboWriter, o: { pilot: number; sync: number; name
   for (let i = 0; i < 16; i++) w.byte(0);
 }
 
+/** A Mega-Save file: $20 bytes before the pilot, a pilot of $63, the sync bytes $64 … $ff, a byte that is not 0, the
+ *  header (start, end, where the loader starts the program, the flags to load the next file and to jump there, two
+ *  more bytes), the data and their XOR (`sum` instead when given). */
+export function megaSaveFile(w: TurboWriter, o: { load: number; data: Uint8Array; run?: number; next?: boolean; pilot?: number; sum?: number }): void {
+  for (let i = 0; i < 16; i++) w.byte(0x20);
+  for (let i = 0; i < (o.pilot ?? 300); i++) w.byte(0x63);
+  for (let v = 0x64; v <= 0xff; v++) w.byte(v);
+  w.byte(0x01);
+  const end = (o.load + o.data.length) & 0xffff, run = o.run ?? 0;
+  w.bytes([o.load & 0xff, o.load >> 8, end & 0xff, end >> 8, run & 0xff, run >> 8, o.next ? 1 : 0, o.next || !o.run ? 0 : 1, 0xca, 0]);
+  w.bytes(o.data);
+  w.byte(o.sum ?? o.data.reduce((a, v) => a ^ v, 0));
+  for (let i = 0; i < 16; i++) w.byte(0);
+}
+
+/** fixtures/tap/megasave-demo.tap: a KERNAL boot file "MEGA DEMO" (bytes of our own in its header, no loader), then
+ *  two Mega-Save files at Tazz's speed: a table at $c000 (the loader goes on) and `demo` (a PRG), which it RUNs. */
+export function megaSaveDemoTape(demo: Uint8Array): Uint8Array {
+  const kernal = makeTap({ files: [{ name: 'MEGA DEMO', load: 0x02a7, data: Uint8Array.from({ length: 93 }, (_, i) => (i * 11 + 3) & 0xff), header: Uint8Array.from({ length: 171 }, (_, i) => (i * 13 + 5) & 0xff) }] });
+  const w = new TurboWriter(54, 71);
+  megaSaveFile(w, { load: 0xc000, data: Uint8Array.from({ length: 600 }, (_, i) => (i * 7) & 0xff), next: true });
+  megaSaveFile(w, { load: demo[0] | (demo[1] << 8), data: demo.subarray(2) });
+  return withTurbo(kernal, w.pulses);
+}
+
 /** A whole tape: a KERNAL tape (makeTap) with turbo pulses after it. */
 export function withTurbo(kernal: Uint8Array, turbo: number[]): Uint8Array {
   const p = tapPulses(kernal), n = p.cycles.length + turbo.length;

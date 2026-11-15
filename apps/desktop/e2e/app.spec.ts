@@ -5858,6 +5858,29 @@ test('a Cyberload tape: its four stages read as files in the Explorer and the Ta
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
+test('a Mega-Save tape: its files are listed and open, as Tazz\'s and Cauldron\'s do', async ({ app, page }) => {
+  // fixtures/tap/megasave-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, then a table and the raster demo
+  // in Mega-Save's format at Tazz's speed
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/megasave-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted megasave-demo\.tap \(\d+ s\): 3 files \(1 KERNAL, 2 Mega-Save\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on megasave-demo.tap' });
+  await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"MEGA DEMO"\s*\+header\s*PRG/, /"file_c000"\s*Mega-Save/, /"file_0801"\s*Mega-Save/]);
+  // every stretch read: nothing left for Sindri alone
+  await expect(page.locator('.disk-spindle')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['KERNAL PRG', 'Mega-Save', 'Mega-Save']);
+  await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$02a7–$0303', '$c000–$c257', /^\$0801–\$[0-9a-f]{4}$/]);
+  await expect(table.locator('tbody tr td:nth-child(7)')).toHaveText([/header 2×, data 2×/, 'the loader goes on to the next file', 'the loader RUNs it']);
+  await table.getByRole('row', { name: /"file_0801"/ }).click();
+  await expect(toast(page, 'Loaded file_0801.prg at $0801')).toBeVisible();
+  await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+});
+
 test('the tape as a C64 finds its files (Settings → General), a turbo loader\'s files under the screen, and Mimir\'s list again', async ({ app, page }) => {
   // fixtures/tap/cyberload-demo.tap: the KERNAL boot file "CYBER DEMO", whose data block starts as a header does and
   // prints a FOUND of its own, then Cyberload's files, which the KERNAL does not see. LOAD's search of it on a C64 is

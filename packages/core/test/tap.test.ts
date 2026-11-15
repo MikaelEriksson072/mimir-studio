@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePrg, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackPrg } from '../src';
-import { blockFile, demoTape, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
+import { blockFile, demoTape, megaSaveDemoTape, megaSaveFile, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
 import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -234,6 +234,64 @@ describe('Freeload and US Gold\'s loader', () => {
     const again = readTape(t);
     expect(again.files).toEqual([]);
     expect(again.unknown).toHaveLength(1);
+  });
+});
+
+describe('Mega-Save', () => {
+  it('reads its files at each speed: a pilot of $63, the sync bytes $64 … $ff, a byte, the header, the data and their XOR', () => {
+    // Cauldron's speed (CIA2's timer B from $0107: a 0 of about 208 cycles, a 1 of 320), and Tazz's ($01fa: 432, 568)
+    const w = new TurboWriter(26, 40);
+    megaSaveFile(w, { load: 0x0f00, data: bytes(2000, 2), next: true });
+    megaSaveFile(w, { load: 0xe000, data: bytes(0x2000, 3), run: 0x800a });
+    const t = new TurboWriter(54, 71);
+    megaSaveFile(t, { load: 0x0801, data: bytes(3000, 4) });
+    const img = readTape(withTurbo(makeTap({ files: [] }), [...w.pulses, 0, 0x20, 0x4e, 0, ...t.pulses]));
+    expect(img.files.map(f => [f.format, f.name, f.type, f.load, f.end, f.note, f.errors])).toEqual([
+      ['megasave', 'file_0f00', 'PRG', 0x0f00, 0x0f00 + 2000, 'the loader goes on to the next file', []],
+      // an end of $0000: to the top of memory
+      ['megasave', 'file_e000', 'PRG', 0xe000, 0x10000, 'the loader starts it at $800a', []],
+      ['megasave', 'file_0801', 'PRG', 0x0801, 0x0801 + 3000, 'the loader RUNs it', []],
+    ]);
+    expect(img.files[1].data).toEqual(bytes(0x2000, 3));
+    expect(img.files[2].data).toEqual(bytes(3000, 4));
+    expect(img.unknown).toEqual([]);
+    expect(tapeFileName(img.files[2])).toBe('file_0801.prg');
+  });
+
+  it('is fixtures/tap/megasave-demo.tap, which the e2e tests insert: a table, then the demo', () => {
+    const tape = megaSaveDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/megasave-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, tape);
+    expect(new Uint8Array(readFileSync(path))).toEqual(tape);
+    const img = readTape(tape);
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.note, f.errors])).toEqual([
+      ['cbm', 'MEGA DEMO', 0x02a7, 0x02a7 + 93, undefined, []],
+      ['megasave', 'file_c000', 0xc000, 0xc000 + 600, 'the loader goes on to the next file', []],
+      ['megasave', 'file_0801', 0x0801, 0x0801 + demo.length - 2, 'the loader RUNs it', []],
+    ]);
+    expect(img.files[2].data).toEqual(demo.subarray(2));
+  });
+
+  it('keeps a file whose checksum does not fit, saying so; a table of the bytes 0 to 255 in other data is no file', () => {
+    const w = new TurboWriter(38, 54);
+    megaSaveFile(w, { load: 0x4000, data: bytes(1000, 5), sum: 0x5a ^ bytes(1000, 5).reduce((a, v) => a ^ v, 0) });
+    const [f] = readTape(withTurbo(makeTap({ files: [] }), w.pulses)).files;
+    expect([f.format, f.load, f.end, f.errors]).toEqual(['megasave', 0x4000, 0x4000 + 1000, ['checksum: the data could not be read cleanly']]);
+    // another loader's data: the bytes 0 to 255 (one $63 before $64), then what reads as a header, data and its XOR
+    const u = new TurboWriter(38, 54);
+    const data = bytes(500, 6);
+    u.bytes([...bytes(1500, 7), ...Array.from({ length: 256 }, (_, i) => i), 1, 0x00, 0x40, 0xf4, 0x41, 0, 0, 0, 1, 0, 0, ...data, data.reduce((a, v) => a ^ v, 0), ...bytes(1500, 8)]);
+    const other = readTape(withTurbo(makeTap({ files: [] }), u.pulses));
+    expect(other.files).toEqual([]);
+    expect(other.unknown).toHaveLength(1);
+    // a pilot of 7 bytes is not enough, 8 are
+    for (const [pilot, n] of [[7, 0], [8, 1]]) {
+      const s = new TurboWriter(38, 54);
+      s.bytes(bytes(400, 9));
+      megaSaveFile(s, { load: 0x2000, data: bytes(600, 10), pilot });
+      expect(readTape(withTurbo(makeTap({ files: [] }), s.pulses)).files).toHaveLength(n);
+    }
   });
 });
 

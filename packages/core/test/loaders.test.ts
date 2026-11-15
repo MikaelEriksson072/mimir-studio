@@ -598,6 +598,18 @@ describe("the Action Replay's loaders", () => {
     expect(ids(' lda #$b6\n sta $dd04\n lda #$01\n sta $dd05\n jsr byte\n rts\nbit: lda #$10\nw: bit $dc0d\n beq w\n lda #$11\n sta $dd0e\n lda $dd0d\n lsr\n bit $dc0d\n rol $fc\n rts\nbyte: ldx #$09\nb: jsr bit\n inc $d020\n dex\n bne b\n lda $fc\n rts\n')).toEqual(['mastertronic']);
   });
 
+  it('know Mega-Save by its wait for the pilot $63 and the sync bytes $64 … $ff', () => {
+    // a pulse on the FLAG line restarts CIA2's timer B, whose underflow is the bit (Tazz's boot: $01fa cycles)
+    const bit = 'bit: lda $dc0d\n and #$10\n beq bit\n lda $dd0d\n stx $dd07\n lsr\n lsr\n lda #$19\n sta $dd0f\n rts\n';
+    const byte = 'byte: lda #$07\n sta $f8\nb: jsr bit\n rol $f7\n inc $d020\n dec $f8\n bpl b\n lda $f7\n rts\n';
+    const wait = ' sei\n lda #$fa\n sta $dd06\n ldx #$01\ns: jsr bit\n rol $f7\n lda $f7\n cmp #$63\n bne s\n ldy #$64\np: jsr byte\n cmp #$63\n beq p\nq: cpy $f7\n bne s\n jsr byte\n iny\n bne q\n rts\n';
+    const [l] = loaders(wait + byte + bit);
+    expect(l).toMatchObject({ id: 'megasave', name: 'Mega-Save' });
+    expect(l.parts.map(p => p.what.split(':')[0])).toEqual(expect.arrayContaining(['waits for the pilot byte $63, then the sync bytes $64 … $ff']));
+    // its bit reading alone: a tape loader, not named
+    expect(ids(' ldx #$01\n jsr bit\n rts\n' + bit)).toEqual(['tape?']);
+  });
+
   it("know TapeTool's loaders (Martin Piper): the TinyHeader boot loader in the tape header, and the IRQ loader", () => {
     // the boot loader of fixtures/tap/mimir-demo.tap, which reads a bit as TapeTool's TapeLoaderCIACommon.a does
     const tape = readTape(new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/tap/mimir-demo.tap'))));
