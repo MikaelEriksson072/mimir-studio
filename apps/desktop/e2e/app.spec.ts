@@ -5338,6 +5338,50 @@ test('Build & Run in a debugger (Shift+F5): Settings picks Retro Debugger or C64
     expect(prg.subarray(2 + off, 2 + off + built.length - 2)).toEqual(built.subarray(2));
   });
 
+  await test.step('a breakpoint (F8) and a watch (Shift+F8) are on their lines and go to the debugger in the debug info, with the source', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, '0810');
+    const row = listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: /^0810$/ }) });
+    await page.keyboard.press('F8');
+    await expect(toast(page, /^Breakpoint at \$0810: Retro Debugger stops there/)).toBeVisible();
+    await expect(row).toHaveClass(/\bbp\b/);
+    await expect(row.locator('.bp-tag')).toHaveText('break');
+    await page.keyboard.press('Shift+F8');
+    await expect(row.locator('.watch-tag')).toHaveText('watch');
+    // F8 again takes it off, and Ctrl+Z brings it back
+    await page.keyboard.press('F8');
+    await expect(row.locator('.bp-tag')).toHaveCount(0);
+    await page.keyboard.press('Control+z');
+    await expect(row.locator('.bp-tag')).toHaveCount(1);
+    // on a line that is no instruction it says why not
+    await goTo(page, '3000');
+    await page.keyboard.press('F8');
+    await expect(toast(page, /A breakpoint goes on an instruction/)).toBeVisible();
+    await page.keyboard.press('Shift+F5');
+    await expect(toast(page, /^Retro Debugger started.* and the source, 1 breakpoint, 1 watch/)).toBeVisible({ timeout: 120_000 });
+    await page.getByRole('tab', { name: 'Build output' }).click();
+    const text = await log.innerText();
+    const m = /the source of (\d+) lines in its Source code view, 1 breakpoint, 1 watch \(([^)\n]*?\.debugger\.dbg)\)/.exec(text.slice(text.lastIndexOf('> Retro Debugger started')));
+    expect(m, text.slice(-900)).toBeTruthy();
+    expect(Number(m![1])).toBeGreaterThan(50);
+    // the labels are never on its command line: they are in the debug info (and a file) next to the PRG
+    expect(text.slice(text.lastIndexOf('> Retro Debugger started'))).not.toMatch(/-symbols|-debuginfo/);
+    const dbg = readFileSync(m![2], 'utf8');
+    expect(dbg).toContain('   <Breakpoints values="SEGMENT,ADDRESS,ARGUMENT">\n      Default,$0810,\n   </Breakpoints>');
+    expect(dbg).toContain('   <Watchpoints values="SEGMENT,ADDRESS,ARGUMENT">\n      Default,$0810\n   </Watchpoints>');
+    expect(dbg).toMatch(/\n {6}Default,\$[0-9a-f]{4},\w+\n/);
+    // the source it names is there, and the line the map gives $0810 is that instruction
+    const src = /\n {6}0,([^\n]+)\n/.exec(dbg)![1], line = /\n {9}\$0810,\$[0-9a-f]{4},0,(\d+),/.exec(dbg)![1];
+    expect(readFileSync(src, 'utf8').split('\n')[Number(line) - 1]).toMatch(/^\s+[a-z]{3}\b/);
+    expect(existsSync(m![2].replace(/\.dbg$/, '.labels'))).toBe(true);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    // both taken back: the project is as it was opened (the next step opens another without being asked to save)
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    await goTo(page, '0810');
+    await expect(row.locator('.bp-tag, .watch-tag')).toHaveCount(0);
+  });
+
   await test.step('C64 Debugger: -alwaysjmp, and the command palette names it', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
     await settings.getByRole('tab', { name: 'Debuggers' }).click();

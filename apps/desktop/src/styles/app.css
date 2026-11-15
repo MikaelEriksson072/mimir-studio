@@ -570,6 +570,11 @@ main.main { container: editor / inline-size; }
 .row.patched .hex { color: var(--warn); }
 .row.patched .gut { box-shadow: inset -2px 0 0 var(--warn); }
 .zp-tag.patch-tag { text-transform: none; letter-spacing: 0; }
+/* a debugger's breakpoint and watch (13.2b): the line says so, and a breakpoint's address is red */
+.zp-tag.bp-tag { color: #fff; background: #d6373c; border-color: #d6373c; }
+.zp-tag.watch-tag { color: var(--accent-hi); border-color: var(--accent-hi); }
+.row.bp .adr { color: #e5484d; font-weight: 600; }
+.row.bp { box-shadow: inset 3px 0 0 #e5484d; }
 .zp-tag { display: inline-block; margin-left: 10px; padding: 0 6px; border-radius: 4px; font: 600 10px/16px var(--font-ui); text-transform: uppercase; letter-spacing: 0.05em; color: var(--warn); box-shadow: inset 0 0 0 1px currentColor; vertical-align: 1px; }
 .edit-pop.zp { border-color: var(--warn); }
 .edit-pop label .zp-tag { margin-left: 8px; }

@@ -17,6 +17,7 @@ import {
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
+  debugSources,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
@@ -1428,6 +1429,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     update(`${out ? 'Include' : 'Exclude'} $${h4(b.start)}-$${h4(b.end - 1)} ${out ? 'in' : 'from'} the build`, d => { d.excluded = out ? d.excluded.filter(x => x !== b.start) : [...d.excluded, b.start]; });
     toast(out ? `$${h4(b.start)}–$${h4(b.end - 1)} is built again` : `$${h4(b.start)}–$${h4(b.end - 1)} is left out of the build (still in the source under #if)`, 'ok');
   };
+  /* ---- a debugger's breakpoints and watches (spec 13.2b): kept in the project, and written into the debug info
+     Build & Run in a debugger (Shift+F5) gives it. The analysis, the source and the output do not see them ---- */
+  /** the breakpoint on the instruction at `a` is set, or removed */
+  const toggleBreakpoint = (a: Addr) => {
+    const l = R.lines.find(x => x.k === 'ins' && a >= x.a && a < x.a + x.n);
+    if (!l) { toast('A breakpoint goes on an instruction: put the cursor on a line of code', 'warn'); return; }
+    const at = l.a, on = !!project.breakpoints?.includes(at);
+    update(`${on ? 'Remove' : 'Set'} breakpoint $${h4(at)}`, d => { const rest = (d.breakpoints ?? []).filter(x => x !== at), next = on ? rest : [...rest, at].sort((x, y) => x - y); d.breakpoints = next.length ? next : undefined; });
+    toast(on ? `Breakpoint $${h4(at)} removed` : `Breakpoint at $${h4(at)}: ${debuggerName} stops there when Shift+F5 starts it`, 'ok');
+  };
+  /** the address `a` is put on the debugger's watch list, or taken off it */
+  const toggleWatch = (a: Addr) => {
+    const on = !!project.watches?.includes(a);
+    update(`${on ? 'Stop watching' : 'Watch'} $${h4(a)}`, d => { const rest = (d.watches ?? []).filter(x => x !== a), next = on ? rest : [...rest, a].sort((x, y) => x - y); d.watches = next.length ? next : undefined; });
+    toast(on ? `$${h4(a)} is no longer watched` : `$${h4(a)} is watched: ${debuggerName} shows it in its watch list when Shift+F5 starts it`, 'ok');
+  };
+  const clearDebugMarks = () => {
+    const b = project.breakpoints?.length ?? 0, w = project.watches?.length ?? 0; if (!b && !w) return;
+    update('Remove all breakpoints and watches', d => { d.breakpoints = undefined; d.watches = undefined; });
+    toast(`${b} breakpoint${b === 1 ? '' : 's'} and ${w} watch${w === 1 ? '' : 'es'} removed (Ctrl+Z brings them back)`, 'ok');
+  };
+  const breakpointSet = useMemo(() => new Set(project.breakpoints ?? []), [project.breakpoints]);
   /** save the block at `a` as a binary file (data/<label>.bin, loaded with .import binary), or write it out again */
   const toggleBinary = (a: Addr) => {
     const b = findBlock(A.blocks, a); if (!b) return;
@@ -2580,7 +2603,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       // the RAM of a snapshot opened before snapshots were kept with the project: it can only start like a PRG
       if (f0 && (f0.load === 0x0200 || f0.load === 0x0002) && f0.load + f0.bytes.length === 0x10000) toast(`This file looks like a VICE snapshot that was opened before Mimir kept snapshots, so ${emu} starts it like a PRG: open the .vsf again and Build & Run restarts it as it was`, 'warn');
       else if (start == null && overSystem) toast(`The program overwrites BASIC's work area ($${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}), so RUN cannot start it: set the program start`, 'warn');
-      const r = await run({ prgPath, labelsPath, start, port, disk: diskPath, tape: tapePath }), via = r.via;
+      // a debugger shows the source by the code it runs, stops at the breakpoints and lists the watches: the debug
+      // info is made from the render that was just verified (the first file's: the one that is run)
+      const debug = inDebugger ? { sources: debugSources(R), breakpoints: (project.breakpoints ?? []).filter(a => A.owner[a] === 0), watches: (project.watches ?? []).map(addr => ({ addr })) } : undefined;
+      const r = await run({ prgPath, labelsPath, start, port, disk: diskPath, tape: tapePath, ...(debug ? { debug } : {}) }), via = r.via;
       const p01 = port != null ? ` with $01 = $${h2(port)}` : '';
       // (a debugger that cannot take the disk or the tape leaves it out, and its notes say so)
       const left = (what: string) => !!r.notes?.some(n => n.startsWith(`The ${what} is not`));
@@ -2593,8 +2619,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         ? `, starting at $${h4(start)}${p01} (loaded and started from the VICE monitor${diskPath ? `, after the drive read the disk (typed at READY, then sys ${START_STUB} stops in the monitor)` : ''}: ${why})`
         : port != null ? `, starting at $${h4(start)}${p01} (after loading, POKEs put a stub at $${h4(START_STUB)} that sets $01 and jumps there, and sys ${START_STUB} runs it: BASIC cannot set $01 itself)`
         : `, starting at $${h4(start)} (sys ${start} after loading)`;
-      setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${prgPath}${labelsPath ? ` with labels from ${labelsPath}` : ''}${how}${inDrive}${inDatasette}`)}` });
-      toast(`${emu} started${start != null ? ` at $${h4(start)}${p01}` : ''}${labelsPath ? ` with labels in the ${inDebugger ? 'debugger' : 'monitor'}` : ''}${diskPath && disk && inDrive ? `, ${disk.name} in drive 8` : ''}${inDatasette}${note(r)}`, level(r));
+      const di = r.debugInfo, dbg = di ? `, the source of ${di.lines} lines in its Source code view${di.breakpoints ? `, ${di.breakpoints} breakpoint${di.breakpoints === 1 ? '' : 's'}` : ''}${di.watches ? `, ${di.watches} watch${di.watches === 1 ? '' : 'es'}` : ''} (${di.path})` : '';
+      setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${prgPath}${labelsPath ? ` with labels from ${labelsPath}` : ''}${how}${inDrive}${inDatasette}${dbg}${r.reused ? ', in the debugger that was already running' : ''}`)}` });
+      toast(`${emu} started${start != null ? ` at $${h4(start)}${p01}` : ''}${labelsPath ? ` with labels in the ${inDebugger ? 'debugger' : 'monitor'}` : ''}${di ? ` and the source${di.breakpoints ? `, ${di.breakpoints} breakpoint${di.breakpoints === 1 ? '' : 's'}` : ''}${di.watches ? `, ${di.watches} watch${di.watches === 1 ? '' : 'es'}` : ''}` : ''}${diskPath && disk && inDrive ? `, ${disk.name} in drive 8` : ''}${inDatasette}${note(r)}`, level(r));
     } catch (e) {
       toast(errorText(e), 'err');
       setBuild(b => b && { ...b, log: `${b.log}\n\n> ${emu}: ${errorText(e)}` });
@@ -2908,6 +2935,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'fold-data', label: 'Fold every block that is not code', run: () => foldAll('data') },
     { id: 'fold-all', label: 'Fold all blocks', run: () => foldAll('all') },
     { id: 'unfold-all', label: 'Unfold all blocks', run: () => foldAll('none') },
+    { id: 'breakpoint', label: 'Set / remove a breakpoint on the instruction at the cursor (for Build & Run in a debugger)', key: 'F8', run: () => { if (cursor != null) toggleBreakpoint(cursor); } },
+    { id: 'watch', label: 'Watch / stop watching the address at the cursor (in the debugger\'s watch list)', key: 'Shift+F8', run: () => { if (cursor != null) toggleWatch(cursor); } },
+    ...(project.breakpoints?.length || project.watches?.length ? [{ id: 'debug-clear', label: `Remove all breakpoints and watches (${project.breakpoints?.length ?? 0} and ${project.watches?.length ?? 0})`, run: clearDebugMarks }] : []),
     { id: 'exclude', label: 'Exclude / include the block at the cursor in the build', run: () => { if (cursor != null) toggleExcluded(cursor); } },
     { id: 'junk', label: 'Mark the selection or the block at the cursor as junk (left out of everything)', run: () => { const r = sel && sel.multi && sel.end > sel.start ? sel : cursor != null ? findBlock(A.blocks, cursor) : null; if (r) markJunk({ start: r.start, end: r.end }); } },
     ...(project.junk?.length ? [{ id: 'junk-all', label: `Include all junk again (${project.junk.length} area${project.junk.length === 1 ? '' : 's'})`, run: includeAllJunk }] : []),
@@ -3041,6 +3071,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (e.key === 'F5') return run(e.shiftKey ? 'build-debugger' : 'build');
       if (e.key === 'F9') return run('quicksave');
       if (e.key === 'F7') return run('verify');
+      if (e.key === 'F8' && !typing && !k.modal && !k.editing && k.tab === 'listing') { e.preventDefault(); return run(e.shiftKey ? 'watch' : 'breakpoint'); }
       if (typing || k.editing || k.modal || ctrl || (e.altKey && !['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'].includes(e.key))) return;
       // the inspector opened from its strip (or a narrow window's drawer): Esc folds it in, and only that
       if (e.key === 'Escape' && k.drawer === 'insp') { e.preventDefault(); k.closeInspector(); return; }
@@ -3218,6 +3249,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       ...([['prev', 'previous'], ['next', 'next']] as const).flatMap(([dir, word]): MenuItem[] => { const m = mergeOverride(A, l.a, dir); return m ? [{ label: `Merge with ${word} block (${kindInfo(m.other.type).label}) → ${kindInfo(m.into).label}`, run: () => mergeBlock(dir, l.a) }] : []; }),
       { label: 'Merge range into one block…', key: 'M', run: () => { if (!inSel) setCursor(l.a); setModal('merge'); } },
       ...(b ? [{ label: 'Block size… (start and end)', key: 'L', run: () => openBlockSize(l.a) }] : []),
+      { sep: true },
+      ...(l.k === 'ins' ? [{ label: project.breakpoints?.includes(l.a) ? 'Remove breakpoint' : 'Set breakpoint (a debugger stops here)', key: 'F8', run: () => toggleBreakpoint(l.a) }] : []),
+      ...('n' in l && l.n > 0 ? [{ label: project.watches?.includes(l.a) ? `Stop watching $${h4(l.a)}` : `Watch $${h4(l.a)} in the debugger`, key: 'Shift+F8', run: () => toggleWatch(l.a) }] : []),
       { sep: true },
       { label: project.excluded.includes(b?.start ?? -1) ? 'Include block in the build' : 'Exclude block from the build', run: () => toggleExcluded(l.a) },
       { label: project.binary.includes(b?.start ?? -1) ? 'Write block in the source again' : `Save block as a binary file (${words.binary})`, run: () => toggleBinary(l.a) },
@@ -3608,7 +3642,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                   pickCell({ a, n: 1 }, extend, far); listRef.current?.focus();
                 }}
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
-                labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
+                labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} breakpoints={breakpointSet} watches={project.watches} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
                 patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} holdView={swaps} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R} scriptMarks={scriptMarks} onScriptMark={openUserScript}
                 startAt={viewAt.current} onView={seeAt} />
               {findOpen && <FindBar q={findQ} opts={findOpts} onQuery={setFindQ} onOpts={setFindOpts} count={findHits.length} at={findAt >= 0 ? findAt + 1 : null} onStep={stepFind} onClose={closeFind} focusKey={findFocus} />}

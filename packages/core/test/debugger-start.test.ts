@@ -4,13 +4,13 @@
  * started as from VICE's monitor, the drive's initialise, LOAD"*",8,1 and RUN. And the command lines each debugger
  * gets, with what it cannot take left out or refused. */
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { C64, d64ToDisk } from '@mimir/sindri';
 import { Drive } from '../../sindri/src/drive.ts';
 import { debuggerStart, DRIVE_INIT, makeD64, makePrg, type Roms } from '../src';
-import { DEBUGGERS, debuggerArgv, findC64Roms, prepareDebugger } from '../src/node';
+import { DEBUGGERS, debuggerArgv, findC64Roms, prepareDebugger, retroBorderMode } from '../src/node';
 import { fromSource } from './helpers/programs';
 
 const prgOf = (src: string) => { const f = fromSource('t.prg', src); return makePrg(f.load, f.bytes); };
@@ -272,12 +272,56 @@ describe('the command lines', () => {
     expect(p.plan!.typed).toBe(`${DRIVE_INIT}sys49152`);
   });
 
-  it('Retro Debugger leaves the disk and the tape out, says so, and then does not initialise the drive', async () => {
-    const p = await prepareDebugger({ kind: 'retro', exe: 'x', prgPath, start: 0xc000, disk: join(dir, 'd.d64'), tape: join(dir, 't.tap') });
-    expect(p.argv).not.toContain('-d64');
-    expect(p.argv).not.toContain('-tap');
-    expect(p.notes).toEqual([expect.stringMatching(/^The disk is not in drive 8 .*stops its emulation/), expect.stringMatching(/^The tape is not in the datasette/)]);
-    expect(p.plan!.typed).toBe('sys49152');
+  it('Retro Debugger gets the labels in a file next to what it loads, never with -symbols (its Data watch window asserts)', async () => {
+    writeFileSync(labels, 'al C:c000 .start\n');
+    const p = await prepareDebugger({ kind: 'retro', exe: 'x', prgPath, labelsPath: labels, start: 0xc000 });
+    expect(p.argv).toEqual(['-wait', '3000', '-prg', p.startPrg, '-jmp', `x${p.plan!.jmp!.toString(16).padStart(4, '0')}`]);
+    const beside = join(dir, 'game.debugger.labels');
+    expect(readFileSync(beside, 'utf8')).toBe('al C:c000 .start\n');
+    // a run without labels leaves none of an earlier run for the debugger to find
+    await prepareDebugger({ kind: 'retro', exe: 'x', prgPath, start: 0xc000 });
+    expect(existsSync(beside)).toBe(false);
+    // a cartridge's are found next to the .crt
+    const crt = join(dir, 'cart.crt');
+    expect((await prepareDebugger({ kind: 'retro', exe: 'x', prgPath: crt, cart: true, labelsPath: labels })).argv).toEqual(['-crt', crt, '-reset']);
+    expect(readFileSync(join(dir, 'cart.labels'), 'utf8')).toBe('al C:c000 .start\n');
+  });
+
+  // Retro Debugger's settings are read for its border mode before it gets a disk: the tests name the file (the one
+  // of the Retro Debugger on this machine is the user's)
+  const borderFile = (mode: number | null) => { const f = join(dir, `settings-${mode}.hjson`); writeFileSync(f, `{\n  MainWindowMaximized: true\n${mode == null ? '' : `  viceViciiBorderMode: ${mode}\n`}}\n`); return f; };
+
+  it('Retro Debugger gets a disk before the program, never on the program\'s command line; the tape is left out', async () => {
+    for (const mode of [null, 0, 3]) {
+      const p = await prepareDebugger({ kind: 'retro', exe: 'x', prgPath, start: 0xc000, disk: join(dir, 'd.d64'), tape: join(dir, 't.tap'), retroSettings: borderFile(mode) });
+      expect(p.argv).not.toContain('-d64');
+      expect(p.argv).not.toContain('-tap');
+      expect(p.diskFirst).toBe(join(dir, 'd.d64'));
+      expect(p.notes).toEqual([expect.stringMatching(/^The tape is not in the datasette/)]);
+      // the drive reads the disk first, as in VICE
+      expect(p.plan!.typed).toBe(`${DRIVE_INIT}sys49152`);
+    }
+    // no settings file to read (another system, or the debugger never run): the disk is given
+    expect((await prepareDebugger({ kind: 'retro', exe: 'x', prgPath, disk: join(dir, 'd.d64'), retroSettings: join(dir, 'none.hjson') })).diskFirst).toBe(join(dir, 'd.d64'));
+    expect((await prepareDebugger({ kind: 'retro', exe: 'x', prgPath, disk: join(dir, 'd.d64'), retroSettings: null })).diskFirst).toBe(join(dir, 'd.d64'));
+    // C64 Debugger takes it on the command line, as before
+    expect((await prepareDebugger({ kind: 'c64d', exe: 'x', prgPath, disk: join(dir, 'd.d64') })).diskFirst).toBeUndefined();
+  });
+
+  it('Retro Debugger with its border set to full or debug gets no disk (it crashes with one), and the note says what to change', async () => {
+    for (const [mode, name] of [[1, 'full'], [2, 'debug']] as const) {
+      const f = borderFile(mode);
+      const p = await prepareDebugger({ kind: 'retro', exe: 'x', prgPath, start: 0xc000, disk: join(dir, 'd.d64'), retroSettings: f });
+      expect(p.diskFirst).toBeUndefined();
+      expect(p.argv).not.toContain('-d64');
+      expect(p.notes).toEqual([expect.stringContaining(`The disk is not in drive 8 (${join(dir, 'd.d64')}): Retro Debugger 1.0.0 crashes about every other time it gets a disk while its VIC-II border is ${name} (viceViciiBorderMode: ${mode} in ${f}): set it to Normal in Retro Debugger (Settings → C64 → VIC → VIC Border mode)`)]);
+      // and then the drive is not initialised
+      expect(p.plan!.typed).toBe('sys49152');
+      await expect(prepareDebugger({ kind: 'retro', exe: 'x', prgPath: join(dir, 'disk.d64'), retroSettings: f })).rejects.toThrow(/VIC Border mode\), then run again\. Build & Run \(F5\) starts the disk in VICE/);
+    }
+    expect(retroBorderMode('{\n  viceViciiBorderMode: 2\n}')).toBe(2);
+    expect(retroBorderMode('{\n  "viceViciiBorderMode": 1\n}')).toBe(1);
+    expect(retroBorderMode('{\n  RasterCrossVisible: true\n}')).toBe(0);
   });
 
   it('a cartridge: Retro Debugger attaches it and resets; C64 Debugger is refused, as is a VICE snapshot for Retro Debugger', async () => {
@@ -296,7 +340,10 @@ describe('the command lines', () => {
     const t = await prepareDebugger({ kind: 'c64d', exe: 'x', prgPath: tap });
     expect(t.argv).toEqual(['-tap', tap, '-prg', t.startPrg, '-alwaysjmp']);
     expect(t.notes).toEqual([expect.stringContaining('Press PLAY')]);
-    await expect(prepareDebugger({ kind: 'retro', exe: 'x', prgPath: d64 })).rejects.toThrow(/cannot start the disk/);
+    // Retro Debugger: the disk first, then the start code that types LOAD and RUN, jumped to
+    const r = await prepareDebugger({ kind: 'retro', exe: 'x', prgPath: d64, retroSettings: null });
+    expect(r).toMatchObject({ via: 'load', diskFirst: d64, startPrg: join(dir, 'debugger-start.prg') });
+    expect(r.argv).toEqual(['-wait', '3000', '-prg', r.startPrg, '-jmp', 'x02a7']);
     await expect(prepareDebugger({ kind: 'retro', exe: 'x', prgPath: tap })).rejects.toThrow(/does not load from a tape/);
     expect(DEBUGGERS.retro.name).toBe('Retro Debugger');
   });

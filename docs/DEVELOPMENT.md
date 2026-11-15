@@ -782,6 +782,54 @@ the reference as a patch in `test/helpers/reference.ts`):
     debugger from the disk Mimir wrote into it, through `launchDebugger`. The debugger's window was read with
     PrintWindow; posted key messages reach its monitor but not its shortcuts (Ctrl+S), so it was not made to save a
     snapshot of its own.
+    Retro Debugger's labels are no longer given with `-symbols` (2026-11-15): with a `-prg` it stopped the debugger
+    with imgui's assertion "Missing End()" whenever its Data watch window was open in the saved layout (every
+    program, one label is enough; a fresh settings folder hides it, as the default layout has no Data watch). Its
+    command line empties the symbols outside its lock (`C64CommandLine.cpp`: `DeleteAllSymbols`, then
+    `ParseSymbols`), and `CViewDataWatch::RenderImGui` returns after `PreRenderImGui` without `PostRenderImGui`
+    when `currentSegment` is NULL (tag v1.0.0, still so on master); `-debuginfo` does the same. The labels are now
+    copied next to what it loads (`labelsBeside`: `name.debugger.labels`, `name.labels` for a cartridge), which
+    its PRG and cartridge loaders read by themselves (`CMainMenuHelper::LoadLabelsAndWatches`: `.labels`, `.vs`,
+    `.watch`, `.dbg` with the file's name; its settings for loading them are on by default); a run without labels
+    removes the file. Checked on the real debugger with the user's layout (Data watch open): 6 of 6 starts without
+    the assertion where `-symbols` gave it 6 of 6, a label at `$c000` shown in Data watch, and through
+    `launchDebugger` the raster demo and Uncensored's unpacked program. Back up `%LOCALAPPDATA%\RetroDebugger`
+    before such tests: a killed debugger has written its layout, and `Copy-Item` into a folder that is still
+    there nests the copy.
+    Debug info, breakpoints, watches and the reuse of a running debugger came the same day. The `.dbg` is Kick
+    Assembler's `-debugdump` format as `CDebugAsmSource.cpp` reads it: its lines are split at every comma with the
+    commas kept as words (a source line must be exactly `INDEX,PATH`, a PC breakpoint `SEGMENT,$ADDR,` with the
+    comma at its end), every segment named must be a `<Segment>` of the file, and the sources are read from the
+    paths as UTF-8. `debugSources` takes the map from `RenderResult.fileLines` (line i of the file is `fileLines[i]`,
+    its `a` and `n` the bytes it made), so no assembler has to write one. Both debuggers read `name.dbg` next to the
+    PRG by themselves (`LoadLabelsAndWatches`, under the lock the Data watch window takes: this path cannot give
+    the assertion). Checked on the real ones with the raster demo: Retro Debugger's Source code window shows
+    Mimir's source by the code, PC Breakpoints lists the breakpoint and the C64 stops there, Data watch lists the
+    watches; C64 Debugger 0.64.58.6 stopped at the same breakpoint. Retro Debugger's Ctrl+Shift+F3 did nothing
+    when sent to it; its windows were opened with clicks in its C64 menu (SetCursorPos and mouse_event at window
+    coordinates, PrintWindow to see).
+    `-pass`: the passed command line is carried out in the order of `C64DebuggerPassConfigToRunningInstance`
+    (reset, wait, cartridge, disk, unpause, PRG, jump), whatever its order on the command line. A debugger stopped
+    at a breakpoint did the reset and nothing after it (frame 0, the old screen) with `-pass -reset -wait … -prg`;
+    `-unpause` in the same command line comes after the wait, so the C64 would get the program before it has
+    started. Two command lines do it: `-pass -reset -unpause`, then the program's. A debugger started with `-pass`
+    when none runs opens a console window of its own, so the first is started without it, and `launchDebugger`
+    remembers the pid of the debugger it started (`process.kill(pid, 0)` says whether it still runs). Checked
+    through `launchDebugger`: three runs in a row in one window, the second stopped at its breakpoint, the third
+    running. `test/debugger-dbg.test.ts` has node standing in for the debugger and recording its command lines.
+    A disk in Retro Debugger (the same day, asked with Uncensored's disk refused): what 2026-11-12 measured as
+    "stops its emulation with a disk" was two things. With the user's settings a start with `-d64` ended with
+    0xC0000374 about every other time; with a fresh settings folder never. Found by leaving out one settings file
+    at a time (settings.hjson), then groups of its keys, then one key, five starts each: `viceViciiBorderMode: 2`
+    (the Debug border; 1, Full, does it too; 0 and 3 do not), and the layout, recents and the File browser's folder
+    make no difference. `retroDiskRefusal` reads the file and says what to change; the menu's names are from
+    `CMainMenuBar.cpp` (Settings, C64, VIC, VIC Border mode). And with a normal border `-d64 D -wait 3000 -prg P
+    -jmp A` in one command line stops at frame 28 at READY (the disk's attach resets the C64 after the wait, and
+    the PRG and the jump come at once), while `-d64 D` alone runs, `-d64 D -autorundisk` starts the disk's first
+    program by the debugger's own loading, and a disk passed to a running debugger (`-pass -d64 D`) was taken 4
+    of 4 times. So the disk goes first and the program after it by the passes above, which keeps the start code
+    (the same as C64 Debugger's and VICE's typing, and a real LOAD from the drive). When testing with the user's
+    settings folder, write its settings.hjson without the border line for the run and restore the backup after.
 40. Disks for the Covert Bitops loader (spec 13.5l) are new, and GoatLight is read. `readCovertDisk`
     (`packages/core/src/c64/covert-disk.ts`) reads a disk whose directory files the loader loads by name (version 2: two
     letters or a whole name; version 3: two hex digits), unpacked the ways the loader unpacks them: exomizer level

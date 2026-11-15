@@ -197,6 +197,9 @@ export const serializedProjectSchema = z.object({
   junk: junk.optional(),
   // project files from before view offsets, and those without any, have none
   viewOffsets: viewOffsets.optional(),
+  // a debugger's breakpoints and watches (spec 13.2b)
+  breakpoints: z.array(at).max(4096).optional(),
+  watches: z.array(at).max(4096).optional(),
   // project files from before cartridges, and those without one, have none
   cart: z.object({ name: fileName, data: z.string() }).optional(),
   settings: settingsSchema.default({}),
@@ -229,6 +232,9 @@ export const projectSchema = z.object({
   binary: z.array(at).max(65536),
   junk: junk.optional(),
   viewOffsets: viewOffsets.optional(),
+  // a debugger's breakpoints and watches (spec 13.2b)
+  breakpoints: z.array(at).max(4096).optional(),
+  watches: z.array(at).max(4096).optional(),
   cart: z.object({ name: fileName, crt: crtBytes }).nullable().optional(),
   settings: settingsSchema,
 });
@@ -264,8 +270,15 @@ export const exportWriteSchema = z.object({
 }).refine(r => !!r.dir !== !!r.target, 'give either dir or target');
 /** the sources to assemble: one per project file, and a cartridge's own source after them */
 export const buildSchema = z.object({ dir: z.string().min(1).max(4096), entries: z.array(z.string().max(255)).min(1).max(1025), assembler: z.enum(['kick', '64tass']).optional() });
+/** what a debugger shows of the program (spec 13.2b): the sources with the bytes their lines made, where it stops
+ *  and what it watches. The sources are written next to the PRG, by their file names */
+const debugInfo = z.object({
+  sources: z.array(z.object({ name: fileName, text: z.string().max(32 * 1024 * 1024), spans: z.array(z.tuple([addr, addr, z.number().int().min(1).max(4_000_000)])).max(0x10000) })).max(64),
+  breakpoints: z.array(addr).max(4096).optional(),
+  watches: z.array(z.object({ addr, count: z.number().int().min(1).max(256).optional(), format: z.enum(['hex8', 'hex16', 'hex32', 'signed8', 'signed16', 'signed32', 'unsigned8', 'unsigned16', 'unsigned32', 'text']).optional() })).max(4096).optional(),
+});
 /** `cart`: prgPath is a cartridge image VICE attaches (-cartcrt) */
-export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), port: z.number().int().min(0).max(0xff).optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional(), debugger: z.boolean().optional() });
+export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), port: z.number().int().min(0).max(0xff).optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional(), debugger: z.boolean().optional(), debug: debugInfo.optional() });
 const prg = z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG');
 /** the built PRGs (one per project file, in order) and how to pack them */
 export const packSchema = z.object({ files: z.array(z.object({ name: fileName, prg })).min(1).max(64), prefs: packPrefsSchema });

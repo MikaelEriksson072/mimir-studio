@@ -1947,6 +1947,8 @@ kommandona, etiketterna, VIA-namnen, en gren som alltid tas, `.byte $2c`, samma 
 | Kommandopalett | `Ctrl+Shift+P`, `F1` | Alla kommandon sökbara |
 | Verifiera / bygg och kör | `F7` / `F5` | Round-trip / KickAss + VICE |
 | Bygg och kör i en debugger | `Shift+F5` | KickAss + Retro Debugger eller C64 Debugger, startat som i VICE (13.2b) |
+| Brytpunkt för debuggern på raden | `F8` | sätts eller tas bort på en instruktionsrad (13.2b) |
+| Bevaka radens adress i debuggern | `Shift+F8` | sätts eller tas bort (13.2b) |
 
 **Override-modellen:** overrides lagras som en ordnad lista i projektet. `analyze()` applicerar dem i ordning (senare vinner, `auto` rensar). Bara det som fortfarande vinner räknas: en override som senare overrides täcker helt lämnar ingen blockgräns, inga props, ingen startpunkt och ingen linjär disassemblering efter sig. Att markera ett intervall slår därför ihop blocken och de tidigare overrides i intervallet till ett nytt block; en override som bara delvis täcks behåller resten som eget block. Kod-overrides blir startpunkter och, om spårningen inte når hela intervallet, linjär disassemblering. Data-overrides blockerar spårning in i intervallet och rapporterar kodvägar som når dem.
 
@@ -2895,11 +2897,62 @@ Kontrollerat med Retro Debugger 1.0.0 och C64 Debugger 0.64.58.6:
 | | Retro Debugger 1.0.0 | C64 Debugger 0.64.58.6 |
 |---|---|---|
 | PRG | `-wait 3000 -prg main.debugger.prg -jmp x<adress>` | `-prg main.debugger.prg -alwaysjmp` |
-| Etiketter | `-symbols main.vs` | `-symbols main.vs` |
-| Disk | utelämnas: dess emulering stannar med `-d64` på kommandoraden (också utan program), och en disk som skickas med `-pass` gav samma sak eller en krasch; en disk som ska autostartas vägras | `-d64` |
+| Etiketter | filen `main.debugger.labels` bredvid PRG-kopian (`main.labels` bredvid en `.crt`), som debuggern läser själv; aldrig `-symbols`, som med `-prg` stoppar Retro Debugger 1.0.0 med *Assertion failed … Missing End()* när dess fönster Data watch är öppet | `-symbols main.vs` |
+| Källkod, brytpunkter, bevakningar | filen `main.debugger.dbg` bredvid PRG-kopian, se nedan | samma fil |
+| Ett fönster som redan är öppet | används igen: `-pass -reset -unpause`, sedan programmets kommandorad med `-pass` | en ny debugger varje gång |
+| Disk | sätts i först, i en egen kommandorad, och programmet ges sedan som till en debugger som redan kör, se nedan; utelämnas (och en disk som ska autostartas vägras) när debuggerns VIC-kant är *Full* eller *Debug* | `-d64` |
 | Band | utelämnas (tom skärm, sedan ingen); ett band som ska autostartas vägras | `-tap`; PLAY trycks i debuggerns *Settings → Tape* |
 | Cartridge | `-crt <fil> -reset` | vägras: den står kvar vid READY |
 | VICE-snapshot | vägras: *Snapshot loading failed* (läser inte VICE 3.x) | `-pass -snapshot main.c64d.snap`: snapshoten omskriven som debuggern läser den, se nedan |
+
+**Källkoden, brytpunkter och bevakningar i debuggern.** Bredvid PRG-kopian skriver `Shift+F5` också
+`main.debugger.dbg`, debuginformation i Kick Assemblers `-debugdump`-format, som båda debuggrarna läser själva när de
+laddar PRG:n (filen med PRG:ns namn och `.dbg`). Mimir skriver den själv ur den rendering som just verifierats byte
+för byte (`debugSources` och `debugInfoFile`, `core/src/c64/debugger-dbg.ts`), så den är densamma med Kick Assembler,
+64tass och den inbyggda assemblern. Den innehåller:
+
+- **Källorna**: första filens `.asm`, skriven till mappen `main.debugger.src` bredvid, och för varje instruktions- och
+  datarad vilka byte den gav (`$start,$slut,fil,rad,1,rad,radens längd`). Debuggerns fönster *Source code* (i Retro
+  Debugger menyn *C64 → C64 Source code*) visar då källan med etiketter och kommentarer vid koden som körs. Rader i
+  ett block som lämnats utanför bygget gav inga byte och är inte med.
+- **Etiketterna** ur assemblerns etikettfil (debuggern läser `.dbg` efter `.labels`, i dess ställe).
+- **Brytpunkterna**: `F8` på en instruktionsrad sätter eller tar bort en (också i radens högerklicksmeny); raden får
+  en röd kant, röd adress och märket *break*. Debuggern stannar där innan instruktionen körs.
+- **Bevakningarna**: `Shift+F8` sätter radens adress på debuggerns bevakningslista (*Data watch*) eller tar bort den;
+  raden får märket *watch*.
+
+Brytpunkter och bevakningar sparas i projektfilen (`breakpoints`, `watches`: adresser, sorterade) och går att ångra;
+analysen, källan och utdata ser dem inte. Kommandopaletten har *Remove all breakpoints and watches*. Bara
+brytpunkter i den fil som körs följer med. Filen ges aldrig med `-debuginfo` (som stoppar Retro Debugger på samma
+sätt som `-symbols`), och en körning utan debuginformation tar bort en fil från en tidigare. En cartridge, en
+snapshot och en disk eller ett band som autostartas får ingen `.dbg`. Byggloggen säger hur många källrader,
+brytpunkter och bevakningar debuggern fick, och var filen ligger.
+
+**En disk i Retro Debugger.** Med `-d64` bredvid `-prg` och `-jmp` på samma kommandorad stannar Retro Debugger 1.0.0:s
+emulering efter 28 bildrutor. Med `-d64` ensam sitter disken i station 8 och C64:an kör. Därför får den disken först:
+körs ingen debugger startas den med bara `-d64 <disk>`, och när C64:an startat (väntetiden i inställningarna, minst 3 s,
+plus 2 s) får den programmet som en debugger som redan kör får det (`-pass -reset -unpause`, sedan programmets
+kommandorad med `-pass`); disken sitter kvar över nollställningen. En debugger som redan kör får disken med `-pass -d64
+<disk>` och 2 s senare programmet på samma sätt. Startkoden gör sedan som i VICE: diskinitieringen före `run` eller
+`sys`, eller `load"*",8,1` och `run` för en disk som autostartas (stationen laddar då programmet på riktigt).
+
+Ett undantag: med debuggerns VIC-kant satt till *Full* eller *Debug* (`viceViciiBorderMode: 1` eller `2` i dess
+`settings.hjson`) avslutas Retro Debugger 1.0.0 med ett minnesfel (0xC0000374) ungefär varannan gång den får en disk,
+från kommandoraden eller överlämnad (11 av 20 starter med *Debug*, 2 av 4 med *Full*; ingen av 26 med *Normal* eller
+*No borders*; dess övriga inställningar och layout spelar ingen roll). Mimir läser därför filen
+(`%LOCALAPPDATA%\RetroDebugger\settings.hjson`) innan den ger en disk: med en sådan kant lämnas disken utanför, och
+en anteckning i toasten och byggloggen säger varför och vad som ska ändras (*Settings → C64 → VIC → VIC Border mode →
+Normal* i Retro Debugger); en disk som ska autostartas vägras med samma förklaring. Mimir ändrar inte debuggerns
+inställningar. Kontrollerat med Uncensored (Booze Design 2014, `boozedemo1.d64`) genom `launchDebugger`: disken
+startade och demot körde, både i en nystartad debugger och i ett fönster som användes igen.
+
+**Samma fönster igen.** Retro Debugger som Mimir startat och som fortfarande kör får nästa `Shift+F5` i samma fönster,
+med sin layout och sina öppna fönster, i stället för en debugger till per körning. Debuggern utför en överlämnad
+kommandorad i sin egen ordning (nollställning, väntan, laddning, hopp) och gör inget av det medan den står på en
+brytpunkt, så den får två: `-pass -reset -unpause` (C64:an startar om och kör), och en halv sekund senare programmets
+kommandorad med `-pass` först. Processen som lämnar över avslutas genast; gör den inte det fanns ingen debugger, och
+den är då debuggern. En debugger som användaren startat själv känner Mimir inte till och startar en egen. Loggen
+säger *in the debugger that was already running*. C64 Debugger startas som förut på nytt varje gång.
 
 **En VICE-snapshot i C64 Debugger.** C64 Debugger 0.64.58 bygger på VICE 3.1, vars snapshots är format 1.1 med
 32-bitars klockor; VICE 3.6-3.10 skriver format 2.0 med 64-bitars klockor och nyare moduler, som debuggern vägrar.

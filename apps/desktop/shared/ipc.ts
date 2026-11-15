@@ -3,7 +3,7 @@
  * process registers exactly these channels and the preload exposes
  * exactly these functions as `window.kr`.
  * ===================================================================== */
-import type { AssemblerId, Cartridge, ExomizerReport, KickProblem, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
+import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
 
 export const CHANNELS = {
   projectOpen: 'project:open',
@@ -193,7 +193,8 @@ export interface BuildResult {
  *  a .tap or .t64 is autostarted (VICE loads its first file from it) */
 /** `port`: with a start, $01 as the program starts there (Sindri saw another than $37 there) */
 /** `debugger`: in the debugger Settings → Toolchain names (Build & Run in a debugger, Shift+F5), instead of VICE */
-export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; port?: number; disk?: string; tape?: string; cart?: boolean; debugger?: boolean }
+/** `debug`: for a debugger, the sources with the bytes their lines made, the breakpoints and the watches (a PRG only) */
+export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; port?: number; disk?: string; tape?: string; cart?: boolean; debugger?: boolean; debug?: DebugInfo }
 /** `via`: RUN, `sys <start>`, (a program over BASIC's work area $0002-$03ff) loaded and started from the monitor, or a
  *  cartridge attached; in a debugger also `load` (LOAD from the disk or the tape, then RUN). A debugger's run also
  *  says which one (`debugger`), its command line, what its start code types, where that code is, and `notes`: what is
@@ -209,6 +210,10 @@ export interface RunResult {
   code?: { start: number; end: number } | null;
   carried?: boolean;
   notes?: string[];
+  /** the debug info written for the debugger: how many source lines, breakpoints and watches it has */
+  debugInfo?: { path: string; sources: string; lines: number; breakpoints: number; watches: number };
+  /** the program was passed to a debugger that was already running (its window is used again) */
+  reused?: boolean;
 }
 
 /**

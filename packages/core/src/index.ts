@@ -19,6 +19,7 @@ export { PETSCII_CONTROLS, petsciiControl, TEXT_ENCODINGS, textEncoding, type Pe
 export { parseBasic, BASIC_TOKENS } from './c64/basic';
 export { parsePrg, makePrg, overwritesSystemArea, coversReadyScreen, startsFromMonitor, SYSTEM_AREA, READY_SCREEN, START_STUB } from './c64/prg';
 export { debuggerStart, DRIVE_INIT, type DebuggerStart, type DebuggerVia } from './c64/debugger-start';
+export { debugInfoFile, debugSources, viceLabels, type DebugInfo, type DebugSource, type DebugWatch, type DebugWatchFormat } from './c64/debugger-dbg';
 export {
   clipRanges, findInMemory, loadedRanges, MAX_MATCHES, monitorChar, monitorHexOf, monitorLine, monitorPrefix, monitorRows, monitorText, monitorTextOf, MONITOR_PER_ROW, MONITOR_ROW, nextZero, parseMonitorCommand,
   petsciiToScreen, textLabel, TEXT_LABEL_MAX, type FindAs, type MemoryMatch, type MonitorChar, type MonitorCommand, type MonitorLineOpts, type MonitorMode, type MonitorPerRow, type MonitorRange, type MonitorRow,

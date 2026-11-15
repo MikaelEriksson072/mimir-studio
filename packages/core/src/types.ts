@@ -396,6 +396,11 @@ export interface Project {
   /** bytes the listing shows at another address (spec 10.4), for manual analysis: only the editor sees them, the
    *  analysis, the .asm, the output and the round trip do not. Missing: none */
   viewOffsets?: ViewOffset[];
+  /** where a debugger stops (spec 13.2b): addresses of instructions, sorted. Build & Run in a debugger writes them
+   *  into the debug info it reads; the analysis, the source and the output do not see them. Missing: none */
+  breakpoints?: Addr[];
+  /** memory a debugger shows in its watch list (spec 13.2b): addresses, sorted. Missing: none */
+  watches?: Addr[];
   bookmarks: Record<Addr, Bookmark>; // the user's notes on addresses (the Bookmarks list); not written to the source
   /** zero-page bytes the user joined into a 16-bit variable, by the low byte's address: true, `$a` low and `$a+1` high
    *  (written `name` and `name+1`); false, two variables even where the analysis made a pointer. Missing: none */
@@ -497,6 +502,9 @@ export interface SerializedProject {
   junk?: JunkArea[];
   /** missing in project files from before view offsets, and in those without any */
   viewOffsets?: ViewOffset[];
+  /** missing in project files from before a debugger's breakpoints and watches, and in those without any */
+  breakpoints?: Addr[];
+  watches?: Addr[];
   /** missing in project files from before bookmarks */
   bookmarks?: Record<Addr, Bookmark>;
   /** missing in project files from before zero-page pairs, and in those without one */

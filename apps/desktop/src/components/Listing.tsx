@@ -158,6 +158,8 @@ interface ListingProps {
   gutter: Gutter;
   /** the user's bookmarks: their lines get a mark in the left margin, which opens the note in the Bookmarks list */
   bookmarks: Record<Addr, Bookmark>; onBookmark: (a: Addr) => void;
+  /** where a debugger stops and what it watches (spec 13.2b): their lines say so */
+  breakpoints?: ReadonlySet<Addr>; watches?: readonly Addr[];
   /** cycle counting on: the cycles column and the counted range */
   cycles?: CycleView | null;
   /** the user's patches: the bytes they wrote over are marked (spec 10.2) */
@@ -235,7 +237,7 @@ function ScriptTag({ marks, onOpen }: { marks: ScriptMark[]; onOpen?: (id: strin
     <Icon name="prompt" size={11} />{marks[0].name}{marks.length > 1 ? ` +${marks.length - 1}` : ''}</span>;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth, scriptMarks, onScriptMark }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, breakpoints, watches, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth, scriptMarks, onScriptMark }: ListingProps) {
   const words = asmWords(useAssembler());
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
@@ -651,15 +653,16 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     // bytes a patch wrote over (the first of its lines names it)
     const pt = n > 0 && patches.length ? patchAt(patches, l.a) : undefined;
     const sm = marksOf(l, i);
+    const bp = l.k === 'ins' && !!breakpoints?.has(l.a), wt = n > 0 && watches?.length ? watches.filter(w => w >= l.a && w < l.a + n) : [];
     const ptTip = pt && (pt.script ? `Changed by the script "${pt.name}" when it ran: $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} (the Scripts tab runs it again or takes it out)` : `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`);
     rows.push(
-      <div key={i} data-i={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, ...tint(i) }}
+      <div key={i} data-i={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', bp && 'bp', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i)}{mark(i)}
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno', !byLine && (n > 0 || l.k === 'lbl') && voffAt(l.a) && 'shifted')} title={tip ?? runTip ?? (byLine || !(n > 0 || l.k === 'lbl') ? undefined : voffTip(l.a))}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? adrText(l.a) : ''}</span>
         <span className="hex" title={pt ? [ptTip, tip].filter(Boolean).join('\n\n') : tip}>{bytes}</span>
         {cycles && <CycleCell l={l} A={A} step={steps.get(l.a)} taken={cycles.taken} onToggle={cycles.onToggle} />}
-        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>{pt.script ? 'script' : 'patch'} {pt.name}</span>}{sm && <ScriptTag marks={sm} onOpen={onScriptMark} />}</span>
+        <span className="src"><LineBody l={l} onToken={onToken} mem={A.mem} cells={cellMarks} />{l.k === 'dir' && l.zp != null && <span className="zp-tag" title={`Zero-page variable $${h2(l.zp)}: double-click or N renames it everywhere; ; / * comment it`}>zero page</span>}{'delay' in l && l.delay && <span className="zp-tag delay-tag" title="Timing code: a branch that a timer sets goes part of the way into these instructions, so they only take time (their operands are no data)">delay</span>}{pt && pt.start === l.a && <span className="zp-tag patch-tag" title={ptTip || undefined}>{pt.script ? 'script' : 'patch'} {pt.name}</span>}{bp && <span className="zp-tag bp-tag" title={`Breakpoint: a debugger started with Shift+F5 stops here, before $${h4(l.a)} runs (F8 removes it)`}>break</span>}{wt.length > 0 && <span className="zp-tag watch-tag" title={`Watched: a debugger started with Shift+F5 shows ${wt.map(w => `$${h4(w)}`).join(', ')} in its watch list (Shift+F8 removes it)`}>watch</span>}{sm && <ScriptTag marks={sm} onOpen={onScriptMark} />}</span>
         {textCols && n > 0 && !(l.k === 'dir' && l.reloc) && <TextCols A={A} a={l.a} n={n} lower={lower} sel={sel && !isSel && sel.start < l.a + n && sel.end > l.a ? sel : null} />}
       </div>);
   }
