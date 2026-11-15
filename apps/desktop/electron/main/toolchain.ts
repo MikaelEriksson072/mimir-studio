@@ -178,5 +178,5 @@ export async function runInDebugger(req: RunRequest, settings: ToolchainSettings
     kind, exe, args: splitArgs(kind === 'retro' ? settings.retroDebuggerArgs : settings.c64DebuggerArgs), wait: settings.debuggerWait,
     prgPath, labelsPath: labelsPath && existsSync(labelsPath) ? labelsPath : null, start: req.start, port: req.port, disk, tape, cart: req.cart,
   });
-  return { pid: r.pid, via: r.via, debugger: name, argv: [exe, ...r.argv], typed: r.plan?.typed, code: r.plan?.code ?? null, carried: !!r.plan?.carried, notes: r.notes };
+  return { pid: r.pid, via: r.via, debugger: name, argv: [exe, ...r.argv], typed: r.plan?.typed, code: r.plan?.code ?? null, carried: !!r.plan?.carried, notes: r.notes, ...(r.snapshot ? { snapshot: r.snapshot } : {}) };
 }

@@ -767,6 +767,20 @@ the reference as a patch in `test/helpers/reference.ts`):
     C64 Debugger 0.64.58.6: `-alwaysjmp`, which waits for READY, `-d64`, `-tap`; its `-jmp` is lost and it does not
     start a cartridge. Neither reads a VICE 3.10 snapshot.) Both load into RAM under the I/O area and the ROMs, as the
     monitor path needs. `test/debugger-start.test.ts` runs the start code in Sindri's C64 the way they do.
+    A VICE snapshot in C64 Debugger came later (2026-11-15): `snapshotForC64Debugger` (`c64/vsf-c64d.ts`) writes a
+    VICE 3.10 snapshot again as VICE 3.1 reads one. The layouts are from the debugger's source (github.com/slajerek/
+    RetroDebugger, tag v0.64.60.04E: `c64-snapshot.c` and each module's `*_snapshot_read_module`) against VICE 3.10's
+    writers (github.com/VICE-Team/svn-mirror, tag 3.10.0); Retro Debugger 1.0.0's VICE is neither (its header check
+    wants format 1.1 while its modules are newer), so it stays refused. What the real debugger showed: the snapshot
+    loads only when its VIC-II model byte is the debugger's own (a C64C's snapshot stayed at READY until the byte said
+    6569); at its start the debugger loads the PRG it remembers *after* a `-snapshot`, which resets the C64 (the
+    snapshot's RAM is still there, which looks like a failed load), and takes no `-d64` next to a snapshot, so the
+    snapshot is passed to the running debugger (`-pass -snapshot`, given twice) and the disk is written into it as a
+    `GCRIMAGE0` module. Checked by hand: `fixtures/vsf/raster-demo.vsf` goes on in the debugger, and a snapshot taken
+    in a delay loop before a KERNAL LOAD (x64sc with a D64 in drive 8, true drive emulation) loaded its file in the
+    debugger from the disk Mimir wrote into it, through `launchDebugger`. The debugger's window was read with
+    PrintWindow; posted key messages reach its monitor but not its shortcuts (Ctrl+S), so it was not made to save a
+    snapshot of its own.
 40. Disks for the Covert Bitops loader (spec 13.5l) are new, and GoatLight is read. `readCovertDisk`
     (`packages/core/src/c64/covert-disk.ts`) reads a disk whose directory files the loader loads by name (version 2: two
     letters or a whole name; version 3: two hex digits), unpacked the ways the loader unpacks them: exomizer level

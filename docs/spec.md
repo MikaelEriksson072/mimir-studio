@@ -2875,12 +2875,40 @@ Kontrollerat med Retro Debugger 1.0.0 och C64 Debugger 0.64.58.6:
 | Disk | utelämnas: dess emulering stannar med `-d64` på kommandoraden (också utan program), och en disk som skickas med `-pass` gav samma sak eller en krasch; en disk som ska autostartas vägras | `-d64` |
 | Band | utelämnas (tom skärm, sedan ingen); ett band som ska autostartas vägras | `-tap`; PLAY trycks i debuggerns *Settings → Tape* |
 | Cartridge | `-crt <fil> -reset` | vägras: den står kvar vid READY |
-| VICE-snapshot | vägras: *Snapshot loading failed* (läser inte VICE 3.x) | vägras: den återställer det inte |
+| VICE-snapshot | vägras: *Snapshot loading failed* (läser inte VICE 3.x) | `-pass -snapshot main.c64d.snap`: snapshoten omskriven som debuggern läser den, se nedan |
+
+**En VICE-snapshot i C64 Debugger.** C64 Debugger 0.64.58 bygger på VICE 3.1, vars snapshots är format 1.1 med
+32-bitars klockor; VICE 3.6-3.10 skriver format 2.0 med 64-bitars klockor och nyare moduler, som debuggern vägrar.
+Tillståndet är detsamma, så `snapshotForC64Debugger` (`core/src/c64/vsf-c64d.ts`) skriver om snapshoten modul för
+modul så som VICE 3.1:s läsare tar den (kontrollerat mot debuggerns källkod och VICE 3.10:s skrivare), och
+`Shift+F5` skriver den bredvid `.vsf`:en som `main.c64d.snap` med det byggda programmet i sitt RAM:
+
+| Modul | Omskrivning |
+|---|---|
+| `MAINCPU` | klockorna 32 bitar; utan ane/lxa-loggnivå och jam-flagga |
+| `C64MEM`, `GLUE`, `C64MEMHACKS` | som de är (RAM, CPU-port); `C64CART` bara utan cartridge (en snapshot med cartridge vägras) |
+| `CIA1`, `CIA2` | TOD-klockan 32 bitar; utan det nyare tillståndet för serieport och avbrottsfördröjning |
+| `SID`, `SIDEXTENDED` | utan modellbyten, ljudet på; reSID:s eller fastSID:s tillstånd som det är; en SID |
+| `DRIVE8`, `DRIVE9` → `DRIVE` | båda stationerna i en modul, klockorna 32 bitar; `DRIVECPUn` (register, 2 KB RAM) utan sista bussvärdet; stationens VIA:er utan det nyare timer 2-tillståndet. Bara 1540/1541/1541-II, andra stationer lämnas utan med en anteckning |
+| `VIC-II` | ljuspennans cykel 32 bitar; modellen skrivs som den första i sin tv-standard (6569 för PAL, 6567 för NTSC), för debuggern vägrar en annan modell än sin egen. Debuggerns *C64 model* måste alltså vara C64 PAL respektive C64 NTSC, annars säger den *Snapshot loading failed* och nollställer; toasten och loggen säger vilken |
+| `TAPEPORT`, `USERPORT`, `JOYPORTn` | ingen enhet; en joystick utan något nedtryckt; `KEYBOARD` utelämnas (ingen tangent hålls) |
+| `GCRIMAGE0` | projektets disk (D64 eller G64) som station 8:s, spåren som GCR-byte per halvspår: debuggern tar ingen disk på kommandoraden bredvid en snapshot. Det programmet skriver till disken stannar i debuggern |
+
+En klocka över 2^31 cykler flyttas tillbaka tillsammans med de andra i sin CPU. Bandstationens tillstånd, de virtuella
+stationerna och händelsehistoriken följer inte med, och ett band sätts inte i (en anteckning säger det). En snapshot i
+format 1.x (VICE 3.1-3.5) skickas som den är.
+
+Debuggern får snapshoten med `-pass`: en debugger som redan kör läser in den i sitt fönster (med etiketterna). En som
+startas av kommandot laddar vid sin start det program den minns *efter* snapshoten, över den, så kommandoraden ges en
+gång till efter väntetiden i inställningarna plus 3 sekunder, om det första kommandot startade debuggern (ett som
+lämnade över till en körande debugger har då avslutats). Retro Debugger 1.0.0 läser inte VICE:s snapshots och vägras.
 
 `test/debugger-start.test.ts` kör startkoden i Sindris C64 med VICE:s ROM:ar så som debuggrarna gör (PRG:n in i RAM
 vid READY, hopp): RUN med slutpekaren och tillbaka till READY, ett buret program på `$c000` med `$01 = $36`, en
 monitorstart med skärmens byte kvar, och med en 1541 felkanalen `00, OK` efter initieringen (`73,CBM DOS` utan),
-programmets systemområde tillbaka efter KERNAL-anropen, och `load"*",8,1` med RUN.
+programmets systemområde tillbaka efter KERNAL-anropen, och `load"*",8,1` med RUN. `test/vsf-c64d.test.ts` läser den
+omskrivna snapshoten så som VICE 3.1 gör: modulerna och deras versioner, RAM, CPU och klockor, stationen med sitt RAM,
+disken som GCR-spår (spår 18 avkodat tillbaka till D64:ans BAM), klockor flyttade tillbaka, och det som vägras.
 
 ### 13.3 VICE binary monitor (M3)
 

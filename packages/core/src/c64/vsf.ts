@@ -70,7 +70,9 @@ export function parseVsf(b: Uint8Array, name = 'snapshot'): Snapshot {
   const ciaMod = modules.find(m => m.name === 'CIA2');
   const cia2 = ciaMod && ciaMod.size >= 4 ? { pra: b[ciaMod.offset], ddra: b[ciaMod.offset + 2] } : null;
   const sidMod = modules.find(m => m.name === 'SID');
-  const sid = sidMod && sidMod.major === 1 && sidMod.size >= 4 + 0x19 ? b.slice(sidMod.offset + 4, sidMod.offset + 4 + 0x19) : null;
+  // (the model byte before the registers is there from module version 1.4)
+  const sidAt = sidMod && sidMod.minor < 4 ? 3 : 4;
+  const sid = sidMod && sidMod.major === 1 && sidMod.size >= sidAt + 0x19 ? b.slice(sidMod.offset + sidAt, sidMod.offset + sidAt + 0x19) : null;
   return { machine, version, vice, modules, ram, port, cpu, cia2, sid };
 }
 

@@ -2498,8 +2498,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const s = parseVsf(vsf, name);
         const at = [s.cpu ? `PC $${h4(s.cpu.pc)}` : null, `$01 = $${h2(s.port.data)}`].filter(Boolean).join(', ');
         const r = await run({ prgPath: vsfPath, labelsPath: labels, disk: diskPath });
-        setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${vsfPath}${labels ? ` with labels from ${labels}` : ''}, the snapshot restarted as it was taken (${at}), the built program in its RAM${drive}`)}` });
-        toast(`${emu} restarted the snapshot as it was taken (${at}), with the built program in its RAM${labels ? '; labels in the monitor' : ''}`, 'ok');
+        // (a debugger gets the snapshot written as it reads one, with the disk in it: its notes say what it does not get)
+        const inSnap = r.snapshot ? (r.snapshot.disk && disk ? `, ${disk.name} in the snapshot as drive 8's disk` : '') : drive;
+        setBuild(b => b && { ...b, log: `${b.log}\n\n${started(r, `${r.snapshot?.path ?? vsfPath}${labels ? ` with labels from ${labels}` : ''}, the snapshot restarted as it was taken (${at}), the built program in its RAM${inSnap}`)}` });
+        toast(`${emu} restarted the snapshot as it was taken (${at}), with the built program in its RAM${labels ? `; labels in the ${inDebugger ? 'debugger' : 'monitor'}` : ''}${r.snapshot ? `. Its C64 model must be the ${r.snapshot.model}` : ''}`, 'ok');
         return;
       }
       // a project whose first file came from a KERNAL file of the tape in the datasette (13.5f): VICE loads the tape

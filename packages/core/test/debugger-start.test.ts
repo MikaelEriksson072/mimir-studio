@@ -280,11 +280,12 @@ describe('the command lines', () => {
     expect(p.plan!.typed).toBe('sys49152');
   });
 
-  it('a cartridge: Retro Debugger attaches it and resets; C64 Debugger is refused, as is a VICE snapshot for both', async () => {
+  it('a cartridge: Retro Debugger attaches it and resets; C64 Debugger is refused, as is a VICE snapshot for Retro Debugger', async () => {
     const crt = join(dir, 'demo.crt');
     expect((await prepareDebugger({ kind: 'retro', exe: 'x', prgPath: crt, cart: true })).argv).toEqual(['-crt', crt, '-reset']);
     await expect(prepareDebugger({ kind: 'c64d', exe: 'x', prgPath: crt, cart: true })).rejects.toThrow(/does not start a cartridge/);
-    for (const kind of ['retro', 'c64d'] as const) await expect(prepareDebugger({ kind, exe: 'x', prgPath: join(dir, 'snap.vsf') })).rejects.toThrow(/cannot restart a VICE snapshot/);
+    // (C64 Debugger gets it written as it reads one: vsf-c64d.test.ts)
+    await expect(prepareDebugger({ kind: 'retro', exe: 'x', prgPath: join(dir, 'snap.vsf') })).rejects.toThrow(/cannot restart a VICE snapshot/);
   });
 
   it('a disk or a tape VICE autostarts: C64 Debugger types LOAD, Retro Debugger is refused', async () => {

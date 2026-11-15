@@ -200,7 +200,9 @@ export interface RunRequest { prgPath: string; labelsPath?: string; start?: numb
  *  not as in VICE */
 export interface RunResult {
   pid: number;
-  via: 'run' | 'sys' | 'monitor' | 'cart' | 'load';
+  via: 'run' | 'sys' | 'monitor' | 'cart' | 'load' | 'snapshot';
+  /** a snapshot restarted in a debugger: the file written for it, and the C64 model the debugger must be set to */
+  snapshot?: { path: string; model: string; disk: boolean };
   debugger?: string;
   argv?: string[];
   typed?: string;

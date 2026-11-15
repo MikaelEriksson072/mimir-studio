@@ -5318,6 +5318,34 @@ test('Build & Run in a debugger (Shift+F5): Settings picks Retro Debugger or C64
     await expect(toast(page, /^C64 Debugger started/)).toBeVisible({ timeout: 120_000 });
     await expect(log).toContainText(/> \S*where\.exe (?:-symbols "?[^"\n]*?\.vs"? )?-prg "?[^"\n]*?\.debugger\.prg"? -alwaysjmp/);
   });
+
+  await test.step('a VICE snapshot: C64 Debugger gets it written as it reads one, passed to the running debugger', async () => {
+    // fixtures/vsf/raster-demo.vsf is VICE 3.10's (format 2.0, a C64C): the debugger's is format 1.1, of its C64 PAL
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
+    await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
+    await expect(toast(page, /^Loaded raster-demo\.prg at \$0200 from a VICE 3\.10 snapshot/)).toBeVisible();
+    await waitForListing(page);
+    await page.keyboard.press('Shift+F5');
+    await expect(toast(page, /^C64 Debugger restarted the snapshot as it was taken \(PC \$08c7, \$01 = \$37\), with the built program in its RAM.*Its C64 model must be the 6569 \(C64 PAL\)/)).toBeVisible({ timeout: 120_000 });
+    await page.getByRole('tab', { name: 'Build output' }).click();
+    const text = await log.innerText();
+    const cmd = /> \S*where\.exe -pass (?:-symbols "?[^"\n]*?\.vs"? )?-snapshot "?([^"\n]*?\.c64d\.snap)"?/.exec(text);
+    expect(cmd, text.slice(-800)).toBeTruthy();
+    expect(text).toContain('Note: The snapshot is of a 8565 (C64C PAL); it is written as a 6569 (C64 PAL), the model C64 Debugger has for it');
+    expect(text).toContain("Note: C64 Debugger's C64 model must be the 6569 (C64 PAL)");
+    const snap = readFileSync(cmd![1]);
+    expect([snap[19], snap[20]]).toEqual([1, 1]);
+    expect(snap.includes(Buffer.from('DRIVECPU0'))).toBe(true);
+  });
+
+  await test.step('Retro Debugger does not read VICE\'s snapshots, and says who does', async () => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await settings.locator('#set-debugger').selectOption('retro');
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+    await page.keyboard.press('Shift+F5');
+    await expect(toast(page, /Retro Debugger cannot restart a VICE snapshot.*C64 Debugger does/)).toBeVisible({ timeout: 120_000 });
+  });
 });
 
 test('the side panel\'s sections say what they hold, start closed, stay open for the run and are closed again after a restart', async ({ page }) => {
