@@ -109,8 +109,8 @@ export function AnalysisOverview({ A, project, labels, snap, packing, problems, 
 
         <div className="ov-open" role="group" aria-label="Open">
           <span className="ov-open-label">Open</span>
-          <button type="button" className="btn small" title="The listing: the program disassembled as Kick Assembler code, block by block" onClick={go(() => links.tab('listing'))}><Icon name="list" size={13} />Listing</button>
-          <button type="button" className="btn small" title="The Kick Assembler source the export writes" onClick={go(() => links.tab('source'))}><Icon name="code" size={13} />{source}</button>
+          <button type="button" className="btn small" title={`The listing: the program disassembled as ${A.S.assembler === '64tass' ? '64tass' : 'Kick Assembler'} code, block by block`} onClick={go(() => links.tab('listing'))}><Icon name="list" size={13} />Listing</button>
+          <button type="button" className="btn small" title={`The ${A.S.assembler === '64tass' ? '64tass' : 'Kick Assembler'} source the export writes`} onClick={go(() => links.tab('source'))}><Icon name="code" size={13} />{source}</button>
           <button type="button" className="btn small" title={firstGfx ? `Graphics: memory as characters, sprites or bitmaps, at the first graphics block (${bankAdr(A, firstGfx.start)})` : 'Graphics: memory as characters, sprites or bitmaps'} onClick={go(() => links.tab('gfx', firstGfx))}><Icon name="image" size={13} />Graphics</button>
           <button type="button" className="btn small" title="Memory: the bytes as the VICE monitor shows them" onClick={go(() => links.tab('mem'))}><Icon name="chip" size={13} />Memory</button>
           {drive && <button type="button" className="btn small" title="The drive code: the code the program uploads to the 1541, where it runs there" onClick={go(() => links.tab('drive'))}><Icon name="disk" size={13} />Drive code</button>}

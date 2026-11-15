@@ -1,7 +1,8 @@
 /* Hover (registers, labels, opcodes) and go-to-definition (Ctrl+click, F12) for Kick sources. */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { driveSymbol, findBlock, h4, kindInfo, OPC, padName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptPad } from '@mimir/core';
+import { driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptPad } from '@mimir/core';
 import { KICKASS } from './kickass-language';
+import { TASS64 } from './tass-language';
 
 /** The analysis shown in the editor; SourceView keeps it current. */
 export const monacoContext: { A: AnalysisResult | null; R: RenderResult | null } = { A: null, R: null };
@@ -94,7 +95,8 @@ export function registerProviders(monaco: typeof Monaco): void {
       return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads, scriptContext).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
     },
   });
-  monaco.languages.registerHoverProvider(KICKASS, {
+  // (the hover and go-to-definition serve both assemblers' sources: Kick Assembler's and 64tass's, spec 11.8)
+  for (const lang of [KICKASS, TASS64]) monaco.languages.registerHoverProvider(lang, {
     provideHover(model, pos) {
       const w = model.getWordAtPosition(pos); if (!w) return null;
       const name = w.word;
@@ -126,7 +128,8 @@ export function registerProviders(monaco: typeof Monaco): void {
       if (known != null) return { contents: [{ value: `**${name}** — $${h4(known)}` }, { value: 'a name of the program' }] };
       // a mnemonic; an undocumented one (also in a `.byte` line's comment) with what it does, as the first opcode of it
       // Kick Assembler writes (an `lax` instruction is never the unstable `lax #`)
-      const ops = OPC.filter(o => o.mn.toLowerCase() === name.toLowerCase());
+      // (64tass's names too: isb is ISC, asr ALR, sbx AXS …)
+      const ops = OPC.filter(o => o.mn.toLowerCase() === name.toLowerCase() || (model.getLanguageId() === TASS64 && tassName(o.mn).toLowerCase() === name.toLowerCase()));
       const op = ops.find(o => !o.ill) ?? ops.find(o => o.kick) ?? ops[0];
       const text = op && op.ill ? undocumentedText(op.op, true) : null;
       if (text) { const [head, ...rest] = text.split('\n'); return { contents: [{ value: `**${head}**` }, { value: rest.join('  \n') }] }; }
@@ -154,10 +157,12 @@ export function registerProviders(monaco: typeof Monaco): void {
       };
     },
   }, { providedCodeActionKinds: ['quickfix'] });
-  monaco.languages.registerDefinitionProvider(KICKASS, {
+  for (const lang of [KICKASS, TASS64]) monaco.languages.registerDefinitionProvider(lang, {
     provideDefinition(model, pos) {
       const w = model.getWordAtPosition(pos); if (!w) return null;
-      const m = new RegExp(`^${w.word.replace(/[^\w]/g, '')}:`, 'm').exec(model.getValue()); if (!m) return null;
+      // `name:`; in 64tass also `name = value` and `name .namespace` at the start of a line
+      const word = w.word.replace(/[^\w]/g, '');
+      const m = new RegExp(lang === TASS64 ? `^${word}(?::|\\s*:?=|\\s+\\.(?:namespace|block)\\b)` : `^${word}:`, 'm').exec(model.getValue()); if (!m) return null;
       const p = model.getPositionAt(m.index);
       return { uri: model.uri, range: new monaco.Range(p.lineNumber, 1, p.lineNumber, w.word.length + 1) };
     },

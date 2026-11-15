@@ -35,7 +35,7 @@ Fyra designprinciper bär hela arkitekturen:
 | Prestanda | Full analys av 64 KB under 50 ms i worker; listning 60 fps vid scrollning. |
 | Arbetsflöde | Från PRG till körande om-assemblerat program i VICE på under 30 sekunder för en ny användare. |
 
-**Icke-mål i v1:** ingen inbyggd emulator (VICE används), ingen automatisk uppackning av komprimerade program (detekteras och rapporteras; uppackning med ett klick med Sindri, den inbyggda uppackaren, 8.11b, eller ett externt verktyg som unp64), ingen export till andra assemblers (ACME/64tass/ca65 ligger på roadmap), inget stöd för cartridge-format (`.crt`) och diskavbilder (`.d64`) i v1 — `.d64`-import kommer i M5.
+**Icke-mål i v1:** ingen inbyggd emulator (VICE används), ingen automatisk uppackning av komprimerade program (detekteras och rapporteras; uppackning med ett klick med Sindri, den inbyggda uppackaren, 8.11b, eller ett externt verktyg som unp64), ingen export till andra assemblers än Kick Assembler och 64tass (11.8; ACME och ca65 ligger på roadmap), inget stöd för cartridge-format (`.crt`) och diskavbilder (`.d64`) i v1 — `.d64`-import kommer i M5.
 
 ## 3. Teknikstack
 
@@ -2637,6 +2637,84 @@ filerna har dem (verktygstipset har fler). Ett klick går till listningen där o
 alla (även kommandot *Include all junk again*). Det går bara här, i editorn: den exporterade källkoden har inget att
 ta bort `//` framför. Allt ångras med `Ctrl+Z`.
 
+### 11.8 64tass
+
+*Settings → Assembler output → Assembler* väljer vilken assembler källan skrivs för: **Kick Assembler 5.x** (standard)
+eller **64tass 1.57** (Turbo Assembler-syntax). Valet (`Settings.assembler`, `kick` eller `64tass`) sparas i projektet som
+de andra utdatainställningarna, och ett nytt projekt tar det från det förra. Listningen, källfliken, exporten, NOTES,
+F7, Build & Run, Pack, drivkodsfliken och cartridges följer det: det är samma radmodell (`Line[]`), bara stavningen av
+en del rader skiljer (`render/dialect.ts`). Allt för 64tass är skrivet för 64tass körd med **`-a`** (ASCII-källa: 64tass
+PETSCII-tabeller) och **`-C`** (skiftlägeskänsliga namn); filhuvudet säger det (`· 64tass 1.57 (-a -C)`).
+
+| Kick Assembler | 64tass |
+|---|---|
+| `// kommentar`, `/* … */` | `; kommentar`, `.comment` … `.endc` (en rad som skulle avsluta blocket får `;` före sig) |
+| `.pc = $0810 "Code"` | `* = $0810 ; Code` (namnet som kommentar: den inbyggda assemblerns minneskarta) |
+| `.label ptr = $fb`, `.const PET_CLR = @"\$93"` | `ptr = $fb`, `PET_CLR = $93` |
+| `#import "include/c64-hardware.asm"` | `.include "include/c64-hardware.asm"` (filen med `NAMN = $d020 ; beskrivning`) |
+| `BasicUpstart2(start)` | `* = $0801`, `.word (+), 10`, `.null $9e, format("%d", start)`, `+`, `.word 0` (som 64tass manual skriver BASIC-raden) |
+| `.var music = LoadSid("music/music_1000.sid")`, `.fill music.size, music.getData(i)` | `music .namespace` som läser .sid-filen med `binary()` som LoadSid gör (huvudets fält big-endian, laddadressen före datan little-endian): `music.location`, `.init`, `.play`, `.size`, `.data`; i kroppen `* = music.location` och `.text music.data` |
+| `.import binary "gfx/…"` | `.binary "gfx/…"` |
+| `.pseudopc $c000 {` … `}` | `.logical $c000` … `.here` (samma paus och återupptagning som i Kick, fast 64tass kan nästla) |
+| `#if INCLUDE_x` / `#else` / `#endif`, `// #define INCLUDE_x` i huvudet | `.if INCLUDE_x` / `.else` / `.endif`, `INCLUDE_x = false` i huvudet (sätt `true` för att bygga blocket) |
+| `lda.abs $0002` | `lda @w $0002`; `.zp` behövs inte: 64tass tar zero page för en etikett under `$100` själv, definierad före eller efter (det går om pass tills storlekarna står still) |
+| `.encoding "petscii_upper"` … `.text PET_CLR + "HELLO"` | `.enc "none"` … `.text PET_CLR, "hello"` |
+
+**Texterna** skrivs med 64tass egna `none` och `screen` (med `-a`, uppmätta tecken för tecken med 64tass 1.57.2900): de
+oskiftade bokstäverna (`$41–$5a` i PETSCII, `$01–$1a` i skärmkoder, versaler i C64:ans första teckenuppsättning) är
+`a–z` i källan, de skiftade `A–Z`. En text för versalteckensnittet står alltså med gemener, `.text "hello world"`, som
+64tass-användare skriver den. `£`, `↑` och `←` (som Kick skriver som `.byte`) står som tecken; `"` och tecken utan
+motsvarighet blir `.byte`.
+
+**Odokumenterade opkoder** skrivs med 64tass namn (`isb`, `asr`, `sbx`, `ane`, `sha`, `shs`, `lds`, de andra som
+Mimirs) och filen får `.cpu "6502i"` överst när den har någon. 64tass ger samma byte för 221 av de 256 opkoderna
+(uppmätt: varje opkods mnemonic och läge assemblerat för sig), också de instabila; de andra (`nop`-varianterna utom
+`$ea/$04/$14/$0c/$1c/$80`, `jam` utom `$02`, `anc $2b`, `sbc $eb`) blir `.byte` med instruktionen som kommentar
+(`OpcodeInfo.tass`, `TASS_ENC`).
+
+**Etiketter.** 64tass tar ett namn som börjar med `_` som lokalt för etiketten före (uppmätt: `jmp _loc` efter en annan
+etikett är "not defined"), och namnen generatorn själv använder (`binary`, `len`, `format`, `size`, `true`, `false`) och
+64tass mnemonics kan inte vara etiketter. Byte av namn (`N`) vägrar dem när projektet är för 64tass ("not a valid
+64tass label"), och en etikett som redan har ett sådant namn (från Kick-tiden) blir ett fel i Problems
+(`labelFor`).
+
+**Den inbyggda 64tass-assemblern** (`verify/tass-subset-assembler.ts`, `assembleTass`) verifierar (F7, fuzz-testet, CLI:t)
+det generatorn skriver, som 64tass 1.57 med `-a -C`: etiketter i början av raden (`namn:`, `namn`), `namn = värde`,
+`namn := värde`, de anonyma `+` och `-`, `* =` (inne i `.logical` flyttas byten med), `.logical`/`.here`,
+`.if`/`.elsif`/`.else`/`.endif`, `.namespace` och `.block` (läses som `namn.etikett`, en namnrymd kan öppnas igen),
+`.include`, `.cpu`, `.enc`, `.cdef`, `.byte`, `.word`, `.text`, `.null`, `.fill`, `.binary`, `.cerror`,
+`.comment`/`.endc`, `@w`/`@b`, och uttrycken: tal, strängar, `*`, `<`/`>` över hela uttrycket efter sig (som 64tass),
+aritmetik, bitoperatorer, jämförelser, `? :`, listor, bytesträngar indexerade, med listor och skivade
+(`sid[[7, 6]]`, `sid[offset + 2:]`), `binary()`, `len()` och `format()`. Flera pass tills storlekarna står still.
+
+**Riktiga 64tass** (`run64tass`) körs som `64tass -a -C --cbm-prg <extra> -o out/<namn>.prg --vice-labels -l
+out/<namn>.vs <namn>.asm` i byggmappen (utdatamappen görs först: 64tass gör den inte själv); en cartridges egen källa
+(`<namn>.crt.asm`) med `--nostart -X`, avbildningen som den är från offset 0. Felraderna `fil:rad:kolumn: error: …`
+(med `note:` efter) blir Problems-poster och markörer i Monaco (`parseTassOutput`). *Settings → Toolchain → 64tass*
+säger var den finns: installationen har med **64tass 1.57.2900** (`resources\64tass`, GPL-2.0 med sina licensfiler,
+`vendor/64tass/README.md` säger var källkoden finns), och inställningen pekar dit om användaren inte valt en annan; i ett
+utvecklingsbygge den som hittas i `C:\C64` (två mappnivåer ner, som releasen packas upp), `TASS64` eller `PATH`.
+*Extra 64tass arguments* läggs till Mimirs egna.
+
+**Cartridges.** En källa per chip och avbildningens källa: `* = 0`, en egen ASCII-kodning (`.enc "ascii"`,
+`.cdef " ~", 32`) för huvudet och varje `"CHIP"`, chipens PRG:er med `.binary "out/<chip>.prg", 2` och `.cerror * -
+chip0 != <storlek>`. Alla banker i en källa (13.9c): 64tass har inga segment, så avbildningen skrivs som den ligger:
+huvudet, sedan varje CHIP-paket med chipets kod där den körs (`.logical $8000`), i bankens namnrymd (`bank03
+.namespace`, för bankens nästa chip `.namespace bank03`). Riktiga 64tass bygger fixturens cartridge byte för byte på båda
+sätten, med varje banks etiketter (`al 8009 .bank00:start`).
+
+**Pack a file** (13.8b) gissar vilken assembler en vald källa är skriven för (`guessAssembler`: Kicks `//`, `#import`,
+`.pc`, `.label`, `BasicUpstart2` mot 64tass `;`, `* =`, `.include`, `.logical`, `.enc` …) och visar valet (*Assembled
+with*), som användaren kan ändra. CLI:t: `--assembler kick|64tass`, och `mimir verify … --64tass [exe]` bygger också med
+riktiga 64tass.
+
+**Skript och patchar** skrivs tills vidare i Kick Assemblers syntax även i ett 64tass-projekt (de körs i Mimir och
+assembleras av den inbyggda Kick-assemblern); en patch som exporteras som egen källa (`patches/`) är Kick-källa.
+
+**Uppmätt:** riktiga 64tass bygger alla integrationsfall (demot i alla inställningsvarianter, binära block, snapshots,
+showcasen, texter i alla kodningar, PETSCII-styrkoder, utelämnade block och skräp, relokerade block, alla opkoder,
+zero page, slumpprojekt) byte-exakt, och den inbyggda 64tass-assemblern också; fuzz-testet tar Kick och 64tass om vartannat.
+
 ## 12. Round-trip-verifiering
 
 Verifieringen är produktens kvalitetsgrind:
@@ -2662,6 +2740,8 @@ Verifieringen är produktens kvalitetsgrind:
 | Java | `java` | Körs med `-jar` |
 | KickAss.jar | `C:\C64\KickAssembler\KickAss.jar` | Kick Assembler 5.x |
 | Extra Kick-argument | `-vicesymbols -showmem` | Etikettfil för VICE, minneskarta |
+| 64tass | den medföljande 64tass 1.57.2900 (`resources\64tass\64tass.exe`); i ett utvecklingsbygge den som hittas i `C:\C64`, `TASS64` eller `PATH` | Bygger ett projekt skrivet för 64tass (11.8) |
+| Extra 64tass-argument | tomt | Efter Mimirs egna `-a -C --cbm-prg`, utdatan och `--vice-labels -l` |
 | VICE | `C:\C64\VICE\bin\x64sc.exe` | Cykelexakt C64-emulering |
 | Extra VICE-argument | `-autostartprgmode 1` | Laddar PRG direkt i minnet |
 | Bygg och kör i en debugger (Shift+F5) | Retro Debugger | Retro Debugger eller C64 Debugger (13.2b) |
@@ -2677,7 +2757,7 @@ Verifieringen är produktens kvalitetsgrind:
 ### 13.2 Bygg och kör (F5)
 
 1. Spara/exportera projektet till projektmappen (eller temporär mapp).
-2. `java -jar KickAss.jar main.asm -odir out -vicesymbols -showmem`.
+2. `java -jar KickAss.jar main.asm -odir out -vicesymbols -showmem` (ett projekt för 64tass: `64tass -a -C --cbm-prg -o out/main.prg --vice-labels -l out/main.vs main.asm`, 11.8).
 3. Parsa stdout/stderr. Kicks felrader (`Error: … at line N, column M in file.asm`) blir Problems-poster och Monaco-markörer på rätt rad.
 4. Round-trip-jämförelse (12).
 5. `x64sc -autostartprgmode 1 -moncommands out/main.vs -autostart out/main.prg` — etiketterna finns direkt i VICE-monitorn.
@@ -2788,8 +2868,8 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `disk:open` | renderer → main | `{ path? }` → `{ path, name, bytes }` för en `.d64` (dialog om sökväg saknas; `null` om den avbryts) |
 | `file:smart` | renderer → main | `{ zeroPage? }` → `{ files, disk, project, asm, left, problems }`: **Smart attach** (13.4b), en dialog för alla slags filer, var och en läst som dess filändelse säger; mapparna får användas under sessionen (`null` om dialogen avbryts) |
 | `export:write` | renderer → main | `{ dir \| target, files: Record<string, string \| Uint8Array> }` → `{ dir, written: string[] }`; `target`: `pick` (mappdialog), `temp` (ny mapp i temp), `project` (projektets `source`), `build` (projektets `build`, utan projekt en ny mapp i temp) |
-| `toolchain:build` | renderer → main | `{ dir, entries: string[] }` → `{ ok, stdout, problems: Problem[], prg?: Uint8Array }` |
-| `asm:pick` | renderer → main | → `{ path, dir, entry }`: en Kick Assembler-källa vald i en dialog, att bygga där den ligger (13.8b); mappen får byggas i under sessionen (`null` om dialogen avbryts) |
+| `toolchain:build` | renderer → main | `{ dir, entries: string[], assembler? }` (`kick` eller `64tass`, 11.8) → `{ ok, stdout, problems: Problem[], prg?: Uint8Array }` |
+| `asm:pick` | renderer → main | → `{ path, dir, entry, assembler }`: en Kick Assembler- eller 64tass-källa vald i en dialog (`assembler`: den källan ser ut att vara skriven för, 11.8), att bygga där den ligger (13.8b); mappen får byggas i under sessionen (`null` om dialogen avbryts) |
 | `toolchain:run` | renderer → main | `{ prgPath, labelsPath?, start?, disk? }` → `{ pid, via: 'run' \| 'sys' \| 'monitor' }` |
 | `toolchain:pack` | renderer → main | `{ files: { name, prg }[], prefs: PackPrefs }` → `{ ok, output, argv, dir, name?, path?, prg?, packed, report, check, error? }`: Brokkr i en arbetstråd eller Exomizer, efter `prefs.packer`; filen skrivs också i `prefs.dir` när den är satt (en mapp vald i sessionen), och `path` pekar dit (13.8) |
 | `pack:folder` | renderer → main | `{ dir?, ask? }` → `{ dir }`: mappen för den packade filen; en mapp sessionen redan får skriva i ges tillbaka direkt, annars (och alltid med `ask`) frågar en mappdialog som öppnas där (`null` om den avbryts) |
@@ -4880,6 +4960,7 @@ export default {
 
 ### 14.3 Monaco-integration
 
+- Språket `tass64` (Monarch) för ett projekt skrivet för 64tass (11.8): `;`-kommentarer och `.comment`, 64tass direktiv och funktioner, etiketter i början av raden, `@w`/`@b`, mnemonics med 64tass namn. Hover och gå till definition gäller båda språken (i 64tass också `namn = värde` och `namn .namespace`).
 - Språket `kickass` (Monarch): kommentarer, `#import`, direktiv (`.pc`, `.byte`, `.word`, `.text`, `.fill`, `.label`, `.var`, `.encoding`, `.macro` …), makron (`BasicUpstart2`, `LoadSid`), etikettdefinitioner, dokumenterade och odokumenterade mnemonics (olika färger), hårdvarusymboler, tal (`$`, `%`, decimal), strängar, `#<`/`#>`.
 - **Hover:** hårdvaruregister visar adress och beskrivning; etiketter visar adress, blocktyp och antal referenser.
 - **Gå till definition** (Ctrl+klick, F12) på etiketter.
@@ -5190,7 +5271,7 @@ Demo, går igenom turen med F2, hittar alla blocktyper i Blocks-vyn och verifier
 | **M3 VICE live** | Binary monitor: brytpunkter, minnes-/registervy, dynamisk täckning, hot reload |
 | **M4 Strukturer** | Användardefinierade structs, makroigenkänning (upprepade kodmönster → `.macro`), lokala etiketter (`!loop:`), scopes per rutin |
 | **M5 Format** | `.d64`-import, `.sid`-import (PSID/RSID), `.crt`, Koala/Art Studio-export av bitmappar |
-| **M6 Fler mål** | Export till ACME, 64tass, ca65; plugin-API för egna heuristiker |
+| **M6 Fler mål** | Export till 64tass (klar, 11.8), ACME, ca65; skript och patchar i 64tass-syntax; plugin-API för egna heuristiker |
 
 ## 18. Risker och öppna frågor
 

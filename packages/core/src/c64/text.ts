@@ -1,11 +1,12 @@
 /* =====================================================================
  * Text encodings: which bytes a `.text` string can write, and how.
- * The characters follow Kick Assembler 5.25's tables (measured with KickAss.jar). Only characters that
- * show what the C64 shows are used: a byte without one (inverse, graphics, ", £, ↑, ←) is written as
- * `.byte`, which keeps the output byte-exact. In a PETSCII text the control codes are written by name
- * in the same `.text` line (`.text PET_CLR + "HELLO" + PET_RETURN`).
+ * The characters follow Kick Assembler 5.25's tables (measured with KickAss.jar), and for 64tass its `none` and
+ * `screen` encodings with -a (measured with 64tass 1.57.2900). Only characters that show what the C64 shows are
+ * used: a byte without one (inverse, graphics, ", and in Kick Assembler £, ↑, ←) is written as `.byte`, which
+ * keeps the output byte-exact. In a PETSCII text the control codes are written by name in the same `.text` line
+ * (`.text PET_CLR + "HELLO" + PET_RETURN`, in 64tass `.text PET_CLR, "hello", PET_RETURN`).
  * ===================================================================== */
-import type { Addr, Line, TextEncoding, Token } from '../types';
+import type { Addr, AssemblerId, Line, TextEncoding, Token } from '../types';
 
 export interface TextEncodingInfo {
   /** the Kick Assembler `.encoding` name */
@@ -14,24 +15,40 @@ export interface TextEncodingInfo {
   label: string;
   /** the character written in `.text` for a byte, or null for `.byte` */
   char: (b: number) => string | null;
+  /** 64tass (with -a): its `.enc` name and the character it gives the byte for. Its tables put the unshifted letters
+   *  ($41-$5a in PETSCII, $01-$1a in screen codes: upper case in the C64's first character set) at a-z, the shifted
+   *  ones at A-Z, and £ ↑ ← where the C64 has them */
+  tass: { enc: 'none' | 'screen'; char: (b: number) => string | null };
 }
 
 const at = String.fromCharCode;
 /** $20-$3f: digits and punctuation, the same in every table (" ends the string) */
 const punct = (b: number) => (b >= 0x20 && b <= 0x3f && b !== 0x22 ? at(b) : null);
+/** 64tass's `none` with -a, $20-$5f: the unshifted letters as a-z, and £ ↑ ← at $5c, $5e, $5f */
+const tassPet = (b: number) => (b >= 0x41 && b <= 0x5a ? at(b + 0x20) : b === 0x5c ? '£' : b === 0x5e ? '↑' : b === 0x5f ? '←' : b >= 0x20 && b <= 0x5d && b !== 0x22 ? at(b) : null);
+/** 64tass's `screen` with -a, $00-$3f: @, the unshifted letters as a-z, [ £ ] ↑ ← and the punctuation */
+const tassScreen = (b: number) => (b === 0 ? '@' : b <= 0x1a ? at(b + 0x60) : b <= 0x1f ? '[£]↑←'[b - 0x1b] : punct(b));
 
 export const TEXT_ENCODINGS: Record<TextEncoding, TextEncodingInfo> = {
-  petscii: { kick: 'petscii_upper', label: 'PETSCII', char: b => (b >= 0x20 && b <= 0x5d && b !== 0x22 && b !== 0x5c ? at(b) : null) },
+  petscii: {
+    kick: 'petscii_upper', label: 'PETSCII', char: b => (b >= 0x20 && b <= 0x5d && b !== 0x22 && b !== 0x5c ? at(b) : null),
+    tass: { enc: 'none', char: tassPet },
+  },
   // the lower case character set: $41-$5a are lower case letters, $c1-$da upper case
   'petscii-mixed': {
     kick: 'petscii_mixed', label: 'PETSCII, mixed case',
     char: b => (b >= 0x41 && b <= 0x5a ? at(b + 0x20) : b >= 0xc1 && b <= 0xda ? at(b - 0x80) : b >= 0x20 && b <= 0x5d && b !== 0x22 && b !== 0x5c ? at(b) : null),
+    tass: { enc: 'none', char: b => (b >= 0xc1 && b <= 0xda ? at(b - 0x80) : tassPet(b)) },
   },
-  screen: { kick: 'screencode_upper', label: 'screen codes', char: b => (b <= 0x1b || b === 0x1d ? at(b + 0x40) : punct(b)) },
+  screen: {
+    kick: 'screencode_upper', label: 'screen codes', char: b => (b <= 0x1b || b === 0x1d ? at(b + 0x40) : punct(b)),
+    tass: { enc: 'screen', char: tassScreen },
+  },
   // the lower case character set: $01-$1a are lower case letters, $41-$5a upper case
   'screen-mixed': {
     kick: 'screencode_mixed', label: 'screen codes, mixed case',
     char: b => (b === 0 || b === 0x1b || b === 0x1d ? at(b + 0x40) : b <= 0x1a ? at(b + 0x60) : b >= 0x41 && b <= 0x5a ? at(b) : punct(b)),
+    tass: { enc: 'screen', char: b => (b >= 0x41 && b <= 0x5a ? at(b) : tassScreen(b)) },
   },
 };
 
@@ -93,13 +110,13 @@ export const petsciiControl = (b: number): PetsciiControl | undefined => PETSCII
 
 /**
  * The operand of a `.text` line: the characters in strings, and in a PETSCII text (`pet`) each control code by its
- * name, joined by ` + ` (`PET_CLR + "HELLO" + PET_RETURN`). `char` gives each other byte's character; `use` hears of
- * every control code written, so the file head defines it.
+ * name, joined by ` + ` (`PET_CLR + "HELLO" + PET_RETURN`; 64tass's `.text` lists them, `join` `, `). `char` gives each
+ * other byte's character; `use` hears of every control code written, so the file head defines it.
  */
-export function textTokens(bytes: ArrayLike<number>, char: (b: number) => string | null, pet: boolean, use?: (b: number) => void): Token[] {
+export function textTokens(bytes: ArrayLike<number>, char: (b: number) => string | null, pet: boolean, use?: (b: number) => void, join = ' + '): Token[] {
   const tok: Token[] = [];
   for (let i = 0; i < bytes.length;) {
-    if (tok.length) tok.push({ t: 'p', s: ' + ' });
+    if (tok.length) tok.push({ t: 'p', s: join });
     const c = pet ? petsciiControl(bytes[i]) : undefined;
     if (c) {
       use?.(bytes[i]);
@@ -116,8 +133,8 @@ export function textTokens(bytes: ArrayLike<number>, char: (b: number) => string
 
 /** The file head's definitions of the control codes its texts use, at `a`: `.const PET_CLR = @"\$93"`, a string with
  *  the byte in it, so the name can stand in a `.text` line (Kick Assembler 5.25 writes it unchanged in both PETSCII
- *  encodings, measured with KickAss.jar). */
-export function petsciiDefinitions(used: ReadonlySet<number>, a: Addr, upper: boolean): Line[] {
+ *  encodings, measured with KickAss.jar). 64tass's `.text` takes a number as its byte: `PET_CLR = $93`. */
+export function petsciiDefinitions(used: ReadonlySet<number>, a: Addr, upper: boolean, asm: AssemblerId = 'kick'): Line[] {
   if (!used.size) return [];
   const hex = (b: number) => { const s = b.toString(16).padStart(2, '0'); return upper ? s.toUpperCase() : s; };
   return [
@@ -125,7 +142,9 @@ export function petsciiDefinitions(used: ReadonlySet<number>, a: Addr, upper: bo
     { k: 'cmt', a, text: 'PETSCII control codes, written by name in the texts' },
     ...[...used].sort((x, y) => x - y).map((b): Line => ({
       k: 'dir', a, n: 0, cmt: PETSCII_CONTROLS[b].desc,
-      tok: [{ t: 'dir', s: '.const' }, { t: 'p', s: ' ' }, { t: 'def', s: PETSCII_CONTROLS[b].name }, { t: 'p', s: ' = ' }, { t: 'str', s: `@"\\$${hex(b)}"` }],
+      tok: asm === '64tass'
+        ? [{ t: 'def', s: PETSCII_CONTROLS[b].name }, { t: 'p', s: ' = ' }, { t: 'num', s: `$${hex(b)}` }]
+        : [{ t: 'dir', s: '.const' }, { t: 'p', s: ' ' }, { t: 'def', s: PETSCII_CONTROLS[b].name }, { t: 'p', s: ' = ' }, { t: 'str', s: `@"\\$${hex(b)}"` }],
     })),
   ];
 }

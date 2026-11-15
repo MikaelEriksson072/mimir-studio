@@ -1,22 +1,26 @@
 /* Find in the listing (Ctrl+F): a line's text as the listing shows it, without its address and bytes. The code and the
  * comment of a line are searched apart, so a match never runs from one into the other. */
-import { kickMnemonic, typeInfo, type ListingLine, type Token } from '@mimir/core';
+import { ASSEMBLERS, forcedMnemonic, typeInfo, type AssemblerId, type ListingLine, type Token } from '@mimir/core';
 
 /** `matchCase`: as written (else in any case); `word`: a whole word, not inside a longer name */
 export interface FindOptions { matchCase: boolean; word: boolean }
 
 const WORD = 'A-Za-z0-9_';
 
-/** the text of a line the listing shows, its parts on lines of their own (no query holds a line break) */
-export function findText(l: ListingLine): string {
+/** the text of a line the listing shows, its parts on lines of their own (no query holds a line break); `asm`: the
+ *  assembler it is written for (its comments, forced addressing and names of the undocumented opcodes) */
+export function findText(l: ListingLine, assembler?: AssemblerId): string {
+  // (as a callback of map the second argument is the index: anything but 64tass is Kick Assembler)
+  const asm: AssemblerId = assembler === '64tass' ? '64tass' : 'kick';
   const toks = (t: Token[]) => t.map(x => x.s).join('');
-  const cmt = (c?: string) => (c ? [`// ${c}`] : []);
+  const cs = ASSEMBLERS[asm].comment;
+  const cmt = (c?: string) => (c ? [`${cs} ${c}`] : []);
   switch (l.k) {
     case 'lbl': return `${l.name}:`;
-    case 'ins': return [kickMnemonic(l.mn) + (l.ext || '') + (l.tok.length ? ' ' + toks(l.tok) : ''), ...cmt(l.cmt)].join('\n');
+    case 'ins': { const h = forcedMnemonic(l.mn, l.ext, asm); return [h.mn + (l.tok.length ? ' ' + h.pre + toks(l.tok) : ''), ...cmt(l.cmt)].join('\n'); }
     case 'dat': return [`${l.dir} ${toks(l.tok)}`, ...cmt(l.cmt)].join('\n');
     case 'dir': return [toks(l.tok), ...cmt(l.cmt)].join('\n');
-    case 'cmt': return l.raw ? l.text : l.text ? `// ${l.text}` : '//';
+    case 'cmt': return l.raw ? l.text : l.text ? `${cs} ${l.text}` : cs;
     case 'hdr': return `${typeInfo(l.type).label}\n${l.text}`;
     case 'file': return l.text;
     // a picture: the labels written under its sprites, and the comments of the rows it stands for

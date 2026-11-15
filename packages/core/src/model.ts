@@ -67,11 +67,13 @@ export const DEFAULT_SETTINGS: Settings = {
   // analysis
   illegal: true, detectMusic: true, detectGfx: true, detectText: true, bankTracking: true, snapshotZeroPage: false, codeIslands: true, deepAnalysis: false,
   // output
-  mnemonicCase: 'lower', hexCase: 'lower', bytesPerRow: 8, indent: 8, commentCol: 40,
+  assembler: 'kick', mnemonicCase: 'lower', hexCase: 'lower', bytesPerRow: 8, indent: 8, commentCol: 40,
   basicUpstart: true, hwInclude: 'import', hwComments: true, musicAsSid: true, gfxBinary: true, addrComments: false, notesFormat: 'html', cartOneSource: false,
   // toolchain (used by the Electron main process and the CLI)
   javaPath: 'java', kickJar: 'C:\\C64\\KickAssembler\\KickAss.jar', vicePath: 'C:\\C64\\VICE\\bin\\x64sc.exe',
   outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1',
+  // 64tass (empty: the one the installed app comes with) and its arguments besides Mimir's own
+  tassPath: '', tassArgs: '',
   // an external unpacker for packed PRGs (unp64; empty: Sindri, the built-in one): its path and arguments ({in} the packed PRG,
   // {out} the result)
   unpackerPath: '', unpackerArgs: '{in}',
@@ -89,4 +91,4 @@ export const DEFAULT_SETTINGS: Settings = {
   debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000,
 };
 
-export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer', 'debugger', 'retroDebuggerPath', 'retroDebuggerArgs', 'c64DebuggerPath', 'c64DebuggerArgs', 'debuggerWait'] as const;
+export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'tassPath', 'tassArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer', 'debugger', 'retroDebuggerPath', 'retroDebuggerArgs', 'c64DebuggerPath', 'c64DebuggerArgs', 'debuggerWait'] as const;

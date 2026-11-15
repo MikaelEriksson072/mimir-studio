@@ -25,6 +25,7 @@ export function toolLook(key: LocateKey, win = isWin): ToolLook {
   switch (key) {
     case 'javaPath': return { what: 'Java', names: [exe('java', win)], under: ['bin'], filter: programs(win) };
     case 'kickJar': return { what: 'Kick Assembler', names: ['KickAss.jar'], under: [], filter: { name: 'Kick Assembler', extensions: ['jar'] } };
+    case 'tassPath': return { what: '64tass', names: [exe('64tass', win)], under: [], filter: programs(win) };
     case 'vicePath': return { what: 'VICE', names: [exe('x64sc', win)], under: ['bin'], filter: programs(win) };
     case 'viceQuicksave': return { what: "VICE's quicksave snapshot", names: ['C64SC.vsf', 'C64.vsf'], under: [], filter: { name: 'VICE snapshots', extensions: ['vsf'] } };
     case 'unpackerPath': return { what: 'the external unpacker', names: [exe('unp64', win)], under: [], filter: programs(win) };

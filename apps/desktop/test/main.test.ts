@@ -14,7 +14,7 @@ import { answerClose, askBeforeClose, CLOSE_ANSWER_MS, type ClosingWindow } from
 import { findInFolder, startFolder, toolLook } from '../electron/main/locate';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
 import { deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
-import { buildWithKickAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
+import { buildWithAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
 import { charRomFiles, readCharRom } from '../electron/main/chargen';
@@ -23,7 +23,7 @@ import { projectNameOf, projectNameProblem } from '../shared/projects';
 import { smartKind, smartPlan } from '../shared/smart-attach';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
-const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000, ...patch });
+const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', tassPath: '', tassArgs: '', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000, ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
@@ -936,16 +936,19 @@ const javaOk = !!jar && spawnSync('java', ['-version'], { windowsHide: true }).s
 /** the Exomizer the installer bundles (apps/desktop/vendor/exomizer), on Windows */
 const vendorExo = process.platform === 'win32' && existsSync(join(__dirname, '..', 'vendor', 'exomizer', 'exomizer.exe')) ? join(__dirname, '..', 'vendor', 'exomizer', 'exomizer.exe') : null;
 
+/** the 64tass the installer bundles (apps/desktop/vendor/64tass), on Windows */
+const vendorTass = process.platform === 'win32' && existsSync(join(__dirname, '..', 'vendor', '64tass', '64tass.exe')) ? join(__dirname, '..', 'vendor', '64tass', '64tass.exe') : null;
+
 describe('toolchain runner', () => {
   it('reports a missing KickAss.jar as a problem instead of failing', async () => {
     const dir = tmp(); const policy = new PathPolicy(); policy.allow(dir);
-    const r = await buildWithKickAssembler({ dir, entries: ['x.asm'] }, toolchain({ kickJar: join(dir, 'missing.jar') }), policy);
+    const r = await buildWithAssembler({ dir, entries: ['x.asm'] }, toolchain({ kickJar: join(dir, 'missing.jar') }), policy);
     expect(r.ok).toBe(false);
     expect(r.problems[0].message).toMatch(/KickAss\.jar not found/);
   });
 
   it('refuses folders outside the policy', async () => {
-    await expect(buildWithKickAssembler({ dir: tmp(), entries: ['x.asm'] }, toolchain(), new PathPolicy())).rejects.toThrow(/outside the folders/);
+    await expect(buildWithAssembler({ dir: tmp(), entries: ['x.asm'] }, toolchain(), new PathPolicy())).rejects.toThrow(/outside the folders/);
   });
 
   it.skipIf(!javaOk)('builds the demo with the real KickAss.jar byte-identical', async () => {
@@ -953,10 +956,26 @@ describe('toolchain runner', () => {
     const A = analyze(p), R = render(A, p);
     const dir = tmp(); const policy = new PathPolicy(); policy.allow(dir);
     await writeVfs(dir, R.files);
-    const r = await buildWithKickAssembler({ dir, entries: ['raster-demo.asm'] }, toolchain({ kickJar: jar! }), policy);
+    const r = await buildWithAssembler({ dir, entries: ['raster-demo.asm'] }, toolchain({ kickJar: jar! }), policy);
     expect(r.problems).toEqual([]);
     expect(r.ok).toBe(true);
     expect(r.commands[0]).toEqual(['java', '-jar', jar, 'raster-demo.asm', '-odir', 'out', '-vicesymbols', '-showmem']);
+    expect(r.prg!.subarray(2)).toEqual(p.files[0].bytes);
+    expect(r.outputs[0].vsPath).not.toBeNull();
+  }, 60_000);
+
+  it('reports a missing 64tass as a problem, and builds the demo written for 64tass with the bundled one byte-identical', async () => {
+    const dir = tmp(); const policy = new PathPolicy(); policy.allow(dir);
+    const none = await buildWithAssembler({ dir, entries: ['x.asm'], assembler: '64tass' }, toolchain({ tassPath: join(dir, '64tass.exe') }), policy);
+    expect(none.ok).toBe(false);
+    expect(none.problems[0].message).toMatch(/64tass not found/);
+    if (!vendorTass) return;
+    const p = demoProject(), q = { ...p, settings: { ...p.settings, assembler: '64tass' as const } };
+    await writeVfs(dir, render(analyze(q), q).files);
+    const r = await buildWithAssembler({ dir, entries: ['raster-demo.asm'], assembler: '64tass' }, toolchain({ tassPath: vendorTass }), policy);
+    expect(r.problems).toEqual([]);
+    expect(r.ok).toBe(true);
+    expect(r.commands[0]).toEqual([vendorTass, '-a', '-C', '--cbm-prg', '-o', 'out/raster-demo.prg', '--vice-labels', '-l', 'out/raster-demo.vs', 'raster-demo.asm']);
     expect(r.prg!.subarray(2)).toEqual(p.files[0].bytes);
     expect(r.outputs[0].vsPath).not.toBeNull();
   }, 60_000);
@@ -1067,7 +1086,7 @@ describe('toolchain runner', () => {
   it.skipIf(!javaOk)('turns Kick Assembler errors into problems with file and line', async () => {
     const dir = tmp(); const policy = new PathPolicy(); policy.allow(dir);
     writeFileSync(join(dir, 'bad.asm'), '.pc = $1000 "Code"\n  lda unknown_label\n');
-    const r = await buildWithKickAssembler({ dir, entries: ['bad.asm'] }, toolchain({ kickJar: jar! }), policy);
+    const r = await buildWithAssembler({ dir, entries: ['bad.asm'] }, toolchain({ kickJar: jar! }), policy);
     expect(r.ok).toBe(false);
     expect(r.problems).toEqual([{ severity: 'error', file: 'bad.asm', line: 2, column: 7, message: "Unknown symbol 'unknown_label'" }]);
   }, 60_000);

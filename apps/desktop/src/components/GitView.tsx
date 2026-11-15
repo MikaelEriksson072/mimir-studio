@@ -155,7 +155,7 @@ export function GitView({ home, saveNow, onCreateProject, onTerminal, toast }: G
     <button className="btn" onClick={() => void refresh()}><Icon name="refresh" size={14} />Look again</button>
   </GitEmpty>;
   if (!repo) return <GitEmpty title={`${home.name} is not a git repository`} text={`Create one in ${home.dir}: git keeps every commit of the project file, the source and the packed file, and pushes them to GitHub or a server of your own.`}
-    note={<>With a <span className="mono">.gitignore</span> that leaves out <span className="mono">build</span> (KickAss.jar's output, made again by every build) and a <span className="mono">.gitattributes</span> that keeps C64 files binary, where there are none. Git {st.git.version}.</>}>
+    note={<>With a <span className="mono">.gitignore</span> that leaves out <span className="mono">build</span> (the assembler's output, made again by every build) and a <span className="mono">.gitattributes</span> that keeps C64 files binary, where there are none. Git {st.git.version}.</>}>
     <button className="btn primary" disabled={!!busy} onClick={init}><Icon name="git" size={14} />{busy ? 'Creating…' : 'Create a git repository'}</button>
   </GitEmpty>;
 

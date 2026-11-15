@@ -12,7 +12,7 @@ const lines: ListingLine[] = [
   { k: 'ins', a: 0x0819, n: 3, mn: 'jmp', ext: '', tok: [{ t: 'lbl', s: 'main_loop2', to: 0x0820 }], cmt: '' },
   { k: 'blank', a: 0x081c },
 ];
-const texts = lines.map(findText);
+const texts = lines.map(l => findText(l));
 const find = (q: string, matchCase = false, word = false) => findLines(texts, findRegExp(q, { matchCase, word }));
 
 describe('Find in the listing', () => {

@@ -1,4 +1,4 @@
-/* Settings: toolchain (stored by the main process), analysis and Kick Assembler output (stored in the project), and
+/* Settings: toolchain (stored by the main process), analysis and the assembler output (stored in the project), and
  * the app's own preferences (General, kept by the window). */
 import { useState, type ReactNode } from 'react';
 import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
@@ -60,15 +60,18 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
   );
   const txt = (k: Key, label: string, help?: string) => <label className="field"><span>{label}</span><input id={`set-${k}`} className="mono" value={String(s[k])} onChange={e => set(k, e.target.value as never)} spellCheck={false} />{help && <small className="muted">{help}</small>}</label>;
   const chk = (k: Key, label: string, help?: string) => <label className="check"><input id={`set-${k}`} type="checkbox" checked={!!s[k]} onChange={e => set(k, e.target.checked as never)} /><span>{label}{help && <small className="muted"> — {help}</small>}</span></label>;
+  const tass = s.assembler === '64tass';
   const sel = (k: Key, label: string, opts: [string | number, string][], help?: string) => <label className="field"><span>{label}</span><select id={`set-${k}`} value={String(s[k])} onChange={e => set(k, (isNaN(+e.target.value) ? e.target.value : +e.target.value) as never)}>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>{help && <small className="muted">{help}</small>}</label>;
   return (
     <Modal title="Settings" onClose={onClose} wide>
-      <div className="seg wide" role="tablist">{([['toolchain', 'Toolchain'], ['analysis', 'Analysis'], ['output', 'Kick Assembler output'], ['general', 'General']] as const).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{l}</button>)}</div>
+      <div className="seg wide" role="tablist">{([['toolchain', 'Toolchain'], ['analysis', 'Analysis'], ['output', 'Assembler output'], ['general', 'General']] as const).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={cx(tab === k && 'on')} onClick={() => setTab(k)}>{l}</button>)}</div>
       <div className="modal-body">
         {tab === 'toolchain' && <>
           {path('javaPath', 'Java executable', 'Kick Assembler needs Java 8 or later. Choose folder…: the JDK or JRE folder (java is in its bin folder), or the folder with several in it.')}
           {path('kickJar', 'KickAss.jar', 'Verify and Build & Run assemble with this jar when it exists.')}
           {txt('kickArgs', 'Extra Kick Assembler arguments', '-vicesymbols writes a VICE label file next to the PRG.')}
+          {path('tassPath', '64tass', 'Verify and Build & Run assemble a project written for 64tass (Assembler output) with it. The installed app comes with 64tass 1.57.2900 (resources\\64tass in its folder) and uses it unless you pick another.')}
+          {txt('tassArgs', 'Extra 64tass arguments', 'Mimir always gives -a -C --cbm-prg, the output and a VICE label file (--vice-labels -l). -Wall shows more warnings in Problems.')}
           {path('vicePath', 'VICE emulator (x64sc)', 'Choose folder…: the VICE folder (x64sc is in it or in its bin folder).')}
           {txt('viceArgs', 'Extra VICE arguments')}
           {sel('debugger', 'Build & Run in a debugger (Shift+F5)', [['retro', 'Retro Debugger'], ['c64d', 'C64 Debugger']],
@@ -91,7 +94,7 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
           {txt('editorArgs', 'External editor arguments', "{dir} is the export's folder, {file} its first .asm file. Sublime Text and Visual Studio Code: {dir} {file} (the folder, with the file open in it) · Notepad++: {file}")}
           {path('exomizerPath', 'Exomizer', 'Packs in the Pack view when Exomizer is chosen there instead of Brokkr, the built-in cruncher. The installed app comes with Exomizer 3.1.1 (resources\\exomizer in its folder) and uses it unless you pick another. Empty: Brokkr only.')}
           {desktop && kr && <p className="muted small">Choose folder… looks for the program in the folder you pick, in its bin (or win32) folder and in the folders in it, so the folder a zip unpacked to will do. When it is not there, a file dialog opens in that folder. Save settings keeps it.</p>}
-          <p className="muted small">{desktop ? 'Stored by the app (not in the project). The main process starts Java, VICE, an external unpacker, Exomizer and the editor with argument lists, never through a shell.' : 'Running outside the desktop app: these paths only fill in the exported build scripts.'}</p>
+          <p className="muted small">{desktop ? 'Stored by the app (not in the project). The main process starts Java, 64tass, VICE, an external unpacker, Exomizer and the editor with argument lists, never through a shell.' : 'Running outside the desktop app: these paths only fill in the exported build scripts.'}</p>
         </>}
         {tab === 'analysis' && <>
           {chk('illegal', 'Trace undocumented opcodes', 'LAX, SAX, DCP, ISC… common in demos')}
@@ -104,22 +107,24 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
           {chk('snapshotZeroPage', 'VICE snapshots: include the zero page and the stack', 'opens the RAM from $0002 instead of $0200, for code that runs there (a PC or IRQ handler there is traced). Zero-page variables are then labels of the loaded bytes. Applies to the next snapshot you open')}
         </>}
         {tab === 'output' && <>
+          {sel('assembler', 'Assembler', [['kick', 'Kick Assembler 5.x (KickAss.jar)'], ['64tass', '64tass 1.57 (Turbo Assembler syntax)']],
+            'The source the listing shows, the export writes and Verify and Build & Run assemble. Saved in the project. 64tass: comments with ;, * = for an address, .logical for a relocated block, .if for a block left out of the build, the music read from its .sid with binary(), texts with .enc "none" or "screen" (letters as 64tass\'s -a tables have them: lower case for the upper case on the C64\'s screen), the undocumented opcodes by 64tass\'s names with .cpu "6502i"; it is built with -a -C. Scripts and patches are still written in Kick Assembler\'s syntax.')}
           <div className="grid2">
             {sel('hexCase', 'Hex digits', [['lower', '$d020'], ['upper', '$D020']])}
             {sel('bytesPerRow', 'Bytes per .byte row', [[8, '8'], [16, '16'], [4, '4']])}
             {sel('indent', 'Indent', [[8, '8 spaces'], [4, '4 spaces'], [2, '2 spaces']])}
             {sel('commentCol', 'Comment column', [[40, '40'], [48, '48'], [32, '32']])}
           </div>
-          {sel('hwInclude', 'Hardware registers and KERNAL routines', [['import', 'Names from include/c64-hardware.asm (#import)'], ['inline', 'Names defined in the .asm file (.label lines)'], ['none', 'Real addresses ($d020, $ffd2), without include/c64-hardware.asm']])}
+          {sel('hwInclude', 'Hardware registers and KERNAL routines', [['import', `Names from include/c64-hardware.asm (${tass ? '.include' : '#import'})`], ['inline', `Names defined in the .asm file (${tass ? 'name = $d020' : '.label'} lines)`], ['none', 'Real addresses ($d020, $ffd2), without include/c64-hardware.asm']])}
           <p className="muted small">With real addresses the listing and the export write <span className="mono">sta $d020</span> instead of <span className="mono">sta VIC_BORDER_COLOR</span>, and the comment below still names the register (hover shows its name). Saved in the project; a PRG you open next keeps it.</p>
-          {chk('basicUpstart', 'Use BasicUpstart2() when the BASIC stub matches it')}
-          {chk('musicAsSid', 'Export detected music as a .sid file loaded with LoadSid()')}
-          {chk('gfxBinary', 'Export charsets and bitmaps as binary files with .import binary')}
+          {chk('basicUpstart', tass ? 'Write the BASIC line as .word (+), 10 and .null $9e, format("%d", start) when the stub is that line' : 'Use BasicUpstart2() when the BASIC stub matches it')}
+          {chk('musicAsSid', tass ? 'Export detected music as a .sid file read with binary() (music.init, music.play, music.data)' : 'Export detected music as a .sid file loaded with LoadSid()')}
+          {chk('gfxBinary', `Export charsets and bitmaps as binary files with ${tass ? '.binary' : '.import binary'}`)}
           {chk('hwComments', 'Comment hardware register accesses', 'what the register or KERNAL routine does, with names or with real addresses')}
           {chk('addrComments', 'Add the original address to every line')}
           {sel('notesFormat', 'Bookmarks and comments in the export', [['html', 'NOTES.html: a formatted page with the code in colour (open it in a browser)'], ['txt', 'NOTES.txt: plain text'], ['none', 'No document']])}
           <p className="muted small">Written only when the project has bookmarks or comments. Both formats list them by address, each with its place in the .asm file and the code around it.</p>
-          <p className="muted small">Mnemonics are always written in lower case: Kick Assembler 5.x rejects upper-case mnemonics.</p>
+          <p className="muted small">{tass ? 'Mnemonics are always written in lower case (64tass runs with -C, case-sensitive), the undocumented ones by 64tass\'s names (isb, asr, sbx, ane, sha, shs, lds) with .cpu "6502i" at the top.' : 'Mnemonics are always written in lower case: Kick Assembler 5.x rejects upper-case mnemonics.'}</p>
         </>}
         {tab === 'general' && <>
           <label className="check"><input id="set-startScreen" type="checkbox" checked={prefs.startScreen} onChange={e => setPrefs(p => ({ ...p, startScreen: e.target.checked }))} />

@@ -6,6 +6,7 @@ import { ALL_PORTS, describePorts, h4, kindInfo, portName, portsOf, type Addr, t
 import { Icon } from '../lib/icons';
 import { cx, fmtBytes } from '../lib/util';
 import type { Sel } from '../lib/types';
+import { useAssembler } from '../lib/assembler';
 
 /** what the status bar's items do when clicked */
 export interface StatusActions {
@@ -34,6 +35,8 @@ const Item = ({ onClick, title, className, children }: { onClick: () => void; ti
   <button type="button" className={cx('sb-item sb-btn', className)} title={title} onClick={onClick}>{children}</button>;
 
 export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, busy, deepBusy, verify, cycles, bank, shown, messages, actions }: StatusBarProps) {
+  // the project's assembler (spec 11.8)
+  const tass = useAssembler() === '64tass';
   // the memory configuration the instruction at the cursor runs with
   const port = cursor != null && A.mcfg ? A.mcfg.port[A.codeOwner[cursor] >= 0 ? A.codeOwner[cursor] : cursor] : 0;
   return (
@@ -49,9 +52,9 @@ export function StatusBar({ A, fileCount, cursor, curLabel, blk, sel, renderMs, 
         <Icon name={messages.errors ? 'err' : 'info'} size={12} />{messages.count}</Item>}
       <Item className="hide-narrow" title="Show the Analysis log" onClick={actions.onLog}>{busy ? 'analysing…' : `analysis ${A.stats.ms.toFixed(1)} ms · render ${renderMs.toFixed(1)} ms (worker)${deepBusy ? ' · deep analysis…' : ''}`}</Item>
       <Item className={cx(verify && (verify.ok ? 'ok' : 'bad'))} title="Verify the round-trip: assemble the source and compare it with the files (F7)" onClick={actions.onVerify}>
-        {verify ? (verify.ok ? `✓ round-trip verified${verify.kick ? ' with KickAss.jar' : ''}` : '✗ round-trip failed') : 'round-trip not verified'}
+        {verify ? (verify.ok ? `✓ round-trip verified${verify.kick ? ` with ${tass ? '64tass' : 'KickAss.jar'}` : ''}` : '✗ round-trip failed') : 'round-trip not verified'}
       </Item>
-      <Item className="hide-narrow" title="Settings: the toolchain (Java, KickAss.jar, VICE)" onClick={actions.onSettings}>Kick Assembler 5.x</Item>
+      <Item className="hide-narrow" title={tass ? 'Settings: the toolchain (64tass, VICE) and the assembler (Assembler output)' : 'Settings: the toolchain (Java, KickAss.jar, VICE) and the assembler (Assembler output)'} onClick={actions.onSettings}>{tass ? '64tass 1.57' : 'Kick Assembler 5.x'}</Item>
     </footer>
   );
 }

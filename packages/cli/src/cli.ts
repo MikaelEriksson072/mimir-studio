@@ -10,7 +10,7 @@ import {
   covertSummary, KRILL_PACKER, readBitfireDisk, readBoozeDisk, readCovertDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
-import { findC64Roms, findKickAssJar, findVice, runKickAssembler, splitArgs, writeVfs } from '@mimir/core/node';
+import { find64tass, findC64Roms, findKickAssJar, findVice, run64tass, runKickAssembler, splitArgs, writeVfs, type KickRunResult } from '@mimir/core/node';
 
 export interface Io { out: (s: string) => void; err: (s: string) => void; cwd: string }
 
@@ -18,7 +18,7 @@ const USAGE = `Mimir Studio command line
 
 Usage:
   mimir analyse <file.prg | cartridge.crt | project.mimir.json>... [--json] [--bank <n>]
-  mimir verify  <file.prg | cartridge.crt | project.mimir.json>... [--kickass [KickAss.jar]] [--java <java>]
+  mimir verify  <file.prg | cartridge.crt | project.mimir.json>... [--kickass [KickAss.jar]] [--java <java>] [--64tass [64tass.exe]]
   mimir export  <file.prg | cartridge.crt | project.mimir.json>... -o <folder> [--name <name>] [--force]
   mimir unpack  <file.prg | disk.d64 | disk.g64 | tape.tap | tape.t64> [--file <name>] [--disk <disk.d64|g64>] [--tape <tap|t64>] [-o <unpacked.prg>] [--no-roms]
   mimir measure <file.prg | project.mimir.json | folder>... [--json] [--no-roms]
@@ -36,8 +36,12 @@ Options:
   --set key=value   override a setting (repeatable), e.g. --set hwInclude=inline --set bytesPerRow=16
   --deep            deep analysis: slower, analyses again until the problems are at a minimum
                     (the same as --set deepAnalysis=true)
+  --assembler <a>   the assembler the source is written for: kick (Kick Assembler 5.x, the default) or 64tass
+                    (the same as --set assembler=64tass)
   --kickass [jar]   also assemble with the real Kick Assembler (default: auto-detect / KICKASS_JAR)
   --java <path>     Java executable used for --kickass (default: java)
+  --64tass [exe]    write the source for 64tass and also assemble it with the real 64tass, run with -a -C
+                    (default: auto-detect / TASS64)
   --no-roms         unpack with Sindri's stand-ins instead of VICE's C64 ROMs (default: the ROMs of a
                     VICE installation, or the folder in C64_ROMS)
   --bank <n>        a cartridge: only this bank (by default every bank, each a space of its own)
@@ -61,7 +65,8 @@ function parse(argv: string[]): Parsed {
     if (a === '-o' || a === '--out') { flags.set('out', rest[++i] ?? ''); continue; }
     if (a.startsWith('--')) {
       const name = a.slice(2), nextArg = rest[i + 1];
-      const takesValue = name === 'name' || name === 'java' || name === 'file' || name === 'disk' || name === 'tape' || name === 'bank' || (name === 'kickass' && nextArg && !nextArg.startsWith('-') && /\.jar$/i.test(nextArg));
+      const takesValue = name === 'name' || name === 'java' || name === 'file' || name === 'disk' || name === 'tape' || name === 'bank' || name === 'assembler' || (name === 'kickass' && nextArg && !nextArg.startsWith('-') && /\.jar$/i.test(nextArg))
+        || (name === '64tass' && nextArg && !nextArg.startsWith('-') && /64tass(\.exe)?$/i.test(nextArg));
       flags.set(name, takesValue ? rest[++i] : true);
       continue;
     }
@@ -128,7 +133,14 @@ function analyseCmd(p: Project, io: Io, json: boolean) {
   return 0;
 }
 
-async function kickCheck(p: Project, io: Io, jar: string, java: string): Promise<boolean> {
+/** the real assembler: KickAss.jar with Java, or 64tass */
+type Tool = { kind: 'kick'; jar: string; java: string } | { kind: '64tass'; exe: string };
+
+async function kickCheck(p: Project, io: Io, tool: Tool): Promise<boolean> {
+  const run1 = (cwd: string, entry: string): Promise<KickRunResult> => (tool.kind === '64tass'
+    ? run64tass({ exe: tool.exe, cwd, entry, outDir: 'out', args: splitArgs(p.settings.tassArgs ?? '') })
+    : runKickAssembler({ java: tool.java, jar: tool.jar, cwd, entry, outDir: 'out', args: splitArgs(p.settings.kickArgs) }));
+  const tname = basename(tool.kind === '64tass' ? tool.exe : tool.jar);
   const A = analyze(p);
   const R = render(A, p);
   const dir = await mkdtemp(join(tmpdir(), 'mimir-cli-'));
@@ -140,20 +152,20 @@ async function kickCheck(p: Project, io: Io, jar: string, java: string): Promise
       // every bank in one source (13.9c): the chips are built by the cartridge's source, checked below
       if (cart?.one && f.chip != null) continue;
       const entry = `${R.fileNames[fi]}.asm`;
-      const run = await runKickAssembler({ java, jar, cwd: dir, entry, outDir: 'out', args: splitArgs(p.settings.kickArgs) });
+      const run = await run1(dir, entry);
       const cmp = comparePrg(f, run.prg);
       const good = run.ok && cmp.ok;
       ok = ok && good;
-      io.out(`${good ? 'OK  ' : 'FAIL'} ${entry} with ${basename(jar)}: ${cmp.same}/${cmp.total} bytes identical (${run.ms} ms)`);
+      io.out(`${good ? 'OK  ' : 'FAIL'} ${entry} with ${tname}: ${cmp.same}/${cmp.total} bytes identical (${run.ms} ms)`);
       for (const pr of run.problems) io.out(`  ${pr.file}:${pr.line}:${pr.column} ${pr.severity}: ${pr.message}`);
       for (const d of cmp.diffs.slice(0, 10)) io.out(`  ${d.msg ?? `$${h4(d.addr)}: expected $${(d.exp ?? 0).toString(16)}, got ${d.got == null ? 'nothing' : '$' + d.got.toString(16)}`}`);
     }
     // the cartridge's own source, after the chips: the image it writes against the one opened
     if (cart && p.cart) {
-      const run = await runKickAssembler({ java, jar, cwd: dir, entry: cart.entry, outDir: 'out', args: splitArgs(p.settings.kickArgs) });
+      const run = await run1(dir, cart.entry);
       const cmp = compareCrt(parseCrt(p.cart.crt, p.cart.name), run.ok ? run.prg : null, expectedCartridge(p) ?? undefined);
       ok = ok && run.ok && cmp.ok;
-      io.out(`${run.ok && cmp.ok ? 'OK  ' : 'FAIL'} ${cart.entry} with ${basename(jar)}: ${cart.output} ${cmp.same}/${cmp.total} bytes identical to ${p.cart.name} (${run.ms} ms)`);
+      io.out(`${run.ok && cmp.ok ? 'OK  ' : 'FAIL'} ${cart.entry} with ${tname}: ${cart.output} ${cmp.same}/${cmp.total} bytes identical to ${p.cart.name} (${run.ms} ms)`);
       for (const pr of run.problems) io.out(`  ${pr.file}:${pr.line}:${pr.column} ${pr.severity}: ${pr.message}`);
       for (const d of cmp.diffs) io.out(`  ${d}`);
     }
@@ -335,6 +347,10 @@ function bankFlag(flags: Map<string, string | true>): number | undefined {
 export async function main(argv: string[], io: Io): Promise<number> {
   const { cmd, inputs, flags, sets } = parse(argv);
   if (flags.has('deep')) sets.push(['deepAnalysis', 'true']);
+  // the assembler (spec 11.8): --assembler, and --64tass writes the source for 64tass
+  const asm = flags.get('assembler');
+  if (asm !== undefined) { if (asm !== 'kick' && asm !== '64tass') { io.err('--assembler is kick or 64tass'); return 2; } sets.push(['assembler', asm]); }
+  if (flags.has('64tass')) sets.push(['assembler', '64tass']);
   try {
     switch (cmd) {
       case 'analyse': case 'analyze':
@@ -346,7 +362,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if (flags.has('kickass')) {
           const jar = typeof flags.get('kickass') === 'string' ? resolve(io.cwd, flags.get('kickass') as string) : findKickAssJar([p.settings.kickJar]);
           if (!jar) { io.err('KickAss.jar not found: pass --kickass <path> or set KICKASS_JAR'); return 2; }
-          ok = (await kickCheck(p, io, jar, (flags.get('java') as string) || 'java')) && ok;
+          ok = (await kickCheck(p, io, { kind: 'kick', jar, java: (flags.get('java') as string) || 'java' })) && ok;
+        }
+        if (flags.has('64tass')) {
+          const exe = typeof flags.get('64tass') === 'string' ? resolve(io.cwd, flags.get('64tass') as string) : find64tass(p.settings.tassPath ? [p.settings.tassPath] : []);
+          if (!exe) { io.err('64tass not found: pass --64tass <path> or set TASS64'); return 2; }
+          ok = (await kickCheck(p, io, { kind: '64tass', exe })) && ok;
         }
         return ok ? 0 : 1;
       }

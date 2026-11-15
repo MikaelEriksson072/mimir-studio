@@ -47,7 +47,7 @@ test('assemble a Kick Assembler source and pack the PRG it makes', async ({ work
   writeFileSync(source, 'BasicUpstart2(start)\nstart:\n  inc $d020\n  jmp start\n');
   await page.getByRole('button', { name: 'Pack a file…' }).click();
   await stubDialogs(app, { open: [source] });
-  await page.getByRole('button', { name: 'Kick Assembler source…' }).click();
+  await page.getByRole('button', { name: 'Assembler source…' }).click();
   await expect(page.getByRole('list', { name: 'Files to pack' })).toContainText('my border.prg $0801', { timeout: 60_000 });
   expect(existsSync(join(work, 'out', 'my border.prg'))).toBe(true);
 

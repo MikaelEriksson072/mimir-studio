@@ -25,6 +25,9 @@ asar: true
 extraResources:
   - from: vendor/exomizer
     to: exomizer
+  # 64tass for projects written for it (vendor/64tass/README.md, spec 11.8): resources\64tass\, with its licenses
+  - from: vendor/64tass
+    to: 64tass
 
 win:
   # build/icon.ico: the Mimir Studio logo, drawn from build/logo.jpg and build/icon.svg by scripts/make-icons.cjs

@@ -1,5 +1,6 @@
-/* Pack from the start screen: PRG files, or a Kick Assembler source, packed with Brokkr or Exomizer as they are, without
- * a project or the analysis. A source is assembled with KickAss.jar where it is (its folder's out\, as its own build
+/* Pack from the start screen: PRG files, or a Kick Assembler or 64tass source, packed with Brokkr or Exomizer as they
+ * are, without a project or the analysis. A source is assembled with KickAss.jar or 64tass (the one its text looks
+ * written for, guessAssembler; the user can pick the other) where it is (its folder's out\, as its own build
  * would), when it is chosen and again before each pack. The settings are the Pack view's (PackSettings), kept for the
  * next time; the packed file goes next to what was packed unless another folder is chosen. Smart attach opens it over
  * the work with a source already chosen, for Brokkr to pack. */
@@ -16,12 +17,14 @@ const kr = window.kr;
 
 /** a file to pack: its name (without .prg), where it loads, its bytes and where it is on disk */
 interface Packed { name: string; load: number; bytes: Uint8Array; path: string }
-/** what is packed: PRG files as they are, or a source and the PRG KickAss.jar made of it (null: not yet, or it failed) */
+/** what is packed: PRG files as they are, or a source and the PRG its assembler made of it (null: not yet, or it failed) */
 type Input =
   | { kind: 'prg'; files: Packed[] }
   | { kind: 'asm'; source: AsmPickResult; built: Packed | null; problems: KickProblem[] };
 
 const folderOf = (path: string) => path.replace(/[\\/][^\\/]*$/, '');
+/** what builds a source: KickAss.jar, or 64tass for one written for it */
+const toolOf = (s: AsmPickResult | undefined) => (s?.assembler === '64tass' ? '64tass' : 'KickAss.jar');
 const bare = (name: string) => name.replace(/\.prg$/i, '');
 
 /** the BASIC line at $0801 of a PRG that holds it (its SYS starts the program; a snapshot's RAM from $0200 holds it
@@ -77,10 +80,10 @@ export function QuickPack({ onBack, source: given, back = { label: 'Start', titl
   const ranges = prefs.ranges;
   const addLog = (text: string) => setLog(l => (l ? `${l}\n\n${text}` : text));
 
-  /** KickAss.jar on the source where it is; the PRG it made, or null (the problems say why) */
+  /** KickAss.jar (or 64tass) on the source where it is; the PRG it made, or null (the problems say why) */
   const assemble = async (source: AsmPickResult): Promise<Packed | null> => {
     if (!kr) return null;
-    const r = await kr.build({ dir: source.dir, entries: [source.entry] });
+    const r = await kr.build({ dir: source.dir, entries: [source.entry], assembler: source.assembler ?? 'kick' });
     addLog(r.stdout.trim() || r.problems.map(p => p.message).join('\n'));
     const o = r.outputs[0];
     const built = o?.ok && o.prg && o.prg.length > 2 ? { name: bare(o.prgPath.split(/[\\/]/).pop() ?? source.entry.replace(/\.asm$/i, '')), load: o.prg[0] | (o.prg[1] << 8), bytes: o.prg.subarray(2), path: o.prgPath } : null;
@@ -132,12 +135,12 @@ export function QuickPack({ onBack, source: given, back = { label: 'Start', titl
     if (!kr || !input || packing) return;
     setError(null);
     const asm = input.kind === 'asm';
-    setPacking({ step: asm ? 'verify' : 'pack', since: Date.now(), prefs, before: asm ? { title: 'Assemble the source with KickAss.jar', doing: 'Assembling…' } : null });
+    setPacking({ step: asm ? 'verify' : 'pack', since: Date.now(), prefs, before: asm ? { title: `Assemble the source with ${toolOf(input.source)}`, doing: 'Assembling…' } : null });
     try {
       let todo = files;
       if (asm) {
         const built = await assemble(input.source);
-        if (!built) { setError(`KickAss.jar could not assemble ${input.source.entry}: see below.`); return; }
+        if (!built) { setError(`${toolOf(input.source)} could not assemble ${input.source.entry}: see below.`); return; }
         todo = [built];
       }
       // the folder must be one this session may write to: one kept from before is asked for again
@@ -184,15 +187,19 @@ export function QuickPack({ onBack, source: given, back = { label: 'Start', titl
               <h2>What to pack</h2>
               <div className="qp-pick">
                 <button className={cx('btn', !input && 'primary')} disabled={!!busy || !!packing} onClick={() => void choosePrgs()}><Icon name="doc" size={14} />PRG files…</button>
-                <button className="btn" disabled={!!busy || !!packing} onClick={() => void chooseAsm()}><Icon name="code" size={14} />Kick Assembler source…</button>
+                <button className="btn" disabled={!!busy || !!packing} onClick={() => void chooseAsm()}><Icon name="code" size={14} />Assembler source…</button>
               </div>
-              {!input && <p className="muted small">One PRG or several, packed together into one file; or a .asm source, which KickAss.jar assembles where it is first ({toolchain?.kickJar ? <span className="mono">{toolchain.kickJar.split(/[\\/]/).pop()}</span> : 'set in Settings → Toolchain'}).</p>}
+              {!input && <p className="muted small">One PRG or several, packed together into one file; or a .asm source, which KickAss.jar ({toolchain?.kickJar ? <span className="mono">{toolchain.kickJar.split(/[\\/]/).pop()}</span> : 'set in Settings → Toolchain'}) or 64tass assembles where it is first: the one the source looks written for.</p>}
               {input?.kind === 'asm' && <div className="qp-source">
                 <div className="mono small" title={input.source.path}><Icon name="code" size={12} /> {input.source.entry}</div>
                 <div className="muted small qp-path">{input.source.dir}</div>
+                <label className="field qp-asm"><span>Assembled with</span>
+                  <select id="qp-assembler" value={input.source.assembler ?? 'kick'} disabled={!!busy || !!packing} onChange={e => void takeAsm({ ...input.source, assembler: e.target.value === '64tass' ? '64tass' : 'kick' })}>
+                    <option value="kick">Kick Assembler (KickAss.jar)</option><option value="64tass">64tass (-a -C)</option>
+                  </select></label>
                 {busy === 'Assembling' && <p className="muted small">Assembling…</p>}
-                {input.problems.length > 0 && <ul className="qp-problems" aria-label="Kick Assembler problems">{input.problems.slice(0, 8).map((p, i) => <li key={i} className="err-text small">{p.file ? `${p.file}:${p.line}: ` : ''}{p.message}</li>)}</ul>}
-                {input.built && <p className="muted small">KickAss.jar makes <span className="mono">{input.built.name}.prg</span> in <span className="mono">out</span> there; Pack assembles it again first.</p>}
+                {input.problems.length > 0 && <ul className="qp-problems" aria-label={`${input.source.assembler === '64tass' ? '64tass' : 'Kick Assembler'} problems`}>{input.problems.slice(0, 8).map((p, i) => <li key={i} className="err-text small">{p.file ? `${p.file}:${p.line}: ` : ''}{p.message}</li>)}</ul>}
+                {input.built && <p className="muted small">{toolOf(input.source)} makes <span className="mono">{input.built.name}.prg</span> in <span className="mono">out</span> there; Pack assembles it again first.</p>}
               </div>}
               {files.length > 0 && <div className="qp-files" role="list" aria-label="Files to pack">
                 {files.map(f => <div key={f.path} role="listitem" className="mono small" title={f.path}><Icon name="doc" size={12} /> {f.name}.prg <span className="muted">${h4(f.load)}–${h4(f.load + f.bytes.length - 1)} · {fmtBytes(f.bytes.length)}</span></div>)}
@@ -216,8 +223,8 @@ export function QuickPack({ onBack, source: given, back = { label: 'Start', titl
             <PackerChoice prefs={prefs} set={set} exomizer={toolchain?.exomizerPath ?? ''} desktop={!!kr} />
             <PackSettings prefs={prefs} set={set} files={files} fileNames={files.map(f => f.name)} entry={basic?.sys ?? first?.load ?? null} warning={files.length ? warning : null}
               exomizer={toolchain?.exomizerPath ?? ''} desktop={!!kr} busy={busy} packing={packing} result={result} current={packKeyOf(prefs, key)}
-              before={input?.kind === 'asm' ? 'Pack assembles the source again with KickAss.jar first.' : files.length ? '' : 'Choose what to pack first.'}
-              packTitle={input?.kind === 'asm' ? 'Assemble the source with KickAss.jar, then pack the PRG it makes' : 'Pack the files as they are'}
+              before={input?.kind === 'asm' ? `Pack assembles the source again with ${toolOf(input.source)} first.` : files.length ? '' : 'Choose what to pack first.'}
+              packTitle={input?.kind === 'asm' ? `Assemble the source with ${toolOf(input.source)}, then pack the PRG it makes` : 'Pack the files as they are'}
               noDir={files.length ? 'Next to the file packed.' : 'Next to the file packed, once one is chosen.'}
               onPack={() => void pack()} onRun={() => void run()} onSave={() => void save()} onSaveFile={f => void save(f)} onLog={showLog} onPickDir={() => void pickDir()} />
           </div>

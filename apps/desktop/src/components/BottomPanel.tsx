@@ -12,6 +12,7 @@ import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util
 import type { BottomTab } from '../store/ui';
 import type { BuildState, Message, MountedDisk, MountedTape, UiProblem } from '../lib/types';
 import type { TypeGroup } from '@mimir/core';
+import { asmWords, useAssembler } from '../lib/assembler';
 
 export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNavigate: (a: Addr) => void; empty: string }) {
   if (!items.length) return <div className="empty">{empty}</div>;
@@ -138,6 +139,7 @@ interface RelocPanelProps {
 /** The Relocated tab (spec 8.1b): the blocks the program copies elsewhere to run there, where each is loaded and runs,
  *  and the copy loops the analysis found that are not relocated yet, each with what can be done about it. */
 export function RelocPanel({ A, R, relocs, onNavigate, onRelocate, onUnrelocate }: RelocPanelProps) {
+  const asm = useAssembler();
   const span = (s: Addr, e: Addr) => `$${h4(s)}–$${h4(e - 1)}`;
   const link = (a: Addr, text?: string) => <button className="addr-link" title={`$${h4(a)}`} onClick={e => { e.stopPropagation(); onNavigate(a); }}>{text ?? R.labels.get(a)?.name ?? `$${h4(a)}`}</button>;
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
@@ -148,7 +150,7 @@ export function RelocPanel({ A, R, relocs, onNavigate, onRelocate, onUnrelocate 
   return (
     <div className="xref relocs">
       <div className="xref-head">{n} relocated block{n === 1 ? '' : 's'}{A.copies.length ? `, ${A.copies.length} copy loop${A.copies.length === 1 ? '' : 's'} found` : ''}
-        <span className="muted"> · bytes the program copies elsewhere to run there: read where they run, written where they are loaded inside .pseudopc</span>
+        <span className="muted"> · bytes the program copies elsewhere to run there: read where they run, written where they are loaded inside {asmWords(asm).pseudopc}</span>
         <button className="btn small reloc-new" onClick={() => onRelocate(null)} title="Relocate the selection, or the block at the cursor (R)">Relocate…</button></div>
       {n > 0 ? (
         <table className="tbl" aria-label="Relocated blocks"><thead><tr><th>Block</th><th>Loaded at</th><th>Runs at</th><th>Bytes</th><th>File</th><th /></tr></thead><tbody>
@@ -754,7 +756,13 @@ interface BuildPanelProps { build: BuildState | null; S: Settings; names: string
 export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun, onCopy }: BuildPanelProps) {
   const name = names[0] || 'main';
   const q = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
-  const kick = (entry: string) => `${q(S.javaPath)} -jar ${q(S.kickJar)} ${entry} -odir ${S.outDir} ${S.kickArgs}`;
+  // the project's assembler (spec 11.8): KickAss.jar with Java, or 64tass as the main process runs it (run64tass)
+  const tass = S.assembler === '64tass', tool = tass ? '64tass' : 'KickAss.jar';
+  const kick = (entry: string) => {
+    if (!tass) return `${q(S.javaPath)} -jar ${q(S.kickJar)} ${entry} -odir ${S.outDir} ${S.kickArgs}`;
+    const base = entry.replace(/\.asm$/i, ''), image = /\.crt$/i.test(base);
+    return `${q(S.tassPath || '64tass')} ${image ? '-a -C --nostart -X' : '-a -C --cbm-prg'}${S.tassArgs ? ` ${S.tassArgs}` : ''} -o ${S.outDir}/${image ? base : `${base}.prg`} --vice-labels -l ${S.outDir}/${base}.vs ${entry}`;
+  };
   // every bank in one source (13.9c): it is the only source to build, and VICE gets its labels
   const kickCmd = cart?.one ? null : kick(`${name}.asm`);
   const cartCmd = cart ? kick(cart.entry) : null;
@@ -775,13 +783,13 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
           <div className="mb-2 flex flex-wrap gap-2 text-[11.5px]">
             <span className={cx('rounded border px-2 py-0.5', build.V.ok ? 'border-ok text-ok' : 'border-err text-err')}>built-in verifier: {build.V.ok ? 'byte-identical' : 'differences'}</span>
             {build.kick
-              ? <span className={cx('rounded border px-2 py-0.5', build.kick.ok ? 'border-ok text-ok' : 'border-err text-err')}>KickAss.jar: {build.kick.ok ? 'byte-identical' : `${build.kick.problems.length} problem${build.kick.problems.length === 1 ? '' : 's'}`}</span>
-              : <span className="rounded border border-line-2 px-2 py-0.5 text-fg-3">KickAss.jar: not run (set its path in Settings → Toolchain)</span>}
+              ? <span className={cx('rounded border px-2 py-0.5', build.kick.ok ? 'border-ok text-ok' : 'border-err text-err')}>{tool}: {build.kick.ok ? 'byte-identical' : `${build.kick.problems.length} problem${build.kick.problems.length === 1 ? '' : 's'}`}</span>
+              : <span className="rounded border border-line-2 px-2 py-0.5 text-fg-3">{tool}: not run (set its path in Settings → Toolchain)</span>}
             {build.cart && <span className={cx('rounded border px-2 py-0.5', build.cart.ok && (!build.kick?.cart || build.kick.cart.ok) ? 'border-ok text-ok' : 'border-err text-err')}>{build.cart.name}: {build.cart.ok && (!build.kick?.cart || build.kick.cart.ok) ? 'byte-identical' : 'differences'}</span>}
           </div>
           <pre className={cx('build-log', build.ok ? 'ok' : 'bad', stale && 'stale')}>{stale && '(project changed since this run — verify again)\n'}{build.log}</pre>
         </>
-      ) : <div className="empty small">Run “Verify round-trip” to re-assemble the generated source with the built-in verifier and, when KickAss.jar is configured, with the real Kick Assembler, then compare every byte with the original PRG.</div>}
+      ) : <div className="empty small">Run “Verify round-trip” to re-assemble the generated source with the built-in verifier and, when {tool} is configured, with the real {tass ? '64tass' : 'Kick Assembler'}, then compare every byte with the original PRG.</div>}
     </div>
   );
 }

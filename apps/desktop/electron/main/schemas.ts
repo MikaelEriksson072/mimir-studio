@@ -80,6 +80,8 @@ export const toolchainSettingsSchema = z.object({
   vicePath: z.string().max(1024),
   outDir: z.string().max(128).regex(/^[A-Za-z0-9_.-]+$/, 'output folder must be a plain folder name'),
   kickArgs: z.string().max(1024),
+  tassPath: z.string().max(1024),
+  tassArgs: z.string().max(1024),
   viceArgs: z.string().max(1024),
   unpackerPath: z.string().max(1024),
   unpackerArgs: z.string().max(1024),
@@ -98,7 +100,7 @@ export const toolchainSettingsSchema = z.object({
 
 /** settings:locate: which tool's folder to ask for, and the path in the form (where the dialog opens) */
 export const locateSchema = z.object({
-  key: z.enum(['javaPath', 'kickJar', 'vicePath', 'viceQuicksave', 'unpackerPath', 'editorPath', 'exomizerPath', 'retroDebuggerPath', 'c64DebuggerPath']),
+  key: z.enum(['javaPath', 'kickJar', 'tassPath', 'vicePath', 'viceQuicksave', 'unpackerPath', 'editorPath', 'exomizerPath', 'retroDebuggerPath', 'c64DebuggerPath']),
   current: z.string().max(1024).optional(),
 }).strict();
 
@@ -108,7 +110,7 @@ export const settingsSchema = toolchainSettingsSchema.partial().extend({
   bytesPerRow: z.number().int().min(1).max(64), indent: z.number().int().min(0).max(16), commentCol: z.number().int().min(0).max(160),
   basicUpstart: z.boolean(), hwInclude: z.enum(['import', 'inline', 'none']), hwComments: z.boolean(),
   musicAsSid: z.boolean(), gfxBinary: z.boolean(), addrComments: z.boolean(), notesFormat: z.enum(['html', 'txt', 'none']),
-  cartOneSource: z.boolean(),
+  cartOneSource: z.boolean(), assembler: z.enum(['kick', '64tass']),
 }).partial();
 
 const fileName = z.string().min(1).max(255);
@@ -261,7 +263,7 @@ export const exportWriteSchema = z.object({
   files: z.record(z.string().min(1).max(512), z.union([z.string(), z.instanceof(Uint8Array)])),
 }).refine(r => !!r.dir !== !!r.target, 'give either dir or target');
 /** the sources to assemble: one per project file, and a cartridge's own source after them */
-export const buildSchema = z.object({ dir: z.string().min(1).max(4096), entries: z.array(z.string().max(255)).min(1).max(1025) });
+export const buildSchema = z.object({ dir: z.string().min(1).max(4096), entries: z.array(z.string().max(255)).min(1).max(1025), assembler: z.enum(['kick', '64tass']).optional() });
 /** `cart`: prgPath is a cartridge image VICE attaches (-cartcrt) */
 export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), port: z.number().int().min(0).max(0xff).optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional(), debugger: z.boolean().optional() });
 const prg = z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG');

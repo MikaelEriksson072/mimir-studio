@@ -63,6 +63,20 @@ export function findUnp64(extra: string[] = []): string | null {
   return firstExisting(candidates);
 }
 
+/** 64tass: TASS64 env var, the usual C:\C64 folders (a release unpacked there is `64tass-1.57.2900\64tass-1.57.2900\`,
+ * two levels down), then PATH. */
+export function find64tass(extra: string[] = []): string | null {
+  const exe = process.platform === 'win32' ? '64tass.exe' : '64tass';
+  const candidates = [...extra, process.env.TASS64 || ''].filter(Boolean);
+  for (const r of ['C:\\C64', 'C:\\C64\\Tools', 'C:\\C64\\64tass']) {
+    candidates.push(join(r, exe));
+    for (const d of subdirs(r)) { candidates.push(join(d, exe)); for (const e of subdirs(d)) candidates.push(join(e, exe)); }
+  }
+  for (const d of (process.env.PATH || process.env.Path || '').split(process.platform === 'win32' ? ';' : ':')) if (d) candidates.push(join(d, exe));
+  candidates.push('/usr/bin/64tass', '/usr/local/bin/64tass', '/opt/homebrew/bin/64tass');
+  return firstExisting(candidates);
+}
+
 /** Exomizer 3: EXOMIZER env var, the usual C:\C64 folders (an unpacked release keeps it in win32\), then PATH. */
 export function findExomizer(extra: string[] = []): string | null {
   const exe = process.platform === 'win32' ? 'exomizer.exe' : 'exomizer';

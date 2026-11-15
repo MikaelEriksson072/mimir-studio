@@ -7,7 +7,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
@@ -38,6 +38,7 @@ import { blockView } from './lib/blockfolders';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
 import { operandName, renameText, type NameRef } from './lib/rename';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
+import { AssemblerContext, asmWords } from './lib/assembler';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
 import { packDefaults, packKeyOf } from './lib/pack';
@@ -164,6 +165,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const { update, replace, undo, redo, enter, setHome } = useProject.getState();
   /** analysis settings from the project, toolchain paths from the app */
   const S: Settings = useMemo(() => ({ ...A.S, ...toolchain }), [A.S, toolchain]);
+  /** the assembler the project's source is written for (spec 11.8) */
+  const asm = assemblerOf(S), words = asmWords(asm);
   // the newest analysis, project and settings, for work that awaits (verify, build, export) and must not use a stale
   // render: an export right after a settings change runs with the settings of the analysis it waited for
   const latest = useRef({ A, R, aKey, project, rProject, S, final });
@@ -446,7 +449,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [findFocus, setFindFocus] = useState(0);
   /** Ctrl+F in the source tab: Monaco's own find */
   const [srcFind, setSrcFind] = useState(0);
-  const findTexts = useMemo(() => (findOpen ? listLines.map(findText) : null), [listLines, findOpen]);
+  const findTexts = useMemo(() => (findOpen ? listLines.map(l => findText(l, asm)) : null), [listLines, findOpen, asm]);
   const findRe = useMemo(() => (findOpen ? findRegExp(findQ, findOpts) : null), [findOpen, findQ, findOpts]);
   const findHits = useMemo(() => (findTexts ? findLines(findTexts, findRe) : []), [findTexts, findRe]);
   /** the hit shown, as an index into the hits (-1: none) */
@@ -1317,7 +1320,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const r = one && id === 'code' && b0 ? { start: r0.start, end: Math.max(r0.end, b0.end) }
       : one && id === 'words' && r0.end - r0.start === 1 && A.owner[r0.start + 1] === A.owner[r0.start] ? { start: r0.start, end: r0.start + 2 } : r0;
     const rl = A.relocs.find(x => x.start < r.end && r.start < x.end);
-    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside .pseudopc`, 'warn'); return; }
+    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside ${words.pseudopc}`, 'warn'); return; }
     // Auto merge (Settings → General): the blocks of that type right before and after the range join it
     const mo = markOverride(A, r.start, r.end, id, useUi.getState().autoMerge), o = mo.override;
     const keep = s?.bytes ? keepCutTypes(A, o.start, o.end) : [];
@@ -1419,7 +1422,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const toggleExcluded = (a: Addr) => {
     const b = findBlock(A.blocks, a); if (!b) return;
     const inRun = relocAt(A, b.start);
-    if (inRun) { toast(`A block where a relocated block runs is written inside its .pseudopc, so it cannot be left out alone: leave out the whole relocated block ($${h4(inRun.start)})`, 'warn'); return; }
+    if (inRun) { toast(`A block where a relocated block runs is written inside its ${words.pseudopc}, so it cannot be left out alone: leave out the whole relocated block ($${h4(inRun.start)})`, 'warn'); return; }
     const out = project.excluded.includes(b.start);
     update(`${out ? 'Include' : 'Exclude'} $${h4(b.start)}-$${h4(b.end - 1)} ${out ? 'in' : 'from'} the build`, d => { d.excluded = out ? d.excluded.filter(x => x !== b.start) : [...d.excluded, b.start]; });
     toast(out ? `$${h4(b.start)}–$${h4(b.end - 1)} is built again` : `$${h4(b.start)}–$${h4(b.end - 1)} is left out of the build (still in the source under #if)`, 'ok');
@@ -1429,7 +1432,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const b = findBlock(A.blocks, a); if (!b) return;
     const on = project.binary.includes(b.start), name = R.labels.get(b.start)?.name ?? `block_${h4(b.start)}`;
     update(`${on ? 'Write' : 'Save'} $${h4(b.start)}-$${h4(b.end - 1)} ${on ? 'in the source' : 'as a binary file'}`, d => { d.binary = on ? d.binary.filter(x => x !== b.start) : [...d.binary, b.start]; });
-    toast(on ? `$${h4(b.start)}–$${h4(b.end - 1)} is written in the source again` : `$${h4(b.start)}–$${h4(b.end - 1)} is saved as data/${name}.bin and loaded with .import binary`, 'ok');
+    toast(on ? `$${h4(b.start)}–$${h4(b.end - 1)} is written in the source again` : `$${h4(b.start)}–$${h4(b.end - 1)} is saved as data/${name}.bin and loaded with ${words.binary}`, 'ok');
   };
   /** 11.7: `r` is junk: the analysis takes its bytes as not loaded, so the listing, the source and the output do not
    *  have them; the Explorer's Junk list puts them back */
@@ -1484,7 +1487,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const n = r.end - r.start;
     update(`Relocate $${h4(r.start)}-$${h4(r.end - 1)} to run at $${h4(r.to)}`, d => addReloc(d, r));
     closeReloc(); setSel(null);
-    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(r.to)}–$${h4(r.to + n - 1)}: traced and named there, and written inside .pseudopc (Ctrl+Z takes it back)`, 'ok');
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(r.to)}–$${h4(r.to + n - 1)}: traced and named there, and written inside ${words.pseudopc} (Ctrl+Z takes it back)`, 'ok');
     showChanged(r.to, r.to + n, `Relocated: runs at $${h4(r.to)}`);
   };
   /** the relocated block loaded at `start` runs at `to` instead */
@@ -1540,7 +1543,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** another address has the name, or a zero-page variable (they share the name space) */
   const nameTaken = (name: string, addr: Addr) => [...R.labels].some(([a, l]) => a !== addr && l.name === name) || [...R.zp].some(([a, z]) => a !== addr && !z.off && z.name === name);
   const rename = (addr: Addr, name: string): boolean => {
-    if (name && !validLabel(name)) { setLabelError('Use letters, digits and _ only, start with a letter or _, and avoid mnemonic names.'); toast(`"${name}" is not a valid Kick Assembler label`, 'err'); return false; }
+    // a name the project's assembler takes (64tass: not starting with _, which is local there, and not len, true …)
+    if (name && !labelFor(asm, name, validLabel)) { setLabelError(asm === '64tass' ? 'Use letters, digits and _ only, start with a letter (64tass takes a name starting with _ as local), and avoid mnemonic and function names.' : 'Use letters, digits and _ only, start with a letter or _, and avoid mnemonic names.'); toast(`"${name}" is not a valid ${ASSEMBLERS[asm].name} label`, 'err'); return false; }
     for (const [a, l] of R.labels) if (a !== addr && l.name === name) { setLabelError(`"${name}" is already used at $${h4(a)}.`); toast(`"${name}" is already used at $${h4(a)}`, 'err'); return false; }
     // zero-page variables share the name space (a pointer's high byte is <name>+1, not a name of its own)
     for (const [a, z] of R.zp) if (a !== addr && !z.off && z.name === name) { setLabelError(`"${name}" is already the zero-page variable at $${h2(a)}.`); toast(`"${name}" is already the zero-page variable at $${h2(a)}`, 'err'); return false; }
@@ -2168,7 +2172,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** the label a `.label name = $xxxx` line defines (the zero-page variables and the labels of other files in the file
    *  head, those inside binary blocks); null for any other line and for hardware symbols written inline */
   const labelDefAt = (l: ListingLine | null | undefined): { addr: Addr; zp: boolean } | null => {
-    if (!l || l.k !== 'dir' || l.tok[0]?.s !== '.label') return null;
+    if (!l || l.k !== 'dir' || !isLabelDefinition(l)) return null;
     if (l.zp != null) return { addr: l.zp, zp: true };
     const def = l.tok.find(t => t.t === 'def');
     if (def) for (const [a, x] of R.labels) if (x.name === def.s) return { addr: a, zp: false };
@@ -2253,9 +2257,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     update(value == null ? `Restore generated ${path}` : `Edit ${path}`, d => { d.scripts ??= {}; if (value == null) delete d.scripts[path]; else d.scripts[path] = value; });
     if (text == null) toast(`${path} is generated again from the toolchain settings`, 'ok');
   };
-  const kickAvailable = !!kr && !!toolchain.kickJar;
+  /** the project's assembler (spec 11.8) and the tool that builds with it: KickAss.jar or 64tass */
+  const asmTool = asm === '64tass' ? '64tass' : 'KickAss.jar';
+  const kickAvailable = !!kr && !!(asm === '64tass' ? toolchain.tassPath : toolchain.kickJar);
 
-  /** Built-in verifier in the worker, then (when configured) the real KickAss.jar in a temp build folder. */
+  /** Built-in verifier in the worker, then (when configured) the real KickAss.jar or 64tass in a temp build folder. */
   const runVerify = async (opts: { quiet?: boolean } = {}): Promise<BuildState | null> => {
     if (!latest.current.project.files.length) { toast('The project has no files yet: open a PRG, a snapshot or a cartridge first', 'warn'); return null; }
     try {
@@ -2268,7 +2274,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const V: VerifyResult & { ms: number } = await verifyInWorker(snapshot, aKey);
       const log: string[] = [];
       for (const r of V.results) {
-        log.push(`> built-in Kick-subset assembler: ${r.path}`);
+        log.push(`> built-in ${asm === '64tass' ? '64tass' : 'Kick'}-subset assembler: ${r.path}`);
         if (r.errors.length) { log.push('Errors:'); for (const e of r.errors.slice(0, 20)) log.push(`  ${e.file}:${e.line}  ${e.msg}`); }
         log.push('Memory map:'); for (const b of r.blocks) log.push(`  $${h4(b.start)}-$${h4(Math.max(b.start, b.end))} ${b.name}`);
         log.push(`${r.ok ? 'Round-trip OK' : 'Round-trip FAILED'}: ${r.same} / ${r.total} bytes identical to ${r.file}${r.excluded ? ` (${r.excluded} bytes left out of the build)` : ''}`);
@@ -2298,7 +2304,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       }
       let kick: KickBuild | null = null;
       if (kickAvailable && kr) {
-        setBuildBusy('Assembling with KickAss.jar');
+        setBuildBusy(`Assembling with ${asmTool}`);
         // the cartridge's own source comes last: it takes the chips' PRGs the others built
         const cs = cartridgeFiles(snapshot, R, latest.current.S);
         // the files with a source of their own: with every bank in one source (13.9c) the chips have none
@@ -2306,9 +2312,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         // in the project's build folder (without a project in a fresh folder in temp)
         const w = await kr.writeExport({ target: 'build', name: snapshot.name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40), files: { ...R.files, ...cs?.files } });
         if (w) {
-          const res = await kr.build({ dir: w.dir, entries: [...own.map(x => `${x.n}.asm`), ...(cs ? [cs.entry] : [])] });
+          const res = await kr.build({ dir: w.dir, entries: [...own.map(x => `${x.n}.asm`), ...(cs ? [cs.entry] : [])], assembler: asm });
           log.push(res.stdout.trim());
-          if (!res.outputs.length) log.push('', `KickAss.jar was not run: ${res.problems.map(p => p.message).join('; ')}`, 'Verified with the built-in assembler only.');
+          if (!res.outputs.length) log.push('', `${asmTool} was not run: ${res.problems.map(p => p.message).join('; ')}`, 'Verified with the built-in assembler only.');
           else {
             const compared = res.outputs.slice(0, own.length).map((o, k) => { const i = own[k].i, c = comparePrg(snapshot.files[i], o.prg, R.excluded.filter(x => x.file === i).map(x => ({ start: spaceAddr(x.start), end: spaceAddr(x.start) + x.end - x.start }))); return { entry: o.entry, ok: o.ok && c.ok, same: c.same, total: c.total, excluded: c.excluded, prgPath: o.prgPath, vsPath: o.vsPath, prg: o.prg, diffs: c.diffs }; });
             const co = cs ? res.outputs[own.length] : undefined;
@@ -2316,10 +2322,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             kick = { ok: res.ok && compared.every(c => c.ok) && (!kickCart || kickCart.ok), dir: w.dir, problems: res.problems, compared, cart: kickCart };
             log.push('');
             for (const c of compared) {
-              log.push(`KickAss.jar round-trip ${c.ok ? 'OK' : 'FAILED'}: ${c.entry} ${c.same} / ${c.total} bytes identical${c.excluded ? `, ${c.excluded} left out of the build` : ''} (${res.ms} ms total)`);
+              log.push(`${asmTool} round-trip ${c.ok ? 'OK' : 'FAILED'}: ${c.entry} ${c.same} / ${c.total} bytes identical${c.excluded ? `, ${c.excluded} left out of the build` : ''} (${res.ms} ms total)`);
               for (const d of c.diffs.slice(0, 8)) log.push(d.msg ? `  ${d.msg}` : `  $${h4(d.addr)}: expected $${h2(d.exp ?? 0)}, got ${d.got == null ? 'nothing' : '$' + h2(d.got)}`);
             }
-            if (kickCart) cartLog(kickCart, 'KickAss.jar');
+            if (kickCart) cartLog(kickCart, asmTool);
             log.push(`Build folder: ${w.dir}`);
           }
         }
@@ -2328,7 +2334,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       setBuild(res);
       if (!opts.quiet) {
         setUi({ bottom: 'build', panelOpen: true });
-        toast(res.ok ? `Round-trip verified${kick ? ' with KickAss.jar' : ''}: output is byte-identical` : 'Round-trip found differences; see Build output', res.ok ? 'ok' : 'err');
+        toast(res.ok ? `Round-trip verified${kick ? ` with ${asmTool}` : ''}: output is byte-identical` : 'Round-trip found differences; see Build output', res.ok ? 'ok' : 'err');
       }
       return res;
     } catch (e) {
@@ -2509,7 +2515,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       let prgPath: string, labelsPath: string | undefined;
       if (res.kick?.compared[0]) { prgPath = res.kick.compared[0].prgPath; labelsPath = res.kick.compared[0].vsPath ?? undefined; }
       else {
-        // no KickAss.jar: run the PRG produced by the built-in verifier
+        // no KickAss.jar (64tass): run the PRG produced by the built-in verifier
         const prg = res.V.results[0]?.prg;
         if (!prg) throw new Error('nothing to run');
         const w = await kr.writeExport({ target: 'temp', name: 'run', files: { [`${R.fileNames[0]}.prg`]: prg } });
@@ -2630,7 +2636,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       setBuildBusy(`Packing with ${packer}`);
       const r = await kr.pack({ files: files.map(f => ({ name: f.name, prg: f.prg! })), prefs });
       setPackRes({ ...r, key: packKeyOf(prefs, filesKey(R)) });
-      const from = res.kick?.compared[0] ? `the PRG KickAss.jar built, ${res.kick.compared[0].prgPath}` : 'the PRG the built-in assembler built';
+      const from = res.kick?.compared[0] ? `the PRG ${asmTool} built, ${res.kick.compared[0].prgPath}` : 'the PRG the built-in assembler built';
       const check = !r.check ? '' : r.check.argv.length ? `\n\n> ${r.check.argv.map(shellWord).join(' ')}\n${r.check.output.trim()}\n${r.check.text}` : `\n${r.check.text}`;
       const commands = (r.commands ?? [r.argv]).map(c => `> ${c.map(shellWord).join(' ')}`).join('\n');
       setBuild(b => b && { ...b, log: `${b.log}\n\n${commands}\n(in ${r.dir}, from ${from})\n${r.output.trim()}${check}${r.ok ? '' : `\n${r.error}`}` });
@@ -2679,7 +2685,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const { R: R1, project: p1, S: S1 } = latest.current;
       const w = await kr.writeExport({ target: home && !elsewhere ? 'project' : 'pick', files: exportFiles(p1, R1, S1, res.V, new Date()) });
       if (w) { setExportDir(w.dir); exportedFiles.current = filesOf(p1); }
-      if (w) toast(res.ok ? `Exported verified Kick Assembler project to ${w.dir} (${w.written.length} files)` : `Exported to ${w.dir}, but the round-trip check failed; see Build output`, res.ok ? 'ok' : 'warn');
+      if (w) toast(res.ok ? `Exported verified ${ASSEMBLERS[asm].name} project to ${w.dir} (${w.written.length} files)` : `Exported to ${w.dir}, but the round-trip check failed; see Build output`, res.ok ? 'ok' : 'warn');
       return w && { dir: w.dir, main: mainSource(R1) };
     } catch (e) { toast(`Export failed: ${errorText(e)}`, 'err'); return null; }
   };
@@ -2859,7 +2865,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'exclude', label: 'Exclude / include the block at the cursor in the build', run: () => { if (cursor != null) toggleExcluded(cursor); } },
     { id: 'junk', label: 'Mark the selection or the block at the cursor as junk (left out of everything)', run: () => { const r = sel && sel.multi && sel.end > sel.start ? sel : cursor != null ? findBlock(A.blocks, cursor) : null; if (r) markJunk({ start: r.start, end: r.end }); } },
     ...(project.junk?.length ? [{ id: 'junk-all', label: `Include all junk again (${project.junk.length} area${project.junk.length === 1 ? '' : 's'})`, run: includeAllJunk }] : []),
-    { id: 'binary', label: 'Save the block at the cursor as a binary file (.import binary) / write it in the source', run: () => { if (cursor != null) toggleBinary(cursor); } },
+    { id: 'binary', label: `Save the block at the cursor as a binary file (${words.binary}) / write it in the source`, run: () => { if (cursor != null) toggleBinary(cursor); } },
     { id: 'merge-prev', label: 'Merge the block at the cursor with the previous block', run: () => mergeBlock('prev') },
     { id: 'merge-next', label: 'Merge the block at the cursor with the next block', run: () => mergeBlock('next') },
     { id: 'merge-range', label: 'Merge range into one block… (start, end, block type)', key: 'M', run: () => setModal('merge') },
@@ -2890,16 +2896,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'inspector-mode', label: inspector === 'auto' ? 'Keep the inspector open beside the editor' : 'Fold in the inspector (a strip at the right edge opens it when you need it)', run: () => setInspector(inspector === 'auto' ? 'open' : 'auto') },
     { id: 'panel', label: 'Toggle bottom panel', key: 'Ctrl+J', run: () => setUi({ panelOpen: !useUi.getState().panelOpen }) },
     { id: 'verify', label: 'Verify round-trip (re-assemble and compare)', key: 'F7', run: () => void runVerify() },
-    { id: 'build', label: 'Build with KickAss.jar & run in VICE', key: 'F5', run: () => void runBuild() },
-    { id: 'build-debugger', label: `Build with KickAss.jar & run in ${debuggerName} (started as in VICE; Settings → Toolchain picks the debugger)`, key: 'Shift+F5', run: () => void runBuild(true) },
+    { id: 'build', label: `Build with ${asmTool} & run in VICE`, key: 'F5', run: () => void runBuild() },
+    { id: 'build-debugger', label: `Build with ${asmTool} & run in ${debuggerName} (started as in VICE; Settings → Toolchain picks the debugger)`, key: 'Shift+F5', run: () => void runBuild(true) },
     { id: 'pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} (build, verify, pack as the Pack view says)`, run: () => void runPack() },
     { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack', sidePanel: true }) },
     ...(packRes?.ok && packRes.path ? [
       ...(packRes.argv[1] === 'sfx' ? [{ id: 'pack-run', label: `Run the packed ${packRes.name} in VICE`, run: () => void runPacked() }] : []),
       { id: 'pack-save', label: `Save the packed ${packRes.name} as…`, run: () => void savePacked() },
     ] : []),
-    { id: 'export', label: home ? `Export Kick Assembler project to ${home.name}\\source` : 'Export Kick Assembler project to a folder…', key: 'Ctrl+E', run: () => void exportProject() },
-    ...(home ? [{ id: 'export-to', label: 'Export Kick Assembler project to another folder…', run: () => void exportProject(true) }] : []),
+    { id: 'export', label: home ? `Export ${ASSEMBLERS[asm].name} project to ${home.name}\\source` : `Export ${ASSEMBLERS[asm].name} project to a folder…`, key: 'Ctrl+E', run: () => void exportProject() },
+    ...(home ? [{ id: 'export-to', label: `Export ${ASSEMBLERS[asm].name} project to another folder…`, run: () => void exportProject(true) }] : []),
     { id: 'save', label: home ? `Save project (${home.name}.mimir.json; Mimir also saves as you work)` : 'Save: create a project from this work (a folder of its own)…', key: 'Ctrl+S', run: () => void saveProject() },
     { id: 'save-copy', label: 'Save a copy of the project file (.mimir.json)…', run: () => void saveProjectCopy() },
     { id: 'openproj', label: 'Open project (.mimir.json)…', run: () => void openProject() },
@@ -2917,7 +2923,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'offsets', label: offsets ? 'Listing: hide the offset in the file' : 'Listing: show the offset in the file (as SourceGen)', run: () => setUi({ offsets: !offsets }) },
     { id: 'text-cols', label: textCols ? 'Listing: hide the Text columns' : 'Listing: show each line\'s bytes as PETSCII and as screen codes (Text columns; with Data as code, every block as code with its text)', key: 'V', run: () => setUi({ textCols: !textCols, tab: 'listing' }) },
     { id: 'gutter', label: gutter === 'line' ? 'Listing: show memory addresses' : 'Listing: show line numbers (as in the .asm file)', run: () => setUi({ gutter: gutter === 'line' ? 'addr' : 'line' }) },
-    { id: 'tab-source', label: 'Show generated Kick Assembler source', run: () => setUi({ tab: 'source' }) },
+    { id: 'tab-source', label: `Show generated ${ASSEMBLERS[asm].name} source`, run: () => setUi({ tab: 'source' }) },
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-scripts', label: 'Show the scripts: Kick Assembler code that runs in Mimir on a copy of the program', run: () => setUi({ tab: 'scripts' }) },
@@ -3166,7 +3172,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       ...(b ? [{ label: 'Block size… (start and end)', key: 'L', run: () => openBlockSize(l.a) }] : []),
       { sep: true },
       { label: project.excluded.includes(b?.start ?? -1) ? 'Include block in the build' : 'Exclude block from the build', run: () => toggleExcluded(l.a) },
-      { label: project.binary.includes(b?.start ?? -1) ? 'Write block in the source again' : 'Save block as a binary file (.import binary)', run: () => toggleBinary(l.a) },
+      { label: project.binary.includes(b?.start ?? -1) ? 'Write block in the source again' : `Save block as a binary file (${words.binary})`, run: () => toggleBinary(l.a) },
       // junk (11.7): the selection's bytes or the block's, left out of the listing, the source and the output
       ...(inSel && cs ? [{ label: 'Mark selection as junk (left out of everything)', run: () => markJunk({ start: cs.start, end: cs.end }) }]
         : b ? [{ label: 'Mark block as junk (left out of everything)', run: () => markJunk({ start: b.start, end: b.end }) }] : []),
@@ -3417,8 +3423,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'script' | 'git', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'script', 'Scripts'], ['git', 'git', 'Git'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
 
   return (
+    <AssemblerContext.Provider value={asm}>
     <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
-      <TitleBar projectName={project.name} home={home?.name ?? null} changed={unsavedChanges} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
+      <TitleBar asmTool={asmTool} projectName={project.name} home={home?.name ?? null} changed={unsavedChanges} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onFile={fileMenu} fileOpen={menu?.owner === 'file'} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}
         onVerify={() => void runVerify()} onExport={() => void exportProject()} onBuild={() => void runBuild()} onTerminal={() => void openTerminal()}
@@ -3673,5 +3680,6 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} /><span className="toast-msg">{t.msg}</span>
         {t.kind === 'err' && <button className="icon-btn toast-x" aria-label="Dismiss the message" title="Dismiss (the Messages tab keeps it)" onClick={() => dismissToast(t.id)}><Icon name="x" size={13} /></button>}</div>)}</div>
     </div>
+    </AssemblerContext.Provider>
   );
 }

@@ -1,10 +1,10 @@
-/* Toolchain runner (spec 13.2): Kick Assembler and VICE are started with argument arrays, never
+/* Toolchain runner (spec 13.2): Kick Assembler, 64tass and VICE are started with argument arrays, never
  * through a shell, using the executables from the main-process settings store. */
 import { existsSync, statSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import type { BrokkrPack, KickProblem, ToolchainSettings } from '@mimir/core';
-import { canIdentify, DEBUGGERS, editorName, findC64Roms, findEditors, identifyPacker, launchDebugger, launchEditor, launchTerminal, launchVice, runExomizer, runKickAssembler, runUnpacker, splitArgs } from '@mimir/core/node';
+import { canIdentify, DEBUGGERS, editorName, findC64Roms, findEditors, identifyPacker, launchDebugger, launchEditor, launchTerminal, launchVice, run64tass, runExomizer, runKickAssembler, runUnpacker, splitArgs } from '@mimir/core/node';
 import { rm, writeFile } from 'node:fs/promises';
 import type { BuildRequest, BuildResult, EditorInfo, EditorOpenResult, IdentifyResponse, PackRequest, PackResponse, RomsResponse, RunRequest, RunResult, TerminalOpenResult, UnpackRequest, UnpackResponse } from '../../shared/ipc';
 import { createBuildFolder } from './project-fs';
@@ -12,19 +12,24 @@ import { assertEntryName, type PathPolicy } from './paths';
 
 const missing = (what: string, path: string): KickProblem => ({ severity: 'error', file: '', line: 0, column: 0, message: `${what} not found at "${path}". Set the path in Settings → Toolchain.` });
 
-export async function buildWithKickAssembler(req: BuildRequest, settings: ToolchainSettings, policy: PathPolicy): Promise<BuildResult> {
+/** Build the sources with the assembler they are written for (spec 13.2, 11.8): Kick Assembler (KickAss.jar with
+ *  Java) or 64tass, from the settings store */
+export async function buildWithAssembler(req: BuildRequest, settings: ToolchainSettings, policy: PathPolicy): Promise<BuildResult> {
   const t0 = Date.now();
   const dir = policy.assert(req.dir, 'Build folder');
   const entries = req.entries.map(assertEntryName);
-  if (!settings.kickJar || !existsSync(settings.kickJar)) {
-    return { ok: false, stdout: '', problems: [missing('KickAss.jar', settings.kickJar)], outputs: [], commands: [], ms: Date.now() - t0 };
+  const tass = req.assembler === '64tass';
+  if (tass ? !settings.tassPath || !existsSync(settings.tassPath) : !settings.kickJar || !existsSync(settings.kickJar)) {
+    return { ok: false, stdout: '', problems: [tass ? missing('64tass', settings.tassPath) : missing('KickAss.jar', settings.kickJar)], outputs: [], commands: [], ms: Date.now() - t0 };
   }
   const outputs: BuildResult['outputs'] = [];
   const commands: string[][] = [];
   let stdout = '';
   for (const entry of entries) {
     if (!existsSync(join(dir, entry))) throw new Error(`${entry} does not exist in the build folder`);
-    const run = await runKickAssembler({ java: settings.javaPath || 'java', jar: settings.kickJar, cwd: dir, entry, outDir: settings.outDir || 'out', args: splitArgs(settings.kickArgs) });
+    const run = tass
+      ? await run64tass({ exe: settings.tassPath, cwd: dir, entry, outDir: settings.outDir || 'out', args: splitArgs(settings.tassArgs) })
+      : await runKickAssembler({ java: settings.javaPath || 'java', jar: settings.kickJar, cwd: dir, entry, outDir: settings.outDir || 'out', args: splitArgs(settings.kickArgs) });
     commands.push(run.argv);
     stdout += `> ${run.argv.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}\n${run.output}\n`;
     outputs.push({ entry, ok: run.ok, prg: run.prg, prgPath: run.prgPath, vsPath: run.vsPath, problems: run.problems });
@@ -129,7 +134,7 @@ async function packInWorker(req: PackRequest): Promise<BrokkrPack> {
 export async function openTerminal(dir: string, settings: ToolchainSettings): Promise<TerminalOpenResult> {
   if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new Error(`${dir} is not a folder`);
   const has = (p: string) => !!p && existsSync(p);
-  await launchTerminal({ dir, java: settings.javaPath || 'java', kickJar: has(settings.kickJar) ? settings.kickJar : undefined, vicePath: has(settings.vicePath) ? settings.vicePath : undefined });
+  await launchTerminal({ dir, java: settings.javaPath || 'java', kickJar: has(settings.kickJar) ? settings.kickJar : undefined, vicePath: has(settings.vicePath) ? settings.vicePath : undefined, tassPath: has(settings.tassPath) ? settings.tassPath : undefined });
   return { dir };
 }
 

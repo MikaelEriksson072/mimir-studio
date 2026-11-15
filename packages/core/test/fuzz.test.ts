@@ -1,5 +1,5 @@
 /* Property: whatever the program, overrides, entries, labels, comments, comment lines/blocks and settings,
- * the generated Kick Assembler source re-assembles byte-identical. */
+ * the generated Kick Assembler or 64tass source re-assembles byte-identical. */
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { analyze, h4, PROBLEM_CODES, render, verify, type NumberFormat, type Override, type ProjectInput, type Settings, type TextEncoding } from '../src';
@@ -13,6 +13,8 @@ const settingsArb: fc.Arbitrary<Partial<Settings>> = fc.record({
   bytesPerRow: fc.constantFrom(4, 8, 16), indent: fc.constantFrom(2, 4, 8), commentCol: fc.constantFrom(32, 40, 48),
   basicUpstart: fc.boolean(), hwInclude: fc.constantFrom('import', 'inline', 'none'), hwComments: fc.boolean(),
   musicAsSid: fc.boolean(), gfxBinary: fc.boolean(), addrComments: fc.boolean(), bankTracking: fc.boolean(), codeIslands: fc.boolean(), deepAnalysis: fc.boolean(),
+  // the source written for Kick Assembler or for 64tass (spec 11.8), verified by the built-in one of each
+  assembler: fc.constantFrom('kick', '64tass'),
 }, { requiredKeys: [] }) as fc.Arbitrary<Partial<Settings>>;
 
 const overrideArb = fc.record({

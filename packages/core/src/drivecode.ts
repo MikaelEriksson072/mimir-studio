@@ -17,8 +17,10 @@
  */
 import type { Addr, AnalysisResult, Line, Token } from './types';
 import { OPC, MODE_LEN } from './cpu/opcodes';
-import { kickMnemonic, lineText, type LineTextSettings } from './render/lines';
+import { lineText, type LineTextSettings } from './render/lines';
 import { assemble } from './verify/kick-subset-assembler';
+import { assembleTass } from './verify/tass-subset-assembler';
+import { asmMnemonic, assemblerOf, defineTokens, logicalEndTokens, logicalTokens, pcLine } from './render/dialect';
 import { $4, h4 } from './util/hex';
 
 /** a run of the drive code's bytes in the C64's memory and where they run in the drive */
@@ -126,6 +128,9 @@ const storesAbs = (b: number) => { const o = OPC[b]; return MODE_LEN[o.mode] ===
 
 /** The drive code of the analysed program, re-assembled; null when the loaders found none. */
 export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: 'lower' | 'upper' }, name: string): DriveCode | null {
+  // the assembler the source is written for (spec 11.8)
+  const asm = assemblerOf(S);
+  let usedIll = false;
   const mem = A.mem, owner = A.owner;
   const up = S.hexCase === 'upper';
   const hx = (v: number, w: number) => { const s = v.toString(16).padStart(w, '0'); return up ? s.toUpperCase() : s; };
@@ -381,7 +386,7 @@ export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: '
     const drv = (c: Addr) => (base + c - g.start) & 0xffff;
     if (g.gap) { push(dataLine(g.start, [...mem.subarray(g.start, g.end)], g.how), null); return; }
     segLine.set(g, body.length);
-    if (g.run != null) push({ k: 'dir', a: g.start, n: 0, tok: [{ t: 'dir', s: '.pseudopc' }, { t: 'p', s: ' ' }, { t: 'num', s: n4(g.run) }, { t: 'p', s: ' {' }], cmt: `${$(g.start)}-${$(g.end - 1)} run at ${$(g.run)}-${$(g.run + L - 1)} (${g.how})` }, g.run);
+    if (g.run != null) push({ k: 'dir', a: g.start, n: 0, tok: logicalTokens(asm, { t: 'num', s: n4(g.run) }), cmt: `${$(g.start)}-${$(g.end - 1)} run at ${$(g.run)}-${$(g.run + L - 1)} (${g.how})` }, g.run);
     else push({ k: 'cmt', a: g.start, text: `${$(g.start)}-${$(g.end - 1)}: ${g.how}` }, null);
     let data: number[] = [], dataAt = g.start;
     const flush = () => { if (data.length) push(dataLine(dataAt, data, ''), drv(dataAt)); data = []; };
@@ -399,7 +404,7 @@ export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: '
         if (c + n > g.end) {
           // the instruction goes on in bytes elsewhere in the C64's memory (after the next drive command)
           const o = OPC[mem[c]];
-          push(dataLine(c, [...mem.subarray(c, g.end)], `${kickMnemonic(o.mn)}: its last ${c + n - g.end === 1 ? 'byte is' : `${c + n - g.end} bytes are`} in the next part`), d);
+          push(dataLine(c, [...mem.subarray(c, g.end)], `${asmMnemonic(o.mn, asm)}: its last ${c + n - g.end === 1 ? 'byte is' : `${c + n - g.end} bytes are`} in the next part`), d);
           c = g.end; continue;
         }
         push(insLine(i, c, d, g.drive), d);
@@ -415,7 +420,7 @@ export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: '
       data.push(mem[c]); c++;
     }
     flush();
-    if (g.run != null) push({ k: 'dir', a: g.end, n: 0, tok: [{ t: 'p', s: '}' }] }, null);
+    if (g.run != null) push({ k: 'dir', a: g.end, n: 0, tok: logicalEndTokens(asm) }, null);
   };
   const S_ROW = 8;
   const insLine = (i: number, c: Addr, d: Addr, drive: '1541' | '1581'): Line => {
@@ -453,7 +458,7 @@ export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: '
         break;
       }
     }
-    if (o.ill) cm.push('undocumented');
+    if (o.ill) { cm.push('undocumented'); usedIll = true; }
     return { k: 'ins', a: c, n, mn: o.mn, ext, tok, cmt: cm.join('; '), ...(o.ill ? { ill: true } : {}) };
   };
 
@@ -471,7 +476,7 @@ export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: '
       const loader = p.k === 'seg' ? p.g.loader : loaderOf(s, e);
       const head = `---- ${loader}: drive code at ${$(s)} `;
       push({ k: 'cmt', a: s, text: head.padEnd(Math.max(66, head.length + 4), '-') }, null);
-      push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: '.pc' }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(s) }, { t: 'p', s: ' ' }, { t: 'str', s: '"Drive code"' }] }, null);
+      push(pcLine(asm, s, [{ t: 'num', s: n4(s) }], 'Drive code'), null);
     }
     if (p.k === 'cmd') {
       const c = p.c;
@@ -489,14 +494,16 @@ export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: '
   hc(`${name}: the drive code, re-assembled`);
   hc('');
   hc(`The code for the ${drives.join(' and ')} that the program keeps in the C64's memory and uploads to the drive. Each part is`);
-  hc('written where it is in the C64\'s memory, inside .pseudopc at the address where it runs in the drive, so this source');
+  hc(`written where it is in the C64's memory, inside ${asm === '64tass' ? '.logical' : '.pseudopc'} at the address where it runs in the drive, so this source`);
   hc('assembles to the program\'s bytes again. What the traced code does not reach stays data.');
   hc('');
   for (const g of segs.filter(x => !x.gap)) hc(`${$(g.start)}-${$(g.end - 1)}  ${g.run != null ? `runs at ${$(g.run)}-${$(g.run + g.end - g.start - 1)}` : 'runs where it is not known'}  ${g.code} of ${g.end - g.start} bytes code  (${g.how})`);
   const lines: Line[] = [...head];
+  // 64tass: the CPU with the undocumented opcodes, when the code has one
+  if (asm === '64tass' && usedIll) lines.push({ k: 'blank', a: segs[0].start }, { k: 'dir', a: segs[0].start, n: 0, tok: [{ t: 'dir', s: '.cpu' }, { t: 'p', s: ' ' }, { t: 'str', s: '"6502i"' }], cmt: 'the NMOS 6502 with its undocumented opcodes' });
   if (usedVia.size) {
     lines.push({ k: 'blank', a: segs[0].start });
-    for (const a of [...usedVia].sort((x, y) => x - y)) { const v = VIA_SYM.get(a)!; lines.push({ k: 'dir', a: segs[0].start, n: 0, tok: [{ t: 'dir', s: '.label' }, { t: 'p', s: ' ' }, { t: 'def', s: v.name, zp: a }, { t: 'p', s: ' = ' }, { t: 'num', s: n4(a) }], cmt: v.desc }); }
+    for (const a of [...usedVia].sort((x, y) => x - y)) { const v = VIA_SYM.get(a)!; lines.push({ k: 'dir', a: segs[0].start, n: 0, tok: defineTokens(asm, { t: 'def', s: v.name, zp: a }, [{ t: 'num', s: n4(a) }]), cmt: v.desc }); }
   }
   lines.push({ k: 'blank', a: segs[0].start });
   const headN = lines.length;
@@ -508,7 +515,7 @@ export function driveCode(A: AnalysisResult, S: LineTextSettings & { hexCase?: '
   const file = `${name.replace(/\.[^.]*$/, '')}-drive.asm`;
   const check: DriveCheck = { ok: false, bytes: 0, diffs: [], errors: [] };
   try {
-    const r = assemble({ [file]: text }, file);
+    const r = (asm === '64tass' ? assembleTass : assemble)({ [file]: text }, file);
     check.errors = r.errors.map(e => `line ${e.line}: ${e.msg}`);
     for (let a = 0; a < 0x10000; a++) {
       if (!r.written[a]) continue;

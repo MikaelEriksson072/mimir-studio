@@ -21,7 +21,8 @@ const annotated = (): Project => ({
 
 describe('NOTES.html', () => {
   it('colours a line without changing its text', () => {
-    for (const S of [DEFAULT_SETTINGS, ...SETTING_VARIANTS.map(v => ({ ...DEFAULT_SETTINGS, ...v }))]) {
+    // (every variant also written for 64tass, spec 11.8)
+    for (const S of [DEFAULT_SETTINGS, ...SETTING_VARIANTS.map(v => ({ ...DEFAULT_SETTINGS, ...v }))].flatMap((x): Settings[] => [x, { ...x, assembler: '64tass' }])) {
       const p = { ...annotated(), settings: S };
       const { R } = build(p, S);
       for (const lines of Object.values(R.fileLines)) for (const l of lines as Line[]) expect(text(lineHtml(l, S))).toBe(lineText(l, S));

@@ -66,8 +66,11 @@ export function DriveView({ A, S, name, theme, onCopy, onSave, onShow, findReq =
     if (state !== 'ready' || !D || !monaco || !e) return;
     const uri = monaco.Uri.parse('drive:///' + encodeURIComponent(D.file));
     if (model.current && model.current.uri.toString() !== uri.toString()) { model.current.dispose(); model.current = null; }
-    if (!model.current) { model.current = monaco.editor.createModel(D.text, 'kickass', uri); e.setModel(model.current); }
-    else if (model.current.getValue() !== D.text) { const vs = e.saveViewState(); model.current.setValue(D.text); if (vs) e.restoreViewState(vs); }
+    // (in the language of the assembler it is written for, spec 11.8)
+    const lang = S.assembler === '64tass' ? 'tass64' : 'kickass';
+    if (!model.current) { model.current = monaco.editor.createModel(D.text, lang, uri); e.setModel(model.current); }
+    else if (model.current.getLanguageId() !== lang) monaco.editor.setModelLanguage(model.current, lang);
+    if (model.current.getValue() !== D.text) { const vs = e.saveViewState(); model.current.setValue(D.text); if (vs) e.restoreViewState(vs); }
   }, [state, D]);
 
   const findDone = useRef(findReq);

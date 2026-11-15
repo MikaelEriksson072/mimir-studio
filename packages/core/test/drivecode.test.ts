@@ -5,6 +5,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { analyze, assemble, DEFAULT_SETTINGS, demoProject, driveCode, parsePrg, runAddress } from '../src';
 import { fromSource } from './helpers/programs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { find64tass, run64tass, writeVfs } from '../src/node';
 
 const BASIC = '.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00\n.pc = $080d\n';
 
@@ -93,6 +96,29 @@ describe('drive code', () => {
     const main = D.segments.find(g => g.run === 0x0500)!;
     expect(main.start).toBeLessThanOrEqual(0x3000);
     expect(main.drive).toBe('1541');
+  });
+
+  it('writes the drive code for 64tass inside .logical, which the built-in 64tass and the real one assemble to the same bytes', async () => {
+    const T = driveCode(A, { ...DEFAULT_SETTINGS, assembler: '64tass' }, 'loader.prg')!;
+    expect(T.check).toMatchObject({ ok: true, errors: [], diffs: [] });
+    expect(T.text).toMatch(/^\.logical \$0700 +; /m);
+    expect(T.text).toMatch(/^\.logical \$0500 +; /m);
+    expect(T.text).toMatch(/^\.here$/m);
+    expect(T.text).toMatch(/^\* = \$/m);
+    expect(T.text).not.toMatch(/\/\/|\.pseudopc|\.pc /);
+    const tass = find64tass();
+    if (!tass) return;
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-drive-'));
+    try {
+      await writeVfs(dir, { [T.file]: T.text });
+      const run = await run64tass({ exe: tass, cwd: dir, entry: T.file, outDir: 'out' });
+      expect(run.ok, run.output).toBe(true);
+      const prg = run.prg!, load = prg[0] | (prg[1] << 8);
+      // the parts' bytes as the program has them (the gaps between parts are filled with zeros)
+      for (const g of T.segments) for (let a = g.start; a < g.end; a++) expect(prg[a - load + 2], `$${a.toString(16)}`).toBe(A.mem[a]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('writes the drive code as code, inside .pseudopc where it runs, and the commands as bytes', () => {

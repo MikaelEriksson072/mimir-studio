@@ -1,7 +1,7 @@
 /* Cycle counting (spec 10.1): the cycles of each instruction in the listing, and in the inspector the cycles of the
  * selected range or the block at the cursor along one path, with the branches the user marks as taken. */
 import { useMemo } from 'react';
-import { h4, instructionCycles, kickMnemonic, cycleText, type Addr, type AnalysisResult, type CyclePath, type CycleStep, type ListingLine, type RenderResult } from '@mimir/core';
+import { forcedMnemonic, h4, instructionCycles, cycleText, type Addr, type AnalysisResult, type CyclePath, type CycleStep, type ListingLine, type RenderResult } from '@mimir/core';
 import { cx } from '../lib/util';
 
 export interface CycleView {
@@ -36,7 +36,7 @@ export function CycleCell({ l, A, step, taken, onToggle }: { l: ListingLine; A: 
 
 /** The inspector's Cycles section for the counted range. */
 export function CyclesSection({ path, R, onToggle, onNavigate }: { path: CyclePath; R: RenderResult; onToggle: (pc: Addr) => void; onNavigate: (a: Addr) => void }) {
-  const ins = useMemo(() => { const m = new Map<Addr, string>(); for (const l of R.lines) if (l.k === 'ins' && !l.preview) m.set(l.a, `${kickMnemonic(l.mn)}${l.ext}${l.tok.length ? ' ' + l.tok.map(t => t.s).join('') : ''}`); return m; }, [R]);
+  const ins = useMemo(() => { const m = new Map<Addr, string>(); for (const l of R.lines) if (l.k === 'ins' && !l.preview) { const h = forcedMnemonic(l.mn, l.ext, R.assembler); m.set(l.a, `${h.mn}${l.tok.length ? ' ' + h.pre + l.tok.map(t => t.s).join('') : ''}`); } return m; }, [R]);
   const span = `$${h4(path.start)}–$${h4(path.end - 1)}`;
   return (
     <section className="insp-sec cyc-sec" aria-label="Cycles">

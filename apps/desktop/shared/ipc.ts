@@ -3,7 +3,7 @@
  * process registers exactly these channels and the preload exposes
  * exactly these functions as `window.kr`.
  * ===================================================================== */
-import type { Cartridge, ExomizerReport, KickProblem, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
+import type { AssemblerId, Cartridge, ExomizerReport, KickProblem, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
 
 export const CHANNELS = {
   projectOpen: 'project:open',
@@ -156,10 +156,12 @@ export interface ExportWriteResult { dir: string; written: string[] }
 
 /** A Kick Assembler source picked in a dialog: its path, its folder (open in this session: it can be built there) and
  *  its file name, the entry to build. */
-export interface AsmPickResult { path: string; dir: string; entry: string }
+/** `assembler`: the one the source is likely written for (guessAssembler on its text); the user can pick the other */
+export interface AsmPickResult { path: string; dir: string; entry: string; assembler?: AssemblerId }
 
-/** Assemble each entry (an .asm file in `dir`) with KickAss.jar from the settings. */
-export interface BuildRequest { dir: string; entries: string[] }
+/** Assemble each entry (an .asm file in `dir`) with KickAss.jar or 64tass from the settings. */
+/** `assembler`: the one the sources are written for (Settings.assembler; missing: Kick Assembler) */
+export interface BuildRequest { dir: string; entries: string[]; assembler?: AssemblerId }
 export interface BuildOutput {
   entry: string;
   ok: boolean;
@@ -299,7 +301,7 @@ export type ViceResult = { ok: true; response: string } | { ok: false; error: st
 export interface FsChangedEvent { path: string }
 
 /** the toolchain settings that are a path to a program or file (Settings → Toolchain, Choose folder…) */
-export type LocateKey = 'javaPath' | 'kickJar' | 'vicePath' | 'viceQuicksave' | 'unpackerPath' | 'editorPath' | 'exomizerPath' | 'retroDebuggerPath' | 'c64DebuggerPath';
+export type LocateKey = 'javaPath' | 'kickJar' | 'tassPath' | 'vicePath' | 'viceQuicksave' | 'unpackerPath' | 'editorPath' | 'exomizerPath' | 'retroDebuggerPath' | 'c64DebuggerPath';
 /** A folder dialog for the tool of `key` (it opens at `current`, the path in the form, when that is there), and the
  *  program found in the folder picked. */
 export interface LocateRequest { key: LocateKey; current?: string }

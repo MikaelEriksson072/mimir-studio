@@ -7,6 +7,8 @@ import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'no
 import type { KickProblem, Vfs } from '../types';
 import { START_STUB, startsFromMonitor } from '../c64/prg';
 import { parseKickOutput } from '../verify/kick-output';
+import { parseTassOutput } from '../verify/tass-output';
+import { TASS_FIXED_ARGS } from '../render/dialect';
 import { splitArgs } from '../util/args';
 import { DRIVE_INIT } from '../c64/debugger-start';
 
@@ -93,6 +95,60 @@ export async function runKickAssembler(o: KickRunOptions): Promise<KickRunResult
   const prg = existsSync(prgPath) ? new Uint8Array(await readFile(prgPath)) : null;
   const ok = code === 0 && !problems.some(p => p.severity === 'error') && prg != null;
   return { ok, code, output, problems, argv: [o.java, ...argv], prgPath, prg, vsPath: existsSync(vsPath) ? vsPath : null, ms: Date.now() - t0 };
+}
+
+export interface TassRunOptions {
+  /** 64tass's executable */
+  exe: string;
+  /** folder that contains the sources (the process' working directory) */
+  cwd: string;
+  /** source file, relative to cwd */
+  entry: string;
+  /** output folder, relative to cwd (made when missing: 64tass writes into a folder only when it is there) */
+  outDir: string;
+  /** extra arguments (Settings.tassArgs) */
+  args?: string[];
+  timeoutMs?: number;
+}
+
+/**
+ * `64tass -a -C --cbm-prg <args...> -o <outDir>/<name>.prg --vice-labels -l <outDir>/<name>.vs <entry>` in `cwd` (spec
+ * 11.8): the PETSCII encodings of an ASCII source, case-sensitive names, a PRG with its load address and a VICE label
+ * file next to it, as Kick Assembler's -vicesymbols writes one. A cartridge's source (`<name>.crt.asm`) writes the
+ * image `<name>.crt` as it is (`--nostart`, -X for an image of more than 64 KB).
+ */
+export async function run64tass(o: TassRunOptions): Promise<KickRunResult> {
+  const t0 = Date.now();
+  const base = o.entry.replace(/\.asm$/i, '');
+  const cart = /\.crt$/i.test(base);
+  const out = (o.outDir || '.').replace(/[\\/]+$/, '');
+  const prgRel = `${out}/${cart ? base : base + '.prg'}`, vsRel = `${out}/${base}.vs`;
+  const prgPath = join(o.cwd, prgRel), vsPath = join(o.cwd, vsRel);
+  await mkdir(dirname(prgPath), { recursive: true });
+  await rm(prgPath, { force: true });
+  await rm(vsPath, { force: true });
+  const fixed = cart ? ['-a', '-C', '--nostart', '-X'] : [...TASS_FIXED_ARGS];
+  const argv = [...fixed, ...(o.args || []), '-o', prgRel, '--vice-labels', '-l', vsRel, o.entry];
+  let output = '';
+  const code = await new Promise<number | null>(done => {
+    let child;
+    try {
+      child = spawn(o.exe, argv, { cwd: o.cwd, shell: false, windowsHide: true });
+    } catch (e) {
+      output += `64tass: error: could not start ${o.exe}: ${(e as Error).message}\n`;
+      done(null); return;
+    }
+    const timer = setTimeout(() => { output += `\n64tass: error: 64tass did not finish within ${(o.timeoutMs ?? 60000) / 1000} s\n`; child.kill(); }, o.timeoutMs ?? 60000);
+    child.stdout.on('data', d => { output += d.toString(); });
+    child.stderr.on('data', d => { output += d.toString(); });
+    child.on('error', e => { clearTimeout(timer); output += `64tass: error: could not start "${o.exe}": ${e.message}\n`; done(null); });
+    child.on('close', c => { clearTimeout(timer); done(c); });
+  });
+  output = output.replace(/\r\n?/g, '\n');
+  const problems = parseTassOutput(output, o.cwd);
+  const prg = existsSync(prgPath) ? new Uint8Array(await readFile(prgPath)) : null;
+  const ok = code === 0 && !problems.some(p => p.severity === 'error') && prg != null;
+  return { ok, code, output, problems, argv: [o.exe, ...argv], prgPath, prg, vsPath: existsSync(vsPath) ? vsPath : null, ms: Date.now() - t0 };
 }
 
 /** How VICE starts the program: RUN, `sys <start>` typed after loading, a jump from the monitor, or a cartridge

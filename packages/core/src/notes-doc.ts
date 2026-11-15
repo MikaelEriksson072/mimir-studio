@@ -4,7 +4,8 @@
  * the one in the exported .asm files. */
 import { isBookmarkColor, type Addr, type Bookmark, type Line, type Project, type RenderResult, type Settings, type Token } from './types';
 import { h2, h4 } from './util/hex';
-import { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES, type LineTextSettings } from './render/lines';
+import { lineText, TOP_LEVEL_DIRECTIVES, type LineTextSettings } from './render/lines';
+import { ASSEMBLERS, assemblerOf, forcedMnemonic } from './render/dialect';
 
 export const NOTES_FILE = 'NOTES.html';
 export const NOTES_TEXT_FILE = 'NOTES.txt';
@@ -28,17 +29,19 @@ export function lineHtml(l: Line, S: LineTextSettings): string {
   const parts: [string, string][] = [];
   const toks = (tk: Token[]) => { for (const t of tk) parts.push([TOKEN_CLASS[t.t], t.s]); };
   const ind = ' '.repeat(S.indent);
+  // (written for the project's assembler, as lineText writes it: `//` or `;`, `lda.abs` or `lda @w`, spec 11.8)
+  const asm = assemblerOf(S), cs = ASSEMBLERS[asm].comment;
   const cmt = (c: string | undefined) => {
     if (!c) return;
     const len = parts.reduce((n, [, s]) => n + s.length, 0);
-    parts.push(['', ' '.repeat(Math.max(1, S.commentCol - len))], ['cm', '// ' + c]);
+    parts.push(['', ' '.repeat(Math.max(1, S.commentCol - len))], ['cm', `${cs} ${c}`]);
   };
   const cc = (c: string) => [l.a != null && S.addrComments && (l.k === 'ins' || l.k === 'dat') ? '$' + h4(l.a) : '', c].filter(Boolean).join('  ');
   switch (l.k) {
     case 'lbl': parts.push(['lb', l.name], ['', ':']); break;
-    case 'ins': parts.push(['', ind], [l.ill ? 'il' : 'mn', kickMnemonic(l.mn) + (l.ext || '')]); if (l.tok.length) { parts.push(['', ' ']); toks(l.tok); } cmt(cc(l.cmt)); break;
+    case 'ins': { const f = forcedMnemonic(l.mn, l.ext, asm); parts.push(['', ind], [l.ill ? 'il' : 'mn', f.mn]); if (l.tok.length) { parts.push(['', ' ' + f.pre]); toks(l.tok); } cmt(cc(l.cmt)); break; }
     case 'dat': parts.push(['', ind], ['dr', l.dir], ['', ' ']); toks(l.tok); cmt(cc(l.cmt)); break;
-    case 'dir': if (!(l.tok[0] && TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s))) parts.push(['', ind]); toks(l.tok); cmt(l.cmt); break;
+    case 'dir': if (!(l.tok[0] && (TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s) || l.tok[0].t === 'def'))) parts.push(['', ind]); toks(l.tok); cmt(l.cmt); break;
     default: parts.push(['cm', lineText(l, S)]);
   }
   return parts.map(([c, s]) => (c ? `<span class="${c}">${esc(s)}</span>` : esc(s))).join('');

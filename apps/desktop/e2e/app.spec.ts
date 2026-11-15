@@ -1232,7 +1232,7 @@ test('Smart attach opens each file as its extension says, and Brokkr packs a Kic
       const d = all[all.length - 1];
       return { title: d?.title, filters: d?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: d?.properties };
     });
-    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 and G64 disks, TAP and T64 tapes, Mimir projects and Kick Assembler sources: prg PRG vsf VSF crt CRT d64 D64 g64 G64 tap TAP t64 T64 json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
+    expect(o).toEqual({ title: 'Smart attach', filters: ['PRGs, snapshots, cartridges, D64 and G64 disks, TAP and T64 tapes, Mimir projects and Kick Assembler or 64tass sources: prg PRG vsf VSF crt CRT d64 D64 g64 G64 tap TAP t64 T64 json JSON asm ASM', 'All files: *'], properties: ['openFile', 'multiSelections'] });
   });
 
   await test.step('a VICE snapshot and a cartridge, each by its extension', async () => {
@@ -2245,7 +2245,7 @@ test('real addresses instead of the hardware include file', async ({ page }) => 
   const has = async (text: string) => (await rows()).some(t => t.startsWith(text));
   const choose = async (value: 'import' | 'none') => {
     await page.getByRole('button', { name: 'Settings' }).click();
-    await page.getByRole('tab', { name: 'Kick Assembler output' }).click();
+    await page.getByRole('tab', { name: 'Assembler output' }).click();
     await page.locator('#set-hwInclude').selectOption(value);
     await page.getByRole('button', { name: 'Save settings' }).click();
     // keys reach the listing once the dialog is gone (an earlier "Settings saved" toast may still be showing)
@@ -2738,7 +2738,7 @@ test('the export writes NOTES.html, or NOTES.txt when set, with the bookmarks an
   await test.step('Settings → NOTES.txt writes the plain-text document instead', async () => {
     await page.keyboard.press('Control+,');
     const dialog = page.getByRole('dialog', { name: 'Settings' });
-    await dialog.getByRole('tab', { name: 'Kick Assembler output' }).click();
+    await dialog.getByRole('tab', { name: 'Assembler output' }).click();
     await dialog.getByLabel('Bookmarks and comments in the export').selectOption('txt');
     await dialog.getByRole('button', { name: 'Save settings' }).click();
     await expect(dialog).toBeHidden();

@@ -2,7 +2,8 @@
  * validated with zod before it touches the file system or starts a process. */
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions, type WebContents } from 'electron';
 import { existsSync, statSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import { guessAssembler, type AssemblerId } from '@mimir/core';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { assertEntryName, type PathPolicy } from './paths';
@@ -14,7 +15,7 @@ import type { SettingsStore } from './settings';
 import { createProjectFolder, gatherWork, homeOf, nearestFolder, type ProjectStore } from './projects';
 import { PROJECT_FOLDERS } from '../../shared/projects';
 import { createBuildFolder, readDiskImage, readPrgFiles, readTapeImage, readProjectFile, writeExportFolder, writeProjectFile, type ExportWatcher } from './project-fs';
-import { buildWithKickAssembler, c64Roms, currentEditor, identifyWithTool, keepPacked, openInEditor, openTerminal, packWithBrokkr, packWithExomizer, runInDebugger, runInVice, unpackWithTool } from './toolchain';
+import { buildWithAssembler, c64Roms, currentEditor, identifyWithTool, keepPacked, openInEditor, openTerminal, packWithBrokkr, packWithExomizer, runInDebugger, runInVice, unpackWithTool } from './toolchain';
 import { viceAttach, viceCommand } from './vice-monitor';
 import { quicksaveFileName, quicksaveFiles, quicksaveInfo, readQuicksave, type QuicksaveHistory, type QuicksaveWatcher } from './quicksave';
 import { charRomFiles, readCharRom } from './chargen';
@@ -71,6 +72,11 @@ async function pickPaths(e: IpcMainInvokeEvent, options: OpenDialogOptions): Pro
   const win = windowOf(e.sender);
   const r = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   return r.canceled ? [] : r.filePaths;
+}
+
+/** the assembler a source on disk is likely written for (its first 256 KB read): Kick Assembler or 64tass */
+async function sourceAssembler(path: string): Promise<AssemblerId> {
+  try { return guessAssembler((await readFile(path, 'utf8')).slice(0, 256 * 1024)); } catch { return 'kick'; }
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -204,7 +210,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.fileSmart, smartAttachSchema, async (req, e): Promise<SmartAttachResult | null> => {
     const all = [...new Set(Object.values(SMART_EXTENSIONS).flat())];
     const paths = await pick(e, 'smart', { title: 'Smart attach', properties: ['openFile', 'multiSelections'], filters: [
-      { name: 'PRGs, snapshots, cartridges, D64 and G64 disks, TAP and T64 tapes, Mimir projects and Kick Assembler sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
+      { name: 'PRGs, snapshots, cartridges, D64 and G64 disks, TAP and T64 tapes, Mimir projects and Kick Assembler or 64tass sources', extensions: all.flatMap(x => [x, x.toUpperCase()]) },
       { name: 'All files', extensions: ['*'] },
     ] });
     if (!paths.length) return null;
@@ -218,7 +224,7 @@ export function registerIpc(deps: IpcDeps): void {
     if (plan.project) out.project = await read(plan.project, () => plan.project);
     if (plan.asm) {
       const path = plan.asm;
-      out.asm = await read(path, () => ({ path, dir: policy.allow(dirname(path)), entry: assertEntryName(basename(path)) }));
+      out.asm = await read(path, async () => ({ path, dir: policy.allow(dirname(path)), entry: assertEntryName(basename(path)), assembler: await sourceAssembler(path) }));
     }
     if (plan.disk) { const path = plan.disk; out.disk = await read(path, () => readDiskImage(path)); }
     if (plan.tape) { const path = plan.tape; out.tape = await read(path, () => readTapeImage(path)); }
@@ -248,15 +254,15 @@ export function registerIpc(deps: IpcDeps): void {
     return { dir, written };
   });
 
-  handle(CHANNELS.toolchainBuild, buildSchema, req => buildWithKickAssembler(req, settings.get(), policy));
+  handle(CHANNELS.toolchainBuild, buildSchema, req => buildWithAssembler(req, settings.get(), policy));
   // a source of the user's to build where it is (Pack from the start screen): its folder is allowed, as a dialog's
   handle(CHANNELS.asmPick, z.undefined().or(z.object({}).strict()), async (_req, e): Promise<AsmPickResult | null> => {
-    const [path] = await pick(e, 'asm', { title: 'Choose a Kick Assembler source to pack', properties: ['openFile'], filters: [{ name: 'Kick Assembler source', extensions: ['asm', 'ASM'] }, { name: 'All files', extensions: ['*'] }] });
+    const [path] = await pick(e, 'asm', { title: 'Choose a Kick Assembler or 64tass source to pack', properties: ['openFile'], filters: [{ name: 'Kick Assembler or 64tass source', extensions: ['asm', 'ASM'] }, { name: 'All files', extensions: ['*'] }] });
     if (!path) return null;
     const entry = basename(path);
-    if (!/\.asm$/i.test(entry)) throw new Error(`${entry} is not a .asm file: Kick Assembler builds .asm sources`);
+    if (!/\.asm$/i.test(entry)) throw new Error(`${entry} is not a .asm file: Kick Assembler and 64tass build .asm sources`);
     assertEntryName(entry);
-    return { path, dir: chose(dirname(path), 'asm'), entry };
+    return { path, dir: chose(dirname(path), 'asm'), entry, assembler: await sourceAssembler(path) };
   });
   handle(CHANNELS.toolchainRun, runSchema, req => (req.debugger ? runInDebugger(req, settings.get(), policy) : runInVice(req, settings.get(), policy)));
   handle(CHANNELS.toolchainUnpack, unpackSchema, req => unpackWithTool(req, settings.get()));

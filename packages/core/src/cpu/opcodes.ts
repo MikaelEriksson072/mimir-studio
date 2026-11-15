@@ -21,6 +21,9 @@ export interface OpcodeInfo {
   access: Access;
   /** Kick Assembler can express it with a mnemonic (round-trip safe) */
   kick: boolean;
+  /** 64tass (with `.cpu "6502i"`) gives this opcode for its mnemonic (TASS_NAMES) and mode: the first of the table
+   *  with them, the documented ones first (measured with 64tass 1.57.2900: `nop` is $ea, not $1a, `sbc #` $e9, not $eb) */
+  tass: boolean;
 }
 
 export const MODE_LEN: Record<AddrMode, 1 | 2 | 3> = { imp: 1, acc: 1, imm: 2, zp: 2, zpx: 2, zpy: 2, izx: 2, izy: 2, rel: 2, abs: 3, abx: 3, aby: 3, ind: 3 };
@@ -71,8 +74,22 @@ export const OPC: readonly OpcodeInfo[] = OPCODE_SRC.map((src, op): OpcodeInfo =
   const access: Access = WRITE_MN.has(mn) ? 'write' : (RMW_MN.has(mn) && mode !== 'acc') ? 'rmw'
     : (MODE_LEN[mode] > 1 && mode !== 'imm' && mode !== 'rel' && flow === 'seq') ? 'read' : null;
   const kick = !ill || (!unstable && KICK_ILLEGAL.has(mn) && !(mn === 'ANC' && op !== 0x0b));
-  return { op, mn, mode, len: MODE_LEN[mode], ill, unstable, jam: mn === 'JAM', flow, access, kick };
+  return { op, mn, mode, len: MODE_LEN[mode], ill, unstable, jam: mn === 'JAM', flow, access, kick, tass: false };
 });
+
+/** The names 64tass gives the undocumented opcodes whose names differ from ours (its `6502i` CPU); the rest are the same */
+export const TASS_NAMES: Readonly<Record<string, string>> = { ISC: 'ISB', ALR: 'ASR', AXS: 'SBX', XAA: 'ANE', AHX: 'SHA', TAS: 'SHS', LAS: 'LDS' };
+/** an opcode's mnemonic as 64tass writes it (upper case, as OPC has them) */
+export const tassName = (mn: string): string => TASS_NAMES[mn] ?? mn;
+
+/** 64tass's encoding table: its mnemonic (upper case) -> mode -> opcode, the documented opcodes first, then the
+ *  undocumented ones in the table's order; each opcode 64tass gives for its mnemonic and mode is marked `tass` */
+export const TASS_ENC: Record<string, Partial<Record<AddrMode, number>> | undefined> = {};
+for (const pref of [false, true]) for (const o of OPC) {
+  if (o.ill !== pref) continue;
+  const m = TASS_ENC[tassName(o.mn)] || (TASS_ENC[tassName(o.mn)] = {});
+  if (m[o.mode] === undefined) { m[o.mode] = o.op; (o as { tass: boolean }).tass = true; }
+}
 
 /** Assembler encoding table: mnemonic -> mode -> opcode (documented first, then Kick-accepted illegals). */
 export const ENC: Record<string, Partial<Record<AddrMode, number>> | undefined> = {};

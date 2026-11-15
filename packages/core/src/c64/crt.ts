@@ -4,7 +4,7 @@
  * them at when the C64 starts, and the other banks open from the Explorer. The image stays with the project, so the
  * export rebuilds it byte for byte in a Kick Assembler source of its own (cartridgeSource), from the re-assembled
  * chips and the others as binary files, and Build & Run starts it in VICE. */
-import type { Addr, Cartridge } from '../types';
+import type { Addr, AssemblerId, Cartridge } from '../types';
 import type { CartMode } from './memconfig';
 import { h2, h4 } from '../util/hex';
 import type { ParsedPrg } from './prg';
@@ -243,6 +243,8 @@ export const crtBase = (cart: Pick<Cartridge, 'name'>): string => cart.name.repl
 export interface CartSourceOptions {
   /** the output folder of the build (Settings.outDir), where the chips' PRGs are */
   outDir: string;
+  /** the assembler the source is for (Settings.assembler); missing: Kick Assembler */
+  assembler?: AssemblerId;
   /** the chips the project re-assembles: CHIP packet -> the name of their source (without .asm) */
   sources: ReadonlyMap<number, string>;
   hexCase?: 'lower' | 'upper';
@@ -251,21 +253,29 @@ export interface CartSourceOptions {
 /** A line of a cartridge's source: a comment, a directive with its operands and a comment, a label, a gap */
 export type CartLine = { k: 'cmt'; text: string } | { k: 'dir'; dir: string; args?: string; cmt?: string } | { k: 'lbl'; name: string } | { k: 'blank' };
 
-/** a line of a cartridge's source as text: comments at column 40, as Kick Assembler sources are written here */
-export const cartLineText = (l: CartLine): string => {
-  if (l.k === 'cmt') return `// ${l.text}`;
+/** a cartridge's directives as 64tass writes them (spec 11.8): `.binary`, `.cerror` */
+const TASS_DIRS: Readonly<Record<string, string>> = { '.import binary': '.binary', '.errorif': '.cerror' };
+/** a cartridge directive as the assembler writes it */
+export const cartDirective = (dir: string, asm: AssemblerId = 'kick'): string => (asm === '64tass' ? TASS_DIRS[dir] ?? dir : dir);
+
+/** a line of a cartridge's source as text: comments at column 40, as Kick Assembler (or 64tass) sources are written here */
+export const cartLineText = (l: CartLine, asm: AssemblerId = 'kick'): string => {
+  const cm = asm === '64tass' ? ';' : '//';
+  if (l.k === 'cmt') return `${cm} ${l.text}`;
   if (l.k === 'lbl') return `${l.name}:`;
   if (l.k === 'blank') return '';
-  const d = l.args ? `${l.dir} ${l.args}` : l.dir;
-  return l.cmt ? `${d.padEnd(40)}// ${l.cmt}` : d;
+  const dir = cartDirective(l.dir, asm);
+  const d = l.args ? `${dir} ${l.args}` : dir;
+  return l.cmt ? `${d.padEnd(40)}${cm} ${l.cmt}` : d;
 };
 
 /**
  * The image's header and CHIP packets as source lines (13.9): the header's and every packet header's bytes as commented
  * `.byte` lines (the name as `.text` in ASCII), and for each chip the lines `data` gives, after the label `chip<n>:`,
- * followed by an `.errorif` that checks the chip's length; `what` names where its bytes come from.
+ * followed by an `.errorif` that checks the chip's length; `what` names where its bytes come from. For 64tass (`asm`)
+ * every packet's "CHIP" is written in ASCII again: the chip's code before it may have picked another encoding.
  */
-export function cartImageLines(c: Crt, chip: (x: CrtChip) => { lines: CartLine[]; what: string; from: string }, hexCase?: 'lower' | 'upper'): CartLine[] {
+export function cartImageLines(c: Crt, chip: (x: CrtChip) => { lines: CartLine[]; what: string; from: string }, hexCase?: 'lower' | 'upper', asm: AssemblerId = 'kick'): CartLine[] {
   const up = hexCase === 'upper';
   const x2 = (v: number) => '$' + (up ? h2(v).toUpperCase() : h2(v));
   const x4 = (v: number) => '$' + (up ? h4(v).toUpperCase() : h4(v));
@@ -300,6 +310,7 @@ export function cartImageLines(c: Crt, chip: (x: CrtChip) => { lines: CartLine[]
     const size = x.data.length, d = chip(x);
     bytes(p, x.offset, 'between the packets');
     out.push({ k: 'blank' }, { k: 'cmt', text: `CHIP ${x.index}: bank ${x.bank}, ${chipTypeName(x.type)} at ${x4(x.load)}, ${size} bytes${d.what ? ` (${d.what})` : ''}` });
+    if (asm === '64tass') dir('.enc', '"ascii"');
     dir('.text', '"CHIP"');
     bytes(x.offset + 4, x.offset + 8, `packet length: ${x.length}`);
     bytes(x.offset + 8, x.offset + 10, `chip type: ${chipTypeName(x.type)}`);
@@ -323,7 +334,19 @@ export function cartImageLines(c: Crt, chip: (x: CrtChip) => { lines: CartLine[]
 export function cartridgeSource(name: string, c: Crt, o: CartSourceOptions): { source: string; files: Record<string, Uint8Array> } {
   const base = crtBase({ name }), files: Record<string, Uint8Array> = {};
   const outDir = o.outDir.replace(/\\/g, '/').replace(/\/+$/, '') || '.';
-  const head = [
+  // 64tass (spec 11.8): the image from offset 0 as it is (--nostart, -X past 64 KB), its texts in an ASCII encoding
+  const head = o.assembler === '64tass' ? [
+    `; ${name} — the cartridge image, rebuilt by Mimir Studio`,
+    `; ${describeCrt(c)}${c.name ? `: "${c.name}"` : ''}`,
+    `; ${c.chips.length} CHIP packet${c.chips.length === 1 ? '' : 's'}: ${o.sources.size ? `${o.sources.size} re-assembled from ${o.sources.size === 1 ? 'its source' : 'their sources'}, built first into ${outDir}/` : 'none re-assembled'}${o.sources.size < c.chips.length ? `, ${c.chips.length - o.sources.size} from banks/` : ''}`,
+    `; Assemble the chips' sources first (build.bat and build.sh do); this writes ${outDir}/${crtOutputName(base)}`,
+    '; with 64tass -a -C --nostart -X: the image as it is, from offset 0 (-X: it can run past 64 KB).',
+    '',
+    '* = 0',
+    '.enc "ascii"                            ; the header in ASCII: the printable characters as they are',
+    '.cdef " ~", 32',
+    '',
+  ] : [
     `// ${name} — the cartridge image, rebuilt by Mimir Studio`,
     `// ${describeCrt(c)}${c.name ? `: "${c.name}"` : ''}`,
     `// ${c.chips.length} CHIP packet${c.chips.length === 1 ? '' : 's'}: ${o.sources.size ? `${o.sources.size} re-assembled from ${o.sources.size === 1 ? 'its source' : 'their sources'}, built first into ${outDir}/` : 'none re-assembled'}${o.sources.size < c.chips.length ? `, ${c.chips.length - o.sources.size} from banks/` : ''}`,
@@ -341,6 +364,6 @@ export function cartridgeSource(name: string, c: Crt, o: CartSourceOptions): { s
     const bin = `banks/${chipName(c, x)}.bin`;
     files[bin] = x.data.slice();
     return { lines: [{ k: 'dir', dir: '.import binary', args: `"${bin}"` }], what: '', from: bin };
-  }, o.hexCase);
-  return { source: [...head, ...lines.map(cartLineText)].join('\n') + '\n', files };
+  }, o.hexCase, o.assembler);
+  return { source: [...head, ...lines.map(l => cartLineText(l, o.assembler))].join('\n') + '\n', files };
 }

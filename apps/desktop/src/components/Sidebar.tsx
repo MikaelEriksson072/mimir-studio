@@ -570,7 +570,7 @@ function ViewOffsetsSection({ list, shown, onGo, onEdit, onRemove, onRemoveAll, 
  * The export and Build & Run rebuild the whole image, the chips not opened from their bytes.
  */
 function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt: Crt; name: string; project: Project; onOpenBank: (bank: number, leave?: boolean) => void; onOneSource: (on: boolean) => void }) {
-  const one = !!project.settings.cartOneSource;
+  const one = !!project.settings.cartOneSource, asm = project.settings.assembler;
   const banks = useMemo(() => crtBanks(crt), [crt]);
   const open = new Set(project.files.map(f => f.chip).filter((c): c is number => c != null));
   const boot = bootBank(crt);
@@ -599,7 +599,9 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
           );
         })}
       </div>
-      <label className="check small cart-one" title={`Every bank in one Kick Assembler source, ${name.replace(/\.crt$/i, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'cartridge'}.crt.asm, which writes the whole cartridge by itself: each chip in a segment, each bank in a namespace (the same names can be in several banks), the header and CHIP packets last. Off: a source per chip and one for the image`}>
+      <label className="check small cart-one" title={asm === '64tass'
+        ? `Every bank in one 64tass source, ${name.replace(/\.crt$/i, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'cartridge'}.crt.asm, which writes the whole cartridge by itself: the header, then each CHIP packet with its chip's code where it runs (.logical), each bank in a namespace (the same names can be in several banks). Off: a source per chip and one for the image`
+        : `Every bank in one Kick Assembler source, ${name.replace(/\.crt$/i, '').replace(/[^A-Za-z0-9_-]+/g, '_') || 'cartridge'}.crt.asm, which writes the whole cartridge by itself: each chip in a segment, each bank in a namespace (the same names can be in several banks), the header and CHIP packets last. Off: a source per chip and one for the image`}>
         <input type="checkbox" checked={one} onChange={e => onOneSource(e.target.checked)} /> All banks in one .asm
       </label>
       <div className="side-hint">{cartModeName(crt.mode)} · every bank is in the listing, one after the other · a click goes to a bank, + adds one, × leaves one out · the export and Build &amp; Run rebuild the whole .crt</div>

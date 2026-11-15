@@ -88,6 +88,8 @@ export interface Settings {
    * ROM, self-modified jump targets and branches with known flags are not followed) */
   deepAnalysis: boolean;
   // output
+  /** the assembler the source is written for and built with: Kick Assembler 5.x or 64tass (spec 11.8) */
+  assembler: AssemblerId;
   mnemonicCase: 'lower' | 'upper';
   hexCase: 'lower' | 'upper';
   bytesPerRow: number;
@@ -110,6 +112,10 @@ export interface Settings {
   vicePath: string;
   outDir: string;
   kickArgs: string;
+  /** 64tass (empty: the one that comes with the app) and the arguments it gets besides Mimir's own (`-a -C --cbm-prg -o
+   *  … --vice-labels -l …`) */
+  tassPath: string;
+  tassArgs: string;
   viceArgs: string;
   /** an external unpacker for packed PRGs (unp64; empty: Sindri, the built-in one) and its argument template: {in} the packed
    * PRG, {out} the result */
@@ -140,10 +146,12 @@ export interface Settings {
 }
 
 export type MusicPlayer = 'vice' | 'deepsid';
+/** the assemblers the source can be written for (Settings.assembler) */
+export type AssemblerId = 'kick' | '64tass';
 /** Retro Debugger, or C64 Debugger (both Marcin Skoczylas', with VICE inside) */
 export type DebuggerKind = 'retro' | 'c64d';
 
-export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer' | 'debugger' | 'retroDebuggerPath' | 'retroDebuggerArgs' | 'c64DebuggerPath' | 'c64DebuggerArgs' | 'debuggerWait'>;
+export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'tassPath' | 'tassArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer' | 'debugger' | 'retroDebuggerPath' | 'retroDebuggerArgs' | 'c64DebuggerPath' | 'c64DebuggerArgs' | 'debuggerWait'>;
 
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment.
  *  `below`: empty lines between it and the line (the empty lines of Project.blanks go above it). */
@@ -1007,6 +1015,8 @@ export interface RenderResult {
   parts?: RenderResult[];
   /** the source to show first when it is not the first file's: a cartridge's banks in one source (13.9c) */
   main?: string;
+  /** the assembler the files are written for (Settings.assembler; missing: Kick Assembler) */
+  assembler?: AssemblerId;
   /** the view offsets the listing (`lines`, `labels`) shows (spec 10.4): those of RenderOptions.viewOffsets whose bytes
    *  can be shown. The files, fileLines and problems never see them */
   viewOffsets?: ViewOffset[];

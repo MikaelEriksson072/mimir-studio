@@ -1,9 +1,11 @@
-/* Round trip: render -> assemble every file -> compare with the original PRG byte by byte.
+/* Round trip: render -> assemble every file (with the built-in Kick Assembler, or 64tass for a source written for it)
+ * -> compare with the original PRG byte by byte.
  * Blocks left out of the build (RenderResult.excluded) are not compared: the output starts and ends at the first
- * and last byte that is built, and must not contain the excluded bytes (a gap Kick Assembler fills with zeros). */
+ * and last byte that is built, and must not contain the excluded bytes (a gap both assemblers fill with zeros). */
 import type { Addr, AnalysisResult, ExcludedRange, RenderResult, VerifyDiff, VerifyResult } from '../types';
 import { h4 } from '../util/hex';
 import { assemble } from './kick-subset-assembler';
+import { assembleTass } from './tass-subset-assembler';
 
 interface Span { start: Addr; end: Addr }
 
@@ -18,7 +20,7 @@ function built(load: Addr, end: Addr, skip: readonly Span[]) {
 export function verify(A: AnalysisResult, R: RenderResult): VerifyResult {
   const results = A.files.map((f, fi) => {
     const path = `${R.fileNames[fi]}.asm`;
-    const asm = assemble(R.files, path);
+    const asm = (R.assembler === '64tass' ? assembleTass : assemble)(R.files, path);
     const end = Math.min(0x10000, f.load + f.bytes.length);
     const b = built(f.load, end, (R.excluded || []).filter((x: ExcludedRange) => x.file === fi));
     const diffs: VerifyDiff[] = [];

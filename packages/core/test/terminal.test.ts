@@ -20,6 +20,12 @@ describe('terminal command', () => {
     expect(c.env).toMatchObject({ Path: 'C:\\VICE\\bin;C:\\Windows', HOME: 'h', KICKASS_JAR: 'C:\\C64\\KickAss.jar', MIMIR_JAVA: 'C:\\jdk\\bin\\java.exe' });
   });
 
+  it('puts 64tass\'s folder on PATH too, after VICE\'s', () => {
+    const c = terminalCommand({ dir: 'C:\\work', platform: 'win32', tassPath: 'C:\\Mimir\\resources\\64tass\\64tass.exe', vicePath: 'C:\\VICE\\bin\\x64sc.exe', env: { Path: 'C:\\Windows' } });
+    expect(c.env.Path).toBe('C:\\VICE\\bin;C:\\Mimir\\resources\\64tass;C:\\Windows');
+    expect(c.args[3]).toBe("Write-Host 'Mimir Studio terminal: 64tass -a -C <file.asm> runs 64tass, x64sc <file.prg> starts VICE' -ForegroundColor DarkGray");
+  });
+
   it('works without a toolchain', () => {
     const c = terminalCommand({ dir: 'C:\\work', platform: 'win32', env: { Path: 'C:\\Windows' } });
     expect(c.args[3]).toBe("Write-Host 'Mimir Studio terminal' -ForegroundColor DarkGray");

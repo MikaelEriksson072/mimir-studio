@@ -20,7 +20,8 @@ import { analyze as analyzeOne } from './analyze';
 import { addDeepReports } from './analyze/deep';
 import { render as renderOne, type RenderOptions } from './render/kick';
 import { verify as verifyOne } from './verify/verify';
-import { cartImageLines, chipAddress, chipName, crtBanks, crtBase, crtOutputName, crtSourceName, describeCrt, parseCrt, type CartLine, type Crt } from './c64/crt';
+import { cartDirective, cartImageLines, chipAddress, chipName, crtBanks, crtBase, crtOutputName, crtSourceName, describeCrt, parseCrt, type CartLine, type Crt } from './c64/crt';
+import { isTass } from './render/dialect';
 
 export const SPACE = 0x10000;
 export const spaceOf = (a: Addr): number => Math.floor(a / SPACE);
@@ -356,13 +357,14 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
 
   // what every chip's head defined, once: the include, the hardware names, the PETSCII control codes, the zero-page
   // variables (with their notes)
-  let include: Line | null = null;
+  // (64tass's head can have two such lines: .cpu "6502i" and the .include)
+  const includes: Line[] = [];
   const hw: Line[] = [], pet: Line[] = [], zp: Line[] = [], seen = new Set<string>();
   for (const i of order) {
     let notes: Line[] = [];
     for (const l of text(i)) {
       if (l.k === 'blank' || !('head' in l)) continue;
-      if (l.head === 'import' && !include) include = l;
+      if (l.head === 'import' && l.k === 'dir') { const t = `import ${lineText(l, S)}`; if (!seen.has(t)) { seen.add(t); includes.push(l); } }
       else if (l.head === 'hw' && l.k === 'dir') { const t = lineText(l, S); if (!seen.has(t)) { seen.add(t); hw.push(l); } }
       else if (l.head === 'pet' && l.k === 'dir') { const t = lineText(l, S); if (!seen.has(t)) { seen.add(t); pet.push(l); } }
       else if (l.head === 'zp' && l.k === 'cmt' && l.zp != null) notes.push(l);
@@ -372,6 +374,65 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
         notes = [];
       }
     }
+  }
+  const hoisted: Line[] = [
+    ...includes,
+    ...(hw.length ? [cmt(at0, 'hardware and KERNAL symbols'), ...hw] : []),
+    ...(pet.length ? [blank(at0), cmt(at0, 'PETSCII control codes, written by name in the texts'), ...pet.sort((x, y) => petValue(x).localeCompare(petValue(y)))] : []),
+    ...(zp.length ? [blank(at0), cmt(at0, 'zero page (every bank)'), ...zp] : []),
+  ];
+  const others = [...chunks.keys()].filter(i => !isChip(i));
+  const files: Record<string, Uint8Array> = {};
+  if (isTass(S)) {
+    // 64tass has no segments (spec 11.8): the image is written as it goes, from offset 0, its header and each CHIP
+    // packet, and in the packet the chip's code where it runs (.logical), inside its bank's namespace (opened again
+    // for a bank's next chip: `.namespace bank03`)
+    const opened = new Set<number>();
+    const chipLines = new Map<number, Line[]>();
+    for (const i of order) {
+      const c = chipOf(i), a = chunks.get(i)!.bar.a, again = opened.has(c.bank);
+      opened.add(c.bank);
+      const ns0: Line = again ? { k: 'dir', a, n: 0, tok: [{ t: 'dir', s: '.namespace' }, { t: 'p', s: ' ' }, { t: 'p', s: ns(c.bank) }], cmt: `bank ${c.bank} again: ${R.fileNames[i]}` }
+        : { k: 'dir', a, n: 0, tok: [{ t: 'def', s: ns(c.bank) }, { t: 'p', s: ' ' }, { t: 'dir', s: '.namespace' }], cmt: `bank ${c.bank}: ${R.fileNames[i]}` };
+      chipLines.set(c.index, [ns0, dir(a, '.logical', x4(chipAddress(crt, c)), `the chip runs at ${x4(chipAddress(crt, c))}-${x4(chipAddress(crt, c) + c.data.length - 1)}`)]);
+    }
+    const segOf = new Map(order.map(i => [chipOf(i).index, i]));
+    const toLine = (l: CartLine): Line => l.k === 'cmt' ? cmt(at0, l.text) : l.k === 'blank' ? blank(at0)
+      : l.k === 'lbl' ? { k: 'dir', a: at0, n: 0, tok: [{ t: 'def', s: l.name }, { t: 'p', s: ':' }] } : dir(at0, cartDirective(l.dir, '64tass'), l.args ?? '', l.cmt ?? '');
+    /** the image's lines, each project chip's code (`body`: its listing lines or its source's) in its packet */
+    const image = (body: (i: number) => readonly Line[]): Line[] => cartImageLines(crt, x => {
+      const i = segOf.get(x.index);
+      if (i != null) return { lines: [{ k: 'cmt', text: `\u0000${x.index}` }], what: `${R.fileNames[i]}, in ${ns(x.bank)}`, from: R.fileNames[i] };
+      const bin = `banks/${chipName(crt, x)}.bin`;
+      files[bin] = x.data.slice();
+      return { lines: [{ k: 'dir', dir: '.import binary', args: `"${bin}"` }], what: 'not in the project', from: bin };
+    }, S.hexCase, '64tass').flatMap((l): Line[] => {
+      const m = l.k === 'cmt' ? /^\u0000(\d+)$/.exec(l.text) : null;
+      if (!m) return [toLine(l)];
+      const i = segOf.get(+m[1])!, end = chunks.get(i)!.lines.at(-1)?.a ?? chunks.get(i)!.bar.a;
+      return [...chipLines.get(+m[1])!, ...body(i).filter(x => !('head' in x && x.head && HOISTED.has(x.head))),
+        dir(end, '.here', '', `end of ${R.fileNames[i]}`), dir(end, '.endnamespace', '', `end of bank ${chipOf(i).bank}`)];
+    });
+    const head: Line[] = [
+      cmt(at0, `${project.cart!.name} — every bank of the cartridge in one source, re-assembled by Mimir Studio`),
+      cmt(at0, `${describeCrt(crt)}${crt.name ? `: "${crt.name}"` : ''}`),
+      cmt(at0, `Assemble this file alone with 64tass -a -C --nostart -X: it writes ${crtOutputName(base)}, from offset 0. Each bank is a`),
+      cmt(at0, 'namespace, so the same name can be in several banks (bank03.start is bank 3\'s start from outside it), and each'),
+      cmt(at0, 'chip\'s code is in its CHIP packet, where it runs (.logical).'),
+      blank(at0),
+      ...hoisted,
+      blank(at0),
+      dir(at0, '*', '= 0', 'the image: its header, then each CHIP packet with its chip'),
+      dir(at0, '.enc', '"ascii"', 'the header in ASCII: the printable characters as they are'),
+      dir(at0, '.cdef', '" ~", 32'),
+      blank(at0),
+    ];
+    return {
+      ...R, main: entry, parts: R.parts ?? [R],
+      lines: [{ k: 'file', a: at0, text: `${entry} · every bank`, fi: order[0] }, ...head, ...image(i => chunks.get(i)!.lines), ...others.flatMap(i => [chunks.get(i)!.bar, ...chunks.get(i)!.lines])],
+      files: { ...Object.fromEntries(Object.entries(R.files).filter(([k]) => !order.some(i => k === `${R.fileNames[i]}.asm`))), ...files, [entry]: [...head, ...image(text)].map(l => lineText(l, S)).join('\n') + '\n' },
+      fileLines: { ...Object.fromEntries(Object.entries(R.fileLines).filter(([k]) => !order.some(i => k === `${R.fileNames[i]}.asm`))), [entry]: [...head, ...image(text)] },
+    };
   }
   const top: Line[] = [
     cmt(at0, `${project.cart!.name} — every bank of the cartridge in one source, re-assembled by Mimir Studio`),
@@ -383,10 +444,7 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
     dir(at0, '.segmentdef', 'Cartridge [start=0]'),
     ...order.map(i => { const c = chipOf(i), a = chipAddress(crt, c); return dir(chunks.get(i)!.bar.a, '.segmentdef', `${seg(i)} [min=${x4(a)}, max=${x4(a + c.data.length - 1)}, fill]`, `bank ${c.bank}`); }),
     blank(at0),
-    ...(include ? [include] : []),
-    ...(hw.length ? [cmt(at0, 'hardware and KERNAL symbols'), ...hw] : []),
-    ...(pet.length ? [blank(at0), cmt(at0, 'PETSCII control codes, written by name in the texts'), ...pet.sort((x, y) => petValue(x).localeCompare(petValue(y)))] : []),
-    ...(zp.length ? [blank(at0), cmt(at0, 'zero page (every bank)'), ...zp] : []),
+    ...hoisted,
     blank(at0),
   ];
   // each bank in its namespace, each chip in its segment, without what the top defines
@@ -401,7 +459,6 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
     ];
   });
   // the image: the header and the CHIP packets, each chip from its segment, one not in the project from banks/
-  const files: Record<string, Uint8Array> = {};
   const segOf = new Map(order.map(i => [chipOf(i).index, seg(i)]));
   const atEnd = chunks.get(order[order.length - 1])!.lines.at(-1)?.a ?? at0;
   const toLine = (l: CartLine): Line => l.k === 'cmt' ? cmt(atEnd, l.text) : l.k === 'blank' ? blank(atEnd)
@@ -421,8 +478,7 @@ export function oneSource(project: ProjectInput, S: Settings, R: RenderResult): 
   ];
   const listing = [...top, ...banked(i => chunks.get(i)!.lines), ...image];
   const source = [...top, ...banked(text), ...image];
-  // files that are not chips keep their sources and their file bars
-  const others = [...chunks.keys()].filter(i => !isChip(i));
+  // (files that are not chips keep their sources and their file bars: `others`)
   const out: RenderResult = {
     // the render of a source per chip stays for verify (13.9c): a project of one space has no other
     ...R, main: entry, parts: R.parts ?? [R],

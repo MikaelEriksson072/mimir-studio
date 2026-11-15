@@ -1,11 +1,13 @@
-/* Node-only: opens a terminal window in a folder, with the toolchain at hand: VICE's folder on PATH and, on
- * Windows, a `kickass` command that runs KickAss.jar with the configured Java. */
+/* Node-only: opens a terminal window in a folder, with the toolchain at hand: VICE's and 64tass's folders on PATH and,
+ * on Windows, a `kickass` command that runs KickAss.jar with the configured Java. */
 import { spawn } from 'node:child_process';
 import { posix, win32 } from 'node:path';
 
 export interface TerminalLaunch {
   dir: string;
   java?: string; kickJar?: string; vicePath?: string;
+  /** 64tass: its folder goes on PATH too (spec 11.8) */
+  tassPath?: string;
   platform?: NodeJS.Platform;
   /** the environment to extend (default: this process's) */
   env?: Record<string, string | undefined>;
@@ -22,10 +24,12 @@ export function terminalCommand(o: TerminalLaunch): TerminalCommand {
   const base = o.env ?? process.env;
   const env: Record<string, string | undefined> = { ...base };
   const pathKey = Object.keys(base).find(k => k.toUpperCase() === 'PATH') ?? 'PATH';
-  if (o.vicePath) env[pathKey] = [(platform === 'win32' ? win32 : posix).dirname(o.vicePath), base[pathKey]].filter(Boolean).join(platform === 'win32' ? ';' : ':');
+  const dirOf = (p: string) => (platform === 'win32' ? win32 : posix).dirname(p);
+  const onPath = [o.vicePath, o.tassPath].filter((p): p is string => !!p).map(dirOf);
+  if (onPath.length) env[pathKey] = [...new Set(onPath), base[pathKey]].filter(Boolean).join(platform === 'win32' ? ';' : ':');
   if (o.kickJar) { env.KICKASS_JAR = o.kickJar; env.MIMIR_JAVA = o.java || 'java'; }
   if (platform === 'win32') {
-    const hint = [o.kickJar && 'kickass <file.asm> runs Kick Assembler', o.vicePath && 'x64sc <file.prg> starts VICE'].filter(Boolean).join(', ');
+    const hint = [o.kickJar && 'kickass <file.asm> runs Kick Assembler', o.tassPath && '64tass -a -C <file.asm> runs 64tass', o.vicePath && 'x64sc <file.prg> starts VICE'].filter(Boolean).join(', ');
     const script = [
       o.kickJar ? 'function global:kickass { & $env:MIMIR_JAVA -jar $env:KICKASS_JAR @args }' : '',
       `Write-Host 'Mimir Studio terminal${hint ? `: ${hint}` : ''}' -ForegroundColor DarkGray`,

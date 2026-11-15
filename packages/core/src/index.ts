@@ -6,7 +6,7 @@ export { T, TYPE_INFO, TYPE_BY_KEY, MARK_AS, MARK_TYPE, DEFAULT_SETTINGS, TOOLCH
 export type { TypeGroup, TypeInfo, MarkAs } from './model';
 export { h2, h4, $2, $4, word } from './util/hex';
 
-export { OPC, ENC, MODE_LEN, KICK_ILLEGAL } from './cpu/opcodes';
+export { OPC, ENC, MODE_LEN, KICK_ILLEGAL, TASS_ENC, TASS_NAMES, tassName } from './cpu/opcodes';
 export { undocumentedOpcode, undocumentedText, type UndocumentedInfo } from './cpu/undocumented';
 export type { OpcodeInfo, AddrMode, Flow, Access } from './cpu/opcodes';
 export { decode } from './cpu/decode';
@@ -61,13 +61,17 @@ export { validLabel, type RenderOptions } from './render/kick';
 export { applyZpPairs, zpPairable } from './zp-pairs';
 export { addJunk, junkAt, junkIn, removeJunk } from './junk';
 export { refsShown, removeViewOffset, setViewOffset, shiftText, shownAddress, shownLabelName, shownTarget, usableViewOffsets, viewOffsetAt, viewOffsetFit, viewOffsetProblem } from './viewoffsets';
-export { lineText, kickMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';
+export { lineText, kickMnemonic, lineMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';
 export type { LineTextSettings } from './render/lines';
 export { hardwareInclude } from './render/include';
+// the assemblers the source can be written for (spec 11.8)
+export { ASSEMBLERS, asmMnemonic, assemblerOf, forcedMnemonic, guessAssembler, isLabelDefinition, isTass, labelFor, TASS_FIXED_ARGS, type AssemblerInfo } from './render/dialect';
 
 export { assemble, type AssembleOptions } from './verify/kick-subset-assembler';
+export { assembleTass } from './verify/tass-subset-assembler';
 export { comparePrg } from './verify/verify';
 export { parseKickOutput } from './verify/kick-output';
+export { parseTassOutput } from './verify/tass-output';
 
 export { DEMO_FONT, makeDemo } from './demo';
 export type { DemoProgram } from './demo';

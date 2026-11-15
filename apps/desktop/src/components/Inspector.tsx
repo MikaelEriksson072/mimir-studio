@@ -11,6 +11,7 @@ import { Heatmap, type CanvasColors, type HeatMode } from './Heatmap';
 import { GfxPreview, type GfxMode } from './GfxPreview';
 import { blockMc } from '../lib/gfxlines';
 import { CyclesSection } from './Cycles';
+import { asmWords, useAssembler } from '../lib/assembler';
 
 interface InspectorProps {
   A: AnalysisResult; R: RenderResult; project: Project; cursor: Addr | null; sel: Sel | null; colors: CanvasColors;
@@ -59,6 +60,7 @@ interface InspectorProps {
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
 export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice' }: InspectorProps) {
+  const words = asmWords(useAssembler());
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
@@ -122,7 +124,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
             </select></label>}
           {FORMATTABLE.includes(blk.type) && <FormatFields blk={blk} defaultRow={blk.type === 'words' ? 1 : A.S.bytesPerRow} onFormat={onFormat} />}
           {blk.type === 'sprite' && <SpriteFields key={`${blk.start}-${blk.end}`} blk={blk} onSprites={onSprites} />}
-          <label className="check" title={runRl ? 'Written inside the .pseudopc of the relocated block: leave out the whole relocated block instead' : undefined}><input type="checkbox" aria-label="Include in the build" disabled={!!runRl} checked={!project.excluded.includes(blk.start)} onChange={() => onToggleExcluded(blk.start)} /><span>Include in the build<small className="muted"> — when off, the block stays in the source under #if and its bytes are left out</small></span></label>
+          <label className="check" title={runRl ? `Written inside the ${words.pseudopc} of the relocated block: leave out the whole relocated block instead` : undefined}><input type="checkbox" aria-label="Include in the build" disabled={!!runRl} checked={!project.excluded.includes(blk.start)} onChange={() => onToggleExcluded(blk.start)} /><span>Include in the build<small className="muted"> — when off, the block stays in the source under #if and its bytes are left out</small></span></label>
           <label className="check"><input type="checkbox" aria-label="Save as a binary file" checked={project.binary.includes(blk.start)} onChange={() => onToggleBinary(blk.start)} /><span>Save as a binary file<small className="muted"> — the export writes <span className="mono">data/{lb ? lb.name : `block_${h4(blk.start)}`}.bin</span> and the source loads it with .import binary</small></span></label>
           <div className="merge-row">
             {([['prev', 'Merge with previous'], ['next', 'Merge with next']] as const).map(([dir, label]) => { const m = mergeOverride(A, blk.start, dir); return (
@@ -190,9 +192,10 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
 /** A relocated block (spec 8.1b): where it is loaded and where it runs, and buttons to run it elsewhere or to stop
  *  relocating it. `inside`: the block shown is one where it runs. */
 function RelocNotice({ R, r, inside, onRelocate, onUnrelocate }: { R: RenderResult; r: NonNullable<ReturnType<typeof relocAt>>; inside: boolean } & Pick<InspectorProps, 'onRelocate' | 'onUnrelocate'>) {
+  const asm = useAssembler();
   const n = r.end - r.start, name = R.labels.get(r.start)?.name;
   const loaded = <span className="mono">${h4(r.start)}–${h4(r.end - 1)}</span>, runs = <span className="mono">${h4(r.to)}–${h4(r.to + n - 1)}</span>;
-  const pc = <span className="mono">.pseudopc ${h4(r.to)} {'{ }'}</span>;
+  const pc = <span className="mono">{asm === '64tass' ? `.logical $${h4(r.to)} … .here` : <>.pseudopc ${h4(r.to)} {'{ }'}</>}</span>;
   return (
     <div className="notice small reloc-notice">
       <Icon name="info" size={14} />
@@ -275,7 +278,7 @@ function FormatFields({ blk, defaultRow, onFormat }: { blk: Block; defaultRow: n
         <div className="seg fmt-seg" role="group" aria-label="Number format">
           {opts.map(([k, l, t]) => <button key={l} className={cx(fmt === k && 'on')} aria-pressed={fmt === k} title={t} onClick={() => { if (fmt !== k) onFormat(blk, { fmt: k }); }}>{l}</button>)}
         </div></div>
-      <label className="field fmt-row" title={`1 to 64 ${words ? 'words' : 'bytes'} on a line of the source; ${defaultRow} is the default${words ? '' : ' (Settings → Kick Assembler output)'}`}><span>{words ? 'Words per row' : 'Bytes per row'}</span>
+      <label className="field fmt-row" title={`1 to 64 ${words ? 'words' : 'bytes'} on a line of the source; ${defaultRow} is the default${words ? '' : ' (Settings → Assembler output)'}`}><span>{words ? 'Words per row' : 'Bytes per row'}</span>
         <input className={cx('mono', bad && 'bad')} value={text} inputMode="numeric" spellCheck={false} onChange={e => { setText(e.target.value); setBad(false); }} onBlur={() => take()}
           onKeyDown={e => {
             if (e.key === 'Enter') { e.preventDefault(); take(); }

@@ -3,7 +3,7 @@
  * project keeps the user's version and the export writes it. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { BUILD_SCRIPTS, lineText, type Addr, type AnalysisResult, type BuildScript, type KickProblem, type Line, type RenderResult, type Settings, type Vfs } from '@mimir/core';
+import { BUILD_SCRIPTS, isLabelDefinition, lineText, type AssemblerId, type Addr, type AnalysisResult, type BuildScript, type KickProblem, type Line, type RenderResult, type Settings, type Vfs } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { Changed, NavOptions } from '../lib/types';
 import { LineBody, lineScriptMarks, scriptMarkTip, type ScriptMark } from './Listing';
@@ -31,7 +31,8 @@ interface SourceViewProps {
 
 const isScript = (p: string): p is BuildScript => (BUILD_SCRIPTS as readonly string[]).includes(p);
 
-const languageOf = (p: string) => p.endsWith('.asm') ? 'kickass' : p.endsWith('.md') ? 'markdown' : p.endsWith('.sh') ? 'shell' : p.endsWith('.bat') ? 'bat' : 'plaintext';
+/** a file's language in the editor: an .asm source in the language of the assembler it is written for (spec 11.8) */
+const languageOf = (p: string, asm?: AssemblerId) => p.endsWith('.asm') ? (asm === '64tass' ? 'tass64' : 'kickass') : p.endsWith('.md') ? 'markdown' : p.endsWith('.sh') ? 'shell' : p.endsWith('.bat') ? 'bat' : 'plaintext';
 
 /** the address a script can be linked to at a place in a source file: the name under the pointer when it is one of the
  *  program's (a label, a zero-page variable), else the line's (its label, its .label line's, its first byte) */
@@ -43,7 +44,7 @@ function linkAddrAt(R: RenderResult, line: Line | undefined, word: string | null
     for (const [a, z] of R.zp) if (!z.off && z.name === word) return a;
   }
   if (!line) return null;
-  if (line.k === 'dir' && line.tok[0]?.s === '.label') {
+  if (line.k === 'dir' && isLabelDefinition(line)) {
     if (line.zp != null) return line.zp;
     const def = line.tok.find(t => t.t === 'def');
     if (def) for (const [a, l] of labels) if (l.name === def.s) return a;
@@ -175,8 +176,11 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     if (state !== 'ready' || !cur || !monaco || !e) return;
     if (pending.current && pending.current.path !== cur.path) flush();
     let m = models.current[cur.path];
-    if (!m) { m = monaco.editor.createModel(cur.text, languageOf(cur.path), monaco.Uri.parse('file:///' + cur.path)); models.current[cur.path] = m; }
-    else if (m.getValue() !== cur.text && pending.current?.path !== cur.path) {
+    const lang = languageOf(cur.path, R.assembler);
+    if (!m) { m = monaco.editor.createModel(cur.text, lang, monaco.Uri.parse('file:///' + cur.path)); models.current[cur.path] = m; }
+    // (the project's assembler changed: the same file in the other one's language, with its new text below)
+    else if (m.getLanguageId() !== lang) monaco.editor.setModelLanguage(m, lang);
+    if (m.getValue() !== cur.text && pending.current?.path !== cur.path) {
       // a change from outside (settings, undo, Restore generated): not an edit of the user's
       const vs = e.saveViewState(); applying.current = true; m.setValue(cur.text); applying.current = false; if (e.getModel() === m && vs) e.restoreViewState(vs);
     }
@@ -185,14 +189,14 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     e.updateOptions({ readOnly: !isScript(cur.path) });
   }, [state, cur?.path, cur?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Kick Assembler errors as editor markers
+  // the assembler's errors (Kick Assembler's or 64tass's) as editor markers
   useEffect(() => {
     const monaco = monacoRef.current;
     if (state !== 'ready' || !monaco) return;
     for (const [p, m] of Object.entries(models.current)) {
       monaco.editor.setModelMarkers(m, 'kickass', problems.filter(pr => pr.file === p && pr.line > 0).map(pr => ({
         severity: pr.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
-        message: `Kick Assembler: ${pr.message}`, startLineNumber: pr.line, startColumn: Math.max(1, pr.column), endLineNumber: pr.line, endColumn: m.getLineMaxColumn(Math.min(pr.line, m.getLineCount())),
+        message: `${R.assembler === '64tass' ? '64tass' : 'Kick Assembler'}: ${pr.message}`, startLineNumber: pr.line, startColumn: Math.max(1, pr.column), endLineNumber: pr.line, endColumn: m.getLineMaxColumn(Math.min(pr.line, m.getLineCount())),
       })));
     }
   }, [problems, state, cur?.path, cur?.text]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -259,7 +263,7 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
         <select id="src-file" value={cur ? cur.path : ''} onChange={e => setPath(e.target.value)}>{textFiles.map(f => <option key={f.path} value={f.path}>{f.path}</option>)}</select>
         <span className="tb-note">{state === 'loading' ? 'Loading Monaco editor…' : state !== 'ready' ? 'Built-in viewer'
           : cur && isScript(cur.path) ? (scripts[cur.path] != null ? 'Edited by you · kept in the project · the export writes this version' : 'Editable · the export writes your version once you change it')
-            : 'Monaco · Kick Assembler syntax · read-only (edit labels, comments and types in the listing)'}</span>
+            : `Monaco · ${R.assembler === '64tass' ? '64tass' : 'Kick Assembler'} syntax · read-only (edit labels, comments and types in the listing)`}</span>
         <span className="grow" />
         {cur && isScript(cur.path) && scripts[cur.path] != null && <button className="btn" title="Throw away your edits: the export writes the generated script, which follows the toolchain settings, again" onClick={() => { if (pending.current) { clearTimeout(pending.current.timer); pending.current = null; } onEditScript(cur.path as BuildScript, null); }}><Icon name="undo" />Restore generated</button>}
         {state === 'ready' && <button className="btn" title="Find in the file (Ctrl+F); F3 / Shift+F3 go to the next and the one before" onClick={openFind}><Icon name="search" />Find</button>}

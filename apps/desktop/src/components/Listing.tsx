@@ -1,9 +1,10 @@
 /* Listing — virtualized, interactive view of the shared line model (spec 6, "one line model, two views"). */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { findBlock, h2, h4, kickMnemonic, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, shiftText, SPACE, viewOffsetAt, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Block, type Bookmark, type ByteMove, type Line, type ListingLine, type Patch, type Token } from '@mimir/core';
+import { findBlock, h2, h4, isLabelDefinition, kindInfo, lineMove, loadAddress, monitorChar, offsetText, OPC, patchAt, patchEnd, relocAt, shiftText, SPACE, viewOffsetAt, typeInfo, TOP_LEVEL_DIRECTIVES, undocumentedText, type Addr, type AnalysisResult, type Block, type Bookmark, type ByteMove, type Line, type ListingLine, type Patch, type Token } from '@mimir/core';
 import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { cellParts, type Cell } from '../lib/cells';
+import { asmWords, commentStart, insHead, useAssembler } from '../lib/assembler';
 import { Icon } from '../lib/icons';
 import { peekOf, peekOrder, PEEK_ROWS, type Peek, type PeekNames } from '../lib/peek';
 import type { Changed, Editing, ScrollReq, Sel, ViewAt } from '../lib/types';
@@ -74,12 +75,15 @@ export interface CellMarks { sel: { start: Addr; end: Addr } | null; cur: Addr |
 /** A line's text. `mem`: the memory it is in, to name an undocumented opcode exactly in its tooltip; `cells`: write
  *  each byte of a data line as a cell of its own (a click on it picks that byte). */
 export function LineBody({ l, onToken, mem, cells }: { l: ListingLine; onToken: (t: Token) => void; mem?: Uint8Array; cells?: CellMarks | null }) {
+  // (written as the project's assembler writes it: `//` or `;`, `lda.abs` or `lda @w`, 64tass's names of the
+  // undocumented opcodes)
+  const asm = useAssembler(), cs = commentStart(asm);
   const ind = <span className="ind" />;
   const ill = undocumentedTip(l, mem);
-  const cmt = 'cmt' in l && l.cmt ? <span className={cx('syn-comment', 'cmt', 'userCmt' in l && l.userCmt && 'user', ill && l.k === 'dat' && 'ill-tip')} title={l.k === 'dat' ? ill : undefined}>// {l.cmt}</span> : null;
+  const cmt = 'cmt' in l && l.cmt ? <span className={cx('syn-comment', 'cmt', 'userCmt' in l && l.userCmt && 'user', ill && l.k === 'dat' && 'ill-tip')} title={l.k === 'dat' ? ill : undefined}>{cs} {l.cmt}</span> : null;
   switch (l.k) {
     case 'lbl': return <span className="syn-label def">{l.name}<span className="syn-p">:</span></span>;
-    case 'ins': return <><span className="cp">{ind}<span className={cx(l.ill ? 'syn-ill' : 'syn-mn', ill && 'ill-tip')} title={ill}>{kickMnemonic(l.mn)}{l.ext}</span>{l.tok.length ? ' ' : ''}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>;
+    case 'ins': { const h = insHead(l.mn, l.ext, asm); return <><span className="cp">{ind}<span className={cx(l.ill ? 'syn-ill' : 'syn-mn', ill && 'ill-tip')} title={ill}>{h.mn}</span>{l.tok.length ? ' ' : ''}{h.pre && l.tok.length ? <span className="syn-p">{h.pre}</span> : null}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>; }
     case 'dat': {
       const parts = cells ? cellParts(l) : null;
       const on = (c: Cell) => !!cells?.sel && c.a >= cells.sel.start && c.a + c.n <= cells.sel.end;
@@ -88,8 +92,8 @@ export function LineBody({ l, onToken, mem, cells }: { l: ListingLine; onToken: 
         : <Toks key={i} tok={p.tok} onToken={onToken} />)) : <Toks tok={l.tok} onToken={onToken} />;
       return <><span className="cp">{ind}<span className={cx('syn-dir', ill && 'ill-tip')} title={ill}>{l.dir}</span> {op}</span>{cmt}</>;
     }
-    case 'dir': { const top = !!l.tok[0] && TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s); return <><span className="cp">{!top && ind}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>; }
-    case 'cmt': return <span className={cx('syn-comment', l.note && 'note', l.mark && 'mark')} title={l.note ? 'Double-click to edit' : l.mark ? 'Marked by the analysis: a part of a loader (Explorer → Loaders)' : undefined}>{l.raw ? l.text : l.text ? `// ${l.text}` : '//'}</span>;
+    case 'dir': { const top = !!l.tok[0] && (TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s) || l.tok[0].t === 'def'); return <><span className="cp">{!top && ind}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>; }
+    case 'cmt': return <span className={cx('syn-comment', l.note && 'note', l.mark && 'mark')} title={l.note ? 'Double-click to edit' : l.mark ? 'Marked by the analysis: a part of a loader (Explorer → Loaders)' : undefined}>{l.raw ? l.text : l.text ? `${cs} ${l.text}` : cs}</span>;
     default: return null;
   }
 }
@@ -200,7 +204,7 @@ export interface ScriptMark { id: string; name: string; linked: boolean; line?: 
 export function lineScriptMarks(lines: readonly (Line | ListingLine)[], i: number, marks: ReadonlyMap<Addr, ScriptMark[]>, labels: PeekNames['labels']): ScriptMark[] | null {
   const l = lines[i];
   if (l.k === 'lbl') return marks.get(l.a) ?? null;
-  if (l.k === 'dir' && l.tok[0]?.s === '.label') {
+  if (l.k === 'dir' && isLabelDefinition(l)) {
     if (l.zp != null) return marks.get(l.zp) ?? null;
     const def = l.tok.find(t => t.t === 'def');
     if (def) for (const [a, x] of labels) if (x.name === def.s) return marks.get(a) ?? null;
@@ -228,6 +232,7 @@ function ScriptTag({ marks, onOpen }: { marks: ScriptMark[]; onOpen?: (id: strin
 }
 
 export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth, scriptMarks, onScriptMark }: ListingProps) {
+  const words = asmWords(useAssembler());
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
   const [height, setHeight] = useState(600);
@@ -604,7 +609,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
         <button className="fold" aria-label={folded.has(l.a) ? 'Unfold block' : 'Fold block'} aria-expanded={!folded.has(l.a)} title={folded.has(l.a) ? 'Unfold (F)' : 'Fold (F)'}
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onToggleFold(l.a); }}><Icon name={folded.has(l.a) ? 'chevron' : 'down'} size={12} /></button>
         <span className="hdr-chip" style={{ '--c': `var(--g-${hg})` } as React.CSSProperties}>{typeInfo(l.type).label}</span>
-        <span className="hdr-text">{l.text}</span>{l.excluded && <span className="hdr-excluded" title="Left out of the build: the block stays in the source under #if, its labels in #else">not built</span>}{l.binary && <span className="hdr-binary" title={`Saved as ${l.binary} and loaded with .import binary`}>binary</span>}{l.preview && <span className="hdr-preview" title="Shown as code; the export still writes this block as it is classified">as code</span>}{blk && blk.user && <span className="hdr-user" title="Type set by you"><Icon name="pencil" size={12} /></span>}{lparts.length > 0 && <span className="hdr-loader" title={lparts.map(({ f, p }) => `${f.name}: ${p.what}`).join('\n')}>{[...new Set(lparts.map(({ f }) => f.name.replace(/ \(.*$/, '')))].join(', ')}</span>}
+        <span className="hdr-text">{l.text}</span>{l.excluded && <span className="hdr-excluded" title={`Left out of the build: the block stays in the source under ${words.if}, its labels in ${words.else}`}>not built</span>}{l.binary && <span className="hdr-binary" title={`Saved as ${l.binary} and loaded with .import binary`}>binary</span>}{l.preview && <span className="hdr-preview" title="Shown as code; the export still writes this block as it is classified">as code</span>}{blk && blk.user && <span className="hdr-user" title="Type set by you"><Icon name="pencil" size={12} /></span>}{lparts.length > 0 && <span className="hdr-loader" title={lparts.map(({ f, p }) => `${f.name}: ${p.what}`).join('\n')}>{[...new Set(lparts.map(({ f }) => f.name.replace(/ \(.*$/, '')))].join(', ')}</span>}
         {blk && blk.type === 'sprite' && blk.start === l.a && onSprites && <SpriteCount b={blk} onSprites={onSprites} />}
         {hidden.has(i) && <span className="hdr-folded">{hidden.get(i)} line{hidden.get(i) === 1 ? '' : 's'} folded</span>}
         {blk && !blk.user && blk.conf < 0.7 && <span className="hdr-conf" title={`Low confidence: ${blk.reason}`}>?</span>}
