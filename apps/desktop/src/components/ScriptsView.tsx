@@ -84,6 +84,8 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
   const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
+  /** the code's row: the output's edge goes up only as far as it has more than its least height */
+  const editRow = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
   const ed = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const models = useRef<Record<string, Monaco.editor.ITextModel>>({});
@@ -654,14 +656,21 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
             : <span className="scr-links-empty">Right-click a label in the listing or the source and pick <b>Link to a script</b>: it comes here, and a click on it writes it in the code.</span>}
         </div>
         <div className="scr-body">
-          <div className="scr-edit-row">
+          <div className="scr-edit-row" ref={editRow}>
             <div className="mon-host scr-editor" ref={host} style={{ display: state === 'ready' ? 'block' : 'none' }} />
             {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} readOnly={!!dbg} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
             {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} atBp={atBp}
               watch={watchItems.length ? <WatchTable items={watchItems} mode="now" compact onGoLine={goLine} /> : null} />}
           </div>
-          {/* the output gives way when the window is low or the bottom panel high: a drag goes on from the height it has */}
-          {!outFolded && <Splitter dir="h" onDrag={d => { const k = dbg ? 'dbgOutH' : 'outH', h = useScripts.getState()[k]; set({ [k]: Math.max(dbg ? 60 : 140, Math.min(window.innerHeight - 260, Math.min(h, document.getElementById('scr-out')?.offsetHeight ?? h) - d)) }); }} />}
+          {/* the output gives way only when the window is low (the bottom panel stops above it): a drag goes on from the
+              height it has, and goes up only as far as the code has more than its 140px (a higher output would grow
+              down under the edge, pushing the bottom panel away); while debugging it can be made as low as its least,
+              110px (app.css .scr-out) */}
+          {!outFolded && <Splitter dir="h" onDrag={d => {
+            const k = dbg ? 'dbgOutH' : 'outH', h = useScripts.getState()[k], shown = Math.min(h, document.getElementById('scr-out')?.offsetHeight ?? h);
+            const room = Math.max(0, (editRow.current?.offsetHeight ?? 140) - 140);
+            set({ [k]: Math.max(dbg ? 110 : 140, Math.min(window.innerHeight - 260, shown + room, shown - d)) });
+          }} />}
           <ScriptOutput script={cur} check={check} kept={kept} stale={stale} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg}
             folded={outFolded} height={dbg ? dbgOutH : outH} watchCount={spots.length} live={livePad} where={where} theme={theme}
             watch={<WatchSection items={watchItems} mode={watchMode} stale={stale} hidden={hiddenSpots} onRemove={removeWatch} onAdd={addWatch} onGoLine={goLine} onShow={onShow}

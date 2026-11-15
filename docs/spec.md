@@ -2312,11 +2312,14 @@ $06, $08` i `.asm`-filen efter en körning.
   visas.
 - **Utdatat fälls ner** med pilen längst till höger i flikraden (*Output*): flikraden står kvar och koden får resten
   av höjden; ett klick på pilen eller en flik fäller upp det med samma höjd som förut. Nedfälld säger flikarna
-  fortfarande vad de håller, och raden hur många fel koden har. När fönstret är lågt eller bottenpanelen hög ger
-  utdatat vika först: koden behåller 140 px och utdatat 60 px. Bottenpanelen (*Analysis log*, …) kan inte dras över
-  dem: verktygsraden, raderna under den, 140 px kod, utdatats flikrad och 60 px utdata är editorytans minsta höjd, så
-  bottenpanelen ger vika i stället (ner till sin flikrad) och får tillbaka höjden den hade i en annan flik. En
-  dragkant dras vidare från höjden panelen har, inte den som sparats.
+  fortfarande vad de håller, och raden hur många fel koden har. Bottenpanelen (*Analysis log*, …) kan inte dras över
+  koden eller utdatat: editorytan vill ha verktygsraden, raderna under den, 140 px kod, utdatats flikrad och utdatat
+  med höjden det drogs till, så bottenpanelen stannar ovanför utdatat och ger vika (ner till sin flikrad); den får
+  tillbaka höjden den hade i en annan flik. Utdatats kant dras upp bara så långt koden har mer än 140 px. Först när
+  fönstret är så lågt att bottenpanelen redan är nere på sin flikrad ger utdatat vika, ner till 110 px (en scratchpads
+  rubrik och knappar med två rader emellan); koden behåller 140 px. Utdatats flikar ritar aldrig utanför det
+  (knapparna hamnade förut ovanpå bottenpanelen när det tryckts ihop), och det som ändå inte får plats skärs av vid
+  editorytans fot. En dragkant dras vidare från höjden panelen har, inte den som sparats.
 - **Vad en scratchpad börjar med** (`ScriptPad.data`, och `ScriptPad.src` för hur det skrevs): utan det börjar
   scratchpaden med sin fill, med det börjar den med de byten från sin första byte och fill efter dem. *Edit start* i
   visningen öppnar en editor med tre former: **Kick Assembler** (assembleras vid scratchpadens adress med programmets

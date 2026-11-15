@@ -7525,11 +7525,18 @@ test('scripts: Init sets the registers, the flags and zero-page bytes a run star
   });
 });
 
-test('scripts: the bottom panel cannot be dragged over the code and the output; it gives way and gets its height back in the listing', async ({ page }) => {
+test('scripts: the bottom panel cannot be dragged over the code and the output; it stops above the output at its own height and gets its height back in the listing', async ({ page }) => {
   await waitForListing(page);
   await page.getByRole('tab', { name: 'Scripts' }).click();
   await page.getByRole('button', { name: 'New script' }).first().click();
   await expect(page.locator('.scr-out')).toBeVisible();
+  // a scratchpad: its view has buttons at the output's foot (Copy as .byte, Save .prg…)
+  await outTab(page, 'Scratchpads');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  const copy = page.locator('.scr-out').getByRole('button', { name: 'Copy as .byte' });
+  await expect(copy).toBeVisible();
+  const box = (sel: string) => page.locator(sel).first().evaluate(e => { const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: r.height }; });
+  const own = await box('.scr-out');
   // the Scripts tab folds the bottom panel in: a tab of it opens it again
   const bottom = page.locator('section.bottom');
   await bottom.getByRole('tab', { name: /^Analysis log/ }).click();
@@ -7540,15 +7547,25 @@ test('scripts: the bottom panel cannot be dragged over the code and the output; 
     await page.mouse.move(x, y); await page.mouse.down();
     await page.mouse.move(x, y + dy, { steps: 20 }); await page.mouse.up();
   };
-  const box = (sel: string) => page.locator(sel).evaluate(e => { const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: r.height }; });
 
-  // as high as it goes (520 px kept): it stops where the code has 140 px and the output 60 px, above both
+  // as high as it goes (520 px kept): it stops above the output, which keeps the height it had, and the code its 140 px
   await drag(-600);
   const out = await box('.scr-out'), code = await box('.scr-edit-row'), panel = await box('section.bottom');
   expect(code.h).toBeGreaterThanOrEqual(139);
-  expect(out.h).toBeGreaterThanOrEqual(59);
+  expect(Math.abs(out.h - own.h)).toBeLessThan(2);
   expect(out.bottom).toBeLessThanOrEqual(panel.top);
   expect(panel.h).toBeLessThan(520);
+  // nothing of the output is drawn outside it, over the bottom panel: its buttons are inside it
+  const btn = await box('.scr-out .scr-view-actions');
+  expect(btn.bottom).toBeLessThanOrEqual(out.bottom + 0.5);
+  expect(await page.locator('.scr-out button:visible').evaluateAll((bs, top) => bs.filter(b => b.getBoundingClientRect().bottom > top).length, panel.top)).toBe(0);
+  // the output's edge dragged up with the code at its 140 px: it stays, and pushes nothing away (no output grows down
+  // under an edge that does not move)
+  const outSplit = page.locator('.scr-body > .splitter.h'), o = (await outSplit.boundingBox())!;
+  await page.mouse.move(o.x + 40, o.y + o.height / 2); await page.mouse.down();
+  await page.mouse.move(o.x + 40, o.y + o.height / 2 - 100, { steps: 10 }); await page.mouse.up();
+  expect(Math.abs((await box('.scr-out')).h - own.h)).toBeLessThan(2);
+  expect(Math.abs((await box('section.bottom')).top - panel.top)).toBeLessThan(2);
   // dragged down, it moves at once (from the height it has, not the one kept)
   await drag(40);
   expect((await box('section.bottom')).top).toBeGreaterThan(panel.top + 30);
