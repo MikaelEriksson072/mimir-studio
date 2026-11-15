@@ -52,8 +52,9 @@ function compare(p: ProjectInput) {
   const R: RenderResult = render(A, clone());
   const RR = KR.render(RA, refInput);
   same(R.files, RR.files, `files: ${where}`);
-  // the head markers (Line.head, for every bank in one source) are new in the production engine
-  same(R.lines.map(l => ({ ...l, head: undefined })), RR.lines, `lines: ${where}`);
+  // the head markers (Line.head, for every bank in one source) and the block comment's (Line.blockCmt, DEL removes it in
+  // the listing) are new in the production engine
+  same(R.lines.map(l => ({ ...l, head: undefined, blockCmt: undefined })), RR.lines, `lines: ${where}`);
   same([...R.labels], [...RR.labels], 'render labels');
   same(R.fileNames, RR.fileNames, 'file names');
   same(R.problems, RR.problems, 'render problems');

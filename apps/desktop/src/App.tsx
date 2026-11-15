@@ -37,6 +37,7 @@ import { gfxLayout } from './lib/gfxview';
 import { blockView } from './lib/blockfolders';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
 import { operandName, renameText, type NameRef } from './lib/rename';
+import { commentOf } from './lib/comments';
 import { findLines, findRegExp, findText, nextHit, type FindOptions } from './lib/find';
 import { AssemblerContext, asmWords } from './lib/assembler';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
@@ -1602,6 +1603,44 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       putBlanks(d, addr, Math.min(MAX_BLANKS, k));
     });
   };
+  /** DEL with the pointer resting on a comment in the listing (spec 10): the user's comment there goes, as one step
+   *  Ctrl+Z takes back; one the analysis writes stays, and a toast says why. False: the pointer is on no comment, and
+   *  DEL does what it does without one */
+  const removeHoveredComment = (): boolean => {
+    const row = listRef.current?.querySelector<HTMLElement>('.row[data-i]:hover');
+    const l = row ? view.lines[Number(row.dataset.i)] : undefined;
+    const c = row && l ? commentOf(l, !!row.querySelector('.src .cmt:hover')) : null;
+    if (!c) return false;
+    const back = ' (Ctrl+Z brings it back)', zpName = (a: Addr) => R.zp.get(a)?.name ?? `$${h2(a)}`;
+    switch (c.kind) {
+      case 'analysis':
+        toast(c.line ? 'The analysis writes this comment line, so Delete leaves it: it removes the comments you wrote (; / * and the block\'s Comment in the inspector)' : 'The analysis writes this comment, so Delete leaves it: ; writes your own in its place', 'info');
+        return true;
+      case 'eol': {
+        // (the listing may still show one just removed, until the analysis of the edit comes in)
+        const at = c.addrs.filter(a => project.comments[a] != null);
+        if (!at.length) return true;
+        const where = at.map(a => `$${h4(a)}`).join(', ');
+        update(`Remove comment${at.length > 1 ? 's' : ''} at ${where}`, d => { for (const a of at) delete d.comments[a]; });
+        toast(`${c.zp ? `The comment of the zero-page variable ${zpName(at[0])}` : at.length > 1 ? `The comments at ${where}` : `The comment at $${h4(at[0])}`} removed${back}`, 'ok');
+        return true;
+      }
+      case 'note': {
+        const n = project.notes[c.addr];
+        if (!n) return true;
+        // its empty lines stay, above the line
+        setNote(c.addr, '', !!n.block);
+        toast(`The comment ${n.block ? 'block' : 'line'} above ${c.zp ? `the zero-page variable ${zpName(c.addr)}` : `$${h4(c.addr)}`} removed${back}`, 'ok');
+        return true;
+      }
+      case 'block': {
+        if (!project.blockComments[c.addr]) return true;
+        update(`Remove block comment at $${h4(c.addr)}`, d => { delete d.blockComments[c.addr]; });
+        toast(`The block's comment at $${h4(c.addr)} removed${back}`, 'ok');
+        return true;
+      }
+    }
+  };
   // `at`: the line the context menu was opened on (its closures were made before the cursor moved there)
   // a picture's line: the character, sprite or cell at the cursor
   const lineAddr = (at?: Addr) => at ?? (curLine && curLine.a != null && curLine.k !== 'gfx' ? curLine.a : cursor);
@@ -2973,8 +3012,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     }
     pickCell(next, extend);
   };
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -3039,6 +3078,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         // with the find widget open, Esc closes only it
         case 'Escape': e.preventDefault(); if (k.findOpen) k.closeFind(); else goBack(); return;
         case 'Backspace': e.preventDefault(); goBack(); return;
+        // with the pointer resting on a comment: it goes (elsewhere Delete does nothing in the listing)
+        case 'Delete': if (k.removeHoveredComment()) e.preventDefault(); return;
         default: break;
       }
       const key = e.key.length === 1 ? e.key.toUpperCase() : e.key;

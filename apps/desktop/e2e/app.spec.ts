@@ -295,6 +295,102 @@ test('insert a comment line and a comment block, edit and remove them', async ({
   });
 });
 
+test('Delete removes the comment the pointer rests on, the user\'s only, and Ctrl+Z brings it back', async ({ page }) => {
+  await waitForListing(page);
+  const row = (adr: string) => listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: new RegExp(`^${adr}$`) }) });
+  const userCmt = (text: string) => listing(page).locator('.row .cmt.user', { hasText: text });
+  const commentRow = (text: string) => listing(page).locator('.row.k-cmt', { hasText: text });
+  const removed = page.locator('.toasts .toast', { hasText: 'removed (Ctrl+Z brings it back)' });
+
+  await test.step('the comment the analysis writes stays, and a toast says why', async () => {
+    await goTo(page, 'start');
+    const hw = row('0810').locator('.cmt');
+    await expect(hw).toHaveText('// Clear screen and home cursor');
+    await hw.hover();
+    await page.keyboard.press('Delete');
+    await expect(toast(page, 'The analysis writes this comment, so Delete leaves it')).toBeVisible();
+    await expect(hw).toHaveText('// Clear screen and home cursor');
+  });
+
+  await test.step('with the pointer off the comment, Delete leaves it, also on the cursor line', async () => {
+    await goTo(page, '$0813');
+    await page.keyboard.press(';');
+    const input = page.getByLabel('Comment at $0813');
+    await input.fill('clears the sprites');
+    await input.press('Enter');
+    await expect(input).toBeHidden();
+    await expect(userCmt('clears the sprites')).toBeVisible();
+    await expect(statusBar(page)).toContainText('$0813');
+    // the pointer on the instruction of the commented line, and on another line
+    for (const at of [row('0813').locator('.syn-mn'), row('0816').locator('.syn-mn')]) {
+      await at.hover();
+      await page.keyboard.press('Delete');
+    }
+    await page.waitForTimeout(300);
+    await expect(userCmt('clears the sprites')).toBeVisible();
+    await expect(removed).toHaveCount(0);
+  });
+
+  await test.step('on the comment at the end of a line, Delete removes it', async () => {
+    await userCmt('clears the sprites').hover();
+    await page.keyboard.press('Delete');
+    await expect(toast(page, 'The comment at $0813 removed (Ctrl+Z brings it back)')).toBeVisible();
+    await expect(userCmt('clears the sprites')).toHaveCount(0);
+    await expect(row('0813').locator('.cmt')).toHaveCount(0);
+    await page.keyboard.press('Control+z');
+    await expect(userCmt('clears the sprites')).toBeVisible();
+  });
+
+  await test.step('on a comment line, Delete removes it', async () => {
+    await goTo(page, 'start');
+    await page.keyboard.press('/');
+    const input = page.getByLabel('Comment line above $0810');
+    await input.fill('set up the raster IRQ');
+    await input.press('Enter');
+    await expect(commentRow('// set up the raster IRQ')).toBeVisible();
+    await commentRow('// set up the raster IRQ').hover();
+    await page.keyboard.press('Delete');
+    await expect(toast(page, 'The comment line above $0810 removed (Ctrl+Z brings it back)')).toBeVisible();
+    await expect(commentRow('set up the raster IRQ')).toHaveCount(0);
+    await page.keyboard.press('Control+z');
+    await expect(commentRow('// set up the raster IRQ')).toBeVisible();
+  });
+
+  await test.step('on any line of a comment block, Delete removes the whole block', async () => {
+    await goTo(page, '$0816');
+    await page.keyboard.press('*');
+    const area = page.getByLabel('Comment block above $0816');
+    await area.fill('wait for\nline 250');
+    await area.press('Control+Enter');
+    await expect(area).toBeHidden();
+    await expect(commentRow('wait for')).toBeVisible();
+    await commentRow('line 250').hover();
+    await page.keyboard.press('Delete');
+    await expect(toast(page, 'The comment block above $0816 removed')).toBeVisible();
+    await expect(commentRow('wait for')).toHaveCount(0);
+    await expect(commentRow('line 250')).toHaveCount(0);
+    // the comment line above $0810 stays
+    await expect(commentRow('// set up the raster IRQ')).toBeVisible();
+  });
+
+  await test.step('on the block\'s comment under its header, Delete removes it', async () => {
+    await headerRow(page, '0810').click();
+    const field = page.locator('.inspector').getByLabel('Comment', { exact: true });
+    await field.fill('the start');
+    // leaving the field sets the comment (its name has the text in it now: the field is not found by its label)
+    await page.keyboard.press('Tab');
+    const blockCmt = listing(page).locator('.row.k-cmt', { has: page.locator('.block-cmt', { hasText: '// the start' }) });
+    await expect(blockCmt).toBeVisible();
+    await blockCmt.hover();
+    await page.keyboard.press('Delete');
+    await expect(toast(page, 'The block\'s comment at $0810 removed')).toBeVisible();
+    await expect(blockCmt).toHaveCount(0);
+    await expect(field).toHaveValue('');
+    await page.keyboard.press('Control+z');
+    await expect(blockCmt).toBeVisible();
+  });
+});
+
 test('insert empty lines, remove them and undo', async ({ page }) => {
   await waitForListing(page);
   const blanks = listing(page).locator('.row.user-blank');

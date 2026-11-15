@@ -534,7 +534,8 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
     const reloc = b.type === 'reloc' ? relocs.find(x => x.start === b.start) : undefined;
     const runs = reloc ? ` · runs at ${n4(reloc.to)}-${n4(reloc.to + len - 1)}` : '';
     out.push({ k: 'hdr', a: b.start, blk: b.id, type: TYPE_BY_KEY[b.type], text: `${title}${lb ? ' · ' + lb.name : ''} · ${n4(b.start)}-${n4(b.end - 1)} (${len} byte${len === 1 ? '' : 's'})${runs}${shownIn(b)}${binary ? ` · ${binary}` : ''}`, ...(binary ? { binary } : {}) });
-    if (userCmt) out.push(...commentLines(b.start, userCmt));
+    // (marked as the block's comment: DEL with the pointer on it in the listing removes it)
+    if (userCmt) out.push(...commentLines(b.start, userCmt).map((l): Line => ({ ...l, blockCmt: true } as Line)));
     // inside a relocated block's .pseudopc the bytes follow one another: a .pc there would move where they are loaded
     // (in a view offset, 10.4, the listing has the .pc where the bytes are shown)
     const seg = (name: string) => { if (!ctx.reloc) out.push(pcLine(asm, b.start, [numT(n4(shownOf(b.start)))], name)); };

@@ -152,13 +152,13 @@ export function gfxListing(all: readonly ListingLine[], A: AnalysisResult, cols:
     const g = { ...GFX_GEOMETRY[kind], cols: kind === 'bitmap' ? 40 : cols[kind] ?? GFX_GEOMETRY[kind].cols };
     const numAt = (a: Addr) => { let num = r.rows[0].num; for (const x of r.rows) if (x.a <= a) num = x.num; return num; };
     const push = (s: Addr, e: Addr, col: number) => {
-      const cmt = r.cmts.filter(c => c.a < e && c.a + c.n > s).map(c => c.cmt).join(' · ');
+      const cs = r.cmts.filter(c => c.a < e && c.a + c.n > s), cmt = cs.map(c => c.cmt).join(' · ');
       const names = r.names.filter(x => x.a >= s && x.a < e);
-      const l: GfxLine = { k: 'gfx', a: s, n: e - s, kind: kind!, unit: g.unit, col, cols: g.cols, rows: 1, blk: b!.start, mc, ...(cmt ? { cmt } : {}), ...(names.length ? { names } : {}) };
+      const l: GfxLine = { k: 'gfx', a: s, n: e - s, kind: kind!, unit: g.unit, col, cols: g.cols, rows: 1, blk: b!.start, mc, ...(cmt ? { cmt, cmtAt: cs.map(c => c.a) } : {}), ...(names.length ? { names } : {}) };
       const h = gfxGridRows(l) * g.h * g.scale + (kind === 'sprite' ? SPRITE_CAPTION + 4 : kind === 'bitmap' ? 8 : 0);
       l.rows = Math.max(1, Math.ceil(h / ROW_PX));
       keep(l, numAt(s));
-      for (let k = 1; k < l.rows; k++) keep({ ...l, n: 0, pad: true, cmt: undefined, names: undefined }, 0);
+      for (let k = 1; k < l.rows; k++) keep({ ...l, n: 0, pad: true, cmt: undefined, cmtAt: undefined, names: undefined }, 0);
       for (const x of r.after) if (x.l.a >= s && (x.l.a < e || e === r.end)) keep(x.l, x.num);
     };
     const aligned = (r.start - b.start) % g.unit === 0;

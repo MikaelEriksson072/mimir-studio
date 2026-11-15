@@ -975,9 +975,10 @@ export type Line =
   | { k: 'dir'; a: Addr; n: number; tok: Token[]; cmt?: string; zp?: Addr; userCmt?: boolean; head?: HeadPart; reloc?: 'open' | 'close' | 'pause' | 'resume' }
   /** `raw`: written as it is (the lines of a block comment); `note`: part of a user Note; `zp`: the note is on the
    *  zero-page variable at this address (its `.label` line in the file head, whose `a` is the file's load address);
+   *  `blockCmt`: part of the comment the user gave the block starting at `a` (Project.blockComments), under its header;
    *  `mark`: a mark the analysis made (where a loader part starts or ends); `reloc`: where a relocated block ends when
    *  its .pseudopc was paused for one relocated from inside it, and not opened again */
-  | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; mark?: boolean; head?: HeadPart; reloc?: 'close' }
+  | { k: 'cmt'; a: Addr; text: string; raw?: boolean; note?: boolean; zp?: Addr; blockCmt?: boolean; mark?: boolean; head?: HeadPart; reloc?: 'close' }
   /** `user`: one of the empty lines the user inserted above this address (Project.blanks); `under`: one of those under
    *  its comment line or block (Note.below) */
   | { k: 'blank'; a: Addr; head?: HeadPart; user?: boolean; under?: boolean };
@@ -993,10 +994,11 @@ export interface FileLine { k: 'file'; a: Addr; text: string; fi: number }
  * Listing only: graphics drawn as they look, in place of their .byte rows. Its `n` bytes from `a` are items of `unit`
  * bytes (a character or a bitmap cell 8, a sprite 64), laid out `cols` to a row from column `col`, of the block that
  * starts at `blk`; `mc`: drawn multicolour. The picture takes `rows` rows of the listing: the lines after it with
- * `pad` (and no bytes) are its room. `cmt`: the comments of the .byte rows it stands for; `names`: the labels of its
- * sprites, written under them instead of on lines of their own.
+ * `pad` (and no bytes) are its room. `cmt`: the comments of the .byte rows it stands for, which the user gave the
+ * addresses `cmtAt` (Project.comments); `names`: the labels of its sprites, written under them instead of on lines of
+ * their own.
  */
-export interface GfxLine { k: 'gfx'; a: Addr; n: number; kind: 'sprite' | 'chars' | 'bitmap'; unit: number; col: number; cols: number; rows: number; blk: Addr; mc: boolean; cmt?: string; names?: { a: Addr; name: string }[]; pad?: boolean }
+export interface GfxLine { k: 'gfx'; a: Addr; n: number; kind: 'sprite' | 'chars' | 'bitmap'; unit: number; col: number; cols: number; rows: number; blk: Addr; mc: boolean; cmt?: string; cmtAt?: Addr[]; names?: { a: Addr; name: string }[]; pad?: boolean }
 export type ListingLine = Line | FileLine | GfxLine;
 
 export interface RenderLabel { name: string; kind: string; user: boolean }

@@ -72,6 +72,9 @@ function undocumentedTip(l: ListingLine, mem?: Uint8Array): string | undefined {
  *  part of the line; `cur`, the byte at the cursor when the selection is of bytes */
 export interface CellMarks { sel: { start: Addr; end: Addr } | null; cur: Addr | null }
 
+/** the tooltip of the user's comment at the end of a line */
+const USER_CMT_TIP = 'Your comment: ; edits it, Delete with the pointer here removes it';
+
 /** A line's text. `mem`: the memory it is in, to name an undocumented opcode exactly in its tooltip; `cells`: write
  *  each byte of a data line as a cell of its own (a click on it picks that byte). */
 export function LineBody({ l, onToken, mem, cells }: { l: ListingLine; onToken: (t: Token) => void; mem?: Uint8Array; cells?: CellMarks | null }) {
@@ -80,7 +83,8 @@ export function LineBody({ l, onToken, mem, cells }: { l: ListingLine; onToken: 
   const asm = useAssembler(), cs = commentStart(asm);
   const ind = <span className="ind" />;
   const ill = undocumentedTip(l, mem);
-  const cmt = 'cmt' in l && l.cmt ? <span className={cx('syn-comment', 'cmt', 'userCmt' in l && l.userCmt && 'user', ill && l.k === 'dat' && 'ill-tip')} title={l.k === 'dat' ? ill : undefined}>{cs} {l.cmt}</span> : null;
+  const user = 'userCmt' in l && !!l.userCmt;
+  const cmt = 'cmt' in l && l.cmt ? <span className={cx('syn-comment', 'cmt', user && 'user', ill && l.k === 'dat' && 'ill-tip')} title={l.k === 'dat' && ill ? ill : user ? USER_CMT_TIP : undefined}>{cs} {l.cmt}</span> : null;
   switch (l.k) {
     case 'lbl': return <span className="syn-label def">{l.name}<span className="syn-p">:</span></span>;
     case 'ins': { const h = insHead(l.mn, l.ext, asm); return <><span className="cp">{ind}<span className={cx(l.ill ? 'syn-ill' : 'syn-mn', ill && 'ill-tip')} title={ill}>{h.mn}</span>{l.tok.length ? ' ' : ''}{h.pre && l.tok.length ? <span className="syn-p">{h.pre}</span> : null}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>; }
@@ -93,7 +97,7 @@ export function LineBody({ l, onToken, mem, cells }: { l: ListingLine; onToken: 
       return <><span className="cp">{ind}<span className={cx('syn-dir', ill && 'ill-tip')} title={ill}>{l.dir}</span> {op}</span>{cmt}</>;
     }
     case 'dir': { const top = !!l.tok[0] && (TOP_LEVEL_DIRECTIVES.includes(l.tok[0].s) || l.tok[0].t === 'def'); return <><span className="cp">{!top && ind}<Toks tok={l.tok} onToken={onToken} /></span>{cmt}</>; }
-    case 'cmt': return <span className={cx('syn-comment', l.note && 'note', l.mark && 'mark')} title={l.note ? 'Double-click to edit' : l.mark ? 'Marked by the analysis: a part of a loader (Explorer → Loaders)' : undefined}>{l.raw ? l.text : l.text ? `${cs} ${l.text}` : cs}</span>;
+    case 'cmt': return <span className={cx('syn-comment', l.note && 'note', l.blockCmt && 'block-cmt', l.mark && 'mark')} title={l.note ? 'Double-click to edit; Delete with the pointer here removes it' : l.blockCmt ? 'The block\'s comment (Comment in the inspector); Delete with the pointer here removes it' : l.mark ? 'Marked by the analysis: a part of a loader (Explorer → Loaders)' : undefined}>{l.raw ? l.text : l.text ? `${cs} ${l.text}` : cs}</span>;
     default: return null;
   }
 }
@@ -623,13 +627,13 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       const end = l.a + l.n, full = !!sel && l.a >= sel.start && end <= sel.end;
       const over = sel && sel.start < end && sel.end > l.a ? sel : null;
       rows.push(
-        <div key={i} className={cx('row', 'k-gfx', full && 'sel', i === curLine && 'cur', blk && excluded.has(blk.start) && 'excluded', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, height: l.rows * ROW, ...tint(i) }}
+        <div key={i} data-i={i} className={cx('row', 'k-gfx', full && 'sel', i === curLine && 'cur', blk && excluded.has(blk.start) && 'excluded', drop && 'drop-into', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, height: l.rows * ROW, ...tint(i) }}
           onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
           <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i, i + l.rows - 1)}{mark(i)}
           {offCell(l.a)}<span className={cx('adr', byLine && 'lno', !byLine && voffAt(l.a) && 'shifted')} title={runTip ?? (byLine ? undefined : voffTip(l.a))}>{byLine ? lineNo[i] || '' : adrText(l.a)}</span>
           <span className="hex" title={`$${h4(l.a)}–$${h4(end - 1)} (${l.n} byte${l.n === 1 ? '' : 's'})`}>–{h4(end - 1)}</span>
           {cycles && <span className="cyc" />}
-          <span className="src gfx-src"><GfxStrip l={l} i={i} A={A} colors={gfxColors} sel={over} cur={i === curLine ? cursor : null} />{l.cmt && <span className="syn-comment cmt user">// {l.cmt}</span>}</span>
+          <span className="src gfx-src"><GfxStrip l={l} i={i} A={A} colors={gfxColors} sel={over} cur={i === curLine ? cursor : null} />{l.cmt && <span className="syn-comment cmt user" title={USER_CMT_TIP}>// {l.cmt}</span>}</span>
         </div>);
       continue;
     }
@@ -649,7 +653,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const sm = marksOf(l, i);
     const ptTip = pt && (pt.script ? `Changed by the script "${pt.name}" when it ran: $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} (the Scripts tab runs it again or takes it out)` : `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`);
     rows.push(
-      <div key={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, ...tint(i) }}
+      <div key={i} data-i={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i)}{mark(i)}
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno', !byLine && (n > 0 || l.k === 'lbl') && voffAt(l.a) && 'shifted')} title={tip ?? runTip ?? (byLine || !(n > 0 || l.k === 'lbl') ? undefined : voffTip(l.a))}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? adrText(l.a) : ''}</span>
