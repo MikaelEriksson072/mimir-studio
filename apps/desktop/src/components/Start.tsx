@@ -232,8 +232,10 @@ export function StartScreen({ resume, onStarted }: StartScreenProps) {
   };
   /** Quick work: an empty Mimir without a project (no files, no project folder, neither the work the window kept nor
    *  the demo). The window keeps one work without a project, so it is that from now on, as a file opened in its place
-   *  would be */
+   *  would be. It starts with the window to itself: the side panel (Explorer, …), the bottom panel and the inspector
+   *  folded in, each opened again as usual (the inspector's strip at the right edge, or Settings → General) */
   const quickWork = async (note?: string) => {
+    useUi.getState().set({ sidePanel: false, panelOpen: false, inspector: 'auto' });
     enter(createProject({ name: QUICK_WORK, files: [], settings: settings() }), null);
     await kr?.workUnsaved();
     onStarted(note);

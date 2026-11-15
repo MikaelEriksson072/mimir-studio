@@ -226,6 +226,11 @@ test.describe('the start screen', () => {
       await quick.click();
       await isEmpty();
       expect((await projects()).recent).toEqual([]);
+      // every panel is folded in: the side panel, the bottom panel and the inspector (its strip at the edge opens it)
+      await expect(page.locator('.app')).toHaveClass(/side-closed/);
+      await expect(page.locator('.app')).toHaveClass(/insp-auto/);
+      await expect(page.getByRole('region', { name: 'Panels' })).toHaveClass(/collapsed/);
+      await expect(page.getByRole('button', { name: 'Expand panel' })).toBeVisible();
     });
 
     await test.step('work without a project with only a file opened in it: Quick work takes its place without asking', async () => {
