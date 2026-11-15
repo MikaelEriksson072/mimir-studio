@@ -1076,8 +1076,8 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     return { title: o?.title, filters: o?.filters?.map(f => `${f.name}: ${f.extensions.join(' ')}`), properties: o?.properties };
   });
   /** another view in the side panel, every Explorer section closed: the File menu's choice brings them back. What was
-   *  opened before is analysed first: on a busy machine, a file opened while that analysis still ran was left at the
-   *  start of the one before */
+   *  opened before is analysed first, so the sections its analysis opens (Loaders, Program start) are open before
+   *  they are closed, not after */
   const elsewhere = async () => {
     await expect(statusBar(page)).not.toContainText('analysing');
     const open = page.locator('.side-sec .sec-toggle[aria-expanded="true"]');
@@ -1189,6 +1189,31 @@ test('the File menu opens each kind of file with a dialog of its own, and the Ex
     await expect(explorer).toHaveAttribute('aria-pressed', 'true');
     await expect(expanded('Cartridge')).toHaveAttribute('aria-expanded', 'true');
   });
+});
+
+test('a file opened as the analysis of the one before comes in opens at its own start, not at the start of the one before', async ({ app, page }) => {
+  await waitForListing(page);
+  // the cartridge: its analysis is in, and the deep analysis of it is still at work (a new project has it on)
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/crt/mimir-demo.crt')] });
+  await page.keyboard.press('Control+o');
+  await expect(statusBar(page)).toContainText('bank 0 · $8009 · start');
+  await expect(statusBar(page)).not.toContainText('analysing');
+  // Ctrl+O, and the PRG is picked 300 ms later while the page is busy: the deep analysis of the cartridge comes in
+  // first, and the PRG opens before the page has drawn it. The cartridge's analysis was then the first the PRG's empty
+  // cursor saw, and the cursor stayed at the cartridge's start ($8009) once the PRG's own analysis was in
+  await app.evaluate(({ dialog }, path) => {
+    const d = dialog as unknown as Record<string, unknown>;
+    d.showOpenDialog = async () => { await new Promise(r => setTimeout(r, 300)); return { canceled: false, filePaths: [path] }; };
+  }, join(repoDir, 'fixtures/prg/raster-demo.prg'));
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', ctrlKey: true, bubbles: true }));
+    const t = performance.now();
+    while (performance.now() - t < 1500) { /* the page busy: the analysis and the dialog's answer wait */ }
+  });
+  await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
+  await expect(statusBar(page)).toContainText('1 file');
+  await expect(statusBar(page)).not.toContainText('analysing');
+  await expect(statusBar(page)).toContainText('$0810 · start');
 });
 
 test('Smart attach opens each file as its extension says, and Brokkr packs a Kick Assembler source', async ({ workDir: work, app, page }) => {

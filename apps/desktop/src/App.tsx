@@ -289,8 +289,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** where VICE's CPU was when it saved the snapshot the analysis is of (spec 13.7): a snapshot opens there */
   const snapPc = useMemo(() => snapshotPc(A.files, A.owner), [A.files, A.owner]);
   // a new analysis with nowhere to be: the listing and the .asm go to the program start, a snapshot's to its PC (in
-  // the bytes opened, else the start)
+  // the bytes opened, else the start). Only an analysis of the project shown: the file opened before can still have
+  // its result on the way when the next one opens (it renders with the next one's empty cursor), and its start is
+  // nowhere in the new one, where the cursor then stayed
   useEffect(() => {
+    if (rProject !== project) return;
     const at = snapPc?.loaded ? snapPc.pc : A.entry;
     if (cursor == null && at != null) { setCursor(at); setScrollReq({ addr: at, center: true, n: Date.now() }); }
   }, [A]); // eslint-disable-line react-hooks/exhaustive-deps
