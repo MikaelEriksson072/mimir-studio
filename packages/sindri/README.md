@@ -19,7 +19,8 @@ and `test/` are kept the same as there. Mimir runs it through
 ## How it works
 
 The C64 is emulated with what unpacking needs: a 6510 with all 256 opcodes (the undocumented ones as VICE runs them)
-and exact instruction timing, the memory banked by `$01`, the VIC-II's raster line, raster interrupts and badlines,
+and exact instruction timing, the memory banked by `$01`, the VIC-II's raster line, raster interrupts and the cycles it
+takes from the CPU (badlines, also made in the middle of a line, and sprite fetches),
 both CIAs with timers, interrupts and the keyboard and joysticks, and the SID registers a program can read. With the
 C64 ROMs it starts the machine, types `LOAD`, loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
 autostarts through the vectors or the stack, and packers that call the KERNAL work as they do on the real machine.
@@ -53,9 +54,26 @@ end. Over 1359 releases (Year-top20 2005-2026, the one-file top 200, 160 intros)
 (2006) and Cauldron (2008, and its 101% version twice in 2014) no longer stop on a JAM (VICE never runs those
 addresses), Battle Stations (2023) spends three quarters of its time waiting for its loader as in VICE (a third before)
 and runs to the time limit instead of settling, and six demos save the same program with other bytes in their
-variables. Sprites
-taking the bus (each one shown on a line takes two cycles or more there) are not emulated: Party Elk 2's IRQ handler
-times itself with sprites on and still crashes.
+variables.
+
+The VIC takes the bus from the CPU in the cycles a 6569 does, measured in VICE the same way: while BA is low the 6510
+stops at its next read until BA is high again, and its writes go on. BA is low in a badline's cycles 11-53, with YSCROLL
+as it is in each cycle, so a `$d011` write in the middle of a line makes it a badline from the next cycle on (the CPU
+waits until cycle 54) and one before cycle 11 undoes it; and for each sprite whose DMA is on, in its two fetch cycles and
+the three before them (sprite 0 in cycles 54-58, sprite 7 in 5-9 of the next line; all eight cost 19 cycles a line).
+A sprite's DMA goes on in cycle 54 of the line whose low byte is its Y, if it is enabled, for 21 lines (42 Y-expanded).
+Before each instruction Sindri knows how many cycles it takes (page crossing and taken branch counted) and which of them
+write, and walks them against BA. Until 16 November 2026 a line was a badline or not from its start, a badline took 40
+cycles from the instruction that read in it, and sprites took nothing: Continuum's main program got the cycles of the
+seven sprites one part multiplexes and of the badline another part's NMI handler makes every eighth line (FLI-like), and
+it called the loader for track 11 sector 17 4.2 seconds before VICE does; now its loader calls come within 0.3 seconds of VICE's over 265
+seconds. Party Elk 2 (the one-file top 200, #9), whose IRQ handler times itself with sprites on, no longer stops on a
+JAM. Over the same 1359 releases 131 runs end otherwise, most (117) saving the same program with other bytes in its
+variables; a few that settle on a quiet stretch or a choice the timing makes do so elsewhere: Subway Arts' decruncher
+(the one-file #1) turns interrupts on with its last `JMP $A7AE` on the stack page, and the KERNAL's IRQ, whose timer
+phase the start-up and LOAD leave and VICE's autostart varies, now overwrites it (it then returns to READY with the
+program unpacked); Eclectic's intro (2014) reads oscillator 3 to tell the SID model, which Sindri does not emulate
+(noise), and now shows its 2-second message. Sprite-heavy demos run about a fifth slower.
 
 For every byte of RAM it records which layer wrote it last and when, when it was last read as data and when it was
 last run. **A new layer begins when the CPU jumps into code that the running layer wrote and has not run yet**: the
@@ -497,10 +515,11 @@ with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of te
 - A program on several disks waits when it asks for the next one (its drive code reads track 18 again and again to see
   the disk change): only one disk is in the drive.
 - Copy protections that check what a D64 cannot hold (custom formats, half tracks, timing on the disk) need the
-  disk's G64; a G64 holds whole bytes a track, so bit counts per turn and weak bits are not there. Programs that depend
-  on exact VIC timing (sprite DMA, the cycle within a raster line) may not get through; badlines take the bus from
-  cycle 11 to 54 of the line (from its first read on), CIA timers are read in the instruction's last cycle and never
-  read 0. What the drive writes stays in memory; the image is not changed.
+  disk's G64; a G64 holds whole bytes a track, so bit counts per turn and weak bits are not there. The VIC takes the
+  bus in its badlines' and sprite fetches' cycles, but draws nothing: a program that reads what is on the screen (a
+  sprite collision, the light pen) or relies on the VIC's own odd states (sprite crunching, the DMA delay shifting the
+  screen) may not get through; CIA timers are read in the instruction's last cycle and never read 0. What the drive
+  writes stays in memory; the image is not changed.
 - A run stops at 500 layers (`budget`, *500 layers: it keeps jumping into code it wrote*): programs have a few dozen at
   most, but a loader that starts itself over and over makes two each time, each slower than the last. Ping Pong
   (Konami, tape) does: Sindri's LOAD from the tape does not print the KERNAL's messages (PRESS PLAY ON TAPE, OK,

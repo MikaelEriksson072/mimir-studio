@@ -744,7 +744,7 @@ class Session {
         if (op === 0x20) this.call((pc + 3) & 0xffff);
         else if (op === 0x00) this.call((pc + 2) & 0xffff);
       }
-      if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(cpu.irq()); this.call(this.irqRet); }
+      if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(m.takeIrq()); this.call(this.irqRet); }
       if (m.nmiDue()) { this.interrupted(pc); m.advance(m.takeNmi()); this.call(this.irqRet); }
       if (m.icount >= next) { next = m.icount + CHECK; this.check(); }
     }
@@ -1524,7 +1524,7 @@ function startUp(roms: Roms, ram: Uint8Array): MachineState | null {
     m.icount++;
     if (cpu.jammed) return null;
     m.advance(cycles);
-    if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
+    if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(m.takeIrq());
     if (m.nmiDue()) m.advance(m.takeNmi());
   }
   return null;

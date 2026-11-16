@@ -74,6 +74,8 @@ function boot(prg: Uint8Array, nmi = false) {
     const until = m.cycles + n * 63 * 312;
     while (m.cycles < until) {
       const cpu = m.cpu, iWas = cpu.i;
+      // (the VIC's badline and sprite cycles first, as Sindri's own run takes them)
+      m.dmaWait();
       m.advance(cpu.step());
       if (cpu.jammed) throw new Error(`JAM at $${h4(cpu.pc)}`);
       if (nmi && m.nmiLine && !nmiWas) m.advance(cpu.nmi());

@@ -10,7 +10,7 @@
 import { Cpu, type Bus } from './cpu.ts';
 import { DRIVE_RATIO, type Drive } from './drive.ts';
 import type { Datasette } from './tape.ts';
-import { CYCLES } from './opcodes.ts';
+import { CYCLES, OPCODES } from './opcodes.ts';
 
 /** what a 256-byte page reads from */
 export const RAM = 0, ZP = 1, BASIC = 2, KERNAL = 3, CHAR = 4, IO = 5;
@@ -44,8 +44,49 @@ const WRITES_LAST = new Set([
   0x9e, 0x9b, 0x48, 0x08,
 ]);
 export const CYCLES_PER_FRAME = CYCLES_PER_LINE * LINES;
+/** for each opcode, its cycles that write (bit k: cycle k): a store's last, a read-modify-write's last two, JSR's and
+ *  BRK's pushes */
+const WRITE_CYCLES: Uint8Array = Uint8Array.from({ length: 256 }, (_, op) =>
+  op === 0x20 ? 0b011000 : op === 0x00 ? 0b0011100 : RMW.has(op) ? 3 << (CYCLES[op] - 2) : WRITES_LAST.has(op) ? 1 << (CYCLES[op] - 1) : 0);
+/** the cycles of an interrupt sequence that write (the three pushes) */
+const INTERRUPT_WRITES = 0b0011100;
+/** the opcodes that take a cycle more when their indexed address crosses a page: found by running each across one */
+const PAGE_CROSS: Uint8Array = (() => {
+  const out = new Uint8Array(256), mem = new Uint8Array(0x10000);
+  const cpu = new Cpu({ read: a => mem[a], write: (a, v) => { mem[a] = v; }, fetch: a => mem[a] });
+  for (let op = 0; op < 256; op++) {
+    const mode = OPCODES[op].mode;
+    if (mode !== 'abx' && mode !== 'aby' && mode !== 'izy') continue;
+    mem.fill(0);
+    mem[0x1000] = op; mem[0x1001] = mode === 'izy' ? 0x10 : 0xff; mem[0x1002] = 0x20;
+    mem[0x10] = 0xff; mem[0x11] = 0x20;
+    cpu.pc = 0x1000; cpu.x = 1; cpu.y = 1; cpu.s = 0xff; cpu.jammed = false;
+    cpu.step();
+    if (cpu.penalty) out[op] = 1;
+  }
+  return out;
+})();
+
 /** PAL: 985248 Hz */
 export const CLOCK = 985248;
+
+/** cycles from..to-1 of a line as bits: [cycles 0-31, cycles 32-62] */
+function cycleBits(from: number, to: number): [number, number] {
+  let lo = 0, hi = 0;
+  for (let c = from; c < to; c++) if (c < 32) lo |= 1 << c; else hi |= 1 << (c - 32);
+  return [lo, hi];
+}
+/** the cycles a badline holds BA low in: from 11 (3 before the first character fetch) to 53, the last */
+const BAD_BA = cycleBits(11, 54);
+/**
+ * A sprite's fetches (the 6569's p-access and three s-accesses) take two cycles, sprite 0's 57-58 at the end of a line,
+ * sprite 1's 59-60, sprite 2's 61-62, sprite 3's 0-1 of the next line ... sprite 7's 8-9; BA goes low three cycles
+ * before. In a line: BA for the sprites whose DMA is on from its cycle 54 (sprites 0-4 start here) and for those that
+ * were on at the end of the line before (sprites 3-7 fetch at the start of this one). Measured in VICE (x64sc): a read
+ * in these cycles waits until the fetches are over, sprite 0 costs 5 cycles, all eight 19.
+ */
+const SPRITE_END_BA = [cycleBits(54, 59), cycleBits(56, 61), cycleBits(58, 63), cycleBits(60, 63), cycleBits(62, 63), [0, 0], [0, 0], [0, 0]];
+const SPRITE_START_BA = [[0, 0], [0, 0], [0, 0], cycleBits(0, 2), cycleBits(0, 4), cycleBits(1, 6), cycleBits(3, 8), cycleBits(5, 10)];
 
 export class Vic {
   readonly regs = new Uint8Array(0x40);
@@ -55,10 +96,21 @@ export class Vic {
   flags = 0;
   /** DEN was set on line $30, so this frame has badlines */
   private den = true;
-  /** this line is a badline whose cycles the VIC has not taken yet */
-  bad = false;
   /** in the last advance: the cycle (counted from its start) in which the raster compare raised its flag, else -1 */
   rose = -1;
+  /** the sprites whose DMA is on (a bit each), and how many lines of fetches each has left */
+  sprites = 0;
+  private readonly spriteLines = new Uint8Array(8);
+  /** the sprites that were on at the end of the line before: they fetch in this line's cycles 0-9 */
+  private spritesBefore = 0;
+  /** the BA bits of this line and the next while their keys are the version they were made for */
+  private readonly ba0 = new Int32Array(2);
+  private readonly ba1 = new Int32Array(2);
+  private ba0Key = -1;
+  private ba1Key = -1;
+  /** bumped by every write and event that changes when BA is low */
+  private baVersion = 0;
+  private readonly simLines = new Uint8Array(8);
 
   /** register r as the CPU reads it `at` cycles into the instruction (the raster line may have moved on) */
   read(r: number, at = 0): number {
@@ -79,36 +131,127 @@ export class Vic {
 
   write(r: number, v: number): void {
     switch (r) {
-      case 0x11: this.regs[0x11] = v; this.compare = (this.compare & 0xff) | ((v & 0x80) << 1); return;
+      case 0x11:
+        this.regs[0x11] = v; this.compare = (this.compare & 0xff) | ((v & 0x80) << 1);
+        // (DEN set in any cycle of line $30 lets the frame have badlines)
+        if (this.line === 0x30 && v & 0x10) this.den = true;
+        this.baVersion++;
+        return;
       case 0x12: this.compare = (this.compare & 0x100) | v; return;
       case 0x19: this.flags &= ~v & 0x0f; return;
       case 0x1e: case 0x1f: return;
     }
     if (r < 0x2f) this.regs[r] = v;
+    // sprite Y positions, enable and Y expansion
+    if ((r < 0x10 && r & 1) || r === 0x15 || r === 0x17) this.baVersion++;
   }
 
   get irq(): boolean { return (this.flags & this.regs[0x1a] & 0x0f) !== 0; }
 
   /**
-   * Let n cycles pass; returns the cycles the CPU loses to badlines meanwhile. On a badline the VIC takes the bus for
-   * 40 cycles, until cycle 54 of the line (counted from 0, when the raster line changes), as a real one does (fast
-   * loaders that time their transfers around badlines and read $d012 to stay clear of them depend on where they go).
+   * Let n cycles pass. The VIC's own bus cycles are not in them: the CPU waits for those before an instruction
+   * (C64.dmaWait), as BA tells it. Here the sprites' DMA goes on in cycle 54 (Y equal to the line's low byte, the sprite
+   * enabled) for 21 lines of fetches (42 Y-expanded), counted down in cycle 15.
    */
   advance(n: number): number {
-    let stolen = 0;
     this.rose = -1;
-    this.lineCycle += n;
-    for (;;) {
-      if (this.bad && this.lineCycle >= 14) { this.bad = false; stolen += 40; this.lineCycle += 40; }
-      if (this.lineCycle < CYCLES_PER_LINE) break;
-      this.lineCycle -= CYCLES_PER_LINE;
-      const line = this.line = this.line === LINES - 1 ? 0 : this.line + 1;
-      if (line === 0x30) this.den = (this.regs[0x11] & 0x10) !== 0;
-      // the compare matches in the line's first cycle (line 0: its second, as in VICE)
-      if (line === this.compare) { if (!(this.flags & 1)) this.rose = n + stolen - this.lineCycle + (line ? 0 : 1); this.flags |= 1; }
-      this.bad = this.den && line >= 0x30 && line <= 0xf7 && (line & 7) === (this.regs[0x11] & 7);
+    const c0 = this.lineCycle;
+    // (no event in these cycles: most of the time)
+    if (c0 + n < (c0 < 15 ? 15 : c0 < 54 ? 54 : CYCLES_PER_LINE)) { this.lineCycle = c0 + n; return 0; }
+    let done = 0;
+    while (done < n) {
+      const c = this.lineCycle;
+      const next = c < 15 ? 15 : c < 54 ? 54 : CYCLES_PER_LINE;
+      const step = Math.min(n - done, next - c);
+      this.lineCycle += step; done += step;
+      if (this.lineCycle !== next) break;
+      if (next === 15) {
+        if (this.sprites) for (let i = 0; i < 8; i++) if (this.sprites >> i & 1 && --this.spriteLines[i] === 0) this.sprites &= ~(1 << i);
+      } else if (next === 54) {
+        this.sprites = this.spritesOn(this.sprites, this.spriteLines, this.line);
+      } else {
+        this.lineCycle = 0;
+        this.spritesBefore = this.sprites;
+        const line = this.line = this.line === LINES - 1 ? 0 : this.line + 1;
+        if (line === 0x30) this.den = (this.regs[0x11] & 0x10) !== 0;
+        // the compare matches in the line's first cycle (line 0: its second, as in VICE)
+        if (line === this.compare) { if (!(this.flags & 1)) this.rose = done + (line ? 0 : 1); this.flags |= 1; }
+        // (the sprites counted down in cycle 15 and turned on in 54 are what the BA bits already took them to be)
+        this.baVersion++;
+      }
     }
-    return stolen;
+    return 0;
+  }
+
+  /** the sprites on after cycle 54 of `line`: those enabled whose Y is the line's low byte go on */
+  private spritesOn(on: number, lines: Uint8Array, line: number): number {
+    const r = this.regs, enabled = r[0x15] & ~on;
+    if (!enabled) return on;
+    for (let i = 0; i < 8; i++) {
+      if (enabled >> i & 1 && r[1 + 2 * i] === (line & 0xff)) { on |= 1 << i; lines[i] = r[0x17] >> i & 1 ? 42 : 21; }
+    }
+    return on;
+  }
+
+  /** whether line L is a badline with DEN as latched for its frame and YSCROLL as it is now */
+  private badline(line: number, den: boolean): boolean {
+    return den && line >= 0x30 && line <= 0xf7 && (line & 7) === (this.regs[0x11] & 7);
+  }
+
+  /**
+   * The cycles in which BA is low in the line `ahead` lines on (0: this one), as the registers are now (bits for
+   * cycles 0-31, 32-62; the arrays for this line and the next are the VIC's own, valid until it changes): the badline's (YSCROLL as it is in each cycle: a write that makes the line a badline
+   * after cycle 11 holds the CPU from its next read on, measured in VICE) and the sprites'.
+   */
+  baBits(ahead: number): Int32Array {
+    if (ahead === 0) {
+      if (this.ba0Key !== this.baVersion) { this.ba0Key = this.baVersion; this.lineBits(0, this.ba0); }
+      return this.ba0;
+    }
+    if (ahead === 1) {
+      if (this.ba1Key !== this.baVersion) { this.ba1Key = this.baVersion; this.lineBits(1, this.ba1); }
+      return this.ba1;
+    }
+    const out = new Int32Array(2);
+    this.lineBits(ahead, out);
+    return out;
+  }
+
+  private lineBits(ahead: number, out: Int32Array): void {
+    if (!this.sprites && !this.spritesBefore && !this.regs[0x15]) {
+      // (no sprites: only the badline)
+      let line = this.line, den = this.den;
+      for (let k = 0; k < ahead; k++) { line = line === LINES - 1 ? 0 : line + 1; if (line === 0x30) den = (this.regs[0x11] & 0x10) !== 0; }
+      const bad = this.badline(line, den);
+      out[0] = bad ? BAD_BA[0] : 0; out[1] = bad ? BAD_BA[1] : 0;
+      return;
+    }
+    const lines = this.simLines;
+    lines.set(this.spriteLines);
+    let on = this.sprites, before = this.spritesBefore, line = this.line, den = this.den, c = this.lineCycle;
+    for (let k = 0; ; k++) {
+      if (k > 0) {
+        before = on; c = 0;
+        line = line === LINES - 1 ? 0 : line + 1;
+        if (line === 0x30) den = (this.regs[0x11] & 0x10) !== 0;
+      }
+      if (c < 15 && on) for (let i = 0; i < 8; i++) if (on >> i & 1 && --lines[i] === 0) on &= ~(1 << i);
+      if (c < 54) on = this.spritesOn(on, lines, line);
+      if (k === ahead) break;
+    }
+    let lo = 0, hi = 0;
+    if (this.badline(line, den)) { lo = BAD_BA[0]; hi = BAD_BA[1]; }
+    for (let i = 3; i < 8; i++) if (before >> i & 1) { lo |= SPRITE_START_BA[i][0]; hi |= SPRITE_START_BA[i][1]; }
+    for (let i = 0; i < 5; i++) if (on >> i & 1) { lo |= SPRITE_END_BA[i][0]; hi |= SPRITE_END_BA[i][1]; }
+    out[0] = lo; out[1] = hi;
+  }
+
+  /** the VIC's state beyond the registers, for a saved machine */
+  get spriteState(): { on: number; before: number; lines: number[] } {
+    return { on: this.sprites, before: this.spritesBefore, lines: [...this.spriteLines] };
+  }
+  set spriteState(s: { on: number; before: number; lines: number[] }) {
+    this.sprites = s.on; this.spritesBefore = s.before; this.spriteLines.set(s.lines); this.baVersion++;
   }
 }
 
@@ -272,7 +415,7 @@ export interface Roms {
 export interface MachineState {
   ram: Uint8Array; color: Uint8Array; ddr: number; port: number;
   cpu: { a: number; x: number; y: number; s: number; pc: number; p: number };
-  vic: { regs: Uint8Array; line: number; lineCycle: number; compare: number; flags: number; bad?: boolean };
+  vic: { regs: Uint8Array; line: number; lineCycle: number; compare: number; flags: number; sprites?: Vic['spriteState'] };
   cia: [Cia, Cia];
   cycles: number;
 }
@@ -561,23 +704,73 @@ export class C64 implements Bus {
 
   // --- time and interrupts ----------------------------------------------------------------------------------------
   /**
-   * Before the instruction at PC: on a badline the VIC holds the CPU from its first read at cycle 11 of the line (counted
-   * from 0, when the raster line changes; BA goes low there, 3 cycles before its first fetch) until cycle 54; writes go
-   * on for three cycles more. When this instruction reads at cycle 11 or later, it waits that long before it starts
-   * (or, started before 11, after the cycles it ran): its bus access comes after the VIC's. The fast loaders that read
-   * the serial port at counted cycles around badlines depend on it: a byte started right after $d012 shows a badline
-   * cannot be sent before the VIC takes the bus.
+   * Before the instruction at PC: the cycles the CPU waits for the VIC. While BA is low (a badline's cycles 11-53, a
+   * sprite's fetches and the three cycles before them; Vic.baBits) the 6510 stops at its next read cycle until BA is
+   * high again, and its write cycles go on. The instruction's cycles, read or write, are walked against BA (its page
+   * crossing and taken branch counted), and the time it waits passes first: its I/O access in its last cycle comes after
+   * the VIC's. Fast loaders that read the serial port at counted cycles around badlines depend on it, raster code on
+   * sprites taking their cycles, and FLI-like code on a badline its $d011 write makes in the middle of a line (Continuum,
+   * Triad 2014: its NMI handler does it every eighth line, 40 cycles each). Measured in VICE (x64sc) with a cycle-exact
+   * raster sync, a timer and a read moved one cycle at a time (test/timing.test.ts).
    */
   dmaWait(): void {
-    const v = this.vic;
-    if (!v.bad) return;
-    const s = v.lineCycle;
-    if (s >= 54) return;
+    const v = this.vic, c = v.lineCycle, bits = v.baBits(0);
+    // (most of the time BA stays high through the instruction, 9 cycles at most)
+    if (c < CYCLES_PER_LINE - 9) {
+      if (!(bits[0] | bits[1])) return;
+      const lo = c < 32 ? bits[0] >>> c : 0, hi = c > 23 ? (c < 32 ? bits[1] << (32 - c) : bits[1] >>> (c - 32)) : 0;
+      if (!((lo | hi) & 0x1ff)) return;
+    } else if (!(bits[1] >>> (c - 32)) && !(v.baBits(1)[0] & ((1 << (c + 9 - CYCLES_PER_LINE)) - 1))) return;
     const op = this.peek(this.cpu.pc);
-    const lastRead = s + CYCLES[op] - 1 - (RMW.has(op) ? 2 : WRITES_LAST.has(op) ? 1 : 0);
-    if (lastRead < 11) return;
-    v.bad = false;
-    this.advance(54 - Math.max(s, 11));
+    const wait = this.baWait(this.nextCycles(op), WRITE_CYCLES[op]);
+    if (wait) this.advance(wait);
+  }
+
+  /** The cycles n cycles of the CPU (bit k of `writes` set: cycle k writes) wait for BA from now on. */
+  baWait(n: number, writes: number): number {
+    const v = this.vic;
+    let c = v.lineCycle, ahead = 0, bits = v.baBits(0), wait = 0;
+    for (let k = 0; k < n; k++) {
+      if (!(writes >> k & 1)) {
+        while ((c < 32 ? bits[0] >>> c : bits[1] >>> (c - 32)) & 1) {
+          wait++;
+          if (++c === CYCLES_PER_LINE) { c = 0; bits = v.baBits(++ahead); }
+        }
+      }
+      if (++c === CYCLES_PER_LINE) { c = 0; bits = v.baBits(++ahead); }
+    }
+    return wait;
+  }
+
+  /**
+   * The cycles the instruction at PC takes (op: its opcode), a page crossing and a taken branch included, as Cpu.step
+   * will count them.
+   */
+  nextCycles(op: number): number {
+    const cpu = this.cpu, pc = cpu.pc;
+    let n = CYCLES[op];
+    if (PAGE_CROSS[op]) {
+      const mode = OPCODES[op].mode;
+      let base: number, index: number;
+      if (mode === 'izy') { const p = this.peek((pc + 1) & 0xffff); base = this.peek(p) | (this.peek((p + 1) & 0xff) << 8); index = cpu.y; }
+      else { base = this.peekWord((pc + 1) & 0xffff); index = mode === 'abx' ? cpu.x : cpu.y; }
+      if (((base + index) ^ base) & 0xff00) n++;
+    } else if ((op & 0x1f) === 0x10) {
+      // BPL BMI BVC BVS BCC BCS BNE BEQ: N, V, C or Z, clear or set
+      const flag = op < 0x40 ? cpu.n : op < 0x80 ? cpu.v : op < 0xc0 ? cpu.c : cpu.z, taken = op & 0x20 ? flag !== 0 : flag === 0;
+      if (taken) {
+        const next = (pc + 2) & 0xffff, to = (next + ((this.peek((pc + 1) & 0xffff) ^ 0x80) - 0x80)) & 0xffff;
+        n += (to ^ next) & 0xff00 ? 2 : 1;
+      }
+    }
+    return n;
+  }
+
+  /** The CPU takes an IRQ (irqDue, the I flag clear): its cycles, the wait for BA first, to pass with advance. */
+  takeIrq(): number {
+    const wait = this.baWait(7, INTERRUPT_WRITES);
+    if (wait) this.advance(wait);
+    return this.cpu.irq();
   }
 
   /** Let the cycles of one instruction pass; returns them plus the cycles badlines stole. */
@@ -639,6 +832,8 @@ export class C64 implements Bus {
   /** The CPU takes the NMI (nmiDue): its cycles, to pass with advance. */
   takeNmi(): number {
     this.nmiPending = false;
+    const wait = this.baWait(7, INTERRUPT_WRITES);
+    if (wait) this.advance(wait);
     return this.cpu.nmi();
   }
 
@@ -649,7 +844,7 @@ export class C64 implements Bus {
     return {
       ram: this.ram.slice(), color: this.color.slice(), ddr: this.ddr, port: this.port,
       cpu: { a: c.a, x: c.x, y: c.y, s: c.s, pc: c.pc, p: c.p },
-      vic: { regs: this.vic.regs.slice(), line: this.vic.line, lineCycle: this.vic.lineCycle, compare: this.vic.compare, flags: this.vic.flags, bad: this.vic.bad },
+      vic: { regs: this.vic.regs.slice(), line: this.vic.line, lineCycle: this.vic.lineCycle, compare: this.vic.compare, flags: this.vic.flags, sprites: this.vic.spriteState },
       cia: [copyCia(this.cia1), copyCia(this.cia2)],
       cycles: this.cycles,
     };
@@ -661,7 +856,8 @@ export class C64 implements Bus {
     const c = this.cpu;
     c.a = s.cpu.a; c.x = s.cpu.x; c.y = s.cpu.y; c.s = s.cpu.s; c.pc = s.cpu.pc; c.p = s.cpu.p;
     this.vic.regs.set(s.vic.regs); this.vic.line = s.vic.line; this.vic.lineCycle = s.vic.lineCycle;
-    this.vic.compare = s.vic.compare; this.vic.flags = s.vic.flags; this.vic.bad = s.vic.bad ?? false;
+    this.vic.compare = s.vic.compare; this.vic.flags = s.vic.flags;
+    this.vic.spriteState = s.vic.sprites ?? { on: 0, before: 0, lines: [0, 0, 0, 0, 0, 0, 0, 0] };
     for (const [mine, saved] of [[this.cia1, s.cia[0]], [this.cia2, s.cia[1]]] as const) {
       const { inputA, inputB } = mine;
       Object.assign(mine, saved, { tod: saved.tod.slice(), inputA, inputB });

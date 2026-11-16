@@ -63,7 +63,7 @@ export function vsfMachine(b: Uint8Array): MachineState {
     color: Uint8Array.from(b.subarray(v + COLOUR_RAM, v + COLOUR_RAM + 0x400), x => x & 0x0f),
     port: b[mem.at], ddr: b[mem.at + 1],
     cpu: { a: b[c], x: b[c + 1], y: b[c + 2], s: b[c + 3], pc: word(b, c + 4), p: b[c + 6] },
-    vic: { regs: b.slice(v + 1, v + 0x41), lineCycle: dword(b, v + 65), line: dword(b, v + 73), flags: b[v + 78] & 0x0f, compare: dword(b, v + 79), bad: false },
+    vic: { regs: b.slice(v + 1, v + 0x41), lineCycle: dword(b, v + 65), line: dword(b, v + 73), flags: b[v + 78] & 0x0f, compare: dword(b, v + 79) },
     cia: [cia('CIA1'), cia('CIA2')],
     cycles: 0,
   };
