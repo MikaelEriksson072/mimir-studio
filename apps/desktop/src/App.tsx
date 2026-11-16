@@ -827,23 +827,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** the files of the mounted disk and the tape that are in the project: the Explorer marks them */
   const diskOpen = new Set(project.files.map(f => diskFileOf.current.get(f.id)).filter((f): f is D64File => !!f));
   const tapeOpen = new Set(project.files.map(f => tapeOf.current.get(f.id)?.file).filter((f): f is TapeFile => !!f));
+  /** the loader's own file (a chunk, a file, an IFFL part) each file opened from a loader tab of the bottom panel came
+   *  from: the tab marks the ones in the project, so it shows which is loaded */
+  const loaderOf = useRef(new Map<string, object>());
+  const fromLoader = <T extends { id: string }>(item: object, files: T[]): T[] => { for (const f of files) loaderOf.current.set(f.id, item); return files; };
+  const loaderOpen: ReadonlySet<object> = new Set(project.files.flatMap(f => { const x = loaderOf.current.get(f.id); return x ? [x] : []; }));
   /** a chunk of a Spindle disk's job, as a PRG at its address */
   const openChunk = (j: SpindleJob, c: SpindleChunk, add: boolean) => {
-    try { addFiles([withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(c, [withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a Bitfire disk as a PRG: unpacked, at where it unpacks to; else as it loads */
   const openBitfireFile = (f: BitfireFile, add: boolean) => {
     const u = f.unpacked;
-    try { addFiles([withId(parsePrg(bitfireFileName(f).replace(/\.lz$/, '.prg'), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [withId(parsePrg(bitfireFileName(f).replace(/\.lz$/, '.prg'), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a BoozeLoader disk as a PRG: unpacked, at where it unpacks to; else as it loads (as much as memory holds) */
   const openBoozeFile = (f: BoozeFile, add: boolean) => {
     const u = f.unpacked;
-    try { addFiles([withId(parsePrg(boozeFileName(f), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes.subarray(0, f.end - f.load))))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [withId(parsePrg(boozeFileName(f), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes.subarray(0, f.end - f.load))))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a chunk of a Sparkle disk's bundle, as a PRG at its address */
   const openSparkleChunk = (b: SparkleBundle, c: SparkleChunk, add: boolean) => {
-    try { addFiles([withId(parsePrg(sparkleChunkName(b, c), sparkleChunkPrg(c)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(c, [withId(parsePrg(sparkleChunkName(b, c), sparkleChunkPrg(c)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every chunk of a Sparkle disk's bundles as a PRG in a folder, with the loader script rebuilt to load them */
   const saveSparkleFiles = async () => {
@@ -862,7 +867,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a part of an IFFL file unpacked: its pieces, a PRG each at where it unpacks to */
   const openIfflPart = (f: IfflFile, p: IfflPart, add: boolean) => {
     if (!p.pieces) return;
-    try { addFiles(p.pieces.map(x => withId(parsePrg(ifflPieceName(f, p, x), ifflPiecePrg(x)))), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(p, p.pieces.map(x => withId(parsePrg(ifflPieceName(f, p, x), ifflPiecePrg(x))))), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every part of the disk's IFFL files in a folder: as it is stored and, when it is packed, its pieces unpacked as
    *  PRGs */
@@ -885,7 +890,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a file of a disk for Krill's loader as a PRG: unpacked, at where it unpacks to; else as it loads */
   const openKrillFile = (f: KrillFile, add: boolean) => {
-    try { addFiles([withId(parsePrg(krillUnpackedName(f), krillFilePrg(f)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [withId(parsePrg(krillUnpackedName(f), krillFilePrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every file of a disk for Krill's loader in a folder: as it is on the disk (what cc1541 writes), and unpacked as a
    *  PRG when it is packed, with cc1541's command line that writes the disk again */
@@ -910,7 +915,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a file of a disk for the Covert Bitops loader as a PRG: unpacked, at where it unpacks to; else as it loads */
   const openCovertFile = (f: CovertFile, add: boolean) => {
-    try { addFiles([withId(parsePrg(covertUnpackedName(f), covertFilePrg(f)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [withId(parsePrg(covertUnpackedName(f), covertFilePrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every file of a disk for the Covert Bitops loader in a folder: as it is on the disk (what makedisk or maked64
    *  takes), and unpacked as a PRG when it is packed, with the tool's command file and a note with its command line */
@@ -934,7 +939,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a file outside the directory of a Pirate Slayer disk as a PRG at its load address, decoded (as much as memory holds) */
   const openPirateSlayerFile = (f: PirateSlayerFile, add: boolean) => {
-    try { addFiles([withId(parsePrg(pirateSlayerFileName(f), pirateSlayerPrg(f)))], add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [withId(parsePrg(pirateSlayerFileName(f), pirateSlayerPrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every file outside the directory of a Pirate Slayer disk, decoded, as a PRG each in a folder, with files.txt that
    *  lists them */
@@ -3699,15 +3704,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {shownBottom === 'xrefs' && <XrefPanel A={A} R={R} cursor={cursor} onNavigate={nav} S={S} />}
             {shownBottom === 'irqs' && <RasterPanel A={A} R={R} onNavigate={nav} />}
             {shownBottom === 'relocs' && <RelocPanel A={A} R={R} relocs={project.relocs} onNavigate={nav} onRelocate={(r, copyAt) => startRelocate(r, copyAt)} onUnrelocate={unrelocate} />}
-            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} />}
-            {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} />}
-            {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} />}
-            {shownBottom === 'sparkle' && disk?.sparkle && <SparklePanel disk={disk} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openSparkleChunk} onSaveFiles={() => void saveSparkleFiles()} />}
-            {shownBottom === 'iffl' && disk?.iffl && <IfflPanel disk={disk} onOpenPart={openIfflPart} onSaveParts={() => void saveIfflParts()} />}
-            {shownBottom === 'krill' && <KrillPanel A={A} disk={disk} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openKrillFile} onSaveFiles={() => void saveKrillFiles()} />}
-            {shownBottom === 'covert' && disk?.covert && <CovertPanel disk={disk} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openCovertFile} onSaveFiles={() => void saveCovertFiles()} />}
-            {shownBottom === 'pirateslayer' && disk?.pirateslayer && <PirateSlayerPanel disk={disk} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onSaveFiles={() => void savePirateSlayerFiles()} />}
-            {shownBottom === 'tape' && tape && <TapePanel tape={tape} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onSaveFiles={() => void saveTapeFiles()} />}
+            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} />}
+            {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} />}
+            {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} />}
+            {shownBottom === 'sparkle' && disk?.sparkle && <SparklePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openSparkleChunk} onSaveFiles={() => void saveSparkleFiles()} />}
+            {shownBottom === 'iffl' && disk?.iffl && <IfflPanel disk={disk} open={loaderOpen} onOpenPart={openIfflPart} onSaveParts={() => void saveIfflParts()} />}
+            {shownBottom === 'krill' && <KrillPanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openKrillFile} onSaveFiles={() => void saveKrillFiles()} />}
+            {shownBottom === 'covert' && disk?.covert && <CovertPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openCovertFile} onSaveFiles={() => void saveCovertFiles()} />}
+            {shownBottom === 'pirateslayer' && disk?.pirateslayer && <PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onSaveFiles={() => void savePirateSlayerFiles()} />}
+            {shownBottom === 'tape' && tape && <TapePanel tape={tape} open={tapeOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onSaveFiles={() => void saveTapeFiles()} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
             {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild({ ...project, settings: S })} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}
           </ErrorBoundary></div>

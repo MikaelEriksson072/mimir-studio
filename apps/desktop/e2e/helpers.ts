@@ -18,6 +18,8 @@ export interface ListingRow {
 export const listing = (page: Page): Locator => page.getByLabel('Disassembly listing');
 export const statusBar = (page: Page): Locator => page.locator('footer.statusbar');
 export const toast = (page: Page, text: string | RegExp): Locator => page.locator('.toasts .toast', { hasText: text });
+/** column `col` of a loader tab's rows marked as a file in the project (`aria-current`, a line on the left) */
+export const inProject = (table: Locator, col: number): Locator => table.locator('tbody tr[aria-current="true"]').locator(`td:nth-child(${col})`);
 
 /** Wait until the analysis worker delivered the first listing, and (a new project has the deep analysis on) the deep
  *  analysis took the place of the normal one shown first: a test starts from where the listing stays. */

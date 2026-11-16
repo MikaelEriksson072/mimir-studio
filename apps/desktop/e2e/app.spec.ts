@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Locator, Page } from '@playwright/test';
 import { expect, repoDir, test } from './fixtures';
-import { dialogOptions, fromFileMenu, fromSubmenu, goTo, expectFiles, headerRow, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
+import { dialogOptions, fromFileMenu, fromSubmenu, goTo, expectFiles, headerRow, inProject, listing, listingRows, occurrences, openSection, statusBar, stubDialogs, toast, waitForListing, type ListingRow } from './helpers';
 
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
@@ -5862,8 +5862,11 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
     const table = page.getByRole('table', { name: 'Spindle load script' });
     await table.getByRole('row', { name: /job01_0800/ }).click();
     await expect(toast(page, 'Loaded job01_0800.prg at $0800')).toBeVisible();
+    // the chunk in the project is marked in the script
+    await expect(inProject(table, 4)).toHaveText(['job01_0800.bin']);
     await table.getByRole('button', { name: 'Add job02_4000.bin to this project' }).click();
     await expectFiles(page, ['job01_0800.prg', 'job02_4000.prg']);
+    await expect(inProject(table, 4)).toHaveText(['job01_0800.bin', 'job02_4000.bin']);
     await expect(listing(page).locator('.row', { hasText: 'sta VIC_BORDER_COLOR' }).first()).toBeVisible();
   });
 
@@ -5910,8 +5913,10 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
     // the raster demo, as it was before it was packed
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
     await expect(listing(page).locator('.row', { hasText: 'jsr music.init' }).first()).toBeVisible();
+    await expect(inProject(table, 5)).toHaveText(['file00_0801.lz']);
     await table.getByRole('button', { name: 'Add file01_4000.lz to this project' }).click();
     await expectFiles(page, ['file00_0801.prg', 'file01_4000.prg']);
+    await expect(inProject(table, 5)).toHaveText(['file00_0801.lz', 'file01_4000.lz']);
   });
 
   await test.step('it copies d64write\'s command line, each file in a comment above it', async () => {
@@ -5959,8 +5964,10 @@ test('a mounted Pirate Slayer disk: the files outside its directory in the Pirat
     // the raster demo, as it was before it was stored XOR $EA
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
     await expect(listing(page).locator('.row', { hasText: 'jsr music.init' }).first()).toBeVisible();
+    await expect(inProject(table, 5)).toHaveText(['t3s0_0801.prg']);
     await table.getByRole('button', { name: 'Add t9s0_4000.prg to this project' }).click();
     await expectFiles(page, ['t3s0_0801.prg', 't9s0_4000.prg']);
+    await expect(inProject(table, 5)).toHaveText(['t3s0_0801.prg', 't9s0_4000.prg']);
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
   });
@@ -6017,6 +6024,7 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
     await expect(table.locator('tbody tr').nth(3).locator('td').nth(6)).toHaveText('name byte 2, 3 blocks (3 RLE packed)');
     await table.getByRole('row', { name: /TinyHeader file/ }).click();
     await expect(toast(page, 'Loaded tinyheader.prg at $0801')).toBeVisible();
+    await expect(inProject(table, 4)).toHaveText(['TinyHeader file']);
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Copy script' }).click();
     await expect(toast(page, 'Copied the TapeTool command lines')).toBeVisible();
@@ -6302,6 +6310,7 @@ test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, a
     await expect(toast(page, 'Loaded file00_0801.prg at $0801')).toBeVisible();
     // the raster demo, as it was before it was packed
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await expect(inProject(files, 5)).toHaveText(['file00_0801.prg']);
   });
 
   await test.step('the boot program\'s code is its script: its loads, with what each file unpacks to on the disk', async () => {
@@ -6331,6 +6340,9 @@ test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, a
     await expect(statusBar(page)).toContainText('$0824');
     await script.getByRole('button', { name: 'Open file02_4c18.prg' }).click();
     await expect(toast(page, 'Loaded file02_4c18.prg at $4c18')).toBeVisible();
+    // the file is marked in the disk's files and on the script's line that loads it
+    await expect(inProject(files, 5)).toHaveText(['file02_4c18.prg']);
+    await expect(inProject(script, 2)).toHaveText(['load $02']);
   });
 
   await test.step('ejecting the disk takes its files away; the program\'s script stays', async () => {
@@ -6372,8 +6384,10 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
     await expect(toast(page, 'Loaded bundle00_0801.prg at $0801')).toBeVisible();
     // the raster demo, as it was before it was packed into the bundle
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await expect(inProject(bundles, 4)).toHaveText(['bundle00_0801.prg']);
     await bundles.getByRole('button', { name: 'Add bundle01_3000.prg to this project' }).click();
     await expectFiles(page, ['bundle00_0801.prg', 'bundle01_3000.prg']);
+    await expect(inProject(bundles, 4)).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg']);
   });
 
   await test.step('Graphics opens at the start of the file opened last, in every view; one opened while it is open goes there at once', async () => {
@@ -6463,8 +6477,10 @@ test("a mounted disk for Krill's loader: its files in the Krill script tab, unpa
     await expect(toast(page, 'Loaded file01_0801.prg at $0801')).toBeVisible();
     // the raster demo, as it was before it was packed
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await expect(inProject(files, 6)).toHaveText(['file01_0801.zx0']);
     await files.getByRole('button', { name: 'Add file02_c830.zx0 to this project' }).click();
     await expectFiles(page, ['file01_0801.prg', 'file02_c830.prg']);
+    await expect(inProject(files, 6)).toHaveText(['file01_0801.zx0', 'file02_c830.zx0']);
   });
 
   await test.step("it copies cc1541's command line: the directory in order, with its names, blocks and dirart line", async () => {
@@ -6524,8 +6540,10 @@ test('a mounted disk with an IFFL file: the file opens as its parts in the IFFL 
     await expect(toast(page, 'Loaded iffl01_part00_0801.prg at $0801')).toBeVisible();
     // the raster demo, as it was before it was packed
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await expect(inProject(parts, 6)).toHaveText(['iffl01_part00.exo']);
     await parts.getByRole('button', { name: 'Add part 1 unpacked to this project' }).click();
     await expectFiles(page, ['iffl01_part00_0801.prg', 'iffl01_part01_c000.prg', 'iffl01_part01_2000.prg']);
+    await expect(inProject(parts, 6)).toHaveText(['iffl01_part00.exo', 'iffl01_part01.exo']);
   });
 
   await test.step('Save parts… saves every part as it is stored and its pieces unpacked', async () => {
@@ -6646,6 +6664,16 @@ test("Krill's loader loading by track and sector: the program's script, the file
     await expect(statusBar(page)).toContainText('$0227');
     await script.getByRole('button', { name: 'Open file06_c000.exo' }).click();
     await expect(toast(page, 'Loaded file06_c000.prg at $c000')).toBeVisible();
+    // marked in the script and in the files
+    await expect(inProject(script, 2)).toHaveText(['load 1/14']);
+    await expect(inProject(files, 6)).toHaveText(['file06_c000.exo']);
+    await expect(inProject(calls, 5)).toHaveCount(0);
+    // a call in a file's code opens the file it loads: marked in the calls, the files and the script
+    await calls.locator('tbody tr').first().click();
+    await expect(toast(page, 'Loaded file01_2000.prg at $2000')).toBeVisible();
+    await expect(inProject(calls, 4)).toHaveText(['load 1/1']);
+    await expect(inProject(files, 6)).toHaveText(['file01_2000.exo']);
+    await expect(inProject(script, 2)).toHaveText(['load 1/1']);
   });
 });
 
@@ -6681,8 +6709,10 @@ test('a mounted disk for the Covert Bitops loader: its files in the Covert scrip
     await expect(toast(page, 'Loaded file01_0801.prg at $0801')).toBeVisible();
     // the raster demo, as it was before it was packed
     await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await expect(inProject(files, 6)).toHaveText(['file01_0801.exo']);
     await files.getByRole('button', { name: 'Add file02_4000.puc to this project' }).click();
     await expectFiles(page, ['file01_0801.prg', 'file02_4000.prg']);
+    await expect(inProject(files, 6)).toHaveText(['file01_0801.exo', 'file02_4000.puc']);
   });
 
   await test.step("it copies makedisk's command file, with the notes and the command line", async () => {

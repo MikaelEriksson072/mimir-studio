@@ -14,6 +14,12 @@ import type { BuildState, Message, MountedDisk, MountedTape, UiProblem } from '.
 import type { TypeGroup } from '@mimir/core';
 import { asmWords, useAssembler } from '../lib/assembler';
 
+/** The files of a loader tab that are in the project (opened or added from it): their rows are marked as the Explorer
+ *  marks a disk's files in the project (a line on the left, `aria-current`), so the tab shows which file is loaded. */
+type InProject = ReadonlySet<object>;
+/** a loader tab's row of a file in `open`: the class, `aria-current` and its tip */
+const mark = (on: boolean, title?: string) => ({ 'aria-current': on || undefined, title: title && on ? `${title}: it is in the project` : title });
+
 export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNavigate: (a: Addr) => void; empty: string }) {
   if (!items.length) return <div className="empty">{empty}</div>;
   return (
@@ -205,24 +211,26 @@ interface SpindlePanelProps {
   A: AnalysisResult; R: RenderResult;
   /** the mounted disk: its load script when it is a Spindle 3 disk */
   disk: MountedDisk | null;
+  /** the chunks in the project: their rows are marked */
+  open: InProject;
   onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void;
   /** open a job's chunk as a PRG (`add`: add it to the project) */
   onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void;
 }
 
 /** The Spindle script tab: a mounted Spindle 3 disk's load script (Spin's jobs), and the effect drivers in memory. */
-export function SpindlePanel({ A, R, disk, onNavigate, onCopy, onOpenChunk }: SpindlePanelProps) {
+export function SpindlePanel({ A, R, disk, open, onNavigate, onCopy, onOpenChunk }: SpindlePanelProps) {
   if (!A.spindle.length && !disk?.spindle) return <div className="empty">No Spindle script: a Spindle 3 disk holds the jobs its load script lists, and a VICE snapshot of a trackmo linked with Pefchain holds its effect drivers.</div>;
   return (
     <>
-      {disk?.spindle && <SpinDiskSection disk={disk} onCopy={onCopy} onOpenChunk={onOpenChunk} />}
+      {disk?.spindle && <SpinDiskSection disk={disk} open={open} onCopy={onCopy} onOpenChunk={onOpenChunk} />}
       {A.spindle.length > 0 && <DriversSection A={A} R={R} onNavigate={onNavigate} onCopy={onCopy} />}
     </>
   );
 }
 
 /** A Spindle 3 disk's jobs (spec 13.5b), a row per chunk; a row opens the chunk as a PRG at its address, + adds it. */
-function SpinDiskSection({ disk, onCopy, onOpenChunk }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void }) {
+function SpinDiskSection({ disk, open, onCopy, onOpenChunk }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void }) {
   const d = disk.spindle!;
   const chunks = d.jobs.reduce((n, j) => n + j.chunks.length, 0);
   const notes = (j: SpindleJob) => [j.jump != null && `then jumps to $${h4(j.jump)}`, j.shadow && 'loads under I/O', j.missing > 0 && `${j.missing} bytes could not be decrunched`].filter(Boolean).join(' · ');
@@ -236,7 +244,7 @@ function SpinDiskSection({ disk, onCopy, onOpenChunk }: { disk: MountedDisk; onC
         {d.jobs.flatMap(j => j.chunks.map((c, k) => {
           const name = spinChunkName(j, c);
           return (
-            <tr key={`${j.n}-${c.start}`} className={cx(k === 0 && 'job-first')} title={`Open ${name} as a PRG at $${h4(c.start)}`} onClick={() => onOpenChunk(j, c, false)}>
+            <tr key={`${j.n}-${c.start}`} className={cx(k === 0 && 'job-first', open.has(c) && 'on')} {...mark(open.has(c), `Open ${name} as a PRG at $${h4(c.start)}`)} onClick={() => onOpenChunk(j, c, false)}>
               <td className="mono">{k === 0 && <>{j.n}{j.labels.map(l => <span key={l} className="pill">{h2(l)}:</span>)}</>}</td>
               <td className="mono">${h4(c.start)}–${h4(c.end - 1)}</td>
               <td className="mono">{c.end - c.start}</td>
@@ -254,7 +262,7 @@ function SpinDiskSection({ disk, onCopy, onOpenChunk }: { disk: MountedDisk; onC
 /** The Bitfire script tab (spec 13.5c): a Bitfire disk's own files, a row each, in the order d64write wrote them (and
  *  the loader loads them); a row opens the file as a PRG, unpacked when it is packed (bitnax for 0.x, else dali), +
  *  adds it. */
-export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: BitfireFile, add: boolean) => void }) {
+export function BitfirePanel({ disk, open, onCopy, onOpenFile }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: BitfireFile, add: boolean) => void }) {
   const d = disk.bitfire!;
   const unpacked = d.files.filter(f => f.unpacked).length, n = d.files.length, packer = d.format === '0.x' ? 'bitnax' : 'dali';
   // what the disk's own directory holds: the boot program and other files (and a dirart)
@@ -274,7 +282,7 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
         {d.files.map(f => {
           const name = bitfireFileName(f), u = f.unpacked;
           return (
-            <tr key={f.n} title={u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
+            <tr key={f.n} className={cx(open.has(f) && 'on')} {...mark(open.has(f), u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`)} onClick={() => onOpenFile(f, false)}>
               <td className="mono">${h2(f.n)}</td>
               <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
               <td className="mono">{u ? `$${h4(u.start)}–$${h4(u.end - 1)}` : <span className="muted">—</span>}</td>
@@ -293,7 +301,7 @@ export function BitfirePanel({ disk, onCopy, onOpenFile }: { disk: MountedDisk; 
 /** The Sparkle script tab (spec 13.5i): a Sparkle disk's bundles, the files each loader call loads, a row per chunk
  *  in the order they load; a row opens the chunk as a PRG at its address, + adds it. Copy script gives the loader
  *  script rebuilt from the disk, Save files… every chunk as a PRG with that script. */
-export function SparklePanel({ disk, onCopy, onOpenChunk, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenChunk: (b: SparkleBundle, c: SparkleChunk, add: boolean) => void; onSaveFiles: () => void }) {
+export function SparklePanel({ disk, open, onCopy, onOpenChunk, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (b: SparkleBundle, c: SparkleChunk, add: boolean) => void; onSaveFiles: () => void }) {
   const d = disk.sparkle!;
   const chunks = d.bundles.reduce((n, b) => n + b.chunks.length, 0);
   const send = d.api?.send;
@@ -317,7 +325,7 @@ export function SparklePanel({ disk, onCopy, onOpenChunk, onSaveFiles }: { disk:
         {d.bundles.flatMap(b => b.chunks.map((c, k) => {
           const name = sparkleChunkName(b, c);
           return (
-            <tr key={`${b.n}-${c.start}`} className={cx(k === 0 && 'job-first')} title={`Open ${name} as a PRG at $${h4(c.start)}`} onClick={() => onOpenChunk(b, c, false)}>
+            <tr key={`${b.n}-${c.start}`} className={cx(k === 0 && 'job-first', open.has(c) && 'on')} {...mark(open.has(c), `Open ${name} as a PRG at $${h4(c.start)}`)} onClick={() => onOpenChunk(b, c, false)}>
               <td className="mono">{k === 0 && `$${h2(b.n)}`}</td>
               <td className="mono">${h4(c.start)}–${h4(c.end - 1)}</td>
               <td className="mono">{c.end - c.start}</td>
@@ -337,7 +345,7 @@ export function SparklePanel({ disk, onCopy, onOpenChunk, onSaveFiles }: { disk:
  *  is a chain of pieces packed with Exomizer, each with where it ends in memory: a row opens the part's pieces unpacked,
  *  a PRG each at where it unpacks to, + adds them; a part that is not packed so has no address and is only saved.
  *  Save parts… writes every part as it is stored and its pieces unpacked. */
-export function IfflPanel({ disk, onOpenPart, onSaveParts }: { disk: MountedDisk; onOpenPart: (f: IfflFile, p: IfflPart, add: boolean) => void; onSaveParts: () => void }) {
+export function IfflPanel({ disk, open, onOpenPart, onSaveParts }: { disk: MountedDisk; open: InProject; onOpenPart: (f: IfflFile, p: IfflPart, add: boolean) => void; onSaveParts: () => void }) {
   const d = disk.iffl!;
   const n = d.files.reduce((a, f) => a + f.parts.length, 0), unpacked = d.files.reduce((a, f) => a + f.parts.filter(p => p.pieces).length, 0);
   const packers = [...new Set(d.files.flatMap(f => (f.packer ? [IFFL_PACKER[f.packer].name] : [])))];
@@ -352,7 +360,7 @@ export function IfflPanel({ disk, onOpenPart, onSaveParts }: { disk: MountedDisk
           const name = ifflPartName(f, p), u = p.pieces, to = u?.map(x => `$${h4(x.start)}–$${h4(x.end - 1)}`).join(', ');
           const packer = f.packer ? IFFL_PACKER[f.packer].name : 'Exomizer';
           return (
-            <tr key={`${f.entry}-${p.n}`} title={u ? `Open part ${p.n} unpacked: ${u.length === 1 ? `${ifflPieceName(f, p, u[0])}, a PRG at $${h4(u[0].start)}` : `its ${u.length} pieces, a PRG each (${to})`}` : `${name} is not packed with ${packer}: it has no address of its own, Save parts… saves it as it is stored`} onClick={() => u && onOpenPart(f, p, false)}>
+            <tr key={`${f.entry}-${p.n}`} className={cx(open.has(p) && 'on')} {...mark(open.has(p), u ? `Open part ${p.n} unpacked: ${u.length === 1 ? `${ifflPieceName(f, p, u[0])}, a PRG at $${h4(u[0].start)}` : `its ${u.length} pieces, a PRG each (${to})`}` : `${name} is not packed with ${packer}: it has no address of its own, Save parts… saves it as it is stored`)} onClick={() => u && onOpenPart(f, p, false)}>
               <td className="mono">{p.n}</td>
               <td className="mono">"{f.name}"</td>
               <td className="mono">${p.offset.toString(16).padStart(5, '0')}</td>
@@ -377,19 +385,19 @@ export function IfflPanel({ disk, onOpenPart, onSaveParts }: { disk: MountedDisk
  *  a row goes to its code, and the file it loads on the mounted disk opens from its button. Copy script gives cc1541's
  *  command line that writes the disk again (the script's, the script with it), Save files… every file as it is on the
  *  disk and unpacked, with them. */
-export function KrillPanel({ A, disk, onNavigate, onCopy, onOpenFile, onSaveFiles }: { A: AnalysisResult; disk: MountedDisk | null; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function KrillPanel({ A, disk, open, onNavigate, onCopy, onOpenFile, onSaveFiles }: { A: AnalysisResult; disk: MountedDisk | null; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
   if (!disk?.krill && !A.krill?.steps.length) return <div className="empty">No Krill script: a program with Krill's loader calls it with X and Y naming a file, and a disk for it keeps packed files.</div>;
   const loads = A.krill?.steps.length ? krillLoads(A.krill, disk?.krill ?? null) : [];
   return (
     <>
-      {disk?.krill && <KrillDiskSection disk={disk} loads={loads} onCopy={onCopy} onOpenFile={onOpenFile} onSaveFiles={onSaveFiles} />}
-      {loads.length > 0 && <KrillScriptSection A={A} disk={disk} loads={loads} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
+      {disk?.krill && <KrillDiskSection disk={disk} loads={loads} open={open} onCopy={onCopy} onOpenFile={onOpenFile} onSaveFiles={onSaveFiles} />}
+      {loads.length > 0 && <KrillScriptSection A={A} disk={disk} loads={loads} open={open} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
     </>
   );
 }
 
 /** Krill's loader's script in the program (5.15c): a row per load. */
-function KrillScriptSection({ A, disk, loads, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; loads: KrillLoad[]; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void }) {
+function KrillScriptSection({ A, disk, loads, open, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; loads: KrillLoad[]; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void }) {
   const S = A.krill!, d = disk?.krill ?? null;
   const routines = S.routines.map(r => `$${h4(r)}`).join(', ');
   return (
@@ -407,7 +415,7 @@ function KrillScriptSection({ A, disk, loads, onNavigate, onCopy, onOpenFile }: 
             d && !f && (l.ts ? 'no file of the mounted disk starts there' : 'no file of the mounted disk has the name'),
           ].filter(Boolean).join(' · ');
           return (
-            <tr key={`${l.step.jsr}:${l.entry ?? ''}`} title={`Go to $${h4(l.step.at)}`} onClick={() => onNavigate(l.step.at)}>
+            <tr key={`${l.step.jsr}:${l.entry ?? ''}`} className={cx(!!f && open.has(f) && 'on')} {...mark(!!f && open.has(f), `Go to $${h4(l.step.at)}`)} onClick={() => onNavigate(l.step.at)}>
               <td className="mono">${h4(l.step.at)}</td>
               <td className="mono script-line"><span className="syn-label">{l.text}</span></td>
               <td className="mono">{f ? <>{krillFileName(f)}{u && <span className="muted"> → ${h4(u.start)}–${h4(u.end - 1)}</span>}
@@ -422,7 +430,7 @@ function KrillScriptSection({ A, disk, loads, onNavigate, onCopy, onOpenFile }: 
 }
 
 /** A mounted disk for Krill's loader: its files, a row each, and the loader's calls in their code. */
-function KrillDiskSection({ disk, loads, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; loads: KrillLoad[]; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
+function KrillDiskSection({ disk, loads, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; loads: KrillLoad[]; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
   const d = disk.krill!;
   const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length, outside = d.files.filter(f => f.entry < 0).length;
   const packer = krillPackerName(d);
@@ -451,7 +459,7 @@ function KrillDiskSection({ disk, loads, onCopy, onOpenFile, onSaveFiles }: { di
         {d.files.map((f, i) => {
           const name = krillFileName(f), u = f.unpacked;
           return (
-            <tr key={krillFileTs(f)} title={u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
+            <tr key={krillFileTs(f)} className={cx(open.has(f) && 'on')} {...mark(open.has(f), u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`)} onClick={() => onOpenFile(f, false)}>
               <td className="mono">{f.entry >= 0 ? `$${h2(f.entry)}` : <span className="muted">{krillFileTs(f)}</span>}</td>
               <td className="mono">{f.entry >= 0 ? `"${d.entries[f.entry].name}"` : <span className="muted">not in the directory</span>}</td>
               <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
@@ -469,7 +477,7 @@ function KrillDiskSection({ disk, loads, onCopy, onOpenFile, onSaveFiles }: { di
           {d.calls.map(c => {
             const f = d.files[c.file];
             return (
-              <tr key={`${c.in}:${c.jsr}:${c.entry ?? ''}`} title={`Open ${krillFileName(f)}`} onClick={() => onOpenFile(f, false)}>
+              <tr key={`${c.in}:${c.jsr}:${c.entry ?? ''}`} className={cx(open.has(f) && 'on')} {...mark(open.has(f), `Open ${krillFileName(f)}`)} onClick={() => onOpenFile(f, false)}>
                 <td className="mono">{krillFileName(d.files[c.in])}</td>
                 <td className="mono">${h4(c.at)}</td>
                 <td className="mono">${h4(c.to)}</td>
@@ -489,7 +497,7 @@ function KrillDiskSection({ disk, loads, onCopy, onOpenFile, onSaveFiles }: { di
  *  COVERT_RAW_AT), + adds it. Below, the script: the calls of the loader read from the code on the disk, and the
  *  command file and command line of Cadaver's tool (makedisk or maked64) that writes the disk again. Copy script copies
  *  them; Save files… saves every file as it is on the disk and unpacked, with the command file. */
-export function CovertPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: CovertFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function CovertPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: CovertFile, add: boolean) => void; onSaveFiles: () => void }) {
   const d = disk.covert!;
   const script = covertScript(d, disk.name), text = covertScriptText(script);
   const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length;
@@ -516,7 +524,7 @@ export function CovertPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: M
         {d.files.map(f => {
           const name = covertFileName(f), u = f.unpacked;
           return (
-            <tr key={f.entry} title={u ? `Open ${name} unpacked, as a PRG at $${h4(prgAt(f))}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
+            <tr key={f.entry} className={cx(open.has(f) && 'on')} {...mark(open.has(f), u ? `Open ${name} unpacked, as a PRG at $${h4(prgAt(f))}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`)} onClick={() => onOpenFile(f, false)}>
               <td className="mono">${h2(f.entry)}</td>
               <td className="mono">"{d.entries[f.entry].name}"</td>
               <td className="mono">{u ? <span className="muted">packed</span> : `$${h4(f.load)}–$${h4(Math.min(f.load + f.data.length - 2, 0x10000) - 1)}`}</td>
@@ -531,14 +539,17 @@ export function CovertPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: M
       </tbody></table>
       {d.calls.length > 0 && (
         <table className="tbl" aria-label="Covert calls"><thead><tr><th>At</th><th>In</th><th>Loads</th><th>Call</th></tr></thead><tbody>
-          {d.calls.map(c => (
-            <tr key={`${c.in}:${c.at}`}>
-              <td className="mono">${h4(c.at)}</td>
-              <td className="mono">${h2(c.in)}</td>
-              <td className="mono">"{d.entries[c.file].name}"</td>
-              <td className="mono">{covertCallText(c, d)}</td>
-            </tr>
-          ))}
+          {d.calls.map(c => {
+            const f = d.files.find(x => x.entry === c.file), on = !!f && open.has(f);
+            return (
+              <tr key={`${c.in}:${c.at}`} className={cx(on && 'on')} {...mark(on)}>
+                <td className="mono">${h4(c.at)}</td>
+                <td className="mono">${h2(c.in)}</td>
+                <td className="mono">"{d.entries[c.file].name}"</td>
+                <td className="mono">{covertCallText(c, d)}</td>
+              </tr>
+            );
+          })}
         </tbody></table>
       )}
       <pre className="covert-script mono" aria-label="Covert script">{[...script.seq, '', script.command].join('\n')}</pre>
@@ -550,7 +561,7 @@ export function CovertPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: M
  *  where, how framed, each copy a turn), the boot and what it does, where the drive's check is, the boot's text, and
  *  the files outside the directory, a row each: a row opens the file as a PRG at its load address, decoded; + adds it.
  *  Save files… saves them all, decoded, with files.txt that lists them; Copy list copies that list. */
-export function PirateSlayerPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: PirateSlayerFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function PirateSlayerPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: PirateSlayerFile, add: boolean) => void; onSaveFiles: () => void }) {
   const p = disk.pirateslayer!;
   const hex = (v: number) => v.toString(16).toUpperCase().padStart(2, '0');
   const keys = [...new Set(p.files.filter(f => f.key).map(f => `$${hex(f.key)}`))];
@@ -588,7 +599,7 @@ export function PirateSlayerPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { d
           {p.files.map(f => {
             const name = pirateSlayerFileName(f), past = f.load + f.bytes.length - f.end;
             return (
-              <tr key={`${f.track}/${f.sector}`} title={`Open ${name} as a PRG at $${h4(f.load)}${f.key ? `, decoded (XOR $${hex(f.key)})` : ''}`} onClick={() => onOpenFile(f, false)}>
+              <tr key={`${f.track}/${f.sector}`} className={cx(open.has(f) && 'on')} {...mark(open.has(f), `Open ${name} as a PRG at $${h4(f.load)}${f.key ? `, decoded (XOR $${hex(f.key)})` : ''}`)} onClick={() => onOpenFile(f, false)}>
                 <td className="mono">{f.track}/{f.sector}</td>
                 <td className="mono">{f.blocks}</td>
                 <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
@@ -609,7 +620,7 @@ export function PirateSlayerPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { d
  *  Tape) with where it starts, and the stretches of turbo data no format here reads. A row opens the file, + adds it.
  *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them.
  *  A T64 tape archive (13.5j): its directory, an entry a row. */
-export function TapePanel({ tape, onCopy, onOpenFile, onSaveFiles }: { tape: MountedTape; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function TapePanel({ tape, open, onCopy, onOpenFile, onSaveFiles }: { tape: MountedTape; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onSaveFiles: () => void }) {
   const { img } = tape;
   const tt = tapeToolScript(img, tape.name);
   const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', megasave: 'Mega-Save', cyberload: 'Cyberload', t64: 'T64' };
@@ -641,7 +652,7 @@ export function TapePanel({ tape, onCopy, onOpenFile, onSaveFiles }: { tape: Mou
           );
           const file = f!, can = file.load != null && file.data.length > 0 && file.type !== 'SEQ' && file.type !== 'END';
           return (
-            <tr key={`f${i}`} className={can ? undefined : 'muted'} title={can ? `Open ${file.name}${file.headerCode ? ' and its header' : ''}` : undefined} onClick={() => { if (can) onOpenFile(file, false); }}>
+            <tr key={`f${i}`} className={cx(!can && 'muted', open.has(file) && 'on')} {...mark(open.has(file), can ? `Open ${file.name}${file.headerCode ? ' and its header' : ''}` : undefined)} onClick={() => { if (can) onOpenFile(file, false); }}>
               <td className="mono">{t64 ? file.id : time(file.seconds)}</td>
               <td className="mono">${file.offset.toString(16)}</td>
               <td>{FORMAT[file.format]}{file.format === 'cbm' ? ` ${file.type}` : file.format === 't64' ? ` ${file.load == null ? 'FRZ' : file.type}` : ''}</td>
@@ -662,18 +673,18 @@ export function TapePanel({ tape, onCopy, onOpenFile, onSaveFiles }: { tape: Mou
 /** The Booze script tab (spec 13.5d): a mounted BoozeLoader disk's own files, a row each by number (a row opens the file
  *  as a PRG, unpacked when it is packed, + adds it), and BoozeLoader's script in the program (5.15b): the loads, sides
  *  and calls of the code that calls the loader, each load with what its file unpacks to on the mounted disk. */
-export function BoozePanel({ A, disk, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+export function BoozePanel({ A, disk, open, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
   if (!disk?.booze && !A.booze?.steps.length) return <div className="empty">No BoozeLoader script: a BoozeLoader disk keeps its files in a table of its own, and a program with BoozeLoader calls it with each file's number.</div>;
   return (
     <>
-      {disk?.booze && <BoozeDiskSection disk={disk} onCopy={onCopy} onOpenFile={onOpenFile} />}
-      {!!A.booze?.steps.length && <BoozeScriptSection A={A} disk={disk} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
+      {disk?.booze && <BoozeDiskSection disk={disk} open={open} onCopy={onCopy} onOpenFile={onOpenFile} />}
+      {!!A.booze?.steps.length && <BoozeScriptSection A={A} disk={disk} open={open} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
     </>
   );
 }
 
 /** A BoozeLoader disk's files (spec 13.5d), a row each. */
-function BoozeDiskSection({ disk, onCopy, onOpenFile }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+function BoozeDiskSection({ disk, open, onCopy, onOpenFile }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
   const d = disk.booze!;
   const unpacked = d.files.filter(f => f.unpacked).length, n = d.files.length;
   const what = [d.side != null && `side ${d.side}`, d.cruncher && `packed with ${BOOZE_CRUNCHER[d.cruncher]}`, !d.driveCode && 'no drive code on this side'].filter(Boolean).join(', ');
@@ -691,7 +702,7 @@ function BoozeDiskSection({ disk, onCopy, onOpenFile }: { disk: MountedDisk; onC
         {d.files.map(f => {
           const name = boozeFileName(f), u = f.unpacked;
           return (
-            <tr key={`${f.track}/${f.sector}`} title={u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
+            <tr key={`${f.track}/${f.sector}`} className={cx(open.has(f) && 'on')} {...mark(open.has(f), u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`)} onClick={() => onOpenFile(f, false)}>
               <td className="mono">{f.n != null ? `$${h2(f.n)}` : `${f.track}/${f.sector}`}</td>
               <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
               <td className="mono">{u ? `$${h4(u.start)}–$${h4(u.end - 1)}` : <span className="muted">—</span>}</td>
@@ -709,7 +720,7 @@ function BoozeDiskSection({ disk, onCopy, onOpenFile }: { disk: MountedDisk; onC
 
 /** BoozeLoader's script in the program (5.15b), a row per load, side and call; a row goes to its code, and a load's file
  *  on the mounted disk (of the side the script is on) opens from its row's button. */
-function BoozeScriptSection({ A, disk, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+function BoozeScriptSection({ A, disk, open, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
   const S = A.booze!, d = disk?.booze ?? null;
   const loads = S.steps.filter(s => s.kind === 'load').length;
   /** a load's file on the mounted disk, when the script is on its side (or either side is not known) */
@@ -731,7 +742,7 @@ function BoozeScriptSection({ A, disk, onNavigate, onCopy, onOpenFile }: { A: An
         {rows.map(({ s, f }, i) => {
           const u = f?.unpacked, r = runOf(s), first = i === 0 || runOf(rows[i - 1].s) !== r;
           return (
-            <tr key={s.jsr} className={cx(first && i > 0 && 'job-first')} title={`Go to $${h4(s.at)}`} onClick={() => onNavigate(s.at)}>
+            <tr key={s.jsr} className={cx(first && i > 0 && 'job-first', !!f && open.has(f) && 'on')} {...mark(!!f && open.has(f), `Go to $${h4(s.at)}`)} onClick={() => onNavigate(s.at)}>
               <td className="mono">${h4(s.at)}</td>
               <td className="mono script-line"><span className={s.kind === 'call' ? undefined : 'syn-label'}>{boozeLine(s)}</span></td>
               <td className="mono">{f ? <>{boozeFileName(f)}{u && <span className="muted"> → ${h4(u.start)}–${h4(u.end - 1)}</span>}
