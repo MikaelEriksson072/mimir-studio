@@ -6153,6 +6153,29 @@ test('a Mega-Save tape: its files are listed and open, as Tazz\'s and Cauldron\'
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
+test('a Novaload tape: the pages its boot file\'s loader reads and the files its LOAD reads are listed and open, as Paperboy\'s are', async ({ app, page }) => {
+  // fixtures/tap/novaload-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, the pages a Novaload boot's
+  // loader reads ($c000-$c1ff, $e000-$e0ff), then the raster demo as Novaload's file "DEMO", at Paperboy's speed
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/novaload-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted novaload-demo\.tap \(\d+ s\): 4 files \(1 KERNAL, 3 Novaload\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on novaload-demo.tap' });
+  await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"NOVA DEMO"\s*\+header/, /"file_c000"\s*Novaload/, /"file_e000"\s*Novaload/, /"DEMO"\s*Novaload/]);
+  // every stretch read: nothing left for Sindri alone
+  await expect(page.locator('.disk-spindle')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText([/^KERNAL/, 'Novaload', 'Novaload', 'Novaload']);
+  await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText([/^\$0801–\$08b0$/, '$c000–$c1ff', '$e000–$e0ff', /^\$0801–\$[0-9a-f]{4}$/]);
+  await expect(table.locator('tbody tr td:nth-child(7)')).toHaveText([/header 2×, data 2×/, "the boot file's loader reads it, 2 pages", "the boot file's loader reads it, 1 page", '']);
+  await table.getByRole('row', { name: /"DEMO"/ }).click();
+  await expect(toast(page, 'Loaded DEMO.prg at $0801')).toBeVisible();
+  await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+});
+
 test('the tape as a C64 finds its files (Settings → General), a turbo loader\'s files under the screen, and Mimir\'s list again', async ({ app, page }) => {
   // fixtures/tap/cyberload-demo.tap: the KERNAL boot file "CYBER DEMO", whose data block starts as a header does and
   // prints a FOUND of its own, then Cyberload's files, which the KERNAL does not see. LOAD's search of it on a C64 is

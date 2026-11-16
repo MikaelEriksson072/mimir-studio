@@ -591,6 +591,13 @@ describe("the Action Replay's loaders", () => {
     expect(ids(irq(' lda $dc0d\n pha\n and #$01\n ora $b4\n sta $b4\n pla\n clc\n and #$10\n beq nob\n lda #$19\n sta $dd0e\n lda $dd0d\n lsr\n rol $bd\nnob: nop', ' nop'))).toEqual(['firebird']);
     // the IRQ Novaload: waits for $aa, then stores each byte with a beep and a sum
     expect(ids(irq(' lda $dc05\n nop', ' cmp #$aa\n beq s\n lda #$02\n bne t\ns: lda #$37\nt: sta $0365\n lda #$7f\n sta $a9\n lda $dc0d\n pla\n tay\n pla\n rti\nstore: ldy $a7\n sta ($a5),y\n sta $d401\n clc\n adc $aa\n sta $aa\n iny\n sty $a7\n bne store'))).toEqual(['novaload']);
+    // the IRQ of its LOAD (Paperboy's at $0334): the bit read, the sum, then the step it is at (bcs into it), the pilot
+    // ($80 after 0 bits and a 1) and the sync byte $aa
+    const loadIrq = ' lda $dc05\n ldy #$11\n sty $dc0e\n eor #$02\n lsr\n lsr\n ror $a9\n bcs end\n lda $aa\n sta $a8\n adc $a9\n sta $aa\n ldy $b4\n lda $a9\n sec\n bcs pilot\npilot: cmp #$80\n bne end\n lda #$08\n bne set\n sbc #$aa\n beq set\nset: sta $0358';
+    const withIrq = (code: string) => ` sei\n lda #<irq\n sta $0314\n lda #>irq\n sta $0315\n lda #$90\n sta $dc0d\n cli\n jmp *\nirq: pha\n tya\n pha\n${code}\nend: lda $dc0d\n pla\n tay\n pla\n rti\n`;
+    expect(ids(withIrq(loadIrq))).toEqual(['novaload']);
+    // waiting for another sync byte: a tape loader, not named
+    expect(ids(withIrq(loadIrq.replace('sbc #$aa', 'sbc #$ab')))).toEqual(['tape?']);
     // Cyberload: TapeTool's bit reading without its pha, with a php after
     const cyber = ids(' lda #$f3\n sta $dc04\n lda #$01\n sta $dc05\n jsr bit\n rts\nbit: lda #$10\nw: bit $dc0d\n beq w\n lda $dc04\n cmp $dc04\n beq one\n clc\none: lda #$19\n sta $dc0e\n php\n dec $f0\n plp\n rts\n');
     expect(cyber).toEqual(['cyberload']);

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePrg, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackPrg } from '../src';
-import { blockFile, demoTape, megaSaveDemoTape, megaSaveFile, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
+import { blockFile, demoTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
 import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -52,6 +52,17 @@ describe('the KERNAL format', () => {
     expect(img.unknown).toEqual([]);
     expect(img.tapetool).toBeNull();
     expect(tapeFileName(img.files[0])).toBe('FIRST.prg');
+  });
+
+  it('loads what the header says of a longer data block, as the KERNAL stores it: the rest is only read', () => {
+    // a boot file's whole tape buffer of 192 bytes, its header saying the 12 that load over the vectors at $0300 (the
+    // spaces after them would take $0314 and $0328 to $2020)
+    const data = Uint8Array.from({ length: 192 }, (_, i) => (i < 12 ? (i & 1 ? 0x03 : 0x51) : 0x20));
+    const [f] = readTape(makeTap({ files: [{ name: 'boot', load: 0x0300, data, end: 0x030c }] })).files;
+    expect([f.load, f.end, [...f.data], f.note, f.errors]).toEqual([0x0300, 0x030c, [...data.slice(0, 12)], "the data block holds 192 bytes, LOAD stores the header's 12", []]);
+    // a header that says more than the block holds: the file is the block
+    const [g] = readTape(makeTap({ files: [{ name: 'more', load: 0x1000, data: bytes(100), end: 0x1100 }] })).files;
+    expect([g.end, g.data.length, g.note]).toEqual([0x1000 + 100, 100, 'the header says $1000-$1100, the data block holds 100 bytes']);
   });
 
   it('puts a relocatable program at the start of BASIC, as LOAD does, and says where it was saved from', () => {
@@ -292,6 +303,83 @@ describe('Mega-Save', () => {
       megaSaveFile(s, { load: 0x2000, data: bytes(600, 10), pilot });
       expect(readTape(withTurbo(makeTap({ files: [] }), s.pulses)).files).toHaveLength(n);
     }
+  });
+});
+
+describe('Novaload', () => {
+  const page = (n: number) => bytes(256, n);
+
+  it('reads its files: a pilot of 0 bits, a 1, $aa, the name, start less 256, end, the blocks with a running sum', () => {
+    const w = new TurboWriter(37, 87);
+    // a whole number of blocks (its last block holds 0 bytes), one with a last block of 100 bytes, one with no name
+    novaFile(w, { name: 'B2', load: 0x4000, data: bytes(0x3200, 2) });
+    novaFile(w, { name: 'SUB.SID', load: 0x0834, data: bytes(14284, 3) });
+    novaFile(w, { load: 0xc000, data: bytes(100, 4) });
+    // up to the top of memory: an end of $0000
+    novaFile(w, { name: 'F', load: 0xf800, data: bytes(0x800, 5) });
+    const img = readTape(withTurbo(makeTap({ files: [] }), w.pulses));
+    expect(img.files.map(f => [f.format, f.name, f.type, f.load, f.end, f.errors])).toEqual([
+      ['novaload', 'B2', 'PRG', 0x4000, 0x7200, []],
+      ['novaload', 'SUB.SID', 'PRG', 0x0834, 0x0834 + 14284, []],
+      ['novaload', 'file_c000', 'PRG', 0xc000, 0xc064, []],
+      ['novaload', 'F', 'PRG', 0xf800, 0x10000, []],
+    ]);
+    expect(img.files[1].data).toEqual(bytes(14284, 3));
+    expect([...img.files[0].raw!]).toEqual([0x42, 0x32]);
+    expect(img.files[2].raw).toBeUndefined();
+    expect(img.unknown).toEqual([]);
+    expect(tapeFileName(img.files[1])).toBe('SUB.SID.prg');
+  });
+
+  it("reads what the boot file's loader reads: $55, then page after page up to a page 0; files are pages that follow on", () => {
+    const w = new TurboWriter(37, 87);
+    novaPages(w, [0xe0, 0xe1, 0xe2, 0xe3, 0xef, 0xf0, 0xfe, 0xff, 0x08, 0x09].map(p => ({ page: p, data: page(p) })));
+    const img = readTape(withTurbo(makeTap({ files: [] }), w.pulses));
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.note, f.errors])).toEqual([
+      ['novaload', 'file_e000', 0xe000, 0xe400, "the boot file's loader reads it, 4 pages", []],
+      ['novaload', 'file_ef00', 0xef00, 0xf100, "the boot file's loader reads it, 2 pages", []],
+      ['novaload', 'file_fe00', 0xfe00, 0x10000, "the boot file's loader reads it, 2 pages", []],
+      ['novaload', 'file_0800', 0x0800, 0x0a00, "the boot file's loader reads it, 2 pages", []],
+    ]);
+    expect(img.files[3].data).toEqual(new Uint8Array([...page(0x08), ...page(0x09)]));
+    expect(img.unknown).toEqual([]);
+  });
+
+  it('keeps a block whose sum does not fit, saying so, and takes nothing from a short pilot or one page alone', () => {
+    const w = new TurboWriter(37, 87);
+    novaFile(w, { name: 'X', load: 0x1000, data: bytes(1000, 6), bad: 1 });
+    novaPages(w, [0x20, 0x21, 0x22].map(p => ({ page: p, data: page(p) })), { bad: 1 });
+    const img = readTape(withTurbo(makeTap({ files: [] }), w.pulses));
+    expect(img.files.map(f => [f.name, f.load, f.end, f.errors])).toEqual([
+      ['X', 0x1000, 0x1000 + 1000, ['checksum: the block at $1100 could not be read cleanly']],
+      ['file_2000', 0x2000, 0x2300, ['checksum: the page at $2100 could not be read cleanly']],
+    ]);
+    // another loader's data with a pilot of a few dozen 0 bits before a 1 and $aa: no file, however its sums fit
+    const s = new TurboWriter(37, 87);
+    s.bytes(bytes(1500, 7));
+    novaFile(s, { name: 'Y', load: 0x2000, data: bytes(600, 8), pilot: 200 });
+    s.bytes(bytes(1500, 9));
+    expect(readTape(withTurbo(makeTap({ files: [] }), s.pulses)).files).toEqual([]);
+    // one page that adds up: other data now and then has one
+    const one = new TurboWriter(37, 87);
+    novaPages(one, [{ page: 0x30, data: page(0x30) }]);
+    expect(readTape(withTurbo(makeTap({ files: [] }), one.pulses)).files).toEqual([]);
+  });
+
+  it('is fixtures/tap/novaload-demo.tap, which the e2e tests insert: pages for the boot file, then the demo', () => {
+    const tape = novaloadDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/novaload-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, tape);
+    expect(new Uint8Array(readFileSync(path))).toEqual(tape);
+    const img = readTape(tape);
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors])).toEqual([
+      ['cbm', 'NOVA DEMO', 0x0801, 0x0801 + 176, []],
+      ['novaload', 'file_c000', 0xc000, 0xc200, []],
+      ['novaload', 'file_e000', 0xe000, 0xe100, []],
+      ['novaload', 'DEMO', 0x0801, 0x0801 + demo.length - 2, []],
+    ]);
+    expect(img.files[3].data).toEqual(demo.subarray(2));
   });
 });
 

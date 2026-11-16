@@ -119,9 +119,9 @@ e2:    lda #$19
 const LOADER = loader();
 
 /** a tape: the boot file (`data` at `load`, the loader in its header), then PROGRAM as turbo data after a leader */
-function bootTape(load: number, data: Uint8Array, boot = LOADER): Uint8Array {
+function bootTape(load: number, data: Uint8Array, boot = LOADER, end = load + data.length): Uint8Array {
   const out: number[] = [];
-  kernal(out, header(3, load, load + data.length, 'BOOT', boot.prg.subarray(2)), data);
+  kernal(out, header(3, load, end, 'BOOT', boot.prg.subarray(2)), data);
   const t: number[] = [];
   for (let i = 0; i < 64; i++) turbo(t, [0xff, 0xc3]);
   turbo(t, [0xaa, 0x69, ...PROGRAM.prg.subarray(2), 0]);
@@ -134,6 +134,31 @@ const viaMain = () => { const d = new Uint8Array(0x0304 - 0x02a7).fill(0xea); d.
 /** $029f-$02a6: the IRQ vector the KERNAL keeps while it reads the tape, which it puts back after the load */
 const viaIrq = () => Uint8Array.from([0x51, 0x03, 0, 0, 0, 0, 0, 0]);
 const prgOf = (load: number, data: Uint8Array) => Uint8Array.from([load & 0xff, load >> 8, ...data]);
+/** $02a7-$0333 as Novaload's older boots have it (Turbo Esprit's): the STOP vector at $0328 leads to $02ed (its low byte
+ *  the KERNAL's, so the vector half loaded still leads there), which the KERNAL calls while it loads the rest. Called
+ *  first, it points the vector on to its second half and puts $ff in $0332; called again it starts the loader in the
+ *  tape buffer once the load has put $0332's own byte (0) there. A SYS to where it loads (an RTS), or a call after the
+ *  whole file is in, finds $ff there and returns. */
+const viaStop = () => asm(`
+* = $02a7
+        rts
+* = $02ed
+first:  lda #<again
+        sta $0328
+        lda #$ff
+        sta $0332
+again:  lda $0332
+        bmi back
+        jmp $0351
+back:   rts
+* = $0300
+        .word $e38b, $a483, $a57c, $a71a, $a7e4, $ae86
+        .byte 0, 0, 0, 0, $4c
+        .word $b248
+        .byte 0
+        .word $ea31, $fe66, $fe47, $f34a, $f291, $f20e, $f250, $f333, $f157, $f1ca, first, $f13e, $f32f, $fe66, $f4a5
+        .byte 0, $f5
+`).prg.subarray(2);
 
 describe('the datasette', () => {
   it('reads the pulses of a TAP, and its KERNAL files', () => {
@@ -172,6 +197,38 @@ describe('the datasette', () => {
       }
     });
   }
+
+  it.skipIf(!roms)('calls the STOP vector a boot file loads over as LOAD goes on, which can start the program before the end', () => {
+    const data = viaStop();
+    expect(data.length).toBe(0x0334 - 0x02a7);
+    const lines: string[] = [];
+    const res = unpack(prgOf(0x02a7, data), { roms, tape: bootTape(0x02a7, data), trace: l => lines.push(l) });
+    expect(lines.slice(0, 2)).toEqual(['the file loads over the STOP vector: LOAD calls $02ed as it goes on loading', 'layer 0 starts at $02ed']);
+    expect(res.unpacked).toBe(true);
+    const s = res.saved!;
+    expect(s.entry).toBe(0x1000);
+    expect([...s.prg.subarray(2 + 0x1000 - s.start, 2 + 0x1000 - s.start + PROGRAM.prg.length - 2)]).toEqual([...PROGRAM.prg.subarray(2)]);
+    // a boot file whose STOP vector stays the KERNAL's loads all at once, as before: no call
+    const plain = [] as string[];
+    unpack(prgOf(0x02a7, viaMain()), { roms, tape: bootTape(0x02a7, viaMain()), trace: l => plain.push(l) });
+    expect(plain.filter(l => l.includes('STOP vector'))).toEqual([]);
+  });
+
+  it("stores a data block up to the header's end, as the KERNAL does: the rest of it is only read", () => {
+    // a whole tape buffer of 192 bytes for the 12 its header says: the vectors at $0300-$030b, all to the loader at $0351
+    // (BASIC's main loop starts it through $0302), then spaces that would take $0314 and $0328 to $2020 (Incentive's
+    // Zodiac and Cricket Crazy have it so)
+    const block = Uint8Array.from({ length: 192 }, (_, i) => (i < 12 ? (i & 1 ? 0x03 : 0x51) : 0x20));
+    const t = bootTape(0x0300, block, LOADER, 0x030c);
+    const [f] = tapeFiles(tapPulses(t));
+    expect([f.start, f.end, [...f.data]]).toEqual([0x0300, 0x030c, [...block.subarray(0, 12)]]);
+    for (const r of [null, roms]) {
+      if (r === roms && !roms) continue;
+      const res = unpack(prgOf(0x0300, f.data), { roms: r, tape: t });
+      expect(res.unpacked).toBe(true);
+      expect(res.saved!.entry).toBe(0x1000);
+    }
+  });
 
   it('waits a while after the loader stops the motor with more on the tape: it can pause before it starts the program', () => {
     // 3.3 s with the motor off and nothing written, more than a layer takes to settle (1.5 million cycles); no keys, as

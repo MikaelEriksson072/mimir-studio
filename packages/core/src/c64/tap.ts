@@ -21,6 +21,8 @@
  * - Freeload (Ocean's) and US Gold's loader: a pilot byte, a sync byte, [a name,] start, end, the data and their XOR;
  * - Mega-Save (Palace's, Hewson's, Level 9's, Alligata's …): a pilot of $63, the sync bytes $64 … $ff, a byte, a header
  *   of 10 bytes (start, end, …), the data and their XOR;
+ * - Novaload (Novagen's, Elite's, Encore's, US Gold's Americana …): the lowest bit first, a pilot of 0 bits, a 1 and $aa;
+ *   a file its LOAD reads (the name, start, end, blocks with a running sum) or the pages its boot file's loader reads;
  * - Cyberload (System 3's, Thalamus', Activision's, Accolade's …): a pilot of $0f before every sync byte, the loader's
  *   four stages each in a format of its own (cyberFirst, cyberSecond, cyberBlocks, cyberNamedFiles).
  * Anything else that holds data is the turbo data of a loader not known here: the boot program's loader reads it, so
@@ -88,7 +90,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
 }
 
 /** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'cyberload' | 't64';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'novaload' | 'cyberload' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -330,9 +332,13 @@ function cbmFiles(p: TapPulses, blocks: CbmBlock[]): TapeFile[] {
         file.data = best.data;
         file.to = ds[ds.length - 1].block.to;
         if (!best.ok) errors.push('checksum: the data could not be read cleanly');
-        // a loader that takes over while the KERNAL loads (through a vector the data overwrites) can have the header
-        // say more than the block holds: the file is what the block holds
-        if (best.data.length !== len) { file.note = `the header says $${hex4(start)}-$${hex4(stop)}, the data block holds ${best.data.length} bytes`; file.end = start + best.data.length; }
+        // the KERNAL stores a block's bytes up to the header's end and only reads the rest: a block that holds more (a
+        // whole tape buffer of 192 bytes for the 12 or 52 of a boot file that loads over the vectors at $0300, as
+        // Epyx's Summer Games and Incentive's Zodiac have) loads that many, as VICE loads them. A loader that takes over
+        // while the KERNAL loads (through a vector the data overwrites) can have the header say more than the block
+        // holds: the file is what the block holds
+        if (len && best.data.length > len) { file.note = `the data block holds ${best.data.length} bytes, LOAD stores the header's ${len}`; file.data = best.data.slice(0, len); }
+        else if (best.data.length !== len) { file.note = `the header says $${hex4(start)}-$${hex4(stop)}, the data block holds ${best.data.length} bytes`; file.end = start + best.data.length; }
       } else errors.push('no data block follows the header');
       // a relocatable program: LOAD (secondary address 0, as typed and as SHIFT+RUN/STOP does it) puts it at the start
       // of BASIC
@@ -750,6 +756,124 @@ function megaSaveFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[]
   return out;
 }
 
+/* ---- Novaload ---- */
+
+/* Novaload (Novagen's own, and Elite's, Encore's, US Gold's Americana, Epyx's, MicroProse's, Martech's … tapes): a pulse
+ * longer than about 500 cycles is a 1 (CIA1's timer A, one shot from $03f4, has gone below $0200; the first Novaload
+ * read the top bit of $81f4), the lowest bit first; before each file a pilot of 0 bits (about 2 060), a 1 and the sync
+ * byte $aa. Then one of two kinds:
+ * - a file (what Novaload's LOAD reads, by name): the length of its name, the name, its start less 256, its end, the
+ *   bytes in its last block and its blocks plus one, the sum of these bytes; then its blocks, 256 bytes each but the
+ *   last, each followed by the sum of all the bytes after the sync byte before it (the sums too);
+ * - what the loader in the boot file's tape header reads in its IRQ: the byte $55, then blocks of a page each (the
+ *   page, its 256 bytes, their sum with the page) until a page 0.
+ * Learned from Paperboy's (Elite) boot and its LOAD as Sindri ran them with the tape. */
+
+/** zero bits a Novaload pilot needs (its tapes have about 2 060, from 2 006; another loader's data has a few dozen) */
+const NOVA_PILOT = 256;
+
+/** byte `k` of a bit stream from bit `at`, the lowest bit first (-1 past the end) */
+function lsbByte(bits: Uint8Array, at: number): number {
+  if (at < 0 || at + 8 > bits.length) return -1;
+  let v = 0;
+  for (let i = 0; i < 8; i++) v |= bits[at + i] << i;
+  return v;
+}
+
+function novaFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
+  const out: TapeFile[] = [];
+  let zeros = 0;
+  for (let k = 0; k < bits.length; k++) {
+    if (!bits[k]) { zeros++; continue; }
+    const pilot = zeros;
+    zeros = 0;
+    if (pilot < NOVA_PILOT || lsbByte(bits, k + 1) !== 0xaa) continue;
+    const r = novaFile(p, bits, base, k) ?? novaPages(p, bits, base, k);
+    if (!r) continue;
+    out.push(...r.files);
+    k = r.end - 1;
+  }
+  return out;
+}
+
+const fileAt = (p: TapPulses, at: number) => ({ at, offset: p.offsets[at] ?? 0, seconds: (p.times[at] ?? 0) / TAPE_CLOCK });
+
+/** A Novaload file from its 1 before the sync byte at bit `k`: its header has to add up, and its blocks have to be as
+ *  many as from its start to its end. */
+function novaFile(p: TapPulses, bits: Uint8Array, base: number, k: number): { files: TapeFile[]; end: number } | null {
+  let at = k + 9;
+  const take = () => { const v = lsbByte(bits, at); at += 8; return v; };
+  const n = take();
+  if (n < 0 || n > 16) return null;
+  const named = Array.from({ length: n }, take), head = Array.from({ length: 6 }, take);
+  if (named.includes(-1) || head.includes(-1)) return null;
+  const raw = Uint8Array.from(named);
+  let sum = [n, ...named, ...head].reduce((a, v) => (a + v) & 0xff, 0);
+  if (take() !== sum) return null;
+  sum = (sum * 2) & 0xff;
+  const start = ((head[0] | (head[1] << 8)) + 0x100) & 0xffff, blocks = head[5] - 1, last = head[4];
+  const length = blocks * 256 + last, end = head[2] | (head[3] << 8) || 0x10000;
+  if (blocks < 0 || !length || start + length !== end) return null;
+  const data = new Uint8Array(length), errors: string[] = [];
+  let o = 0;
+  for (let b = 0; b <= blocks && o < length; b++) {
+    const size = b < blocks ? 256 : last;
+    for (let i = 0; i < size; i++) {
+      const v = take();
+      if (v < 0) { errors.push('the data runs past the end of the turbo stretch'); break; }
+      data[o++] = v;
+      sum = (sum + v) & 0xff;
+    }
+    const v = errors.length ? -1 : take();
+    if (v < 0) { if (!errors.length) errors.push('the data runs past the end of the turbo stretch'); break; }
+    if (v !== sum) errors.push(`checksum: the block at $${hex4((start + o - size) & 0xffff)} could not be read cleanly`);
+    sum = (sum + v) & 0xff;
+  }
+  const name = petsciiName(raw.map(v => (v === 0x20 ? 0xa0 : v))).trimEnd() || `file_${hex4(start)}`;
+  return { files: [{ format: 'novaload', name, ...(n ? { raw } : {}), type: 'PRG', load: start, end, data, ...fileAt(p, base + k), to: base + Math.min(at, bits.length), errors }], end: Math.min(at, bits.length) };
+}
+
+/** The pages the boot file's loader reads after the sync byte at bit `k`: $55, then page by page up to a page 0. A page
+ *  whose sum does not fit is taken (with an error) where the one after it fits; files are pages that follow on from
+ *  each other in memory. Two pages have to fit (one page fits by chance in other data now and then). */
+function novaPages(p: TapPulses, bits: Uint8Array, base: number, k: number): { files: TapeFile[]; end: number } | null {
+  let at = k + 9;
+  if (lsbByte(bits, at) !== 0x55) return null;
+  at += 8;
+  const page = (from: number) => {
+    const pg = lsbByte(bits, from);
+    if (pg <= 0) return null;
+    const data = new Uint8Array(256);
+    let sum = pg;
+    for (let i = 0; i < 256; i++) { const v = lsbByte(bits, from + 8 + i * 8); if (v < 0) return null; data[i] = v; sum = (sum + v) & 0xff; }
+    return { page: pg, data, ok: lsbByte(bits, from + 8 + 256 * 8) === sum, at: from, to: from + 8 * 258 };
+  };
+  const pages: NonNullable<ReturnType<typeof page>>[] = [];
+  for (let pg = page(at); pg; pg = page(at)) {
+    if (!pg.ok && !page(pg.to)?.ok) break;
+    pages.push(pg);
+    at = pg.to;
+  }
+  if (pages.filter(x => x.ok).length < 2) return null;
+  const groups: (typeof pages)[] = [];
+  for (const pg of pages) {
+    const g = groups[groups.length - 1];
+    if (g && g[g.length - 1].page + 1 === pg.page) g.push(pg);
+    else groups.push([pg]);
+  }
+  const files = groups.map((g, i): TapeFile => {
+    const load = g[0].page << 8, data = new Uint8Array(g.length * 256);
+    g.forEach((pg, j) => data.set(pg.data, j * 256));
+    return {
+      format: 'novaload', name: `file_${hex4(load)}`, type: 'PRG', load, end: load + data.length, data,
+      ...fileAt(p, base + (i ? g[0].at : k)), to: base + g[g.length - 1].to,
+      errors: g.filter(pg => !pg.ok).map(pg => `checksum: the page at $${hex4(pg.page << 8)} could not be read cleanly`),
+      note: `the boot file's loader reads it, ${g.length} page${g.length === 1 ? '' : 's'}`,
+    };
+  });
+  return { files, end: at };
+}
+
 /* ---- Cyberload ---- */
 
 /* Cyberload (System 3, Thalamus, Hewson, Activision …) loads in stages after the KERNAL boot file, each with a pulse
@@ -1038,7 +1162,7 @@ export function readTape(u8: Uint8Array): TapeImage {
         for (let at = last.to - r.from; at + 8 <= bits.length; at += 8) { const v = msbByte(bits, at); if (v !== 0xff && v !== 0xc3) break; out++; }
         tapetool = { speed: tapetool?.speed ?? Math.round(two.short / 8) * 8, leadOut: Math.round(out / 2) };
       }
-      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from), ...megaSaveFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
+      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from), ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
       // Cyberload's first stage in the stretch after its boot file, and the second after it with the keys it holds
       if (keys) { const f = cyberSecond(p, bits, r, 0, keys); if (f) found.push(f); keys = null; }
       const boot = files.filter(f => f.format === 'cbm' && f.headerCode && f.to <= r.from).pop();
@@ -1159,11 +1283,12 @@ const PAL_SHORT = 0x30, PAL_MEDIUM = 0x42, PAL_LONG = 0x56;
  * (LOAD puts it at the start of BASIC), else type 3. `header`: the rest of the header (tape buffer $0351-$03fb, at most
  * 171 bytes), e.g. a loader's code. Names are taken as PETSCII upper case.
  */
-export function makeTap(o: { files: { name: string; data: Uint8Array; load: number; basic?: boolean; header?: Uint8Array }[]; endOfTape?: boolean }): Uint8Array {
+export function makeTap(o: { files: { name: string; data: Uint8Array; load: number; basic?: boolean; header?: Uint8Array; end?: number }[]; endOfTape?: boolean }): Uint8Array {
   const petscii = (s: string, n: number) => { const b = new Uint8Array(n).fill(0x20); for (let i = 0; i < Math.min(n, s.length); i++) b[i] = s.toUpperCase().charCodeAt(i) & 0x7f; return b; };
   const out: number[] = [];
   o.files.forEach((f, i) => {
-    const h = new Uint8Array(192).fill(0x20), end = f.load + f.data.length;
+    // (`end`: the end the header says, when it is not after the data)
+    const h = new Uint8Array(192).fill(0x20), end = f.end ?? f.load + f.data.length;
     if (end > 0x10000) throw new Error(`"${f.name}" ends past $ffff`);
     h[0] = f.basic ? 1 : 3; h[1] = f.load & 0xff; h[2] = f.load >> 8; h[3] = end & 0xff; h[4] = (end >> 8) & 0xff;
     h.set(petscii(f.name, 16), 5);

@@ -169,11 +169,16 @@ export function tapeFiles(pulses: Uint32Array): TapeFile[] {
     if (header[0] === 1 || header[0] === 3) {
       const ds = [];
       const d = read[i + 1];
-      if (d && (d.data.length !== 192 || ((end - start) & 0xffff) === 192)) {
+      // (192 bytes of data look like a header: one whose first byte is no header's type, or that the header says, is data)
+      if (d && (d.data.length !== 192 || ![1, 3, 4, 5].includes(d.data[0]) || ((end - start) & 0xffff) === 192)) {
         ds.push(d); i++;
         if (d.copy === 1 && read[i + 1]?.copy === 2 && read[i + 1]!.data.length === d.data.length) ds.push(read[++i]!);
         data = best(ds);
         to = ds[ds.length - 1].b.to;
+        // the KERNAL stores the bytes up to the header's end and only reads the rest (a boot file's whole tape buffer of
+        // 192 bytes for the 12 that load over the vectors at $0300, as Incentive's Zodiac has it)
+        const len = (end - start) & 0xffff;
+        if (len && data.length > len) data = data.slice(0, len);
       }
     }
     out.push({ header, data, type: header[0], start, end, at: hs[0].b.at, to });

@@ -117,6 +117,60 @@ export function megaSaveDemoTape(demo: Uint8Array): Uint8Array {
   return withTurbo(kernal, w.pulses);
 }
 
+/** Novaload's bits: the lowest first; its pilot of 0 bits (its tapes have about 2 060), a 1 and the sync byte $aa. */
+function novaByte(w: TurboWriter, v: number): void { for (let i = 0; i < 8; i++) w.bit((v >> i) & 1); }
+function novaSync(w: TurboWriter, pilot: number): void { for (let i = 0; i < pilot; i++) w.bit(0); w.bit(1); novaByte(w, 0xaa); }
+
+/** A Novaload file (what its LOAD reads): the name's length, the name, its start less 256, its end, the bytes in its last
+ *  block and its blocks plus one, their sum; then its blocks, 256 bytes each but the last, each followed by the sum of all
+ *  the bytes after the sync byte (the sums too). `bad` spoils the sum after that block. */
+export function novaFile(w: TurboWriter, o: { name?: string; load: number; data: Uint8Array; pilot?: number; bad?: number }): void {
+  novaSync(w, o.pilot ?? 2064);
+  const name = [...(o.name ?? '')].map(c => c.toUpperCase().charCodeAt(0));
+  const start = (o.load - 0x100) & 0xffff, end = (o.load + o.data.length) & 0xffff;
+  const head = [name.length, ...name, start & 0xff, start >> 8, end & 0xff, end >> 8, o.data.length & 0xff, (o.data.length >> 8) + 1];
+  let sum = 0;
+  for (const v of head) { novaByte(w, v); sum = (sum + v) & 0xff; }
+  novaByte(w, sum);
+  sum = (sum * 2) & 0xff;
+  for (let b = 0, at = 0; at < o.data.length; b++) {
+    const size = Math.min(256, o.data.length - at);
+    for (let i = 0; i < size; i++) { novaByte(w, o.data[at + i]); sum = (sum + o.data[at + i]) & 0xff; }
+    at += size;
+    const ck = b === o.bad ? sum ^ 0x5a : sum;
+    novaByte(w, ck);
+    sum = (sum + ck) & 0xff;
+  }
+  for (let i = 0; i < 64; i++) w.bit(0);
+}
+
+/** What the loader in a Novaload boot file's header reads: $55, then each page (its number, its 256 bytes, their sum
+ *  with the number), up to a page 0. `bad` spoils that page's sum. */
+export function novaPages(w: TurboWriter, pages: { page: number; data: Uint8Array }[], o: { pilot?: number; bad?: number } = {}): void {
+  novaSync(w, o.pilot ?? 2064);
+  novaByte(w, 0x55);
+  pages.forEach((p, k) => {
+    novaByte(w, p.page);
+    let sum = p.page;
+    for (const v of p.data) { novaByte(w, v); sum = (sum + v) & 0xff; }
+    novaByte(w, k === o.bad ? sum ^ 0x5a : sum);
+  });
+  novaByte(w, 0);
+  for (let i = 0; i < 64; i++) w.bit(0);
+}
+
+/** fixtures/tap/novaload-demo.tap: a KERNAL boot file "NOVA DEMO" (bytes of our own in its header, no loader), then what
+ *  a Novaload boot's loader reads (a table at $c000-$c1ff, a page at $e000), and `demo` (a PRG) as the file "DEMO", at
+ *  Paperboy's speed (a 0 of 296 cycles, a 1 of 696). */
+export function novaloadDemoTape(demo: Uint8Array): Uint8Array {
+  const kernal = makeTap({ files: [{ name: 'NOVA DEMO', load: 0x0801, basic: true, data: Uint8Array.from({ length: 176 }, (_, i) => (i * 11 + 3) & 0xff), header: Uint8Array.from({ length: 171 }, (_, i) => (i * 13 + 5) & 0xff) }] });
+  const w = new TurboWriter(37, 87);
+  const page = (n: number) => Uint8Array.from({ length: 256 }, (_, i) => (i * 7 + n) & 0xff);
+  novaPages(w, [{ page: 0xc0, data: page(0) }, { page: 0xc1, data: page(1) }, { page: 0xe0, data: page(2) }]);
+  novaFile(w, { name: 'DEMO', load: demo[0] | (demo[1] << 8), data: demo.subarray(2) });
+  return withTurbo(kernal, w.pulses);
+}
+
 /** A whole tape: a KERNAL tape (makeTap) with turbo pulses after it. */
 export function withTurbo(kernal: Uint8Array, turbo: number[]): Uint8Array {
   const p = tapPulses(kernal), n = p.cycles.length + turbo.length;

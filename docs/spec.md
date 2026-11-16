@@ -1359,7 +1359,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Action Replay turbo tape (Datel) | LOAD/SAVE med TAPE TURBO ON. 5.1 och 7.5: biten genom CIA1:s timer B, synk `$10 … $01`, sparrutinen. 7.2: Turbo Tape 250:s format (tröskel `$0107`, ledarbyte `$02`, synk `$09 … $01`), biten genom CIA2:s timer B med volym och ram som blinkar (`sta $d418 / sta $d020`); andra turbor läser biten likadant men utan blinket, och synken ensam räcker inte |
 | TapeTool (Martin Piper) | biten genom CIA1:s timer A som one-shot (`pha / lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e`, TapeLoaderCIACommon.a), IRQ-laddarens bit (`lda $dc0d / ldx #$19 / stx $dc0e / lsr / rol`, TapeLoaderCIAIRQ.a); väntan på synken `$aa` och TinyHeader `$69` räknas bara med dem (13.5g) |
 | Novaload (Novagen) | biten genom toppbiten i CIA1:s timer A (`bit $dc0d / beq / lda $dc05 / stx $dc0e / eor #$80 / asl / pla / ror`); timern satt till `$81f4`, som bara räknas med biten. Action Replay 7.2:s Nova transfer läser band med samma kod |
-| Novaload, IRQ-versionen (Novagen) | avbrottet som läser bandet och väntar på synkbyten `$aa` (`cmp #$aa / beq / lda #$02 / bne / lda #$37 / sta … / lda #$7f / sta zp / lda $dc0d / pla / tay / pla / rti`) och lagringen med pip på SID:en och summa (`ldy zp / sta (zp),y / sta $d401 / clc / adc zp / sta zp / iny / sty zp / bne`). Elite, Encore, US Golds Americana, Epyx, System 3, MicroProse … (21 band; texten NOVALOAD i minnet) |
+| Novaload, IRQ-versionen (Novagen) | avbrottet som läser bandet och väntar på synkbyten `$aa` (`cmp #$aa / beq / lda #$02 / bne / lda #$37 / sta … / lda #$7f / sta zp / lda $dc0d / pla / tay / pla / rti`) och lagringen med pip på SID:en och summa (`ldy zp / sta (zp),y / sta $d401 / clc / adc zp / sta zp / iny / sty zp / bne`), båda i bootfilens bandhuvud; och avbrottet i dess LOAD (LOAD-vektorn `$0330`, Paperboys vid `$0334`): bitläsningen, summan och steget det är på, ledaren och synken (`eor #$02 / lsr / lsr / ror zp / bcs / lda zp / sta zp / adc zp / sta zp / ldy zp / lda zp / sec / bcs … / cmp #$80 / bne / lda #$08 / bne / sbc #$aa / beq`, samma kod på 126 band i arkivet). Elite, Encore, US Golds Americana, Epyx, System 3, MicroProse … (texten NOVALOAD i minnet) |
 | Freeload (Ocean) | bitläsningen i avbrottet: bit 1 i CIA1:s timer A:s höga byte (`lda $dc05 / ldy #$19 / sty $dc0e / eor #$02 / lsr / lsr / rol`, delad med US Golds laddare och räknas bara med det egna), och väntan på ledaren `$40` och synken `$5a` (`cmp #$40 / beq / cmp #$5a / beq`). Ocean, Imagine, Mastertronic, Domark, CRL, Gremlin (texten FREELOAD i minnet) |
 | US Golds bandladdare | Freeloads bitläsning med ledaren `$20` och synken `$ff` (`cmp #$20 / beq / cmp #$ff / beq`): 720, Masters of the Universe, Super Huey II, Turbo Out Run |
 | Mega-Save | väntan på ledaren `$63` och synkbyten `$64`…`$ff` i laddaren i bandhuvudet (`cmp #$63 / bne / ldy #$64 / jsr … / cmp #$63 / beq / cpy zp / bne`), och bitläsningen i bootfilen (`lda $dc0d / and #$10 / beq / lda $dd0d / stx $dd07 / lsr / lsr / lda #$19 / sta $dd0f / rts`: en puls startar om CIA2:s timer B, svag). Palace (Cauldron), Hewson, Level 9, Alligata, Llamasoft, CRL (TAPCleans namn; Final TAP kallade den CHR, efter Cauldron, Hewson och Rainbird) |
@@ -3459,7 +3459,9 @@ utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
   byte som ser ut som ett huvud tas som data när huvudet säger 192 byte. Ett relokerbart program (typ 1) laddas av
   `LOAD` (sekundäradress 0, som SHIFT+RUN/STOP) i början av BASIC, så det öppnas vid `$0801` och var det sparades ifrån
   står vid filen. Ett huvud som säger mer än datablocket har (en laddare som tar över medan KERNAL:n laddar) står som en
-  anmärkning, inte ett fel: filen är det blocket har.
+  anmärkning, inte ett fel: filen är det blocket har. Ett block som har fler byte än huvudet säger (en hel bandbuffert på
+  192 byte för de 12 eller 52 en bootfil laddar över vektorerna vid `$0300`) är filen bara till huvudets slut, som
+  KERNAL:n lagrar det och VICE laddar det; anmärkningen säger hur många byte blocket har.
 - **TapeTool (Martin Piper).** Se 13.5g.
 - **Turbo Tape 64** (och Action Replay 7.2:s "Turbo Tape 250"): en 0 och en 1 omkring 263 cykler isär, högsta biten
   först, ledaren `$02`, synk `$09`…`$01`; ett huvud (1, start, slut, en byte, namnet) och ett datablock (0, byten,
@@ -3480,6 +3482,23 @@ utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
   två till), datan och en XOR-kontrollsumma. Filen heter `file_<start>`; Tape-flikens anteckning säger vad laddaren gör
   sedan: går vidare till nästa fil, startar den på adressen, eller RUN (BASIC länkas om och RUN skrivs i
   tangentbordsbufferten). Formatet lästes ur Tazz bootkod; en fil vars summa inte stämmer behålls, med felet.
+- **Novaload** (Novagens egen, och Elites, Encores, US Golds Americana, Epyx, MicroProse, Martech, Activision …;
+  Paperboy, Mercenary, 1942, Winter Games): en puls längre än cirka 500 cykler är en 1 (CIA1:s timer A, one-shot från
+  `$03f4`, har hunnit under `$0200`; den första Novaload läser toppbiten av `$81f4`), lägsta biten först; före varje fil
+  en ledare av 0-bitar (cirka 2 060; minst 256 här, annan data har några dussin före en 1 och `$aa`), en 1 och synkbyten
+  `$aa`. Sedan något av två:
+  - *en fil* (det Novaloads LOAD läser, med namn): namnets längd, namnet, starten minus 256, slutet, antal byte i sista
+    blocket och antal block plus ett, summan av de byten; sedan blocken, 256 byte vart utom det sista, vart och ett följt
+    av summan av alla byte efter synkbyten (de tidigare summorna med). Antalet block ska stämma med start och slut. Filen
+    heter som på bandet, utan namn `file_<start>`;
+  - *sidor*, som laddaren i bootfilens bandhuvud läser i sitt avbrott (med ett pip på SID:en för varje byte): byten
+    `$55`, sedan sida för sida (sidans nummer, dess 256 byte, summan av dem och numret) till en sida 0. Sidor som följer
+    på varandra i minnet blir en fil `file_<start>`, och Tape-flikens anteckning säger hur många sidor den har. Två sidor
+    ska stämma: en sida stämmer ibland av en slump i annan data.
+
+  Formaten lästes ur Paperboys (Elite) bootkod och den LOAD den lägger i `$0330`, körda i Sindri med bandet: alla
+  81 356 byte de lagrade är desamma som läsaren ger, i samma ordning. Den äldre Novaload (Turbo Esprit) läser samma
+  filer med samma summor. Ett block eller en sida vars summa inte stämmer behålls, med felet.
 - **Cyberload** (System 3, Thalamus, Activision, Accolade, Electronic Arts, MicroProse, Gremlin, Virgin …): en puls
   längre än CIA1:s timer A (one-shot, oftast cirka 500 cykler) är en 1, högsta biten först, och varje synkbyte har en
   ledare av `$0f`-byte före sig (minst fyra här). Laddaren laddar i fyra steg efter KERNAL-bootfilen, var och ett i ett
@@ -3590,7 +3609,14 @@ stämmer, med rena pulser: skadade band), 11 890 sträckor till 9 488. Inga file
 nästan bara 0-bitar gav 6 nya US Gold-filer. Kvar på Creatures, Hawkeye och Snare är Thalamus egen nivåladdare (anropad
 vid `$01a0`), inte Cyberload. Mega-Save (2026-11-15): i båda samlingarna (1 931 band) 292 filer på 76 band, alla med
 en summa som stämmer (alla bootfilernas laddare är samma kod, bara hastigheten skiljer); sträckorna med okänd turbodata
-gick från 16 782 till 16 491 och band med inget kvar från 655 till 728. Inga filer i andra format ändrades. `test/tap.test.ts` läser det
+gick från 16 782 till 16 491 och band med inget kvar från 655 till 728. Inga filer i andra format ändrades. Novaload
+(2026-11-16): 3 323 filer på 266 band; sträckorna med okänd turbodata gick från 16 491 till 14 183 och band med inget
+kvar från 728 till 986, utan att någon fil i ett annat format ändrades. Äkta ledare har 2 006–2 414 nollbitar; de sex
+huvuden med en summa som stämde men ett blockantal som inte gjorde det hade 16–128, liksom alla ensamma sidor och sidor
+utan `$55` (upprepade `$aa`); äkta sidor har 9–216. 17 filer har ett fel: 8 där huvudet säger mer än bandet har
+(Labyrinths O-filer en byte mer än två block, Beach Head II, Shanghai) och 9 med en blocksumma som inte stämmer, 7 av
+dem i sista blocket på rena pulser (Turbo Esprits A: laddaren sätter status `$30`, men spelets laddkod ser inte på den
+och VICE laddar vidare). `test/tap.test.ts` läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
 kod för andra steget), och fixturerna `fixtures/tap/mimir-demo.tap` och `fixtures/tap/cyberload-demo.tap` (de fyra
@@ -3609,7 +3635,23 @@ startar genom nästa avbrott, som kommer direkt (KERNAL:n avslutar laddningen i 
 vars underflöde redan väntar), före BASIC hinner använda vektorer som filen laddat över. Motorspärren `$c0` sätts som
 KERNAL:n gör när den startar motorn, annars slår KERNAL:ns IRQ på motorn så fort PLAY är nedtryckt. Pekarna som en LOAD
 från bandet lämnar sätts också: starten i `$c1/$c2`, slutet i `$ae/$af` och `$ac/$ad` (Mastertronics och Codemasters
-bootfiler rensar minnet från (`$ac`) upp till `$0800`, och stannade direkt utan dem). Ett program som
+bootfiler rensar minnet från (`$ac`) upp till `$0800`, och stannade direkt utan dem). KERNAL:n anropar STOP (`JSR $FFE1`
+vid `$f8be`, genom vektorn `$0328`) hela tiden medan dess avbrott lagrar filens byte, så en fil som laddas över den
+vektorn med en adress i RAM anropas där innan resten av den har kommit in. En sådan laddning lagrar en byte i taget och
+anropar vektorn efter varje; när den kommer tillbaka (till `$f8c1`) fortsätter laddningen, och en som inte gör det har
+startat programmet (KERNAL:n avslutar aldrig den LOAD:en). Novaloads äldre bootfiler startar så (Turbo Esprit, Airborne
+Ranger, Boulder Dash: `$02ed`, som hoppar in i filen när en byte längre fram har laddats), och gick till READY eller en
+reset utan det, med laddaren letande efter en fil utan att något namn satts upp. KERNAL:n lagrar också bara ett
+datablocks byte fram till slutet som huvudet anger och läser resten: en bootfil vars block är en hel bandbuffert på 192
+byte för de 12 eller 52 huvudet anger (vektorerna vid `$0300`, som Incentives Zodiac och Epyx Summer Games har) laddar
+bara dem, inte mellanslagen efter, som skulle föra IRQ- och STOP-vektorerna till `$2020`; Mimirs läsare (13.5e) och
+Sindris ger filen de byten. Mätt 2026-11-16 på de 103 band i arkivet vars bootfil laddas över STOP-vektorn med en adress
+i RAM (93 av dem Novaloads): förut sparade 5 ett senare lager än bootfilen (65 slutade i en reset, 12 vid READY, 8 i en
+JAM), nu alla 103: 100 vilar i ett program, ett stannar i en JAM efter 272 s band (Barry McGuigans Boxing) och två når
+tidsgränsen. Ett program som pausar längre än Sindri väntar vilar fortfarande där (Boulder Dashs 12,8 s på jiffy-klockan
+efter bilden, Kennedy Approachs `FOR I=0 TO 7000` i BASIC). Av 76 andra band går 74 som förut; de två andra hör till de
+18 bootfiler vars huvud säger färre byte än blocket har, som nu laddar bara dem (Cricket Crazy, Zodiac, Quake Minus 1
+når sina spel; Epyx eget Summer Games-band, som hänger sig i VICE också, stannar i en JAM). Ett program som
 väntar medan bandet spelar laddar, inte vilar; efter bandets slut väntar Sindri 5 s till. Ett program som stängt av
 motorn med mer kvar på bandet vilar inte heller förrän 5 s efter: Cyberload tonar ut ljudet i 2,5 s mellan laddningen och
 Tusker, och Sindri sparade laddaren vid `$fd03` (som läser delarna från bandet igen) i stället för spelet vid `$6440`.

@@ -262,6 +262,14 @@ const CALLS = 1024;
 const SYS_RETURN = 0xe146;
 /** where the KERNAL's screen editor waits for a key at the READY prompt (with none in the buffer) */
 const READY_WAITS = 0xe5cd;
+/** the KERNAL's STOP routine (the vector at $0328 leads there), and where its tape routines come back from calling it
+ *  while they wait for the next byte (JSR $FFE1 at $f8be) */
+const KERNAL_STOP = 0xf6ed;
+const STOP_RETURN = 0xf8c1;
+
+/** a tape LOAD stored a byte at a time (Session.tapeLoadOn): `put` stores the next of its `n` bytes; `sp` the stack as
+ *  LOAD has it; `first` runs before the STOP vector is first called, `done` ends the LOAD */
+interface TapeLoad { n: number; i: number; put: () => void; sp: number; called: boolean; first?: () => void; done: () => boolean }
 
 const hex4 = (v: number) => '$' + v.toString(16).padStart(4, '0');
 
@@ -389,6 +397,8 @@ class Session {
   private tape: Datasette | null = null;
   private tapeKernal: TapeFile[] = [];
   private tapeFile: TapeFile | null = null;
+  /** a tape LOAD in the middle of its bytes, while the STOP vector it loaded over runs (tapeLoadOn) */
+  private tapeLoad: TapeLoad | null = null;
   private tapeStart = 0;
   /** since when the tape has been at its end with the motor on */
   private tapeEnded = 0;
@@ -556,19 +566,60 @@ class Session {
     this.tapeBuffer(f);
     this.tapeIrqSave();
     const to = m.ram[0xb9] === 0 && f.type === 1 ? m.ram[0xc3] | (m.ram[0xc4] << 8) : f.start;
-    // (loaded before the program started, by a BASIC loader say: loaded bytes, as the file's are)
-    for (let i = 0; i < f.data.length && to + i < 0x10000; i++) { m.write(to + i, f.data[i]); if (!this.started) m.wid[to + i] = LOADED; }
-    this.tapeIrqRestore();
-    const end = Math.min(0x10000, to + f.data.length) & 0xffff;
-    this.tapePointers(to, end);
-    m.ram[0x90] = 0;
-    cpu.x = end & 0xff; cpu.y = end >> 8; cpu.c = 0;
     d.seek(f.to);
     // what the motor would have read while it loaded counts as loading from the tape (a T64's file: the pulses of a
     // KERNAL tape's, 20 a byte, each block twice)
     d.edges += d.t64 != null ? (192 + f.data.length) * 40 : f.to - f.at;
     this.trace(`loads "${this.fileName()}" from the tape: $${to.toString(16).padStart(4, '0')}-$${((to + f.data.length - 1) & 0xffff).toString(16).padStart(4, '0')}`);
-    return this.rts(200);
+    let i = 0;
+    return this.tapeLoadOn({
+      n: Math.min(f.data.length, 0x10000 - to), i: 0, sp: cpu.s, called: false,
+      // (loaded before the program started, by a BASIC loader say: loaded bytes, as the file's are)
+      put: () => { m.write(to + i, f.data[i]); if (!this.started) m.wid[to + i] = LOADED; i++; },
+      done: () => {
+        this.tapeIrqRestore();
+        const end = Math.min(0x10000, to + f.data.length) & 0xffff;
+        this.tapePointers(to, end);
+        m.ram[0x90] = 0;
+        cpu.x = end & 0xff; cpu.y = end >> 8; cpu.c = 0;
+        return this.rts(200);
+      },
+    });
+  }
+
+  /**
+   * A tape LOAD going on with its bytes. The KERNAL calls STOP (JSR $FFE1 at $f8be, through the vector at $0328) all the
+   * time while its interrupt stores them, so a file that loads over that vector with an address in RAM is called there
+   * before the rest of it is in: Novaload's older boots (Turbo Esprit, Airborne Ranger: $02ed) start the program from
+   * it once a byte further on has loaded, as their STOP routine looks there. Such a load stores a byte at a time and
+   * calls the vector after each one, its RTS coming back to $f8c1, where the load goes on (the trap there); one that
+   * does not come back has started the program, and the KERNAL never ends the LOAD. Without such a vector the bytes all
+   * go in at once and LOAD ends.
+   */
+  private tapeLoadOn(t: TapeLoad): boolean {
+    const m = this.m, cpu = m.cpu;
+    this.tapeLoad = null;
+    while (t.i < t.n) {
+      t.put();
+      t.i++;
+      const v = m.ram[0x0328] | (m.ram[0x0329] << 8);
+      if (v === KERNAL_STOP || m.map[v >> 8] > ZP) continue;
+      if (!t.called) {
+        t.called = true;
+        t.first?.();
+        this.trace(`the file loads over the STOP vector: LOAD calls ${hex4(v)} as it goes on loading`);
+      }
+      this.tapeLoad = t;
+      m.write(0x100 | cpu.s, (STOP_RETURN - 1) >> 8); cpu.s = (cpu.s - 1) & 0xff;
+      m.write(0x100 | cpu.s, (STOP_RETURN - 1) & 0xff); cpu.s = (cpu.s - 1) & 0xff;
+      this.call(STOP_RETURN);
+      cpu.pc = v;
+      cpu.lastOp = 0x6c;
+      m.advance(20);
+      m.icount++;
+      return true;
+    }
+    return t.done();
   }
 
   private bootStandIn(): void {
@@ -652,25 +703,41 @@ class Session {
    * the rest go to $02b0). Returns where LOAD ends, the address after the last byte, as it leaves it in $ae/$af.
    */
   private loadFile(): number {
+    const f = this.fileBytes();
+    for (let i = 0; i < f.n; i++) f.put();
+    this.runFromHere();
+    return f.end();
+  }
+
+  /** The file's bytes for loadFile, a byte at a time (`put` stores the next one); `end` what LOAD leaves in $ae/$af. */
+  private fileBytes(): { n: number; put: () => void; end: () => number } {
     const m = this.m;
-    let lo = this.loadAt & 0xff, hi = this.loadAt >> 8;
-    for (let i = 0; i < this.data.length; i++) {
-      const a = lo | (hi << 8), v = this.data[i];
-      if (a >= 2) {
-        m.ram[a] = v;
-        m.wid[a] = LOADED;
-        m.wtime[a] = m.icount;
-        m.firstTouch[a] ||= m.icount;
-      }
-      if (a === 0xae) lo = v; else if (a === 0xaf) hi = v;
-      lo = (lo + 1) & 0xff;
-      if (!lo) hi = (hi + 1) & 0xff;
-    }
-    // from here on: what the run does with the loaded bytes
-    for (const t of [m.firstOp, m.firstArg, m.firstRead, m.firstWrite]) t.fill(0);
-    m.ram[0xae] = lo; m.ram[0xaf] = hi;
-    m.ram[0x90] = 0x40;
-    return lo | (hi << 8);
+    let lo = this.loadAt & 0xff, hi = this.loadAt >> 8, i = 0;
+    return {
+      n: this.data.length,
+      put: () => {
+        const a = lo | (hi << 8), v = this.data[i++];
+        if (a >= 2) {
+          m.ram[a] = v;
+          m.wid[a] = LOADED;
+          m.wtime[a] = m.icount;
+          m.firstTouch[a] ||= m.icount;
+        }
+        if (a === 0xae) lo = v; else if (a === 0xaf) hi = v;
+        lo = (lo + 1) & 0xff;
+        if (!lo) hi = (hi + 1) & 0xff;
+      },
+      end: () => {
+        m.ram[0xae] = lo; m.ram[0xaf] = hi;
+        m.ram[0x90] = 0x40;
+        return lo | (hi << 8);
+      },
+    };
+  }
+
+  /** from here on: what the run does with the loaded bytes */
+  private runFromHere(): void {
+    for (const t of [this.m.firstOp, this.m.firstArg, this.m.firstRead, this.m.firstWrite]) t.fill(0);
   }
 
   /** Type a line into the keyboard buffer (10 characters at most, RETURN added). */
@@ -1138,12 +1205,18 @@ class Session {
         }
         // from a tape: device 1, and the file's header in the tape buffer
         const fromTape = !!this.tape && (!!this.tapeFile || !this.drive);
-        if (fromTape) { m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
-        const end = this.loadFile();
-        if (fromTape) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
-        cpu.x = end & 0xff; cpu.y = (end >> 8) & 0xff; cpu.c = 0;
-        this.setPhase('loaded');
-        return this.rts(200);
+        const loaded = (end: number) => {
+          if (fromTape) { this.tapeIrqRestore(); this.tapePointers(this.loadAt, end & 0xffff); }
+          cpu.x = end & 0xff; cpu.y = (end >> 8) & 0xff; cpu.c = 0;
+          this.setPhase('loaded');
+          return this.rts(200);
+        };
+        if (!fromTape) return loaded(this.loadFile());
+        m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeIrqSave();
+        // a byte at a time, as the KERNAL's interrupt stores them: the STOP vector may lead into the file
+        const f = this.fileBytes();
+        const t: TapeLoad = { n: f.n, i: 0, put: f.put, sp: cpu.s, called: false, first: () => this.runFromHere(), done: () => { if (!t.called) this.runFromHere(); return loaded(f.end()); } };
+        return this.tapeLoadOn(t);
       }
       // with a disk the KERNAL loads it from the drive (by the name LOAD left, perhaps: then it is the program's)
       if (this.drive && m.ram[0xba] === 8) {
@@ -1163,6 +1236,8 @@ class Session {
       return true;
     });
     this.trap(0xfce2, KERNAL, () => { if (!this.started) return false; this.stop('reset', 'resets the C64'); return true; });
+    // the STOP vector a tape LOAD called (tapeLoadOn) came back: the load goes on
+    this.trap(STOP_RETURN, KERNAL, () => (this.tapeLoad && cpu.s === this.tapeLoad.sp ? this.tapeLoadOn(this.tapeLoad) : false));
     this.trap(0xf1ca, KERNAL, () => { this.print(cpu.a); return this.real ? false : (cpu.c = 0, this.rts()); });
 
     if (this.real) {

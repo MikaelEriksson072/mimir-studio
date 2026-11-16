@@ -191,13 +191,16 @@ const KNOWN: Known[] = [
   },
   {
     id: 'novaload', name: 'Novaload (Novagen)',
-    how: 'tape: the top bit of CIA1\'s timer A ($81f4) tells short pulses from long; a sync byte $aa, the name, then blocks with a checksum. The Action Replay 7.2\'s Nova transfer reads Novaload tapes with the same code. The later Novaload (Elite, Encore, US Gold\'s Americana, Epyx, System 3 …) reads the bits in an IRQ, the lowest first, waits for $aa after a pilot of 0 bits, and stores each byte with a beep on the SID and a sum',
+    how: 'tape: the top bit of CIA1\'s timer A ($81f4) tells short pulses from long, the lowest bit first; a pilot of 0 bits, a 1 and the sync byte $aa, the name, its start (less 256) and end, then blocks of 256 bytes, each with the sum of all the bytes before it. The Action Replay 7.2\'s Nova transfer reads Novaload tapes with the same code. The later Novaload (Elite, Encore, US Gold\'s Americana, Epyx, System 3 …) reads the bits in an IRQ: the boot file\'s loader in its tape header stores each byte with a beep on the SID, page by page (each page\'s number, its bytes and their sum), and its LOAD reads the same files as the first. Mimir reads both from a .tap',
     signs: [
       { pat: pat('A9 10 2C 0D DC F0 FB AD 05 DC 8E 0E DC 49 80 0A 68 6A'), role: 'tape', what: 'reads a bit: a pulse on the FLAG line, then the top bit of CIA1\'s timer A' },
       { pat: pat('A9 F4 8D 04 DC A9 81 8D 05 DC'), role: 'tape', what: 'times the pulses with CIA1\'s timer A from $81f4', weak: true },
       // the IRQ Novaload, as Sindri ran it from 21 tapes of 11 publishers (all with NOVALOAD in memory)
       { pat: pat('C9 AA F0 .. A9 02 D0 .. A9 37 8D .. .. A9 7F 85 .. AD 0D DC 68 A8 68 40'), role: 'tape', what: 'the IRQ that reads the tape: waits for the sync byte $aa, then the bytes' },
       { pat: pat('A4 .. 91 .. 8D 01 D4 18 65 .. 85 .. C8 84 .. D0'), role: 'tape', what: 'stores a byte, beeps it on the SID ($d401) and adds it to the sum' },
+      // the IRQ of its LOAD (in the LOAD vector, $0330), as Paperboy's boot copies it to $0334: on 126 tapes of the
+      // archive the same code
+      { pat: pat('49 02 4A 4A 66 .. B0 .. A5 .. 85 .. 65 .. 85 .. A4 .. A5 .. 38 B0 .. C9 80 D0 .. A9 08 D0 .. E9 AA F0'), role: 'tape', what: 'the IRQ of its LOAD: reads a bit (bit 1 of CIA1\'s timer A high byte), adds each byte to the sum, waits for the pilot and the sync byte $aa' },
     ],
   },
   // the loaders of the big tape publishers, learned from Sindri's runs of their tapes (the code that read the FLAG line

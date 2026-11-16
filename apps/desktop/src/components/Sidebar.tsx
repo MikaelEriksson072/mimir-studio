@@ -726,7 +726,7 @@ export const tapeOpens = (f: TapeFile): boolean => f.load != null && f.data.leng
 
 /** a time on the tape, as a datasette's counter would not show it but a player does: m:ss */
 export const tapeTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', megasave: 'Mega-Save', cyberload: 'Cyberload', t64: 'T64' };
+const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', megasave: 'Mega-Save', novaload: 'Novaload', cyberload: 'Cyberload', t64: 'T64' };
 
 /** The tape in the datasette (13.5e), its files in tape order with where each starts. A file opens with a click (a KERNAL
  *  file with loader code in its header opens with the header as a second file); + adds it to the project. A T64 tape

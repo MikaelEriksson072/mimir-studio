@@ -309,7 +309,7 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   program loaded up to `$a000` or beyond leaves none: `open15,8,15,"i"` stopped there with ?OUT OF MEMORY. See spec 13.5.
 - **Tape images.** *File → Insert tape image (TAP, T64)…* (or drop a `.tap` or `.t64`) puts a tape in the datasette, beside the disk:
   the Explorer's *Tape* section lists its files (`packages/core/src/c64/tap.ts`: KERNAL, Turbo Tape 64, Freeload, US
-  Gold's, Mega-Save, Cyberload's four stages, TapeTool) and the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the
+  Gold's, Mega-Save, Novaload's files and the pages its boot loader reads, Cyberload's four stages, TapeTool) and the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the
   renderer's `tapeOf` map, as `diskOf` for disks); a KERNAL boot file with code in its header opens with the header as
   a second file, which Sindri does not run. Build & Run writes the built boot file back on the tape when the project's first file came from it,
   else puts a copy in VICE's datasette. A T64 (`packages/core/src/c64/t64.ts`, `readTape` reads it when its header is

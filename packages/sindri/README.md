@@ -267,6 +267,16 @@ With a tape (a TAP image, given instead of the file or with `--tape`) a datasett
   IRQ would turn the motor on as soon as PLAY is down. The pointers a tape LOAD leaves are set too: the start in
   `$c1/$c2`, the end in `$ae/$af` and `$ac/$ad` (Mastertronic's and Codemasters' boot files clear memory from (`$ac`)
   up to `$0800`, and stopped at once without them);
+- the KERNAL calls STOP (`JSR $FFE1` at `$f8be`, through the vector at `$0328`) all the time while its interrupt stores
+  a file's bytes, so a file that loads over that vector with an address in RAM is called there before the rest of it is
+  in. Such a load stores a byte at a time and calls the vector after each one; when it returns (to `$f8c1`) the load
+  goes on, and one that does not has started the program, as the KERNAL never ends that LOAD. Novaload's older boot
+  files start so (Turbo Esprit, Airborne Ranger, Boulder Dash: `$02ed`, which jumps into the file once a byte further
+  on has loaded), and went to READY or reset without it, their loader searching the tape with no name set up;
+- the KERNAL stores a data block's bytes up to the end its header says and only reads the rest: a boot file whose
+  block is a whole tape buffer of 192 bytes for the 12 or 52 its header says (the vectors at `$0300`, as Incentive's
+  Zodiac and Epyx's Summer Games have it) loads only those, its other bytes (spaces, which would take the IRQ and STOP
+  vectors to `$2020`) not;
 - a program waiting while the tape plays is loading, not settled, until a while (5 s) after the tape's end, and the
   time limit grows to the rest of the tape and half a minute more. One that stopped the motor with more on the tape is
   not settled for 5 s after either: Cyberload fades the sound out for 2.5 s between loading Tusker and starting it,
@@ -293,7 +303,14 @@ tape for more than 5 s and get to the game's code (Novaload, Cyberload and other
 Zeppelin's), 81 end in a running program, 9 at READY, 5 in a reset and 2 on a JAM after loading, and one is a BASIC
 game that reads its data with the KERNAL's own routines; 80 save a later layer than the boot file (67 before). A tape
 takes 2.1 s (median, 10.0 s at most) for 163 s of C64 time on average. Without the IRQ vector at `$029f/$02a0` and
-the motor interlock, only 14 of the first 25 got further than the boot file.
+the motor interlock, only 14 of the first 25 got further than the boot file. Of the 103 tapes of the archive whose boot
+file loads over the STOP vector with an address in RAM (93 of them Novaload's), 5 saved a later layer than the boot
+file before (65 ended in a reset, 12 at READY, 8 on a JAM) and all 103 do now: 100 settle in a program, one stops on a
+JAM after 272 s of tape (Barry McGuigan's Boxing) and two run to the time limit. A program that pauses longer than
+Sindri waits still settles there (Boulder Dash's 12.8 s on the jiffy clock after its picture, Kennedy Approach's
+`FOR I=0 TO 7000` in BASIC). Of 76 other tapes 74 run as before; the two others are among the 18 boot files whose
+header says fewer bytes than their block holds, which now load those (Cricket Crazy, Zodiac, Quake Minus 1 get to their
+games; Epyx's own Summer Games tape, which hangs in VICE as well, stops on a JAM).
 
 ## VICE snapshots
 
@@ -535,7 +552,8 @@ layers, stop and saved program in the first run in a process, which starts the C
 The datasette tests build a tape (a KERNAL boot file with a loader in its header, then a program as turbo data) and run
 its boot file with the stand-ins and the ROMs, started through `$0302` and through the IRQ vector at `$029f`: its loader
 reads the program from the tape and starts it, with the pointers a tape LOAD leaves, and starts it after a pause of
-3.3 s with the motor off too. Programs that look at the RAM under the KERNAL go on as on a C64, and a program saved
+3.3 s with the motor off too; started through the STOP vector the boot file loads over, once a byte after it has
+loaded (with the ROMs); and from a 192-byte block of which the header says 12 bytes. Programs that look at the RAM under the KERNAL go on as on a C64, and a program saved
 with a gap nothing wrote has `$00` there and the `$ff` it wrote where the RAM powered on with `$ff`. A T64's tests read a directory
 with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of text, and run a boot file that loads
 `PART2` with LOAD from the tape, once after it and once before it on the T64, with the stand-ins and the ROMs.
