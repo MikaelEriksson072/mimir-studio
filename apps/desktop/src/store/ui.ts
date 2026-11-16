@@ -92,6 +92,9 @@ interface UiState {
   diskLook: DiskLook;
   /** marking a range (C, D, W, T …) merges it with the blocks of that type right before and after it (Settings → General) */
   autoMerge: boolean;
+  /** a routine the user names is kept by its fingerprint, and other projects get the name suggested (Settings → General,
+   *  spec 10.5) */
+  learnRoutines: boolean;
   /** how Pack on the start screen packs a file without a project (the packer, format, kind of file …), for the next time */
   quickPack: PackPrefs;
   /** New project makes a git repository in the project's folder too (the box as it was ticked last) */
@@ -114,7 +117,7 @@ export const OWN_BM_COLORS = 8;
 export const bmColorsOf = (saved: unknown): string[] =>
   Array.from({ length: OWN_BM_COLORS }, (_, i) => { const c = Array.isArray(saved) ? saved[i] : null; return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : ''; });
 
-const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'textCols', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'diskLook', 'autoMerge', 'quickPack', 'newProjectGit', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
+const PERSIST = ['theme', 'tab', 'sidePanel', 'panelOpen', 'inspector', 'welcome', 'heatFit', 'gutter', 'cycles', 'offsets', 'textCols', 'gfxPictures', 'autoUnpack', 'followQuicksave', 'startScreen', 'overview', 'diskLook', 'autoMerge', 'learnRoutines', 'quickPack', 'newProjectGit', 'bmColors', 'gfx', 'mon', 'sizes'] as const;
 
 export const useUi = create<UiState>((set) => ({
   theme: store.get<Theme>('kr.theme', 'dark'),
@@ -138,6 +141,7 @@ export const useUi = create<UiState>((set) => ({
   overview: store.get('kr.overview', true),
   diskLook: store.get<DiskLook>('kr.diskLook', 'mimir') === 'c64' ? 'c64' : 'mimir',
   autoMerge: store.get('kr.autoMerge', true),
+  learnRoutines: store.get<unknown>('kr.learnRoutines', true) !== false,
   quickPack: { ...DEFAULT_PACK, ...store.get<Partial<PackPrefs>>('kr.quickPack', {}) },
   newProjectGit: store.get<unknown>('kr.newProjectGit', false) === true,
   sideOpen: [],

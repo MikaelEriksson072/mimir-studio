@@ -5,7 +5,7 @@
  * music found has a Play button (VICE or DeepSID, as the Blocks view's), which leaves the window open. A link, a click
  * outside the window or Esc closes it; Settings → General (or the box at its foot) turns it off. */
 import { Fragment, type ReactNode } from 'react';
-import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project } from '@mimir/core';
+import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project, type RoutineMatch } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { IconName } from '../lib/icon-paths';
 import { blockMap, count, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, startOf, typeRows, type SnapshotPc } from '../lib/overview';
@@ -47,6 +47,9 @@ interface OverviewProps {
   /** play the music block that starts at an address, in VICE or DeepSID as `musicPlayer` says (Settings → Toolchain) */
   onPlayMusic?: (start: Addr) => void;
   musicPlayer: MusicPlayer;
+  /** the routines known from other projects that have no name of the user's yet, with the names suggested (10.5), and
+   *  what names them all (the overview stays open) */
+  known?: readonly RoutineMatch[]; onNameKnown?: () => void;
   links: OverviewLinks; onClose: () => void;
 }
 
@@ -66,7 +69,7 @@ function Card({ icon, title, n, wide, className, children }: { icon: IconName; t
 const Link = ({ onClick, title, className, children }: { onClick: () => void; title?: string; className?: string; children: ReactNode }) =>
   <button type="button" className={cx('ov-link', className)} title={title} onClick={onClick}>{children}</button>;
 
-export function AnalysisOverview({ A, project, labels, snap, packing, problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, links, onClose }: OverviewProps) {
+export function AnalysisOverview({ A, project, labels, snap, packing, problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, links, onClose }: OverviewProps) {
   /** every link closes the window, then goes there */
   const go = (f: () => void) => () => { onClose(); f(); };
   const start = startOf(A, project);
@@ -214,6 +217,22 @@ export function AnalysisOverview({ A, project, labels, snap, packing, problems, 
               <Link onClick={go(() => links.bottom('stats'))}>Statistics</Link>
             </div>
           </Card>
+
+          {known.length > 0 && <Card icon="pencil" title="Known routines" n={known.length}>
+            <div className="ov-rows">
+              {known.slice(0, 5).map(m => (
+                <button type="button" key={m.addr} className="ov-row ov-known" title={`The same routine as ${m.name}${m.from ? ` in ${m.from}` : ''}: $${h4(m.addr)}–$${h4(m.end - 1)}\nClick to go there in the listing`} onClick={go(() => links.addr(m.addr))}>
+                  <i className="ov-dot" style={{ background: 'var(--g-code)' }} />
+                  <span className="mono">{bankAdr(A, m.addr)}</span><span className="ov-known-name">{m.name}</span>
+                  {m.from && <span className="muted ov-known-from">{m.from}</span>}
+                </button>))}
+              {known.length > 5 && <p className="muted">and {known.length - 5} more</p>}
+            </div>
+            <p className="muted">Named in other projects. Nothing is named here until you say so.</p>
+            <div className="ov-more">
+              {onNameKnown && <button type="button" className="btn small" title="Each gets the name it had in the other project (one step: Ctrl+Z takes it back)" onClick={onNameKnown}>{known.length === 1 ? 'Name it' : `Name all ${known.length}`}</button>}
+            </div>
+          </Card>}
 
           <Card icon="image" title="Graphics" n={gfx.length ? count(gfx.reduce((n, t) => n + t.total, 0), 'block') : undefined}>
             {gfx.length ? <div className="ov-rows">

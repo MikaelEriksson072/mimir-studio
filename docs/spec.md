@@ -2459,6 +2459,58 @@ dem när det körs. Den kräver därför inte att ingenting är laddat där byte
   relocerad) står kvar tonad med skälet. Allt ångras med `Ctrl+Z`, och offseten sparas i projektfilen. I en
   cartridge visas den i sin bank.
 
+### 10.5 Rutiner som är kända från andra projekt
+
+Scenkod återanvänds: utskrift, IRQ-setup, laddare och players står i program efter program, länkade till olika
+adresser. Namnet användaren ger en rutin ska därför följa med till nästa projekt som har den. När en rutin namnges
+sparar Mimir ett fingeravtryck av den, som IDA:s FLIRT gör för biblioteksfunktioner och som Sindri gör för packare
+med `--learn`; ett projekt som har samma rutin får namnet föreslaget. Allt räknas i
+`packages/core/src/routines.ts`, biblioteket hålls av appen (`apps/desktop/src/store/routines.ts`).
+
+- **Rutinen.** `routineAt(A, start)` tar instruktionerna i adressordning från `start` till den första RTS, RTI, JMP,
+  BRK eller JAM som ingen av rutinens branchar går förbi (eller dit koden tar slut, högst 1024 instruktioner). Det
+  beror bara på byten och på vad analysen läser som kod, så samma rutin får samma utsträckning var den än ligger.
+- **Fingeravtrycket.** Rutinens byte som hex, med `..` för maskade byte (`pattern`), och bara opkoderna (`opcodes`),
+  som det slås upp på. Maskat är det som följer med programmet när det länkas någon annanstans: operanden i en absolut
+  instruktion (abs, abs,x, abs,y och indirekt JMP) som pekar in i $0400–$cfff, och en immediate som analysen läst som
+  halvan av en sådan adress (`lda #<text`, `ldy #>text`). Kvar står opkoder, nollsidesadresser, branchoffsets, övriga
+  immediates och absoluta adresser under $0400 (systemets variabler och vektorer) och från $d000 (I/O och KERNAL), som
+  är desamma i alla program och skiljer rutiner åt bäst (`sta $d020`, `jsr $ffd2`). Utskriftsrutinen `ldx #0 / stx
+  $d020 / sty $0286 / lda text,x / beq / jsr $ffd2 / inx / bne / rts` får `a2008e20d08c8602bd....f00620d2ffe8d0f560`.
+- **Vad som lärs.** Bara namn på det som börjar en rutin: ett JSR-mål, en avbrottshanterare, programstarten, en
+  användarsatt entry eller ett mål i en hopptabell (`startsRoutine`), inte en etikett inne i en rutin. Rutinen måste
+  räcka för att kännas igen (`learnable`, `ROUTINE_MIN`): med maskade byte minst 8 instruktioner, 5 olika opkoder och
+  14 byte som inte är maskade, annars vore den varje loop av sitt slag (`lda $xxxx,x / sta $xxxx,x / inx / bne / rts`
+  kopierar vad som helst). Utan maskade byte är den samma byte överallt, och då räcker 8 byte (`bit $d011 / bpl / bit
+  $d011 / bmi / rts`). En rutin har ett namn i biblioteket (ett nytt namn ersätter det gamla); samma namn kan ha flera
+  varianter.
+- **Igenkänningen.** `knownRoutines(A, library)` går igenom programmets rutinstarter och slår upp var och en på sina
+  opkoder; den är en känd rutin när byten är desamma överallt där fingeravtrycket inte är maskat (`sameRoutine`; vad
+  programmets egen analys skulle maskera spelar ingen roll). Av flera kända tas den med flest omaskade byte, sedan den
+  som lärdes sist. `routineSuggestions` tar bort dem användaren redan namngett och dem som redan heter så, ger ett
+  upptaget namn `_2`, `_3` … och hoppar över namn projektets assembler inte tar.
+- **I appen.** `N` (eller inspektorn) på en rutin lär biblioteket den, och meddelandet säger det (*Mimir knows the
+  routine now*). Förslagen visas på tre ställen, och ingenting namnges förrän användaren säger till: översikten av
+  analysen (14.1b) har kortet *Known routines* med adress, namn och projektet det kom från, och *Name it* / *Name all
+  N*; högerklick på rutinen har *Name it print_text (known from …)* och *Forget print_text: not this routine*, som tar
+  bort namnet ur biblioteket; kommandopaletten har *Name the N routines known from other projects*. Att namnge är ett
+  steg som `Ctrl+Z` tar tillbaka. *Learn the routines named in this project* i paletten lär alla rutiner som redan har
+  namn i det öppna projektet (`learnProject`), för projekt från innan Mimir lärde sig. Settings → General → *Learn
+  the routines I name* (på från början, `learnRoutines` i `store/ui.ts`) slår av inlärningen; det som är känt föreslås
+  ändå. Biblioteket sparas per användare i appens lagring (`kr.routineLibrary`, som skriptbiblioteket), inte i
+  projektet: analysen, `.asm`-filen och round-trip ser det inte, och ett projekt beror inte på det.
+- **Mätt.** På 428 uppackade program ur arkivet (demos, intron och spel) har analysen 14 450 rutinstarter med 9 829
+  olika fingeravtryck. Med tröskeln ovan för maskade rutiner står 1 069 fingeravtryck i minst två program (2 382
+  ställen), och 233 av de 428 programmen har minst en rutin som också finns i ett annat. De vanligaste är KERNAL-
+  sekvenser mot diskdriven, väntan på rasterstrålen och delar av musikspelare. Utan tröskel vore det 1 536
+  fingeravtryck, men det vanligaste av dem (`lda #5 / sta $xxxx,x / lda #1 / sta $xxxx,x / sta $xxxx,x / jmp $xxxx`,
+  104 program) säger ingenting om vad det gör.
+
+Test: `packages/core/test/routines.test.ts` (fingeravtryck, utsträckning, trösklar, inlärning i ett program och
+igenkänning i ett som är länkat någon annanstans, en annan omaskad byte, förslag, lagrat bibliotek) och
+`apps/desktop/e2e/overview.spec.ts` (namnge, nästa projekt får förslaget i översikten, paletten och menyn, glömma,
+inställningen).
+
 ## 11. Kick Assembler-generatorn
 
 ### 11.1 Filens struktur
@@ -5168,7 +5220,9 @@ Sedan kommer analysens delar, ett kort var:
 
 Varje länk stänger fönstret och går sedan dit den säger; *Play* gör det inte (spelaren öppnar ett eget fönster, och
 meddelandet om vad som spelas syns ovanpå översikten). Ett klick utanför fönstret, `Esc`, krysset och *Close* stänger
-det också. Settings → General → *Show an overview of the analysis when a file is opened* (på från början, sparas per
+det också. Har programmet rutiner som är kända från andra projekt (10.5) och som användaren inte namngett visar kortet
+*Known routines* dem med adress, namn och projektet namnet kom från; *Name it* / *Name all N* ger dem namnen och
+lämnar fönstret öppet. Settings → General → *Show an overview of the analysis when a file is opened* (på från början, sparas per
 användare som `overview` i `apps/desktop/src/store/ui.ts`) slår av och på det, liksom rutan *Show this overview when a
 file is opened* i fönstrets fot. Kommandopaletten har *Show the analysis overview*, som visar det när som helst, även
 när det är avslaget. Vad korten säger räknas fram i `apps/desktop/src/lib/overview.ts` och läggs ut i

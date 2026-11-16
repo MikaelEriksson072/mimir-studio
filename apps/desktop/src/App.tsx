@@ -18,10 +18,12 @@ import {
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
   debugSources,
+  knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
 import { useScripts, type LibraryScript } from './store/scripts';
+import { useRoutines } from './store/routines';
 import { runScriptInWorker } from './lib/scriptrun';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, store, uid } from './lib/util';
@@ -1581,7 +1583,43 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // zero-page variables share the name space (a pointer's high byte is <name>+1, not a name of its own)
     for (const [a, z] of R.zp) if (a !== addr && !z.off && z.name === name) { setLabelError(`"${name}" is already the zero-page variable at $${h2(a)}.`); toast(`"${name}" is already the zero-page variable at $${h2(a)}`, 'err'); return false; }
     update(name ? `Rename $${h4(addr)} to ${name}` : `Restore label at $${h4(addr)}`, d => { if (name) d.labels[addr] = name; else delete d.labels[addr]; });
+    learned.current = !!name && learnName(addr, name);
     return true;
+  };
+  /* ---- routines known from other projects (spec 10.5): a routine that is named leaves its fingerprint in the app's
+   * library, and the routines of this project that the library knows get their names suggested ---- */
+  const library = useRoutines(s => s.library);
+  /** whether the last rename taught the library a routine (its message says so) */
+  const learned = useRef(false);
+  /** the routine at `addr` goes into the library as `name`, when it starts one and is enough to know again by */
+  const learnName = (addr: Addr, name: string): boolean => {
+    if (!useUi.getState().learnRoutines || !startsRoutine(A.entryKind.get(addr))) return false;
+    const { library: lib, setLibrary } = useRoutines.getState();
+    const next = learnRoutine(lib, routineAt(A, addr), name, project.name, Date.now());
+    setLibrary(next);
+    return next !== lib;
+  };
+  const knownHere = useMemo(() => knownRoutines(A, library), [A, library]);
+  /** the names to suggest: where the user has given none, each a name the program does not have yet */
+  const suggested = useMemo(() => routineSuggestions(knownHere, project.labels, a => R.labels.get(a)?.name,
+    [...[...R.labels.values()].map(l => l.name), ...[...R.zp.values()].map(z => z.name)], n => labelFor(asm, n, validLabel)), [knownHere, project.labels, R, asm]);
+  const nameKnown = (list: readonly RoutineMatch[] = suggested) => {
+    if (!list.length) { toast(library.length ? 'No routine of this program is known from another project (or each has its name already)' : 'Mimir knows no routines yet: it learns the ones you name (N on a routine)', 'info'); return; }
+    update(list.length === 1 ? `Name $${h4(list[0].addr)} ${list[0].name} (a known routine)` : `Name ${list.length} known routines`, d => { for (const m of list) d.labels[m.addr] = m.name; });
+    toast(list.length === 1 ? `$${h4(list[0].addr)} is ${list[0].name} now${list[0].from ? `, as in ${list[0].from}` : ''}; Ctrl+Z takes it back` : `${list.length} routines have the names they had in other projects; Ctrl+Z takes it back`, 'ok');
+  };
+  /** the names of this project's routines go into the library (the ones named before Mimir learned, or while it was off) */
+  const learnThisProject = () => {
+    const { library: lib, setLibrary } = useRoutines.getState();
+    const next = learnProject(lib, A, project.labels, project.name, Date.now());
+    setLibrary(next);
+    const n = next.filter(k => !lib.includes(k)).length;
+    toast(n ? `Mimir learned ${n} routine${n === 1 ? '' : 's'} of this project: other projects get ${n === 1 ? 'its name' : 'their names'} suggested` : 'Nothing new to learn: the routines you named here are known, or too short to know again', n ? 'ok' : 'info');
+  };
+  const forgetKnown = (name: string) => {
+    const n = useRoutines.getState().library.filter(k => k.name === name).length;
+    useRoutines.getState().forget(name);
+    toast(`Mimir no longer knows ${name}${n > 1 ? ` (${n} variants)` : ''}: it is not suggested again`, 'ok');
   };
   /** `$a` the low byte and `$a+1` the high byte of one 16-bit zero-page variable (`on`), or two variables
    *  (Project.zpPairs). As the analysis has them by itself the setting goes (unless a name on the high byte splits them) */
@@ -2316,7 +2354,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!editing) return;
     if (editing.kind === 'label') {
       const what = editing.zp ? `Zero-page variable $${h2(editing.addr)}` : null;
-      if (rename(editing.addr, v.trim())) { setEditing(null); toast(v.trim() ? `${what ? `${what} renamed` : 'Renamed'} to ${v.trim()}; all references updated` : `${what ?? 'Label'}: automatic name restored`, 'ok'); }
+      if (rename(editing.addr, v.trim())) { setEditing(null); toast(v.trim() ? `${what ? `${what} renamed` : 'Renamed'} to ${v.trim()}; all references updated${learned.current ? '. Mimir knows the routine now: other projects get the name suggested' : ''}` : `${what ?? 'Label'}: automatic name restored`, 'ok'); }
     }
     else if (editing.kind === 'note') { setNote(editing.addr, editing.block ? v.replace(/^(\s*\n)+/, '').trimEnd() : v.trim(), !!editing.block, editing.blank); setEditing(null); }
     else { setComment(editing.addr, v.trim()); setEditing(null); }
@@ -3015,6 +3053,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'script-new', label: sel && sel.multi && sel.end > sel.start ? 'New script from the selection (runs in Mimir on a copy of the program)' : `New script (${LANG_TITLE[codeLang]} code that runs in Mimir on a copy of the program)`, run: () => newUserScript(sel && sel.multi && sel.end > sel.start ? rangeLines(sel.start, sel.end) : []) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
     { id: 'overview', label: 'Show the analysis overview: what the analysis found, with links to each part', run: () => setModal('overview') },
+    { id: 'name-known', label: suggested.length ? `Name the ${suggested.length} routine${suggested.length === 1 ? '' : 's'} known from other projects (${suggested.slice(0, 3).map(m => m.name).join(', ')}${suggested.length > 3 ? ' …' : ''})` : 'Name the routines known from other projects (none here)', run: () => nameKnown() },
+    { id: 'learn-project', label: `Learn the routines named in this project, so other projects get their names suggested (Mimir knows ${library.length})`, run: learnThisProject },
   ];
   // the dialogs of "The work is not saved" hold the keys too
   const dialog = modal ?? (unsavedAsk || saveFirst || closeAsk ? 'project' : null);
@@ -3216,6 +3256,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const ownName: NameRef | null = own != null && ownLabel ? { addr: own, zp: !!def?.zp, name: ownLabel.name } : null;
     const op = def ? null : operandName(l, R, cell);
     const opName = op && !(!op.zp && op.addr === own) ? op : null;
+    // the name the library suggests for the line's routine (as it is suggested), and the one it has there (to forget)
+    const knownAt = own != null && !def?.zp ? suggested.find(m => m.addr === own) : undefined;
+    const knownOf = knownHere.find(m => m.addr === own) ?? knownAt!;
     const p = l.a != null ? patchAt(project.patches, l.a) : undefined;
     // in a selection of more than one line: the bookmark on its first line, a new one on its area
     const area = inSel ? selArea(cs) : null, bmAt = area ? bookmarkOnLine(area.start) : l.a != null ? bookmarkOnLine(l.a) : null;
@@ -3347,6 +3390,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         // (a byte a view offset shows elsewhere gets its label where it is shown, 10.4)
         { label: renameText(ownName, own != null ? shownAddress(R.viewOffsets, own) : own), key: 'N', icon: 'pencil', run: () => (def ? startDefRename(def, zl?.line ?? view.lines.indexOf(l)) : startRename(l.a)) },
         ...(opName ? [{ label: renameText(opName, opName.addr), key: 'Shift+N', icon: 'pencil', run: () => startOperandRename(l, cell ?? null) }] satisfies MenuItem[] : []),
+        // a routine known from another project (10.5): its name there, one click; and a name suggested wrongly forgotten
+        ...(knownAt ? [
+          { label: `Name it ${knownAt.name} (known${knownAt.from ? ` from ${knownAt.from}` : ''})`, icon: 'pencil', run: () => nameKnown([knownAt]) },
+          { label: `Forget ${knownOf.name}: not this routine`, run: () => forgetKnown(knownOf.name) },
+        ] satisfies MenuItem[] : []),
         // a zero-page variable's .label line, or an instruction that uses one: join it with a neighbour into 16 bits, or split it
         { label: '16-bit variable', children: zpPairItems(zl ? zl.addr : zpOperand(l)) },
         // on a zero-page variable's .label line (or its comment lines) these comment the variable
@@ -3751,8 +3799,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       </div>}
       {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
-        links={overviewLinks} onClose={() => setModal(null)} />}
-      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
+        known={suggested} onNameKnown={() => nameKnown()} links={overviewLinks} onClose={() => setModal(null)} />}
+      {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}

@@ -105,3 +105,4 @@ export {
 export { splitArgs } from './util/args';
 export { safeStem, sourceStem } from './util/names';
 export { fileOffsetBases, offsetText } from './offsets';
+export { knownRoutines, learnable, learnProject, learnRoutine, readRoutineLibrary, ROUTINE_MAX, ROUTINE_MIN, routineAt, routineSuggestions, sameRoutine, startsRoutine, type KnownRoutine, type Routine, type RoutineMatch } from './routines';

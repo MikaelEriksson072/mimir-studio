@@ -1303,6 +1303,8 @@ main.main { container: editor / inline-size; }
 .ov-prob.lvl-hint svg { color: var(--hint); }
 .ov-types { columns: 2 300px; column-gap: 24px; }
 .ov-types .ov-type { width: calc(100% + 12px); break-inside: avoid; }
+.ov-known-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.ov-known-from { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .ov-type-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov-type-n { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
 .ov-type-b { min-width: 7ch; text-align: right; color: var(--fg-2); font-variant-numeric: tabular-nums; }

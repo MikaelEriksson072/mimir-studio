@@ -6,7 +6,109 @@ import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, repoDir, test } from './fixtures';
-import { fromFileMenu, statusBar, stubDialogs, toast, waitForListing } from './helpers';
+import { fromFileMenu, goTo, listing, statusBar, stubDialogs, toast, waitForListing } from './helpers';
+
+/* Routines known from other projects (spec 10.5): a routine named in one project is kept by its fingerprint, and the
+ * next project with the routine gets the name suggested: in the overview, the command palette and the right-click
+ * menu, which also forgets it. */
+test('a routine named in one project is suggested in the next one that has it', async ({ app, page }) => {
+  await waitForListing(page);
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  const open = async (name = 'loader-demo.prg', discard = false) => {
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg', name)] });
+    await fromFileMenu(page, 'Open PRG files…');
+    if (discard) await page.getByRole('dialog', { name: 'The work is not saved' }).getByRole('button', { name: 'Do not save' }).click();
+    await expect(toast(page, `Loaded ${name}`).last()).toBeVisible();
+    await expect.poll(() => statusBar(page).textContent(), { timeout: 30_000 }).toMatch(/analysis [\d.]+ ms · render [\d.]+ ms \(worker\)(?! · deep analysis)/);
+  };
+  const command = async (text: string) => {
+    await page.keyboard.press('Control+Shift+P');
+    const q = page.getByRole('textbox', { name: 'Command' });
+    await q.fill(text);
+    return q;
+  };
+  const known = overview.getByRole('region', { name: 'Known routines' });
+  const library = () => page.evaluate(() => JSON.parse(localStorage.getItem('kr.routineLibrary') ?? '[]') as { name: string; pattern: string; from?: string }[]);
+
+  await test.step('naming a routine teaches Mimir its fingerprint, the addresses in the program masked', async () => {
+    await open();
+    await goTo(page, 'sub_0814');
+    await page.keyboard.press('n');
+    const input = page.getByLabel('Label at $0814');
+    await input.fill('send_drive_command');
+    await input.press('Enter');
+    await expect(toast(page, 'Renamed to send_drive_command; all references updated. Mimir knows the routine now')).toBeVisible();
+    // lda #$08 / jsr $ffb1 / lda #$6f / jsr $ff93 / ldx #$00 / lda $xxxx,x / jsr $ffa8 …
+    expect(await library()).toEqual([expect.objectContaining({ name: 'send_drive_command', from: 'loader-demo', pattern: 'a90820b1ffa96f2093ffa200bd....20a8ffe8e006d0f520aeff60' })]);
+    // a name inside a routine teaches nothing
+    await goTo(page, 'start');
+    await page.keyboard.press('n');
+    const start = page.getByLabel('Label at $080d');
+    await start.fill('begin');
+    await start.press('Enter');
+    await expect(toast(page, 'Renamed to begin; all references updated')).toBeVisible();
+    expect(await library()).toHaveLength(1);
+  });
+
+  await test.step('the next project with the routine gets the name suggested: the overview names it, Ctrl+Z takes it back', async () => {
+    // (the same file opened again keeps its names: another one, opened as new work, comes between)
+    await open('raster-demo.prg', true);
+    await open();
+    await expect(statusBar(page)).toContainText('$080d · start');
+    const q = await command('Show the analysis overview');
+    await q.press('Enter');
+    await expect(known).toContainText('$0814');
+    await expect(known).toContainText('send_drive_command');
+    await expect(known).toContainText('loader-demo');
+    await known.getByRole('button', { name: 'Name it' }).click();
+    await expect(toast(page, '$0814 is send_drive_command now, as in loader-demo; Ctrl+Z takes it back')).toBeVisible();
+    await expect(known).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(overview).toBeHidden();
+    await goTo(page, 'send_drive_command');
+    await expect(statusBar(page)).toContainText('$0814 · send_drive_command');
+    await page.keyboard.press('Control+z');
+    await expect(statusBar(page)).toContainText('$0814 · sub_0814');
+  });
+
+  await test.step('the command palette and the right-click menu name it too; the menu forgets a name', async () => {
+    const q = await command('Name the 1 routine known');
+    await expect(page.getByRole('dialog', { name: 'Command palette' })).toContainText('Name the 1 routine known from other projects (send_drive_command)');
+    await q.press('Enter');
+    await expect(statusBar(page)).toContainText('$0814 · send_drive_command');
+    await page.keyboard.press('Control+z');
+    await expect(statusBar(page)).toContainText('$0814 · sub_0814');
+    await listing(page).locator('.row.cur').click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Name it send_drive_command (known from loader-demo)' })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Forget send_drive_command: not this routine' }).click();
+    await expect(toast(page, 'Mimir no longer knows send_drive_command')).toBeVisible();
+    expect(await library()).toEqual([]);
+    await listing(page).locator('.row.cur').click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: /Rename sub_0814/ })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /^Name it/ })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+  });
+
+  await test.step('Settings → General turns the learning off; the palette learns the project\'s names when asked', async () => {
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await settings.getByLabel('Learn the routines I name').uncheck();
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+    await goTo(page, 'sub_0814');
+    await page.keyboard.press('n');
+    const input = page.getByLabel('Label at $0814');
+    await input.fill('drive_cmd');
+    await input.press('Enter');
+    await expect(toast(page, 'Renamed to drive_cmd; all references updated')).toBeVisible();
+    expect(await library()).toEqual([]);
+    const q = await command('Learn the routines named in this project');
+    await q.press('Enter');
+    await expect(toast(page, 'Mimir learned 1 routine of this project')).toBeVisible();
+    expect((await library()).map(k => k.name)).toEqual(['drive_cmd']);
+  });
+});
 
 test('the overview of the analysis opens after a load, and its links go where they say and close it', async ({ app, page }) => {
   await waitForListing(page);

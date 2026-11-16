@@ -29,8 +29,10 @@ export interface AppPrefs {
   diskLook: DiskLook;
   /** marking a range merges it with the blocks of that type next to it */
   autoMerge: boolean;
+  /** a routine that is named is remembered, and its name suggested in other projects */
+  learnRoutines: boolean;
 }
-const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true, diskLook: 'mimir', autoMerge: true };
+const DEFAULT_PREFS: AppPrefs = { startScreen: true, inspector: 'open', gfxPictures: true, autoUnpack: false, overview: true, diskLook: 'mimir', autoMerge: true, learnRoutines: true };
 type PrefBool = { [K in keyof AppPrefs]: AppPrefs[K] extends boolean ? K : never }[keyof AppPrefs];
 
 type PageId = 'general' | 'analysis' | 'output' | 'assemblers' | 'vice' | 'debuggers' | 'tools';
@@ -132,6 +134,12 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
           'They are drawn in the colours of the Graphics tab, multicolour as the VIC registers say or as set for the block. Click a character, a sprite or a bitmap cell to select its bytes. The source and the export still write .byte.'),
         pchk('autoMerge', 'Auto merge when marking blocks', 'A range marked as a type joins the blocks of that type right before and after it.',
           'Marking a selection or a block as a type (C Code, D Bytes, W Words, T Text and the others in Mark as) merges it with the block right before and the block right after it when they are of that type (text in the same encoding) and in the same file: one block. Code merged so is one block, not a block per routine. Off: the marked range is a block of its own. Ctrl+Z takes a merge back.'),
+      ] },
+      { title: 'Names', items: [
+        pchk('learnRoutines', 'Learn the routines I name', 'A routine you name is remembered by its code, and other projects with the same routine get the name suggested.',
+          'When you name a routine (a JSR target, an interrupt handler, an entry point), Mimir keeps a fingerprint of it: its bytes, with the addresses inside the program left out, so the routine is known again wherever it is linked. A project that has it gets the name suggested: in the analysis overview (Known routines, Name them all), in the listing\'s right-click menu on the routine, and in the command palette (Name the routines known from other projects). Nothing is named until you say so, and Ctrl+Z takes it back. '
+          + 'A routine of a few instructions is not learned: with its addresses left out it would be every loop of its kind. The right-click menu forgets a name that was suggested wrongly; the command palette learns all the routines already named in the open project.\n'
+          + 'Off: nothing new is learned. What is known is still suggested.'),
       ] },
       { title: 'Panels', items: [
         psel('inspector', 'Inspector (the panel on the right)', [['open', 'Always open'], ['auto', 'Folded in: opens when you need it, folds in when you click outside it']],
