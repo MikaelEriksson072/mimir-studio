@@ -45,7 +45,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     with no labels for what its instructions only read to take time. Spindle's jitter correction, which subtracts
     the timer from a constant, is one too;
   - routines nothing traced reaches, such as an init that ran before a snapshot was taken;
-  - fast loaders: Spindle, Krill's loader (its version 146 too, by the version text its installer keeps), Bitfire,
+  - fast loaders: Spindle, Krill's loader (version 146 and older too, by the version text its installer keeps and by
+    its resident part's pollblock; its calls in the program are read back as its script, as Triad's Continuum has them), Bitfire,
     Sparkle, BoozeLoader (HCL's, in Booze Design's demos since 2008), the Covert Bitops loader (versions 2 and 3), and
     any other one by its drive code;
   - Pirate Slayer, Electronic Arts' copy protection (1986-1989): its loader in the analysis, and on a mounted disk its
@@ -108,7 +109,14 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     files…* saves every file as it is on the disk and unpacked, with that command line. Version 146 of the loader,
     whose files are packed with Doynax LZ, is read the same way (GoatLight, 2015: both sides, every packed file byte for
     byte what the demo's own unpacker makes of it), and so is revision 166 built with TinyCrunch (Fossil's Space Beer,
-    2019: all 15 parts byte for byte what the demo had in memory after loading each of them, run from its disk in Sindri);
+    2019: all 15 parts byte for byte what the demo had in memory after loading each of them, run from its disk in Sindri),
+    and builds with Exomizer (`exomizer mem -f`, Exomizer 2 and 3: Fairlight's and Onslaught's demos of 2010-2016,
+    Lifecycle, Still Standing, 179 disks of Year-top20 in all). Version 146 and older can be built to load a file by its
+    track and sector instead of its name, as Triad's Continuum (2014) and Fairlight's Lash and Trick and Treat are: the
+    tab then shows the loader's calls read from the files' own code (`ldx #track / ldy #sector / jsr`, a table of tracks
+    and sectors, a raw load to an address), the files outside the directory that they load, and, with the program
+    analysed, the program's own calls as its script, each with its file on the disk (Continuum: all 26 packed files
+    byte for byte what the demo's own unpacker makes of them);
   - the files of a disk for Cadaver's Covert Bitops loader (versions 2 and 3): the files of its directory, loaded by
     name, unpacked as the loader unpacks them (exomizer level 1/2/3, exomizer3 raw, pucrunch), the load calls read from
     the code on the disk (which also say where a raw file goes), and which of Cadaver's tools laid the disk out

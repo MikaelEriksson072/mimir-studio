@@ -646,6 +646,36 @@ export interface BoozeScript {
   steps: BoozeStep[];
 }
 
+/** A call of Krill's loader in the program (5.15c): the file it loads, as X and Y name it. */
+export interface KrillStep {
+  /** its first instruction (the code that sets X and Y), its jsr (or jmp), and the loader's routine it calls */
+  at: Addr; jsr: Addr; to: Addr;
+  /** the analysis traced it; else it was read from bytes the analysis did not trace (copied elsewhere before it runs,
+   *  or reached only through a script of the program's own) */
+  traced: boolean;
+  /** X and Y as values (a track and sector, or the address of a name); null for a table's call */
+  x: number | null; y: number | null;
+  /** the PETSCII bytes at the address X and Y make, up to a 0, when they can be a file's name (1 to 16 bytes); null
+   *  when they cannot */
+  name: number[] | null;
+  /** a call that takes X and Y from a table: where its tracks are, and its entries read as tracks and sectors */
+  table: { at: Addr; entries: [number, number][] } | null;
+  /** the carry the code sets right before it (null: it does not), and with it set an address it stores in two bytes of
+   *  zero page: where version 146 loads the file instead of its load address */
+  carry: 0 | 1 | null; dest: Addr | null;
+}
+
+/** Krill's loader's calls in the program (5.15c): the script its code is. */
+export interface KrillScript {
+  /** the loader's routines the calls call */
+  routines: Addr[];
+  /** how the calls name files: by the address of a name (half of the calls with values point at one at least), or
+   *  by track and sector */
+  by: 'name' | 'ts';
+  /** the calls, in address order */
+  steps: KrillStep[];
+}
+
 /** What ends a Spindle part: the condition column of Pefchain's script (`space`, `-`, `stay`, `addr = value`, `@`). */
 export type SpindleCondition =
   | { kind: 'space' } | { kind: 'drop' } | { kind: 'stay' }
@@ -879,6 +909,8 @@ export interface AnalysisResult {
   spindle: SpindleDriver[];
   /** BoozeLoader's calls, the script its code is (5.15b); null without BoozeLoader */
   booze: BoozeScript | null;
+  /** Krill's loader's calls, the script its code is (5.15c); null without Krill's loader */
+  krill: KrillScript | null;
   /** what the deep analysis did (`Settings.deepAnalysis`); null without it */
   deep: DeepReport | null;
   /** the relocated blocks (`Project.relocs`) the analysis placed where they run, in the order placed: a block whose

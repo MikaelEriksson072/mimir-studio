@@ -3886,9 +3886,9 @@ efter namn, sedan tomma namn som laddar nästa fil i katalogen (fil 2–6 i kata
   råkar packas upp.
 - En katalogpost utan sektorer (spår 0, eller 18/0, BAM:en) är en rad i en dir-art. En post som börjar där en tidigare
   gör är samma fil (en loop-fil).
-- Version 146 med Doynax LZ (GoatLight) läses också, se 13.5l, och revision 166 med TinyCrunch (Space Beer), se nedan.
-  Byggen av loadern med andra uppackare (Exomizer och andra, som Still Standing och Meetro 2024) läses inte här, och
-  inte heller diskar som laddar efter spår och sektor.
+- Version 146 med Doynax LZ (GoatLight) läses också, se 13.5l, revision 166 med TinyCrunch (Space Beer), se nedan, och
+  byggen med Exomizer, också de som laddar efter spår och sektor (Triads Continuum), se nedan. Byggen med andra
+  uppackare (Pucrunch, ByteBoozer, Levelcrush) läses inte.
 
 **Skriptet** (`cc1541Script`): först kommentarsrader om vad disken är och hur loadern laddar, och en rad per katalogpost
 (filnamnet, var den laddas, vart den packas upp; en rad utan fil, samma fil som en tidigare). Sedan cc1541:s kommandorad:
@@ -3902,8 +3902,8 @@ efter namn, sedan tomma namn som laddar nästa fil i katalogen (fil 2–6 i kata
   är på disken, som cc1541 skriver den.
 
 **I appen:**
-- Explorer säger om en monterad disk *Krill's loader: N files in the directory packed with its ZX0, loaded in the
-  directory's order*, med knappen **Krill script**. Monteringen säger *a disk for Krill's loader with N files packed
+- Explorer säger om en monterad disk *Krill's loader: N files packed with its ZX0, loaded in the directory's order*,
+  med knappen **Krill script** (för Exomizer och spår/sektor, se nedan). Monteringen säger *a disk for Krill's loader with N files packed
   with its ZX0*.
 - Bottenpanelens flik **Krill script** har en rad per fil i katalogens ordning: posten, namnet som 1541:an listar det,
   var den laddas, vart den packas upp, storlek (packad → uppackad), filnamnet och anmärkningar (*packed with its ZX0,
@@ -3975,6 +3975,101 @@ med ChristopherJams TinyCrunch, som läsaren inte kände. Formatet är läst ur 
   sådan fil (också två korta literaler i rad och ett startprogram som "slutar" på sin första byte), och disken.
   `fixtures/d64/krill-tc-demo.d64` (rasterdemot packat på plats, en fil som packas upp på annat ställe) monteras av
   `e2e/app.spec.ts` (*a mounted disk for Krill's loader built with TinyCrunch*).
+
+**Exomizer, och filer efter spår och sektor** (Triad, *Continuum*, Datastorm 2014, Year-top20 2014 nr 5). Mimir sa
+*A fast loader (not one of the known ones)* om det uppackade programmet och läste ingenting på disken: alla filer är
+DEL-poster med dir-art-namn. Startprogrammet (en Exomizer-sfx) installerar *Krill's Loader, version 146, configuration
+81E.40.0.1.0.120010.18101C.0100101100* (texten finns i installeraren, som skrivs över sedan). Residenten ligger på
+`$0200–$05ff`: `loadraw` på `$0200` (`jsr openfile / jsr pollblock / bcc / cmp #1 / rts`), `loadcompd` på `$020b`,
+Exomizers uppackare på `$0487`, och på `$0471` en ingång som packar upp ur minnet (X/Y). Det här bygget tar inte ett
+namn utan ett spår och en sektor: `ldx #spår / ldy #sektor / jsr $020b`. Med carry satt laddar `loadraw` till adressen i
+`$06/$07` i stället för filens laddadress. Läses nu (`unpackKrillExomizer()`, `KrillDisk.packer` `'exomizer'`,
+`KrillDisk.protocol`, filerna `.exo`):
+- **Filen** är `exomizer mem -f`: laddadressen (2 byte, som loadern lägger blocken på), sedan vart den packas upp (2
+  byte, den höga först), sedan en Exomizer-ström som packas upp framåt medan blocken kommer in, läst där filen
+  laddats. Strömmen läses med Brokkrs läsare: protokoll 0 (Exomizer 2, Continuum, Fairlights och Onslaughts demos
+  2010–2016), 7 (Lifecycle, Fleshlite, Battle Stations) eller 39 (Still Standing); disken får det protokoll som läser
+  flest filer. Strömmen ska läsas till filens sista byte, och en fil som packas upp på plats (dess byte når strömmens)
+  ska ha strömmen slutande minst Brokkrs säkerhetsmarginal efter datan, annars skulle uppackningen skriva över en byte
+  den inte läst än.
+- **Anropen** (`KrillDisk.calls`, `KrillCall`) läses ur filernas egen kod (uppackad, eller som den är när den inte är
+  packad; inte BASIC-startprogrammet): en `jsr` eller `jmp` direkt efter kod som sätter X och Y (`krillCallRegs()`:
+  den kortaste raka kodbiten, högst 24 byte, av omedelbara laddningar, tabelläsningar, `tax`/`tay`/`asl`, lagringar och
+  `clc`/`sec`). X och Y är ett spår och en sektor där en fil börjar (`how` `'ts'`), en post i en tabell med spår och
+  sektorer (`'table'`: `ldy tab+1,x / lda tab,x / tax`, posterna läses så länge var och en är en fils början), eller
+  adressen till ett namn i samma fil som finns i katalogen (`'name'`). En rutin räknas som loaderns när två anrop
+  anropar den (eller ett som laddar en fil efter namn), eller den ligger högst `$20` från en sådan (`loadraw` och
+  `loadcompd` ligger 11 byte isär). I analysen är rutiner inom `$20` från varandra en grupp, som räknas med två
+  anropsställen (tre utan residentdel funnen) eller ett anrop med ett namn, och aldrig KERNAL:s hopptabell (`$ff81`–):
+  ett ensamt `ldx #4 / ldy #3 / jsr` nära residenten finns i flera byggens egen kod, och `ldx #<"M-R" / ldy #>"M-R" /
+  jsr $ffbd` i ett annat. Programmet
+  laddar antingen efter namn eller efter spår och sektor: anropen av det slag som har färre tas bort
+  (`KrillDisk.by`; `null` för en Exomizer-disk utan anrop i filerna, där bygget kan vara vilket som helst, och fliken,
+  Explorer och kommandoraden säger det). Med carry satt och en adress lagrad i två byte nollsida före anropet säger anropet vart filen ska
+  (`dest`).
+- **Filer utanför katalogen:** ett anrop efter spår och sektor kan peka på en sektorkedja som inte finns i katalogen.
+  Den blir en fil (`entry` −1, namnet `t21s10_9000.exo` efter var den börjar), packas upp och läses efter anrop i sin
+  tur. Ett anrop som pekar mitt i en annan fils kedja, på BAM:en eller katalogen pekar inte på någon fil.
+- **Var disken känns igen:** `KrillDisk.found` är `'code'` när loaderns egen kod eller namn finns i en av filerna (som
+  den är eller uppackad, `loaderCodeIn()` med Krill-tecknen i 8.11c), annars `'files'`: filerna är packade som loadern
+  läser dem, men startprogrammet som installerar loadern är för det mesta packat. `exomizer mem -f` kan andra loaders
+  läsa också.
+- **Programmets skript** (5.15c, `findKrillScript()`, `AnalysisResult.krill`): analysen känner version 146 och äldre på
+  `pollblock` (`ldx #$03 / stx $dd02 / cmp #$fe … ldx #$33|$37 / bit $dd00 / bvc / bmi / stx $dd02`, lika i alla byggen
+  som mötts: Continuum, Revolved, GoatLight, Trick and Treat, Demolicious, Eclectic, Better), och läser anropen av
+  loaderns rutiner (högst `$200` från residenten) på samma sätt som diskläsaren, i kod analysen spårat och i byte den
+  inte spårat (Continuums laddningar körs av demots egen skriptmotor och nås inte). `krillLoads()` ger varje anrop dess
+  fil på den monterade disken (efter namn när disken har namnet, annars efter var en fil börjar), och
+  `krillScriptText()` skriver skriptet med cc1541:s kommandorad efter.
+- **cc1541:s kommandorad** säger när bygget laddar efter spår och sektor (en disk som skrivs om måste ha varje fil där
+  den börjar nu; det kontrolleras inte för kommandoraden), listar filerna utanför katalogen (kommandoraden skriver dem
+  inte) och anropen i filerna som kommentarer.
+- **I appen:** Explorer säger *Krill's loader: N files packed with Exomizer 2, loaded by their track and sector (6 not
+  in the directory)*. Krill script-fliken visar också filerna utanför katalogen (posten är var de börjar, namnet *not in
+  the directory*), vem som laddar varje fil (*loaded by the program at $084c, file04_2000.exo at $2625*), en tabell med
+  anropen i filerna (fil, var, rutin, skriptrad, fil), och när analysen hittat skriptet en tabell med programmets
+  laddningar (var, skriptrad, filen på disken med en knapp som öppnar den, anmärkningar); en rad där går till koden. Den
+  finns också utan monterad disk. *Copy script* i skriptets del kopierar skriptet med kommandoraden, och *Save files…*
+  sparar också `<disk>-krill-script.txt`.
+- **Continuum:** 28 filer: startprogrammet, 20 packade i katalogen, en opackad (25/8, 29 435 byte på `$4800`, laddas
+  med `loadraw`) och 6 packade utanför katalogen (spår 21–23). Huvudprogrammet laddar 2/20, 3/1, 5/19, 6/6, 9/15,
+  11/17, 12/17, 17/10 och 24/12 (nio jobb, `clc / ldx / ldy / jsr $020b / bcs / rts`, som demots skriptmotor lägger i
+  en kö). Delarna laddar resten: 5/19 laddar 6/17 och 6/16, 12/17 laddar 16/19, 24/12 laddar 25/8 opackad, 17/10
+  laddar 19/18 och 20/9 opackade till `$e000` och `$f000` och packar upp dem ur minnet (`$0471`), och 20/9 har en
+  tabell med 12 spår och sektorer: animationens bilder, varav sex utanför katalogen. Disk 2 (*2bextras*) är samma disk
+  med tre filer till.
+- **Kontroll:** alla 26 packade filer är byte för byte vad demots egen uppackare (ingången `$0471`, med residenten ur
+  minnet efter installationen) gör av dem på Sindris 6510. Sindri körde demot från disken till slutet (264 s till den
+  sista laddningen) och loggade varje anrop: alla 27 filer, i den ordning demot laddar dem (2/20, 3/1, 5/19, 6/17,
+  6/16, 6/6, 9/15, 11/17, 12/17, 16/19, 17/10, 19/18 och 20/9 opackade till `$e000` och `$f000`, de 12 bilderna ur
+  tabellen, 24/12 och 25/8 opackad), och efter varje är minnet byte för byte läsarens fil. Förut stannade Sindri efter
+  92 s i en kopia av drivkod på `$0e2f`: den tog CIA:s avbrott och NMI en cykel för tidigt (rättat i Sindri, se dess
+  README).
+- **Demots skriptmotor** (inte läst av Mimir, bara beskriven här): huvudprogrammet kör varje bildruta (från IRQ:n,
+  `$063d`) ett kommando ur en lista av ord, kommandots adress följd av dess argument; ett kommando som inte är klart
+  gör `pla / pla / rts` och körs igen nästa bildruta. Kommandona: `$0689` lägg ett jobb i kön (4 platser, huvudloopen
+  på `$0664` kör dem: laddningarna), `$0777` vänta tills kön är tom, `$0782` vänta till bildruta n, `$06c8`/`$06da`
+  sätt och vänta ut en räknare, `$075d`/`$0771` sätt en rutin och vänta tills den sätter carry, `$06f4` hoppa,
+  `$0727` anropa, `$072d` anropa skriptet vars adress står först i en del (delarnas huvud: `+0` och `+2` skript, `+4`
+  init), `$0733` tillbaka, `$0796`/`$0799` skriv en byte eller ett ord, `$0825` byt rasterlista. Triads *Revolved*
+  (2013) har en annan, äldre motor.
+- **Referensarkivet** (Year-top20, 2 803 diskar): Krill-läsaren tar 179 diskar (var 77), alla 102 nya med Exomizer och
+  inga tidigare lästa av en annan läsare; 17 av dem (6 utgåvor) laddar efter spår och sektor (Continuum, Fairlights
+  Lash, We Are Mature, Techno Viking, Trick and Treat A, C och D, One Quarter). Sindri och analysen på en disk per utgåva: Krills
+  loader i 34 av de 40 nya utgåvorna, i de sex andra stannade Sindri i ett intro innan loadern finns i minnet (We Are
+  Mature, One Quarter, Algotecher, Bad Apple 64, Trafolta, Fleshlite). `pollblock`-tecknet känner nu också Trick and
+  Treat, Demolicious, Eclectic, Better, Revolved och Solaris, som förut var okända.
+- **Hela referensarkivet** (277 829 diskar): Krill-läsaren tar 870 (var 403). De 467 nya är alla Exomizer-diskar (73
+  olika; 403 med protokoll 0, 51 med 7, 13 med 39), med 1 540 packade filer på de olika diskarna (19,5 MB uppackat), och
+  ingen av dem lästes förut av någon annan läsare (Covert-läsaren, som kommer efter, skulle inte ha tagit någon). 79
+  diskar (13 olika: Continuum, Lash, We Are Mature, Techno Viking, One Quarter och Trick and Treat A, C och D) laddar
+  efter spår och sektor; bara Continuum har filer utanför katalogen. På 60 av de 467 finns loaderns kod i en fil.
+- **Test:** `test/krill-exomizer.test.ts` med `packKrillExomizer` (Brokkrs packare) i `test/helpers/krill-disk.ts`:
+  framåt till ett annat ställe, på plats och en byte för nära, protokoll 7 och 39, en disk efter namn, en disk efter
+  spår och sektor med en del som laddar på alla tre sätten och en kedja utanför katalogen, ett ensamt anrop och ett som
+  pekar mitt i en fil, programmets skript (spårat och inte spårat, efter namn), och fixturerna
+  `fixtures/d64/krill-ts-demo.d64` och `fixtures/prg/krill-ts-script.prg`, som `e2e/app.spec.ts` (*Krill's loader
+  loading by track and sector*) öppnar.
 
 ### 13.5l Diskar för Covert Bitops-loadern (makedisks och maked64:s kommandofil) – och GoatLight
 
@@ -4940,7 +5035,7 @@ som ändrad och blir en commit att pusha; utan projekt säger fliken att det beh
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), skräp (11.7, när det finns), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista, en mapp per blocktyp. Ett klick på ett block går till det i listningen; Shift+klick visar det markerat i typens egen vy (`blockView`): sprites, charset, bitmapp och skärmmatris i Graphics ritade som sin typ (multicolor som blocket, en bitmapp så hög som den är, rutnätet flyttat så att en cell börjar vid blocket), text i Memory som `i` (PETSCII) eller `ii` (skärmkoder) med raderna från dess första byte, övriga data (bytes, ord, tabeller, musik, fill) i Memory som `m`, och kod, BASIC och flyttad kod markerad i listningen. Varje rads tips säger vart Shift+klick går. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Scripts**: projektets skript, att köra, öppna och ta bort (10.3). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
-| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Krill script (filerna på en disk för Krills loader och cc1541:s kommandorad, 13.5k), IFFL parts (delarna i en disks IFFL-fil, 13.5m), Covert script (filerna på en disk för Covert Bitops-loadern, anropen i koden och makedisks eller maked64:s kommandofil, 13.5l), Pirate Slayer (13.5h), Tape (13.5e), Statistics, Build output |
+| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Krill script (filerna på en disk för Krills loader, anropen i filerna, cc1541:s kommandorad och skriptet i programmets kod, 13.5k, när de finns), IFFL parts (delarna i en disks IFFL-fil, 13.5m), Covert script (filerna på en disk för Covert Bitops-loadern, anropen i koden och makedisks eller maked64:s kommandofil, 13.5l), Pirate Slayer (13.5h), Tape (13.5e), Statistics, Build output |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, antal meddelanden, analystid, verifieringsstatus. Det som går att göra något med är knappar (se nedan) |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.

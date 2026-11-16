@@ -7,7 +7,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
   exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackedName, unpackLog, unpackPrg, verify,
-  covertSummary, KRILL_PACKER, readBitfireDisk, readBoozeDisk, readCovertDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
+  covertSummary, krillPackerName, readBitfireDisk, readBoozeDisk, readCovertDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
 import { find64tass, findC64Roms, findKickAssJar, findVice, run64tass, runKickAssembler, splitArgs, writeVfs, type KickRunResult } from '@mimir/core/node';
@@ -217,7 +217,10 @@ const DISK_READERS: [string, (d: Uint8Array) => string | null][] = [
   ['bitfire', d => { const r = readBitfireDisk(d); return r && `${r.files.length} files`; }],
   ['booze', d => { const r = readBoozeDisk(d); return r && `${r.files.length} files`; }],
   ['sparkle', d => { const r = readSparkleDisk(d); return r && `${r.bundles.length} bundles`; }],
-  ['krill', d => { const r = readKrillDisk(d); return r && `${r.files.filter(f => f.unpacked).length} of ${r.files.length} files packed with ${KRILL_PACKER[r.packer].name}`; }],
+  ['krill', d => {
+    const r = readKrillDisk(d), outside = r?.files.filter(f => f.entry < 0).length ?? 0;
+    return r && `${r.files.filter(f => f.unpacked).length} of ${r.files.length} files packed with ${krillPackerName(r)}${r.by === 'ts' ? `, loaded by track and sector${outside ? ` (${outside} not in the directory)` : ''}` : ''}${r.calls.length ? `, ${r.calls.length} call${r.calls.length === 1 ? '' : 's'} in the files` : ''}${r.found === 'code' ? ", the loader's code in a file" : ''}`;
+  }],
   ['covert', d => { const r = readCovertDisk(d); return r && `${covertSummary(r)}; found by ${r.found}${r.tool ? `, laid out by ${r.tool}` : ''}`; }],
 ];
 

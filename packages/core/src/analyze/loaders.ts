@@ -65,6 +65,10 @@ const KNOWN: Known[] = [
     signs: [
       { pat: pat('1D C9 DC 8E 02 DD 6A 6A A2 3F 87|8F'), role: 'resident', what: 'receive loop (ora $dcc9,x / stx $dd02)' },
       { pat: pat('6D|7D 00|C9 DD|DC 8E 02 DD C8 F0 .. 4A 4A A2 3F'), role: 'resident', what: 'receive loop (adc $dd00 / stx $dd02 / iny)' },
+      // version 146 and older (2010-2016): pollblock waiting for the drive's next block, the same in every build met
+      // (Triad's Continuum and Revolved, GoatLight, Trick and Treat, Demolicious, Eclectic), whose receive loops differ
+      // by their configuration
+      { pat: pat('A2 03 8E 02 DD C9 FE F0 .. 18 69 .. 38 60 A9 .. A2 33|37 2C 00 DD 50 FB 30 .. 8E 02 DD'), role: 'resident', what: 'version 146 and older: waiting for a block (ldx #$03 / stx $dd02 / bit $dd00 / bvc / stx $dd02)' },
       // "Krill's Loader, version 146, configuration …" in PETSCII upper and lower case (GoatLight, 2015)
       { pat: pat('CB 52 49 4C 4C 27 53 20 CC 4F 41 44 45 52 2C 20 56 45 52 53 49 4F 4E 20'), role: 'install', what: "its installer's version text: \"Krill's Loader, version …, configuration …\"" },
     ],
@@ -334,6 +338,24 @@ const encodings = (s: string): Pattern[] => {
   const letter = (c: number) => c >= 0x41 && c <= 0x5a;
   return [up, up.map(c => (letter(c) ? c + 0x80 : c)), up.map(c => (letter(c) ? c - 0x40 : c)), up.map(c => (letter(c) ? c + 0x20 : c))].map(b => b.map(x => new Set([x])));
 };
+
+/** A known loader's own code (one of its signs) or its name (in any of the four ways a C64 writes text) in these
+ *  bytes: a file of a disk read for that loader (c64/krill-disk.ts) shows its code so. */
+export function loaderCodeIn(id: LoaderId, bytes: Uint8Array): boolean {
+  const k = KNOWN.find(x => x.id === id);
+  if (!k) return false;
+  const has = (p: Pattern) => {
+    const first = p[0];
+    for (let a = 0; a + p.length <= bytes.length; a++) {
+      if (first && !first.has(bytes[a])) continue;
+      let i = 1;
+      for (; i < p.length; i++) { const s = p[i]; if (s && !s.has(bytes[a + i])) break; }
+      if (i === p.length) return true;
+    }
+    return false;
+  };
+  return k.signs.some(s => !s.weak && has(s.pat)) || (!!k.text && encodings(k.text).some(has));
+}
 
 export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
   const { mem, owner, insLen, codeOwner, L } = ctx;

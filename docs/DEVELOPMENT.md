@@ -934,6 +934,26 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     crack of the same game showed it. The app has an *IFFL parts* tab (a row a part, opened as a PRG a piece), an
     Explorer line, and a click on the file in the directory shows the tab instead of opening a program. On the archive's
     games: 28 disks of 9 releases, parts unpacked in 7.
+45. Krill's loader built with Exomizer, and loading by track and sector (spec 13.5k), is read: Triad's Continuum
+    (Year-top20 2014, #5) said "A fast loader (not one of the known ones)" and its disk gave nothing (every file a DEL
+    entry under a dirart). Its boot installs *Krill's Loader, version 146*, built to take a track and sector in X and Y
+    (`ldx #track / ldy #sector / jsr $020b`) and to unpack `exomizer mem -f` files while their blocks come in. Now:
+    the analysis knows version 146 and older by `pollblock` (the same in every build met; it also names Trick and Treat,
+    Demolicious, Eclectic, Better, Revolved and Solaris, which were unknown), `findKrillScript` (`analyze/krill.ts`,
+    `AnalysisResult.krill`) reads the program's calls of the loader from traced code and from bytes not traced
+    (Continuum's loads are jobs its own script engine queues), and `readKrillDisk` reads Exomizer files (protocols 0,
+    7 and 39 with Brokkr's `readStream`; one unpacked in place must have Brokkr's safety margin), the calls in the files'
+    own code (`krillCallRegs`: immediates, a table of tracks and sectors, a zero-page address with the carry set), and
+    the chains outside the directory they load (entry -1). `KrillDisk.found` says whether the loader's code is in a file
+    (`loaderCodeIn`) or only its files show it, and `by` is null for an Exomizer disk whose files call nothing. Checked:
+    Continuum's 26 packed files against the demo's own unpacker on Sindri's Cpu, and all 27 loads Sindri ran in the
+    whole demo against the reader's files (Sindri stopped after 92 s before its CIA interrupt and NMI timing was fixed). Year-top20: 179 Krill
+    disks (was 77), the 102 new ones read by no reader before; Sindri and the analysis found Krill's loader in 34 of the
+    40 new releases (the other six stopped in an intro). The whole reference archive: 870 Krill disks (was 403), the
+    467 new ones Exomizer disks (73 different, 1 540 packed files), none of them read by another reader before; 79 (13
+    different) load by track and sector. The Krill script tab got the program's script, the files outside
+    the directory, who loads each file and the calls in the files; tests in `test/krill-exomizer.test.ts`, the fixtures
+    `krill-ts-demo.d64` and `krill-ts-script.prg`, and an e2e test.
 
 ## Roadmap
 

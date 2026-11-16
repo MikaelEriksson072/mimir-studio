@@ -45,7 +45,7 @@ export {
   unpackCovertExomizer, unpackCovertExomizer3Raw, unpackCovertFile, unpackCovertPucrunch,
   type CovertCall, type CovertDisk, type CovertEntry, type CovertFile, type CovertPacker, type CovertScript, type CovertTool, type CovertUnpacked,
 } from './c64/covert-disk';
-export { cc1541Script, cc1541Text, KRILL_PACKER, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readKrillDisk, unpackKrillDoynax, unpackKrillTinyCrunch, unpackKrillZx0, type KrillDisk, type KrillEntry, type KrillFile, type KrillPacker, type KrillUnpacked } from './c64/krill-disk';
+export { cc1541Script, cc1541Text, KRILL_EXOMIZER_PROTOCOLS, KRILL_PACKER, krillCallRegs, krillCallText, krillDiskPrg, krillFileName, krillFilePrg, krillFileTs, krillPackerName, krillTableEntries, krillUnpackedName, readKrillDisk, unpackKrillDoynax, unpackKrillExomizer, unpackKrillTinyCrunch, unpackKrillZx0, type KrillCall, type KrillDisk, type KrillEntry, type KrillFile, type KrillPacker, type KrillReg, type KrillRegs, type KrillUnpacked } from './c64/krill-disk';
 export { IFFL_ENTRIES, IFFL_PACKER, IFFL_TABLE, ifflPartName, ifflPieceName, ifflPiecePrg, readIffl, readIfflDisk, unpackIfflPart, type IfflDisk, type IfflFile, type IfflPacker, type IfflPart, type IfflPiece } from './c64/iffl-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
@@ -59,6 +59,7 @@ export { goneCounts, isFault, isProblem } from './analyze/deep';
 export { analyze, bankAddr, fileSpaces, type SpaceCache, render, SPACE, spaceAddr, spaceFiles, spaceLines, spaceOf, spaceRender, spaceView, splitProject, verify } from './spaces';
 export { spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript } from './analyze/spindle';
 export { boozeLine, boozeScript } from './analyze/booze';
+export { krillLoads, krillScriptText, type KrillLoad } from './analyze/krill';
 export { validLabel, type RenderOptions } from './render/kick';
 export { applyZpPairs, zpPairable } from './zp-pairs';
 export { addJunk, junkAt, junkIn, removeJunk } from './junk';

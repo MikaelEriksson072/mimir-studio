@@ -6439,7 +6439,7 @@ test("a mounted disk for Krill's loader: its files in the Krill script tab, unpa
   await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await expect(toast(page, 'Mounted krill-demo.d64: "KRILL DEMO", 4 files, a disk for Krill\'s loader with 2 files packed with its ZX0')).toBeVisible();
   await openSection(page, 'Disk');
-  await expect(page.locator('.disk-spindle')).toContainText("Krill's loader: 2 files in the directory packed with its ZX0, loaded in the directory's order");
+  await expect(page.locator('.disk-spindle')).toContainText("Krill's loader: 2 files packed with its ZX0, loaded in the directory's order");
   const files = page.getByRole('table', { name: 'Krill files' });
 
   await test.step('the Explorer opens the tab, a row per file in the directory\'s order', async () => {
@@ -6554,7 +6554,7 @@ test("a mounted disk for Krill's loader built with TinyCrunch (revision 166): it
   await fromFileMenu(page, 'Mount disk image (D64, G64)…');
   await expect(toast(page, 'Mounted krill-tc-demo.d64: "TINY CRUNCH", 3 files, a disk for Krill\'s loader with 2 files packed with TinyCrunch')).toBeVisible();
   await openSection(page, 'Disk');
-  await expect(page.locator('.disk-spindle')).toContainText("Krill's loader: 2 files in the directory packed with TinyCrunch, loaded in the directory's order");
+  await expect(page.locator('.disk-spindle')).toContainText("Krill's loader: 2 files packed with TinyCrunch, loaded in the directory's order");
   const files = page.getByRole('table', { name: 'Krill files' });
 
   await test.step('the tab lists the files, where they load and where they unpack to', async () => {
@@ -6580,6 +6580,72 @@ test("a mounted disk for Krill's loader built with TinyCrunch (revision 166): it
     const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
     expect(text[0]).toBe("# cc1541 command line, rebuilt by Mimir Studio from krill-tc-demo.d64 (Krill's loader, TinyCrunch): 3 files, 2 of them packed.");
     expect(text).toContain('  -f "a" -w file01_0801.tc \\');
+  });
+});
+
+test("Krill's loader loading by track and sector: the program's script, the files outside the directory and the calls in the files", async ({ workDir, app, page }) => {
+  // fixtures/prg/krill-ts-script.prg and fixtures/d64/krill-ts-demo.d64 (packages/core/test/krill-exomizer.test.ts): a
+  // program with version 146's resident at $0200 and calls of it as Triad's Continuum (2014) has them (ldx #track /
+  // ldy #sector / jsr, a raw load to $e000 with the carry set), and a disk whose files are packed with Exomizer 2 (exomizer
+  // mem -f), with a part whose code loads files by track and sector and by a table, one of them outside the directory
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/krill-ts-script.prg')] });
+  await fromFileMenu(page, 'Open PRG files…');
+  await expect(toast(page, 'Loaded krill-ts-script.prg at $0200')).toBeVisible();
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/krill-ts-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted krill-ts-demo.d64: "TS DEMO", 7 files, a disk for Krill\'s loader with 6 files packed with Exomizer 2, loaded by track and sector (1 not in the directory)')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText("Krill's loader: 6 files packed with Exomizer 2, loaded by their track and sector (1 not in the directory)");
+  const script = page.getByRole('table', { name: 'Krill script' }), files = page.getByRole('table', { name: 'Krill files' }), calls = page.getByRole('table', { name: 'Krill calls' });
+
+  await test.step("the program's calls are the script, each with its file on the mounted disk", async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Krill script' }).click();
+    await expect(page.getByRole('tab', { name: /Krill script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /Krill script/ })).toContainText('11');
+    await expect(page.locator('.spindle-head').nth(1)).toContainText("Krill's loader script: 3 loads from the code that calls the loader at $0200, $020b");
+    await expect(page.locator('.spindle-head').nth(1)).toContainText("ldx #track / ldy #sector / jsr: this build names a file by where it starts); the files are krill-ts-demo.d64's");
+    await expect(script.locator('tbody tr td:nth-child(1)')).toHaveText(['$0227', '$0232', '$023d']);
+    await expect(script.locator('tbody tr td:nth-child(2)')).toHaveText(['load 1/1', 'load 1/14', 'load 1/12 to $e000']);
+    await expect(script.locator('tbody tr td:nth-child(3)')).toHaveText(['file01_2000.exo → $2000–$2bb7', 'file06_c000.exo → $c000–$c1d0', 'file05_7000.prg']);
+    await expect(script.locator('tbody tr td:nth-child(4)').nth(2)).toHaveText('the carry set: to where the call says, not its load address');
+  });
+
+  await test.step('the files: the directory\'s, then the one outside it that the table loads, and the calls in their code', async () => {
+    await expect(page.locator('.spindle-head').first()).toContainText("Files of krill-ts-demo.d64 (Krill's loader, Exomizer 2): 8 files, 6 unpacked");
+    await expect(page.locator('.spindle-head').first()).toContainText("this build loads a file by its track and sector, as the calls in the files' code show; 1 file is not in the directory");
+    await expect(files.locator('tbody tr td:nth-child(1)')).toHaveText(['$00', '$01', '$02', '$03', '$04', '$05', '$06', '1/6']);
+    await expect(files.locator('tbody tr td:nth-child(2)').last()).toHaveText('not in the directory');
+    await expect(files.locator('tbody tr td:nth-child(6)')).toHaveText(['file00_0801.prg', 'file01_2000.exo', 'file02_4000.exo', 'file03_6000.exo', 'file04_6800.exo', 'file05_7000.prg', 'file06_c000.exo', 't01s06_5000.exo']);
+    await expect(files.locator('tbody tr td:nth-child(7)').nth(1)).toHaveText('packed with Exomizer 2, unpacked in place · from 1/1 · the directory shows 0 blocks (3) · loaded by the program at $0227, file06_c000.exo at $c000');
+    await expect(files.locator('tbody tr td:nth-child(7)').last()).toHaveText('packed with Exomizer 2, unpacked elsewhere · from 1/6 · not in the directory · loaded by file06_c000.exo at $c010');
+    await expect(calls.locator('tbody tr td:nth-child(2)')).toHaveText(['$c000', '$c010', '$c010', '$c010', '$c010', '$c01b']);
+    await expect(calls.locator('tbody tr td:nth-child(3)')).toHaveText(['$020b', '$020b', '$020b', '$020b', '$020b', '$0200']);
+    await expect(calls.locator('tbody tr td:nth-child(4)')).toHaveText(['load 1/1', 'load 1/4 (table $c030, entry 0)', 'load 1/6 (table $c030, entry 1)', 'load 1/8 (table $c030, entry 2)', 'load 1/10 (table $c030, entry 3)', 'load 1/12 to $e000']);
+  });
+
+  await test.step('it copies the script with cc1541\'s command line, and saves the files with both', async () => {
+    await page.locator('.xref').nth(1).getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, "Copied Krill's loader script")).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text[0]).toBe("; Krill's loader script, read back by Mimir Studio from the code that calls the loader at $0200 and $020b: 3 loads.");
+    expect(text).toContain(`  ${'load 1/12 to $e000'.padEnd(38)} ; $023d, file05_7000.prg`);
+    expect(text).toContain("# cc1541 command line, rebuilt by Mimir Studio from krill-ts-demo.d64 (Krill's loader, Exomizer 2): 8 files, 6 of them packed.");
+    const out = join(workDir, 'krill-ts-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 8 files of krill-ts-demo\.d64 to .* \(6 of them unpacked as well\), and krill-ts-demo-cc1541\.sh, cc1541's command line that writes the disk again, and krill-ts-demo-krill-script\.txt, the program's calls of the loader$/)).toBeVisible();
+    expect(readdirSync(out)).toEqual(expect.arrayContaining(['t01s06_5000.exo', 't01s06_5000.prg', 'krill-ts-demo-krill-script.txt', 'krill-ts-demo-cc1541.sh']));
+    expect(readFileSync(join(out, 'krill-ts-demo-krill-script.txt'), 'utf8').split('\n')[0]).toBe(text[0]);
+  });
+
+  await test.step('a script row goes to its code; its button opens the file it loads, unpacked', async () => {
+    await script.getByRole('row', { name: /load 1\/1\b/ }).click();
+    await expect(statusBar(page)).toContainText('$0227');
+    await script.getByRole('button', { name: 'Open file06_c000.exo' }).click();
+    await expect(toast(page, 'Loaded file06_c000.prg at $c000')).toBeVisible();
   });
 });
 

@@ -3,7 +3,7 @@
  * the Covert Bitops loader, Pirate Slayer
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, KRILL_PACKER, krillFileName, type KrillFile, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   refsShown, shownAddress, shownTarget, viewOffsetAt,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
@@ -369,46 +369,117 @@ export function IfflPanel({ disk, onOpenPart, onSaveParts }: { disk: MountedDisk
   );
 }
 
-/** The Krill script tab (spec 13.5k): a disk for Krill's loader, its directory's files a row each in the directory's
- *  order (the order the loader loads them in); a row opens the file as a PRG, unpacked when it is packed with the
- *  loader's ZX0, (version 146) Doynax LZ or (revision 166) TinyCrunch, + adds it. Copy script gives cc1541's command
- *  line that writes the disk again, Save files… every file as it is on the disk and unpacked, with that command line. */
-export function KrillPanel({ disk, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
+/** The Krill script tab (spec 13.5k): the mounted disk's files, a row each in the directory's order (the order the
+ *  loader loads them in when it loads by name), then the files outside the directory that calls load by their track and
+ *  sector: a row opens the file as a PRG, unpacked when it is packed with the loader's ZX0, (version 146) Doynax LZ,
+ *  Exomizer or (revision 166) TinyCrunch, + adds it; then the loader's calls read from the files' own code. Then Krill's
+ *  loader's script in the program (5.15c), a row per load (a call that takes its files from a table, a row per entry):
+ *  a row goes to its code, and the file it loads on the mounted disk opens from its button. Copy script gives cc1541's
+ *  command line that writes the disk again (the script's, the script with it), Save files… every file as it is on the
+ *  disk and unpacked, with them. */
+export function KrillPanel({ A, disk, onNavigate, onCopy, onOpenFile, onSaveFiles }: { A: AnalysisResult; disk: MountedDisk | null; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
+  if (!disk?.krill && !A.krill?.steps.length) return <div className="empty">No Krill script: a program with Krill's loader calls it with X and Y naming a file, and a disk for it keeps packed files.</div>;
+  const loads = A.krill?.steps.length ? krillLoads(A.krill, disk?.krill ?? null) : [];
+  return (
+    <>
+      {disk?.krill && <KrillDiskSection disk={disk} loads={loads} onCopy={onCopy} onOpenFile={onOpenFile} onSaveFiles={onSaveFiles} />}
+      {loads.length > 0 && <KrillScriptSection A={A} disk={disk} loads={loads} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
+    </>
+  );
+}
+
+/** Krill's loader's script in the program (5.15c): a row per load. */
+function KrillScriptSection({ A, disk, loads, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; loads: KrillLoad[]; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void }) {
+  const S = A.krill!, d = disk?.krill ?? null;
+  const routines = S.routines.map(r => `$${h4(r)}`).join(', ');
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>Krill's loader script: {loads.length} load{loads.length === 1 ? '' : 's'} from the code that calls the loader at {routines} <span className="muted">· Krill's loader has no script file: the program's code is the script ({S.by === 'ts' ? 'ldx #track / ldy #sector / jsr: this build names a file by where it starts' : 'ldx #<name / ldy #>name / jsr'}){S.steps.some(s => !s.traced) ? '; code not traced is read from its bytes' : ''}{d ? `; the files are ${disk!.name}'s` : '; mount the disk to see the file each loads'}</span></span>
+        <button className="btn small" onClick={() => onCopy(krillScriptText(S, d, disk?.name ?? null).join('\n'), "Copied Krill's loader script")}><Icon name="copy" size={14} />Copy script</button>
+      </div>
+      <table className="tbl" aria-label="Krill script"><thead><tr><th>At</th><th>Script line</th><th>File on the disk</th><th>Notes</th></tr></thead><tbody>
+        {loads.map(l => {
+          const f = l.file, u = f?.unpacked;
+          const notes = [
+            !l.step.traced && 'not traced: copied elsewhere before it runs, or run by a script of the program\'s own',
+            l.step.dest != null && 'the carry set: to where the call says, not its load address',
+            d && !f && (l.ts ? 'no file of the mounted disk starts there' : 'no file of the mounted disk has the name'),
+          ].filter(Boolean).join(' · ');
+          return (
+            <tr key={`${l.step.jsr}:${l.entry ?? ''}`} title={`Go to $${h4(l.step.at)}`} onClick={() => onNavigate(l.step.at)}>
+              <td className="mono">${h4(l.step.at)}</td>
+              <td className="mono script-line"><span className="syn-label">{l.text}</span></td>
+              <td className="mono">{f ? <>{krillFileName(f)}{u && <span className="muted"> → ${h4(u.start)}–${h4(u.end - 1)}</span>}
+                <button className="icon-btn" title={`Open ${krillFileName(f)}`} aria-label={`Open ${krillFileName(f)}`} onClick={e => { e.stopPropagation(); onOpenFile(f, false); }}><Icon name="folder" size={13} /></button></> : <span className="muted">—</span>}</td>
+              <td className="muted">{notes}</td>
+            </tr>
+          );
+        })}
+      </tbody></table>
+    </div>
+  );
+}
+
+/** A mounted disk for Krill's loader: its files, a row each, and the loader's calls in their code. */
+function KrillDiskSection({ disk, loads, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; loads: KrillLoad[]; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
   const d = disk.krill!;
-  const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length;
-  const packer = KRILL_PACKER[d.packer].name;
-  const notes = (f: KrillFile) => {
-    const e = d.entries[f.entry], u = f.unpacked;
+  const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length, outside = d.files.filter(f => f.entry < 0).length;
+  const packer = krillPackerName(d);
+  const notes = (f: KrillFile, i: number) => {
+    const e = f.entry >= 0 ? d.entries[f.entry] : null, u = f.unpacked;
+    const by = [...loads.filter(l => l.file === f).map(l => `the program at $${h4(l.step.at)}`), ...d.calls.filter(c => c.file === i).map(c => `${krillFileName(d.files[c.in])} at $${h4(c.at)}${c.dest != null ? ` (to $${h4(c.dest)})` : ''}`)];
     return [
-      u ? `packed with ${packer}, ${d.packer === 'doynax' || (d.packer === 'tinycrunch' && u.inplace) ? `unpacked in place${u.overwritten ? `, over ${u.overwritten} byte${u.overwritten === 1 ? '' : 's'} of its stream still to be read` : ''}` : d.packer === 'tinycrunch' ? 'unpacked elsewhere' : u.inplace ? 'in place' : 'with an end'}` : f.basic ? 'a BASIC program: loaded with LOAD and RUN' : `not packed with ${packer}: as it is on the disk`,
-      `from ${f.sectors[0][0]}/${f.sectors[0][1]}`,
-      e.blocks !== f.sectors.length && `the directory shows ${e.blocks} block${e.blocks === 1 ? '' : 's'} (${f.sectors.length})`,
+      u ? `packed with ${packer}, ${d.packer === 'doynax' || (d.packer === 'tinycrunch' && u.inplace) ? `unpacked in place${u.overwritten ? `, over ${u.overwritten} byte${u.overwritten === 1 ? '' : 's'} of its stream still to be read` : ''}` : d.packer === 'tinycrunch' ? 'unpacked elsewhere' : d.packer === 'exomizer' ? (u.inplace ? 'unpacked in place' : 'unpacked elsewhere') : u.inplace ? 'in place' : 'with an end'}` : f.basic ? 'a BASIC program: loaded with LOAD and RUN' : `not packed with ${packer}: as it is on the disk`,
+      `from ${krillFileTs(f)}`,
+      !e && 'not in the directory',
+      e && e.blocks !== f.sectors.length && `the directory shows ${e.blocks} block${e.blocks === 1 ? '' : 's'} (${f.sectors.length})`,
+      by.length > 0 && `loaded by ${by.join(', ')}`,
     ].filter(Boolean).join(' · ');
   };
   return (
     <div className="xref spindle">
       <div className="xref-head spindle-head">
-        <span>Files of {disk.name} (Krill's loader, {packer}): {n} file{n === 1 ? '' : 's'}, {unpacked} unpacked <span className="muted">· Krill's loader has no load script: a part loads a file by its name, or the next file in the directory with an empty name, so the directory is the order they load in; cc1541's command line rebuilds the disk{lines ? `; ${lines} more line${lines === 1 ? '' : 's'} of the directory without a file of ${lines === 1 ? 'its' : 'their'} own` : ''}</span></span>
+        <span>Files of {disk.name} (Krill's loader, {packer}): {n} file{n === 1 ? '' : 's'}, {unpacked} unpacked <span className="muted">· {d.by === 'ts'
+          ? `this build loads a file by its track and sector, as the calls in the files' code show${outside ? `; ${outside} file${outside === 1 ? ' is' : 's are'} not in the directory` : ''}`
+          : d.by == null ? 'Krill\'s loader has no load script: a part loads a file by its name (or the next in the directory), or in builds of version 146 and older by its track and sector; no call in the files\' code says which'
+          : 'Krill\'s loader has no load script: a part loads a file by its name, or the next file in the directory with an empty name, so the directory is the order they load in'}; cc1541's command line rebuilds the disk{lines ? `; ${lines} more line${lines === 1 ? '' : 's'} of the directory without a file of ${lines === 1 ? 'its' : 'their'} own` : ''}</span></span>
         <button className="btn small" onClick={() => onCopy(cc1541Script(d, disk.name).join('\n'), 'Copied the cc1541 command line')}><Icon name="copy" size={14} />Copy script</button>
         <button className="btn small" onClick={onSaveFiles} title="Save every file as it is on the disk and unpacked to a folder, with cc1541's command line that writes the disk again"><Icon name="download" size={14} />Save files…</button>
       </div>
       <table className="tbl" aria-label="Krill files"><thead><tr><th>Entry</th><th>Name</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
-        {d.files.map(f => {
+        {d.files.map((f, i) => {
           const name = krillFileName(f), u = f.unpacked;
           return (
-            <tr key={f.entry} title={u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
-              <td className="mono">${h2(f.entry)}</td>
-              <td className="mono">"{d.entries[f.entry].name}"</td>
+            <tr key={krillFileTs(f)} title={u ? `Open ${name} unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`} onClick={() => onOpenFile(f, false)}>
+              <td className="mono">{f.entry >= 0 ? `$${h2(f.entry)}` : <span className="muted">{krillFileTs(f)}</span>}</td>
+              <td className="mono">{f.entry >= 0 ? `"${d.entries[f.entry].name}"` : <span className="muted">not in the directory</span>}</td>
               <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
               <td className="mono">{u ? `$${h4(u.start)}–$${h4(u.end - 1)}` : <span className="muted">—</span>}</td>
               <td className="mono">{u ? `${f.bytes.length} → ${u.end - u.start}` : f.bytes.length}</td>
               <td className="mono">{name}</td>
-              <td className="muted">{notes(f)}</td>
+              <td className="muted">{notes(f, i)}</td>
               <td><button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(f, true); }}><Icon name="plus" size={13} /></button></td>
             </tr>
           );
         })}
       </tbody></table>
+      {d.calls.length > 0 && (
+        <table className="tbl" aria-label="Krill calls"><thead><tr><th>In</th><th>At</th><th>Calls</th><th>Script line</th><th>File</th></tr></thead><tbody>
+          {d.calls.map(c => {
+            const f = d.files[c.file];
+            return (
+              <tr key={`${c.in}:${c.jsr}:${c.entry ?? ''}`} title={`Open ${krillFileName(f)}`} onClick={() => onOpenFile(f, false)}>
+                <td className="mono">{krillFileName(d.files[c.in])}</td>
+                <td className="mono">${h4(c.at)}</td>
+                <td className="mono">${h4(c.to)}</td>
+                <td className="mono script-line"><span className="syn-label">{krillCallText(c, d)}</span></td>
+                <td className="mono">{krillFileName(f)}</td>
+              </tr>
+            );
+          })}
+        </tbody></table>
+      )}
     </div>
   );
 }

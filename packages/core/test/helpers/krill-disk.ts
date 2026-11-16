@@ -2,7 +2,29 @@
  * ZX0 unpacker reads them (with a simple greedy packer, not the loader's own tools), in a directory with the names as
  * PETSCII bytes, dirart lines without a file and the block counts a directory shows. Nothing of the loader's own code
  * is on the disks. */
+import { crunchData } from '@mimir/brokkr';
 import { makeD64, sectorsOnTrack, type D64FileType } from '../../src';
+
+/** `data` packed with Exomizer as Krill's loader reads it (`exomizer mem -f`, here with Brokkr's cruncher): where it
+ *  unpacks to (the high byte first), then the stream of this protocol; `safety`: the stream's in-place margin */
+export function packKrillExomizer(data: number[], dest: number, protocol = 0): { bytes: number[]; safety: number } {
+  const c = crunchData(Uint8Array.from(data), { protocol: { flags: protocol }, effort: 'fast' });
+  return { bytes: [dest >> 8, dest & 0xff, ...c.stream], safety: c.safety };
+}
+
+/** packed in place, as exomizer mem -f places it: loading so that the stream ends `safety` bytes after the data (less
+ *  `short`, to make one that would write over its stream) */
+export function packKrillExomizerInPlace(data: number[], dest: number, protocol = 0, short = 0): { bytes: number[]; load: number; safety: number } {
+  const p = packKrillExomizer(data, dest, protocol);
+  return { ...p, load: dest + data.length + p.safety - short - p.bytes.length };
+}
+
+/** A disk's directory entry emptied: its file stays on the disk, a chain of sectors outside the directory. */
+export function hideKrillEntry(disk: Uint8Array, i: number): Uint8Array {
+  const d = dirEntry(i);
+  disk.fill(0, d + 2, d + 32);
+  return disk;
+}
 
 /** The loader's ZX0 writer: bits from the bottom of a byte, put in the stream when the first is written. */
 export class KrillZx0 {

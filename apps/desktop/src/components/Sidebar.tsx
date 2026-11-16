@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, kindInfo, KRILL_PACKER, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, kindInfo, krillPackerName, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -683,7 +683,9 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
       )}
       {disk.krill && (
         <div className="disk-spindle">
-          <span><b>Krill's loader:</b> {disk.krill.files.filter(f => f.unpacked).length} files in the directory packed with {KRILL_PACKER[disk.krill.packer].name}, loaded in the directory's order</span>
+          <span><b>Krill's loader:</b> {disk.krill.files.filter(f => f.unpacked).length} files packed with {krillPackerName(disk.krill)}, {disk.krill.by === 'ts'
+            ? `loaded by their track and sector${disk.krill.files.some(f => f.entry < 0) ? ` (${disk.krill.files.filter(f => f.entry < 0).length} not in the directory)` : ''}`
+            : disk.krill.by == null ? 'loaded by name or by track and sector (no call in the files says which)' : "loaded in the directory's order"}</span>
           <button className="btn small" onClick={onShowKrill}>Krill script</button>
         </div>
       )}
