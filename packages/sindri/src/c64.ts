@@ -420,6 +420,131 @@ export interface MachineState {
   cycles: number;
 }
 
+/** the noise register's period (it never holds 0) */
+const NOISE_PERIOD = 0x7fffff;
+
+/**
+ * SID voice 3's oscillator as a program reads it at $d41b (OSC3), as an 8580 makes it (VICE's default SID: reSID, its
+ * wave.cc/wave.h): a 24-bit accumulator ($555555 at power-on) adds the frequency each cycle; the output is the top 8 of
+ * the 12 bits of the selected waveforms (sawtooth: the accumulator's top bits; triangle: the bits after the top one,
+ * inverted while it is set, or while it differs from voice 2's with ring modulation; pulse: on while the top 12 bits
+ * reach the pulse width, compared a cycle late; noise: 8 bits of a 23-bit shift register, $7ffffe at power-on, that
+ * shifts two cycles after accumulator bit 19 rises). The 8580's triangle and sawtooth come a cycle late. The test bit
+ * holds the accumulator at 0 and the pulse high; let go, it shifts the noise register once (bit 17 inverted in), and
+ * held for 2519864 cycles it fills the register with ones, a bit every 315000 cycles more. Sync resets the
+ * accumulator as voice 2's top bit rises (it and ring modulation are done roughly and not measured). Measured in VICE (x64sc, reSID 8580): the test bit let go before a read moved
+ * one cycle at a time, and noise read every 20 cycles for 256 reads. Not emulated: waveforms combined with each other
+ * (an 8580 gives its own values, here the AND of them) and the noise register written back by them, the output fading
+ * while no waveform is on, the 6581 (its triangle and sawtooth a cycle earlier, its noise otherwise), the envelope
+ * ($d41c reads 0). The oscillators run only as far as a read or a write of voice 2's or 3's registers needs.
+ */
+export class Osc3 {
+  /** the cycle the oscillators have run to */
+  at = 0;
+  /** voice 3's accumulator, the cycle before, and voice 2's */
+  acc = 0x555555; before = 0x555555; acc2 = 0x555555;
+  /** the noise shift register, and the cycle a shift is due in (-1: none) */
+  noise = 0x7ffffe; shiftAt = -1;
+  /** the cycle the test bit went on, while it is (-1: off or the register already reset) */
+  testFrom = -1;
+  /** the waveform output last read (12 bits): it stays while no waveform is on */
+  held = 0;
+
+  private readonly regs: Uint8Array;
+
+  constructor(regs: Uint8Array) { this.regs = regs; }
+
+  /** a write to voice 2's or 3's register r in cycle t */
+  write(r: number, v: number, t: number): void {
+    this.run(t);
+    const was = this.regs[0x12];
+    this.regs[r] = v;
+    if (r !== 0x12) return;
+    if (v & 8 && !(was & 8)) { this.acc = this.before = 0; this.shiftAt = -1; this.testFrom = t; }
+    else if (!(v & 8) && was & 8) {
+      this.noise = ((this.noise << 1) | (~this.noise >> 17 & 1)) & 0x7fffff;
+      this.testFrom = -1;
+    }
+  }
+
+  /** $d41b as read in cycle t */
+  read(t: number): number {
+    this.run(t);
+    const r = this.regs, ctrl = r[0x12], wave = ctrl >> 4;
+    if (!wave) return this.held >> 4;
+    let out = 0xfff;
+    if (wave & 1) {
+      const top = (ctrl & 4 ? this.before ^ this.acc2 : this.before) & 0x800000;
+      out &= ((top ? ~this.before : this.before) >> 11) & 0xfff;
+    }
+    if (wave & 2) out &= this.before >> 12;
+    if (wave & 4 && !(ctrl & 8) && (this.before >> 12) < ((r[0x10] | (r[0x11] << 8)) & 0xfff)) out = 0;
+    if (wave & 8) {
+      const n = this.noise;
+      out &= ((n >> 9) & 0x800) | ((n >> 8) & 0x400) | ((n >> 5) & 0x200) | ((n >> 3) & 0x100) | ((n >> 2) & 0x080)
+        | ((n << 1) & 0x040) | ((n << 3) & 0x020) | ((n << 4) & 0x010);
+    }
+    this.held = out;
+    return out >> 4;
+  }
+
+  /** Let the oscillators run to cycle t. */
+  run(t: number): void {
+    const from = this.at, n = t - from;
+    if (n <= 0) return;
+    this.at = t;
+    const r = this.regs, ctrl = r[0x12], f = r[0x0e] | (r[0x0f] << 8);
+    // voice 2, for ring modulation and sync: the last cycle its top bit rose (0: none)
+    const f2 = r[0x07] | (r[0x08] << 8), a2 = this.acc2;
+    let rose2 = 0;
+    if (r[0x0b] & 8) this.acc2 = 0;
+    else {
+      if (ctrl & 2 && f2) {
+        // (the top bit rises as the accumulator passes m * 2^24 + 2^23: the cycles since the last time)
+        const last = Math.floor((a2 + n * f2 - 0x800000) / 0x1000000);
+        if (last > Math.floor((a2 - 0x800000) / 0x1000000)) rose2 = n - Math.ceil((last * 0x1000000 + 0x800000 - a2) / f2) + 1;
+      }
+      this.acc2 = (a2 + n * f2) % 0x1000000;
+    }
+    if (ctrl & 8) {
+      // (held long enough, the test bit fills the noise register with ones, a bit at a time)
+      const fade = this.testFrom + 2519864;
+      if (this.testFrom >= 0 && t >= fade) {
+        let s = this.noise;
+        for (let i = from >= fade ? Math.floor((from - fade) / 315000) + 1 : 0, end = Math.floor((t - fade) / 315000) + 1; i < end && s !== 0x7fffff; i++) {
+          s |= 1; s = (s | (s << 1)) & 0x7fffff;
+        }
+        this.noise = s;
+      }
+      return;
+    }
+    let shifts = 0;
+    if (this.shiftAt >= 0 && this.shiftAt <= t) { shifts++; this.shiftAt = -1; }
+    const a = this.acc;
+    if (f) {
+      // bit 19 rises as the accumulator passes m * 2^20 + 2^19; the register shifts two cycles later
+      const first = Math.floor((a - 0x80000) / 0x100000), last = Math.floor((a + n * f - 0x80000) / 0x100000);
+      const k = last - first;
+      if (k > 0) {
+        const j = Math.ceil((last * 0x100000 + 0x80000 - a) / f);
+        if (j + 2 <= n) shifts += k;
+        else { shifts += k - 1; this.shiftAt = from + j + 2; }
+      }
+    }
+    if (shifts) {
+      let s = this.noise;
+      for (let i = shifts % NOISE_PERIOD; i > 0; i--) s = ((s << 1) | (((s >> 22) ^ (s >> 17)) & 1)) & 0x7fffff;
+      this.noise = s;
+    }
+    if (rose2) {
+      // synced: counting again from 0 since voice 2's top bit last rose
+      this.acc = ((rose2 - 1) * f) % 0x1000000; this.before = (Math.max(0, rose2 - 2) * f) % 0x1000000;
+    } else {
+      this.acc = (a + n * f) % 0x1000000; this.before = (a + (n - 1) * f) % 0x1000000;
+    }
+  }
+}
+
 export class C64 implements Bus {
   readonly ram = new Uint8Array(0x10000);
   readonly color = new Uint8Array(0x400);
@@ -433,6 +558,8 @@ export class C64 implements Bus {
   readonly cia1 = new Cia();
   readonly cia2 = new Cia();
   readonly sidRegs = new Uint8Array(0x20);
+  /** SID voice 3's oscillator, which a program can read at $d41b */
+  readonly osc3 = new Osc3(this.sidRegs);
   readonly input = new Input();
   readonly cpu: Cpu;
   cycles = 0;
@@ -482,7 +609,6 @@ export class C64 implements Bus {
   /** writes to I/O registers since the counter was reset (VIC, SID, CIA), for telling programs from depackers */
   ioWrites = 0;
 
-  private noise = 0x7e1d;
   private fade = 0;
   private fadeUntil = 0;
 
@@ -659,7 +785,12 @@ export class C64 implements Bus {
 
   private writeChip(a: number, v: number): void {
     if (a < 0xd400) this.vic.write(a & 0x3f, v);
-    else if (a < 0xd800) this.sidRegs[a & 0x1f] = v;
+    else if (a < 0xd800) {
+      const r = a & 0x1f;
+      // (voice 2's and 3's registers: oscillator 3 runs up to the write's cycle first)
+      if (r >= 0x07 && r <= 0x12) this.osc3.write(r, v, this.busCycle);
+      else this.sidRegs[r] = v;
+    }
     else if (a < 0xdc00) this.color[a & 0x3ff] = v & 0x0f;
     else if (a < 0xdd00) { this.cia1.write(a & 0x0f, v); this.timerStart(this.cia1); }
     else if (a < 0xde00) {
@@ -690,14 +821,8 @@ export class C64 implements Bus {
   private readSid(r: number): number {
     switch (r) {
       case 0x19: case 0x1a: return 0xff;
-      case 0x1b: {
-        // oscillator 3 as noise: a 23-bit LFSR, stepped by the time that passed
-        for (let k = (this.cycles & 7) + 1; k > 0; k--) {
-          const bit = ((this.noise >> 22) ^ (this.noise >> 17)) & 1;
-          this.noise = ((this.noise << 1) | bit) & 0x7fffff;
-        }
-        return (this.noise >> 15) & 0xff;
-      }
+      // (in the cycle the instruction reads it, its last)
+      case 0x1b: return this.osc3.read(this.busCycle);
       default: return 0;
     }
   }
@@ -863,6 +988,8 @@ export class C64 implements Bus {
       Object.assign(mine, saved, { tod: saved.tod.slice(), inputA, inputB });
     }
     this.cycles = s.cycles;
+    // (the oscillators go on from here; the SID's state is not saved)
+    this.osc3.at = s.cycles;
     this.nmiPending = false;
     this.updateMap();
   }

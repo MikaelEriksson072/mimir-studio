@@ -21,7 +21,8 @@ and `test/` are kept the same as there. Mimir runs it through
 The C64 is emulated with what unpacking needs: a 6510 with all 256 opcodes (the undocumented ones as VICE runs them)
 and exact instruction timing, the memory banked by `$01`, the VIC-II's raster line, raster interrupts and the cycles it
 takes from the CPU (badlines, also made in the middle of a line, and sprite fetches),
-both CIAs with timers, interrupts and the keyboard and joysticks, and the SID registers a program can read. With the
+both CIAs with timers, interrupts and the keyboard and joysticks, and the SID registers a program can read (voice 3's
+oscillator at `$d41b` as an 8580 makes it). With the
 C64 ROMs it starts the machine, types `LOAD`, loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
 autostarts through the vectors or the stack, and packers that call the KERNAL work as they do on the real machine.
 
@@ -72,8 +73,25 @@ JAM. Over the same 1359 releases 131 runs end otherwise, most (117) saving the s
 variables; a few that settle on a quiet stretch or a choice the timing makes do so elsewhere: Subway Arts' decruncher
 (the one-file #1) turns interrupts on with its last `JMP $A7AE` on the stack page, and the KERNAL's IRQ, whose timer
 phase the start-up and LOAD leave and VICE's autostart varies, now overwrites it (it then returns to READY with the
-program unpacked); Eclectic's intro (2014) reads oscillator 3 to tell the SID model, which Sindri does not emulate
-(noise), and now shows its 2-second message. Sprite-heavy demos run about a fifth slower.
+program unpacked); Eclectic's intro (2014) reads oscillator 3 to tell the SID model, which Sindri did not emulate then
+(noise), and showed its 2-second message (see below). Sprite-heavy demos run about a fifth slower.
+
+SID voice 3's oscillator is emulated as a program reads it at `$d41b` (OSC3), as VICE's default SID does it (reSID's
+8580; `Osc3` in `c64.ts`, after reSID's `wave.cc`): a 24-bit accumulator, `$555555` at power-on, adds the frequency each
+cycle, and the read gives the top 8 bits of the selected waveform: the sawtooth and the triangle as they were a cycle
+before (the 8580's delay), the pulse width compared a cycle late, and 8 bits of the 23-bit noise register (`$7ffffe` at
+power-on), which shifts two cycles after accumulator bit 19 rises. The test bit holds the accumulator at 0; let go, it
+shifts the noise register once, and held for 2.5 million cycles it fills it with ones. Measured in VICE with the test bit
+let go before a read moved one cycle at a time and with noise read every 20 cycles (`test/sid.test.ts`): sawtooth,
+triangle, pulse and noise give VICE's values cycle for cycle (at a low frequency VICE now and then shifts the noise a
+few cycles early: reSID loses the delay where it clocks the SID many cycles at once). Not emulated: waveforms combined
+with each other (an 8580 has its own values for them; here the AND of them) and the noise register they write back, the
+output fading while no waveform is on, ring modulation and sync only roughly, the 6581, and the envelope (`$d41c` reads
+0). Until 16 November 2026 `$d41b` gave noise whatever the waveform: SID-model checks took a branch by chance, and
+Eclectic's intro now goes on to the demo without its message, as in VICE. Over the same 1359 releases 1298 runs are as
+before and 53 save the same program with other bytes (values drawn from the noise); seven get further, Eclectic and four
+of Atlantis' demos (In Surgery, Ooops, Aullido, Mu Mu Land), which settled in their intros; Rust (Onslaught 2013) now
+leaves its intro as in VICE but later stops on a JAM at `$2033`, where VICE plays on (not looked into yet).
 
 For every byte of RAM it records which layer wrote it last and when, when it was last read as data and when it was
 last run. **A new layer begins when the CPU jumps into code that the running layer wrote and has not run yet**: the
