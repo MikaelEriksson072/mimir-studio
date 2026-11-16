@@ -135,13 +135,23 @@ export class Cia {
 
   get irq(): boolean { return (this.icr & this.mask & 0x1f) !== 0; }
 
+  /**
+   * in the last advance: the cycle (counted from its start) in which a timer's underflow pulled the interrupt line
+   * low, else -1. The CPU takes the interrupt as it takes a raster IRQ, after the instruction that ends two cycles or
+   * more after it (C64.irqDue, nmiDue)
+   */
+  rose = -1;
+
   advance(n: number): void {
-    let underflowsA = 0;
+    const was = this.irq;
+    let underflowsA = 0, atA = -1, atB = -1;
     const nb = n - Math.min(n, this.waitB);
     this.waitB -= n - nb;
     if (this.cra & 1 && !(this.cra & 0x20)) {
       const na = n - Math.min(n, this.waitA);
       this.waitA -= n - na;
+      // (the first underflow comes in the cycle the timer goes from 0 on)
+      if (this.ta < na) atA = n - na + this.ta;
       this.ta -= na;
       while (this.ta < 0) {
         underflowsA++;
@@ -154,6 +164,7 @@ export class Cia {
       const mode = (this.crb >> 5) & 3;
       const count = mode === 0 ? nb : mode >= 2 ? underflowsA : 0;
       if (count) {
+        if (this.tb < count) atB = Math.min(n - 1, mode === 0 ? n - nb + this.tb : atA + this.tb * (this.tal + 1));
         this.tb -= count;
         while (this.tb < 0) {
           this.icr |= 2;
@@ -161,6 +172,11 @@ export class Cia {
           this.tb += this.tbl + 1;
         }
       }
+    }
+    this.rose = -1;
+    if (!was && this.irq) {
+      const a = this.mask & 1 && atA >= 0 ? atA : n, b = this.mask & 2 && atB >= 0 ? atB : n;
+      if (Math.min(a, b) < n) this.rose = Math.min(a, b);
     }
     this.todCycles += n;
     if (this.todCycles >= CLOCK / 10) { this.todCycles -= CLOCK / 10; this.tickTod(); }
@@ -489,6 +505,16 @@ export class C64 implements Bus {
 
   private writeIo(a: number, v: number): void {
     this.ioWrites++;
+    const irqWas = this.irqLine, nmiWas = this.cia2.irq;
+    this.writeChip(a, v);
+    // a write that lets an interrupt through (its enable bit set while its flag is up) pulls the line low in its own
+    // cycle, the last of the instruction: the CPU takes it after the next one (measured in VICE: STA $D01A or STA
+    // $DC0D/$DD0D with #$81 and the flag up, then NOPs: the return address is the second NOP)
+    if (!irqWas && this.irqLine) this.irqSince = this.busCycle;
+    if (!nmiWas && this.cia2.irq) this.nmiEdge(this.busCycle);
+  }
+
+  private writeChip(a: number, v: number): void {
     if (a < 0xd400) this.vic.write(a & 0x3f, v);
     else if (a < 0xd800) this.sidRegs[a & 0x1f] = v;
     else if (a < 0xdc00) this.color[a & 0x3ff] = v & 0x0f;
@@ -556,16 +582,20 @@ export class C64 implements Bus {
 
   /** Let the cycles of one instruction pass; returns them plus the cycles badlines stole. */
   advance(n: number): number {
-    const was = this.irqLine, t0 = this.cycles;
+    const was = this.irqLine, nmiWas = this.cia2.irq, t0 = this.cycles;
     const total = n + this.vic.advance(n);
     this.cia1.advance(total);
     this.cia2.advance(total);
     // a pulse from the tape ends: an edge on the FLAG line
     if (this.tape?.motor && this.tape.advance(total)) this.cia1.icr |= 0x10;
     this.cycles += total;
-    // the IRQ line went low: in the cycle the raster compare matched, or (a CIA, an enable written) taken as at the
-    // start of the instruction
-    if (!was && this.irqLine) this.irqSince = this.vic.rose >= 0 && this.vic.irq && !this.cia1.irq ? t0 + this.vic.rose : t0;
+    // the IRQ line went low: in the cycle the raster compare matched or a CIA 1 timer underflowed (the earlier of
+    // them), or (the tape) as at the start of the instruction
+    if (!was && this.irqLine) {
+      const v = this.vic.irq && this.vic.rose >= 0 ? this.vic.rose : Infinity, c = this.cia1.irq && this.cia1.rose >= 0 ? this.cia1.rose : Infinity;
+      this.irqSince = t0 + (Math.min(v, c) < Infinity ? Math.min(v, c) : 0);
+    }
+    if (!nmiWas && this.cia2.irq) this.nmiEdge(t0 + Math.max(0, this.cia2.rose));
     return total;
   }
 
@@ -579,12 +609,38 @@ export class C64 implements Bus {
    * the instruction's last cycle, with the level it had a cycle before: an IRQ that comes in the last cycle waits for
    * the next instruction, and a taken branch that stays in its page polls a cycle earlier still (measured in VICE
    * with raster IRQs after a cycle-exact sync: The Wild Bunch's IRQ handler times itself by CIA timer A, and taken a
-   * few cycles early it branches past the end of its delay into a JAM).
+   * few cycles early it branches past the end of its delay into a JAM). The same holds for a CIA timer's IRQ, counted
+   * from the cycle of its underflow (measured in VICE with one-shot timers before chains of NOP, BNE, BIT and INC).
    */
   irqDue(): boolean {
     return this.irqLine && this.irqSince <= this.cycles - (this.cpu.quickBranch ? 3 : 2);
   }
+
+  /** CIA 2's interrupt output, the NMI line (low while true) */
   get nmiLine(): boolean { return this.cia2.irq; }
+
+  /** the 6510 saw the NMI line go low and has not taken the NMI yet; nmiSince: the cycle it went low */
+  private nmiPending = false;
+  nmiSince = 0;
+
+  private nmiEdge(at: number): void { this.nmiPending = true; this.nmiSince = at; }
+
+  /**
+   * After an instruction: whether the CPU takes an NMI now. The 6510 latches the line's edge and takes the NMI as it
+   * takes an IRQ: after the instruction that ends two cycles or more after it (three after a taken branch in its
+   * page), measured in VICE as for the IRQ. Taken an instruction early, Continuum's (Triad 2014) NMI handler, which
+   * jumps through CIA 1's timer B ($dc06, a cycle counter of the raster line) to code for the cycle it came in,
+   * reads a value one higher than any it has code for, jumps into data and crashes.
+   */
+  nmiDue(): boolean {
+    return this.nmiPending && this.nmiSince <= this.cycles - (this.cpu.quickBranch ? 3 : 2);
+  }
+
+  /** The CPU takes the NMI (nmiDue): its cycles, to pass with advance. */
+  takeNmi(): number {
+    this.nmiPending = false;
+    return this.cpu.nmi();
+  }
 
   // --- state ------------------------------------------------------------------------------------------------------
   save(): MachineState {
@@ -611,6 +667,7 @@ export class C64 implements Bus {
       Object.assign(mine, saved, { tod: saved.tod.slice(), inputA, inputB });
     }
     this.cycles = s.cycles;
+    this.nmiPending = false;
     this.updateMap();
   }
 }

@@ -338,7 +338,6 @@ class Session {
   private skipAt = -1;
   private irqOp = -1;
   private irqFrom = 0;
-  private nmiWas = false;
   private startCycle = 0;
 
   private phase: Phase = 'load';
@@ -746,9 +745,7 @@ class Session {
         else if (op === 0x00) this.call((pc + 2) & 0xffff);
       }
       if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(cpu.irq()); this.call(this.irqRet); }
-      const nmi = m.nmiLine;
-      if (nmi && !this.nmiWas) { this.interrupted(pc); m.advance(cpu.nmi()); this.call(this.irqRet); }
-      this.nmiWas = nmi;
+      if (m.nmiDue()) { this.interrupted(pc); m.advance(m.takeNmi()); this.call(this.irqRet); }
       if (m.icount >= next) { next = m.icount + CHECK; this.check(); }
     }
   }
@@ -1519,7 +1516,6 @@ function startUp(roms: Roms, ram: Uint8Array): MachineState | null {
   m.ddr = 0; m.port = 0; m.updateMap();
   cpu.s = 0xfd; cpu.p = 0x24;
   cpu.pc = m.peekWord(0xfffc);
-  let nmiWas = false;
   while (m.cycles < BOOT_CYCLES) {
     if (cpu.pc === READY_WAITS && m.map[READY_WAITS >> 8] === KERNAL && !m.ram[0xc6]) return m.save();
     const iWas = cpu.i;
@@ -1529,9 +1525,7 @@ function startUp(roms: Roms, ram: Uint8Array): MachineState | null {
     if (cpu.jammed) return null;
     m.advance(cycles);
     if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
-    const nmi = m.nmiLine;
-    if (nmi && !nmiWas) m.advance(cpu.nmi());
-    nmiWas = nmi;
+    if (m.nmiDue()) m.advance(m.takeNmi());
   }
   return null;
 }

@@ -17,7 +17,7 @@ function machine(source: string, pc: number): C64 {
   return m;
 }
 
-/** run n instructions, taking IRQs as the session does */
+/** run n instructions, taking IRQs and NMIs as the session does */
 function run(m: C64, n: number): void {
   const cpu = m.cpu;
   for (let k = 0; k < n; k++) {
@@ -25,6 +25,7 @@ function run(m: C64, n: number): void {
     m.dmaWait();
     m.advance(cpu.step());
     if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) m.advance(cpu.irq());
+    if (m.nmiDue()) m.advance(m.takeNmi());
   }
 }
 
@@ -63,6 +64,111 @@ irq:   pla
     // BNE *+2, three cycles: the line starts in the second cycle of the first branch, which polls in it as a
     // two-cycle instruction does: after the second branch
     expect(interrupted('bne *+2', 62)).toBe(0x04);
+  });
+});
+
+describe('CIA interrupts', () => {
+  /**
+   * CIA 1's timer A (an IRQ) or CIA 2's (an NMI), one-shot from latch 4, 5 ... 11, started by STA $DC0E/$DD0E right
+   * before a chain of `instr` (or, `enable`, run out first and let through by STA $DC0D/$DD0D before NOPs): for each
+   * latch where the interrupt came, as the offset in the chain of the address it returned to. With a BASIC line
+   * (SYS 49152) in front, the same program gave the same eight offsets in VICE 3.10 (x64sc) for each case below.
+   */
+  const offsets = (kind: 'irq' | 'nmi', instr: string, enable = false): number[] => {
+    const cia = kind === 'irq' ? '$dc' : '$dd';
+    const start = enable
+      ? `       lda #$19
+       sta ${cia}0e
+${'       nop\n'.repeat(12)}       tsx
+       stx savesp
+       lda #$81
+       ${kind === 'irq' ? 'cli' : 'nop'}
+       sta ${cia}0d`
+      : `       lda #$81
+       sta ${cia}0d
+       tsx
+       stx savesp
+       lda #$19
+       ${kind === 'irq' ? 'cli' : 'nop'}
+       sta ${cia}0e`;
+    const m = machine(`
+* = $c000
+       sei
+       lda #$7f
+       sta $dc0d
+       sta $dd0d
+       lda #$00
+       sta $dc0e
+       sta $dd0e
+       lda #$35
+       sta $01
+       lda #$0b
+       sta $d011
+wait:  lda $d012
+       cmp #$fa
+       bne wait
+       lda #<handler
+       sta $fffa
+       sta $fffe
+       lda #>handler
+       sta $fffb
+       sta $ffff
+       ldx #$00
+loop:  stx cur
+       lda #$7f
+       sta ${cia}0d
+       lda ${cia}0d
+       txa
+       clc
+       adc #$04
+       sta ${cia}04
+       lda #$00
+       sta ${cia}05
+${start}
+chain:
+${`       ${instr}\n`.repeat(enable ? 8 : 24)}       jmp *
+handler: tsx
+       lda $0102,x
+       sec
+       sbc #<chain
+       ldx cur
+       sta $c800,x
+       lda ${cia}0d
+       ldx savesp
+       txs
+       ldx cur
+       inx
+       cpx #$08
+       beq done
+       jmp loop
+done:  jmp done
+cur:   .byte 0
+savesp: .byte 0
+`, 0xc000);
+    // (the wait for line $fa takes about 6000 instructions; then it ends at done: jmp done)
+    run(m, 20000);
+    return [...m.ram.subarray(0xc800, 0xc808)];
+  };
+
+  it('are taken after the instruction that ends two cycles or more after the underflow, as raster IRQs', () => {
+    // NOP: a timer that runs out in an instruction's last cycle waits for the next (one latch more, one NOP later)
+    expect(offsets('irq', 'nop')).toEqual([4, 5, 5, 6, 6, 7, 7, 8]);
+    expect(offsets('irq', 'bit $c700')).toEqual([6, 9, 9, 9, 9, 12, 12, 12]);
+    // a taken branch that stays in its page: one cycle more
+    expect(offsets('irq', 'bne *+2')).toEqual([6, 8, 8, 8, 10, 10, 10, 12]);
+  });
+
+  it('give NMIs the same timing: the 6510 takes the edge as it takes an IRQ', () => {
+    // (Continuum, Triad 2014: its NMI handler jumps through CIA 1's timer B to code for the cycle it came in; an NMI
+    // one cycle early read a value it has no code for)
+    expect(offsets('nmi', 'nop')).toEqual([4, 5, 5, 6, 6, 7, 7, 8]);
+    expect(offsets('nmi', 'inc $c700')).toEqual([6, 6, 6, 6, 6, 9, 9, 9]);
+    expect(offsets('nmi', 'bne *+2')).toEqual([6, 8, 8, 8, 10, 10, 10, 12]);
+  });
+
+  it('let through by a write come after the next instruction: the write pulls the line low in its last cycle', () => {
+    expect(offsets('irq', 'nop', true)).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
+    expect(offsets('nmi', 'nop', true)).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
   });
 });
 

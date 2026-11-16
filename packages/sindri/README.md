@@ -41,7 +41,19 @@ by a write counts from the third cycle after it, and from the fourth when the wr
 indexed read across a page reads I/O in its extra last cycle. Before November 2026 an IRQ was taken after the
 instruction in which it came and a forced load counted as a start: The Wild Bunch (#1 of 2006), which corrects its IRQ
 jitter with CIA timer A, read its timer a few cycles off and branched past the end of its delay into a JAM, and a
-copy of Royal Arte (#1 of 2001) took a stray IRQ at the one place in a copy loop where it breaks the demo. Sprites
+copy of Royal Arte (#1 of 2001) took a stray IRQ at the one place in a copy loop where it breaks the demo. A CIA
+timer's interrupt follows the same rule, counted from the cycle in which the timer runs out, and so does an NMI (CIA 2's
+interrupt; the 6510 latches the line's edge and takes it as an IRQ) and an interrupt a write lets through (`$d01a`,
+`$dc0d` or `$dd0d` with its flag already up), counted from the write's cycle, the instruction's last, so it comes after
+the next instruction. Until 16 November 2026 those were taken right after the instruction in which they came, a cycle
+or an instruction early, and NMIs at once: Continuum (#5 of 2014), whose NMI handler jumps through CIA 1's timer B (a
+counter of the raster line's cycles) to code for the cycle it came in, read a value it has no code for, jumped into
+data and ended in a copy of its drive code at `$0e2f` after 92 seconds; it now loads its parts in VICE's order to the
+end. Over 1359 releases (Year-top20 2005-2026, the one-file top 200, 160 intros) 1346 runs are as before; Error 23
+(2006) and Cauldron (2008, and its 101% version twice in 2014) no longer stop on a JAM (VICE never runs those
+addresses), Battle Stations (2023) spends three quarters of its time waiting for its loader as in VICE (a third before)
+and runs to the time limit instead of settling, and six demos save the same program with other bytes in their
+variables. Sprites
 taking the bus (each one shown on a line takes two cycles or more there) are not emulated: Party Elk 2's IRQ handler
 times itself with sprites on and still crashes.
 
