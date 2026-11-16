@@ -269,6 +269,8 @@ export class Cia {
   waitA = 0; waitB = 0;
   /** a write just started (1) or loaded (2) the timer: the C64 sets the wait, as it knows the instruction */
   startedA = 0; startedB = 0;
+  /** an underflow of timer A in the last cycle of the last advance, which timer B counts in the next */
+  carryB = 0;
   /** TOD: tenths, seconds, minutes, hours (BCD) */
   readonly tod = new Uint8Array([0, 0, 0, 1]);
   private todCycles = 0;
@@ -303,11 +305,19 @@ export class Cia {
         this.ta += this.tal + 1;
       }
     }
+    // timer B counting timer A's underflows sees each a cycle later (measured in VICE: its interrupt comes a cycle after
+    // the underflow); one in the last cycle reaches it in the next advance
+    const carried = this.carryB;
+    let late = underflowsA;
+    this.carryB = 0;
+    if (late && atA + (late - 1) * (this.tal + 1) === n - 1) { late--; this.carryB = 1; }
     if (this.crb & 1) {
       const mode = (this.crb >> 5) & 3;
-      const count = mode === 0 ? nb : mode >= 2 ? underflowsA : 0;
+      const count = mode === 0 ? nb : mode >= 2 ? carried + late : 0;
       if (count) {
-        if (this.tb < count) atB = Math.min(n - 1, mode === 0 ? n - nb + this.tb : atA + this.tb * (this.tal + 1));
+        if (this.tb < count) {
+          atB = Math.min(n - 1, mode === 0 ? n - nb + this.tb : this.tb < carried ? 0 : atA + 1 + (this.tb - carried) * (this.tal + 1));
+        }
         this.tb -= count;
         while (this.tb < 0) {
           this.icr |= 2;
@@ -702,7 +712,7 @@ export class C64 implements Bus {
   get cpuPort(): number { return this.readPort(); }
 
   // --- the bus ----------------------------------------------------------------------------------------------------
-  read(a: number): number {
+  read(a: number, cycle?: number): number {
     switch (this.map[a >> 8]) {
       case RAM:
         // (the system reading its own variables below $0400, as the KERNAL's interrupt does, is not the program's)
@@ -716,17 +726,17 @@ export class C64 implements Bus {
       case BASIC: return this.basic[a - 0xa000];
       case KERNAL: return this.kernal[a - 0xe000];
       case CHAR: return this.chargen[a - 0xd000];
-      default: return this.readIo(a);
+      default: return this.readIo(a, cycle);
     }
   }
 
-  fetch(a: number): number {
+  fetch(a: number, cycle?: number): number {
     switch (this.map[a >> 8]) {
       case RAM: case ZP: return a > 1 ? this.ram[a] : a === 0 ? this.ddr : this.readPort();
       case BASIC: return this.basic[a - 0xa000];
       case KERNAL: return this.kernal[a - 0xe000];
       case CHAR: return this.chargen[a - 0xd000];
-      default: return this.readIo(a);
+      default: return this.readIo(a, cycle);
     }
   }
 
@@ -744,6 +754,11 @@ export class C64 implements Bus {
     this.ram[a] = v;
   }
 
+  /** the dummy read of a one-byte instruction in $d000-$dfff (Bus.dummy): I/O registers see it, RAM and ROM do not care */
+  dummy(a: number): void {
+    if (this.map[a >> 8] === IO) this.readIo(a, 1);
+  }
+
   /** what the CPU would read, without side effects (for reports and traps) */
   peek(a: number): number {
     switch (this.map[a >> 8]) {
@@ -757,16 +772,19 @@ export class C64 implements Bus {
 
   peekWord(a: number): number { return this.peek(a) | (this.peek((a + 1) & 0xffff) << 8); }
 
-  private readIo(a: number): number {
-    // the timers and the raster line as they are in the cycle the instruction reads them (its last one)
-    const at = this.lastCycle;
+  private readIo(a: number, cycle?: number): number {
+    // the timers and the raster line as they are in the cycle the instruction reads them: its last one, or (a fetch, an
+    // indirect jump's pointer) the one the CPU names. Rust (Onslaught 2013) points its IRQ vector at $dc05: timer A's
+    // high byte, $6c, is JMP (ind) and timer B's value, fetched in cycles 1 and 2, its pointer into a table of entries
+    // that take away the IRQ's jitter
+    const at = cycle ?? this.lastCycle;
     if (a < 0xd400) return this.vic.read(a & 0x3f, at);
-    if (a < 0xd800) return this.readSid(a & 0x1f);
+    if (a < 0xd800) return this.readSid(a & 0x1f, at);
     if (a < 0xdc00) return this.color[a & 0x3ff] & 0x0f;
     if (a < 0xdd00) return this.cia1.read(a & 0x0f, at);
     if (a < 0xde00) {
       // ($dd00 and $dd02, the serial port and its data direction: the drive catches up first)
-      if (this.drive && (a & 0x0d) === 0) this.syncDrive(this.busCycle);
+      if (this.drive && (a & 0x0d) === 0) this.syncDrive(this.cycles + at);
       return this.cia2.read(a & 0x0f, at);
     }
     return 0;
@@ -818,11 +836,11 @@ export class C64 implements Bus {
     if (cia.startedB) { cia.waitB = wait + cia.startedB; cia.startedB = 0; }
   }
 
-  private readSid(r: number): number {
+  private readSid(r: number, at: number): number {
     switch (r) {
       case 0x19: case 0x1a: return 0xff;
       // (in the cycle the instruction reads it, its last)
-      case 0x1b: return this.osc3.read(this.busCycle);
+      case 0x1b: return this.osc3.read(this.cycles + at);
       default: return 0;
     }
   }

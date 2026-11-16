@@ -171,6 +171,88 @@ savesp: .byte 0
     expect(offsets('irq', 'nop', true)).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
     expect(offsets('nmi', 'nop', true)).toEqual([1, 1, 1, 1, 1, 1, 1, 1]);
   });
+
+  /**
+   * Timer B counting timer A's underflows (latch 0, so it runs out with timer A's one underflow), its interrupt let
+   * through, timer A one-shot from latch 4, 5 ... 11 started right before NOPs: the offset in them the interrupt
+   * returned to. The same program gave the same in VICE 3.10.
+   */
+  const counted = (kind: 'irq' | 'nmi'): number[] => {
+    const cia = kind === 'irq' ? '$dc' : '$dd';
+    const m = machine(`
+* = $c000
+       sei
+       lda #$7f
+       sta $dc0d
+       sta $dd0d
+       lda #$00
+       sta $dc0e
+       sta $dc0f
+       sta $dd0e
+       sta $dd0f
+       lda $dc0d
+       lda $dd0d
+       lda #<handler
+       sta $fffa
+       sta $fffe
+       lda #>handler
+       sta $fffb
+       sta $ffff
+       ldx #$00
+loop:  stx cur
+       lda #$00
+       sta ${cia}0e
+       sta ${cia}0f
+       lda #$7f
+       sta ${cia}0d
+       lda ${cia}0d
+       txa
+       clc
+       adc #$04
+       sta ${cia}04
+       lda #$00
+       sta ${cia}05
+       sta ${cia}06
+       sta ${cia}07
+       lda #$82
+       sta ${cia}0d
+       lda #$51
+       sta ${cia}0f
+       tsx
+       stx savesp
+       ldx #$00
+       lda #$19
+       ${kind === 'irq' ? 'cli' : 'nop'}
+       sta ${cia}0e
+chain:
+${'       nop\n'.repeat(24)}       jmp *
+handler: tsx
+       lda $0102,x
+       sec
+       sbc #<chain
+       ldx cur
+       sta $c800,x
+       lda ${cia}0d
+       ldx savesp
+       txs
+       ldx cur
+       inx
+       cpx #$08
+       beq done
+       jmp loop
+done:  jmp done
+cur:   .byte 0
+savesp: .byte 0
+`, 0xc000);
+    run(m, 4000);
+    return [...m.ram.subarray(0xc800, 0xc808)];
+  };
+
+  it('come a cycle later from timer B counting timer A\'s underflows: it sees each a cycle late', () => {
+    // (Dame Kitty and the Mushrooms and SSDPCM1 Super play samples from such an NMI: two lines, 126 cycles, apart)
+    expect(counted('nmi')).toEqual([5, 5, 6, 6, 7, 7, 8, 8]);
+    expect(counted('irq')).toEqual([5, 5, 6, 6, 7, 7, 8, 8]);
+  });
 });
 
 describe('CIA timers', () => {
@@ -397,5 +479,154 @@ ${[1, 3, 5, 7, 9, 11, 13, 15].map(r => `       sta $d0${r.toString(16).padStart(
       const want = m.nextCycles(op), got = c.step();
       if (!c.jammed) expect(got, `opcode $${op.toString(16)}`).toBe(want);
     }
+  });
+});
+
+describe('code and pointers in I/O', () => {
+  /** the program from $c000 run until done: the bytes it left at $c800 */
+  const bytesOf = (source: string, count: number): number[] => {
+    const code = asm(source);
+    const m = new C64(standInRoms());
+    m.ram.set(code.prg.subarray(2), code.prg[0] | (code.prg[1] << 8));
+    m.write(0, 0x2f); m.write(1, 0x37);
+    m.cpu.pc = 0xc000;
+    for (let k = 0; k < 2_000_000 && m.cpu.pc !== code.labels.done; k++) run(m, 1);
+    expect(m.cpu.pc).toBe(code.labels.done);
+    return [...m.ram.subarray(0xc800, 0xc800 + count)];
+  };
+
+  /**
+   * CIA 1's timer started xi + 3 cycles before the jump: 'fetch' runs JMP $dc05 with timer A's high byte $4c (JMP abs),
+   * so it jumps to timer B's value fetched as its operand; 'pointer' runs JMP ($dc04) from RAM and jumps to timer A's
+   * value. Either lands in an INX slide at $c200-$c2ef: X tells the value read. VICE 3.10 gave the same.
+   */
+  const jumps = (kind: 'fetch' | 'pointer') => bytesOf(`
+* = $c000
+       sei
+       lda #$7f
+       sta $dc0d
+       lda $dc0d
+       lda #$35
+       sta $01
+       lda #$0b
+       sta $d011
+wt0:   lda $d012
+       cmp #$fa
+       bne wt0
+       lda #$00
+       sta $dc0e
+       sta $dc0f
+       sta xi
+loop:  sec
+       lda #<slend
+       sbc xi
+       sta vec
+       lda #>slend
+       sbc #$00
+       sta vec+1
+${kind === 'fetch' ? `       lda #$00
+       sta $dc0e
+       lda #$00
+       sta $dc04
+       lda #$4c
+       sta $dc05
+       lda #$e0
+       sta $dc06
+       lda #$c2
+       sta $dc07
+       ldx #$00
+       lda #$11
+       sta $dc0f` : `       lda #$e0
+       sta $dc04
+       lda #$c2
+       sta $dc05
+       ldx #$00
+       lda #$11
+       sta $dc0e`}
+       jmp (vec)
+.fill 26, $c9
+slend: .byte $c5, $ea
+       jmp ${kind === 'fetch' ? '$dc05' : '($dc04)'}
+land:  txa
+       ldx xi
+       sta $c800,x
+       inc xi
+       lda xi
+       cmp #24
+       beq done
+       jmp loop
+done:  jmp done
+xi:    .byte 0
+vec:   .word 0
+* = $c200
+.fill $f0, $e8
+       jmp land
+`, 24);
+
+  it('fetches an opcode and its operands from I/O in their own cycles, 1 and 2 for the operand bytes', () => {
+    // (Rust, Onslaught 2013, points its IRQ vector at $dc05: JMP (ind) through timer B's value, by the cycle it came in)
+    expect(jumps('fetch')).toEqual(Array.from({ length: 24 }, (_, xi) => xi + 26));
+  });
+
+  it('reads an indirect jump\'s pointer in its cycles 3 and 4', () => {
+    expect(jumps('pointer')).toEqual(Array.from({ length: 24 }, (_, xi) => xi + 25));
+  });
+
+  /** with CIA 1's timer B interrupt pending, an RTI to `back` run from `rti`: how often the interrupt came after it */
+  const after = (rti: string) => bytesOf(`
+* = $c000
+       sei
+       lda #$7f
+       sta $dc0d
+       sta $dd0d
+       lda $dc0d
+       lda $dd0d
+       lda #$35
+       sta $01
+       lda #<irq
+       sta $fffe
+       lda #>irq
+       sta $ffff
+       lda #$00
+       sta count
+       lda #$40
+       sta $dc0c
+       sta ramrti
+       lda #$10
+       sta $dc06
+       lda #$00
+       sta $dc07
+       lda #$82
+       sta $dc0d
+       lda #$19
+       sta $dc0f
+       ldx #$20
+w:     dex
+       bne w
+       lda #>back
+       pha
+       lda #<back
+       pha
+       lda #$20
+       pha
+       jmp ${rti}
+back:  nop
+       nop
+       nop
+       nop
+       lda count
+       sta $c800
+done:  jmp done
+irq:   inc count
+       lda $dc0d
+       rti
+count: .byte 0
+ramrti: .byte 0
+`, 1)[0];
+
+  it('makes the dummy read of a one-byte instruction: an RTI run from $dc0c acknowledges CIA 1 by reading $dc0d', () => {
+    // (Rust ends its IRQ handler with JMP $dc0c, the serial data register holding $40; VICE 3.10 gave the same counts)
+    expect(after('$dc0c')).toBe(0);
+    expect(after('ramrti')).toBe(1);
   });
 });

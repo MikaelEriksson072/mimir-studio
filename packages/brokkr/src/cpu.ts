@@ -1,13 +1,26 @@
 /* The 6510 CPU: all 256 opcodes (the undocumented ones as VICE runs them), decimal mode, and the cycle count of
  * every instruction, page crossings and taken branches included. Memory goes through a Bus. */
 
+import { OPCODES } from './opcodes.ts';
+
 export interface Bus {
-  /** a data read, which may have side effects (I/O registers) */
-  read(addr: number): number;
+  /**
+   * a data read, which may have side effects (I/O registers); `cycle`: the instruction's cycle it is in (0: the opcode's)
+   * where the CPU tells it, else its last
+   */
+  read(addr: number, cycle?: number): number;
   write(addr: number, value: number): void;
-  /** an opcode or operand fetch */
-  fetch(addr: number): number;
+  /** an opcode or operand fetch, in the instruction's cycle `cycle` (0: the opcode, 1 and 2: its operand bytes) */
+  fetch(addr: number, cycle?: number): number;
+  /**
+   * the dummy read a one-byte instruction makes of the byte after it, in its second cycle; called only for $d000-$dfff,
+   * where it can have side effects (an RTI run from CIA 1's $dc0c reads $dc0d and so acknowledges its interrupt)
+   */
+  dummy?(addr: number): void;
 }
+
+/** the one-byte opcodes (implied and accumulator), which read the byte after them in their second cycle */
+const ONE_BYTE: Uint8Array = Uint8Array.from(OPCODES, o => (o.mode === 'imp' || o.mode === 'acc' ? 1 : 0));
 
 /** lastOp values for the interrupts, after the 256 opcodes */
 export const OP_IRQ = 0x100;
@@ -28,6 +41,8 @@ export class Cpu {
   /** the opcode of the last instruction, or OP_IRQ/OP_NMI after an interrupt */
   lastOp = 0;
   private extra = 0;
+  /** the operand bytes fetched so far in this instruction (their cycles: 1, 2) */
+  private fetchAt = 0;
   private readonly bus: Bus;
 
   constructor(bus: Bus) { this.bus = bus; }
@@ -58,7 +73,7 @@ export class Cpu {
   }
 
   // --- addressing -------------------------------------------------------------------------------------------------
-  private imm(): number { const v = this.bus.fetch(this.pc); this.pc = (this.pc + 1) & 0xffff; return v; }
+  private imm(): number { const v = this.bus.fetch(this.pc, ++this.fetchAt); this.pc = (this.pc + 1) & 0xffff; return v; }
   private abs(): number { const lo = this.imm(); return lo | (this.imm() << 8); }
   private zpx(): number { return (this.imm() + this.x) & 0xff; }
   private zpy(): number { return (this.imm() + this.y) & 0xff; }
@@ -191,10 +206,12 @@ export class Cpu {
   // --- one instruction ---------------------------------------------------------------------------------------------
   /** Execute one instruction; returns its cycles. */
   step(): number {
-    const op = this.bus.fetch(this.pc);
+    const op = this.bus.fetch(this.pc, 0);
     this.pc = (this.pc + 1) & 0xffff;
     this.extra = 0;
+    this.fetchAt = 0;
     this.lastOp = op;
+    if (ONE_BYTE[op] && (this.pc & 0xf000) === 0xd000) this.bus.dummy?.(this.pc);
     let a: number;
     switch (op) {
       // ORA
@@ -360,14 +377,15 @@ export class Cpu {
       // jumps
       case 0x4c: this.pc = this.abs(); return 3;
       case 0x6c: {
+        // (the pointer is read in cycles 3 and 4: timer registers, where a program jumps through them)
         const p = this.abs();
-        this.pc = this.rd(p) | (this.rd((p & 0xff00) | ((p + 1) & 0xff)) << 8);
+        this.pc = this.bus.read(p, 3) | (this.bus.read((p & 0xff00) | ((p + 1) & 0xff), 4) << 8);
         return 5;
       }
       case 0x20: {
         const lo = this.imm();
         this.push(this.pc >> 8); this.push(this.pc & 0xff);
-        this.pc = lo | (this.bus.fetch(this.pc) << 8);
+        this.pc = lo | (this.bus.fetch(this.pc, 5) << 8);
         return 6;
       }
       case 0x60: { const lo = this.pull(); this.pc = ((lo | (this.pull() << 8)) + 1) & 0xffff; return 6; }

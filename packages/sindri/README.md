@@ -91,7 +91,25 @@ output fading while no waveform is on, ring modulation and sync only roughly, th
 Eclectic's intro now goes on to the demo without its message, as in VICE. Over the same 1359 releases 1298 runs are as
 before and 53 save the same program with other bytes (values drawn from the noise); seven get further, Eclectic and four
 of Atlantis' demos (In Surgery, Ooops, Aullido, Mu Mu Land), which settled in their intros; Rust (Onslaught 2013) now
-leaves its intro as in VICE but later stops on a JAM at `$2033`, where VICE plays on (not looked into yet).
+leaves its intro as in VICE, and since the change below plays on as there.
+
+Code may run in the I/O registers, and Sindri gives it the bus cycles a 6510 makes there. A one-byte instruction reads
+the byte after it in its second cycle (a dummy read), and where that is an I/O register the register sees it: Rust ends
+its raster interrupt with `JMP $dc0c`, CIA 1's serial data register holding `$40`, and the RTI's dummy read of `$dc0d`
+acknowledges the timer interrupt. An opcode and its operand bytes are fetched in the instruction's cycles 0, 1 and 2,
+and an indirect jump reads its pointer in cycles 3 and 4 (other reads are in an instruction's last cycle): Rust points
+its IRQ vector at `$dc05`, where timer A's high byte `$6c` is `JMP ($xxxx)` and timer B's value, fetched in cycles 1 and
+2, the pointer, so the interrupt lands in a table of entries that take away its jitter. Measured in VICE (an RTI from
+`$dc0c` with timer B's interrupt pending, `JMP $dc05` and `JMP ($dc04)` landing in an INX slide; `test/timing.test.ts`).
+Until 16 November 2026 neither was there: the RTI left the interrupt pending, it came again at once through `$dc05`
+read two cycles late, and Rust ended on a JAM at `$2033` (then `$4f00`) 30 seconds in; it now takes VICE's entries,
+cycle for cycle, and plays on. Sample players that end their NMI the same way through CIA 2 (`JMP $dd0c`) got only
+their first NMI before, the line never let go. Some take it from timer B counting timer A's underflows, which sees each
+a cycle late (measured in VICE: its interrupt comes a cycle after timer A's would): with that, Dame Kitty and the
+Mushrooms takes its first 60 NMIs in VICE's cycles and reaches its parts at VICE's times to the hundredth of a second.
+SSDPCM1 Super does so for 78 NMIs, until its loader gets an answer from the 1541 at another moment than in VICE (the
+drive's disk turns in another phase), and later it ends on a JAM where a copy into the stack page meets its own return
+address, which in VICE it does not.
 
 For every byte of RAM it records which layer wrote it last and when, when it was last read as data and when it was
 last run. **A new layer begins when the CPU jumps into code that the running layer wrote and has not run yet**: the
@@ -536,8 +554,10 @@ with an end of `$c3c6`, one past its bytes, 0 entries said used and a slot of te
   disk's G64; a G64 holds whole bytes a track, so bit counts per turn and weak bits are not there. The VIC takes the
   bus in its badlines' and sprite fetches' cycles, but draws nothing: a program that reads what is on the screen (a
   sprite collision, the light pen) or relies on the VIC's own odd states (sprite crunching, the DMA delay shifting the
-  screen) may not get through; CIA timers are read in the instruction's last cycle and never read 0. What the drive
-  writes stays in memory; the image is not changed.
+  screen) may not get through; CIA timers are read in the instruction's last cycle (fetched as an opcode or operand, or
+  as an indirect jump's pointer, in their own) and never read 0; of the 6510's dummy accesses only a one-byte
+  instruction's read of the byte after it is made, and only in I/O. What the drive writes stays in memory; the image is
+  not changed.
 - A run stops at 500 layers (`budget`, *500 layers: it keeps jumping into code it wrote*): programs have a few dozen at
   most, but a loader that starts itself over and over makes two each time, each slower than the last. Ping Pong
   (Konami, tape) does: Sindri's LOAD from the tape does not print the KERNAL's messages (PRESS PLAY ON TAPE, OK,
