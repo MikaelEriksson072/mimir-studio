@@ -1008,7 +1008,8 @@ main.main { container: editor / inline-size; }
 .gfxv-bar .seg { margin-left: 0; }
 .gfxv-field { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .gfxv-field select { height: 24px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); font-size: 12px; padding: 0 4px; }
-.gfxv-color i { width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.gfxv-color i, .gfxv-marked { width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line-2); }
+.gfxv-marked { display: inline-block; flex: none; }
 .gfxv-color select { width: 92px; }
 .gfxv-mc { margin: 0; align-items: center; }
 .gfxv-go { display: inline-flex; gap: 6px; }

@@ -1,6 +1,6 @@
 /* The memory graphics browser's geometry and drawing (src/lib/gfxview.ts). */
 import { describe, expect, it } from 'vitest';
-import { bitmapAround, bitmapRowsOf, builtinFont, byteAt, cellAt, cellBytes, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer } from '../src/lib/gfxview';
+import { bitmapAround, bitmapRowsOf, builtinFont, byteAt, cellAt, cellBytes, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, LOADED, MARKED, markedRgb, NOT_LOADED, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer } from '../src/lib/gfxview';
 import { C64, hexRgb } from '../src/lib/palette';
 
 describe('memory graphics layout', () => {
@@ -86,6 +86,26 @@ describe('memory graphics layout', () => {
 });
 
 describe('memory graphics drawing', () => {
+  it('tints bytes already marked as graphics orange, so they differ from loaded and not loaded ones in any colours', () => {
+    const L = gfxLayout('chars', 3), mem = new Uint8Array(0x10000);
+    mem[0] = mem[8] = mem[16] = 0b10000000;
+    const px = new Uint8ClampedArray(L.width * L.height * 4);
+    // char 0 loaded, char 1 marked as graphics, char 2 not loaded
+    drawMemory(px, L, mem, a => (a < 8 ? LOADED : a < 16 ? MARKED : NOT_LOADED), false, { bg: 0, fg: 1, mc1: 15, mc2: 12 });
+    const at = (x: number, y: number) => [...px.subarray((y * L.width + x) * 4, (y * L.width + x) * 4 + 3)];
+    const step = L.cellW + L.gapX;
+    expect(at(0, 0)).toEqual([255, 255, 255]);
+    expect(at(1, 0)).toEqual([0, 0, 0]);
+    // marked: white and black 45 % of the way to the graphics orange
+    expect(at(step, 0)).toEqual(markedRgb([255, 255, 255]).map(Math.round));
+    expect(at(step + 1, 0)).toEqual(markedRgb([0, 0, 0]).map(Math.round));
+    expect(at(step + 1, 0)[0]).toBeGreaterThan(at(step + 1, 0)[2] + 50);
+    // and not the blue-grey of bytes that are not loaded
+    expect(at(step * 2 + 1, 0)).not.toEqual(at(step + 1, 0));
+    // booleans still say loaded or not
+    drawMemory(px, L, mem, a => a < 16, false, { bg: 0, fg: 1, mc1: 15, mc2: 12 });
+    expect(at(step + 1, 0)).toEqual([0, 0, 0]);
+  });
   it('draws set bits in the foreground, and bytes that are not loaded in a colour of their own', () => {
     const L = gfxLayout('chars', 1), mem = new Uint8Array(0x10000);
     mem[0] = 0b10000001;

@@ -13,7 +13,7 @@ import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture,
 import { Icon } from '../lib/icons';
 import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
 import { parseGoto } from '../lib/goto';
-import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, NO_FONT, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout } from '../lib/gfxview';
+import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
 import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -95,7 +95,14 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
-  const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows } = prefs;
+  const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows, marked } = prefs;
+  // how each byte is drawn: not loaded, loaded, or in a block already marked as graphics (tinted orange when `marked`)
+  const shades = useMemo(() => {
+    const s = new Uint8Array(A.mem.length);
+    for (let a = 0; a < s.length; a++) if (A.owner[a] >= 0) s[a] = LOADED;
+    if (marked) for (const b of A.blocks) if (groupOfKind(b.type) === 'gfx') s.fill(MARKED, b.start, Math.min(b.end, s.length));
+    return s;
+  }, [A, marked]);
   // bitmaps of fewer rows than a screen: the mode's button says the size of a cell
   const modes = useMemo(() => GFX_MODES.map(m => (m.key === 'bitmap' && bitmapRows !== BITMAP_ROWS ? { ...m, sub: `320×${bitmapRows * 8}`, title: `Memory as bitmaps: the first ${bitmapRows} character rows (${bitmapRows * BITMAP_ROW_BYTES} bytes, 320 × ${bitmapRows * 8} pixels) of each 8 KB` } : m)), [bitmapRows]);
   const cols = kind === 'chars' ? prefs.charCols : kind === 'sprites' ? prefs.spriteCols : kind === 'screens' ? prefs.screenCols : 1;
@@ -151,9 +158,9 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     const cv = canvas.current; if (!cv) return;
     const ctx = cv.getContext('2d'), h = (bandRows.to - bandRows.from) * stepY; if (!ctx || h <= 0) return;
     const img = ctx.createImageData(L.width, h);
-    drawMemory(img.data, L, A.mem, a => A.owner[a] >= 0, mc, colors, kind === 'screens' ? font : undefined, undefined, bandRows.from, bandRows.to);
+    drawMemory(img.data, L, A.mem, a => shades[a] as Shade, mc, colors, kind === 'screens' ? font : undefined, undefined, bandRows.from, bandRows.to);
     ctx.putImageData(img, 0, 0);
-  }, [A, L, mc, colors, kind, font, bandRows.from, bandRows.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [A, L, mc, colors, kind, font, shades, bandRows.from, bandRows.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scrollTo = (a: Addr, G: GfxLayout = L) => { const c = cellOf(G, a), el = scroller.current; if (c && el) el.scrollTop = Math.max(0, c.y * zoom - el.clientHeight / 3); };
   /** the cell of `a` is on screen */
@@ -413,6 +420,8 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
         </OptGroup>}
         <OptGroup title="Colours">
           <label className="check gfxv-mc"><input type="checkbox" checked={mc} onChange={e => set({ mc: e.target.checked })} /><span>Multicolor</span></label>
+          <label className="check gfxv-mc" title="Bytes in a block that is already graphics (Charset, Sprite data, Bitmap or Screen matrix, set by the analysis or by you) are drawn tinted orange, the graphics colour, so what is left to find stands out. Saved files keep their own colours">
+            <input type="checkbox" checked={marked} onChange={e => set({ marked: e.target.checked })} /><i className="gfxv-marked" style={{ background: `rgb(${MARKED_TINT.join(',')})` }} /><span>Marked graphics</span></label>
           {(['bg', 'fg', ...(mc ? ['mc1', 'mc2'] : [])] as (keyof GfxPrefs['colors'])[]).map(k => (
             <label key={k} className="gfxv-field gfxv-color" title={`${k === 'bg' ? 'Background (00)' : k === 'fg' ? (mc ? 'Color 11' : 'Foreground') : k === 'mc1' ? 'Color 01' : 'Color 10'}`}>
               {k.toUpperCase()}<i style={{ background: C64[colors[k]] }} /><select aria-label={`Color ${k}`} value={colors[k]} onChange={e => set({ colors: { ...colors, [k]: +e.target.value } })}>{C64_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}</select>
@@ -433,8 +442,8 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
             </div>}
           </span>
           <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name="list" size={13} />Show in listing</button>
-        </> : kind === 'fontrows' ? <span className="muted">Each row is drawn with its own font, 2 KB after the font of the row above (passing over memory where no font can be), and the same 40 screen codes. Click a row to select its font, Shift+click or drag for more. Dark rows are not loaded.</span>
-          : <span className="muted">Click a {NAMES[kind]} to select it, Shift+click or drag for more, then mark it as the graphics it is.{kind === 'screens' ? ' Go to an address and a screen starts there.' : ''} Dark cells are not loaded.</span>}
+        </> : kind === 'fontrows' ? <span className="muted">Each row is drawn with its own font, 2 KB after the font of the row above (passing over memory where no font can be), and the same 40 screen codes. Click a row to select its font, Shift+click or drag for more. Dark rows are not loaded{marked ? ', orange ones already graphics' : ''}.</span>
+          : <span className="muted">Click a {NAMES[kind]} to select it, Shift+click or drag for more, then mark it as the graphics it is.{kind === 'screens' ? ' Go to an address and a screen starts there.' : ''} Dark cells are not loaded{marked ? ', orange ones already graphics' : ''}.</span>}
       </div>
       <div className="gfxv-scroll" ref={scroller} onScroll={onScroll}>
         <div className="gfxv-inner" style={{ height: L.height * zoom }}>

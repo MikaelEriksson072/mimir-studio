@@ -30,10 +30,12 @@ export interface GfxPrefs {
   rowCodes: number; rowFonts: number; rowCount: number; rowSkip: boolean;
   /** bitmaps: how many character rows of each are drawn and selected, 1-25 (fewer for a picture smaller than the screen) */
   bitmapRows: number;
+  /** bytes in a block already marked as graphics (charset, sprites, bitmap, screen matrix) are drawn tinted orange */
+  marked: boolean;
   /** the version of these settings (2: 40 characters a row is the default) */
   v?: number;
 }
-const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25 };
+const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25, marked: true };
 /** The saved Graphics settings over the defaults. 40 characters a row (a screen's width) became the default: the old
  *  default 32 moves to it once (`v` 2), a count picked before stays. A bitmap height that is not 1-25 rows is 25,
  *  sprites a row that are not 1-24 are 8. */

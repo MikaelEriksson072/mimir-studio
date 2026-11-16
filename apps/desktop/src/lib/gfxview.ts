@@ -214,22 +214,35 @@ export function builtinFont(): Uint8Array {
 
 export interface GfxColors { bg: number; fg: number; mc1: number; mc2: number }
 
+/** how `drawMemory` draws a byte: not loaded, loaded, or in a block already marked as graphics */
+export type Shade = 0 | 1 | 2;
+export const NOT_LOADED: Shade = 0, LOADED: Shade = 1, MARKED: Shade = 2;
+/** the graphics colour (`--g-gfx`, orange in both themes) that bytes already marked as graphics are tinted with */
+export const MARKED_TINT: readonly [number, number, number] = [235, 104, 52];
+/** a colour tinted as bytes already marked as graphics are: 45 % of the way to `MARKED_TINT`, so a black background
+ *  turns a dark orange and white a light one, and each colour still differs from the others */
+export const markedRgb = ([r, g, b]: readonly number[]): number[] => [r * 0.55 + MARKED_TINT[0] * 0.45, g * 0.55 + MARKED_TINT[1] * 0.45, b * 0.55 + MARKED_TINT[2] * 0.45];
+
 /**
  * Draw the rows `from` to `to` of layout `L` (all of them by default) into RGBA `px` (L.width x their height): hires,
- * or multicolor (pairs of bits: bg, mc1, mc2, fg). Screens draw each screen code with `font` (2 KB). Bytes that are
- * not loaded are drawn dark, so the program stands out; gaps get `gap`.
+ * or multicolor (pairs of bits: bg, mc1, mc2, fg). Screens draw each screen code with `font` (2 KB). `shade` says how
+ * each byte is drawn: bytes that are not loaded (false, `NOT_LOADED`) dark, so the program stands out, loaded ones (true,
+ * `LOADED`) in the colours, and those in a block already marked as graphics (`MARKED`) tinted with the graphics colour,
+ * so what is left to find stands out from what is known; gaps get `gap`.
  */
-export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array, loaded: (a: Addr) => boolean, mc: boolean, colors: GfxColors, font?: Uint8Array, gap: [number, number, number] = [24, 24, 32], from = 0, to = L.rows): void {
+export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array, shade: (a: Addr) => boolean | Shade, mc: boolean, colors: GfxColors, font?: Uint8Array, gap: [number, number, number] = [24, 24, 32], from = 0, to = L.rows): void {
   const pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => hexRgb(C64[i & 15]));
   // not loaded: a blue-grey of its own, so it differs from loaded bytes in any colours (a black background too)
   const dimmed = pal.map(([r, g, b]) => [r * 0.25 + 34, g * 0.25 + 34, b * 0.25 + 52]);
+  const pals = [dimmed, pal, pal.map(c => markedRgb(c))];
+  const palOf = (a: Addr) => pals[Number(shade(a))] ?? pal;
   for (let i = 0; i < px.length; i += 4) { px[i] = gap[0]; px[i + 1] = gap[1]; px[i + 2] = gap[2]; px[i + 3] = 255; }
   const put = (x: number, y: number, c: number[]) => { const o = (y * L.width + x) * 4; px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; };
   const bits = (b: number, p: number[][], x: number, y: number) => {
     if (mc) for (let k = 0; k < 4; k++) { const c = p[(b >> (6 - k * 2)) & 3]; put(x + k * 2, y, c); put(x + k * 2 + 1, y, c); }
     else for (let k = 0; k < 8; k++) put(x + k, y, (b >> (7 - k)) & 1 ? p[3] : p[0]);
   };
-  const byte = (a: Addr, x: number, y: number) => { if (a < mem.length) bits(mem[a], loaded(a) ? pal : dimmed, x, y); };
+  const byte = (a: Addr, x: number, y: number) => { if (a < mem.length) bits(mem[a], palOf(a), x, y); };
   const f = L.kind === 'screens' ? font ?? builtinFont() : null;
   const stepX = L.cellW + L.gapX, stepY = L.cellH + L.gapY;
   for (let r = Math.max(0, from); r < Math.min(to, L.rows); r++) for (let c = 0; c < L.cols; c++) {
@@ -239,7 +252,7 @@ export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array,
     else if (L.kind === 'sprites') for (let y = 0; y < 21; y++) for (let k = 0; k < 3; k++) byte(base + y * 3 + k, ox + k * 8, oy + y);
     else if (L.kind === 'fontrows') for (let x = 0; x < 40; x++) for (let y = 0; y < 8; y++) byte(base + L.codes![x] * 8 + y, x * 8, oy + y);
     else if (f) for (let i = 0; i < SCREEN_BYTES && base + i < mem.length; i++) {
-      const p = loaded(base + i) ? pal : dimmed, g = mem[base + i] * 8, x = ox + (i % 40) * 8, y0 = oy + Math.floor(i / 40) * 8;
+      const p = palOf(base + i), g = mem[base + i] * 8, x = ox + (i % 40) * 8, y0 = oy + Math.floor(i / 40) * 8;
       for (let y = 0; y < 8; y++) bits(f[g + y], p, x, y0 + y);
     }
     else for (let cy = 0; cy < L.cellH >> 3; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);

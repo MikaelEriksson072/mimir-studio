@@ -5287,7 +5287,13 @@ Det finns fem lägen:
 
 **Visning:** zoom 1–4×, hires eller multicolor (bitpar: BG, MC1, MC2, FG). Färgerna väljs ur C64-paletten. *Offset*
 flyttar rutnätet byte för byte, för data som inte börjar på en cellgräns. Byte som inte är laddade ritas i en egen
-blågrå ton. Vänsterkanten visar adressen för varje rad och, med blockgruppens färg, vad som redan är klassat där.
+blågrå ton. Byte i ett block som redan är grafik (Charset, Sprite data, Bitmap eller Screen matrix, satt av analysen
+eller användaren) ritas tonade mot grafikens orange (`MARKED_TINT`, `--g-gfx`: varje färg 45 % av vägen dit, så svart
+blir mörkt orange och vitt ljust), så att det som är kvar att hitta skiljer sig från det som redan är känt. Ett block
+som markeras i vyn byter färg direkt, och `Ctrl+Z` tar tillbaka den. Rutan *Marked graphics* under *Colours* (på från
+början, `GfxPrefs.marked`) slår av och på det. Sparade filer (PNG med flera) har alltid vyns egna färger (`drawMemory`
+tar en `Shade` per byte: inte laddad, laddad eller grafik). Vänsterkanten visar adressen för varje rad och, med
+blockgruppens färg, vad som redan är klassat där.
 Under vyn står byten under pekaren, med teckennummer i sitt 2 KB-teckensnitt, spritepekare och VIC-bank, eller
 rad och kolumn i bitmappen, samt blocket den ligger i. Valen sparas per användare.
 
