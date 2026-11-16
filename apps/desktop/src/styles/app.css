@@ -1309,6 +1309,10 @@ main.main { container: editor / inline-size; }
 .ov-facts dt { color: var(--fg-2); }
 .ov-facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 .ov-auto { margin: 0; }
+.ov-music-row { display: flex; align-items: center; gap: 8px; }
+.ov-music-row > .ov-row { flex: 1; margin-right: 0; }
+.btn.ov-play { flex: none; gap: 4px; padding: 0 9px 0 7px; color: var(--g-music); border-color: color-mix(in srgb, var(--g-music) 50%, transparent); }
+.btn.ov-play:hover { background: var(--g-music); border-color: var(--g-music); color: #fff; }
 
 /* ---- the Scripts tab (spec 10.3): the list of scripts, the editor, and the output with the scratchpads ---- */
 .scripts { flex: 1; min-height: 0; display: flex; }

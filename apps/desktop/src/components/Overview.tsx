@@ -1,15 +1,16 @@
 /* The overview of the analysis (spec 14.1b): once the analysis of a file just opened is in, a window in the middle of
  * the app says what it found, part by part (the file and the block map, packing, the program start, the loaders, the
  * problems, the blocks by type, the code, graphics and music), with links to each part: the program start, a type of
- * block (its folder in the Blocks view), a loader's parts, the tabs Listing, the .asm source, Graphics and Memory. A
- * link, a click outside the window or Esc closes it; Settings → General (or the box at its foot) turns it off. */
+ * block (its folder in the Blocks view), a loader's parts, the tabs Listing, the .asm source, Graphics and Memory; the
+ * music found has a Play button (VICE or DeepSID, as the Blocks view's), which leaves the window open. A link, a click
+ * outside the window or Esc closes it; Settings → General (or the box at its foot) turns it off. */
 import { Fragment, type ReactNode } from 'react';
-import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type PackingInfo, type Project } from '@mimir/core';
+import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { IconName } from '../lib/icon-paths';
 import { blockMap, count, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, startOf, typeRows, type SnapshotPc } from '../lib/overview';
 import type { UiProblem } from '../lib/types';
-import { bankAdr, cx, fmtBytes, GROUP_LABEL } from '../lib/util';
+import { bankAdr, cx, fmtBytes, GROUP_LABEL, musicPlayTitle } from '../lib/util';
 import type { BottomTab, EditorTab } from '../store/ui';
 import { Modal } from './Modal';
 
@@ -43,6 +44,9 @@ interface OverviewProps {
   scripts: readonly [BottomTab, string][];
   /** the overview opens by itself after a load (Settings → General) */
   auto: boolean; onAuto: (on: boolean) => void;
+  /** play the music block that starts at an address, in VICE or DeepSID as `musicPlayer` says (Settings → Toolchain) */
+  onPlayMusic?: (start: Addr) => void;
+  musicPlayer: MusicPlayer;
   links: OverviewLinks; onClose: () => void;
 }
 
@@ -62,7 +66,7 @@ function Card({ icon, title, n, wide, className, children }: { icon: IconName; t
 const Link = ({ onClick, title, className, children }: { onClick: () => void; title?: string; className?: string; children: ReactNode }) =>
   <button type="button" className={cx('ov-link', className)} title={title} onClick={onClick}>{children}</button>;
 
-export function AnalysisOverview({ A, project, labels, snap, packing, problems, source, unpackLabel, busy, scripts, auto, onAuto, links, onClose }: OverviewProps) {
+export function AnalysisOverview({ A, project, labels, snap, packing, problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, links, onClose }: OverviewProps) {
   /** every link closes the window, then goes there */
   const go = (f: () => void) => () => { onClose(); f(); };
   const start = startOf(A, project);
@@ -226,12 +230,22 @@ export function AnalysisOverview({ A, project, labels, snap, packing, problems, 
 
           <Card icon="music" title="Music" n={A.music.length || undefined}>
             {A.music.length ? <div className="ov-rows">
-              {A.music.slice(0, 3).map(m => (
-                <button type="button" key={m.start} className="ov-row ov-music" title={`${m.why.join('\n')}\nClick to go there in the listing`} onClick={go(() => links.addr(m.start))}>
-                  <i className="ov-dot" style={{ background: 'var(--g-music)' }} />
-                  <span className="mono">{bankAdr(A, m.start)}–${h4(m.end - 1)}</span>
-                  <span className="muted mono">init ${h4(m.init)} · {m.digi && !m.play ? `samples, ${m.digi.nmi ? 'NMI' : 'IRQ'}` : `play $${h4(m.play)}`}</span>
-                </button>))}
+              {A.music.slice(0, 3).map(m => {
+                const tune = name(m.start) ?? `music_${h4(m.start)}`;
+                // it plays as its block does (the user may have marked its bytes as something else)
+                const block = A.blocks.some(b => b.start === m.start && b.type === 'music');
+                return (
+                  <div key={m.start} className="ov-music-row">
+                    <button type="button" className="ov-row ov-music" title={`${m.why.join('\n')}\nClick to go there in the listing`} onClick={go(() => links.addr(m.start))}>
+                      <i className="ov-dot" style={{ background: 'var(--g-music)' }} />
+                      <span className="mono">{bankAdr(A, m.start)}–${h4(m.end - 1)}</span>
+                      <span className="muted mono">init ${h4(m.init)} · {m.digi && !m.play ? `samples, ${m.digi.nmi ? 'NMI' : 'IRQ'}` : `play $${h4(m.play)}`}</span>
+                    </button>
+                    {/* the overview stays open: the player opens a window of its own, and its message shows over this one */}
+                    {onPlayMusic && block && <button type="button" className="btn small ov-play" aria-label={`Play ${tune} in ${musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE'}`}
+                      title={musicPlayTitle(tune, musicPlayer, m.digi, !m.play)} onClick={() => onPlayMusic(m.start)}><Icon name="play" size={12} />Play</button>}
+                  </div>);
+              })}
               {A.music.length > 3 && <p className="muted">and {A.music.length - 3} more</p>}
             </div> : <p className="muted">{A.S.detectMusic ? 'No SID music found.' : 'Detect SID music is off in Settings → Analysis.'}</p>}
             {A.music[0]?.digi ? <p className="muted">A sample player: its {A.music[0].digi.nmi ? 'NMI' : 'IRQ'} plays {A.music[0].digi.hz} samples a second{A.music[0].digi.parts.length ? `, from ${count(A.music[0].digi.parts.reduce((n, [s, e]) => n + e - s, 0), 'byte')} outside the block` : ''}.</p>

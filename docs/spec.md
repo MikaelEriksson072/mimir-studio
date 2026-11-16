@@ -5162,9 +5162,12 @@ Sedan kommer analysens delar, ett kort var:
   vid typens första block, markerat och ritat som den typen (sprites, chars, bitmap, screens); därunder VIC-banken,
   bitmappsläge, multicolor och spritepekare.
 - **Music**: musikblocken (högst tre) med intervall, init och play (länkar till listningen) och vad körningen av dem
-  spelade (5.8).
+  spelade (5.8). Varje block har en knapp **Play** som spelar det där Settings → Toolchain säger, i VICE eller DeepSID,
+  som Blocks-vyns spelknapp (samma titel, samma `playMusic` i `App.tsx`); ett musikintervall vars byte du har märkt som
+  något annat får ingen knapp.
 
-Varje länk stänger fönstret och går sedan dit den säger. Ett klick utanför fönstret, `Esc`, krysset och *Close* stänger
+Varje länk stänger fönstret och går sedan dit den säger; *Play* gör det inte (spelaren öppnar ett eget fönster, och
+meddelandet om vad som spelas syns ovanpå översikten). Ett klick utanför fönstret, `Esc`, krysset och *Close* stänger
 det också. Settings → General → *Show an overview of the analysis when a file is opened* (på från början, sparas per
 användare som `overview` i `apps/desktop/src/store/ui.ts`) slår av och på det, liksom rutan *Show this overview when a
 file is opened* i fönstrets fot. Kommandopaletten har *Show the analysis overview*, som visar det när som helst, även

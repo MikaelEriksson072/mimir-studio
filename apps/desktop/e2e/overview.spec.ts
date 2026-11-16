@@ -1,6 +1,9 @@
 /* The overview of the analysis (spec 14.1b): once a file just opened is analysed, a window in the middle says what the
- * analysis found, part by part; its links go there and close it, as a click outside it and Esc do. Settings → General
+ * analysis found, part by part; its links go there and close it, as a click outside it and Esc do; the music found
+ * plays from a Play button, which leaves it open. Settings → General
  * (and the box at its foot) turns it off; the tests start with it off (fixtures.ts). */
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, repoDir, test } from './fixtures';
 import { fromFileMenu, statusBar, stubDialogs, toast, waitForListing } from './helpers';
@@ -96,6 +99,33 @@ test('the overview of the analysis opens after a load, and its links go where th
     await expect(overview).toBeHidden();
     await expect(page.getByRole('tab', { name: 'Graphics', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(statusBar(page)).toContainText('sel $2000–$203f');
+  });
+
+  await test.step('the music found plays from its Play button, in VICE as the Blocks view\'s does, and the overview stays open', async () => {
+    // VICE itself is not started: a Windows program that ends at once stands in for it (app.spec.ts tests the PRG it gets)
+    const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+    expect(existsSync(standIn)).toBe(true);
+    await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+    await palette();
+    const music = overview.getByRole('region', { name: 'Music' });
+    const play = music.getByRole('button', { name: /^Play \S+ in VICE$/ });
+    await expect(play).toHaveCount(1);
+    await expect(play).toHaveText('Play');
+    await expect(play).toHaveAttribute('title', /^Play \S+ in VICE: init with song \$00, then play each frame\. Settings → Toolchain picks VICE or DeepSID$/);
+    const before = new Set(readdirSync(tmpdir()).filter(d => d.startsWith('mimir-play-')));
+    await play.click();
+    await expect(toast(page, /^VICE plays \S+ \(\$1000-\$10af\): init \$1000 with song \$00, then play \$\w{4} each frame\./)).toBeVisible();
+    await expect(overview).toBeVisible();
+    // the player's PRG VICE was given: RUN starts it at $0801, and the block's bytes are in it
+    const dirs = readdirSync(tmpdir()).filter(d => d.startsWith('mimir-play-') && !before.has(d)).map(d => join(tmpdir(), d));
+    const prgs = dirs.flatMap(d => readdirSync(d).filter(f => f.endsWith('.prg')).map(f => readFileSync(join(d, f))));
+    expect(prgs).toHaveLength(1);
+    expect(prgs[0][0] | (prgs[0][1] << 8)).toBe(0x0801);
+    const demo = readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg'));
+    expect(prgs[0].indexOf(demo.subarray(2 + 0x1000 - 0x0801, 2 + 0x10b0 - 0x0801))).toBeGreaterThan(0);
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+    await page.keyboard.press('Escape');
+    await expect(overview).toBeHidden();
   });
 
   await test.step('a VICE snapshot: the PC it was saved at, with the registers, and the listing is there', async () => {
