@@ -2,8 +2,9 @@
  * listing shows it, in a small box. Code is shown as its bytes with their text (PETSCII and screen codes), every other
  * block as code: swept from the block's start as Data as code does, so the instructions stay put while the pointer goes
  * down the block, or from the byte of a data line the pointer is on, so code that starts in the middle of a line shows.
- * The mouse wheel scrolls the box up and down the whole .asm file, block after block in the order the
- * listing has them, shown the same way; where a block starts a divider names it. */
+ * Under the block's end the box goes on with the blocks after it, in the order the listing (the .asm file) has them and
+ * shown the same way; where a block starts a divider names it. The box can be scrolled up and down the whole file
+ * (`off`), but the listing does not: with Ctrl held its mouse wheel scrolls the listing, and the box follows the line. */
 import { decode, h2, h4, hwSymbol, isIO, OPC, type Addr, type AnalysisResult, type Block, type ListingLine, type RenderResult, type Token } from '@mimir/core';
 
 /** at most this many rows in the box (a divider is a row) */

@@ -6,7 +6,7 @@ import { cx, groupOfKind, groupOfType, ROW } from '../lib/util';
 import { cellParts, type Cell } from '../lib/cells';
 import { asmWords, commentStart, insHead, useAssembler } from '../lib/assembler';
 import { Icon } from '../lib/icons';
-import { peekOf, peekOrder, PEEK_ROWS, type Peek, type PeekNames } from '../lib/peek';
+import { peekOf, peekOrder, type Peek, type PeekNames } from '../lib/peek';
 import type { Changed, Editing, ScrollReq, Sel, ViewAt } from '../lib/types';
 import { useUi, type Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
@@ -348,9 +348,9 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   // Ctrl closes it until Ctrl is let go. `x`: where the pointer came onto the row; `top`: the row's top on screen;
   // `since`: when it came onto the row. Once the pointer has rested on the row a moment (PIN_MS), the box stays when
   // the pointer goes into it, and a click there picks that byte in the listing; before that it follows the pointer
-  // down the lines under it. With Ctrl held the mouse wheel over the line or the box scrolls the box up and down the
-  // whole file, block after block (`off`, in rows from the line), as many rows a notch as the system scrolls lines, and
-  // never zooms the window; onto another line the box starts at that line again. `line`: the line the box is for, kept
+  // down the lines under it. With Ctrl held the mouse wheel over the listing or the box scrolls the listing as it does
+  // without Ctrl, and never zooms the window; the box follows the line that comes under the pointer (in the box, once
+  // pinned, it stays). `line`: the line the box is for, kept
   // so a click in the box that unfolds a block (and so moves the lines) leaves the box as it is. `at`: the byte (a cell)
   // of a data line the pointer is on, where the box's code starts; onto the line it is the byte under the pointer, and
   // along the line another byte once the pointer has rested on it a moment (CELL_MS), so on its way right into the box
@@ -359,12 +359,10 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   const textCols = useUi(s => s.textCols);
   const gfxColors = useUi(s => s.gfx.colors);
   const pointer = useRef<{ x: number; y: number } | null>(null);
-  const peekKeys = useRef({ quiet: false, timer: 0, wheel: 0, cell: 0, cellAt: null as Addr | null });
-  const [peekRow, setPeekRow] = useState<{ i: number; line: ListingLine; x: number; top: number; since: number; off: number; at: Addr | null } | null>(null);
+  const peekKeys = useRef({ quiet: false, timer: 0, cell: 0, cellAt: null as Addr | null });
+  const [peekRow, setPeekRow] = useState<{ i: number; line: ListingLine; x: number; top: number; since: number; at: Addr | null } | null>(null);
   /** the blocks in the listing's order, worked out when a peek needs them */
   const peekBlocks = useRef<{ lines: ListingLine[]; A: AnalysisResult; order: Block[] } | null>(null);
-  /** the peek shown: how far its wheel goes */
-  const peekShown = useRef<Peek | null>(null);
   /** the byte (cell) of line `i` under the element `over` */
   const cellOver = (over: Element, i: number): Addr | null => {
     const c = over.closest<HTMLElement>('.cell');
@@ -384,18 +382,18 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     // another byte of the line: the code starts there once the pointer has rested on it
     if (!settle && cell !== k.cellAt) { clearTimeout(k.cell); k.cellAt = cell; if (cell != null) k.cell = window.setTimeout(() => peekNow(true), CELL_MS); }
     setPeekRow(q => {
-      if (settle) return q && q.i === i && q.line === latest.current.lines[i] && cell != null && q.at !== cell ? { ...q, at: cell, x: p.x, off: 0 } : q;
+      if (settle) return q && q.i === i && q.line === latest.current.lines[i] && cell != null && q.at !== cell ? { ...q, at: cell, x: p.x } : q;
       if (onPeek && q && now - q.since >= PIN_MS) return q;
       if (p.y < r.top || p.y >= r.bottom || i < 0 || i >= latest.current.lines.length) return onPeek ? q : null;
       // on its way into the box beside the line, once it has rested there: rightwards, at the box's height
       if (q && q.i !== i && aim && now - q.since >= PIN_MS && p.x > q.x + 8 && p.x < aim.left && p.y >= aim.top && p.y < aim.bottom) return q;
       const line = latest.current.lines[i];
-      return q && q.i === i && q.line === line && q.top === top ? q : q?.i === i && q.line === line ? { ...q, top } : { i, line, x: p.x, top, since: now, off: 0, at: cell };
+      return q && q.i === i && q.line === line && q.top === top ? q : q?.i === i && q.line === line ? { ...q, top } : { i, line, x: p.x, top, since: now, at: cell };
     });
   };
   useEffect(() => {
     const k = peekKeys.current;
-    const off = () => { clearTimeout(k.timer); clearTimeout(k.cell); k.cellAt = null; k.wheel = 0; setPeekRow(null); };
+    const off = () => { clearTimeout(k.timer); clearTimeout(k.cell); k.cellAt = null; setPeekRow(null); };
     const keyDown = (e: KeyboardEvent) => {
       if (e.key === 'Control' || e.key === 'Meta') { if (!e.repeat) { k.quiet = false; clearTimeout(k.timer); k.timer = window.setTimeout(() => peekNow(), 150); } return; }
       // Shift with the pointer in the box is for Shift+click there
@@ -405,20 +403,16 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     };
     const keyUp = (e: KeyboardEvent) => { if (e.key === 'Control' || e.key === 'Meta') { k.quiet = false; off(); } };
     const blur = () => { k.quiet = false; off(); };
-    // Ctrl and the wheel over the listing or the box: the box comes at once if it is not up yet, else it scrolls
+    // Ctrl and the wheel over the listing or the box: the listing scrolls as the wheel scrolls it without Ctrl (by its
+    // pixels, lines or pages), not the box and not the window's zoom; the box comes at once if it is not up yet, and
+    // follows the line that comes under the pointer
     const wheel = (e: WheelEvent) => {
       const el = box.current, t = e.target instanceof Element ? e.target : null;
-      if (!(e.ctrlKey || e.metaKey) || k.quiet || !el || !t || !(t.closest('.peek') || (el.contains(t) && !t.closest('.edit-pop')))) return;
+      if (!(e.ctrlKey || e.metaKey) || !el || !t || !(t.closest('.peek') || (el.contains(t) && !t.closest('.edit-pop')))) return;
       e.preventDefault();
       pointer.current = { x: e.clientX, y: e.clientY };
-      const pk = peekShown.current;
-      if (!pk) { clearTimeout(k.timer); peekNow(); return; }
-      // in rows: a line of the system's wheel setting is 100/3 pixels
-      k.wheel += e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * PEEK_ROWS : e.deltaY / (100 / 3);
-      const n = Math.trunc(k.wheel);
-      if (!n) return;
-      k.wheel -= n;
-      setPeekRow(q => { if (!q) return q; const o = Math.max(pk.min, Math.min(pk.max, q.off + n)); return o === q.off ? q : { ...q, off: o }; });
+      el.scrollTop += e.deltaMode === 1 ? e.deltaY * ROW : e.deltaMode === 2 ? e.deltaY * el.clientHeight : e.deltaY;
+      if (!k.quiet) { clearTimeout(k.timer); peekNow(); }
     };
     window.addEventListener('keydown', keyDown, true); window.addEventListener('keyup', keyUp, true); window.addEventListener('blur', blur);
     window.addEventListener('wheel', wheel, { capture: true, passive: false });
@@ -440,9 +434,8 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const at = lines[lineOf[l.a]], shownAsCode = b.type === 'code' || !!(at && 'preview' in at && at.preview);
     let o = peekBlocks.current;
     if (!o || o.lines !== lines || o.A !== A) peekBlocks.current = o = { lines, A, order: peekOrder(A, lines) };
-    return peekOf(A, names, o.order, b, l.a, 'n' in l ? l.n : 0, !shownAsCode, peekRow?.off, peekRow?.at);
-  }, [peekRow?.line, peekRow?.off, peekRow?.at, lines, lineOf, A, names]); // eslint-disable-line react-hooks/exhaustive-deps
-  peekShown.current = peekRow ? peek : null;
+    return peekOf(A, names, o.order, b, l.a, 'n' in l ? l.n : 0, !shownAsCode, 0, peekRow?.at);
+  }, [peekRow?.line, peekRow?.at, lines, lineOf, A, names]); // eslint-disable-line react-hooks/exhaustive-deps
   /** the line of `a`, or of the nearest address in its bank that has one (after it first) */
   const lineNear = (a: Addr): number => {
     if (lineOf[a] >= 0) return lineOf[a];
@@ -782,7 +775,7 @@ function PeekBox({ peek, A, names, lower, x, top, rowH = ROW, sel, onPick, list 
     if (at) onPick(Number(at.dataset.a), e.shiftKey);
   };
   return createPortal(
-    <div ref={ref} className={cx('peek', peek.as)} role="dialog" aria-label={`${kindInfo(head.type).label} block ${peek.as === 'bytes' ? 'as bytes and text' : 'as code'}: the mouse wheel scrolls it through the file, a click goes there in the listing`} onMouseDown={pick}>
+    <div ref={ref} className={cx('peek', peek.as)} role="dialog" aria-label={`${kindInfo(head.type).label} block ${peek.as === 'bytes' ? 'as bytes and text' : 'as code'}: a click goes there in the listing`} onMouseDown={pick}>
       <div className="peek-head">
         {named(head)}
         <span className="peek-as">{peek.as === 'bytes' ? 'as bytes and text' : 'as code'}</span>
