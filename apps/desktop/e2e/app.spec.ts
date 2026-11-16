@@ -4288,6 +4288,36 @@ test('Ctrl over a line peeks at its block the other way: code as bytes and text,
     await expect(peek).toBeHidden();
   });
 
+  await test.step('data: as code from the byte the pointer is on, so code that starts in the middle of a line shows', async () => {
+    // colors_0939: .byte $06, $0e, $03, $01, $03, $0e, $06, $00; from the $01 ($093c): ora ($03,x) / asl $0006
+    await goTo(page, '$0939');
+    const cells = row('0939').locator('.cell');
+    const on = async (t: Locator, steps = 1) => { const b = (await t.boundingBox())!; await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps }); };
+    await expect(cells).toHaveCount(8);
+    await on(cells.nth(3));
+    await page.keyboard.down('Control');
+    await expect(peek).toContainText('as code');
+    const first = peek.locator('.peek-row[data-a]').first();
+    await expect(first.locator('.p-adr')).toHaveText('093c');
+    await expect(first.locator('.p-src')).toHaveText('ora ($03,x)');
+    await expect(peek.locator('.peek-row[data-a]').nth(1).locator('.p-src')).toHaveText('asl $0006');
+    await expect(peek.locator('.peek-more.before')).toHaveText('… 3 bytes before, from $0939');
+    // the wheel goes up to the bytes before it
+    await page.mouse.wheel(0, -100);
+    await expect(peek.locator('.peek-row[data-a="2361"]')).toBeVisible(); // $0939
+    // another byte of the line, once the pointer rests on it
+    await on(cells.nth(6));
+    await expect(first.locator('.p-adr')).toHaveText('093f');
+    // passing the bytes after it, the code stays
+    const src = (await row('0939').locator('.src').boundingBox())!;
+    await page.mouse.move(src.x + src.width - 4, src.y + src.height / 2, { steps: 8 });
+    await page.waitForTimeout(400);
+    await expect(first.locator('.p-adr')).toHaveText('093f');
+    await page.keyboard.up('Control');
+    await expect(peek).toBeHidden();
+    await goTo(page, '$0985');
+  });
+
   await test.step('a key pressed with Ctrl closes it until Ctrl is let go', async () => {
     await hover(row('0985'));
     await page.keyboard.down('Control');

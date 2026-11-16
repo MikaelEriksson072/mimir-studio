@@ -53,6 +53,41 @@ describe('the peek (Ctrl over a line)', () => {
     expect(lines(k).slice(0, 3).map(text)).toEqual(['lda #$01', 'sta VIC_BORDER_COLOR', `jmp ${R.labels.get(0x0822)?.name ?? '$0822'}`]);
   });
 
+  it('as code from the byte the pointer is on, so code that starts in the middle of a line shows', () => {
+    // $0823: a9 01 8d 20 d0 4c 22 08 02 ad, the pointer on the $01
+    const b = findBlock(A.blocks, 0x0823)!;
+    const k = peekOf(A, R, order, b, 0x0823, 10, true, 0, 0x0824);
+    expect(shown(k).slice(0, 6)).toEqual(['0824 ora ($8d,x)', '0826 jsr $4cd0', '0829 .byte $22', '082a php', '082b .byte $02', '082c .byte $ad']);
+    // the line's bytes are still the ones marked
+    expect(k.mark).toEqual({ start: 0x0823, end: 0x082d });
+    expect(k.before).toBe(1);
+    // above it the bytes before it, an instruction that would run past it as bytes
+    const up = peekOf(A, R, order, b, 0x0823, 10, true, -1, 0x0824);
+    expect(shown(up).slice(0, 2)).toEqual(['0823 .byte $a9', '0824 ora ($8d,x)']);
+    expect(up.min).toBe(peekOf(A, R, order, b, 0x0823, 10, true).min - 1);
+    // from a byte where an instruction of the block's own sweep starts, as from the block's start; outside the block,
+    // and as bytes, the byte is left out
+    expect(shown(peekOf(A, R, order, b, 0x0823, 10, true, 0, 0x0825))).toEqual(shown(peekOf(A, R, order, b, 0x0825, 1, true)));
+    expect(shown(peekOf(A, R, order, b, 0x0823, 10, true, 0, 0x0900))).toEqual(shown(peekOf(A, R, order, b, 0x0823, 10, true)));
+    expect(shown(peekOf(A, R, order, b, 0x0823, 10, false, 0, 0x0826))).toEqual(shown(peekOf(A, R, order, b, 0x0823, 10, false)));
+  });
+
+  it('as code from a byte, the sweep after it meets the block\'s own and goes on as it does', () => {
+    // from the start: jsr $eaa9, then nop ...; from $1001: lda #$ea, then the same nops
+    const big: ProjectInput = { files: [parsePrg('b.prg', assemble({ 'b.asm': `.pc = $1000\n.byte $20, $a9\n.fill 200, $ea` }, 'b.asm').prg!)] };
+    const B = analyze(big), S = render(B, big), o = peekOrder(B, S.lines), b = findBlock(B.blocks, 0x1000)!;
+    expect(b.end).toBeGreaterThan(0x1000 + PEEK_ROWS * 2);
+    const k = peekOf(B, S, o, b, 0x1000, 8, true, 0, 0x1001);
+    expect(shown(k).slice(0, 3)).toEqual(['1001 lda #$ea', '1003 nop', '1004 nop']);
+    const up = peekOf(B, S, o, b, 0x1000, 8, true, -1, 0x1001);
+    expect(shown(up)[0]).toBe('1000 .byte $20');
+    // scrolled to the end, the rows are the block's own
+    const end = peekOf(B, S, o, b, 0x1000, 8, true, 1000, 0x1001), own = peekOf(B, S, o, b, 0x1000, 8, true, 1000);
+    expect(shown(end)).toEqual(shown(own));
+    // one row more (the cut instruction), and the top row one further down: as far to go
+    expect(end.max).toBe(own.max);
+  });
+
   it('a jam opcode, and an instruction that would run past the block, are .byte', () => {
     const b = findBlock(A.blocks, 0x0823)!;
     const k = peekOf(A, R, order, b, b.start, 0, true);

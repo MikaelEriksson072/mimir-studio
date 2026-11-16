@@ -1,7 +1,8 @@
 /* The peek (spec 10, "Titta åt andra hållet"): with Ctrl held, the block under the pointer shown the other way than the
  * listing shows it, in a small box. Code is shown as its bytes with their text (PETSCII and screen codes), every other
  * block as code: swept from the block's start as Data as code does, so the instructions stay put while the pointer goes
- * down the block. The mouse wheel scrolls the box up and down the whole .asm file, block after block in the order the
+ * down the block, or from the byte of a data line the pointer is on, so code that starts in the middle of a line shows.
+ * The mouse wheel scrolls the box up and down the whole .asm file, block after block in the order the
  * listing has them, shown the same way; where a block starts a divider names it. */
 import { decode, h2, h4, hwSymbol, isIO, OPC, type Addr, type AnalysisResult, type Block, type ListingLine, type RenderResult, type Token } from '@mimir/core';
 
@@ -58,16 +59,38 @@ function sweep(A: AnalysisResult, b: Block): Int32Array {
   return s;
 }
 
+/** the instructions of block `b` with one starting at `at`: swept from the block's start up to `at` (an instruction
+ *  that would run past it is bytes), and from `at` on (where that sweep meets the block's own, the rest is the same) */
+function sweepAt(A: AnalysisResult, b: Block, at: Addr): Int32Array {
+  const s = sweep(A, b);
+  let lo = 0, hi = s.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (s[m] < at) lo = m + 1; else hi = m; }
+  if (s[lo] === at) return s;
+  const out = Array.from(s.subarray(0, lo));
+  if (lo > 0) for (let p = out[lo - 1] + 1; p < at; p++) out.push(p);
+  for (let p = at, j = lo; p < b.end;) {
+    while (j < s.length && s[j] < p) j++;
+    if (s[j] === p) { out.push(...s.subarray(j)); break; }
+    const o = OPC[A.mem[p]];
+    out.push(p); p += !o.jam && p + o.len <= b.end ? o.len : 1;
+  }
+  return Int32Array.from(out);
+}
+
 /** the peek at `from` in block `b` of the blocks `order` (peekOrder; `b` is put in it if it is missing); `asCode`: the
  *  block is shown as bytes in the listing, so the box shows the file as code. `n`: how many bytes the line at `from`
- *  has (they are marked); `off`: the rows it is scrolled (kept within the file) */
-export function peekOf(A: AnalysisResult, names: PeekNames, order: readonly Block[], b: Block, from: Addr, n: number, asCode: boolean, off = 0): Peek {
+ *  has (they are marked); `off`: the rows it is scrolled (kept within the file). `on`: as code, the byte of the line
+ *  the pointer is on (a byte or a word of a `.byte` or `.word` line, a character of a `.text`): the code starts there,
+ *  in the top row, so code that starts in the middle of a line shows; the bytes before it go up to it */
+export function peekOf(A: AnalysisResult, names: PeekNames, order: readonly Block[], b: Block, from: Addr, n: number, asCode: boolean, off = 0, on: Addr | null = null): Peek {
   const mark = n > 0 ? { start: from, end: Math.min(b.end, from + n) } : null;
   const blocks = order.includes(b) ? order : [b];
+  const aim = asCode && on != null && on >= b.start && on < b.end ? on : null;
   // each block's rows: as bytes eight a row from its start, the pointer's block from the pointer's byte (above it the
-  // first row is the block's first bytes, as many as are left); as code an instruction a row
+  // first row is the block's first bytes, as many as are left); as code an instruction a row, in the pointer's block
+  // one starting at the byte it is on
   const parts = blocks.map(k => {
-    if (asCode) { const s = sweep(A, k); return { b: k, head: 0, at: k.start, starts: s, count: s.length }; }
+    if (asCode) { const s = k === b && aim != null ? sweepAt(A, k, aim) : sweep(A, k); return { b: k, head: 0, at: k.start, starts: s, count: s.length }; }
     const at = k === b ? from : k.start, head = Math.ceil((at - k.start) / PEEK_ROW);
     return { b: k, head, at, starts: null, count: head + Math.ceil((k.end - at) / PEEK_ROW) };
   });
@@ -93,10 +116,10 @@ export function peekOf(A: AnalysisResult, names: PeekNames, order: readonly Bloc
   /** a block starts at row `g`: a divider above it, unless it is the top row */
   const starts = (g: number) => locate(g).j === 0;
 
-  // the pointer's row: the row of its byte, or the instruction its byte is in
-  const ab = blocks.indexOf(b), pb = parts[ab];
+  // the pointer's row: the row of its byte, or the instruction its byte is in (the one at `on`)
+  const ab = blocks.indexOf(b), pb = parts[ab], to = aim ?? from;
   let jf = pb.head;
-  if (pb.starts) { let lo = 0, hi = pb.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (pb.starts[m] <= from) lo = m; else hi = m - 1; } jf = lo; }
+  if (pb.starts) { let lo = 0, hi = pb.starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (pb.starts[m] <= to) lo = m; else hi = m - 1; } jf = lo; }
   const at = first[ab] + jf;
   // the top row that has the file's last byte in the bottom row, the dividers counted
   let last = total - 1;
