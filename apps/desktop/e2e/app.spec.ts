@@ -3769,6 +3769,94 @@ test('pack with Brokkr: checked in an emulated C64, effort max on threads, and c
     const line = (id: string) => section.locator(`#${id} ~ small`);
     await expect(line('pack-dec-at')).toHaveText(/^Takes \d+ bytes: \$c000–\$c[0-9a-f]{3} in the PRG; the source goes where you #import it\.$/);
     await expect(line('pack-tables-at')).toHaveText('Takes 156 bytes: $0334–$03cf.');
+test('build templates: Pack with Exomizer, a template of my own from the original build.bat, the export writes them', async ({ workDir: work, app, page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'raster-demo.asm' }).click();
+  const file = page.getByLabel('File', { exact: true });
+  const template = page.getByLabel('Build template');
+  const note = page.locator('.source .tb-note');
+  const editor = page.locator('.mon-host .view-lines');
+  await expect(editor).toBeVisible();
+  await file.selectOption('build.bat');
+
+  await test.step('Pack with Exomizer: build.bat packs out\\raster-demo.prg and starts the packed file', async () => {
+    await template.selectOption({ label: 'Pack with Exomizer' });
+    await expect(toast(page, 'build.bat and build.sh are made from the template "Pack with Exomizer"')).toBeVisible();
+    await expect(note).toContainText('Made from the template “Pack with Exomizer”');
+    await expect(editor).toContainText('"%EXOMIZER%" sfx sys -o out\\raster-demo-exo.prg out\\raster-demo.prg || exit /b 1');
+    await expect(editor).toContainText('-autostart out\\raster-demo-exo.prg');
+    await file.selectOption('build.sh');
+    await expect(editor).toContainText('"$EXOMIZER" sfx sys -o out/raster-demo-exo.prg out/raster-demo.prg');
+    await file.selectOption('build.bat');
+  });
+
+  const dialog = page.getByRole('dialog', { name: 'Build templates' });
+  const tplEditor = dialog.locator('.tpl-editor .view-lines');
+  await test.step('a new template starts as the original build.bat and build.sh, with placeholders', async () => {
+    await page.getByRole('button', { name: 'Templates…' }).click();
+    await expect(dialog.getByRole('tab', { name: /Pack with Exomizer/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(dialog.getByRole('button', { name: 'In use in this project' })).toBeDisabled();
+    await dialog.getByRole('button', { name: 'New template' }).click();
+    await expect(dialog.getByRole('tab', { name: 'My build' })).toHaveAttribute('aria-selected', 'true');
+    await expect(tplEditor).toContainText('"%JAVA%" -jar "%KICKASS%" {source}.asm -odir {out} {kickArgs} || exit /b 1');
+    await expect(tplEditor).toContainText('-moncommands {out}\\{labels}.vs {start}');
+    await expect(tplEditor).not.toContainText('EXOMIZER');
+  });
+
+  await test.step('it is edited and renamed, and shows what it makes for this project', async () => {
+    await tplEditor.click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('copy {out}\\{name}.prg D:\\c64\\');
+    await page.keyboard.press('Enter');
+    await dialog.getByLabel('Name').fill('Copy to D');
+    await dialog.getByLabel('Name').press('Enter');
+    await expect(dialog.getByRole('tab', { name: 'Copy to D' })).toHaveAttribute('aria-selected', 'true');
+    await dialog.getByRole('button', { name: 'Filled in for raster-demo' }).click();
+    await expect(tplEditor).toContainText('copy out\\raster-demo.prg D:\\c64\\');
+    await expect(tplEditor).toContainText('"%JAVA%" -jar "%KICKASS%" raster-demo.asm -odir out');
+    await dialog.getByRole('button', { name: 'Use in this project' }).click();
+    await expect(toast(page, 'build.bat and build.sh are made from the template "Copy to D"')).toBeVisible();
+    await expect(dialog.getByRole('tab', { name: /Copy to D/ })).toContainText('in use');
+    await dialog.locator('.modal-foot').getByRole('button', { name: 'Close' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(template).toHaveValue('user:Copy to D');
+    await expect(editor).toContainText('copy out\\raster-demo.prg D:\\c64\\');
+  });
+
+  await test.step('a change to the template in use: the project follows it when the editor closes', async () => {
+    await page.getByRole('button', { name: 'Templates…' }).click();
+    await expect(dialog.getByRole('tab', { name: /Copy to D/ })).toHaveAttribute('aria-selected', 'true');
+    await tplEditor.click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('rem {name} copied');
+    await page.keyboard.press('Enter');
+    await expect(dialog.getByRole('button', { name: 'Update this project’s copy' })).toBeEnabled();
+    // the × in the dialog's head closes it as Close does
+    await dialog.getByRole('button', { name: 'Close' }).first().click();
+    await expect(toast(page, 'build.bat and build.sh follow your changes to the template "Copy to D"')).toBeVisible();
+    await expect(editor).toContainText('rem raster-demo copied');
+  });
+
+  await test.step('the export writes the template\'s scripts, and the project file keeps it', async () => {
+    const out = join(work, 'export-template');
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Export…', exact: true }).click();
+    await expect(toast(page, `Exported verified Kick Assembler project to ${out}`)).toBeVisible({ timeout: 90_000 });
+    expect(readFileSync(join(out, 'build.bat'), 'utf8')).toMatch(/copy out\\raster-demo\.prg D:\\c64\\\r?\nrem raster-demo copied/);
+    expect(readFileSync(join(out, 'README.md'), 'utf8')).toContain('made from the build template "Copy to D"');
+    expect(JSON.parse(readFileSync(join(out, 'raster-demo.mimir.json'), 'utf8')).buildTemplate).toMatchObject({ name: 'Copy to D', assembler: 'kick' });
+  });
+
+  await test.step('Generated again: the scripts follow the settings', async () => {
+    await template.selectOption({ label: 'Generated (the settings)' });
+    await expect(toast(page, 'build.bat and build.sh are generated from the toolchain settings again')).toBeVisible();
+    await expect(editor).not.toContainText('copied');
+    await expect(note).toContainText('Editable');
+    // the template stays in the library for every project
+    await expect(template.locator('option', { hasText: 'Copy to D' })).toHaveCount(1);
+  });
+});
+
     await expect(line('pack-zp')).toHaveText('Takes 9 bytes: $f7–$ff.');
     await expect(view.getByLabel('Keep free', { exact: true })).toHaveCount(0);
     await view.getByLabel('No literal sequences (-T 5)').check();

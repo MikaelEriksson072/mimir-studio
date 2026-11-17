@@ -270,6 +270,9 @@ make an existing project a repository too).
 4. **Verify** with `F7`. The status bar says whether the source assembles back to the original bytes.
 5. **Export** the Kick Assembler project with its build scripts (`Ctrl+E`, into the project's `source` folder), or
    **Build & Run** it in VICE (`F5`), or in Retro Debugger or C64 Debugger (`Shift+F5`, set in *Settings → Toolchain*).
+   The build scripts can come from a **build template**: Mimir's *Pack with Exomizer* packs the built program and
+   starts the packed file, and *Templates…* in the source view makes your own, starting from the original `build.bat`
+   and `build.sh` with placeholders (`{source}`, `{name}`, `{out}` …) that every project fills in.
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
 the Spindle, Bitfire, Booze, Sparkle, Krill and Covert scripts, the IFFL parts and Pirate Slayer (when there is one), statistics and the build output. With a

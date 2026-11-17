@@ -22,6 +22,11 @@ const bookmarks = z.record(z.string().regex(/^\d+$/), z.object({
 }));
 /** build.bat / build.sh as the user edited them */
 const scripts = z.object({ 'build.bat': z.string().max(65536), 'build.sh': z.string().max(65536) }).partial().strict();
+/** the build template the scripts are made from (spec 11.4b) */
+const buildTemplate = z.object({
+  name: z.string().min(1).max(80), 'build.bat': z.string().max(65536), 'build.sh': z.string().max(65536),
+  assembler: z.enum(['kick', '64tass']).optional(), builtIn: z.enum(['exomizer']).optional(),
+}).strict();
 /** how the Pack view packs the project, with Brokkr or Exomizer (spec 13.8) */
 const packRange = z.object({ start: addr, end: addr }).refine(r => r.end > r.start, 'empty range');
 export const packPrefsSchema = z.object({
@@ -180,6 +185,8 @@ export const serializedProjectSchema = z.object({
   zpPairs: zpPairs.optional(),
   // project files from before the build scripts could be edited have none
   scripts: scripts.default({}),
+  // project files from before build templates, and those without one, have none
+  buildTemplate: buildTemplate.optional(),
   // project files from before packing with Exomizer have none
   pack: packPrefsSchema.nullable().default(null),
   // project files from before patches have none
@@ -223,6 +230,7 @@ export const projectSchema = z.object({
   bookmarks,
   zpPairs: zpPairs.optional(),
   scripts,
+  buildTemplate: buildTemplate.nullable().optional(),
   pack: packPrefsSchema.nullable().optional(),
   patches: z.array(patch).max(4096),
   userScripts: z.array(userScript).max(256).optional(),

@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from './model';
 import { makeDemo } from './demo';
 import { parsePrg } from './c64/prg';
 import { safeStem } from './util/names';
+import { readTemplate } from './build-template';
 
 export const newId = (): string =>
   typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 9);
@@ -42,6 +43,7 @@ export function serializeProject(p: Project): SerializedProject {
     format: 'mimir-project', version: 1, name: p.name,
     files: p.files.map(f => ({ name: f.name, load: f.load, data: b64enc(f.bytes), ...(f.vsf ? { vsf: b64enc(f.vsf) } : {}), ...(f.chip != null ? { chip: f.chip } : {}) })),
     overrides: p.overrides, entries: p.entries, entryPoint: p.entryPoint, ...(p.entryPort != null ? { entryPort: p.entryPort } : {}), labels: p.labels, comments: p.comments, blockComments: p.blockComments, notes: p.notes, bankZones: p.bankZones, ...(p.relocs?.length ? { relocs: p.relocs } : {}), excluded: p.excluded, binary: p.binary, bookmarks: p.bookmarks, scripts: p.scripts, ...(p.pack ? { pack: p.pack } : {}),
+    ...(p.buildTemplate ? { buildTemplate: p.buildTemplate } : {}),
     ...(p.zpPairs && Object.keys(p.zpPairs).length ? { zpPairs: p.zpPairs } : {}),
     ...(p.blanks && Object.keys(p.blanks).length ? { blanks: p.blanks } : {}),
     ...(p.junk?.length ? { junk: p.junk } : {}),
@@ -62,6 +64,7 @@ export function deserializeProject(o: SerializedProject): Project {
     format: 'mimir-project', version: 1,
     name: o.name || 'project', files: o.files.map(f => ({ id: newId(), name: f.name, load: f.load, bytes: b64dec(f.data), ...(f.vsf ? { vsf: b64dec(f.vsf) } : {}), ...(o.cart && f.chip != null ? { chip: f.chip } : {}) })),
     overrides: o.overrides || [], entries: o.entries || [], entryPoint: o.entryPoint ?? null, ...(o.entryPoint != null && o.entryPort != null ? { entryPort: o.entryPort } : {}), labels: o.labels || {}, comments: o.comments || {}, blockComments: o.blockComments || {}, notes: o.notes || {}, bankZones: o.bankZones || [], relocs: o.relocs || [], excluded: o.excluded || [], binary: o.binary || [], bookmarks: o.bookmarks || {}, scripts: o.scripts || {}, pack: o.pack ?? null,
+    ...(readTemplate(o.buildTemplate) ? { buildTemplate: readTemplate(o.buildTemplate) } : {}),
     ...(o.zpPairs && Object.keys(o.zpPairs).length ? { zpPairs: o.zpPairs } : {}),
     ...(o.blanks && Object.keys(o.blanks).length ? { blanks: o.blanks } : {}),
     ...(o.junk?.length ? { junk: o.junk } : {}),

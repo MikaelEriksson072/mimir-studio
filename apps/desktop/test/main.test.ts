@@ -495,6 +495,20 @@ describe('schemas', () => {
     expect(projectSchema.safeParse({ ...p, scripts: { 'raster-demo.asm': 'nop' } }).success).toBe(false);
   });
 
+  it('reads the build template, and older files without one', () => {
+    const t = { name: 'Pack with Exomizer', builtIn: 'exomizer' as const, assembler: 'kick' as const, 'build.bat': '@echo off\n', 'build.sh': '#!/bin/sh\n' };
+    const p = { ...demoProject(), buildTemplate: t };
+    const json = JSON.parse(JSON.stringify(serializeProject(p)));
+    expect(serializedProjectSchema.parse(json).buildTemplate).toEqual(t);
+    expect(serializedProjectSchema.parse(JSON.parse(JSON.stringify(serializeProject(demoProject())))).buildTemplate).toBeUndefined();
+    expect(projectSchema.safeParse(p).success).toBe(true);
+    expect(projectSchema.safeParse({ ...p, buildTemplate: null }).success).toBe(true);
+    // a name, the two scripts, nothing else
+    expect(projectSchema.safeParse({ ...p, buildTemplate: { ...t, name: '' } }).success).toBe(false);
+    expect(projectSchema.safeParse({ ...p, buildTemplate: { ...t, run: 'x' } }).success).toBe(false);
+    expect(projectSchema.safeParse({ ...p, buildTemplate: { ...t, builtIn: 'brokkr' } }).success).toBe(false);
+  });
+
   it('reads the pack settings, and older files without them', () => {
     const pack = { ...DEFAULT_PACK, ranges: [{ start: 0x0810, end: 0x1000 }], start: 'jmp' as const, jmp: 0x0810, ramExit: 0x35 };
     const p = { ...demoProject(), pack };

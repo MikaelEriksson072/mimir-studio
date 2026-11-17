@@ -3,8 +3,9 @@
  * project keeps the user's version and the export writes it. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { BUILD_SCRIPTS, isLabelDefinition, lineText, type AssemblerId, type Addr, type AnalysisResult, type BuildScript, type KickProblem, type Line, type RenderResult, type Settings, type Vfs } from '@mimir/core';
+import { BUILD_SCRIPTS, BUILT_IN_TEMPLATES, isLabelDefinition, lineText, type AssemblerId, type Addr, type AnalysisResult, type BuildScript, type BuildTemplate, type KickProblem, type Line, type RenderResult, type Settings, type Vfs } from '@mimir/core';
 import { Icon } from '../lib/icons';
+import { templateKey } from './BuildTemplates';
 import type { Changed, NavOptions } from '../lib/types';
 import { LineBody, lineScriptMarks, scriptMarkTip, type ScriptMark } from './Listing';
 
@@ -16,6 +17,11 @@ interface SourceViewProps {
   onCopy: (text: string | undefined) => void; onExport: () => void;
   /** the build scripts the user edited (Project.scripts), and how an edit (null: back to generated) is kept */
   scripts: Partial<Record<BuildScript, string>>; onEditScript: (path: BuildScript, text: string | null) => void;
+  /** the build template the scripts are made from (spec 11.4b), the user's templates, whether the project is a
+   *  cartridge (Mimir's Pack with Exomizer packs a program); a template chosen (its key, templateKey; null: the
+   *  generated scripts), and the template editor opened */
+  template?: BuildTemplate | null; templates?: readonly BuildTemplate[]; cart?: boolean;
+  onUseTemplate?: (key: string | null) => void; onTemplates?: () => void;
   /** a block whose type just changed: its lines are marked a moment */
   changed?: Changed | null;
   /** a new value opens Monaco's find (Ctrl+F outside the editor) */
@@ -53,7 +59,7 @@ function linkAddrAt(R: RenderResult, line: Line | undefined, word: string | null
   return line.k === 'lbl' || ('n' in line && line.n > 0) ? line.a : null;
 }
 
-export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, changed, findReq = 0, scriptMarks, onScriptMark, onLinkMenu, onPadMenu }: SourceViewProps) {
+export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, extraFiles, problems, onCopy, onExport, scripts, onEditScript, template = null, templates = [], cart = false, onUseTemplate, onTemplates, changed, findReq = 0, scriptMarks, onScriptMark, onLinkMenu, onPadMenu }: SourceViewProps) {
   const host = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<MonacoNs | null>(null);
   const ed = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -261,11 +267,27 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
       <div className="toolbar">
         <label htmlFor="src-file" className="sr-only">File</label>
         <select id="src-file" value={cur ? cur.path : ''} onChange={e => setPath(e.target.value)}>{textFiles.map(f => <option key={f.path} value={f.path}>{f.path}</option>)}</select>
+        {cur && isScript(cur.path) && onUseTemplate && <>
+          <label htmlFor="src-template" className="sr-only">Build template</label>
+          <select id="src-template" className="src-template" value={template ? templateKey(template) : ''} title="The template build.bat and build.sh are made from: placeholders filled in for this project"
+            onChange={e => { flush(); onUseTemplate(e.target.value || null); }}>
+            <option value="">Generated (the settings)</option>
+            <optgroup label="Mimir’s">{BUILT_IN_TEMPLATES.map(b => <option key={b.id} value={`builtin:${b.id}`} disabled={cart}>{b.name}</option>)}</optgroup>
+            {(templates.length > 0 || (template && !template.builtIn && !templates.some(t => t.name === template.name))) && (
+              <optgroup label="Yours">
+                {templates.map(t => <option key={t.name} value={templateKey(t)}>{t.name}</option>)}
+                {template && !template.builtIn && !templates.some(t => t.name === template.name) && <option value={templateKey(template)}>{template.name} (this project’s copy)</option>}
+              </optgroup>
+            )}
+          </select>
+          {onTemplates && <button className="btn" onClick={() => { flush(); onTemplates(); }} title="Make, change and choose build templates: build.bat and build.sh with placeholders, for every project"><Icon name="doc" />Templates…</button>}
+        </>}
         <span className="tb-note">{state === 'loading' ? 'Loading Monaco editor…' : state !== 'ready' ? 'Built-in viewer'
-          : cur && isScript(cur.path) ? (scripts[cur.path] != null ? 'Edited by you · kept in the project · the export writes this version' : 'Editable · the export writes your version once you change it')
+          : cur && isScript(cur.path) ? (scripts[cur.path] != null ? 'Edited by you · kept in the project · the export writes this version'
+            : template ? `Made from the template “${template.name}” · an edit here is this project’s own` : 'Editable · the export writes your version once you change it')
             : `Monaco · ${R.assembler === '64tass' ? '64tass' : 'Kick Assembler'} syntax · read-only (edit labels, comments and types in the listing)`}</span>
         <span className="grow" />
-        {cur && isScript(cur.path) && scripts[cur.path] != null && <button className="btn" title="Throw away your edits: the export writes the generated script, which follows the toolchain settings, again" onClick={() => { if (pending.current) { clearTimeout(pending.current.timer); pending.current = null; } onEditScript(cur.path as BuildScript, null); }}><Icon name="undo" />Restore generated</button>}
+        {cur && isScript(cur.path) && scripts[cur.path] != null && <button className="btn" title={template ? `Throw away your edits: the export writes the script the template “${template.name}” makes again` : 'Throw away your edits: the export writes the generated script, which follows the toolchain settings, again'} onClick={() => { if (pending.current) { clearTimeout(pending.current.timer); pending.current = null; } onEditScript(cur.path as BuildScript, null); }}><Icon name="undo" />{template ? 'Restore template' : 'Restore generated'}</button>}
         {state === 'ready' && <button className="btn" title="Find in the file (Ctrl+F); F3 / Shift+F3 go to the next and the one before" onClick={openFind}><Icon name="search" />Find</button>}
         <button className="btn" onClick={() => onCopy(cur?.text)}><Icon name="copy" />Copy file</button>
         <button className="btn primary" onClick={onExport}><Icon name="folder" />Export…</button>

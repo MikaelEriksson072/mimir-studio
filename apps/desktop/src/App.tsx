@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  bankRange, buildScripts, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
+  bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
@@ -19,11 +19,13 @@ import {
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
+  builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
 } from '@mimir/core';
 import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
 import { useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
+import { useBuildTemplates } from './store/buildTemplates';
 import { runScriptInWorker } from './lib/scriptrun';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
 import { cx, errorText, filesKey, ROW, store, uid } from './lib/util';
@@ -61,6 +63,7 @@ import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
 import { BlockSizeModal } from './components/BlockSize';
 import { RelocateModal, type RelocDraft } from './components/Relocate';
+import { BuildTemplatesModal } from './components/BuildTemplates';
 import { ViewOffsetModal, type ViewOffsetDraft } from './components/ViewOffset';
 import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
@@ -192,7 +195,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | 'templates' | null>(null);
   /** the block the Block size dialog changes (its start when the dialog opened) */
   const [sizeAt, setSizeAt] = useState<Addr | null>(null);
   /** the patch dialog's range and code */
@@ -2363,12 +2366,52 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
 
   /* ---- verify / build / run / export ---- */
   const extraFiles = useMemo(() => projectTextFiles(project, R, S), [project, R, S]);
-  /** build.bat / build.sh edited in the source view; the generated text again (or null) drops the edit */
+  /** build.bat / build.sh edited in the source view; the template's or the generated text again (or null) drops the
+   *  edit */
   const setScript = (path: BuildScript, text: string | null) => {
-    const value = text == null || text === buildScripts(S, R.fileNames, cartBuild({ ...project, settings: S }))[path] ? null : text;
+    const tpl = project.buildTemplate ?? null;
+    const value = text == null || text === templateScripts({ ...project, settings: S }, S, R.fileNames)[path] ? null : text;
     if ((project.scripts?.[path] ?? null) === value) return;
-    update(value == null ? `Restore generated ${path}` : `Edit ${path}`, d => { d.scripts ??= {}; if (value == null) delete d.scripts[path]; else d.scripts[path] = value; });
-    if (text == null) toast(`${path} is generated again from the toolchain settings`, 'ok');
+    update(value == null ? (tpl ? `Restore ${path} from the template` : `Restore generated ${path}`) : `Edit ${path}`, d => { d.scripts ??= {}; if (value == null) delete d.scripts[path]; else d.scripts[path] = value; });
+    if (text == null) toast(tpl ? `${path} is made from the template "${tpl.name}" again` : `${path} is generated again from the toolchain settings`, 'ok');
+  };
+
+  /* ---- build templates (spec 11.4b): build.bat and build.sh with placeholders, the app's library and Mimir's own ---- */
+  const tplLibrary = useBuildTemplates(s => s.library);
+  /** the template a key names (templateKey): Mimir's for the project's assembler, the library's, or the project's
+   *  own copy of one the library does not have */
+  const templateOf = (key: string): BuildTemplate | null => {
+    if (key.startsWith('builtin:')) return builtInTemplate(key.slice('builtin:'.length) as BuiltInTemplateId, S, !!project.cart);
+    const name = key.slice('user:'.length), mine = project.buildTemplate;
+    return tplLibrary.find(t => t.name === name) ?? (mine && !mine.builtIn && mine.name === name ? mine : null);
+  };
+  /** build.bat and build.sh made from the template from now on (null: generated again); the user's edits of them are
+   *  dropped, so the template's scripts are what the export writes (Ctrl+Z brings them back) */
+  const applyTemplate = (t: BuildTemplate | null) => {
+    const edits = Object.keys(project.scripts ?? {}).length > 0;
+    if (!t && !project.buildTemplate && !edits) return;
+    update(t ? `Build scripts from the template "${t.name}"` : 'Build scripts generated again', d => { d.buildTemplate = t ? { ...t } : null; d.scripts = {}; });
+    const dropped = edits ? ': your edits of them were dropped (Ctrl+Z brings them back)' : '';
+    toast(t ? `build.bat and build.sh are made from the template "${t.name}"${dropped}` : `build.bat and build.sh are generated from the toolchain settings again${dropped}`, 'ok');
+  };
+  /** the template editor open, showing a template's key first or a new template ('new') */
+  const [tplStart, setTplStart] = useState<string | undefined>(undefined);
+  const openTemplates = (start?: string) => { setTplStart(start); setModal('templates'); };
+  /** the name of the project's template while the editor changes it (a rename too): the project's copy follows it when
+   *  the editor closes, as one step */
+  const tplFollow = useRef<string | null>(null);
+  const saveTemplate = (t: BuildTemplate, was?: string) => {
+    const mine = latest.current.project.buildTemplate;
+    if (mine && !mine.builtIn && (mine.name === (was ?? t.name) || mine.name === tplFollow.current)) tplFollow.current = t.name;
+    useBuildTemplates.getState().save(t, was);
+  };
+  const closeTemplates = () => {
+    setModal(null);
+    const name = tplFollow.current; tplFollow.current = null;
+    const mine = latest.current.project.buildTemplate, now = name ? useBuildTemplates.getState().library.find(t => t.name === name) : undefined;
+    if (!mine || mine.builtIn || !now || (now.name === mine.name && now['build.bat'] === mine['build.bat'] && now['build.sh'] === mine['build.sh'])) return;
+    update(`Update the build template "${now.name}"`, d => { d.buildTemplate = { ...now }; });
+    toast(`build.bat and build.sh follow your changes to the template "${now.name}"`, 'ok');
   };
   /** the project's assembler (spec 11.8) and the tool that builds with it: KickAss.jar or 64tass */
   const asmTool = asm === '64tass' ? '64tass' : 'KickAss.jar';
@@ -3028,6 +3071,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ] : []),
     { id: 'export', label: home ? `Export ${ASSEMBLERS[asm].name} project to ${home.name}\\source` : `Export ${ASSEMBLERS[asm].name} project to a folder…`, key: 'Ctrl+E', run: () => void exportProject() },
     ...(home ? [{ id: 'export-to', label: `Export ${ASSEMBLERS[asm].name} project to another folder…`, run: () => void exportProject(true) }] : []),
+    { id: 'build-templates', label: `Build templates: make and choose build.bat / build.sh templates for every project${project.buildTemplate ? ` (this one uses "${project.buildTemplate.name}")` : ''}`, run: () => openTemplates() },
+    { id: 'build-template-new', label: 'New build template from the original build.bat and build.sh', run: () => openTemplates('new') },
+    ...(!project.cart && project.buildTemplate?.builtIn !== 'exomizer' ? [{ id: 'build-template-exomizer', label: 'Build scripts: pack the program with Exomizer and start the packed file (the template Pack with Exomizer)', run: () => applyTemplate(builtInTemplate('exomizer', S, false)) }] : []),
+    ...(project.buildTemplate ? [{ id: 'build-template-off', label: `Build scripts: generated from the settings again (not from the template "${project.buildTemplate.name}")`, run: () => applyTemplate(null) }] : []),
     { id: 'save', label: home ? `Save project (${home.name}.mimir.json; Mimir also saves as you work)` : 'Save: create a project from this work (a folder of its own)…', key: 'Ctrl+S', run: () => void saveProject() },
     { id: 'save-copy', label: 'Save a copy of the project file (.mimir.json)…', run: () => void saveProjectCopy() },
     { id: 'openproj', label: 'Open project (.mimir.json)…', run: () => void openProject() },
@@ -3708,7 +3755,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'drive' && <DriveView A={A} S={S} name={project.files.length === 1 ? project.files[0].name : project.name} theme={theme} onCopy={t => void copyText(t)} onSave={D => void saveDrive(D)}
                 onShow={a => navigate(a, { center: true, listing: true })} findReq={srcFind} />}
               {tab === 'source' && <SourceView R={R} A={A} S={S} path={srcPath && (R.files[srcPath] != null || extraFiles[srcPath] != null) ? srcPath : R.main ?? `${R.fileNames[0]}.asm`} setPath={setSrcPath} cursor={cursor} onNavigate={(a, o) => navigate(a, o)} theme={theme} extraFiles={extraFiles} problems={kickProblems} onCopy={t => void copyText(t)} onExport={() => void exportProject()}
-                scripts={project.scripts ?? {}} onEditScript={setScript} changed={changed} findReq={srcFind} scriptMarks={scriptMarks} onScriptMark={openUserScript} onLinkMenu={(a, x, y) => { const m = linkMenu(a); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }}
+                scripts={project.scripts ?? {}} onEditScript={setScript} template={project.buildTemplate ?? null} templates={tplLibrary} cart={!!project.cart}
+                onUseTemplate={key => { const t = key ? templateOf(key) : null; if (key && !t) return; applyTemplate(t); }} onTemplates={() => openTemplates()} changed={changed} findReq={srcFind} scriptMarks={scriptMarks} onScriptMark={openUserScript} onLinkMenu={(a, x, y) => { const m = linkMenu(a); setMenu({ x, y, items: 'children' in m ? [{ header: m.label }, ...m.children] : [m] }); }}
                 onPadMenu={(s, e, x, y) => {
                   // the bytes as they are, and after them the block the line is in, written as its type is
                   const b = findBlock(A.blocks, s), bm = b ? blockCopyMenu(b.start) : null, m = padCopyMenu(s, e);
@@ -3807,6 +3855,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {modal === 'size' && sizeAt != null && <BlockSizeModal A={A} R={R} at={sizeAt} onResize={resizeInto} onClose={() => { setModal(null); setSizeAt(null); }} />}
       {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}
       {modal === 'voff' && voffDraft && <ViewOffsetModal A={A} R={R} offsets={viewOffsets} draft={voffDraft} onApply={applyViewOffset} onRemove={removeOffset} onClose={closeVoff} />}
+      {modal === 'templates' && <BuildTemplatesModal library={tplLibrary} projectName={project.name} assembler={asm} cart={!!project.cart} inUse={project.buildTemplate ?? null}
+        original={originalTemplate(S, !!project.cart)} start={tplStart}
+        fill={t => renderTemplate(templateText(t, S, !!project.cart), S, { names: R.fileNames, cart: cartBuild({ ...project, settings: S }), entry: sfxEntry(project) })}
+        onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
+        onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
       {unsavedAsk && <UnsavedWorkModal name={(unsavedAsk.kept ?? project).name} what={unsavedAsk.what} left={unsavedAsk.kept && home ? home.name : null}
         onSave={() => { setSaveFirst(unsavedAsk); setUnsavedAsk(null); }} onDiscard={() => { setUnsavedAsk(null); unsavedAsk.go(); }} onClose={() => setUnsavedAsk(null)} />}

@@ -170,6 +170,19 @@ export type BookmarkPreset = typeof BOOKMARK_COLORS[number];
 export const isBookmarkColor = (c: string): boolean => (BOOKMARK_COLORS as readonly string[]).includes(c) || /^#[0-9a-f]{6}$/i.test(c);
 /** the build scripts of an exported project, which the user can edit */
 export type BuildScript = 'build.bat' | 'build.sh';
+/** Mimir's own build templates (spec 11.4b) */
+export type BuiltInTemplateId = 'exomizer';
+/** A build template (spec 11.4b): build.bat and build.sh with placeholders ({source}, {name}, {out} …) that Mimir fills
+ *  in for each project. The app keeps the user's in its library; a project keeps a copy of the one it uses. */
+export interface BuildTemplate {
+  name: string;
+  'build.bat': string;
+  'build.sh': string;
+  /** the assembler of the project it was made in: its commands are that assembler's (missing: not known) */
+  assembler?: AssemblerId;
+  /** one of Mimir's own: its text follows the project's assembler and is not edited */
+  builtIn?: BuiltInTemplateId;
+}
 
 /** who packs (spec 13.8): Brokkr, the built-in cruncher (@mimir/brokkr), or the Exomizer set in Settings */
 export type Packer = 'brokkr' | 'exomizer';
@@ -405,8 +418,11 @@ export interface Project {
   /** zero-page bytes the user joined into a 16-bit variable, by the low byte's address: true, `$a` low and `$a+1` high
    *  (written `name` and `name+1`); false, two variables even where the analysis made a pointer. Missing: none */
   zpPairs?: Record<Addr, boolean>;
-  /** build.bat / build.sh as the user edited them: the export writes these instead of the generated scripts */
+  /** build.bat / build.sh as the user edited them: the export writes these instead of the generated scripts (or the
+   *  template's) */
   scripts: Partial<Record<BuildScript, string>>;
+  /** the build template the scripts are made from (spec 11.4b), a copy of it (missing or null: the generated scripts) */
+  buildTemplate?: BuildTemplate | null;
   /** how the Pack view packs the project with Exomizer (missing or null: not set up yet) */
   pack?: PackPrefs | null;
   /** code the user wrote over the loaded bytes, in the order written; `files` holds those that are on */
@@ -510,6 +526,8 @@ export interface SerializedProject {
   /** missing in project files from before zero-page pairs, and in those without one */
   zpPairs?: Record<string, boolean>;
   scripts?: Partial<Record<BuildScript, string>>;
+  /** missing in project files from before build templates, and in those without one */
+  buildTemplate?: BuildTemplate;
   /** missing in project files from before packing with Exomizer */
   pack?: PackPrefs | null;
   /** `bytes` and `old` as base64; missing in project files from before patches */

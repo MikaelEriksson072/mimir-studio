@@ -83,7 +83,11 @@ export { makeShowcase, showcaseProject, type ShowcaseProgram } from './showcase'
 export { addReloc, codeWhereLoaded, loadAddress, loadRange, moveKeys, moveReloc, relocAt, relocLoadedAt, relocProblem, removeReloc, type RelocKeys } from './relocs';
 export { FORMATTABLE, formatOverride, keepCutTypes, lineMove, markIdOf, markOverride, mergeOverride, mergeRange, moveBlockKeys, moveBytes, moveFrom, resizeBlock, splitBlock, type BlockMerge, type BlockResize, type BlockSplit, type ByteMove, type MarkMerge, type RangeMerge } from './edit';
 export { createProject, demoProject, serializeProject, deserializeProject, projectNameFor, withId, newId, b64enc, b64dec } from './project';
-export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles, expectedCartridge, readme, projectScripts, projectTextFiles, exportFiles, type CartBuild } from './export';
+export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles, expectedCartridge, readme, projectScripts, projectTextFiles, templateScripts, exportFiles, type CartBuild } from './export';
+export {
+  BUILT_IN_TEMPLATES, builtInTemplate, fillTemplate, newTemplateName, originalTemplate, placeholdersIn, readTemplate, readTemplateLibrary, renderTemplate,
+  scriptEol, sfxEntry, TEMPLATE_PLACEHOLDERS, templateText, templateValues, type BuildTarget, type TemplateValues,
+} from './build-template';
 export { SCRIPT_TEMPLATES, templateSource, type ScriptTemplate } from './script-templates';
 export { asmOfLang, assembleIn, codeLabels, codeLines, codeOfLine, commentAt, definedNames, LANG_TITLE, langIs, langOf, LANGS, lineComment, needsTassCpu, setsItsPlace, splitLabel, startsInBlockComment, usedWords, withoutComment } from './code-lang';
 export { kickToTass, type Converted } from './code-convert';

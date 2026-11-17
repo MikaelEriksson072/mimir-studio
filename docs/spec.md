@@ -2623,7 +2623,8 @@ redigeras, men inte de andra filerna, som kommer ur listningen. Ändringen spara
 stund efter sista tangenttrycket och när man byter fil) och ångras med `Ctrl+Z`. Exporten skriver då den versionen
 (`projectScripts`), och det andra skriptet förblir genererat. Är texten åter lika med den genererade tas ändringen
 bort. *Restore generated* gör det direkt, och skriptet följer sedan inställningarna igen. Appens egen Build & Run
-använder alltid verktygsinställningarna, inte skripten.
+använder alltid verktygsinställningarna, inte skripten. Skripten kan också göras från en byggmall (11.4b); en ändring i
+källvyn går då före mallens text, och knappen heter *Restore template*.
 
 **NOTES.html** (`notesDocument` i core) är ett självständigt dokument utan externa resurser, med ljust och mörkt tema och utskriftsläge. Det skrivs bara när projektet har bokmärken eller egna kommentarer. Huvudet visar projektnamn, filer, källfiler och exporttid, och README nämner filen. Därefter kommer två delar:
 
@@ -2654,6 +2655,61 @@ får alltid en egen `.pc`. Den byggda PRG:n saknar blockets byte; ligger blocket
 Assembler gör), först eller sist börjar respektive slutar filen vid närmaste byggda byte. Verifieringen (inbyggd och
 KickAss.jar, `comparePrg(…, skip)`) jämför bara de byggda byten och rapporterar hur många som lämnades utanför; det inbyggda
 assemblerets preprocessor klarar `#define`, `#undef`, `#if`/`#elif`/`#else`/`#endif` med `!`, `&&`, `||` och parenteser.
+
+### 11.4b Byggmallar
+
+En **byggmall** (`BuildTemplate`, `packages/core/src/build-template.ts`) är `build.bat` och `build.sh` med
+platshållare som Mimir fyller i för varje projekt, så att samma mall fungerar i alla projekt. De genererade skripten är
+själva originalmallen ifylld (`originalTemplate`, `renderTemplate`): `buildScripts` gör så, och testerna kontrollerar
+att resultatet är detsamma som förut för Kick Assembler och 64tass, med och utan cartridge (bara det dubbla mellanslag
+ett tomt argument lämnade är borta).
+
+**Platshållarna** (`TEMPLATE_PLACEHOLDERS`) är kända namn inom klamrar:
+
+| Platshållare | Blir |
+|---|---|
+| `{source}` | en rad med den skrivs en gång för varje källa bygget assemblerar, i ordning, med källans namn utan `.asm` |
+| `{name}` | programmet: den första källan, vars PRG VICE startar |
+| `{out}` | utdatamappen (inställningarna) |
+| `{labels}` | VICE:s etikettfil utan `.vs` (cartridgens källa när alla banker är i en, 13.9c) |
+| `{start}` | det VICE startar: `-autostart out\<namn>.prg`, eller `-cartcrt out\<namn>.crt` |
+| `{cart}` | cartridgens image, `<namn>.crt` (källan är `{cart}.asm`); en rad med den tas bort utan cartridge |
+| `{entry}` | var Exomizers sfx startar programmet (`sfxEntry`): `sys` när första BASIC-raden har en SYS, `basic` för ett BASIC-program utan, annars `0x<adress>`: programstarten användaren satt, eller första filens laddadress |
+| `{java}`, `{kickass}`, `{tass}`, `{vice}`, `{exomizer}` | verktygen i inställningarna (`{tass}` och `{exomizer}` utan sökväg: `64tass`, `exomizer`) |
+| `{kickArgs}`, `{tassArgs}`, `{viceArgs}` | argumenten i inställningarna |
+
+Ett tomt värde tar mellanslaget före sig med sig (`-a -C --cbm-prg {tassArgs} -o` blir `-a -C --cbm-prg -o`). En rad
+med en platshållare som projektet inte har något värde för (`{cart}` utan cartridge) skrivs inte. Efter ett `$` är det
+skalets (`${name}` står kvar), och andra ord inom klamrar är inga platshållare. `build.bat` får CRLF, `build.sh` LF; i
+`build.sh` blir `{entry}` aldrig `$c000`, som skalet skulle läsa som en variabel (Exomizer läser `0x`).
+
+**Mimirs egen mall** *Pack with Exomizer* (`BUILT_IN_TEMPLATES`, `builtInTemplate`) assemblerar källorna, packar
+`out\<namn>.prg` med Exomizer till en självuppackande `<namn>-exo.prg` (`"%EXOMIZER%" sfx {entry} -o
+{out}\{name}-exo.prg {out}\{name}.prg`) och startar den i VICE. Den görs av samma rader som originalet och följer
+projektets assembler; den redigeras inte, men *Duplicate* gör en egen kopia. Den är för ett program: med en cartridge går
+den inte att välja. Testat på riktigt (`build-template.test.ts`): den exporterade `build.bat` körd med KickAss.jar och
+Exomizer ger en packad fil som VICE (headless, debug-cartridge) packar upp och kör till rätt kontrollsumma, för ett
+program med SYS (`sfx sys`) och ett på `$1000` utan BASIC (`sfx 0x1000`).
+
+**Användarens mallar** hålls av appen (`localStorage` `kr.buildTemplates`, `store/buildTemplates.ts`), som skriptens
+bibliotek, för alla projekt. Ett projekt som använder en mall har en kopia av den (`Project.buildTemplate`, i
+`.mimir.json`), så exporten, CLI:n och en annan dator gör samma skript (`templateScripts`, `projectScripts`); README
+nämner mallen. En inbyggd mall i projektet görs om för projektets assembler; en användares står som den sparades
+(`assembler` säger vilken assembler den gjordes för, och redigeraren påpekar när projektet har en annan).
+
+**I källvyn** har `build.bat` och `build.sh` en väljare *Build template*: *Generated (the settings)*, Mimirs mallar och
+användarens (och projektets kopia av en mall som biblioteket inte har). Att välja en mall gör båda skripten av den och
+tar bort användarens ändringar av dem (ett steg, `Ctrl+Z` tar tillbaka dem). *Templates…* öppnar **mallredigeraren**
+(dialogen *Build templates*): mallarna till vänster (*Mimir’s*, *Yours*, *in use* på projektets), den valda till höger
+med namn, `build.bat`/`build.sh`, *Template* eller *Filled in for <projekt>* (skriptet projektet får, skrivskyddat) och
+en Monaco-editor där platshållarna är markerade och har en hovring. *Placeholders* listar dem, och ett klick skriver
+en där markören står. **New template** klistrar in originalets `build.bat` och `build.sh` för projektets assembler (med
+cartridgens rad när projektet har en), under ett nytt namn (*My build*, *My build 2* …). Texten sparas medan man skriver;
+namnbyte med Enter (namnet måste vara unikt). *Duplicate*, *Delete…* (projektet behåller sin kopia) och *Use in this
+project*. Ändras mallen projektet använder följer projektets kopia med när redigeraren stängs (ett steg); är
+projektets kopia äldre än bibliotekets (ändrad för ett annat projekt) heter knappen *Update this project’s copy*.
+Kommandopaletten har *Build templates*, *New build template from the original build.bat and build.sh*, *Build scripts:
+pack the program with Exomizer …* och *Build scripts: generated from the settings again*.
 
 ### 11.6 Block som binärfil
 
