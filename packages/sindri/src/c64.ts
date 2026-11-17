@@ -32,6 +32,26 @@ export const POWER_ON: Uint8Array = (() => {
   return ram;
 })();
 
+/**
+ * What the program outside its interrupt handlers reads, which tells a pause from a wait for the user (C64.mainReads):
+ * the clock (the KERNAL's jiffy clock at $a0-$a2, the CIAs' time-of-day clocks), the user's input (the keyboard and
+ * joystick ports, the paddles, the keyboard buffer and its count, the key held down, the shift keys), BASIC's NEXT
+ * going round a FOR loop (Session marks it).
+ */
+export const READ_CLOCK = 1, READ_INPUT = 2, READ_NEXT = 4;
+const READ_KIND: Uint8Array = (() => {
+  const k = new Uint8Array(0x10000);
+  k.fill(READ_CLOCK, 0xa0, 0xa3);
+  for (const a of [0xc5, 0xc6, 0xcb, 0x028d, 0x028e]) k[a] = READ_INPUT;
+  k.fill(READ_INPUT, 0x0277, 0x0281);
+  for (let a = 0xdc00; a < 0xde00; a += 0x10) {
+    if (a < 0xdd00) k[a] = k[a + 1] = READ_INPUT;
+    k.fill(READ_CLOCK, a + 8, a + 12);
+  }
+  for (let a = 0xd400; a < 0xd800; a += 0x20) k[a + 0x19] = k[a + 0x1a] = READ_INPUT;
+  return k;
+})();
+
 /** read-modify-write instructions (their last two cycles write) and those whose last cycle writes (stores, pushes) */
 const RMW = new Set([
   0x06, 0x0e, 0x16, 0x1e, 0x46, 0x4e, 0x56, 0x5e, 0x26, 0x2e, 0x36, 0x3e, 0x66, 0x6e, 0x76, 0x7e, 0xe6, 0xee, 0xf6, 0xfe,
@@ -618,6 +638,10 @@ export class C64 implements Bus {
   private lastFresh = -2;
   /** writes to I/O registers since the counter was reset (VIC, SID, CIA), for telling programs from depackers */
   ioWrites = 0;
+  /** an interrupt handler runs (Session keeps it), and what the code outside them read since Session last cleared it
+   *  (READ_CLOCK, READ_INPUT, READ_NEXT) */
+  inIrq = false;
+  mainReads = 0;
 
   private fade = 0;
   private fadeUntil = 0;
@@ -713,6 +737,10 @@ export class C64 implements Bus {
 
   // --- the bus ----------------------------------------------------------------------------------------------------
   read(a: number, cycle?: number): number {
+    if (!this.inIrq) {
+      const k = READ_KIND[a];
+      if (k && (a < 0xd000 || this.map[a >> 8] === IO)) this.mainReads |= k;
+    }
     switch (this.map[a >> 8]) {
       case RAM:
         // (the system reading its own variables below $0400, as the KERNAL's interrupt does, is not the program's)

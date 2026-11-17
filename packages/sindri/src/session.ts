@@ -15,7 +15,7 @@
  * loaders' alike. With a tape, the datasette plays it from where the file ended: the program's own tape loader reads
  * it, and the KERNAL's LOAD from the tape reads on from there (a T64's files only LOAD reads). Then the newest layer is
  * the unpacked program. An intro that waits before anything was unpacked gets keys pressed (space and fire first). */
-import { BASIC, BOOT, C64, KERNAL, LOADED, POWER_ON, ZP, type MachineState, type Roms } from './c64.ts';
+import { BASIC, BOOT, C64, KERNAL, LOADED, POWER_ON, READ_CLOCK, READ_INPUT, READ_NEXT, ZP, type MachineState, type Roms } from './c64.ts';
 import { OP_IRQ, OP_NMI } from './cpu.ts';
 import { LEN } from './opcodes.ts';
 import { initStandIn, KERNAL_VECTORS, standInRoms } from './standin.ts';
@@ -231,6 +231,8 @@ class Layer {
 const BASIC_ENTRIES = [0xa7ae, 0xa871, 0xa659, 0xa660, 0xa68e, 0xa533, 0xa474, 0xa480, 0xa483, 0xe37b, 0xe386];
 /** those that go on with the program in memory (NEWSTT, RUN, CLR, LINKPRG) rather than to the READY prompt */
 const RUN_ENTRIES = new Set([0xa7ae, 0xa871, 0xa659, 0xa660, 0xa68e, 0xa533]);
+/** BASIC's NEXT: a program that goes round a FOR loop with nothing else to do waits for time (TIME_PATIENCE) */
+const NEXT = 0xad1e;
 const TRANSFER = new Uint8Array(0x102);
 for (const op of [0x4c, 0x6c, 0x20, 0x60, 0x40, 0x00, OP_IRQ, OP_NMI]) TRANSFER[op] = 1;
 const VIA: Record<number, Via> = { 0x4c: 'jmp', 0x6c: 'jmp', 0x20: 'jsr', 0x60: 'rts', 0x40: 'rti', 0x00: 'brk', [OP_IRQ]: 'irq', [OP_NMI]: 'nmi' };
@@ -300,6 +302,12 @@ const MAX_LAYERS = 500;
 /** a program that stopped the tape with more on it is not settled for this long (5 s) after: a tape loader can pause
  *  between its loads and the program (Cyberload fades the sound out for 2.5 s before it jumps into Tusker) */
 const TAPE_PAUSE_PATIENCE = 5_000_000;
+/** a program that waits for time is not settled for this long (30 s) after it last made progress: its code outside
+ *  the interrupt handlers reads the clock or BASIC goes round a FOR loop, and none of it reads the keyboard or a
+ *  joystick. Boulder Dash shows its picture until the jiffy clock's middle byte is 3 (12.8 s), Kennedy Approach counts
+ *  FOR I=0 TO 7000 in BASIC (7 s); then they load on. (A main loop that waits for a byte its interrupt handler counts
+ *  is not taken for one: demos that wait for the next frame so made the C64 time 2.5 times as long) */
+const TIME_PATIENCE = 30_000_000;
 
 /** Unpack a PRG (load address first). */
 export function unpack(file: Uint8Array, options: UnpackOptions = {}): UnpackResult {
@@ -362,7 +370,13 @@ class Session {
   private freshSum = 0;
   private holdUntil = 0;
   /** the fresh writes of the last windows, with the cycle each began */
-  private windowFresh: { at: number; fresh: number }[] = [];
+  private windowFresh: { at: number; fresh: number; reads: number }[] = [];
+  /** the open calls that are interrupts, and how many there are */
+  private readonly callIrq = new Uint8Array(CALLS);
+  private irqOpen = 0;
+  /** the program waits for time (TIME_PATIENCE): the progress it waits from, and whether it waited its time out */
+  private timeWait = 0;
+  private timeSpent = false;
   /** the keys still to press (indexes into PRESSES) before the program gives up, the keys pressed in all, and the
    *  presses the program took as answers */
   private pressQueue = PRESSES.map((_, i) => i);
@@ -416,6 +430,7 @@ class Session {
     this.maxCycles = o.maxCycles ?? 400_000_000;
     this.settleCycles = o.settleCycles ?? 1_500_000;
     for (const a of BASIC_ENTRIES) this.special[a] |= 2;
+    this.special[NEXT] |= 4;
     this.setupTraps();
   }
 
@@ -811,20 +826,22 @@ class Session {
         if (op === 0x20) this.call((pc + 3) & 0xffff);
         else if (op === 0x00) this.call((pc + 2) & 0xffff);
       }
-      if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(m.takeIrq()); this.call(this.irqRet); }
-      if (m.nmiDue()) { this.interrupted(pc); m.advance(m.takeNmi()); this.call(this.irqRet); }
+      if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(m.takeIrq()); this.call(this.irqRet, true); }
+      if (m.nmiDue()) { this.interrupted(pc); m.advance(m.takeNmi()); this.call(this.irqRet, true); }
       if (m.icount >= next) { next = m.icount + CHECK; this.check(); }
     }
   }
 
   /** A subroutine call or an interrupt that returns to `ret`: remember it, with the number of layers so far. */
-  private call(ret: number): void {
+  private call(ret: number, irq = false): void {
     if (!this.started) return;
     const k = this.calls;
     if (k >= CALLS) return;
     this.callSp[k] = this.m.cpu.s;
     this.callRet[k] = ret;
     this.callLayers[k] = this.layers.length;
+    this.callIrq[k] = irq ? 1 : 0;
+    if (irq) { this.irqOpen++; this.m.inIrq = true; }
     this.calls = k + 1;
     this.frameSp = this.m.cpu.s;
   }
@@ -837,6 +854,7 @@ class Session {
     const cpu = this.m.cpu;
     while (this.calls && cpu.s > this.callSp[this.calls - 1]) {
       const k = --this.calls;
+      if (this.callIrq[k] && --this.irqOpen === 0) this.m.inIrq = false;
       const returned = (cpu.lastOp === 0x60 || cpu.lastOp === 0x40) && cpu.pc === this.callRet[k];
       // an RTS at the call's own stack level, a little behind the call: the subroutine skipped data after the JSR
       if (cpu.lastOp === 0x60 && cpu.s === this.callSp[k] + 2) { this.skipFrom = this.callRet[k]; this.skipAt = this.m.icount; }
@@ -874,6 +892,7 @@ class Session {
     const m = this.m, page = m.map[pc >> 8], flags = this.special[pc];
     if (flags & 2 && this.started && this.lastRam && TRANSFER[m.cpu.lastOp] && (page === BASIC || page === KERNAL) && this.startsBasic(pc)) this.enter(pc, true);
     if (pc === 0xa7ae && page === BASIC) this.basicGoesOn(m.ram[0x7a] | (m.ram[0x7b] << 8));
+    else if (pc === NEXT && page === BASIC) m.mainReads |= READ_NEXT;
     if (flags & 1) {
       const t = this.traps.get(pc);
       if (t && t.rom === page) return t.run();
@@ -998,15 +1017,16 @@ class Session {
     if (this.phase !== 'run') return;
     if (now >= this.windowEnd) {
       // a window is a third of the settle time; fresh writes in it, or a new layer, are progress
-      if (m.fresh >= 128 || this.cur !== this.progressLayer) { this.progressLayer = this.cur; this.progressAt = now; this.driveBusy = 0; }
+      if (m.fresh >= 128 || this.cur !== this.progressLayer) { this.progressLayer = this.cur; this.progressAt = now; this.driveBusy = 0; this.timeSpent = false; }
       // the program talks with the drive (sends it code with M-W, a byte at a time, with its motor off): not settled
       const bus = this.drive?.busChanges ?? 0;
       if (bus - this.windowBus >= LOADS) this.progressAt = now;
       this.windowBus = bus;
       this.freshSum += m.fresh;
-      this.windowFresh.push({ at: this.windowEnd - this.settleCycles / 3, fresh: m.fresh });
+      this.windowFresh.push({ at: this.windowEnd - this.settleCycles / 3, fresh: m.fresh, reads: m.mainReads });
       if (this.windowFresh.length > 4) this.windowFresh.shift();
       m.fresh = 0;
+      m.mainReads = 0;
       this.shots = [this.shots.at(-1) ?? [], this.screenRows()];
       m.freshMark = this.windowIcount;
       this.windowIcount = m.icount;
@@ -1024,7 +1044,31 @@ class Session {
         if (now - this.tapeEnded < TAPE_END_PATIENCE) this.progressAt = now;
       }
     } else if (t && !t.atEnd && this.tapeRan && now - this.tapeRan < TAPE_PAUSE_PATIENCE) this.progressAt = now;
-    if (!this.holdUntil && now - this.progressAt >= this.settleCycles) this.settled();
+    if (!this.holdUntil && now - this.progressAt >= this.settleCycles && !this.waitsForTime(now)) this.settled();
+  }
+
+  /**
+   * The program waits for time, not for the user: in the windows since it last made progress its code outside the
+   * interrupt handlers read no input, and in the last one it read the clock, or BASIC went round a FOR loop. It has
+   * TIME_PATIENCE from its last progress, once until it makes progress again.
+   */
+  private waitsForTime(now: number): boolean {
+    const third = this.settleCycles / 3;
+    let reads = 0;
+    for (const w of this.windowFresh) if (w.at + third > this.progressAt) reads |= w.reads;
+    const last = this.windowFresh.at(-1)?.reads ?? 0;
+    const waits = !this.timeSpent && !(reads & READ_INPUT) && (last & (READ_CLOCK | READ_NEXT)) !== 0;
+    if (!waits) return false;
+    const pc = this.m.cpu.pc;
+    if (this.timeWait !== this.progressAt) {
+      this.timeWait = this.progressAt;
+      const what = last & READ_NEXT ? 'BASIC goes round a FOR loop' : 'reads the clock';
+      this.trace(`waiting at ${hex4(pc)}: ${what} and no keys, so it waits for time (up to ${TIME_PATIENCE / 1e6} s)`);
+    }
+    if (now - this.progressAt < TIME_PATIENCE) return true;
+    this.timeSpent = true;
+    this.trace(`waited ${((now - this.progressAt) / 985248).toFixed(1)} s at ${hex4(pc)} for time`);
+    return false;
   }
 
   /**
@@ -1340,7 +1384,7 @@ class Session {
     this.trap(0xffba, KERNAL, () => { m.write(0xb8, cpu.a); m.write(0xba, cpu.x); m.write(0xb9, cpu.y); return this.rts(); });
     this.trap(0xffbd, KERNAL, () => { m.write(0xb7, cpu.a); m.write(0xbb, cpu.x); m.write(0xbc, cpu.y); return this.rts(); });
     this.trap(0xffdb, KERNAL, () => { m.write(0xa2, cpu.a); m.write(0xa1, cpu.x); m.write(0xa0, cpu.y); return this.rts(); });
-    this.trap(0xffde, KERNAL, () => { cpu.a = m.ram[0xa2]; cpu.x = m.ram[0xa1]; cpu.y = m.ram[0xa0]; return this.rts(); });
+    this.trap(0xffde, KERNAL, () => { cpu.a = m.ram[0xa2]; cpu.x = m.ram[0xa1]; cpu.y = m.ram[0xa0]; this.mainRead(READ_CLOCK); return this.rts(); });
     this.trap(0xffea, KERNAL, () => { this.jiffy(); return this.rts(); });
     this.trap(0xffed, KERNAL, () => { cpu.x = 40; cpu.y = 25; return this.rts(); });
     this.trap(0xfff0, KERNAL, () => { if (cpu.c) { cpu.x = m.ram[0xd6]; cpu.y = m.ram[0xd3]; } else { m.write(0xd6, cpu.x); m.write(0xd3, cpu.y); } return this.rts(); });
@@ -1348,6 +1392,7 @@ class Session {
     this.trap(0xe716, KERNAL, () => { this.print(cpu.a); return this.rts(); });
     // the routines behind the RAM vectors
     this.trap(0xf13e, KERNAL, () => {
+      this.mainRead(READ_INPUT);
       let key = 0;
       if (m.ram[0xc6]) { key = m.ram[0x0277]; m.ram.copyWithin(0x0277, 0x0278, 0x0281); m.ram[0xc6]--; }
       else if (m.input.petscii) { key = m.input.petscii; m.input.petscii = 0; }
@@ -1358,6 +1403,11 @@ class Session {
     this.trap(0xf6ed, KERNAL, () => { cpu.z = 0; return this.rts(); });
     this.trap(0xf34a, KERNAL, () => { cpu.a = 5; cpu.c = 1; return this.rts(); });
     for (const a of [0xf291, 0xf333, 0xf32f, 0xf20e, 0xf250]) this.trap(a, KERNAL, () => { cpu.c = 0; return this.rts(); });
+  }
+
+  /** what a stand-in routine read, as the ROM's would have read it (C64.mainReads) */
+  private mainRead(kind: number): void {
+    if (!this.m.inIrq) this.m.mainReads |= kind;
   }
 
   private jiffy(): void {

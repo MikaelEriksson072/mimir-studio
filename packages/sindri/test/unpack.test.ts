@@ -355,6 +355,54 @@ dig:   jsr $ffe4
       expect(keys.at(-1)).toBe('1');
     });
 
+    it('waits for the time an intro waits for on the jiffy clock, pressing no keys (Boulder Dash\'s picture)', () => {
+      // until the clock's middle byte goes from 0 to 1: up to 4.3 s, longer than a program that writes nothing settles in
+      const r = go(pack(PROGRAM, { before: 'lda #0\n sta $a1\nwait: lda $a1\n cmp #1\n bne wait' }).prg);
+      expectProgram(r);
+      expect(r.layers[0].presses).toEqual([]);
+    });
+
+    it('presses keys for an intro that waits for a frame counter its interrupt handler counts, as for a key', () => {
+      // 240 interrupts, 4 s: such a wait is not taken for a wait for time (demos that wait for the next frame so made
+      // the C64 time 2.5 times as long), so the keys go in while it waits
+      const r = go(pack(PROGRAM, { before: `
+       sei
+       lda #<irq
+       sta $0314
+       lda #>irq
+       sta $0315
+       cli
+wait:  lda count
+       cmp #240
+       bne wait
+       sei
+       lda #$31
+       sta $0314
+       lda #$ea
+       sta $0315
+       jmp go
+irq:   inc count
+       jmp $ea31
+count: .byte 0
+go:` }).prg);
+      expectProgram(r);
+      expect(r.layers[0].presses[0]).toMatch(/^space \+ fire/);
+    });
+
+    it('presses keys for an intro that watches the clock and reads the keyboard', () => {
+      const r = go(pack(PROGRAM, { before: 'lda #0\n sta $dc00\nwait: lda $a2\n lda $dc01\n cmp #$ef\n bne wait' }).prg);
+      expectProgram(r);
+      expect(r.layers[0].presses[0]).toMatch(/^space \+ fire/);
+    });
+
+    it('gives a program that waits for time 30 s, then takes it for settled', () => {
+      const p = asm(`${SYS_LINE}\nwait: lda $a1\n cmp #$ff\n bne wait`);
+      const r = unpack(p.prg, { roms: mode === 'ROMs' ? roms : null, keys: false });
+      expect(r.stop.reason).toBe('settled');
+      expect(r.stop.cycle).toBeGreaterThan(30_000_000);
+      expect(r.stop.cycle).toBeLessThan(31_000_000);
+    });
+
     it('goes on to the next key when a menu only complains about the one pressed', () => {
       // any key but Y puts the same line up again
       const menu = `
@@ -626,6 +674,32 @@ ${basic([[10, '!:GOTO10']], 0x1001)}`).prg);
     expect(r.layers.map(l => [l.entry, l.via, l.basic])).toEqual([[0x0900, 'start', false], [0xa7ae, 'jmp', true], [0xa871, 'rts', true]]);
     expect(r.saved).toMatchObject({ layer: 2, basic: true, entry: 0x1001 });
     expect(r.stop.reason).toBe('settled');
+  });
+
+  /** at $0900: an RTS back to BASIC; at $0901 (SYS2305): the part at $c000 written and started */
+  const PART = `
+* = $0900
+       rts
+       ldx #part_end-part-1
+copy:  lda part,x
+       sta $c000,x
+       dex
+       bpl copy
+       jmp $c000
+part:  inc $d020
+       jmp $c000
+part_end:`;
+
+  it('waits while BASIC counts a FOR loop before it starts the next part (Kennedy Approach)', () => {
+    const r = go(asm(`${basic([[10, 'SYS2304'], [20, 'FORI=1TO3000:NEXT'], [30, 'SYS2305']])}\n${PART}`).prg);
+    expect(r.layers.map(l => l.entry)).toEqual([0x0900, 0xc000]);
+  });
+
+  it('takes BASIC that counts a FOR loop while it waits for a key for settled', () => {
+    const r = go(asm(`${basic([[10, 'SYS2304'], [20, 'FORI=1TO50:NEXT:GETA$:IFA$=""THEN20'], [30, 'SYS2305']])}\n${PART}`).prg);
+    expect(r.layers.map(l => l.entry)).toEqual([0x0900]);
+    expect(r.stop.reason).toBe('settled');
+    expect(r.stop.cycle).toBeLessThan(3_000_000);
   });
 
   it('goes on at the READY prompt while the program\'s own interrupt handler runs, until it takes over', () => {

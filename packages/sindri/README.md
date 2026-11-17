@@ -150,7 +150,25 @@ demos and games) every layer, name and saved program stayed.
 The run stops when the newest layer settles (it stops streaming new data through memory), loads a file (without a
 disk), returns to BASIC, crashes or runs out of time. A program back at the READY prompt with its IRQ vector at `$0314`
 still leading into code of its own (and the interrupt on) has not ended: it goes on there. Uncensored (#1 of 2014)
-sets its own handler and returns to READY; a second later the handler takes over and loads the demo. The newest layer is then the unpacked program. When an intro waits before anything
+sets its own handler and returns to READY; a second later the handler takes over and loads the demo. The newest layer is then the unpacked program.
+
+A program that waits for time is not settled for half a minute after it last made progress: its code outside the
+interrupt handlers reads the clock (the KERNAL's jiffy clock at `$a0-$a2`, a CIA's time of day), or BASIC goes round a
+FOR loop (its NEXT at `$ad1e`), and none of that code reads the keyboard, a joystick, the paddles or the keyboard
+buffer. Boulder Dash's tape shows its picture until the jiffy clock's middle byte is 3 (`lda $a1 / cmp #$03 / bne`,
+12.8 s), and Kennedy Approach counts `FOR I=0 TO 7000` (7 s) before they load on; both used to settle there. A menu
+that counts a short FOR loop between its GETs reads the keyboard and settles as before. A wait that has had its half
+minute without progress settles, and the next one gets the time only after the program made progress again (a key
+pressed and let go is not progress here). A program that reads its input in its interrupt handler and looks at what
+the handler left in a FOR loop gets the half minute too: Pirates' menu (`FOR I=0 TO 20:IF PEEK(VB+14) THEN I=999`)
+settles where it did, 30 s later. A main loop that waits for a byte its interrupt handler counts (a frame counter) is
+not taken for a wait for time: on 491 programs of the archive that rule waited 429 times, most of them in demos that
+wait for the next frame between their effects, made the C64 time 2.5 times as long and ran five demos to the time
+limit, though seven programs got further (Dominion and Super Slalom to their games). Measured against the version
+before on 703 programs of the archive (Games Top200's 229 disks, the 161 one-file demos of Onefile-top200, 213 intros,
+100 Year-top20 disks), 6 runs waited for time and one result changed: a BASIC intro (Fuck 'Em All) whose setup counts
+FOR loops now gets to its GET loop, and the saved program has the code at `$c000-$c730` it calls; the C64 time grew by
+1.5 %. On the tapes see below. When an intro waits before anything
 was unpacked, keys are pressed in turn (space and fire first, then return, N, F1, Y, F7, 1) until it reacts to one;
 then the list goes round again, from space when a new program started, else from the key it took. A trainer menu that
 asks its questions one after another ("Unlimited lives (Y/N)") takes N with little: it puts the next question up. That
@@ -306,9 +324,11 @@ takes 2.1 s (median, 10.0 s at most) for 163 s of C64 time on average. Without t
 the motor interlock, only 14 of the first 25 got further than the boot file. Of the 103 tapes of the archive whose boot
 file loads over the STOP vector with an address in RAM (93 of them Novaload's), 5 saved a later layer than the boot
 file before (65 ended in a reset, 12 at READY, 8 on a JAM) and all 103 do now: 100 settle in a program, one stops on a
-JAM after 272 s of tape (Barry McGuigan's Boxing) and two run to the time limit. A program that pauses longer than
-Sindri waits still settles there (Boulder Dash's 12.8 s on the jiffy clock after its picture, Kennedy Approach's
-`FOR I=0 TO 7000` in BASIC). Of 76 other tapes 74 run as before; the two others are among the 18 boot files whose
+JAM after 272 s of tape (Barry McGuigan's Boxing) and two run to the time limit. Since Sindri waits for time (see
+above), Boulder Dash gets past its picture to the game at `$599e` (its title screen in VICE) and Kennedy Approach past
+its FOR loop: it loads its game from the tape (with no drive on the bus, as its BASIC checks) and settles in the game's
+options menu, as VICE shows it without a drive. Of those 103 tapes those two and Pirates (its menu, 30 s later)
+changed, of the 76 below none, and the C64 time grew by 2.3 %. Of 76 other tapes 74 run as before; the two others are among the 18 boot files whose
 header says fewer bytes than their block holds, which now load those (Cricket Crazy, Zodiac, Quake Minus 1 get to their
 games; Epyx's own Summer Games tape, which hangs in VICE as well, stops on a JAM).
 

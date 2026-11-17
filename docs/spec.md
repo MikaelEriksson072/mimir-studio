@@ -1301,6 +1301,27 @@ för att menyn nu får N där den fick Y, så att trainerns ändringar inte stå
 Testerna `test/unpack.test.ts` i Sindri: en meny med tolv J/N-frågor och en sifferfråga, och en meny som bara klagar
 på fel tangent (Sindri går vidare till nästa tangent i stället för att trycka samma igen).
 
+**Program som väntar på tiden.** Ett program som inte skriver något nytt på 1,5 s vilar, men ett som väntar på tiden
+får en halv minut från sitt senaste framsteg: dess kod utanför avbrottsrutinerna läser klockan (KERNAL:ns jiffy-klocka
+`$a0-$a2`, en CIA:s time of day), eller så går BASIC runt i en FOR-slinga (dess NEXT på `$ad1e`), och ingen av den
+koden läser tangentbordet, en joystick, paddlarna eller tangentbuffern (`C64.mainReads`; avbrotten följs med
+`Session.call`, `READ_KIND` i `c64.ts`). Boulder Dash-bandet visar sin bild tills jiffy-klockans mittbyte är 3
+(`lda $a1 / cmp #$03 / bne`, 12,8 s), och Kennedy Approach räknar `FOR I=0 TO 7000` (7 s) innan de laddar vidare;
+båda vilade där förut. En meny som räknar en kort FOR-slinga mellan sina GET läser tangentbordet och vilar som förut.
+En väntan som fått sin halva minut utan framsteg vilar, och nästa får tiden först när programmet gjort framsteg igen
+(ett tangenttryck räknas inte). Ett program som läser inmatningen i sin avbrottsrutin och tittar på vad den lämnat i en
+FOR-slinga får också halva minuten: Pirates meny (`FOR I=0 TO 20:IF PEEK(VB+14) THEN I=999`) vilar där den gjorde,
+30 s senare. En huvudslinga som väntar på en byte som avbrottsrutinen räknar upp (en bildräknare) räknas inte som en
+väntan på tiden: på 491 program ur arkivet väntade den regeln 429 gånger, de flesta i demor som väntar på nästa
+bildruta mellan sina effekter, gjorde C64-tiden 2,5 gånger så lång och körde fem demor till tidsgränsen, fast sju
+program kom längre (Dominion och Super Slalom till sina spel). Mätt 2026-11-17 mot versionen före på 703 program ur
+arkivet (Games Top200:s 229 diskar, Onefile-top200:s 161 demor, 213 intron, 100 Year-top20-diskar): 6 körningar väntade
+på tiden och ett resultat ändrades, ett BASIC-intro (Fuck 'Em All) vars uppstart räknar FOR-slingor och som nu når sin
+GET-slinga, och det sparade programmet har koden vid `$c000-$c730` som det anropar; C64-tiden växte med 1,5 %. Banden:
+se 13.5f. Testerna `test/unpack.test.ts` i Sindri: väntan på jiffy-klockan (inga tangenter), en bildräknare (tangenter
+som förut), klockan och tangentbordet (tangenter), en väntan som aldrig tar slut (vilar efter 30 s), BASIC:s FOR-slinga
+före nästa del och en FOR-slinga mellan GET (vilar som förut).
+
 **`$01` vid programstarten.** Sindri säger vilket `$01` det uppackade programmet startar med (`saved.port`, i
 lagerrapporten `start with SYS 41643 = $a2ab, $01=$36`). *Unpack* sparar det med programstarten när det inte är `$37`
 (`Project.entryPort`; bara när den uppackade filen blir projektets enda), och *Unpacked …* säger *starting at $a2ab
@@ -3705,8 +3726,11 @@ bara dem, inte mellanslagen efter, som skulle föra IRQ- och STOP-vektorerna til
 Sindris ger filen de byten. Mätt 2026-11-16 på de 103 band i arkivet vars bootfil laddas över STOP-vektorn med en adress
 i RAM (93 av dem Novaloads): förut sparade 5 ett senare lager än bootfilen (65 slutade i en reset, 12 vid READY, 8 i en
 JAM), nu alla 103: 100 vilar i ett program, ett stannar i en JAM efter 272 s band (Barry McGuigans Boxing) och två når
-tidsgränsen. Ett program som pausar längre än Sindri väntar vilar fortfarande där (Boulder Dashs 12,8 s på jiffy-klockan
-efter bilden, Kennedy Approachs `FOR I=0 TO 7000` i BASIC). Av 76 andra band går 74 som förut; de två andra hör till de
+tidsgränsen. Sedan Sindri väntar på tiden (*Program som väntar på tiden*, 8.11b) kommer Boulder Dash förbi sin bild
+till spelet på `$599e` (titelbilden i VICE) och Kennedy Approach förbi sin FOR-slinga: den laddar spelet från bandet
+(utan diskettstation på bussen, som dess BASIC kollar) och vilar i spelets alternativmeny, som VICE visar den utan
+diskettstation. Av de 103 banden ändrades de två och Pirates (menyn, 30 s senare), av de 76 nedan inget, och C64-tiden
+växte med 2,3 %. Av 76 andra band går 74 som förut; de två andra hör till de
 18 bootfiler vars huvud säger färre byte än blocket har, som nu laddar bara dem (Cricket Crazy, Zodiac, Quake Minus 1
 når sina spel; Epyx eget Summer Games-band, som hänger sig i VICE också, stannar i en JAM). Ett program som
 väntar medan bandet spelar laddar, inte vilar; efter bandets slut väntar Sindri 5 s till. Ett program som stängt av

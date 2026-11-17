@@ -119,7 +119,7 @@ export const SYS_LINE = `
 `;
 
 /** the keywords the tests' BASIC programs use, with their tokens */
-const KEYWORDS: [string, number][] = [['GOTO', 0x89], ['THEN', 0xa7], ['POKE', 0x97], ['RUN', 0x8a], ['SYS', 0x9e], ['IF', 0x8b], ['+', 0xaa], ['=', 0xb2], ['<', 0xb3]];
+const KEYWORDS: [string, number][] = [['GOTO', 0x89], ['THEN', 0xa7], ['POKE', 0x97], ['RUN', 0x8a], ['SYS', 0x9e], ['IF', 0x8b], ['FOR', 0x81], ['NEXT', 0x82], ['TO', 0xa4], ['GET', 0xa1], ['+', 0xaa], ['=', 0xb2], ['<', 0xb3]];
 
 /** A BASIC program at `start`: its lines tokenized and linked, and the end mark after them. */
 export function basic(lines: [number, string][], start = 0x0801): string {
