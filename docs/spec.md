@@ -3571,7 +3571,13 @@ utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
   och en synkbyte (`$5a`, `$ff`), sedan US Golds 16 byte namn (PETSCII, mellanslag som `$20`), start och slut (lägsta
   byten först, slutet ett förbi), datan och en XOR-kontrollsumma. Formaten lärdes ur Sindris körningar av banden:
   byten laddaren lagrade medan motorn gick, hittade i bandets bitar (8.11c). Utan namn heter en Freeload-fil
-  `file_<start>`. Kontrollsumman skiljer filerna från data som råkar ha ledaren och synken.
+  `file_<start>`. Kontrollsumman skiljer filerna från data som råkar ha ledaren och synken. En fil vars summa inte
+  stämmer läses ändå när en lång ledare (minst 16 byte; äkta filer har 64–128) leder till den, sträckan slutar med
+  summan (högst 64 bitar efter den) och andra filer i samma format på bandet har summor som stämmer: laddarna
+  kontrollerar inte alla summor (Ghostbusters bootfil, Kixx, jämför bara summan för den sista filen i en rad, inte för
+  teckensnittet vid `$7000` före den). Filen får felet `checksum: the data's XOR is …, the tape says …`. Utan någon fil
+  vars summa stämmer (Hero Quest, Epyx band) är det ett annat format med samma ledare och synk, och Rainbow Islands
+  nivåfiler har 35 byte till efter summan: de förblir okänd turbodata.
 - **Mega-Save** (Palace, Hewson, Level 9, Alligata, Llamasoft, CRL …; Tazz, Cauldron, Firelord, Iridis Alpha): laddaren
   i bootfilens bandhuvud (`$0351`, startad av bootfilen vid `$02a7`) startar om CIA2:s timer B vid varje puls, en
   one-shot från `$0107`, `$016e` eller `$01fa` cykler (de tre hastigheterna), och en 1 är att den hann ta slut; högsta
@@ -3737,7 +3743,10 @@ huvuden med en summa som stämde men ett blockantal som inte gjorde det hade 16�
 utan `$55` (upprepade `$aa`); äkta sidor har 9–216. 17 filer har ett fel: 8 där huvudet säger mer än bandet har
 (Labyrinths O-filer en byte mer än två block, Beach Head II, Shanghai) och 9 med en blocksumma som inte stämmer, 7 av
 dem i sista blocket på rena pulser (Turbo Esprits A: laddaren sätter status `$30`, men spelets laddkod ser inte på den
-och VICE laddar vidare). `test/tap.test.ts` läser det
+och VICE laddar vidare). Freeload- och US Gold-filer med en summa som inte stämmer (2026-11-17): i båda samlingarna två,
+Ghostbusters (Kixx) teckensnitt vid `$7000` och Chicago 30:s fil vid `$e000`, båda med de byte deras laddare lagrar när
+Sindri kör banden (Ghostbusters laddare kopierar teckensnittets första 1 KB till `$f000`); inga andra filer eller
+sträckor ändrades (sträckorna med okänd turbodata 14 183 till 14 181). `test/tap.test.ts` läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
 kod för andra steget), och fixturerna `fixtures/tap/mimir-demo.tap` och `fixtures/tap/cyberload-demo.tap` (de fyra

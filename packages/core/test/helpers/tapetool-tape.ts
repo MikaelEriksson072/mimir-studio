@@ -81,15 +81,15 @@ export function turboTapeFile(w: TurboWriter, name: string, load: number, data: 
 
 /** Freeload's format (pilot $40, sync $5a) and US Gold's (pilot $20, sync $ff, a 16-byte name): the pilot, the sync,
  *  [the name,] start, end, the data and their XOR, the top bit first, as their loaders read them. */
-export function pilotFile(w: TurboWriter, o: { pilot: number; sync: number; name?: string; load: number; data: Uint8Array }): void {
-  for (let i = 0; i < 64; i++) w.byte(o.pilot);
+export function pilotFile(w: TurboWriter, o: { pilot: number; sync: number; name?: string; load: number; data: Uint8Array; sum?: number; pilots?: number; trail?: number }): void {
+  for (let i = 0; i < (o.pilots ?? 64); i++) w.byte(o.pilot);
   w.byte(o.sync);
   if (o.name != null) w.bytes(Array.from({ length: 16 }, (_, i) => (i < o.name!.length ? o.name!.toUpperCase().charCodeAt(i) : 0x20)));
   const end = o.load + o.data.length;
   w.bytes([o.load & 0xff, o.load >> 8, end & 0xff, end >> 8]);
   w.bytes(o.data);
-  w.byte(o.data.reduce((a, v) => a ^ v, 0));
-  for (let i = 0; i < 16; i++) w.byte(0);
+  w.byte(o.sum ?? o.data.reduce((a, v) => a ^ v, 0));
+  for (let i = 0; i < (o.trail ?? 16); i++) w.byte(0);
 }
 
 /** A Mega-Save file: $20 bytes before the pilot, a pilot of $63, the sync bytes $64 … $ff, a byte that is not 0, the

@@ -246,6 +246,36 @@ describe('Freeload and US Gold\'s loader', () => {
     expect(again.files).toEqual([]);
     expect(again.unknown).toHaveLength(1);
   });
+
+  it('keep a file whose sum does not match on a tape where the others pass theirs (Ghostbusters\' charset)', () => {
+    // Ghostbusters (Kixx): the loader at $f800, the charset at $7000 with a sum the boot never checks (it checks the
+    // last file of the row), the music at $e000; the charset's stretch ends with its sum
+    const xor = (d: Uint8Array) => d.reduce((a, v) => a ^ v, 0);
+    const charset = bytes(2047, 7), wrong = xor(charset) ^ 0x6d;
+    const tape = (o: { pilots?: number; trail?: number; others?: boolean }) => {
+      const one = new TurboWriter(0x23, 0x2f), two = new TurboWriter(0x23, 0x2f), three = new TurboWriter(0x23, 0x2f);
+      pilotFile(one, { pilot: 0x40, sync: 0x5a, load: 0xf800, data: bytes(1936, 2) });
+      pilotFile(two, { pilot: 0x40, sync: 0x5a, load: 0x7000, data: charset, sum: wrong, pilots: o.pilots, trail: o.trail ?? 0 });
+      pilotFile(three, { pilot: 0x40, sync: 0x5a, load: 0xe000, data: bytes(3952, 3) });
+      const pause = [0, 0x20, 0x4e, 0];
+      return readTape(withTurbo(makeTap({ files: [] }), o.others === false ? two.pulses : [...one.pulses, ...pause, ...two.pulses, ...pause, ...three.pulses]));
+    };
+    const img = tape({});
+    expect(img.files.map(f => [f.name, f.load, f.end, f.errors])).toEqual([
+      ['file_f800', 0xf800, 0xf800 + 1936, []],
+      ['file_7000', 0x7000, 0x77ff, [`checksum: the data's XOR is $${xor(charset).toString(16).padStart(2, '0')}, the tape says $${wrong.toString(16).padStart(2, '0')}`]],
+      ['file_e000', 0xe000, 0xe000 + 3952, []],
+    ]);
+    expect(img.files[1].data).toEqual(charset);
+    expect(img.unknown).toEqual([]);
+    // turbo data no format reads: alone on its tape (no file of the format passes its sum: another format with the same
+    // pilot and sync), after a short pilot, or with the stretch going on after the sum
+    for (const o of [{ others: false }, { pilots: 8 }, { trail: 16 }]) {
+      const t = tape(o);
+      expect(t.files.map(f => f.name)).toEqual(o.others === false ? [] : ['file_f800', 'file_e000']);
+      expect(t.unknown).toHaveLength(1);
+    }
+  });
 });
 
 describe('Mega-Save', () => {

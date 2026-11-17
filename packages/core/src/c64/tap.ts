@@ -32,6 +32,7 @@ import { petsciiName } from './d64';
 import { isT64, readT64, type T64Entry, type T64Info } from './t64';
 
 const hex4 = (v: number) => v.toString(16).padStart(4, '0');
+const hex2 = (v: number) => v.toString(16).padStart(2, '0');
 
 /** PAL C64 cycles a second: a TAP counts its pulses in them */
 export const TAPE_CLOCK = 985248;
@@ -681,8 +682,18 @@ const PILOT_FORMATS: { format: TapeFormat; pilot: number; sync: number; name: bo
   { format: 'usgold', pilot: 0x20, sync: 0xff, name: true },
 ];
 
-function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
-  const out: TapeFile[] = [];
+/** the pilot bytes in front of a file whose sum does not match, at least: real files have 64 to 128 (Ghostbusters'
+ *  charset 64), data that happens to hold the pilot and the sync two */
+const PILOT_LONG = 16;
+/** the bits a stretch may go on after such a file's sum: it ends with the file (Ghostbusters' charset has 3) */
+const PILOT_TAIL = 64;
+
+/** The files of the pilot formats in a stretch, and `doubtful` ones whose sum does not match: a long pilot leads to
+ *  them and the stretch ends with their sum, so they are files, not data that happens to hold the pilot and the sync.
+ *  readTape keeps those on a tape where other files of the format pass their sums (their loaders check only some:
+ *  Ghostbusters' boot checks the sum of the last file of a row, not of the charset at $7000 before it). */
+function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): { files: TapeFile[]; doubtful: TapeFile[] } {
+  const out: TapeFile[] = [], doubtful: TapeFile[] = [];
   for (const fmt of PILOT_FORMATS) {
     const want = (fmt.pilot << 16) | (fmt.pilot << 8) | fmt.sync;
     let reg = 0, k = 0;
@@ -699,14 +710,20 @@ function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
       const data = new Uint8Array(stop - start);
       let x = 0, whole = true;
       for (let i = 0; i < data.length; i++) { const v = take(); if (v < 0) { whole = false; break; } data[i] = v; x ^= v; }
+      if (!whole) continue;
+      const sum = take();
+      const file = (errors: string[]): TapeFile => {
+        const name = raw ? petsciiName(raw.map(v => (v === 0x20 ? 0xa0 : v))).trimEnd() || "(no name)" : `file_${hex4(start)}`;
+        return { format: fmt.format, name, ...(raw ? { raw } : {}), type: 'PRG', load: start, end: stop, data, at: base + syncAt, offset: p.offsets[base + syncAt] ?? 0, seconds: (p.times[base + syncAt] ?? 0) / TAPE_CLOCK, to: base + at, errors };
+      };
       // the checksum tells the format from data that happens to hold its pilot and sync
-      if (!whole || take() !== x) continue;
-      const name = raw ? petsciiName(raw.map(v => (v === 0x20 ? 0xa0 : v))).trimEnd() || "(no name)" : `file_${hex4(start)}`;
-      out.push({ format: fmt.format, name, ...(raw ? { raw } : {}), type: 'PRG', load: start, end: stop, data, at: base + syncAt, offset: p.offsets[base + syncAt] ?? 0, seconds: (p.times[base + syncAt] ?? 0) / TAPE_CLOCK, to: base + at, errors: [] });
-      k = at; reg = 0;
+      if (sum === x) { out.push(file([])); k = at; reg = 0; continue; }
+      let pilot = 2;
+      while (msbByte(bits, k - 16 - pilot * 8) === fmt.pilot) pilot++;
+      if (sum >= 0 && bits.length - at < PILOT_TAIL && pilot >= PILOT_LONG) doubtful.push(file([`checksum: the data's XOR is $${hex2(x)}, the tape says $${hex2(sum)}`]));
     }
   }
-  return out;
+  return { files: out, doubtful };
 }
 
 /* ---- Mega-Save ---- */
@@ -1134,6 +1151,20 @@ function cyberNamedFiles(p: TapPulses, bits: Uint8Array, r: Region, threshold: n
 
 /** Read a .tap image: its files in every format known here, and the stretches with data none of them reads. A .t64
  *  tape archive is read as its directory says (readT64). */
+/** What no format took of a stretch: unknown turbo data, where there is enough of it to hold some (not a leader). */
+function unknownTurbo(p: TapPulses, r: Region, taken: readonly (readonly [number, number])[]): TapeUnknown[] {
+  const out: TapeUnknown[] = [];
+  let from = r.from;
+  for (const [a, b] of [...[...taken].sort((x, y) => x[0] - y[0]), [r.to, r.to] as const]) {
+    if (a - from >= 2000) {
+      const t = twoLengths(p.cycles, from, a);
+      if (t && !isLeader(bitsOf(p.cycles, { from, to: a }, (t.short + t.long) / 2))) out.push({ at: from, to: a, offset: p.offsets[from] ?? 0, seconds: (p.times[from] ?? 0) / TAPE_CLOCK, pulses: a - from, short: Math.round(t.short), long: Math.round(t.long) });
+    }
+    from = Math.max(from, b);
+  }
+  return out;
+}
+
 export function readTape(u8: Uint8Array): TapeImage {
   if (isT64(u8)) return readT64(u8);
   const p = tapPulses(u8);
@@ -1146,6 +1177,10 @@ export function readTape(u8: Uint8Array): TapeImage {
   /** the boot files a Cyberload first stage was read after, and the second stage's keys from one in the stretch before */
   const firsts = new Set<TapeFile>();
   let keys: [number, number] | null = null;
+  /** each stretch and the parts of it formats took: what is left between them is unknown turbo data (counted after all
+   *  stretches, as a doubtful file is taken only then); pilot files whose sums do not match, with their stretch */
+  const stretches: { r: Region; taken: (readonly [number, number])[] }[] = [];
+  const doubtful: { f: TapeFile; s: number }[] = [];
   for (const r of regions(p, cbm)) {
     const two: { short: number; long: number } | null = twoLengths(p.cycles, r.from, r.to) ?? sameLengths(p.cycles, r.from, r.to, before);
     if (two) before = two;
@@ -1162,7 +1197,9 @@ export function readTape(u8: Uint8Array): TapeImage {
         for (let at = last.to - r.from; at + 8 <= bits.length; at += 8) { const v = msbByte(bits, at); if (v !== 0xff && v !== 0xc3) break; out++; }
         tapetool = { speed: tapetool?.speed ?? Math.round(two.short / 8) * 8, leadOut: Math.round(out / 2) };
       }
-      found.push(...turboTapeFiles(p, bits, r.from), ...pilotFiles(p, bits, r.from), ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
+      const pilot = pilotFiles(p, bits, r.from);
+      doubtful.push(...pilot.doubtful.map(f => ({ f, s: stretches.length })));
+      found.push(...turboTapeFiles(p, bits, r.from), ...pilot.files, ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
       // Cyberload's first stage in the stretch after its boot file, and the second after it with the keys it holds
       if (keys) { const f = cyberSecond(p, bits, r, 0, keys); if (f) found.push(f); keys = null; }
       const boot = files.filter(f => f.format === 'cbm' && f.headerCode && f.to <= r.from).pop();
@@ -1178,19 +1215,19 @@ export function readTape(u8: Uint8Array): TapeImage {
       cyber.push(...blocks);
     }
     files.push(...found);
-    // what no format took: unknown turbo data, when there is enough of it to hold some
-    const taken = [...found, ...blocks.filter(b => b.ok)].map(f => [f.at, f.to] as const).sort((a, b) => a[0] - b[0]);
-    let from = r.from;
-    for (const [a, b] of [...taken, [r.to, r.to] as const]) {
-      if (a - from >= 2000) {
-        const t = twoLengths(p.cycles, from, a);
-        if (t && !isLeader(bitsOf(p.cycles, { from, to: a }, (t.short + t.long) / 2))) unknown.push({ at: from, to: a, offset: p.offsets[from] ?? 0, seconds: (p.times[from] ?? 0) / TAPE_CLOCK, pulses: a - from, short: Math.round(t.short), long: Math.round(t.long) });
-      }
-      from = Math.max(from, b);
-    }
+    stretches.push({ r, taken: [...found, ...blocks.filter(b => b.ok)].map(f => [f.at, f.to] as const) });
   }
   // Cyberload's blocks make files across stretches: the loader stops the tape between them
   files.push(...cyberBlockFiles(p, cyber));
+  // a pilot file whose sum does not match, on a tape where files of its format pass theirs: the loader does not check
+  // every sum (with no file passing, the format is another with the same pilot and sync)
+  for (const { f, s } of doubtful) {
+    if (!files.some(g => g.format === f.format && !g.errors.length)) continue;
+    if (stretches[s].taken.some(([a, b]) => a < f.to && f.at < b)) continue;
+    files.push(f);
+    stretches[s].taken.push([f.at, f.to]);
+  }
+  for (const { r, taken } of stretches) unknown.push(...unknownTurbo(p, r, taken));
   files.sort((a, b) => a.at - b.at);
   return { version: p.version, pulses: p.cycles.length, seconds: p.times[p.times.length - 1] / TAPE_CLOCK, files, unknown, tapetool };
 }
