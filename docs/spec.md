@@ -2635,27 +2635,6 @@ källvyn går då före mallens text, och knappen heter *Restore template*.
 
 Allt räknas fram ur `RenderResult.fileLines`, så radnummer och kodrader är exakt de i `.asm`-filerna (`lineHtml` ger samma text som `lineText`, vilket testas för alla inställningar). Båda formaten byggs från samma underlag (`collect` i `notes-doc.ts`).
 
-### 11.5 Block utanför bygget
-
-Ett block kan lämnas utanför bygget (högerklick → *Block* → *Exclude block from the build*, inspektorns *Include in the build*,
-kommandopaletten; `Project.excluded` håller blockens startadresser). Det står kvar i källkoden:
-
-```
-// ---- Curve table · sine_09b5 · $09b5-$0ab4 (256 bytes) · excluded from the build ----
-#if INCLUDE_sine_09b5
-sine_09b5:
-        .byte …
-#else
-.label sine_09b5 = $09b5          // alla etiketter i blocket, för koden som använder dem
-#endif
-```
-
-Filens huvud listar `// #define INCLUDE_sine_09b5` för varje sådant block: ta bort `//` så byggs det igen. Nästa block
-får alltid en egen `.pc`. Den byggda PRG:n saknar blockets byte; ligger blocket mitt i fylls luckan med `$00` (som Kick
-Assembler gör), först eller sist börjar respektive slutar filen vid närmaste byggda byte. Verifieringen (inbyggd och
-KickAss.jar, `comparePrg(…, skip)`) jämför bara de byggda byten och rapporterar hur många som lämnades utanför; det inbyggda
-assemblerets preprocessor klarar `#define`, `#undef`, `#if`/`#elif`/`#else`/`#endif` med `!`, `&&`, `||` och parenteser.
-
 ### 11.4b Byggmallar
 
 En **byggmall** (`BuildTemplate`, `packages/core/src/build-template.ts`) är `build.bat` och `build.sh` med
@@ -2710,6 +2689,27 @@ project*. Ändras mallen projektet använder följer projektets kopia med när r
 projektets kopia äldre än bibliotekets (ändrad för ett annat projekt) heter knappen *Update this project’s copy*.
 Kommandopaletten har *Build templates*, *New build template from the original build.bat and build.sh*, *Build scripts:
 pack the program with Exomizer …* och *Build scripts: generated from the settings again*.
+
+### 11.5 Block utanför bygget
+
+Ett block kan lämnas utanför bygget (högerklick → *Block* → *Exclude block from the build*, inspektorns *Include in the build*,
+kommandopaletten; `Project.excluded` håller blockens startadresser). Det står kvar i källkoden:
+
+```
+// ---- Curve table · sine_09b5 · $09b5-$0ab4 (256 bytes) · excluded from the build ----
+#if INCLUDE_sine_09b5
+sine_09b5:
+        .byte …
+#else
+.label sine_09b5 = $09b5          // alla etiketter i blocket, för koden som använder dem
+#endif
+```
+
+Filens huvud listar `// #define INCLUDE_sine_09b5` för varje sådant block: ta bort `//` så byggs det igen. Nästa block
+får alltid en egen `.pc`. Den byggda PRG:n saknar blockets byte; ligger blocket mitt i fylls luckan med `$00` (som Kick
+Assembler gör), först eller sist börjar respektive slutar filen vid närmaste byggda byte. Verifieringen (inbyggd och
+KickAss.jar, `comparePrg(…, skip)`) jämför bara de byggda byten och rapporterar hur många som lämnades utanför; det inbyggda
+assemblerets preprocessor klarar `#define`, `#undef`, `#if`/`#elif`/`#else`/`#endif` med `!`, `&&`, `||` och parenteser.
 
 ### 11.6 Block som binärfil
 
@@ -5431,6 +5431,17 @@ Det finns fem lägen:
   det här läget rutnätet så att en skärm börjar där man går till (*Offset* visar hur mycket). Under vyn står rad och
   kolumn i skärmen och, för en skärm på en 1 KB-gräns, `$d018`-värdets höga nibble och VIC-banken
   (`$d018 = $1x in VIC bank 0`).
+
+  **`Ctrl` över en skärm** visar den ensam över hela fönstret, så stor den får plats i 320:200, tills `Ctrl` släpps
+  (`CellFocus` i `MemoryGfx.tsx`, `cellLayout`). Det är skärmen under pekaren när `Ctrl` trycks ner, efter 150 ms som
+  listningens titt så att `Ctrl+Z` och liknande inte blinkar fram den, eller den pekaren kommer in på med `Ctrl` nere.
+  Den ritas som vyn ritar den, med byte som inte är laddade mörka, men i sina egna färger utan den orange tonen för
+  markerad grafik. Under den står adresserna, `$d018`-värdet och blocket. Mushjulet stegar till skärmen före eller efter
+  (i läsordning, med alla banker över en banks slut, `stepCell`) och zoomar inte fönstret. Ett klick väljer skärmen som
+  visas, och `Esc` stänger den utan att markeringen går. En annan tangent med `Ctrl` (`Ctrl+C`) är tangentens: skärmen
+  går och kommer inte tillbaka förrän `Ctrl` släppts. Pekaren går igenom den till vyn under, och ett annat läge eller
+  rutnät stänger den. Test: `test/gfxview.test.ts` (en skärm för sig, stegen) och e2e-testet *Ctrl over a screen in
+  Graphics shows it alone over the whole window*.
 - **Font per row:** en bild där varje teckenrad har sin egen font (256 tecken, 2 KB), som när programmet byter
   teckenuppsättning (`$d018`) på varje teckenrad. Alla rader visar samma 40 skärmkoder, skärmens första rad, så det är
   fonterna som avgör vad som syns. Raderna tar en font var 2 KB från *First font* (`fontRowStarts`, `fontRowsLayout`):

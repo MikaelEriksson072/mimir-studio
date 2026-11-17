@@ -163,6 +163,28 @@ export function byteAt(L: GfxLayout, x: number, y: number): Addr | null {
   return a < L.size ? a : null;
 }
 
+/** the cell starting at `start` alone, without gaps: a layout of one row and one column of `L`'s kind, for drawing that
+ *  cell by itself (Ctrl over a screen shows it over the whole window) */
+export const cellLayout = (L: GfxLayout, start: Addr): GfxLayout => ({
+  kind: L.kind, unit: L.unit, cols: 1, cellW: L.cellW, cellH: L.cellH, gapX: 0, gapY: 0, offset: start, rows: 1, width: L.cellW, height: L.cellH, size: L.size,
+});
+
+/** the cell before (`d` -1) or after (1) the one starting at `start`, in reading order: along its row, then the row
+ *  below (with every bank, over the end of a bank's part); null at either end */
+export function stepCell(L: GfxLayout, start: Addr, d: 1 | -1): Addr | null {
+  const c = cellOf(L, start);
+  if (!c || L.rowStarts) return null;
+  let r = Math.round(c.y / (L.cellH + L.gapY)), k = Math.round(c.x / (L.cellW + L.gapX)) + d;
+  for (;;) {
+    if (k < 0) { r--; k = L.cols - 1; } else if (k >= L.cols) { r++; k = 0; }
+    if (r < 0 || r >= L.rows) return null;
+    const a = rowAddr(L, r) + k * L.unit;
+    if (a < rowEnd(L, r)) return a;
+    // a row of a part that ends before this cell: the next row on, the cell before it back
+    if (d > 0) { r++; k = 0; } else k--;
+  }
+}
+
 /** the bytes a cell stands for (a bitmap frame: 8000 or its rows drawn, not the 8 KB step; a screen: 1000, not the 1 KB
  *  step) */
 export const cellBytes = (L: GfxLayout) => (L.kind === 'bitmap' ? (L.cellH >> 3) * BITMAP_ROW_BYTES : L.kind === 'screens' ? SCREEN_BYTES : L.unit);

@@ -1,6 +1,6 @@
 /* The memory graphics browser's geometry and drawing (src/lib/gfxview.ts). */
 import { describe, expect, it } from 'vitest';
-import { bitmapAround, bitmapRowsOf, builtinFont, byteAt, cellAt, cellBytes, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, LOADED, MARKED, markedRgb, NOT_LOADED, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer } from '../src/lib/gfxview';
+import { bitmapAround, bitmapRowsOf, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, LOADED, MARKED, markedRgb, NOT_LOADED, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer, stepCell } from '../src/lib/gfxview';
 import { C64, hexRgb } from '../src/lib/palette';
 
 describe('memory graphics layout', () => {
@@ -256,6 +256,40 @@ describe('screens', () => {
     expect([px(0, 7), px(0, 0)]).toEqual([[...hexRgb(C64[14]), 255], [...hexRgb(C64[6]), 255]]);
     // two screens of a 2 KB selection, one under the other
     expect(gfxImage('screens', mem, 0x6000, 0x6800, false, colors, { font }).height).toBe(400);
+  });
+
+  it('draws one screen by itself, without gaps (Ctrl over a screen shows it over the whole window)', () => {
+    const L = gfxLayout('screens', 3), mem = new Uint8Array(0x10000);
+    mem[0x0c00] = 1; mem[0x0c00 + 999] = 2;
+    const G = cellLayout(L, 0x0c00);
+    expect(G).toMatchObject({ kind: 'screens', cols: 1, rows: 1, width: 320, height: 200, gapX: 0, gapY: 0 });
+    const px = new Uint8ClampedArray(G.width * G.height * 4);
+    drawMemory(px, G, mem, () => LOADED, false, colors, font);
+    const at = (x: number, y: number) => [...px.subarray((y * 320 + x) * 4, (y * 320 + x) * 4 + 3)];
+    const fg = hexRgb(C64[14]), bg = hexRgb(C64[6]);
+    // code 1 at the top left, code 2's bottom row at the bottom right, nothing of the screen beside it
+    expect([at(0, 0), at(2, 0), at(312, 199), at(319, 199), at(312, 191)]).toEqual([fg, bg, fg, fg, bg]);
+    // a screen that does not start on 1 KB (Go moved the grid)
+    const H = cellLayout(gfxLayout('screens', 1, 0x345), 0x2345);
+    expect(rowAddr(H, 0)).toBe(0x2345);
+  });
+
+  it('steps to the screen before or after, along the row and then the next one', () => {
+    const L = gfxLayout('screens', 3);
+    expect(stepCell(L, 0x0400, 1)).toBe(0x0800);
+    expect(stepCell(L, 0x0800, 1)).toBe(0x0c00);
+    expect(stepCell(L, 0x0400, -1)).toBe(0x0000);
+    expect(stepCell(L, 0x0000, -1)).toBeNull();
+    expect(stepCell(L, 0xfc00, 1)).toBeNull();
+    // with the grid moved, from the screen's start
+    expect(stepCell(gfxLayout('screens', 1, 0x345), 0x2345, 1)).toBe(0x2745);
+    expect(stepCell(gfxLayout('screens', 1, 0x345), 0x0345, -1)).toBeNull();
+    // every bank at once: over the end of a bank's part into the next one, and back
+    const B = gfxLayout('screens', 2, 0, [{ start: 0x08000, end: 0x08c00 }, { start: 0x18000, end: 0x1a000 }]);
+    expect(stepCell(B, 0x08400, 1)).toBe(0x08800);
+    expect(stepCell(B, 0x08800, 1)).toBe(0x18000);
+    expect(stepCell(B, 0x18000, -1)).toBe(0x08800);
+    expect(stepCell(B, 0x19c00, 1)).toBeNull();
   });
 });
 

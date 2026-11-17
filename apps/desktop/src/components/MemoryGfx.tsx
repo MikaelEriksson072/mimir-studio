@@ -8,12 +8,13 @@
  * one after the other, at bank addresses (`1:$8000`). The tab opens where the editor was in memory (the listing's or
  * Memory's top, spec 14.6b), and says where it was scrolled to for the tab opened next. Only the rows on screen and a
  * screen above and below are drawn, so a cartridge of 1 MB fits too. */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture, makePrg, validLabel, type Addr, type AnalysisResult, type BlockKind, type RenderResult } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
 import { parseGoto } from '../lib/goto';
-import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
+import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
 import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -47,6 +48,11 @@ const MARKS: Record<GfxKind, [string, string][]> = {
   screens: [['screen', 'Screen matrix'], ['charset', 'Charset'], ['bitmap', 'Bitmap']],
   fontrows: [['charset', 'Charset'], ['bitmap', 'Bitmap'], ['sprite', 'Sprite data']],
 };
+
+/** the views where Ctrl over a cell shows it alone over the whole window */
+const FOCUS_KINDS: readonly GfxKind[] = ['screens'];
+/** Ctrl held this long before the screen comes, so Ctrl+Z and the like do not flash it (as the listing's peek) */
+const FOCUS_MS = 150;
 
 /** a font per row: the blocks the screen codes can be picked from, the kinds they are most likely in first, code last */
 const CODE_KINDS: BlockKind[] = ['screen', 'text', 'data', 'table', 'words', 'lohi', 'fill', 'charset', 'bitmap', 'sprite', 'music', 'basic', 'code'];
@@ -257,9 +263,49 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     const r = cellRange(L, anchor.current!, a), b = anchor.current! - (anchor.current! & 0xffff);
     return r && parts ? { start: Math.max(r.start, b), end: Math.min(r.end, b + 0x10000) } : r;
   };
+  // Ctrl held over a screen: that screen alone over the whole window, as large as it fits, until Ctrl is let go. The
+  // screen is the one under the pointer when Ctrl went down (or when the pointer came onto one with Ctrl held); the
+  // wheel steps to the one before or after it, and a click selects the one shown
+  const [focus, setFocus] = useState<Addr | null>(null);
+  const focusOn = useRef({ kind, L, hover, focus });
+  focusOn.current = { kind, L, hover, focus };
+  /** a key pressed with Ctrl held (Ctrl+Z, Ctrl+C) is that key's: the screen goes and does not come back while Ctrl is held */
+  const focusKeys = useRef({ timer: 0, quiet: false, wheel: 0 });
+  useEffect(() => {
+    const k = focusKeys.current;
+    const off = () => { clearTimeout(k.timer); setFocus(null); };
+    const under = () => { const f = focusOn.current; return FOCUS_KINDS.includes(f.kind) && f.hover != null ? cellOf(f.L, f.hover)?.start ?? null : null; };
+    const keyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') { if (!e.repeat) { k.quiet = false; clearTimeout(k.timer); k.timer = window.setTimeout(() => setFocus(under()), FOCUS_MS); } return; }
+      // Esc closes the screen and is taken (the selection stays); other keys go on to what they do
+      if (e.key === 'Escape' && focusOn.current.focus != null) { e.preventDefault(); e.stopPropagation(); }
+      k.quiet = e.ctrlKey || e.metaKey; off();
+    };
+    const keyUp = (e: globalThis.KeyboardEvent) => { if (e.key === 'Control' || e.key === 'Meta') { k.quiet = false; off(); } };
+    const blur = () => { k.quiet = false; off(); };
+    // the wheel with the screen up: the screen before or after it (not the window's zoom), a step at most every 60 ms
+    const wheel = (e: WheelEvent) => {
+      const f = focusOn.current;
+      if (f.focus == null || !(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const now = performance.now();
+      if (!e.deltaY || now - k.wheel < 60) return;
+      k.wheel = now;
+      const a = stepCell(f.L, f.focus, e.deltaY > 0 ? 1 : -1);
+      if (a != null) setFocus(a);
+    };
+    window.addEventListener('keydown', keyDown, true); window.addEventListener('keyup', keyUp, true); window.addEventListener('blur', blur);
+    window.addEventListener('wheel', wheel, { capture: true, passive: false });
+    return () => { window.removeEventListener('keydown', keyDown, true); window.removeEventListener('keyup', keyUp, true); window.removeEventListener('blur', blur); window.removeEventListener('wheel', wheel, { capture: true }); clearTimeout(k.timer); };
+  }, []);
+  // another view or layout: the screen shown is no longer a cell of it
+  useEffect(() => { setFocus(null); }, [kind, L]);
+
   const down = (e: ReactMouseEvent) => {
     if (e.button !== 0) return;
     e.preventDefault(); (e.currentTarget as HTMLElement).closest<HTMLElement>('.gfxv')?.focus();
+    // with a screen up, a click selects that screen (the wheel may have stepped away from the one under the pointer)
+    if (focus != null) { const r = cellRange(L, focus, focus); if (r) { anchor.current = r.start; onSelect(r.start, r.end); } return; }
     const { x, y } = point(e), a = cellAt(L, x, y);
     if (a == null) return;
     if (!(e.shiftKey && anchor.current != null)) anchor.current = a;
@@ -267,9 +313,13 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     dragging.current = true;
   };
   const move = (e: ReactMouseEvent) => {
-    const { x, y } = point(e);
-    setHover(byteAt(L, x, y));
+    const { x, y } = point(e), at = byteAt(L, x, y);
+    setHover(at);
     if (kind === 'fontrows') setHoverAt({ row: Math.floor(y / 8), col: Math.floor(x / 8) });
+    // Ctrl held as the pointer comes onto a screen: it comes at once (no button held: that is a drag)
+    if ((e.ctrlKey || e.metaKey) && !e.buttons && focus == null && at != null && FOCUS_KINDS.includes(kind) && !focusKeys.current.quiet) {
+      const c = cellOf(L, at); if (c) { clearTimeout(focusKeys.current.timer); setFocus(c.start); }
+    }
     if (!dragging.current || !(e.buttons & 1) || anchor.current == null) { dragging.current = false; return; }
     const a = cellAt(L, x, y); if (a == null) return;
     const r = cellsTo(a); if (r && (!sel || r.start !== sel.start || r.end !== sel.end)) onSelect(r.start, r.end);
@@ -443,7 +493,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
           </span>
           <button className="btn small ghost" onClick={() => onShow(range.start)}><Icon name="list" size={13} />Show in listing</button>
         </> : kind === 'fontrows' ? <span className="muted">Each row is drawn with its own font, 2 KB after the font of the row above (passing over memory where no font can be), and the same 40 screen codes. Click a row to select its font, Shift+click or drag for more. Dark rows are not loaded{marked ? ', orange ones already graphics' : ''}.</span>
-          : <span className="muted">Click a {NAMES[kind]} to select it, Shift+click or drag for more, then mark it as the graphics it is.{kind === 'screens' ? ' Go to an address and a screen starts there.' : ''} Dark cells are not loaded{marked ? ', orange ones already graphics' : ''}.</span>}
+          : <span className="muted">Click a {NAMES[kind]} to select it, Shift+click or drag for more, then mark it as the graphics it is.{kind === 'screens' ? ' Go to an address and a screen starts there; hold Ctrl over a screen to see it alone in the whole window.' : ''} Dark cells are not loaded{marked ? ', orange ones already graphics' : ''}.</span>}
       </div>
       <div className="gfxv-scroll" ref={scroller} onScroll={onScroll}>
         <div className="gfxv-inner" style={{ height: L.height * zoom }}>
@@ -464,7 +514,34 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
         </div>
       </div>
       <div className="gfxv-info mono small">{hoverText ?? (cursor != null ? `cursor ${fmt(cursor)} · ${blockText(cursor)}` : ' ')}</div>
+      {focus != null && (() => {
+        const p = kind === 'screens' ? screenPointer(focus) : null, last = Math.min(L.size, focus + cellBytes(L)) - 1;
+        return <CellFocus L={L} at={focus} mem={A.mem} shades={shades} mc={mc} colors={colors} font={kind === 'screens' ? font : undefined} label={`The ${NAMES[kind]} at ${fmt(focus)}`}>
+          <span><b>{fmt(focus)}–{fmt(last)}</b>{p ? ` · $d018 = $${p.d018.toString(16)}x in VIC bank ${p.bank}` : ''} · {blockText(focus)}</span>
+          <span className="gfx-focus-keys">Wheel: the {NAMES[kind]} before or after · click: select it · let go of Ctrl to close</span>
+        </CellFocus>;
+      })()}
     </div>
+  );
+}
+
+/** one cell (a screen) over the whole window, as large as it fits: drawn as the tab draws it (not loaded bytes dark) but
+ *  in its own colours, without the tint of marked graphics. It lets the pointer through, so Ctrl let go finds the tab as
+ *  it was */
+function CellFocus({ L, at, mem, shades, mc, colors, font, label, children }: { L: GfxLayout; at: Addr; mem: Uint8Array; shades: Uint8Array; mc: boolean; colors: GfxColors; font?: Uint8Array; label: string; children: ReactNode }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    const ctx = canvas.current?.getContext('2d'); if (!ctx) return;
+    const G = cellLayout(L, at), img = ctx.createImageData(G.width, G.height);
+    drawMemory(img.data, G, mem, a => (shades[a] === NOT_LOADED ? NOT_LOADED : LOADED), mc, colors, font);
+    ctx.putImageData(img, 0, 0);
+  }, [L, at, mem, shades, mc, colors, font]);
+  return createPortal(
+    <figure className="gfx-focus" aria-label={label}>
+      <canvas ref={canvas} width={L.cellW} height={L.cellH} />
+      <figcaption className="mono">{children}</figcaption>
+    </figure>,
+    document.body,
   );
 }
 

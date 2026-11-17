@@ -3475,6 +3475,79 @@ test('the Graphics tab keeps the address you scrolled to at the top when the vie
   await expect.poll(top).toBe('0500');
 });
 
+test('Ctrl over a screen in Graphics shows it alone over the whole window: the wheel steps, a click selects it', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Graphics' }).click();
+  const view = page.getByLabel('Memory as graphics');
+  await view.getByRole('button', { name: 'Screens', exact: true }).click();
+  await view.getByLabel('Go to address, label or range').fill('$0800');
+  await view.getByLabel('Go to address, label or range').press('Enter');
+  const box = (await view.locator('.gfxv-canvas').boundingBox())!, row = (await view.locator('.gfxv-row[data-addr="0800"]').boundingBox())!;
+  const over = { x: box.x + 100, y: row.y + 60 };
+  await page.mouse.move(over.x, over.y);
+  await expect(view.locator('.gfxv-info')).toContainText('of the screen at $0800');
+  const shown = page.locator('.gfx-focus'), screen = (a: string) => page.getByRole('figure', { name: `The screen at ${a}` });
+  const zoom = () => page.evaluate(() => devicePixelRatio);
+  const z = await zoom();
+
+  await test.step('Ctrl down: the screen under the pointer over the whole window, 320:200', async () => {
+    await page.keyboard.down('Control');
+    await expect(screen('$0800')).toBeVisible();
+    await expect(shown.locator('figcaption')).toContainText('$0800–$0be7 · $d018 = $2x in VIC bank 0');
+    const s = await shown.locator('canvas').evaluate(c => ({ w: c.clientWidth, h: c.clientHeight, W: innerWidth, H: innerHeight }));
+    expect(s.w / s.h).toBeCloseTo(1.6, 1);
+    expect(s.w >= s.W - 30 || s.h >= s.H - 80).toBe(true);
+  });
+
+  await test.step('the wheel: the screen after it and back, not the window zoom; a click selects the one shown', async () => {
+    await page.mouse.wheel(0, 100);
+    await expect(screen('$0c00')).toBeVisible();
+    await page.waitForTimeout(100);
+    await page.mouse.wheel(0, 100);
+    await expect(screen('$1000')).toBeVisible();
+    await page.waitForTimeout(100);
+    await page.mouse.wheel(0, -100);
+    await expect(screen('$0c00')).toBeVisible();
+    expect(await zoom()).toBe(z);
+    await page.mouse.click(over.x, over.y);
+    await expect(view.getByRole('status')).toContainText('$0c00–$0fe7 (1000 bytes)');
+    // Esc closes it and leaves the selection
+    await page.keyboard.press('Escape');
+    await expect(shown).toHaveCount(0);
+    await expect(view.getByRole('status')).toContainText('$0c00–$0fe7 (1000 bytes)');
+    await page.keyboard.up('Control');
+  });
+
+  await test.step('Ctrl let go closes it; a key with Ctrl is the key\'s, and no screen comes while Ctrl is held', async () => {
+    await page.keyboard.down('Control');
+    await expect(screen('$0800')).toBeVisible();
+    await page.keyboard.up('Control');
+    await expect(shown).toHaveCount(0);
+    await page.keyboard.down('Control');
+    await page.keyboard.press('Shift');
+    await page.mouse.move(over.x + 10, over.y + 10);
+    await page.waitForTimeout(300);
+    await expect(shown).toHaveCount(0);
+    await page.keyboard.up('Control');
+    // with Ctrl held as the pointer comes onto a screen, it comes at once
+    await page.mouse.move(box.x - 30, over.y);
+    await page.keyboard.down('Control');
+    await page.mouse.move(over.x, over.y);
+    await expect(screen('$0800')).toBeVisible();
+    await page.keyboard.up('Control');
+    await expect(shown).toHaveCount(0);
+  });
+
+  await test.step('other views have no such screen', async () => {
+    await view.getByRole('button', { name: 'Characters', exact: true }).click();
+    await page.mouse.move(over.x, over.y);
+    await page.keyboard.down('Control');
+    await page.waitForTimeout(300);
+    await expect(shown).toHaveCount(0);
+    await page.keyboard.up('Control');
+  });
+});
+
 test('the Graphics tab shows memory as characters, sprites or bitmaps, and marks what it finds', async ({ page }) => {
   await waitForListing(page);
   await page.keyboard.press('Control+j');
@@ -3696,79 +3769,6 @@ test('edit build.bat in the source view: the export writes it, Restore generated
   });
 });
 
-test('pack with Brokkr: checked in an emulated C64, effort max on threads, and crunched data', async ({ workDir: work, app, page }) => {
-  await waitForListing(page);
-  const view = page.locator('.pack-view');
-  const cmd = view.getByLabel('Brokkr command');
-  const card = view.getByRole('status', { name: 'Packed file' });
-  const packedSize = async () => Number(/packed to (\d+)/.exec(await card.innerText())?.[1]);
-
-  await test.step('Brokkr packs by default: the view shows its command, Pack builds, packs and checks it', async () => {
-    await page.locator('nav.activity').getByRole('button', { name: 'Pack' }).click();
-    // the view's sections are closed when the app starts
-    for (const name of ['What to pack', 'Packed file', 'Self-extracting', 'Command']) await openSection(page, name);
-    await expect(view.getByRole('tab', { name: 'Brokkr' })).toHaveAttribute('aria-selected', 'true');
-    await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
-    await view.getByRole('button', { name: 'Pack', exact: true }).click();
-    await expect(card).toContainText('raster-demo-brokkr.prg', { timeout: 90_000 });
-    await expect(card).toContainText("Decrunched in Brokkr's emulated C64: $0801–$37ff has the same 12287 bytes, and it starts at $0810");
-    await expect(card).toContainText('Decruncher');
-    await expect(toast(page, /^Packed \d+ bytes into raster-demo-brokkr\.prg \(\d+ bytes\), decrunch verified/)).toBeVisible();
-    await page.getByRole('tab', { name: 'Build output' }).click();
-    await expect(page.locator('.build-log')).toContainText('> brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
-    await expect(page.locator('.build-log')).toContainText('checked in an emulated C64');
-  });
-
-  await test.step('only the settings that take effect are shown: no $01 with RUN, the border flash on or off', async () => {
-    const flash = view.getByLabel('Flash the border while decrunching');
-    await expect(view.getByLabel('More options')).toHaveCount(0);
-    await expect(view.getByLabel('Load address')).toHaveCount(0);
-    await view.getByLabel('Start', { exact: true }).selectOption('basic');
-    await expect(view.getByLabel('$01 after')).toHaveCount(0);
-    await flash.uncheck();
-    await expect(cmd).toHaveText('brokkr sfx --start basic --no-effect -o raster-demo-brokkr.prg raster-demo.prg');
-    await flash.check();
-    await view.getByLabel('Start', { exact: true }).selectOption('sys');
-    await expect(view.getByLabel('$01 after')).toBeVisible();
-    await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
-    await expect(card).not.toContainText('Out of date');
-  });
-
-  await test.step('effort max searches on threads and gives no larger file', async () => {
-    const normal = await packedSize();
-    await view.getByLabel('Effort').selectOption('max');
-    await expect(cmd).toHaveText('brokkr sfx --start sys --effort max -o raster-demo-brokkr.prg raster-demo.prg');
-    await view.getByRole('button', { name: 'Pack', exact: true }).click();
-    // while it packs: the steps and the time in a card, the button says so, and the Pack view's button spins
-    const progress = view.getByRole('status', { name: 'Packing' });
-    await expect(progress).toBeVisible();
-    await expect(progress).toContainText('Build and verify the program');
-    await expect(progress).toContainText('Crunch and check with Brokkr');
-    await expect(progress).toContainText("Exomizer's format, effort Max, on threads; then the file runs in Brokkr's emulated C64");
-    await expect(view.getByRole('button', { name: 'Packing…' })).toBeDisabled();
-    await expect(page.locator('nav.activity').getByRole('button', { name: 'Pack' })).toHaveAttribute('aria-busy', 'true');
-    await expect(card).not.toContainText('Out of date', { timeout: 120_000 });
-    await expect(progress).toHaveCount(0);
-    await expect(page.locator('nav.activity').getByRole('button', { name: 'Pack' })).not.toHaveAttribute('aria-busy');
-    await expect(card).toContainText("Decrunched in Brokkr's emulated C64");
-    expect(await packedSize()).toBeLessThanOrEqual(normal);
-  });
-
-  await test.step('crunched data with its decruncher, a PRG and source, which decrunches it in an emulated C64', async () => {
-    await view.getByLabel('Effort').selectOption('normal');
-    await view.getByRole('tab', { name: 'Crunched data' }).click();
-    await openSection(page, 'Crunched data');
-    const decruncher = ['brokkr decruncher -o raster-demo-brokkr-decrunch.asm', 'brokkr decruncher -o raster-demo-brokkr-decrunch.prg'];
-    await expect(cmd).toHaveText(['brokkr mem -o raster-demo-brokkr.prg raster-demo.prg', ...decruncher].join('\n'));
-    // no start and nothing after decrunching: your own code decrunches it
-    await expect(view.getByLabel('Start', { exact: true })).toHaveCount(0);
-    await expect(view.getByLabel('Flash the border while decrunching')).toHaveCount(0);
-    await expect(view.getByLabel(/Write the decruncher too/)).toBeChecked();
-    // where the decruncher written goes: its own defaults, or as set
-    const section = await openSection(page, "Decruncher's memory");
-    const line = (id: string) => section.locator(`#${id} ~ small`);
-    await expect(line('pack-dec-at')).toHaveText(/^Takes \d+ bytes: \$c000–\$c[0-9a-f]{3} in the PRG; the source goes where you #import it\.$/);
-    await expect(line('pack-tables-at')).toHaveText('Takes 156 bytes: $0334–$03cf.');
 test('build templates: Pack with Exomizer, a template of my own from the original build.bat, the export writes them', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await page.getByRole('tab', { name: 'raster-demo.asm' }).click();
@@ -3857,6 +3857,79 @@ test('build templates: Pack with Exomizer, a template of my own from the origina
   });
 });
 
+test('pack with Brokkr: checked in an emulated C64, effort max on threads, and crunched data', async ({ workDir: work, app, page }) => {
+  await waitForListing(page);
+  const view = page.locator('.pack-view');
+  const cmd = view.getByLabel('Brokkr command');
+  const card = view.getByRole('status', { name: 'Packed file' });
+  const packedSize = async () => Number(/packed to (\d+)/.exec(await card.innerText())?.[1]);
+
+  await test.step('Brokkr packs by default: the view shows its command, Pack builds, packs and checks it', async () => {
+    await page.locator('nav.activity').getByRole('button', { name: 'Pack' }).click();
+    // the view's sections are closed when the app starts
+    for (const name of ['What to pack', 'Packed file', 'Self-extracting', 'Command']) await openSection(page, name);
+    await expect(view.getByRole('tab', { name: 'Brokkr' })).toHaveAttribute('aria-selected', 'true');
+    await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    await expect(card).toContainText('raster-demo-brokkr.prg', { timeout: 90_000 });
+    await expect(card).toContainText("Decrunched in Brokkr's emulated C64: $0801–$37ff has the same 12287 bytes, and it starts at $0810");
+    await expect(card).toContainText('Decruncher');
+    await expect(toast(page, /^Packed \d+ bytes into raster-demo-brokkr\.prg \(\d+ bytes\), decrunch verified/)).toBeVisible();
+    await page.getByRole('tab', { name: 'Build output' }).click();
+    await expect(page.locator('.build-log')).toContainText('> brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
+    await expect(page.locator('.build-log')).toContainText('checked in an emulated C64');
+  });
+
+  await test.step('only the settings that take effect are shown: no $01 with RUN, the border flash on or off', async () => {
+    const flash = view.getByLabel('Flash the border while decrunching');
+    await expect(view.getByLabel('More options')).toHaveCount(0);
+    await expect(view.getByLabel('Load address')).toHaveCount(0);
+    await view.getByLabel('Start', { exact: true }).selectOption('basic');
+    await expect(view.getByLabel('$01 after')).toHaveCount(0);
+    await flash.uncheck();
+    await expect(cmd).toHaveText('brokkr sfx --start basic --no-effect -o raster-demo-brokkr.prg raster-demo.prg');
+    await flash.check();
+    await view.getByLabel('Start', { exact: true }).selectOption('sys');
+    await expect(view.getByLabel('$01 after')).toBeVisible();
+    await expect(cmd).toHaveText('brokkr sfx --start sys -o raster-demo-brokkr.prg raster-demo.prg');
+    await expect(card).not.toContainText('Out of date');
+  });
+
+  await test.step('effort max searches on threads and gives no larger file', async () => {
+    const normal = await packedSize();
+    await view.getByLabel('Effort').selectOption('max');
+    await expect(cmd).toHaveText('brokkr sfx --start sys --effort max -o raster-demo-brokkr.prg raster-demo.prg');
+    await view.getByRole('button', { name: 'Pack', exact: true }).click();
+    // while it packs: the steps and the time in a card, the button says so, and the Pack view's button spins
+    const progress = view.getByRole('status', { name: 'Packing' });
+    await expect(progress).toBeVisible();
+    await expect(progress).toContainText('Build and verify the program');
+    await expect(progress).toContainText('Crunch and check with Brokkr');
+    await expect(progress).toContainText("Exomizer's format, effort Max, on threads; then the file runs in Brokkr's emulated C64");
+    await expect(view.getByRole('button', { name: 'Packing…' })).toBeDisabled();
+    await expect(page.locator('nav.activity').getByRole('button', { name: 'Pack' })).toHaveAttribute('aria-busy', 'true');
+    await expect(card).not.toContainText('Out of date', { timeout: 120_000 });
+    await expect(progress).toHaveCount(0);
+    await expect(page.locator('nav.activity').getByRole('button', { name: 'Pack' })).not.toHaveAttribute('aria-busy');
+    await expect(card).toContainText("Decrunched in Brokkr's emulated C64");
+    expect(await packedSize()).toBeLessThanOrEqual(normal);
+  });
+
+  await test.step('crunched data with its decruncher, a PRG and source, which decrunches it in an emulated C64', async () => {
+    await view.getByLabel('Effort').selectOption('normal');
+    await view.getByRole('tab', { name: 'Crunched data' }).click();
+    await openSection(page, 'Crunched data');
+    const decruncher = ['brokkr decruncher -o raster-demo-brokkr-decrunch.asm', 'brokkr decruncher -o raster-demo-brokkr-decrunch.prg'];
+    await expect(cmd).toHaveText(['brokkr mem -o raster-demo-brokkr.prg raster-demo.prg', ...decruncher].join('\n'));
+    // no start and nothing after decrunching: your own code decrunches it
+    await expect(view.getByLabel('Start', { exact: true })).toHaveCount(0);
+    await expect(view.getByLabel('Flash the border while decrunching')).toHaveCount(0);
+    await expect(view.getByLabel(/Write the decruncher too/)).toBeChecked();
+    // where the decruncher written goes: its own defaults, or as set
+    const section = await openSection(page, "Decruncher's memory");
+    const line = (id: string) => section.locator(`#${id} ~ small`);
+    await expect(line('pack-dec-at')).toHaveText(/^Takes \d+ bytes: \$c000–\$c[0-9a-f]{3} in the PRG; the source goes where you #import it\.$/);
+    await expect(line('pack-tables-at')).toHaveText('Takes 156 bytes: $0334–$03cf.');
     await expect(line('pack-zp')).toHaveText('Takes 9 bytes: $f7–$ff.');
     await expect(view.getByLabel('Keep free', { exact: true })).toHaveCount(0);
     await view.getByLabel('No literal sequences (-T 5)').check();
