@@ -834,6 +834,25 @@ main.main { container: editor / inline-size; }
 .check input { margin-top: 2px; accent-color: var(--accent); }
 .gfx-box { display: grid; place-items: center; padding: 10px; border-radius: 6px; background: #161434; border: 1px solid var(--line); }
 .gfx { image-rendering: pixelated; display: block; max-width: 100%; height: auto; }
+/* the inspector's Chars preview: a click on a character shows it enlarged (14.1), the one shown is framed */
+.gfx-pick { position: relative; max-width: 100%; cursor: zoom-in; }
+.gfx-picked { position: absolute; outline: 2px solid var(--accent); outline-offset: 1px; pointer-events: none; }
+.char-zoom { margin-top: 8px; padding: 8px 10px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--editor); outline: none; }
+.char-zoom:focus { border-color: var(--accent); }
+.cz-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.cz-name { font-weight: 600; }
+.cz-nav { display: inline-flex; margin-left: auto; }
+.cz-nav .icon-btn { width: 22px; height: 22px; }
+.cz-nav .icon-btn:disabled { opacity: 0.35; cursor: default; }
+.cz-body { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+/* 8 × 8 pixels of 14 px with a line between them; multicolour 4 of 29 px, as wide */
+.cz-grid { display: grid; grid-template-columns: repeat(8, 14px); grid-auto-rows: 14px; gap: 1px; padding: 1px; background: #1d1648; border-radius: 3px; flex: none; }
+.cz-grid.mc { grid-template-columns: repeat(4, 29px); }
+.cz-grid i { display: block; }
+.cz-bytes { display: grid; grid-auto-rows: 14px; row-gap: 1px; padding-top: 1px; font-size: 11px; line-height: 14px; white-space: pre; color: var(--fg-2); }
+.cz-bytes b { font-weight: 600; color: var(--fg); }
+.cz-bytes i { font-style: normal; }
+.cz-bytes i + i { margin-left: 4px; }
 /* the inspector: multicolour as set for the block, or back to what the VIC registers say */
 .mc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .text-prev { margin: 0; padding: 8px 10px; border-radius: 6px; background: #352879; color: #a59cff; font: 12px/1.5 var(--font-code); white-space: pre-wrap; word-break: break-all; }

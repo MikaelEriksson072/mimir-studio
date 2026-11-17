@@ -8,7 +8,8 @@ import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
 import type { Sel } from '../lib/types';
 import { useUi } from '../store/ui';
 import { Heatmap, type CanvasColors, type HeatMode } from './Heatmap';
-import { GfxPreview, type GfxMode } from './GfxPreview';
+import { CharZoom, GfxPreview, type GfxMode } from './GfxPreview';
+import { charCount } from '../lib/charzoom';
 import { blockMc } from '../lib/gfxlines';
 import { CyclesSection } from './Cycles';
 import { asmWords, useAssembler } from '../lib/assembler';
@@ -73,6 +74,13 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   // a graphics block shown as what it is: multicolour as set for it (the listing's pictures draw it so too)
   const blockMcOn = !!blk && view === 'auto' && autoMode != null && (sel == null || !sel.multi || (sel.start === blk.start && sel.end === blk.end));
   const mcShown = blockMcOn && blk ? blockMc(A, blk) : mc;
+  // the character of the Chars preview shown enlarged (14.1), and a count of the clicks that picked one (they focus it)
+  const [zoom, setZoom] = useState<number | null>(null);
+  const [zoomClicks, setZoomClicks] = useState(0);
+  useEffect(() => { setZoom(null); }, [range?.start, mode, B.base]);
+  const gfxEnd = range ? Math.max(range.end, range.start + (mode === 'bitmap' ? 8000 : mode === 'chars' ? 8 : 64)) : 0;
+  const nChars = range ? charCount(gfxEnd - range.start) : 0;
+  const zoomed = mode === 'chars' && zoom != null && zoom < nChars ? zoom : null;
   const groups = useMemo(() => { const g: Partial<Record<TypeGroup, number>> = {}; for (const [t, n] of Object.entries(A.stats.bytesByType)) { const k = groupOfType(+t); g[k] = (g[k] || 0) + n; } return g; }, [A]);
   const lb = blk ? R.labels.get(blk.start) : undefined;
   const [nameV, setNameV] = useState(''); const [cmtV, setCmtV] = useState('');
@@ -152,12 +160,16 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
           </div>
           {mode && range ? (
             <>
-              <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={Math.max(range.end, range.start + (mode === 'bitmap' ? 8000 : mode === 'chars' ? 8 : 64)) - B.base} mode={mode} mc={mcShown} /></div>
+              <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={gfxEnd - B.base} mode={mode} mc={mcShown}
+                pick={zoomed} onPick={mode === 'chars' ? i => { setZoom(i); setZoomClicks(c => c + 1); } : undefined} /></div>
               {blockMcOn && blk ? <div className="mc-row">
                 <label className="check" title="Saved with the block: the listing's pictures draw it so too"><input type="checkbox" checked={mcShown} onChange={e => onFormat(blk, { mc: e.target.checked })} /> Multicolor</label>
                 {blk.props.mc != null ? <button className="linkish small" onClick={() => onFormat(blk, { mc: null })} title="Draw it as the VIC registers say ($d01c for sprites, $d016 for a charset or bitmap)">as the VIC registers say</button>
                   : <span className="muted small">as the VIC registers say</span>}
               </div> : <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>}
+              {zoomed != null ? <CharZoom mem={B.A.mem} start={range.start - B.base} index={zoomed} count={nChars} mc={mcShown} focus={zoomClicks}
+                onPick={setZoom} onClose={() => setZoom(null)} onGo={a => onNavigate(B.base + a)} />
+                : mode === 'chars' && <p className="muted small">Click a character to see it enlarged.</p>}
             </>
           ) : music ? (
             <>

@@ -5328,6 +5328,18 @@ förut, och ett högerklick utan drag hoppar dit som ett klick. *Zoom to the loa
 det som var i mitten, kartan följer markören när den flyttas utanför det som syns, och *Whole map* i kartans hörn, eller
 hjulet tillbaka, visar hela kartan igen. Geometrin står i `apps/desktop/src/lib/heatview.ts`.
 
+**Ett tecken förstorat:** ett klick på ett tecken i inspektorns *Preview* som Chars (ett charset-block, eller andra byte
+med *Chars* valt) visar det förstorat under förhandsvisningen, och tecknet ramas in i den. Rutan visar tecknets 8 × 8
+pixlar, 14 px var med en linje mellan dem, i förhandsvisningens färger (multicolor 4 × 8, varje pixel dubbelt bred), och
+bredvid raderna de ritar dess 8 byte: adressen, värdet i hex och bitarna (i par i multicolor). Rubriken säger tecknets
+nummer i dess 2 KB, som Graphics-fliken (*Char $41*; *8 bytes* när byten inte börjar på ett tecken, en markering som
+inte börjar på 8), och dess adresser, som går dit i listningen; tecknet står kvar förstorat. Rutan får tangenterna vid
+klicket: `←` `→` tecknet före och efter, `↑` `↓` en rad i förhandsvisningen (16 tecken; står kvar vid kanten), `Home` och
+`End` det första och sista, och `Esc` stänger den, liksom krysset; listningens markör flyttas inte av dem. Pilknapparna
+i rubriken stegar också. Ett annat block, en annan markering eller ett annat läge än Chars stänger den. Under en
+förhandsvisning som Chars utan förstorat tecken står *Click a character to see it enlarged.*
+(`CharZoom` i `GfxPreview.tsx`, `apps/desktop/src/lib/charzoom.ts`.)
+
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:
 - **Under 1650 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.

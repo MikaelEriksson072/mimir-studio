@@ -5959,6 +5959,106 @@ test('the memory map zooms with the wheel around the pointer, a right-drag moves
   });
 });
 
+test('a click on a character in the inspector\'s Chars preview shows it enlarged, with its bytes; the keys step to another', async ({ page }) => {
+  await waitForListing(page);
+  const insp = page.locator('.inspector');
+  const canvas = insp.getByLabel('chars preview');
+  const zoom = insp.locator('.char-zoom');
+  const grid = zoom.locator('.cz-grid');
+  /** clicks the character at a column and row of the preview (16 a row), where the canvas is now */
+  const pick = async (col: number, row: number) => {
+    await canvas.scrollIntoViewIfNeeded();
+    const b = (await canvas.boundingBox())!, cell = b.width / 16;
+    await page.mouse.click(Math.round(b.x + (col + 0.5) * cell), Math.round(b.y + (row + 0.5) * cell));
+  };
+  const cells = () => grid.locator('i').evaluateAll(els => els.map(e => (e as HTMLElement).dataset.c).join(''));
+  const bytes = () => zoom.locator('.cz-bytes > div').allTextContents();
+  // the demo font's A ($7c $c6 $c6 $fe $c6 $c6 $c6 $00): 3 where a pixel is set
+  const A = ['03333300', '33000330', '33000330', '33333330', '33000330', '33000330', '33000330', '00000000'].join('');
+
+  await test.step('the charset at $3000: its preview says what a click does, and nothing is enlarged yet', async () => {
+    await goTo(page, 'charset_3000');
+    await expect(canvas).toBeVisible();
+    await expect(insp).toContainText('Click a character to see it enlarged.');
+    await expect(zoom).toHaveCount(0);
+  });
+
+  await test.step('a click on the second character shows char $01, the A, 8 × 8 pixels beside its bytes, and frames it in the preview', async () => {
+    await pick(1, 0);
+    await expect(zoom).toBeVisible();
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $01 enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$3008–$300f');
+    await expect(grid).toHaveAttribute('aria-label', 'Char $01, 8 by 8 pixels');
+    expect(await cells()).toBe(A);
+    expect(await bytes()).toEqual(['3008 7c 01111100', '3009 c6 11000110', '300a c6 11000110', '300b fe 11111110', '300c c6 11000110', '300d c6 11000110', '300e c6 11000110', '300f 00 00000000']);
+    await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 6\.25%; top: 0%/);
+    await expect(insp).not.toContainText('Click a character to see it enlarged.');
+    // it has the keys
+    await expect(zoom).toBeFocused();
+  });
+
+  await test.step('the arrows step to the character after, a row down and the one before; the listing stays where it is', async () => {
+    await page.keyboard.press('ArrowRight');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $02 enlarged');
+    expect((await bytes())[0]).toBe('3010 fc 11111100');
+    await page.keyboard.press('ArrowDown');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $12 enlarged');
+    await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 12\.5%; top: 6\.25%/);
+    await page.keyboard.press('ArrowLeft');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $11 enlarged');
+    await expect(statusBar(page)).toContainText('$3000 · charset_3000');
+    await page.keyboard.press('End');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $ff enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$37f8–$37ff');
+    await expect(zoom.getByRole('button', { name: 'Next character' })).toBeDisabled();
+    await page.keyboard.press('Home');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $00 enlarged');
+    await expect(zoom.getByRole('button', { name: 'Previous character' })).toBeDisabled();
+    await zoom.getByRole('button', { name: 'Next character' }).click();
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $01 enlarged');
+  });
+
+  await test.step('multicolour: 4 × 8 pixels, the bits in pairs', async () => {
+    const mc = insp.getByRole('checkbox', { name: 'Multicolor' });
+    // saved with the block, so it is checked once the analysis has it
+    await mc.click();
+    await expect(mc).toBeChecked();
+    await expect(grid).toHaveAttribute('aria-label', 'Char $01, multicolor 4 by 8 pixels');
+    await expect(grid.locator('i')).toHaveCount(32);
+    // $7c = 01 11 11 00: light blue, white, white, the background
+    expect((await cells()).slice(0, 4)).toBe('1330');
+    await expect(zoom.locator('.cz-bytes > div').first().locator('i')).toHaveText(['01', '11', '11', '00']);
+    await mc.click();
+    await expect(mc).not.toBeChecked();
+    await expect(grid.locator('i')).toHaveCount(64);
+    expect(await cells()).toBe(A);
+  });
+
+  await test.step('its address goes to its bytes in the listing, and the character stays enlarged', async () => {
+    await zoom.getByRole('button', { name: '$3008–$300f' }).click();
+    await expect(statusBar(page)).toContainText('$3008 · charset_3000+8');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $01 enlarged');
+  });
+
+  await test.step('Esc closes it, and so does its close button; another block shows none', async () => {
+    await zoom.focus();
+    await page.keyboard.press('Escape');
+    await expect(zoom).toHaveCount(0);
+    await expect(statusBar(page)).toContainText('$3008');
+    await pick(0, 1);
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $10 enlarged');
+    await zoom.getByRole('button', { name: 'Close the enlarged character' }).click();
+    await expect(zoom).toHaveCount(0);
+    await pick(2, 0);
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $02 enlarged');
+    await goTo(page, 'sine_09b5');
+    await expect(zoom).toHaveCount(0);
+    await goTo(page, 'charset_3000');
+    await expect(canvas).toBeVisible();
+    await expect(zoom).toHaveCount(0);
+  });
+});
+
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');
