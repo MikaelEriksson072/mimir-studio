@@ -19,6 +19,11 @@ const sindri = (...args: string[]) => {
   const r = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, env: { ...process.env, INIT_CWD: dir }, encoding: 'utf8' });
   return { status: r.status, error: r.stderr.trim() };
 };
+/** what it printed, line by line */
+const report = (...args: string[]) => {
+  const r = spawnSync(process.execPath, [CLI, ...args], { cwd: dir, env: { ...process.env, INIT_CWD: dir }, encoding: 'utf8' });
+  return { status: r.status, lines: r.stdout.trim().split(/\r?\n/) };
+};
 
 describe('the command line', () => {
   it('says that a path with spaces goes in quotes', () => {
@@ -31,6 +36,19 @@ describe('the command line', () => {
     expect(cut).toBe(`sindri: --file takes the name of a file on the disk, not the disk: give the disk on its own, in quotes as its path has spaces, as in sindri "${disk}" (its first PRG, or --file NAME after it for another)`);
     expect(sindri('--file', disk).error).toMatch(/^sindri: --file takes the name of a file on the disk, not the disk: give the disk on its own, as in sindri ".*side1\.d64" \(its first PRG/);
     expect(sindri('--file', 'PART*').error).toBe('sindri: no file given: --file NAME picks a file on the disk given with it, as in sindri disk.d64 --file PART*');
+  });
+
+  it('says that a program that settles in its own code is not packed, and calls it no depacker', () => {
+    // 10 SYS2061, then inc $d020 / jmp $080d
+    writeFileSync(join(dir, 'plain.prg'), Uint8Array.of(0x01, 0x08, 0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00, 0xee, 0x20, 0xd0, 0x4c, 0x0d, 0x08));
+    const r = report('plain.prg', '--no-roms');
+    expect(r.status).toBe(1);
+    expect(r.lines[2]).toBe('layer 0  $080d  start           program');
+    expect(r.lines.join('\n')).not.toContain('depacker');
+    expect(r.lines.at(-2)).toMatch(/: settled/);
+    expect(r.lines.at(-1)).toBe('not packed: it ran as it is and never jumped into code it wrote');
+    // cut short, it says nothing either way
+    expect(report('plain.prg', '--no-roms', '--cycles', '0.1').lines.slice(-2)).toEqual([expect.stringMatching(/: budget/), 'nothing was unpacked']);
   });
 
   it('takes one file at a time, and says when there is none', () => {

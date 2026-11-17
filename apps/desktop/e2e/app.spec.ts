@@ -2146,6 +2146,32 @@ test('a program that waits for a key in front of more packing: Unpack again runs
   await expect(bar).toHaveCount(0);
 });
 
+test('a program that looks packed but runs as it is: Unpack says it is not packed, not that Sindri failed', async ({ app, page, workDir }) => {
+  // 10 SYS2061, inc $d020 / jmp $080d, then 3 KB of bytes that look compressed (a program that unpacks data of its own
+  // that it never runs, or a one-block intro: Sindri finds no layer to peel off)
+  const noise = Array.from({ length: 3072 }, (_, i) => ((i * 1103515245 + 12345) >>> 16) & 0xff);
+  const file = join(workDir, 'noise.prg');
+  writeFileSync(file, Uint8Array.from([0x01, 0x08, 0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00, 0xee, 0x20, 0xd0, 0x4c, 0x0d, 0x08, ...noise]));
+  await waitForListing(page);
+  const bar = page.locator('.pack-bar');
+  const done = page.locator('.unpack-bar');
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  // the signs are strong, so the notice stays, with what Sindri found
+  await expect(bar).toContainText('noise.prg is packed.');
+  await expect(bar).toContainText(/Sindri finds it not packed: it ran as it is and never jumped into code it wrote \(it stopped: settled/, { timeout: 30_000 });
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(toast(page, 'noise.prg is not packed')).toBeVisible({ timeout: 30_000 });
+  await expect(done).toContainText(/^noise\.prg is not packed: Sindri ran it, and it never jumped into code it wrote \(it stopped: settled, [^)]*\)\. There is nothing to unpack\./);
+  await expect(done).not.toHaveClass(/\bbad\b/);
+  await done.getByText('Layer report').click();
+  await expect(done.locator('.unpack-log')).toContainText('layer 0  $080d  start           program');
+  await expect(done.locator('.unpack-log')).not.toContainText('depacker');
+  await expect(done.locator('.unpack-log')).toContainText('not packed: it ran as it is and never jumped into code it wrote');
+  await expect(page.getByText('Sindri could not unpack noise.prg')).toHaveCount(0);
+  await expectFiles(page, ['noise.prg']);
+});
+
 test('a program whose name starts with a - is verified after Unpack: its source does not start with a -', async ({ app, page, workDir }) => {
   // Booze Design's Uncensored loads "- THE DEMO -": its source was -_THE_DEMO_--unpacked.asm, which the build refuses
   // as an option to the assembler, and F7 said Verification failed: invalid source file name

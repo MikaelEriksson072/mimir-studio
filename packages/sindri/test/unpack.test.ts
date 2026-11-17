@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { FILE_ARG, FILE_RAN, FILE_READ, FILE_WRITTEN, POWER_ON, unpack, type UnpackResult } from '../src/index.ts';
+import { FILE_ARG, FILE_RAN, FILE_READ, FILE_WRITTEN, notPacked, POWER_ON, unpack, type UnpackResult } from '../src/index.ts';
 import { findRoms } from '../src/node.ts';
 import { asm, basic, byteLines, SYS_LINE } from './asm.ts';
 import { coded, noise, pack, PROGRAM } from './packers.ts';
@@ -620,11 +620,40 @@ own:   ${Array(6).fill('inc $d020').join('\n       ')}
       expect(r.saved).toMatchObject({ layer: 2, entry: 0x4000, start: t.irq, end: 0x41ff });
     });
 
-    it('says when nothing was unpacked', () => {
-      const r = go(asm(`${SYS_LINE}\nloop: inc $d020\n jmp loop`).prg);
+    it('says when nothing was unpacked, and that a program that settles in its own code is not packed', () => {
+      const plain = asm(`${SYS_LINE}\nloop: inc $d020\n jmp loop`).prg, r = go(plain);
       expect(r.unpacked).toBe(false);
       expect(r.saved).toBeNull();
       expect(r.layers).toHaveLength(1);
+      expect(r.stop.reason).toBe('settled');
+      expect(r.brk).toBeNull();
+      expect(notPacked(r)).toBe(true);
+      // one that goes back to BASIC is not packed either
+      const back = go(asm(`${SYS_LINE}\n inc $d020\n rts`).prg);
+      expect(back).toMatchObject({ unpacked: false, stop: { reason: 'ready' }, brk: null });
+      expect(notPacked(back)).toBe(true);
+      // one that runs into a BRK crashed (started at the wrong address, a loader that failed): the KERNAL takes it to
+      // READY with the ROMs, the stand-ins stop on it, and it says nothing either way
+      const crash = go(asm(`${SYS_LINE}\n inc $d020\n brk`).prg);
+      expect(crash).toMatchObject({ unpacked: false, stop: { reason: mode === 'ROMs' ? 'ready' : 'brk' }, brk: 0x0810 });
+      expect(notPacked(crash)).toBe(false);
+      // one that changes its own instructions (a one-block intro steps its colours so) and calls code it wrote is one
+      // layer, not packed
+      const own = go(asm(`${SYS_LINE}
+       lda #$60
+       sta $c000
+loop:  jsr $c000
+step:  lda #$00
+       sta $d020
+       inc step+1
+       jmp loop`).prg);
+      expect(own.layers.map(l => l.kind)).toEqual(['program']);
+      expect(own.layers[0].calls).toEqual([{ entry: 0xc000, via: 'jsr' }]);
+      expect(notPacked(own)).toBe(true);
+      // a run that ended on a limit says nothing either way: the program may still unpack later
+      const cut = unpack(plain, { roms: mode === 'ROMs' ? roms : null, maxCycles: 100_000 });
+      expect(cut).toMatchObject({ unpacked: false, stop: { reason: 'budget' } });
+      expect(notPacked(cut)).toBe(false);
     });
   });
 }

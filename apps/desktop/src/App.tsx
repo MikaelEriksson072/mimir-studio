@@ -8,7 +8,7 @@ import {
   bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   keepCutTypes, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
@@ -1158,7 +1158,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const run = await runFor(f);
         const output = unpackLog(run, f.name, f.load, f.bytes.length);
         if (!run.unpacked || !run.saved) {
-          setUnpacked({ ok: false, title: `Sindri found nothing to unpack in ${f.name}: it stopped (${run.stop.reason}${run.stop.detail ? `, ${run.stop.detail}` : ''}) before a layer came off.`, output, label: 'Layer report' });
+          const stop = `${run.stop.reason}${run.stop.detail ? `, ${run.stop.detail}` : ''}`;
+          // a program that ran as it is to where programs end up is not packed: nothing went wrong (a one-block intro)
+          if (notPacked(run)) {
+            setUnpacked({ ok: true, title: `${f.name} is not packed: Sindri ran it${f.vsf ? ' on from the snapshot' : ''}, and it never jumped into code it wrote (it stopped: ${stop}). There is nothing to unpack.`, output, label: 'Layer report' });
+            toast(`${f.name} is not packed`, 'info');
+            return;
+          }
+          setUnpacked({ ok: false, title: `Sindri found nothing to unpack in ${f.name}: it stopped (${stop}) before a layer came off.`, output, label: 'Layer report' });
           toast(`Sindri could not unpack ${f.name}`, 'err');
           return;
         }

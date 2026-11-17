@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, openC64File, packedData, packerNames, parsePrg, unpackedName, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
+import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, notPacked, openC64File, packedData, packerNames, parsePrg, unpackedName, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
 import { findC64Roms, findExomizer, runExomizer, viceRomFolders } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
 import { fromSource } from './helpers/programs';
@@ -66,12 +66,22 @@ for (const [mode, r] of modes) {
       expect(second.saved!.prg).toEqual(demo);
     });
 
-    it('finds nothing to unpack in the plain demo', () => {
+    it('finds the plain demo not packed', () => {
       const run = unpackPrg(demo, r);
-      expect(run).toMatchObject({ unpacked: false, saved: null });
+      expect(run).toMatchObject({ unpacked: false, saved: null, stop: { reason: 'settled' } });
+      expect(notPacked(run)).toBe(true);
       expect(packerNames(run)).toBeNull();
-      expect(unpackSummary(run)).toMatch(/^Sindri peels off no layer \(it stopped: /);
-      expect(unpackLog(run, 'demo.prg', 0x0801, demo.length - 2).split('\n').at(-1)).toBe('nothing was unpacked');
+      expect(unpackSummary(run)).toMatch(/^Sindri finds it not packed: it ran as it is and never jumped into code it wrote \(it stopped: settled/);
+      const log = unpackLog(run, 'demo.prg', 0x0801, demo.length - 2).split('\n');
+      // the program itself is no depacker
+      expect(log.find(l => l.startsWith('layer 0'))).toMatch(/ program$/);
+      expect(log.join('\n')).not.toContain('depacker');
+      expect(log.at(-1)).toBe('not packed: it ran as it is and never jumped into code it wrote');
+      // a run cut short says nothing either way
+      const cut = { ...run, stop: { ...run.stop, reason: 'budget' as const } };
+      expect(notPacked(cut)).toBe(false);
+      expect(unpackSummary(cut)).toMatch(/^Sindri peels off no layer \(it stopped: budget/);
+      expect(unpackLog(cut, 'demo.prg', 0x0801, demo.length - 2).split('\n').at(-1)).toBe('nothing was unpacked');
     });
   });
 }
@@ -227,11 +237,11 @@ describe.skipIf(!roms)('Sindri going on from a VICE snapshot', () => {
     expect(s.prg.subarray(at, at + d.length)).toEqual(d);
   });
 
-  it('finds nothing to unpack in the snapshot of the raster demo', () => {
+  it('finds the snapshot of the raster demo not packed', () => {
     const { run: r } = run(fixture('raster-demo.vsf'));
     expect(r).toMatchObject({ unpacked: false, snapshot: 0x08c7 });
     expect(packedData(r)).toEqual([]);
-    expect(unpackSummary(r)).toMatch(/^Going on from the snapshot \(the CPU at \$08c7\), Sindri peels off no layer \(it stopped: settled/);
+    expect(unpackSummary(r)).toMatch(/^Going on from the snapshot \(the CPU at \$08c7\), Sindri finds it not packed: it ran as it is and never jumped into code it wrote \(it stopped: settled/);
   });
 });
 

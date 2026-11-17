@@ -1078,7 +1078,28 @@ lager av visas som
 packad, även om tecknen ovan inte räckte, med lagren i notisen (`unpackSummary()` i `packages/core/src/sindri.ts`:
 "Sindri peels off 2 layers: Exomizer v3.0 (a decruncher at $0100) …; the program starts at $1000") och
 packarnamnen i rubriken. Skalar den inget lager av fast den körde programmet tills det stod still (eller gick tillbaka
-till BASIC) och tecknen bara räcker till *kanske*, visas ingen notis. Mot unp64 på 550 intron och demos ur arkivet ger
+till BASIC) och tecknen bara räcker till *kanske*, visas ingen notis.
+
+*Inte packat* (`notPacked()` i Sindri) är ett program som bara har ett lager, sig självt: det hoppade aldrig in i kod
+det själv skrev, och körningen slutade där program hamnar, stilla eller tillbaka vid READY, utan att det sprang på en
+BRK på vägen. Kod det skrev och anropade som subrutin, eller byte det ändrar i sina egna instruktioner, gör inget nytt
+lager. Lagerrapporten slutar då med `not packed: it ran as it is and never jumped into code it wrote` i stället för
+`nothing was unpacked`, och lager 0 kallas inte uppackare (förut stod det *unknown depacker* under ett program som
+inte var packat). **Unpack** säger att filen inte är packad (rubriken *X is not packed: Sindri ran it, and it never
+jumped into code it wrote (it stopped: …). There is nothing to unpack.*, en vanlig notis), inte att Sindri misslyckades;
+notisens rad lyder *Sindri finds it not packed: …*. En körning som slutade på en gräns, en laddning, en reset eller en
+krasch säger ingenting åt något håll och heter som förut *nothing was unpacked* (*Sindri could not unpack*): programmet
+kan ha packats upp senare. Med ROM:arna tar KERNAL:ens BRK-rutin en krasch till READY, så en BRK som KERNAL:en tog
+(`UnpackResult.brk`) räknas inte som ett slut: annars kallades program som Sindri startade på fel adress inte packade
+(Channel 42:s intro, som börjar på `$0450` och som unp64 packar upp med CruelCrunch). Morning Stretching (Samar, Zoo
+Party 2024), ett *one block intro* på 249 byte med rasterstreck och SID-ljud, gav förut *Sindri could not unpack*.
+Över 1 086 utgåvor ur arkivet (Misc-top200, Onefile-top200, demodisketterna och spelen i CSDB:s Top200 och 317
+intron, första programmet med sin disk) är 120 inte packade (92 stilla, 28 tillbaka vid READY; 60 är på högst 256
+byte), 924 packas upp och 42 säger ingenting (7 av dem är BRK-krascherna ovan); unp64 packar inte upp något av de 120.
+Fyra av dem (Dame Kitty, Kolmiolaake, Rewind, demo._pxp: demos med komprimerad data som de själva packar upp) har
+ändå tecknen för *packad*, och notisen står kvar med Sindris rad.
+
+Mot unp64 på 550 intron och demos ur arkivet ger
 den samma startadress och samma byte för 488 och går ett lager djupare för 17; på 473 andra filer namnger den 429
 packare precis som unp64, 2 med samma familj och ingen fel.
 

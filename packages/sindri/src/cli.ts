@@ -3,7 +3,7 @@
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { unpack, type LayerReport, type Saved, type UnpackOptions } from './session.ts';
+import { notPacked, unpack, NOT_PACKED, type LayerReport, type Saved, type UnpackOptions } from './session.ts';
 import { findRoms, loadRoms } from './node.ts';
 import { d64File, d64Pick } from './d64.ts';
 import { g64ToD64, isG64 } from './g64.ts';
@@ -63,7 +63,8 @@ function describe(l: LayerReport): string {
   const lines = [head];
   if (l.kind !== 'program' || l.index === 0) {
     lines.push(`         ran ${ranges(l.code)} (${l.instructions} instructions), read ${ranges(l.read)} (${kb(l.readBytes)}), wrote ${ranges(l.written)} (${kb(l.writtenBytes)})`);
-    if (l.kind !== 'jump') lines.push(`         ${l.packer ? `packer: ${l.packer.name} (${Math.round(l.packer.similarity * 100)}% alike)` : `unknown depacker, fingerprint ${l.fingerprint}`}`);
+    // (the program itself, when nothing came off, is no depacker)
+    if (l.kind !== 'jump' && l.kind !== 'program') lines.push(`         ${l.packer ? `packer: ${l.packer.name} (${Math.round(l.packer.similarity * 100)}% alike)` : `unknown depacker, fingerprint ${l.fingerprint}`}`);
   }
   if (l.calls.length) lines.push(`         called code it wrote: ${l.calls.map(c => `${hex4(c.entry)} (${c.via})`).join(', ')}`);
   if (l.kind === 'program' && l.kept.length) lines.push(`         keeps what earlier layers left that it ran: ${l.kept.map(k => `${range(k)} (layer ${k.layer})`).join(', ')}`);
@@ -200,7 +201,7 @@ function main(argv: string[]): number {
   for (const l of r.layers) console.log(describe(l));
   const secs = (r.cycles / 985248).toFixed(1);
   console.log(`stopped after ${secs} s of C64 time (${Math.round(r.ms)} ms): ${r.stop.reason}${r.stop.detail ? `, ${r.stop.detail}` : ''}`);
-  if (!r.unpacked) console.log('nothing was unpacked');
+  if (!r.unpacked) console.log(notPacked(r) ? NOT_PACKED : 'nothing was unpacked');
   else if (r.saved) {
     const s = r.saved;
     console.log(`${info ? 'would save' : 'saved'} layer ${s.layer}: ${range(s)} (${kb(s.prg.length - 2)}), start with ${startHint(s)}`);

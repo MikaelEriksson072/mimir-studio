@@ -431,7 +431,10 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   stand-ins. A file it peels a layer off is packed even when the signs missed it, and the notice lists the layers with
   the packers their fingerprints name (`unpackSummary()`). **Unpack** opens the program it saved, with its start, and
   the *Layer report* (`unpackLog()`, as Sindri's own command line prints it); `mimir unpack` does the same on
-  the command line. A file opened from a mounted D64 is unpacked with that disk in an emulated 1541 (the main process
+  the command line. A run with one layer that settled or went back to READY without a BRK the KERNAL took
+  (`notPacked()` in Sindri, `UnpackResult.brk`) is a program that is not packed: Unpack says so as a plain notice, and
+  the report ends with `not packed: …` instead of `nothing was unpacked`, which is kept for runs that prove nothing (a
+  limit, a load, a reset, a crash). A file opened from a mounted D64 is unpacked with that disk in an emulated 1541 (the main process
   reads VICE's DOS ROM with the C64 ROMs): the drive runs behind the C64 and catches up at every access to the serial
   port, so the program's own fast loader goes on loading its next parts, and the report has a `Drive:` line. A VICE
   snapshot is not loaded and started: Sindri goes on from its machine (`vsfMachine()` in `packages/sindri/src/vsf.ts`

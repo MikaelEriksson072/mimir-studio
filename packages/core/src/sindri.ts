@@ -4,10 +4,11 @@
  * from, a 1541 is on the serial bus and the program goes on loading. Here: a run whose result can be posted from a
  * worker, the packers the layers' fingerprints name, and the layer report the app and the CLI show.
  * ===================================================================== */
-import { unpack, vsfMachine, type LayerReport, type Roms, type UnpackResult } from '@mimir/sindri';
+import { notPacked, NOT_PACKED, unpack, vsfMachine, type LayerReport, type Roms, type UnpackResult } from '@mimir/sindri';
 import { h4 } from './util/hex';
 
 export type { LayerReport, Roms } from '@mimir/sindri';
+export { notPacked } from '@mimir/sindri';
 
 /** A run of Sindri without its save() function, so that it can cross a worker boundary; `snapshot`: it went on from
  *  a VICE snapshot whose CPU was there */
@@ -64,6 +65,7 @@ export function depackerText(l: LayerReport): string {
 /** What a run found, in a sentence for the packed notice: the layers it peeled off and where the program starts. */
 export function unpackSummary(run: UnpackRun): string {
   const from = run.snapshot != null ? `Going on from the snapshot (the CPU at $${h4(run.snapshot)}), ` : '';
+  if (notPacked(run)) return `${from}Sindri finds it not packed: it ran as it is and never jumped into code it wrote (it stopped: ${stopText(run)})`;
   if (!run.unpacked) return `${from}Sindri peels off no layer (it stopped: ${stopText(run)})`;
   const d = depackers(run);
   const prog = run.saved ? `; the program starts at $${h4(run.saved.entry)}` : '';
@@ -86,7 +88,8 @@ function layerLines(l: LayerReport): string[] {
   const lines = [`layer ${l.index}  ${hex(l.entry)}  ${(l.via === 'start' ? 'start' : `${l.via} from ${hex(l.from ?? 0)}`).padEnd(15)} ${l.basic ? 'BASIC RUN' : l.kind}`];
   if (l.kind !== 'program' || l.index === 0) {
     lines.push(`         ran ${rangesText(l.code)} (${l.instructions} instructions), read ${rangesText(l.read)} (${kb(l.readBytes)}), wrote ${rangesText(l.written)} (${kb(l.writtenBytes)})`);
-    if (l.kind !== 'jump') lines.push(`         ${l.packer ? `packer: ${l.packer.name} (${Math.round(l.packer.similarity * 100)}% alike)` : `unknown depacker, fingerprint ${l.fingerprint}`}`);
+    // (the program itself, when nothing came off, is no depacker)
+    if (l.kind !== 'jump' && l.kind !== 'program') lines.push(`         ${l.packer ? `packer: ${l.packer.name} (${Math.round(l.packer.similarity * 100)}% alike)` : `unknown depacker, fingerprint ${l.fingerprint}`}`);
   }
   if (l.calls.length) lines.push(`         called code it wrote: ${l.calls.map(c => `${hex(c.entry)} (${c.via})`).join(', ')}`);
   if (l.kind === 'program' && l.kept?.length) lines.push(`         keeps what earlier layers left that it ran: ${l.kept.map(k => `${rangeText(k)} (layer ${k.layer})`).join(', ')}`);
@@ -115,7 +118,7 @@ export function unpackLog(run: UnpackRun, name: string, load: number, size: numb
   if (run.tape) out.push(`Tape: ${run.tape}`);
   for (const l of run.layers) out.push(...layerLines(l));
   out.push(`stopped after ${(run.cycles / 985248).toFixed(1)} s of C64 time (${Math.round(run.ms)} ms): ${stopText(run)}`);
-  if (!run.unpacked) out.push('nothing was unpacked');
+  if (!run.unpacked) out.push(notPacked(run) ? NOT_PACKED : 'nothing was unpacked');
   else if (run.saved) {
     const s = run.saved;
     const port = s.port !== 0x37 ? `, $01=$${s.port.toString(16).padStart(2, '0')}` : '';

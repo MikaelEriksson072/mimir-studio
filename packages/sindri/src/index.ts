@@ -1,5 +1,5 @@
 /* Sindri's API, without file-system access (that is in ./node.ts). */
-export { unpack, FILE_RAN, FILE_ARG, FILE_READ, FILE_WRITTEN } from './session.ts';
+export { unpack, notPacked, NOT_PACKED, FILE_RAN, FILE_ARG, FILE_READ, FILE_WRITTEN } from './session.ts';
 export type { UnpackOptions, UnpackResult, LayerReport, Saved, StopReason, Via } from './session.ts';
 export { C64, POWER_ON, type MachineState, type Roms } from './c64.ts';
 export { isVsf, vsfMachine } from './vsf.ts';

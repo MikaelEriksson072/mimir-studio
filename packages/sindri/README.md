@@ -371,6 +371,16 @@ saved layer 4: $0800-$e1ff (54.5 KB), start with SYS 4096 = $1000
   -> game.1000.prg
 ```
 
+A program that never jumps into code it wrote has one layer, itself, and nothing is saved. When the run ended where
+programs end up, settled or back at READY, without a BRK that the KERNAL took on the way (with the ROMs a crash goes
+on to READY), the last line is `not packed: it ran as it is and never jumped into code it wrote`: a one-block intro
+that loops in its raster wait, say. Code it wrote and called as a subroutine, or bytes it changes in its own
+instructions, make no new layer. A run that stopped on a limit, a load, a reset or a crash ends with
+`nothing was unpacked`: the program may still have unpacked later. Both exit with 1. Of 1086 intros, demos and games
+from a C64 archive (the first program of each release, with its disk), 120 are not packed (60 of them 256 bytes or
+less), and unp64 unpacks none of them; before the BRK rule there were 7 more, and one of those, started at the wrong
+address, unp64 unpacks.
+
 | option | |
 |---|---|
 | `-o FILE` | save here (default: `<name>.<start address>.prg` next to the file) |
@@ -528,7 +538,7 @@ saved with it.
 ## API
 
 ```ts
-import { unpack } from './src/index.ts';
+import { notPacked, unpack } from './src/index.ts';
 import { findRoms } from './src/node.ts';
 
 const result = unpack(prg, { roms: findRoms() });
@@ -536,6 +546,7 @@ unpack(prg, { roms: findRoms(), disk: d64 });  // with the disk it came from in 
 if (result.saved) save(result.saved.prg);   // load address first; result.saved.entry is the start
 result.layers;                              // the report per layer
 result.save(2);                             // another layer's PRG
+notPacked(result);                          // one layer that ended settled or at READY, without a BRK (result.brk)
 result.fileUse[a] & FILE_RAN;               // what the run did with the loaded byte at a
 ```
 

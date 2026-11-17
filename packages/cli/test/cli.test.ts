@@ -86,7 +86,7 @@ describe('mimir CLI', () => {
     // the demo itself is not packed: nothing is written
     c = capture(dir);
     expect(await main(['unpack', 'unpacked.prg', '-o', 'again.prg'], c.io)).toBe(1);
-    expect(c.lines.join('\n').split('\n').at(-1)).toBe('nothing was unpacked');
+    expect(c.lines.join('\n').split('\n').at(-1)).toBe('not packed: it ran as it is and never jumped into code it wrote');
     expect(existsSync(join(dir, 'again.prg'))).toBe(false);
   });
 

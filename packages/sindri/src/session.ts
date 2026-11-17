@@ -155,6 +155,9 @@ export interface UnpackResult {
   /** a layer was peeled off */
   unpacked: boolean;
   stop: { reason: StopReason; pc: number; detail: string; cycle: number };
+  /** where the program last ran into a BRK that the KERNAL's handler took, or null: a crash, mostly (with the ROMs
+   *  it goes on to READY, which ends the run as "ready"; the stand-ins stop on it) */
+  brk: number | null;
   /** the layers in order: 0 is the loaded program */
   layers: LayerReport[];
   /** the saved layer (the newest, or options.layer) */
@@ -178,6 +181,20 @@ export interface UnpackResult {
 
 /** `UnpackResult.fileUse`: executed as an opcode, executed as an operand, read as data, written after the load */
 export const FILE_RAN = 1, FILE_ARG = 2, FILE_READ = 4, FILE_WRITTEN = 8;
+
+/**
+ * The program is not packed: it never jumped into code it wrote (one layer, the program itself), and the run ended
+ * where a program ends up, settled or back at READY, without running into a BRK on the way. A run that stopped on a
+ * limit, a load, a reset or a crash (a BRK the KERNAL took to READY: Sindri started it at the wrong address, or its
+ * loader failed), or whose last layer was dropped for resetting soon, says nothing either way: the program may still
+ * unpack later. (Code it wrote and called as a subroutine, or bytes it changed in its own instructions, keep it one
+ * layer.)
+ */
+export const notPacked = (r: Pick<UnpackResult, 'unpacked' | 'layers' | 'stop' | 'brk'>): boolean =>
+  !r.unpacked && r.layers.length === 1 && r.brk == null && (r.stop.reason === 'settled' || r.stop.reason === 'ready');
+
+/** the report's last line for such a run, in place of "nothing was unpacked" */
+export const NOT_PACKED = 'not packed: it ran as it is and never jumped into code it wrote';
 
 /** What the run did with each byte as it was loaded: what it did before the byte's first write. */
 function fileUse(m: C64): Uint8Array {
@@ -339,6 +356,8 @@ class Session {
   private curId = BOOT;
   private nextId = 0;
   private started = false;
+  /** UnpackResult.brk */
+  private brkAt: number | null = null;
   /** the open subroutine calls and interrupts: stack pointer, return address, layers when called */
   private readonly callSp = new Int16Array(CALLS);
   private readonly callRet = new Int32Array(CALLS);
@@ -1307,7 +1326,10 @@ class Session {
         return false;
       });
       this.trap(0xfe66, KERNAL, () => {
-        if (this.started) this.cur!.printed += `{brk at ${hex4((m.peekWord(0x100 + ((cpu.s + 5) & 0xff)) - 2) & 0xffff)}}`;
+        if (this.started) {
+          this.brkAt = (m.peekWord(0x100 + ((cpu.s + 5) & 0xff)) - 2) & 0xffff;
+          this.cur!.printed += `{brk at ${hex4(this.brkAt)}}`;
+        }
         return false;
       });
       // LOAD at the prompt relinks BASIC's lines from its start (LINKPRG, JSR $a533 after the load). Started at an
@@ -1352,7 +1374,11 @@ class Session {
     });
     this.trap(0xbdcd, BASIC, () => { for (const ch of String(cpu.x | (cpu.a << 8))) this.print(ch.charCodeAt(0)); return this.rts(); });
 
-    this.trap(0xfe66, KERNAL, () => { this.stop('brk', `BRK at ${hex4((m.peekWord(0x100 + ((cpu.s + 5) & 0xff)) - 2) & 0xffff)}`); return true; });
+    this.trap(0xfe66, KERNAL, () => {
+      this.brkAt = (m.peekWord(0x100 + ((cpu.s + 5) & 0xff)) - 2) & 0xffff;
+      this.stop('brk', `BRK at ${hex4(this.brkAt)}`);
+      return true;
+    });
     this.trap(0xea31, KERNAL, () => {
       // the KERNAL's interrupt work: the jiffy clock
       this.jiffy();
@@ -1519,6 +1545,7 @@ class Session {
     return {
       unpacked: best > 0,
       stop: this.stopInfo,
+      brk: this.brkAt,
       layers: reports,
       saved: want >= 0 ? save(want) : null,
       save,
