@@ -504,6 +504,34 @@ ${byteLines(code)}
       expect([...s.prg.subarray(at, at + body.length)]).toEqual([...body]);
     });
 
+    it('starts a file whose text fills the screen with RUN all the same, with a colon when BASIC would read the text after it', () => {
+      // as Channel 42 Intro (FBI Crew) at $0450: rows 2-24 are its text, READY. and RUN land on two of them, and RETURN
+      // hands BASIC the whole row, RUN and the text after it, which is RUN to a line number (?UNDEF'D STATEMENT
+      // ERROR); SYS to where it loads runs into the text (here a JAM, $02 = B). Graphics and reversed spaces are no
+      // text to BASIC: the screen editor reads a reversed space as a space and the tokenizer drops $80-$fe, so RUN
+      // goes as it is there, without a colon over the file's byte
+      const packed = pack(PROGRAM).prg;
+      const codes = (s: string) => [...s].map(c => (c >= 'A' && c <= 'Z' ? c.charCodeAt(0) - 64 : c.charCodeAt(0)));
+      const rows: [number[], boolean][] = [[codes('BEST WISHES FROM THE MAKERS OF THIS INTRO! '), true], [[0xa0, 0xa0, 0x20, 0xe9, 0x69, 0x5f, 0xdf, 0x60, 0x41], false]];
+      for (const [text, colon] of rows) {
+        const screen = Array.from({ length: 0x07e8 - 0x0450 }, (_, i) => text[i % text.length]);
+        const file = Uint8Array.from([0x50, 0x04, ...screen, ...new Array<number>(0x0801 - 0x07e8).fill(0), ...packed.subarray(2)]);
+        const r = go(file);
+        expect(r.basic).toEqual(['10 SYS2061']);
+        expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0x0100, 0x1000]);
+        const s = r.saved!, at = 2 + 0x1000 - s.start;
+        expect(s.entry).toBe(0x1000);
+        expect([...s.prg.subarray(at, at + body.length)]).toEqual([...body]);
+        if (mode === 'ROMs') {
+          // the screen as it was saved: RUN at the start of a row, then the colon or the file's own byte
+          const peek = (a: number) => s.prg[a - s.start + 2];
+          const run = Array.from({ length: 25 }, (_, k) => 0x0400 + 40 * k).find(a => a >= s.start && peek(a) === 0x12 && peek(a + 1) === 0x15 && peek(a + 2) === 0x0e);
+          expect(run).toBeDefined();
+          expect(peek(run! + 3)).toBe(colon ? 0x3a : file[run! + 3 - 0x0450 + 2]);
+        }
+      }
+    });
+
     it('starts a file that loads below BASIC with SYS to where it loads when RUN would not start it', () => {
       const code = asm(`
 * = $1000
