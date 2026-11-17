@@ -1,5 +1,18 @@
-/* A tape as a C64 shows its files (Settings → General → As on a C64): a tape has no directory, so this is what the
- * KERNAL prints while LOAD searches the tape for a name none of its files has, from the tape's start to its end.
+/* A tape as a C64 shows its files (Settings → General → As on a C64), in two ways.
+ *
+ * As a directory (tapeDirectory, the Explorer's choice): a tape has none, so this is the directory its files would make
+ * on a disk, listed as LOAD"$",8 and LIST list a disk's (dirlist.ts), as VICE lists a tape's contents when it is attached:
+ *
+ * - The disk's line: the tape's name (a T64's own, a TAP's file name) and its length (m:ss) where a disk has its ID.
+ * - A line per file in tape order, the end-of-tape marker left out: its blocks as a 1541 would store it (the load address
+ *   too, 254 bytes a block), its name (the spaces after it are the KERNAL's padding: they end it, as shifted spaces do
+ *   on a disk), PRG or SEQ (a C64S snapshot in a T64: FRZ), with a T before the type for a turbo loader's file, which
+ *   the KERNAL cannot load (VICE marks Turbo Tape's so). A file the tape gives no name: Mimir's name for it in upper
+ *   case, ▁ for the _; data without a header: (NO HEADER).
+ * - No BLOCKS FREE. line (VICE has none for a tape either), READY. after the last.
+ *
+ * As LOAD finds them (tapeScreen): what the KERNAL prints while LOAD searches the tape for a name none of its files
+ * has, from the tape's start to its end.
  * Checked against x64sc 3.10 (true datasette emulation) with LOAD"ZZZ" on tapes with odd names:
  *
  * - PRESS PLAY ON TAPE, OK when PLAY is pressed, and SEARCHING, each after a RETURN (OK with one after it too), as the
@@ -15,8 +28,8 @@
  * - A turbo loader's files are no KERNAL blocks: they are not on the screen. A T64's files are, as VICE finds them
  *   (its tape traps put each entry's header in the buffer), but not its C64S snapshots.
  */
-import { ScreenEditor, type DirScreenRow } from './dirlist';
-import type { TapeImage } from './tap';
+import { directoryLines, fileLine, headerLine, listScreen, ScreenEditor, type DirPart, type DirScreen, type DirScreenRow } from './dirlist';
+import type { TapeFile, TapeImage } from './tap';
 
 /** a part of the screen: the KERNAL's own messages, or a FOUND line of a file (`img.files[file]`), `data` when its
  *  data block printed it */
@@ -78,4 +91,60 @@ export function tapeScreen(img: TapeImage): TapeScreen {
   // after a name's CLR the screen is shown from its top
   const from = s.rows[0] !== typed ? 0 : s.touched[0] ? 0 : s.touched[1] ? 1 : 2;
   return { rows: s.rows.slice(from), parts, lower: s.lower };
+}
+
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* the tape as a directory                                                                                          */
+
+/** a tape file's line in the directory: its blocks, its 16 name bytes ($a0 after the name), the byte before the type
+ *  (T: a turbo loader's file) and the type */
+export interface TapeDirEntry { blocks: number; name: Uint8Array; splat: number; type: 'PRG' | 'SEQ' | 'FRZ' }
+
+const PETSCII_UNDERLINE = 0xa4;
+
+/** text as PETSCII upper case: letters to $41-$5a, _ to ▁, what PETSCII has no letter for to ? */
+function petsciiText(s: string): number[] {
+  return [...s].map(ch => {
+    const c = ch.toUpperCase().charCodeAt(0);
+    return ch === '_' ? PETSCII_UNDERLINE : c >= 0x20 && c <= 0x5d ? c : 0x3f;
+  });
+}
+
+/** 16 name bytes: the spaces (and zeros) after the name are padding, shifted spaces as on a disk */
+function nameBytes(raw: ArrayLike<number>): Uint8Array {
+  const out = new Uint8Array(16).fill(0xa0);
+  let n = Math.min(16, raw.length);
+  while (n > 0 && (raw[n - 1] === 0x20 || raw[n - 1] === 0xa0 || raw[n - 1] === 0)) n--;
+  for (let k = 0; k < n; k++) out[k] = raw[k];
+  return out;
+}
+
+/** A tape file's line in the directory, null for the end-of-tape marker (the C64 lists nothing of it). */
+export function tapeDirEntry(f: TapeFile): TapeDirEntry | null {
+  if (f.format === 'cbm' && f.type === 'END') return null;
+  const type = f.format === 't64' && f.load == null ? 'FRZ' : f.type === 'SEQ' || f.type === 'DATA' ? 'SEQ' : 'PRG';
+  // a program on a disk starts with its load address
+  const blocks = Math.ceil((f.data.length + (type === 'PRG' && f.load != null ? 2 : 0)) / 254);
+  const name = nameBytes(f.raw ?? petsciiText(f.type === 'DATA' && f.format === 'cbm' ? '(NO HEADER)' : f.name));
+  const splat = f.format === 'cbm' || f.format === 't64' ? 0x20 : 0x54;
+  return { blocks, name, splat, type };
+}
+
+/** the tape's length as the directory's ID: m:ss */
+const tapeLength = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/**
+ * The tape's files as a directory a C64 lists (see the top): `name` is the tape's file name, the directory's name for
+ * a TAP (and a T64 without one of its own). The parts' files are `img.files`'.
+ */
+export function tapeDirectory(img: TapeImage, name: string): DirScreen {
+  const own = img.t64 && img.t64.name.trim() ? img.t64.raw.subarray(0, 16) : null;
+  const title = own ? Array.from(own, b => (b === 0 ? 0x20 : b)) : petsciiText(name.replace(/\.(tap|t64)$/i, '').slice(0, 16));
+  const id = petsciiText(img.t64 ? 'T64' : tapeLength(img.seconds));
+  const lines: { n: number; text: number[]; part: DirPart }[] = [{ n: 0, text: headerLine(title, id), part: { kind: 'header' } }];
+  img.files.forEach((f, file) => {
+    const e = tapeDirEntry(f);
+    if (e) lines.push({ n: e.blocks, text: fileLine(e.blocks, e.name, e.splat, petsciiText(e.type)), part: { kind: 'entry', file } });
+  });
+  return listScreen(directoryLines(lines));
 }

@@ -6363,10 +6363,11 @@ test('a Novaload tape: the pages its boot file\'s loader reads and the files its
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
-test('the tape as a C64 finds its files (Settings → General), a turbo loader\'s files under the screen, and Mimir\'s list again', async ({ app, page }) => {
+test('the tape as a C64 lists its files as a directory, FOUND shows LOAD\'s search with a turbo loader\'s files under it, and Mimir\'s list again', async ({ app, page }) => {
   // fixtures/tap/cyberload-demo.tap: the KERNAL boot file "CYBER DEMO", whose data block starts as a header does and
-  // prints a FOUND of its own, then Cyberload's files, which the KERNAL does not see. LOAD's search of it on a C64 is
-  // checked cell by cell against VICE in packages/core/test/tapelist.test.ts
+  // prints a FOUND of its own, then Cyberload's files, which the KERNAL does not see. The directory is listed by the
+  // 1541's rules (packages/core/test/tapelist.test.ts and dirlist.test.ts); LOAD's search of it on a C64 is checked
+  // cell by cell against VICE there too
   await waitForListing(page);
   await openSection(page, 'Files');
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/cyberload-demo.tap')] });
@@ -6380,14 +6381,40 @@ test('the tape as a C64 finds its files (Settings → General), a turbo loader\'
     await settings.getByRole('button', { name: 'Save settings' }).click();
     await expect(settings).toBeHidden();
   };
+  const dir = page.getByRole('list', { name: 'Files on cyberload-demo.tap, as a C64 lists them' });
   const screen = page.getByRole('list', { name: 'Files on cyberload-demo.tap, as a C64 finds them' });
   const off = page.getByRole('list', { name: 'Files on cyberload-demo.tap that are not on the C64\'s screen' });
   const tape = page.getByRole('region', { name: 'Tape' });
+  const found = tape.getByRole('button', { name: 'LOAD\'s search of the tape' });
 
-  await test.step('LOAD\'s search: the KERNAL\'s messages, a FOUND for the boot file and one for its data block', async () => {
+  await test.step('the directory: the tape\'s name and length, every file with its blocks, the turbo files with a T, READY.', async () => {
     await look('c64');
     await expect(page.getByRole('list', { name: 'Files on cyberload-demo.tap', exact: true })).toHaveCount(0);
     await expect(tape.locator('.disk-head')).toHaveCount(0);
+    await expect(found).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => dir.getByRole('listitem').evaluateAll(l => l.map(e => e.getAttribute('aria-label'))))
+      .toEqual(['0 "CYBERLOAD-DEMO  " 1:08', '1 "CYBER DEMO" PRG', '4 "file_0002" TPRG', '3 "file_c000" TPRG', '3 "file_e000" TPRG', '49 "DEMO" TPRG', 'READY.']);
+    // 27 columns of 8 pixels (49   "DEMO"            TPRG), 8 rows of 8 with the cursor's after READY.
+    expect(await tape.locator('.c64-screen canvas').evaluate((c: HTMLCanvasElement) => [c.width, c.height])).toEqual([216, 64]);
+    await expect(tape.locator('.c64-cursor')).toHaveCount(1);
+    await expect(off).toHaveCount(0);
+    await expect(tape.locator('.c64-off')).toHaveCount(0);
+  });
+
+  await test.step('a directory line opens its file, + adds one; the turbo files too', async () => {
+    await dir.getByRole('listitem', { name: '1 "CYBER DEMO" PRG' }).click();
+    await expect(toast(page, 'Loaded CYBER DEMO.prg at $029f, CYBER DEMO-header.prg at $033c')).toBeVisible();
+    await expect(dir.getByRole('listitem', { name: '1 "CYBER DEMO" PRG' })).toHaveAttribute('aria-current', 'true');
+    await dir.getByRole('button', { name: 'Add DEMO to this project' }).click();
+    await expect(toast(page, 'Loaded DEMO.prg at $0801')).toBeVisible();
+    await expectFiles(page, ['CYBER DEMO.prg', 'CYBER DEMO-header.prg', 'DEMO.prg']);
+    await expect(dir.getByRole('listitem', { name: '49 "DEMO" TPRG' })).toHaveAttribute('aria-current', 'true');
+  });
+
+  await test.step('FOUND: LOAD\'s search, the KERNAL\'s messages, a FOUND for the boot file and one for its data block', async () => {
+    await found.click();
+    await expect(found).toHaveAttribute('aria-pressed', 'true');
+    await expect(dir).toHaveCount(0);
     await expect.poll(() => screen.getByRole('listitem').evaluateAll(l => l.map(e => e.getAttribute('aria-label'))))
       .toEqual(['PRESS PLAY ON TAPE OK SEARCHING', 'FOUND CYBER DEMO']);
     // the boot file's item is both its FOUND lines, the data block's too
@@ -6399,25 +6426,27 @@ test('the tape as a C64 finds its files (Settings → General), a turbo loader\'
     await expect(off.getByRole('listitem')).toHaveText([/"file_0002"\s*Cyberload/, /"file_c000"\s*Cyberload/, /"file_e000"\s*Cyberload/, /"DEMO"\s*Cyberload/]);
   });
 
-  await test.step('the FOUND line opens the boot file, + under the screen adds a turbo file; Aa switches the character set', async () => {
-    await screen.getByRole('listitem', { name: 'FOUND CYBER DEMO' }).click();
-    await expect(toast(page, 'Loaded CYBER DEMO.prg at $029f, CYBER DEMO-header.prg at $033c')).toBeVisible();
+  await test.step('the files the project has are marked on the FOUND screen and under it; Aa switches the character set; FOUND again: the directory', async () => {
     await expect(screen.getByRole('listitem', { name: 'FOUND CYBER DEMO' })).toHaveAttribute('aria-current', 'true');
-    await off.getByRole('button', { name: 'Add DEMO to this project' }).click();
-    await expect(toast(page, 'Loaded DEMO.prg at $0801')).toBeVisible();
-    await expectFiles(page, ['CYBER DEMO.prg', 'CYBER DEMO-header.prg', 'DEMO.prg']);
     await expect(off.getByRole('listitem').filter({ hasText: '"DEMO"' })).toHaveAttribute('aria-current', 'true');
     const aa = tape.getByRole('button', { name: 'Lower case character set' });
     await aa.click();
     await expect(aa).toHaveAttribute('aria-pressed', 'true');
     await aa.click();
     await expect(aa).toHaveAttribute('aria-pressed', 'false');
+    await found.click();
+    await expect(found).toHaveAttribute('aria-pressed', 'false');
+    await expect(screen).toHaveCount(0);
+    await expect(off).toHaveCount(0);
+    await expect(dir.getByRole('listitem')).toHaveCount(7);
   });
 
   await test.step('Mimir\'s list again', async () => {
     await look('mimir');
+    await expect(dir).toHaveCount(0);
     await expect(screen).toHaveCount(0);
     await expect(off).toHaveCount(0);
+    await expect(found).toHaveCount(0);
     await expect(tape.getByRole('button', { name: 'Lower case character set' })).toHaveCount(0);
     await expect(page.getByRole('list', { name: 'Files on cyberload-demo.tap', exact: true }).getByRole('listitem')).toHaveCount(5);
   });

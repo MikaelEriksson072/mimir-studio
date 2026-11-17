@@ -3647,9 +3647,30 @@ läsas) listas men öppnas inte. Under listan står hur många TapeTool-filer oc
 
 **Bandet som på en C64.** Samma inställning som disken, Settings → General → *The disk and the tape in the Explorer* →
 *As on a C64* (13.5), visar bandet som en C64 visar det, i dess teckensnitt och färger med samma ritning som katalogen
-(`components/C64Screen.tsx`). Ett band har ingen katalog: skärmen är det KERNAL:n skriver när `LOAD` söker igenom
-bandet till slutet efter ett namn som ingen fil har, utskrivet med katalogens skärmeditor
-(`packages/core/src/c64/tapelist.ts`, `tapeScreen`):
+(`components/C64Screen.tsx`), på två sätt (`packages/core/src/c64/tapelist.ts`).
+
+*Som en katalog* (förvalt, `tapeDirectory`). Ett band har ingen katalog, så skärmen är katalogen som bandets filer
+skulle ge på en disk, listad som `LOAD"$",8` och `LIST` listar en disks med samma regler och skärmeditor (`dirlist.ts`:
+`fileLine`, `headerLine`, `directoryLines`, `listScreen`), som VICE listar ett bands innehåll när det sätts i
+(`imagecontents/tapecontents.c`):
+
+- Diskens rad (RVS efter nollan): bandets namn, en T64:s eget och annars bandfilens namn utan `.tap`/`.t64` med stora
+  bokstäver, och där en disk har sitt ID bandets längd (`m:ss`; en T64: `T64`).
+- En rad per fil i bandets ordning, alla format, även turboladdarnas; slutmarkören utelämnas. Blocken är de filen skulle
+  ta på en 1541 (laddadressen medräknad, 254 byte per block: DEMO med 12 287 byte är 49). Namnet: mellanslagen efter det
+  är KERNAL:ns utfyllnad och avslutar det som shiftade mellanslag gör på en disk; därefter gäller 1541:ans regler (första
+  citattecknet stänger, byten efter förlorar bit 7, kontrollkoder inom citattecken visas inverterade och utanför verkar
+  de). Typen är PRG eller SEQ (en datafil, och data utan huvud som heter `(NO HEADER)`), en T64:s C64S-ögonblicksbild FRZ;
+  en turboladdares fil har ett `T` före typen (`TPRG`), där en disk har `*`, eftersom KERNAL:n inte kan ladda den (VICE
+  märker Turbo Tape-filer så). En fil som bandet inte ger något namn får Mimirs namn med stora bokstäver och `_` som
+  PETSCII `$a4` (▁): `"FILE▁C000"`.
+- Ingen `BLOCKS FREE.`-rad (VICE har ingen för band heller); `READY.` och den blinkande markören efter sista raden.
+
+En fils rad öppnar filen och **+** lägger till den, som disken. Filer som namns kontrollkoder skrev över står under
+skärmen med raderna från Mimirs lista.
+
+*Som LOAD hittar dem* (**FOUND** bredvid **Aa**, `tapeScreen`): det KERNAL:n skriver när `LOAD` söker igenom bandet
+till slutet efter ett namn som ingen fil har, utskrivet med katalogens skärmeditor:
 
 - `PRESS PLAY ON TAPE`, `OK` när PLAY trycks och `SEARCHING`, var och ett efter en RETURN (`OK` med en efter sig också),
   som meddelandena vid `$f0bd` i KERNAL:n har dem; `FOR` och namnet som LOAD fick är utelämnade.
@@ -3672,7 +3693,8 @@ inte att öppna. Efter en CLR i ett namn visas skärmen från toppen, som C64:an
 från Mimirs lista, filerna som inte är på den, och varför: en turboladdares filer (*which the KERNAL does not see*),
 data utan huvud, en T64:s ögonblicksbilder och namn som andra namns kontrollkoder skrev över (Barbarians bootfil
 börjar med vit färg och CLR, så bara det sista namnet syns). Slutmarkören står inte där: en C64 visar inget av den.
-Bandets längd och huvudraden visas inte. **Aa** bredvid utmatningsknappen byter teckenuppsättning.
+Bandets längd och huvudraden visas inte. **FOUND** igen visar katalogen. **Aa** bredvid utmatningsknappen byter
+teckenuppsättning i båda.
 
 **Test:** `test/tapelist.test.ts` jämför skärmen cell för cell (skärmkod och färg) med x64sc 3.10:s, äkta
 datasettemulering, `LOAD"ZZZ"` och PLAY tryckt från VICE:s monitor (`tapectrl 1`), för band med udda namn (färgkoder,

@@ -103,7 +103,7 @@ kbd { font: 10.5px/1 var(--font-code); padding: 2px 5px; border-radius: 4px; bor
 .side-sec.closed { padding-bottom: 0; }
 .sec-head { display: flex; align-items: center; gap: 6px; min-height: 34px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-2); }
 .sec-head > span:first-child { white-space: nowrap; }
-.sec-toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 34px; padding: 0; border: 0; background: none; color: var(--fg-2); font: 600 11px var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+.sec-toggle { display: inline-flex; flex: none; align-items: center; gap: 6px; min-width: 0; height: 34px; padding: 0; border: 0; background: none; color: var(--fg-2); font: 600 11px var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
 .sec-toggle:hover { color: var(--fg); }
 .sec-toggle .icon { flex: none; color: var(--fg-3); transition: transform 0.15s; }
 .side-sec.closed .sec-toggle .icon { transform: rotate(-90deg); }

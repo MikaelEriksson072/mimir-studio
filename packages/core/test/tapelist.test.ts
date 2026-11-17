@@ -1,9 +1,10 @@
 /* A tape as a C64 shows its files: what LOAD prints as it searches the tape, against x64sc 3.10's screen (true datasette
- * emulation, LOAD"ZZZ") for tapes with odd names and the repository's tape fixtures. */
+ * emulation, LOAD"ZZZ") for tapes with odd names and the repository's tape fixtures; and the directory the files would
+ * make on a disk, listed by the 1541's rules (dirlist.ts, checked against VICE in dirlist.test.ts). */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { makeT64, readTape, screenRowText, tapeScreen, type TapeScreen } from '../src';
+import { makeT64, readTape, screenRowText, tapeDirectory, tapeDirEntry, tapeScreen, type DirScreen, type TapeScreen } from '../src';
 import { controlTape, kernalTape, oddTape } from './helpers/tapelist-tapes';
 import { VICE_TAPE_SCREENS } from './helpers/tapelist-vice';
 
@@ -14,7 +15,7 @@ const asc = (s: string) => [...s].map(c => c.charCodeAt(0));
 /** the screen's rows as VICE's are written: screen codes in hex, then the colours, a colour only where something is shown */
 const rowsOf = (s: TapeScreen) => s.rows.map(r => `${hex(r.codes)} ${Array.from(r.colors, (c, i) => (r.codes[i] === 0x20 ? '.' : c.toString(16))).join('')}`);
 const viceRows = (rows: string[]) => rows.map(r => { const [codes, colors] = r.split(' '); return `${codes} ${[...colors].map((c, i) => (codes.slice(i * 2, i * 2 + 2) === '20' ? '.' : c)).join('')}`; });
-const text = (s: TapeScreen) => s.rows.map(r => screenRowText(r, s.lower));
+const text = (s: TapeScreen | DirScreen) => s.rows.map(r => screenRowText(r, s.lower));
 const parts = (s: TapeScreen) => s.rows.map(r => s.parts[r.part]);
 
 describe('the tape as a C64 finds its files', () => {
@@ -71,5 +72,58 @@ describe('the tape as a C64 finds its files', () => {
     const img = readTape(t64);
     expect(img.files.map(f => f.load)).toEqual([0x0801, null, 0xc000]);
     expect(text(tapeScreen(img)).slice(4)).toEqual(['FOUND GAME', 'FOUND EXTRA']);
+  });
+});
+
+describe('the tape as a directory', () => {
+  it("lists every file as the 1541 would, the turbo loaders' with a T, READY. and the cursor after them", () => {
+    const img = readTape(fixture('tap/cyberload-demo.tap')), s = tapeDirectory(img, 'cyberload-demo.tap');
+    // the ▁ (PETSCII $a4) for the _ in Mimir's names is a graphics character: · here
+    expect(text(s)).toEqual(['0 "CYBERLOAD-DEMO  " 1:08', '1    "CYBER DEMO"       PRG', '4    "FILE·0002"       TPRG', '3    "FILE·C000"       TPRG',
+      '3    "FILE·E000"       TPRG', '49   "DEMO"            TPRG', 'READY.', '']);
+    // the disk's line in RVS after its 0
+    expect([...s.rows[0].codes.slice(0, 3)]).toEqual([0x30, 0x20, 0xa2]);
+    expect(s.rows.map(r => s.parts[r.part])).toEqual([{ kind: 'header' }, ...[0, 1, 2, 3, 4].map(file => ({ kind: 'entry', file })), { kind: 'ready' }, { kind: 'ready' }]);
+    expect(s.cursor).toEqual({ row: 7, col: 0, color: 14 });
+    // DEMO: 12 287 bytes and its load address, 49 blocks of 254
+    expect(img.files[4].data.length).toBe(12287);
+    expect(tapeDirEntry(img.files[4])).toMatchObject({ blocks: 49, splat: 0x54, type: 'PRG' });
+  });
+
+  it("ends a name at the KERNAL's padding, closes it at a quote, shows its control codes as LIST does, leaves out the end-of-tape marker", () => {
+    const img = readTape(oddTape()), s = tapeDirectory(img, 'odd.tap');
+    expect(text(s).slice(1, -2)).toEqual([
+      '1    "PLAIN"            PRG',
+      // in quotes the colour codes and RVS are shown inverse, as on a disk (white an inverse E)
+      '1    "EWHITE·BLUE"      PRG',
+      // the name's quote closes the quotes: the rest is out of them, its colour code turning the C to red
+      '1    "A"BC             PRG',
+      '1    "NOTES"            SEQ',
+      '1    "DATA3"            PRG', '1    "DATA1"            PRG', '1    "DATA4"            PRG', '1    "RRVS·OFF"         PRG',
+      // a shifted space ends the name, the bytes after it lose bit 7: the second a space
+      '1    "···π" SHIFT       PRG',
+      '1    "WITH NO SPACES!!" PRG',
+    ]);
+    expect([...s.rows[2].codes.slice(5, 7)]).toEqual([0x22, 0x85]);
+    expect([...s.rows[3].colors.slice(8, 10)]).toEqual([14, 2]);
+    expect(img.files.at(-1)?.type).toBe('END');
+    expect(new Set(s.parts.flatMap(p => (p.kind === 'entry' ? [p.file] : [])))).toEqual(new Set(img.files.slice(0, -1).map((_, i) => i)));
+  });
+
+  it('counts blocks as a disk stores the file, with its load address', () => {
+    const tape = (n: number, type: 3 | 4 = 3) => tapeDirEntry(readTape(kernalTape([{ type, name: asc('F'), data: new Array<number>(n).fill(1) }])).files[0]);
+    expect([252, 253, 506, 507].map(n => tape(n)?.blocks)).toEqual([1, 2, 2, 3]);
+    // a data file: no load address, the bytes of its data blocks (191 each on the tape)
+    expect([191, 192, 573].map(n => tape(n, 4)?.blocks)).toEqual([1, 2, 3]);
+    expect(tape(1, 4)?.type).toBe('SEQ');
+  });
+
+  it('names a TAP after its file, its length as the ID; a T64 by its own name, its C64S snapshots FRZ', () => {
+    const odd = readTape(oddTape());
+    expect(Math.floor(odd.seconds)).toBe(138);
+    expect(text(tapeDirectory(odd, 'My_Tape.TAP'))[0]).toBe('0 "MY·TAPE         " 2:18');
+    const t64 = makeT64({ name: 'ARCHIVE', files: [{ name: 'GAME', load: 0x0801, data: Uint8Array.of(0) }, { name: 'SNAP', load: 0, data: Uint8Array.of(0), type: 3, fileType: 0 }] });
+    expect(text(tapeDirectory(readTape(t64), 'x.t64')).slice(0, 3)).toEqual(['0 "ARCHIVE         " T64', '1    "GAME"             PRG', '1    "SNAP"             FRZ']);
+    expect(text(tapeDirectory(readTape(makeT64({ files: [{ name: 'GAME', load: 0x0801, data: Uint8Array.of(0) }] })), 'games.t64'))[0]).toBe('0 "GAMES           " T64');
   });
 });

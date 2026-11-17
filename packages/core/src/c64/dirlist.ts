@@ -52,43 +52,59 @@ const WORDS = ('END FOR NEXT DATA INPUT# INPUT DIM READ LET GOTO RUN IF RESTORE 
 
 const ascii = (s: string) => [...s].map(c => c.charCodeAt(0));
 
-/** A directory entry's line as the 1541 writes it: 27 bytes after the blocks. */
-function entryText(u8: Uint8Array, p: number): number[] {
-  const kind = u8[p + 2], blocks = u8[p + 30] | (u8[p + 31] << 8);
+/** A file's line as the 1541 writes it, 27 bytes after the blocks: the 16 bytes of `name` in quotes from column 5 (the
+ *  first shifted space or quote closing them), `splat` before the type (`*` for a file never closed), the type's three
+ *  letters, `<` for a locked file. */
+export function fileLine(blocks: number, name: ArrayLike<number>, splat: number, type: readonly number[], locked = false): number[] {
   const t = new Array<number>(27).fill(0x20);
   const q = blocks < 10 ? 3 : blocks < 100 ? 2 : 1;
   t[q] = 0x22;
-  const name = u8.subarray(p + 5, p + 21);
-  let end = name.findIndex(b => b === 0xa0 || b === 0x22);
+  const bytes = Array.from({ length: 16 }, (_, k) => (k < name.length ? name[k] : 0xa0));
+  let end = bytes.findIndex(b => b === 0xa0 || b === 0x22);
   if (end < 0) { end = 16; t[q + 17] = 0x22; }
-  for (let k = 0; k < 16; k++) t[q + 1 + k] = k < end ? name[k] : k === end ? 0x22 : name[k] & 0x7f;
-  if (!(kind & 0x80)) t[q + 18] = 0x2a;
-  t[q + 19] = TYPE1[kind & 7]; t[q + 20] = TYPE2[kind & 7]; t[q + 21] = TYPE3[kind & 7];
-  if (kind & 0x40) t[q + 22] = 0x3c;
+  for (let k = 0; k < 16; k++) t[q + 1 + k] = k < end ? bytes[k] : k === end ? 0x22 : bytes[k] & 0x7f;
+  t[q + 18] = splat;
+  t[q + 19] = type[0]; t[q + 20] = type[1]; t[q + 21] = type[2];
+  if (locked) t[q + 22] = 0x3c;
   return t;
+}
+
+/** A directory entry's line as the 1541 writes it: 27 bytes after the blocks. */
+function entryText(u8: Uint8Array, p: number): number[] {
+  const kind = u8[p + 2], blocks = u8[p + 30] | (u8[p + 31] << 8);
+  return fileLine(blocks, u8.subarray(p + 5, p + 21), kind & 0x80 ? 0x20 : 0x2a, [TYPE1[kind & 7], TYPE2[kind & 7], TYPE3[kind & 7]], !!(kind & 0x40));
+}
+
+/** The disk's line: RVS ON, the name in quotes and the ID with the DOS type, shifted spaces as spaces. */
+export const headerLine = (name: ArrayLike<number>, id: ArrayLike<number>): number[] => {
+  const spaced = (a: ArrayLike<number>, n: number) => Array.from({ length: n }, (_, k) => (k < a.length && a[k] !== 0xa0 ? a[k] : 0x20));
+  return [0x12, 0x22, ...spaced(name, 16), 0x22, 0x20, ...spaced(id, 5)];
+};
+
+/** a directory as the 1541 sends it: the bytes LOAD puts at $0801, the part of the listing each byte is from */
+export interface DirProgram { bytes: Uint8Array; part: Uint16Array; parts: DirPart[] }
+
+/** The directory's lines as the 1541 sends them: each line's link $0101, its number and its bytes and a zero, two zeros
+ *  after the last line (the last line's part). */
+export function directoryLines(lines: { n: number; text: number[]; part: DirPart }[]): DirProgram {
+  const bytes: number[] = [], part: number[] = [];
+  lines.forEach(({ n, text }, k) => { for (const b of [1, 1, n & 255, n >> 8, ...text, 0]) { bytes.push(b); part.push(k); } });
+  bytes.push(0, 0); part.push(lines.length - 1, lines.length - 1);
+  return { bytes: Uint8Array.from(bytes), part: Uint16Array.from(part), parts: lines.map(l => l.part) };
 }
 
 /**
  * The directory as LOAD"$",8 loads it at $0801: a BASIC line per entry after the disk's own, BLOCKS FREE. last, each
  * line's link $0101 as the 1541 sends it. `part`: the part of the listing each byte is from.
  */
-export function directoryProgram(image: Uint8Array): { bytes: Uint8Array; part: Uint16Array; parts: DirPart[] } {
+export function directoryProgram(image: Uint8Array): DirProgram {
   const u8 = diskSectors(image);
   const { bam, freeBlocks } = diskBam(u8);
-  const bytes: number[] = [], part: number[] = [];
-  const parts: DirPart[] = [{ kind: 'header' }];
-  const line = (n: number, text: number[], k: number) => { for (const b of [1, 1, n & 255, n >> 8, ...text, 0]) { bytes.push(b); part.push(k); } };
-  const spaced = (a: number, n: number) => [...bam.subarray(a, a + n)].map(b => (b === 0xa0 ? 0x20 : b));
-  line(0, [0x12, 0x22, ...spaced(0x90, 16), 0x22, 0x20, ...spaced(0xa2, 5)], 0);
+  const lines: { n: number; text: number[]; part: DirPart }[] = [{ n: 0, text: headerLine(bam.subarray(0x90, 0xa0), bam.subarray(0xa2, 0xa7)), part: { kind: 'header' } }];
   let file = 0;
-  for (const p of directoryEntries(u8)) {
-    parts.push({ kind: 'entry', file: directoryFile(u8, p) ? file++ : null });
-    line(u8[p + 30] | (u8[p + 31] << 8), entryText(u8, p), parts.length - 1);
-  }
-  parts.push({ kind: 'free' });
-  line(freeBlocks, [...ascii('BLOCKS FREE.'), ...new Array<number>(13).fill(0x20)], parts.length - 1);
-  bytes.push(0, 0); part.push(parts.length - 1, parts.length - 1);
-  return { bytes: Uint8Array.from(bytes), part: Uint16Array.from(part), parts };
+  for (const p of directoryEntries(u8)) lines.push({ n: u8[p + 30] | (u8[p + 31] << 8), text: entryText(u8, p), part: { kind: 'entry', file: directoryFile(u8, p) ? file++ : null } });
+  lines.push({ n: freeBlocks, text: [...ascii('BLOCKS FREE.'), ...new Array<number>(13).fill(0x20)], part: { kind: 'free' } });
+  return directoryLines(lines);
 }
 
 const COLOR_CODES: Record<number, number> = { 0x05: 1, 0x1c: 2, 0x1e: 5, 0x1f: 6, 0x81: 8, 0x90: 0, 0x95: 9, 0x96: 10, 0x97: 11, 0x98: 12, 0x99: 13, 0x9a: 14, 0x9b: 15, 0x9c: 4, 0x9e: 7, 0x9f: 3 };
@@ -192,8 +208,12 @@ export class ScreenEditor {
  * LOAD"$",8 and LIST: the screen the directory of a .d64 (or a .g64) makes on a C64, from the first row the listing
  * prints in to the cursor's after READY.
  */
-export function directoryScreen(image: Uint8Array): DirScreen {
-  const { bytes, part, parts } = directoryProgram(image);
+export const directoryScreen = (image: Uint8Array): DirScreen => listScreen(directoryProgram(image));
+
+/** LOAD and LIST of a directory's lines (directoryLines): the screen they make, from the first row the listing prints in
+ *  to the cursor's after READY. */
+export function listScreen({ bytes, part, parts: listed }: DirProgram): DirScreen {
+  const parts = [...listed];
   const at = (i: number) => (i < bytes.length ? bytes[i] : 0);
   const partAt = (i: number) => part[Math.min(i, part.length - 1)];
   // LOAD relinks the lines: each ends at the first zero from its sixth byte on, until a link's high byte is zero
