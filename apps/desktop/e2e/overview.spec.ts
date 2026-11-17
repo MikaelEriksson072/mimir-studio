@@ -130,6 +130,8 @@ test('the overview of the analysis opens after a load, and its links go where th
   };
   const settings = page.getByRole('dialog', { name: 'Settings' });
   const showSetting = settings.getByLabel('Show an overview of the analysis when a file is opened');
+  /** the title bar's button, which opens it again after it was closed */
+  const titleButton = page.locator('.titlebar').getByRole('button', { name: 'Analysis overview', exact: true });
 
   await test.step('off, a file opens without it', async () => {
     await open('loader-demo.prg');
@@ -172,11 +174,13 @@ test('the overview of the analysis opens after a load, and its links go where th
     await expect(statusBar(page)).toContainText('· Code');
   });
 
-  await test.step('a click outside it closes it, and so does Esc', async () => {
+  await test.step('a click outside it closes it, and so does Esc; the title bar\'s button opens it again', async () => {
     await palette();
     await page.mouse.click(8, 600);
     await expect(overview).toBeHidden();
-    await palette();
+    await titleButton.click();
+    await expect(overview).toBeVisible();
+    await expect(overview.getByRole('region', { name: 'Program start' })).toContainText('$080d');
     await page.keyboard.press('Escape');
     await expect(overview).toBeHidden();
   });
@@ -256,7 +260,7 @@ test('the overview of the analysis opens after a load, and its links go where th
     await page.keyboard.press('Escape');
   });
 
-  await test.step('the box at its foot turns it off: the next file opens without it, and Settings says so', async () => {
+  await test.step('the box at its foot turns it off: the next file opens without it, the title bar\'s button still shows it, and Settings says so', async () => {
     await palette();
     await overview.getByLabel('Show this overview when a file is opened').uncheck();
     await expect(overview).toBeVisible();
@@ -265,6 +269,11 @@ test('the overview of the analysis opens after a load, and its links go where th
     await open('loader-demo.prg');
     await page.waitForTimeout(500);
     await expect(overview).toHaveCount(0);
+    await titleButton.click();
+    await expect(overview).toBeVisible();
+    await expect(overview.getByLabel('Show this overview when a file is opened')).not.toBeChecked();
+    await page.keyboard.press('Escape');
+    await expect(overview).toBeHidden();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await settings.getByRole('tab', { name: 'General', exact: true }).click();
     await expect(showSetting).not.toBeChecked();

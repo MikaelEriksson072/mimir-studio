@@ -3,7 +3,8 @@
  * problems, the blocks by type, the code, graphics and music), with links to each part: the program start, a type of
  * block (its folder in the Blocks view), a loader's parts, the tabs Listing, the .asm source, Graphics and Memory; the
  * music found has a Play button (VICE or DeepSID, as the Blocks view's), which leaves the window open. A link, a click
- * outside the window or Esc closes it; Settings → General (or the box at its foot) turns it off. */
+ * outside the window or Esc closes it; Settings → General (or the box at its foot) turns it off. The title bar's
+ * Analysis overview button (and the command palette) opens it again at any time. */
 import { Fragment, type ReactNode } from 'react';
 import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project, type RoutineMatch } from '@mimir/core';
 import { Icon } from '../lib/icons';
@@ -274,7 +275,7 @@ export function AnalysisOverview({ A, project, labels, snap, packing, problems, 
       </div>
       <div className="modal-foot">
         <label className="check ov-auto"><input type="checkbox" checked={auto} onChange={e => onAuto(e.target.checked)} />
-          <span>Show this overview when a file is opened<small className="muted"> — also in Settings → General</small></span></label>
+          <span>Show this overview when a file is opened<small className="muted"> — also in Settings → General; the title bar's <Icon name="overview" size={11} /> button shows it again</small></span></label>
         <span className="grow" />
         <button type="button" className="btn" onClick={onClose}>Close</button>
       </div>

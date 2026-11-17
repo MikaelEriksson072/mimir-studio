@@ -1003,6 +1003,17 @@ button.tpl-ph:disabled { cursor: default; color: var(--fg-2); }
 
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
 
+/* ---------- a window between narrow and wide: the title bar gives way (Studio, the command search's width, then the
+   labels of Export, Terminal and Editor), so that Build & Run, the theme and Settings stay in the window ---------- */
+@media (max-width: 1240px) {
+  .brand-sub { display: none; }
+  .cmd-search { min-width: 140px; }
+}
+@media (max-width: 1100px) {
+  .hide-mid { display: none; }
+  .cmd-search { min-width: 100px; }
+}
+
 /* ---------- narrow screens: drawers instead of columns ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "main" "status"; }
@@ -1285,7 +1296,7 @@ button.tpl-ph:disabled { cursor: default; color: var(--fg-2); }
 .np-moving { margin-top: 6px; color: var(--fg-2); }
 .np-error { font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
 .np-foot { display: flex; gap: 8px; margin-top: 12px; }
-.proj-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; max-width: 200px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); cursor: pointer; flex: none; font-size: 12.5px; }
+.proj-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; max-width: 200px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); cursor: pointer; flex: 0 1 auto; min-width: 96px; font-size: 12.5px; }
 .proj-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-chip:hover { border-color: var(--fg-3); }
 .proj-chip .icon:first-child { color: var(--accent); }

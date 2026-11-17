@@ -125,7 +125,7 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
         pchk('startScreen', 'Show the start screen when Mimir starts', 'Continue, a new project, open one, or work without a project.',
           'Off: Mimir goes on with what you worked on last (the start screen still comes when that project is gone). The project button in the title bar shows it at any time.'),
         pchk('overview', 'Show an overview of the analysis when a file is opened', 'Once the analysis is done, a window says what it found, with links to each part.',
-          'It shows the program start, packing, loaders, problems, the blocks by type, code, graphics and music, with links to each part and to the listing, the .asm source, Graphics and Memory. A link, a click outside it or Esc closes it. The command palette shows it at any time.'),
+          'It shows the program start, packing, loaders, problems, the blocks by type, code, graphics and music, with links to each part and to the listing, the .asm source, Graphics and Memory. A link, a click outside it or Esc closes it. The Analysis overview button in the title bar (and the command palette) shows it again at any time, also when this is off.'),
         pchk('autoUnpack', 'Unpack packed files when they are opened', 'As Unpack does, without the click.',
           'When Sindri (or the external unpacker in Toolchain → Packers & editor) finds a file you open packed, it is unpacked at once. In a project, Ctrl+Z brings the packed file back. A file Sindri cannot unpack stays as it was opened.'),
       ] },

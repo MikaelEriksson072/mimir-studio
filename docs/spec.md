@@ -5265,7 +5265,7 @@ with* jämför med mappen; utan projekt säger fliken att det behövs ett och vi
 
 | Region | Innehåll |
 |---|---|
-| Titelrad | File-menyn (Smart attach, 13.4b; öppna PRG-filer, en cartridge eller en VICE-snapshot, montera en D64; spara), Ångra/Gör om, kommandosök, Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
+| Titelrad | File-menyn (Smart attach, 13.4b; öppna PRG-filer, en cartridge eller en VICE-snapshot, montera en D64; spara), Ångra/Gör om, kommandosök, Analysis overview (14.1b), Verify, Export, Terminal (13.6), **Build & Run**, tema, inställningar |
 | Aktivitetsrad | Explorer, Blocks, Symbols, Bookmarks (med antal), Scripts (med antal skript, 10.3), Pack (med antal intervall), specifikation, kommandopalett. Knappen för vyn som visas fäller ihop sidopanelen; är den ihopfälld är ingen knapp vald, och en vys knapp visar panelen igen med den vyn |
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), skräp (11.7, när det finns), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista, en mapp per blocktyp. Ett klick på ett block går till det i listningen; Shift+klick visar det markerat i typens egen vy (`blockView`): sprites, charset, bitmapp och skärmmatris i Graphics ritade som sin typ (multicolor som blocket, en bitmapp så hög som den är, rutnätet flyttat så att en cell börjar vid blocket), text i Memory som `i` (PETSCII) eller `ii` (skärmkoder) med raderna från dess första byte, övriga data (bytes, ord, tabeller, musik, fill) i Memory som `m`, och kod, BASIC och flyttad kod markerad i listningen. Varje rads tips säger vart Shift+klick går. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Scripts**: projektets skript, att köra, öppna och ta bort (10.3). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
@@ -5274,6 +5274,11 @@ with* jämför med mappen; utan projekt säger fliken att det behövs ett och vi
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, antal meddelanden, analystid, verifieringsstatus. Det som går att göra något med är knappar (se nedan) |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.
+Titelraden ryms i fönstret ner till dess minsta bredd (760 px), även med ett långt projektnamn: projektknappen krymper
+(namnet kortas med …, minst 96 px) tillsammans med kommandosöket; under 1240 px faller *Studio* bort och kommandosöket
+får bli 140 px smalt, under 1100 px visar *Export*, *Terminal* och *Editor* bara sina ikoner (sökfältet 100 px), och
+under 900 px alla knapparna till höger (File, Ångra/Gör om och kommandosöket göms). Innan dess sköts *Build & Run*,
+tema och inställningar ut ur fönstret mellan 900 och 1175 px.
 
 **Explorer efter en laddning:** när en fil har laddats, hur den än öppnades eller lades till (File-menyn, Ctrl+O, Smart
 attach, ett drag in i fönstret, Disk, Tape, ett laddskript, Pirate Slayer, en VICE-quicksave), fälls *Files* ihop direkt.
@@ -5419,8 +5424,11 @@ det också. Har programmet rutiner som är kända från andra projekt (10.5) och
 *Known routines* dem med adress, namn och projektet namnet kom från; *Name it* / *Name all N* ger dem namnen och
 lämnar fönstret öppet. Settings → General → *Show an overview of the analysis when a file is opened* (på från början, sparas per
 användare som `overview` i `apps/desktop/src/store/ui.ts`) slår av och på det, liksom rutan *Show this overview when a
-file is opened* i fönstrets fot. Kommandopaletten har *Show the analysis overview*, som visar det när som helst, även
-när det är avslaget. Vad korten säger räknas fram i `apps/desktop/src/lib/overview.ts` och läggs ut i
+file is opened* i fönstrets fot. Knappen **Analysis overview** i titelraden (en ikon med fyra rutor, först bland
+knapparna till höger, före *Verify*) öppnar fönstret igen när det har stängts, när som helst och även när det är
+avslaget, med vad analysen av filerna nu säger; utan filer (ingen fil öppnad, ingen cartridge) är den grå.
+Kommandopaletten har samma sak som *Show the analysis overview*. Vad korten säger räknas fram i
+`apps/desktop/src/lib/overview.ts` och läggs ut i
 `components/Overview.tsx`. E2E-testerna börjar med översikten av (fixturen sätter valet och laddar om fönstret), så att
 den inte täcker fönstret när de öppnar filer; dess eget test slår på den.
 

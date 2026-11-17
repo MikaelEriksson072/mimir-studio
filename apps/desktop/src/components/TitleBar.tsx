@@ -24,6 +24,8 @@ interface TitleBarProps {
   /** the external editor the export opens in (null: none is set and none was found) */
   editor: string | null; onEditor: () => void;
   onToggleSide: () => void; onToggleInspector: () => void;
+  /** the Analysis overview (14.1b) opened again, as after a load; without files to analyse there is none */
+  onOverview: () => void; canOverview: boolean;
 }
 
 export function TitleBar(p: TitleBarProps) {
@@ -45,10 +47,12 @@ export function TitleBar(p: TitleBarProps) {
       <button className="cmd-search hide-narrow" onClick={p.onPalette}><Icon name="search" size={14} /><span>{p.projectName}</span><kbd>Ctrl+Shift+P</kbd></button>
       <span className="grow" />
       <div className="tb-group">
+        <button className="icon-btn" onClick={p.onOverview} disabled={!p.canOverview} aria-label="Analysis overview"
+          title={p.canOverview ? 'Analysis overview: what the analysis found, with links to each part (the window that opens after a load)' : 'Analysis overview: open a file first'}><Icon name="overview" /></button>
         <button className={cx('btn', p.verifyState === 'ok' ? 'okish' : p.verifyState === 'bad' ? 'badish' : '')} onClick={p.onVerify} disabled={p.busy} title="Re-assemble and compare byte by byte (F7)"><Icon name={p.verifyState === 'ok' ? 'ok' : 'check'} /><span className="hide-narrow">Verify</span></button>
-        <button className="btn" onClick={p.onExport} disabled={p.busy} title={`Export ${p.asmTool === '64tass' ? '64tass' : 'Kick Assembler'} project to a folder (Ctrl+E)`}><Icon name="folder" /><span className="hide-narrow">Export</span></button>
-        <button className="btn" onClick={p.onTerminal} aria-label="Terminal" title="Open a terminal in the project folder: VICE (x64sc) is on PATH and kickass <file.asm> runs Kick Assembler"><Icon name="prompt" /><span className="hide-narrow">Terminal</span></button>
-        <button className="btn" onClick={p.onEditor} disabled={p.busy} aria-label="Editor" title={`Open the export in ${p.editor ?? 'an external editor (Sublime Text, Visual Studio Code; Settings → Toolchain)'}: its folder, with the first .asm file open. The project is exported first when it has not been`}><Icon name="code" /><span className="hide-narrow">Editor</span></button>
+        <button className="btn" onClick={p.onExport} disabled={p.busy} aria-label="Export" title={`Export ${p.asmTool === '64tass' ? '64tass' : 'Kick Assembler'} project to a folder (Ctrl+E)`}><Icon name="folder" /><span className="hide-narrow hide-mid">Export</span></button>
+        <button className="btn" onClick={p.onTerminal} aria-label="Terminal" title="Open a terminal in the project folder: VICE (x64sc) is on PATH and kickass <file.asm> runs Kick Assembler"><Icon name="prompt" /><span className="hide-narrow hide-mid">Terminal</span></button>
+        <button className="btn" onClick={p.onEditor} disabled={p.busy} aria-label="Editor" title={`Open the export in ${p.editor ?? 'an external editor (Sublime Text, Visual Studio Code; Settings → Toolchain)'}: its folder, with the first .asm file open. The project is exported first when it has not been`}><Icon name="code" /><span className="hide-narrow hide-mid">Editor</span></button>
         <button className="btn primary" onClick={p.onBuild} disabled={p.busy} title={p.snapshot ? `Build with ${p.asmTool ?? 'KickAss.jar'} and restart the snapshot in VICE as it was taken, with the built program in its RAM (F5)` : p.cartridge ? `Build with ${p.asmTool ?? 'KickAss.jar'}, rebuild the cartridge and start it in VICE (F5)` : `Build with ${p.asmTool ?? 'KickAss.jar'} and run in VICE (F5)`}><Icon name="play" /><span className="hide-narrow">Build &amp; Run</span></button>
         <button className="icon-btn" onClick={p.onTheme} aria-label="Toggle theme" title="Toggle light/dark theme"><Icon name={p.theme === 'dark' ? 'sun' : 'moon'} /></button>
         <button className="icon-btn" onClick={p.onSettings} aria-label="Settings" title="Settings (Ctrl+,)"><Icon name="sliders" /></button>
