@@ -623,7 +623,7 @@ export function PirateSlayerPanel({ disk, open, onCopy, onOpenFile, onSaveFiles 
 export function TapePanel({ tape, open, onCopy, onOpenFile, onSaveFiles }: { tape: MountedTape; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onSaveFiles: () => void }) {
   const { img } = tape;
   const tt = tapeToolScript(img, tape.name);
-  const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', megasave: 'Mega-Save', novaload: 'Novaload', cyberload: 'Cyberload', t64: 'T64' };
+  const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', megasave: 'Mega-Save', novaload: 'Novaload', cyberload: 'Cyberload', firebird: 'Firebird', t64: 'T64' };
   const t64 = img.t64;
   const time = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
   const notes = (f: TapeFile) => [

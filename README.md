@@ -125,7 +125,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     disk and unpacked, with the command file; `mimir disks <folder>` counts the disks each loader's reader takes;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
     Gold's loader, Mega-Save (Palace's, Hewson's, Level 9's …), Novaload (Novagen's, Elite's, Encore's …: the files its LOAD reads by name and the pages the loader in the boot file's header reads), Cyberload (all four stages: the loader's own two, the third's blocks with an address of their own and
-    the files the fourth loads by name, the game's levels too) and Martin Piper's TapeTool (the TinyHeader file its boot
+    the files the fourth loads by name, the game's levels too), Firebird's loader (Firebird's, Silverbird's, Rainbird's,
+    Psygnosis', Odin's …: the chain of blocks its first stage reads, and the files of the second loader a program calls)
+    and Martin Piper's TapeTool (the TinyHeader file its boot
     loader reads, files in checksum blocks in any order, RLE packed blocks) are
     listed in the Explorer with where each starts, and a tape boot file opens with its header, where its loader's code
     is (the tape buffer at `$033c`). The *Tape* tab lists everything on the tape, turbo data of a loader not known here

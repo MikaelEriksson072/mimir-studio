@@ -264,7 +264,7 @@ const KNOWN: Known[] = [
   },
   {
     id: 'firebird', name: "Firebird's tape loader",
-    how: 'tape: an IRQ on the FLAG line restarts CIA2\'s timer A (one shot), whose underflow is the bit, the top bit first; a pilot byte, its complement and the pilot again, 7 header bytes, the data and their XOR. Firebird\'s and Silverbird\'s tapes',
+    how: 'tape: an IRQ on the FLAG line restarts CIA2\'s timer A (one shot from $0232), whose underflow is the bit, the top bit first; each block a pilot byte, its complement and the pilot again. The loader the boot file loads (Bubble Bobble\'s at $1c00) reads a chain of blocks: the next block\'s pilot, the block\'s number and address, 256 bytes (64 in the first), bytes it skips, their XOR and where it jumps after the block, the last one into code that decrypts what was loaded; a second loader the program calls reads files: a header of 7 bytes (number, address, the page the file ends before, where it jumps after it), 256 bytes and their XOR a block. Firebird\'s, Silverbird\'s and Rainbird\'s tapes, Psygnosis\', Odin\'s, Thor\'s, Activision\'s, Melbourne House\'s',
     signs: [
       { pat: pat('AD 0D DC 48 29 01 05 .. 85 .. 68 18 29 10 F0 .. A9 19 8D 0E DD AD 0D DD 4A 26'), role: 'tape', what: 'the IRQ that reads a bit: the FLAG line, then CIA2\'s timer A, into the byte (rol)' },
       { pat: pat('C5 .. F0 .. 49 FF C5 .. D0'), role: 'tape', what: 'waits for the pilot byte, then its complement', weak: true },

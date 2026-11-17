@@ -171,6 +171,66 @@ export function novaloadDemoTape(demo: Uint8Array): Uint8Array {
   return withTurbo(kernal, w.pulses);
 }
 
+/** A pause in the tape (the tape stops between Firebird's blocks): a pulse of 20 000 cycles. */
+export const firebirdPause = (w: TurboWriter) => { w.pulses.push(0, 0x20, 0x4e, 0); };
+
+/** Firebird's first stage: a chain of blocks, the top bit first, each the pilot byte 10 times, its complement and the
+ *  pilot, then the next block's pilot (the first block's pilot is $0f, the others `pilot`), the block's number, its
+ *  address, its bytes (the first block's 64, the others 256), a count and that many bytes the loader skips, the XOR of
+ *  the bytes, and where the loader jumps after it (`loop` back into itself; the last block's `jump`). `bad` spoils that
+ *  block's sum, `sums` puts in sums of its own; a pause after each block when given. */
+export function firebirdChain(w: TurboWriter, blocks: { load: number; data: Uint8Array }[], o: { pilot: number; loop: number; jump: number; bad?: number; sums?: Record<number, number>; pause?: (w: TurboWriter) => void }): void {
+  blocks.forEach((b, n) => {
+    const p = n ? o.pilot : 0x0f, data = b.data.subarray(0, n ? 0x100 : 0x40);
+    for (let i = 0; i < 10; i++) w.byte(p);
+    w.bytes([p ^ 0xff, p, o.pilot, n, b.load & 0xff, b.load >> 8]);
+    w.bytes(Uint8Array.from({ length: n ? 0x100 : 0x40 }, (_, i) => data[i] ?? 0));
+    const skip = (n * 7 + 3) & 0x1f;
+    w.byte(skip);
+    for (let i = 0; i < (skip || 256); i++) w.byte((i * 37 + n) & 0xff);
+    const x = data.reduce((a, v) => a ^ v, 0);
+    w.byte(o.sums?.[n] ?? (n === o.bad ? x ^ 0x5a : x));
+    const jump = n === blocks.length - 1 ? o.jump : o.loop;
+    w.bytes([jump & 0xff, jump >> 8]);
+    o.pause?.(w);
+  });
+}
+
+/** A file of the second kind of Firebird's blocks (what a loader the program loads reads): a block a page, each the
+ *  pilot byte 10 times, its complement and the pilot, then its number, its address, 0, the page the file ends before,
+ *  where the loader jumps after the file (0: it returns), the 256 bytes and their XOR. `bad` spoils that block's sum,
+ *  `skip` leaves those blocks out. */
+export function firebirdFile(w: TurboWriter, o: { pilot: number; load: number; data: Uint8Array; jump?: number; bad?: number; skip?: number[] }): void {
+  const pages = Math.ceil(o.data.length / 256), end = ((o.load >> 8) + pages) & 0xff, jump = o.jump ?? 0;
+  for (let n = 0; n < pages; n++) {
+    if (o.skip?.includes(n)) continue;
+    const block = Uint8Array.from({ length: 256 }, (_, i) => o.data[n * 256 + i] ?? 0), load = o.load + n * 256;
+    for (let i = 0; i < 10; i++) w.byte(o.pilot);
+    w.bytes([o.pilot ^ 0xff, o.pilot, n, load & 0xff, load >> 8, 0, end, jump & 0xff, jump >> 8]);
+    w.bytes(block);
+    const x = block.reduce((a, v) => a ^ v, 0);
+    w.byte(n === o.bad ? x ^ 0x5a : x);
+  }
+  for (let i = 0; i < 16; i++) w.byte(0);
+}
+
+/** fixtures/tap/firebird-demo.tap: a KERNAL boot file "FIREBIRD DEMO" (bytes of our own, no loader), then Firebird's
+ *  first stage at Bubble Bobble's speed (a 0 of 384 cycles, a 1 of 720): 64 bytes at $0200, `demo` (a PRG) in blocks
+ *  from its load address, a last block at $bf00 the loader jumps to, each block after a pause; then a table at
+ *  $c000-$c1ff as a file of the second kind (pilot $34, the loader returns after it). */
+export function firebirdDemoTape(demo: Uint8Array): Uint8Array {
+  const kernal = makeTap({ files: [{ name: 'FIREBIRD DEMO', load: 0x02a7, data: Uint8Array.from({ length: 93 }, (_, i) => (i * 11 + 3) & 0xff), header: Uint8Array.from({ length: 171 }, (_, i) => (i * 13 + 5) & 0xff) }] });
+  const w = new TurboWriter(48, 90);
+  const load = demo[0] | (demo[1] << 8), data = demo.subarray(2);
+  const blocks: { load: number; data: Uint8Array }[] = [{ load: 0x0200, data: Uint8Array.from({ length: 64 }, (_, i) => (i * 3 + 1) & 0xff) }];
+  for (let o = 0; o < data.length; o += 256) blocks.push({ load: load + o, data: data.subarray(o, o + 256) });
+  blocks.push({ load: 0xbf00, data: Uint8Array.from({ length: 256 }, (_, i) => (i * 5 + 2) & 0xff) });
+  firebirdPause(w);
+  firebirdChain(w, blocks, { pilot: 0x7e, loop: 0x1c41, jump: 0xbf00, pause: firebirdPause });
+  firebirdFile(w, { pilot: 0x34, load: 0xc000, data: Uint8Array.from({ length: 512 }, (_, i) => (i * 7) & 0xff) });
+  return withTurbo(kernal, w.pulses);
+}
+
 /** A whole tape: a KERNAL tape (makeTap) with turbo pulses after it. */
 export function withTurbo(kernal: Uint8Array, turbo: number[]): Uint8Array {
   const p = tapPulses(kernal), n = p.cycles.length + turbo.length;

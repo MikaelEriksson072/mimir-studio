@@ -1408,7 +1408,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Cyberload | bitläsningen `lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e / php` (TapeTool har samma utan `php`, och med `pha` före), och bootfilens dekryptering av laddaren i bandhuvudet (`ldy #… / eor $0350,y / sta $0350,y / dey / bne / eor #… / sta $dc0d`). Tredje och fjärde steget läser bandet i ett avbrott: bitläsningen `lda $dc0d / lsr / lda #$11 / sta $dc0e` (svag) och sökandet efter ledarbyten `$0f` bit för bit innan det går över till hela byte genom att skriva om sina egna grenar (`cmp #$0f / bne / lda #$18 / sta … / lda #$00 / sta … / lda #$01 / sta zp`), så att Tuskers `$f800` och `$fd00` också heter Cyberload. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite, Accolade, MicroProse (texten "CYBERLOAD NOW LOADING …" i skärmkoder i bootfilen). Bandformaten i 13.5e |
 | Interceptor Micros laddare | bitläsningen `sty $d020 / eor #$02 / lsr / lsr / ror`, minst signifikanta biten först, väntan på ledaren `$a0` (`cmp #$a0 / bne / lda #$27 / sta $0119`), och bootkoden i bandhuvudet som läser laddaren med KERNAL:ns `$f84a` och dekrypterar den till stacksidan (`lda $00ff,y / eor …,y / sta $00ff,y / dey / bne`). Activision, Thalamus Hits, Electric Dreams, Domark (texten "(C) INTERCEPTOR MICROS 1987") |
 | Mastertronics bandladdare | bitläsningen `lda #$10 / bit $dc0d / beq / lda #$11 / sta $dd0e / lda $dd0d / lsr / bit $dc0d / rol` (CIA2:s timer A som one-shot från `$01b6`) och 9 bitar per byte (`ldx #$09 / jsr … / inc $d020 / dex / bne`). Mastertronic, M.A.D., Codemasters, Firebirds och Silverbirds budgetband, Durell (17 band) |
-| Firebirds bandladdare | avbrottet `lda $dc0d / pha / and #$01 / ora zp / sta zp / pla / clc / and #$10 / beq / lda #$19 / sta $dd0e / lda $dd0d / lsr / rol` (FLAG-linjen, sedan CIA2:s timer A) och väntan på en ledarbyte och dess komplement (`cmp zp / beq / eor #$ff / cmp zp / bne`, svag). Firebird, Silverbird. Den piper inte (ingen SID-skrivning), så den kallas inte Bleepload |
+| Firebirds bandladdare | avbrottet `lda $dc0d / pha / and #$01 / ora zp / sta zp / pla / clc / and #$10 / beq / lda #$19 / sta $dd0e / lda $dd0d / lsr / rol` (FLAG-linjen, sedan CIA2:s timer A) och väntan på en ledarbyte och dess komplement (`cmp zp / beq / eor #$ff / cmp zp / bne`, svag); samma kod i första steget och i den andra laddaren programmet anropar (Bubble Bobbles `$1c00` och `$4900`). Firebird, Silverbird, Rainbird, Psygnosis, Odin, Thor, Activision, Melbourne House. Den piper inte (ingen SID-skrivning), så den kallas inte Bleepload. Bandformaten i 13.5e |
 | Super Snapshot turbo (LMS) | Turbo V5, LOAD och SAVE. LOAD tar emot fyra byte per handskakning till `$aa–$ad` (`bit $dd00 / bvs / ldy #$03 / nop / bit $80 / lda $dd00 / lsr / lsr / nop / nop / ora $dd00 …`), och koden den kopierar till `$0200` lägger dem i minnet med ROM:en avbankade (`lda #$34 / sta $01 / lda $aa / sta ($93),y …`, 51 byte); filens första byte byts en bit i taget (`sta $a6 / ldx #8 / bit $dd00 / bvc …`): laddadressen, och bit 7 för Warp*25. En byte till GET, katalogen och filkopieraren och en från SAVE, båda på en rad utan badline (`bit $dd00 / bpl / sec / lda $d012 / sbc $26 / bcc / and #$07 / cmp #$02 / bcc`, sedan `lda $2a` respektive `lda #$07 / sta $dd00`); drivkoden skickas två halvbyte i taget med MK4:ans badline-väntan (`cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); kommandona `M-R $fffe`, `M-W $0150` och `$0173` (35 byte var) och `M-E $0150`; drivkoden: starten vid `$0150`, 1541-koden vid `$0300` och `$0400`, SAVE:s vid `$0500`, 1581-koden vid `$0503` (`lda #$d2 / sta $4001`). En fil med bit 7 satt läses som Action Replays Warp*25 med Action Replays kod (mottagarloopen och avkodningen ovan; drivkoden är densamma, omflyttad), och de delarna blir turbons |
 | Super Snapshot copiers (LMS) | diskkopieraren tar emot en sektor till `$0500` (`lda $dd00 / bmi / ora #$17 / sta $dd00 / lda $dd00 / bpl / and #$07 / sta $dd00` … `eor $dd00 / eor #$f9 / sta $0500,y`) och skickar den tillbaka (`ldy #0 / lda $0500,y / pha / ldx #$27 / stx $dd00 / bit $dd00 / bvs`); dess drivkod vid `$033f` (544 byte, `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c`) och `$057c` (352 byte); filkopierarens drivkod vid `$0400` (768 byte, märkt `"2A" $9c` först) |
 | Split freeze loader (Action Replay, Super Snapshot) | första filen i en backup sparad som två (Super Snapshots *BREAK INTO 2 FILES*, Action Replay 4:s *split freeze*): `sei / inc $01 / ldx #n / ldy #0 / lda $0847,y / sta $d000,y …` kopierar dess n sidor till `$d000` med I/O avbankat; `lda $bb / bne / dec $bc / dec $bb / inc $b7 / lda #"1" / sta ($bb),y` sätter en "1" framför namnet den laddades med, och `jmp $ffd5` med `$080c` på stacken laddar den filen, resten av backupen, över sig själv och fortsätter på `$080d`. Den laddar med KERNAL:s LOAD, så drivkod och drivkommandon räknas aldrig till den |
@@ -3633,6 +3633,35 @@ utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
     Vilket huvud det är visar sig på att blocken stämmer. Namnet ska vara tecken man kan skriva, med mellanslag eller
     nollor efter (`D`, `0B`, `0:MINI-PUTT`, Accolades `TITLE.GRA`): data av en och samma byte om och om igen har XOR 0
     vad den än är, och togs annars för huvuden.
+- **Firebirds bandladdare** (Firebird, Silverbird, Rainbird, och Psygnosis, Odin, Thor, Activision, Melbourne House,
+  Ariolasoft …; Bubble Bobble, Thrust, Gunstar, Blood Money, Rock n Wrestle): bootfilen laddar laddaren med KERNAL:n
+  (Bubble Bobbles andra fil, `$1c00`–`$1dff`) och den läser bandet i ett avbrott på FLAG-linjen som startar om CIA2:s
+  timer A, en one-shot från `$0232` cykler, och en 1 är att den hann ta slut; högsta biten först. Den söker sin
+  ledarbyte bit för bit och läser sedan hela byte till en ring på 32 vid `$033c`. Varje block: ledarbyten (9–11 på
+  banden, minst fyra här), dess komplement och ledarbyten igen, sedan ett av två slag:
+  - *första steget* (laddaren bootfilen laddar): nästa blocks ledarbyte (det första blockets är `$0f`), blockets nummer
+    (från 0) och adress; 256 byte (64 i block 0), en byte och så många byte laddaren hoppar över (0: 256), datans XOR
+    och vart laddaren hoppar efter blocket: tillbaka in i sig själv, det sista blockets in i koden det har med sig.
+    Blocken bildar en kedja (varje block har den ledarbyte och det nummer det förra sa), och kedjan blir filer av det
+    minne den fyller: ett block som fortsätter där ett annat slutar hör till dess fil, och en sida som laddas igen räknas
+    (Bubble Bobbles laddare laddar sin egen sida vid `$1c00` fem gånger mitt i spelet, samma byte); de senare bytena
+    gäller. Filen heter `file_<start>`, och Tape-flikens anteckning säger hur många block den har, hur många gånger den
+    laddats och vart laddaren hoppar efter den när det inte är tillbaka in i sig själv. Det sista blocket (Bubble
+    Bobbles `$bf00`) dekrypterar det som laddats, varje spel på sitt eget sätt (Bubble Bobbles med blocket vid `$0200`
+    och laddarens två sidor, och åtta byte till från bandet: nyckeln, från och till, vart det hoppar), så filerna är
+    byten som laddaren lagrade dem; Sindri kör resten;
+  - *filer* som en andra laddare läser, som programmet laddat med första steget och anropar (Bubble Bobbles vid `$4900`,
+    för `$5800`–`$cfff` och `$0400`–`$47ff`): samma läsning, en ledarbyte för hela filen, och i varje block numret
+    (från 0 i varje fil), adressen, en byte (0), sidan filen slutar före (0: minnets slut), vart laddaren hoppar efter
+    filen (0: den återvänder), 256 byte och deras XOR. Block som följer på varandra i minnet med samma ledarbyte, slut och
+    hopp är en fil `file_<start>`; anteckningen säger ledarbyten, antalet block och vad laddaren gör sedan, och block
+    som saknas i början eller slutet står som fel.
+
+  En kedja eller fil behöver två block vars summa stämmer (eller ett block som är en hel fil): data med en ledarbyte,
+  komplementet och en summa som råkar stämma ger enstaka block, och ledarbyten är inte `$00` eller `$ff` (data av nollor
+  har dem). Ett block vars summa inte stämmer tas bara där det fortsätter en kedja eller fil, med felet. Formaten lästes
+  ur Bubble Bobbles laddare vid `$1c00` och den dess första steg dekrypterar, körda i Sindri med bandet; alla 72 256
+  byte i filerna är byte de lagrade.
 - **Okänd turbodata.** Det som återstår mellan KERNAL-blocken och pauserna med två pulslängder (en 1 som är 1,3–3 gånger
   så lång som en 0) och som inte är en ledare (fyra bytevärden som utgör 90 %) listas som turbodata som inget format här
   läser, med sina två pulslängder. Den läses av Sindri (13.5f). En sträcka med för få pulser av den andra längden för
@@ -3746,7 +3775,19 @@ dem i sista blocket på rena pulser (Turbo Esprits A: laddaren sätter status `$
 och VICE laddar vidare). Freeload- och US Gold-filer med en summa som inte stämmer (2026-11-17): i båda samlingarna två,
 Ghostbusters (Kixx) teckensnitt vid `$7000` och Chicago 30:s fil vid `$e000`, båda med de byte deras laddare lagrar när
 Sindri kör banden (Ghostbusters laddare kopierar teckensnittets första 1 KB till `$f000`); inga andra filer eller
-sträckor ändrades (sträckorna med okänd turbodata 14 183 till 14 181). `test/tap.test.ts` läser det
+sträckor ändrades (sträckorna med okänd turbodata 14 183 till 14 181). Firebirds laddare (2026-11-17): i båda
+samlingarna 371 filer på 57 band, ingen med fel; sträckorna med okänd turbodata gick från 14 181 till 9 333 och band med
+inget kvar från 988 till 1 045 (alla 57 läses till slutet), utan att någon fil i ett annat format ändrades. Alla
+kedjor börjar med block 0 vid `$0200` och ledarbyten `$0f`, ledarna har 9–11 byte, och det sista blocket hoppar in i
+sig självt (`$bf00` på 15 band, annars `$c400`, `$0800`, `$cf00` …). Andra träffar på mönstret (Jack Nicklaus, Pub
+Games, Grand Monster Slam, Tour de France) var data av en och samma byte, ledarbyte `$00`, `$ff` eller `$aa`, och ger
+inga filer. På 48 av de 57 banden laddade Sindri alla filer, och alla 2 604 288 byte är läsarens (lagrade medan motorn
+gick). De andra nio stannar i programmets egen kod innan resten är laddat: Blood Money och Flying Shark laddar sina
+nivåer under spelet, Captain Fizz väntar på F1, F3 eller F5 i en meny, Star Trek visar sin titel tills avbrottet
+räknat 2 150 bildrutor (43 s; en väntan på en räknare som avbrottet ökar väntar Sindri inte ut, *Program som väntar på tiden* i 8.11b), Thrust (två
+avbilder) spelar Firebirds jingel med fördröjningsloopar i RAM som Sindri tar för att programmet står still, och Revs
+(två) och Preservers Seabase Delta spelar bandet till slutet utan att laddaren tar resten (C64Tapes-orgs Seabase Delta
+laddas helt). `test/tap.test.ts` läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
 kod för andra steget), och fixturerna `fixtures/tap/mimir-demo.tap` och `fixtures/tap/cyberload-demo.tap` (de fyra

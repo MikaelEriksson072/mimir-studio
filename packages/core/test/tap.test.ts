@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePrg, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackPrg } from '../src';
-import { blockFile, demoTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
+import { blockFile, demoTape, firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
 import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -509,6 +509,102 @@ describe('Cyberload', () => {
     const again = readTape(t);
     expect(again.files).toEqual([]);
     expect(again.unknown).toHaveLength(1);
+  });
+});
+
+describe("Firebird's loader", () => {
+  // Bubble Bobble's speed: a 0 of 384 cycles, a 1 of 720
+  const fire = () => new TurboWriter(48, 90);
+  const tape = (w: TurboWriter) => readTape(withTurbo(makeTap({ files: [] }), w.pulses));
+  const page = (n: number) => bytes(256, n);
+
+  it("reads the first stage: a chain of blocks, each naming the next one's pilot; files are the memory they fill", () => {
+    const w = fire();
+    const loader = page(9);
+    // Bubble Bobble's shape: 64 bytes at $0200, the program in blocks, the loader's own page again (twice), the last
+    // block at $bf00, which the loader jumps to; the tape stops after each block but one
+    firebirdChain(w, [
+      { load: 0x0200, data: bytes(64, 1) }, { load: 0x1000, data: page(2) }, { load: 0x1100, data: page(3) },
+      { load: 0x1c00, data: loader }, { load: 0x1200, data: page(4) }, { load: 0x1c00, data: loader }, { load: 0xbf00, data: page(5) },
+    ], { pilot: 0x7e, loop: 0x1c41, jump: 0xbf00, pause: firebirdPause });
+    const img = tape(w);
+    expect(img.files.map(f => [f.format, f.name, f.type, f.load, f.end, f.note, f.errors])).toEqual([
+      ['firebird', 'file_0200', 'PRG', 0x0200, 0x0240, 'first stage, 1 block', []],
+      ['firebird', 'file_1000', 'PRG', 0x1000, 0x1300, 'first stage, 3 blocks', []],
+      ['firebird', 'file_1c00', 'PRG', 0x1c00, 0x1d00, 'first stage, 1 block, loaded 2 times', []],
+      ['firebird', 'file_bf00', 'PRG', 0xbf00, 0xc000, 'first stage, 1 block; the loader jumps to $bf00 after it', []],
+    ]);
+    expect(img.files[1].data).toEqual(new Uint8Array([...page(2), ...page(3), ...page(4)]));
+    expect(img.files[2].data).toEqual(loader);
+    expect(img.unknown).toEqual([]);
+    expect(tapeFileName(img.files[1])).toBe('file_1000.prg');
+  });
+
+  it('reads the second kind: files of their own, a pilot each, up to the page their header names', () => {
+    const w = fire();
+    firebirdFile(w, { pilot: 0x34, load: 0x5800, data: bytes(1024, 6) });
+    // the sum of its first block is the next one's pilot byte: that block's pilot does not reach back into it
+    const data = bytes(512, 7);
+    data[255] ^= data.subarray(0, 256).reduce((a, v) => a ^ v, 0) ^ 0x35;
+    firebirdFile(w, { pilot: 0x35, load: 0x0400, data, jump: 0x0810 });
+    // up to the top of memory: the page after it is 0 in the header (Blood Money's at $ef00, Cholo's at $e000)
+    firebirdFile(w, { pilot: 0x36, load: 0xfe00, data: bytes(512, 16) });
+    const img = tape(w);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.note, f.errors])).toEqual([
+      ['firebird', 'file_5800', 0x5800, 0x5c00, 'pilot $34, 4 blocks; the loader returns after it', []],
+      ['firebird', 'file_0400', 0x0400, 0x0600, 'pilot $35, 2 blocks; the loader jumps to $0810 after it', []],
+      ['firebird', 'file_fe00', 0xfe00, 0x10000, 'pilot $36, 2 blocks; the loader returns after it', []],
+    ]);
+    expect(img.files[1].data).toEqual(data);
+    expect(img.unknown).toEqual([]);
+  });
+
+  it('keeps a block whose sum does not fit where its chain or file goes on, says what is missing, and takes no single block', () => {
+    const w = fire();
+    firebirdChain(w, [{ load: 0x0200, data: bytes(64, 1) }, { load: 0x1000, data: page(2) }, { load: 0x1100, data: page(3) }, { load: 0x1200, data: page(4) }], { pilot: 0x6b, loop: 0xc041, jump: 0x1000, bad: 2 });
+    firebirdFile(w, { pilot: 0x48, load: 0xc000, data: bytes(768, 8), bad: 1 });
+    // blocks of a file missing: its last, then its first
+    firebirdFile(w, { pilot: 0x50, load: 0xe000, data: bytes(768, 9), skip: [2] });
+    firebirdFile(w, { pilot: 0x51, load: 0xf000, data: bytes(768, 10), skip: [0] });
+    const img = tape(w);
+    expect(img.files.map(f => [f.name, f.load, f.end, f.errors])).toEqual([
+      ['file_0200', 0x0200, 0x0240, []],
+      ['file_1000', 0x1000, 0x1300, ['checksum: the block at $1100 could not be read cleanly']],
+      ['file_c000', 0xc000, 0xc300, ['checksum: the block at $c100 could not be read cleanly']],
+      ['file_e000', 0xe000, 0xe200, ['it ends at $e200, its blocks up to $e300 are not on the tape']],
+      ['file_f100', 0xf100, 0xf300, ['its first block is not on the tape']],
+    ]);
+    // one block of the first stage alone, or of a file it is not the whole of: data now and then holds a pilot, its
+    // complement and a sum that fits
+    const one = fire();
+    one.bytes(bytes(800, 11));
+    firebirdChain(one, [{ load: 0x0200, data: bytes(64, 1) }], { pilot: 0x6b, loop: 0xc041, jump: 0xc041 });
+    one.bytes(bytes(800, 12));
+    firebirdFile(one, { pilot: 0x22, load: 0x3000, data: bytes(768, 13), skip: [1, 2] });
+    one.bytes(bytes(800, 14));
+    expect(tape(one).files).toEqual([]);
+    // a file of one block is whole: its header says it ends after it
+    const whole = fire();
+    firebirdFile(whole, { pilot: 0x22, load: 0x3000, data: bytes(256, 15) });
+    expect(tape(whole).files.map(f => [f.name, f.load, f.end, f.errors])).toEqual([['file_3000', 0x3000, 0x3100, []]]);
+  });
+
+  it('is fixtures/tap/firebird-demo.tap, which the e2e tests insert: the first stage with the demo, then a file of the second kind', () => {
+    const t = firebirdDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/firebird-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, t);
+    expect(new Uint8Array(readFileSync(path))).toEqual(t);
+    const img = readTape(t);
+    expect(img.unknown).toEqual([]);
+    const end = 0x0801 + Math.ceil((demo.length - 2) / 256) * 256;
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors])).toEqual([
+      ['cbm', 'FIREBIRD DEMO', 0x02a7, 0x02a7 + 93, []],
+      ['firebird', 'file_0200', 0x0200, 0x0240, []],
+      ['firebird', 'file_0801', 0x0801, end, []],
+      ['firebird', 'file_bf00', 0xbf00, 0xc000, []],
+      ['firebird', 'file_c000', 0xc000, 0xc200, []],
+    ]);
+    expect(img.files[2].data.subarray(0, demo.length - 2)).toEqual(demo.subarray(2));
   });
 });
 

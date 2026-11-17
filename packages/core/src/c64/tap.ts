@@ -24,7 +24,10 @@
  * - Novaload (Novagen's, Elite's, Encore's, US Gold's Americana …): the lowest bit first, a pilot of 0 bits, a 1 and $aa;
  *   a file its LOAD reads (the name, start, end, blocks with a running sum) or the pages its boot file's loader reads;
  * - Cyberload (System 3's, Thalamus', Activision's, Accolade's …): a pilot of $0f before every sync byte, the loader's
- *   four stages each in a format of its own (cyberFirst, cyberSecond, cyberBlocks, cyberNamedFiles).
+ *   four stages each in a format of its own (cyberFirst, cyberSecond, cyberBlocks, cyberNamedFiles);
+ * - Firebird's loader (Firebird's, Silverbird's, Rainbird's, Psygnosis', Odin's …): blocks of a pilot byte, its
+ *   complement and the pilot again, the first stage's in a chain where each names the next one's pilot, a second kind
+ *   in files of their own (firebirdBlocks, firebirdFiles).
  * Anything else that holds data is the turbo data of a loader not known here: the boot program's loader reads it, so
  * Sindri does, running the boot program with the tape in its datasette (13.5f). */
 import { Cpu, type Bus } from '@mimir/sindri';
@@ -91,7 +94,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
 }
 
 /** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'novaload' | 'cyberload' | 't64';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'novaload' | 'cyberload' | 'firebird' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -1147,6 +1150,164 @@ function cyberNamedFiles(p: TapPulses, bits: Uint8Array, r: Region, threshold: n
   return out;
 }
 
+/* ---- Firebird ---- */
+
+/* Firebird's loader (Firebird's, Silverbird's and Rainbird's tapes, and Psygnosis', Odin's, Thor's, Activision's,
+ * Melbourne House's, Ariolasoft's …): the boot file loads it with the KERNAL (Bubble Bobble's at $1c00), and it reads
+ * the tape in an IRQ on the FLAG line that restarts CIA2's timer A, one shot from $0232 cycles, whose underflow is a 1,
+ * the top bit first. It finds its pilot byte bit by bit, then reads whole bytes into a ring of 32 at $033c. Each block:
+ * the pilot byte (9 to 11 of them on the tapes, at least FB_PILOT here), its complement and the pilot again, then one of
+ * two kinds:
+ * - the first stage (the loader the boot file loads): the next block's pilot byte (the first block's is $0f), the
+ *   block's number (from 0), its address; 256 bytes (64 in block 0), a count and that many bytes the loader skips (0:
+ *   256), the XOR of the data, and where the loader jumps after the block: back into itself, the last block's into the
+ *   code that block holds (it decrypts what was loaded: each game in its own way, so the bytes are given as loaded);
+ * - a loader a program loads with the first stage and calls (Bubble Bobble's at $4900, for its $5800-$cfff and
+ *   $0400-$47ff), the same reading: a pilot byte for the whole file, then each block's number (from 0 in each file),
+ *   its address, a byte (0), the page the file ends before, where the loader jumps after the file (0: it returns), 256
+ *   bytes and their XOR.
+ * Learned from Bubble Bobble's loader at $1c00 and the one its first stage decrypts, run in Sindri with the tape: every
+ * byte they stored is the reader's. A block whose sum does not match is taken only where it carries on a chain or a file
+ * whose other blocks do. */
+
+/** pilot bytes a Firebird block needs before the complement (the tapes have 9 to 11) */
+const FB_PILOT = 4;
+
+interface FbBlock {
+  /** the first stage, or the second kind (a file of its own) */
+  first: boolean;
+  /** the stretch it is in, its first pilot byte and the bit after it (pulses) */
+  s: number;
+  at: number; to: number;
+  pilot: number; num: number; load: number; bytes: Uint8Array;
+  /** the first stage: the next block's pilot byte; the second kind: the page its file ends before */
+  next: number;
+  /** where the loader jumps after the block (the first stage) or after the file (the second kind; 0: it returns) */
+  jump: number;
+  ok: boolean;
+}
+
+/** The Firebird blocks in a stretch (bits from pulse `base` on), each read in both kinds where its pilot leads to one:
+ *  the chains and the files they make are chosen after all stretches (firebirdFiles). */
+function firebirdBlocks(bits: Uint8Array, base: number, s: number): FbBlock[] {
+  const out: FbBlock[] = [];
+  /** the end of the last block that checked: a pilot does not reach back into it (its sum can be the pilot byte) */
+  let floor = 0;
+  let reg = 0;
+  for (let k = 0; k < bits.length; k++) {
+    reg = ((reg << 1) | bits[k]) >>> 0;
+    if (k < 31) continue;
+    // the pilot byte twice, its complement, the pilot (the last two bytes before the header)
+    const v = reg & 0xff;
+    if (v === 0 || v === 0xff || reg >>> 24 !== v || ((reg >>> 16) & 0xff) !== v || ((reg >>> 8) & 0xff) !== (v ^ 0xff)) continue;
+    const syncAt = k + 1 - 16;
+    let n = 0;
+    while (syncAt - 8 * (n + 1) >= floor && msbByte(bits, syncAt - 8 * (n + 1)) === v) n++;
+    if (n < FB_PILOT) continue;
+    const from = syncAt - 8 * n, found: FbBlock[] = [];
+    for (const first of [true, false]) {
+      let at = k + 1;
+      const take = () => { const b = msbByte(bits, at); at += 8; return b; };
+      const head = Array.from({ length: first ? 4 : 7 }, take);
+      if (head.includes(-1)) continue;
+      const num = first ? head[1] : head[0], load = first ? head[2] | (head[3] << 8) : head[1] | (head[2] << 8);
+      const bytes = new Uint8Array(first && num === 0 ? 0x40 : 0x100);
+      let x = 0, whole = true;
+      for (let i = 0; i < bytes.length; i++) { const b = take(); if (b < 0) { whole = false; break; } bytes[i] = b; x ^= b; }
+      if (!whole) continue;
+      if (first) { const skip = take(); if (skip < 0) continue; at += 8 * (skip || 256); }
+      const sum = take(), jump = first ? take() | (take() << 8) : head[5] | (head[6] << 8);
+      if (sum < 0 || at > bits.length) continue;
+      found.push({ first, s, at: base + from, to: base + at, pilot: v, num, load, bytes, next: first ? head[0] : head[4], jump, ok: sum === x });
+    }
+    out.push(...found);
+    // past a block that checks: the pilot of the next one cannot start inside it
+    const ok = found.filter(b => b.ok);
+    if (ok.length) { floor = Math.min(...ok.map(b => b.to)) - base; k = floor - 1; reg = 0; }
+  }
+  return out;
+}
+
+/** The files of the Firebird blocks on a tape, and the blocks they took. First-stage blocks make a chain where each
+ *  carries on from the one before (its pilot byte the one that block named, its number one more); a chain is files of
+ *  the memory its blocks fill, a page loaded again (Bubble Bobble's loader loads its own page at $1c00 five times)
+ *  counted, the later bytes kept. Blocks of the second kind make a file where they have one pilot, page, end and jump
+ *  and follow on in memory. Two blocks that check make a chain or a file (or one block that is a whole file):
+ *  data that happens to hold the pilot, its complement and a sum that fits makes single blocks. */
+function firebirdFiles(p: TapPulses, blocks: FbBlock[]): { files: TapeFile[]; taken: FbBlock[] } {
+  blocks.sort((a, b) => a.at - b.at);
+  const chains: FbBlock[][] = [], groups: FbBlock[][] = [];
+  /** the latest chain or file whose last block `b` carries on */
+  const latest = (gs: FbBlock[][], b: FbBlock, on: (l: FbBlock) => boolean) => {
+    for (let i = gs.length - 1; i >= 0; i--) { const l = gs[i][gs[i].length - 1]; if (l.to <= b.at && ((l.num + 1) & 0xff) === b.num && on(l)) return gs[i]; }
+    return null;
+  };
+  for (const b of blocks) {
+    const gs = b.first ? chains : groups;
+    const g = b.first ? latest(chains, b, l => l.next === b.pilot) : latest(groups, b, l => l.pilot === b.pilot && l.next === b.next && l.jump === b.jump && l.load + 0x100 === b.load);
+    if (g) g.push(b);
+    else if (b.ok) gs.push([b]);
+  }
+  /** the page after a block's (0 after the top of memory, as the header has it) */
+  const after = (b: FbBlock) => ((b.load >> 8) + 1) & 0xff;
+  const whole = (g: FbBlock[]) => g.length === 1 && g[0].num === 0 && after(g[0]) === g[0].next;
+  const keep = (g: FbBlock[]) => {
+    // a block that does not check ends a chain or a file it does not carry on
+    while (g.length && !g[g.length - 1].ok) g.pop();
+    return g.filter(b => b.ok).length >= 2 || whole(g);
+  };
+  const files: TapeFile[] = [], taken: FbBlock[] = [];
+  const bad = (b: FbBlock) => `checksum: the block at $${hex4(b.load)} could not be read cleanly`;
+  // a pulse is one block's: where a chain and a file both read it, the longer one has it
+  const claimed = new Set<number>();
+  const all = [...chains.filter(keep), ...groups.filter(keep)].sort((a, b) => b.length - a.length).filter(g => {
+    if (g.some(b => claimed.has(b.at))) return false;
+    for (const b of g) claimed.add(b.at);
+    return true;
+  });
+  for (const g of all) {
+    taken.push(...g);
+    if (g[0].first) {
+      // the memory the chain fills: a block goes on from a run that ends where it starts, or loads a page a run has
+      const usual = [...g.reduce((m, b) => m.set(b.jump, (m.get(b.jump) ?? 0) + 1), new Map<number, number>())].sort((a, b) => b[1] - a[1])[0][0];
+      const runs: { load: number; end: number; blocks: FbBlock[]; again: number; mem: Map<number, number> }[] = [];
+      for (const b of g) {
+        const end = Math.min(0x10000, b.load + b.bytes.length);
+        let r = runs.find(r => b.load >= r.load && end <= r.end);
+        if (r) r.again++;
+        else if ((r = runs.find(r => r.end === b.load))) r.end = end;
+        else runs.push(r = { load: b.load, end, blocks: [], again: 0, mem: new Map() });
+        r.blocks.push(b);
+        for (let i = 0; i < end - b.load; i++) r.mem.set(b.load + i, b.bytes[i]);
+      }
+      for (const r of runs) {
+        const data = Uint8Array.from({ length: r.end - r.load }, (_, i) => r.mem.get(r.load + i) ?? 0);
+        const first = r.blocks[0], last = r.blocks.reduce((a, b) => (b.to > a.to ? b : a));
+        const jumps = r.blocks.filter(b => b.jump !== usual).map(b => `$${hex4(b.jump)}`);
+        const n = r.blocks.length - r.again;
+        files.push({
+          format: 'firebird', name: `file_${hex4(r.load)}`, type: 'PRG', load: r.load, end: r.end, data,
+          ...fileAt(p, first.at), to: last.to, errors: r.blocks.filter(b => !b.ok).map(bad),
+          note: `first stage, ${n} block${n === 1 ? '' : 's'}${r.again ? `, loaded ${r.again + 1} times` : ''}${jumps.length ? `; the loader jumps to ${jumps.join(', ')} after it` : ''}`,
+        });
+      }
+    } else {
+      const first = g[0], last = g[g.length - 1], end = Math.min(0x10000, last.load + 0x100);
+      const data = new Uint8Array(end - first.load);
+      g.forEach((b, i) => data.set(b.bytes.subarray(0, Math.min(0x100, data.length - i * 0x100)), i * 0x100));
+      const errors = g.filter(b => !b.ok).map(bad);
+      if (first.num) errors.push(first.num === 1 ? 'its first block is not on the tape' : `its first ${first.num} blocks are not on the tape`);
+      if (after(last) !== first.next) errors.push(`it ends at $${hex4(end & 0xffff)}, its blocks up to $${hex2(first.next)}00 are not on the tape`);
+      files.push({
+        format: 'firebird', name: `file_${hex4(first.load)}`, type: 'PRG', load: first.load, end, data,
+        ...fileAt(p, first.at), to: last.to, errors,
+        note: `pilot $${hex2(first.pilot)}, ${g.length} block${g.length === 1 ? '' : 's'}; ${first.jump ? `the loader jumps to $${hex4(first.jump)} after it` : 'the loader returns after it'}`,
+      });
+    }
+  }
+  return { files, taken };
+}
+
 /* ---------------------------------------------------------------------------------------------------------------- */
 
 /** Read a .tap image: its files in every format known here, and the stretches with data none of them reads. A .t64
@@ -1181,6 +1342,8 @@ export function readTape(u8: Uint8Array): TapeImage {
    *  stretches, as a doubtful file is taken only then); pilot files whose sums do not match, with their stretch */
   const stretches: { r: Region; taken: (readonly [number, number])[] }[] = [];
   const doubtful: { f: TapeFile; s: number }[] = [];
+  /** Firebird's blocks, made into chains and files across stretches (the loader stops the tape between blocks) */
+  const fb: FbBlock[] = [];
   for (const r of regions(p, cbm)) {
     const two: { short: number; long: number } | null = twoLengths(p.cycles, r.from, r.to) ?? sameLengths(p.cycles, r.from, r.to, before);
     if (two) before = two;
@@ -1213,12 +1376,17 @@ export function readTape(u8: Uint8Array): TapeImage {
       }
       blocks = cyberBlocks(bits, r.from);
       cyber.push(...blocks);
+      fb.push(...firebirdBlocks(bits, r.from, stretches.length));
     }
     files.push(...found);
     stretches.push({ r, taken: [...found, ...blocks.filter(b => b.ok)].map(f => [f.at, f.to] as const) });
   }
   // Cyberload's blocks make files across stretches: the loader stops the tape between them
   files.push(...cyberBlockFiles(p, cyber));
+  // Firebird's chains and files, of blocks no other format took
+  const firebird = firebirdFiles(p, fb.filter(b => !stretches[b.s].taken.some(([a, c]) => a < b.to && b.at < c)));
+  files.push(...firebird.files);
+  for (const b of firebird.taken) stretches[b.s].taken.push([b.at, b.to]);
   // a pilot file whose sum does not match, on a tape where files of its format pass theirs: the loader does not check
   // every sum (with no file passing, the format is another with the same pilot and sync)
   for (const { f, s } of doubtful) {

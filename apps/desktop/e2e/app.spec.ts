@@ -6463,6 +6463,30 @@ test('a Novaload tape: the pages its boot file\'s loader reads and the files its
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
+test('a tape with Firebird\'s loader: its first stage\'s chain and a file of the second kind are listed and open, as Bubble Bobble\'s are', async ({ app, page }) => {
+  // fixtures/tap/firebird-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, then Firebird's first stage
+  // (64 bytes at $0200, the raster demo in blocks from $0801, a last block at $bf00 the loader jumps to) and a table at
+  // $c000 as a file of the second kind, at Bubble Bobble's speed
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/firebird-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted firebird-demo\.tap \(\d+ s\): 5 files \(1 KERNAL, 4 Firebird\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on firebird-demo.tap' });
+  await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"FIREBIRD DEMO"\s*\+header\s*PRG/, /"file_0200"\s*Firebird/, /"file_0801"\s*Firebird/, /"file_bf00"\s*Firebird/, /"file_c000"\s*Firebird/]);
+  // every stretch read: nothing left for Sindri alone
+  await expect(page.locator('.disk-spindle')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['KERNAL PRG', 'Firebird', 'Firebird', 'Firebird', 'Firebird']);
+  await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$02a7–$0303', '$0200–$023f', '$0801–$3800', '$bf00–$bfff', '$c000–$c1ff']);
+  await expect(table.locator('tbody tr td:nth-child(7)')).toHaveText([/header 2×, data 2×/, 'first stage, 1 block', 'first stage, 48 blocks', 'first stage, 1 block; the loader jumps to $bf00 after it', 'pilot $34, 2 blocks; the loader returns after it']);
+  await table.getByRole('row', { name: /"file_0801"/ }).click();
+  await expect(toast(page, 'Loaded file_0801.prg at $0801')).toBeVisible();
+  await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+});
+
 test('the tape as a C64 lists its files as a directory, FOUND shows LOAD\'s search with a turbo loader\'s files under it, and Mimir\'s list again', async ({ app, page }) => {
   // fixtures/tap/cyberload-demo.tap: the KERNAL boot file "CYBER DEMO", whose data block starts as a header does and
   // prints a FOUND of its own, then Cyberload's files, which the KERNAL does not see. The directory is listed by the
