@@ -27,7 +27,7 @@ import { openedPrg } from './project-fs';
 import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema, windowCloseSchema,
-  gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRemoteSchema,
+  gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRangeSchema, gitRemoteSchema, gitStatusSchema,
 } from './schemas';
 import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
@@ -340,7 +340,7 @@ export function registerIpc(deps: IpcDeps): void {
   // git (13.10b): always in the repository of the project that is open, never in a folder the renderer names
   const none = z.undefined().or(z.object({}).strict());
   handle(CHANNELS.gitVersion, none, () => git.version());
-  handle(CHANNELS.gitStatus, none, () => git.status());
+  handle(CHANNELS.gitStatus, gitStatusSchema, req => git.status(req?.log));
   handle(CHANNELS.gitInit, none, () => git.init());
   handle(CHANNELS.gitStage, gitPathsSchema.optional(), req => git.stage(req?.paths));
   handle(CHANNELS.gitUnstage, gitPathsSchema.optional(), req => git.unstage(req?.paths));
@@ -348,6 +348,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.gitPush, none, () => git.push());
   handle(CHANNELS.gitRemote, gitRemoteSchema, req => git.remote(req.url));
   handle(CHANNELS.gitDiff, gitDiffSchema, req => git.diff(req));
+  handle(CHANNELS.gitCompare, gitRangeSchema, req => git.compare(req));
   handle(CHANNELS.settingsGet, z.undefined().or(z.object({}).strict()), () => settings.get());
   handle(CHANNELS.settingsSet, toolchainSettingsSchema.partial(), req => {
     const next = settings.set(req);

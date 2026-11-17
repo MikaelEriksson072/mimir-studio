@@ -70,7 +70,7 @@ const api: KrApi = {
   },
   answerClose: req => invoke(CHANNELS.windowClose, req),
   gitVersion: () => invoke(CHANNELS.gitVersion),
-  gitStatus: () => invoke(CHANNELS.gitStatus),
+  gitStatus: req => invoke(CHANNELS.gitStatus, req ?? {}),
   gitInit: () => invoke(CHANNELS.gitInit),
   gitStage: req => invoke(CHANNELS.gitStage, req ?? {}),
   gitUnstage: req => invoke(CHANNELS.gitUnstage, req ?? {}),
@@ -78,6 +78,7 @@ const api: KrApi = {
   gitPush: () => invoke(CHANNELS.gitPush),
   gitRemote: req => invoke(CHANNELS.gitRemote, req),
   gitDiff: req => invoke(CHANNELS.gitDiff, req),
+  gitCompare: req => invoke(CHANNELS.gitCompare, req),
 };
 
 contextBridge.exposeInMainWorld('kr', api);

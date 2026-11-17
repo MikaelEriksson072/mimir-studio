@@ -5,11 +5,14 @@ import { spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { open, writeFile } from 'node:fs/promises';
 import { delimiter, join, resolve } from 'node:path';
-import type { GitDiffRequest, GitDiffResult, GitInitOutcome, GitOpResult, GitRepo, GitStatus, GitVersion } from '../../shared/ipc';
-import { GIT_ATTRIBUTES, GIT_IGNORE, gitPathProblem, LOG_FORMAT, parseLog, parseRemotes, parseStatus, remoteUrlProblem } from '../../shared/git';
+import type { GitCompareResult, GitDiffRequest, GitDiffResult, GitInitOutcome, GitOpResult, GitRange, GitRepo, GitStatus, GitVersion } from '../../shared/ipc';
+import { addNumstat, GIT_ATTRIBUTES, GIT_IGNORE, gitPathProblem, LOG_FORMAT, parseLog, parseNameStatus, parseRemotes, parseStatus, remoteUrlProblem } from '../../shared/git';
 
-/** how many commits the Git tab lists */
+/** how many commits the Git tab lists, and at most (it asks for more) */
 export const GIT_LOG = 20;
+export const GIT_LOG_MAX = 2000;
+/** a commit the renderer names: by its hash, never a branch, a tag or another revision */
+const HASH = /^[0-9a-f]{7,64}$/i;
 /** how much of a diff is shown */
 export const DIFF_LIMIT = 512 * 1024;
 /** how long a push may take (the credential manager may ask the user to sign in first) */
@@ -120,7 +123,14 @@ export class GitService {
     return r.ok && r.stdout.trim() ? resolve(r.stdout.trim()) : null;
   }
 
-  status(): Promise<GitStatus> { return this.serial(() => this.readStatus()); }
+  /** how many commits the last status listed: the steps' statuses list as many */
+  private logN = GIT_LOG;
+
+  /** the repository, with the newest `log` commits (as many as the last time when not said) */
+  status(log?: number): Promise<GitStatus> {
+    if (log) this.logN = Math.max(1, Math.min(GIT_LOG_MAX, Math.floor(log)));
+    return this.serial(() => this.readStatus());
+  }
 
   private async readStatus(): Promise<GitStatus> {
     const git = await this.version();
@@ -128,15 +138,66 @@ export class GitService {
     if (!git || !dir) return { git, dir, repo: null };
     const root = await this.rootOf(git.path, dir);
     if (!root) return { git, dir, repo: null };
+    const n = this.logN;
     const [st, rem, log] = await Promise.all([
       runGit(git.path, root, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all']),
       runGit(git.path, root, ['remote', '-v']),
-      runGit(git.path, root, ['log', `-n${GIT_LOG}`, `--format=${LOG_FORMAT}`, '--no-color']),
+      // one more than is listed: whether there are older ones
+      runGit(git.path, root, ['log', `-n${n + 1}`, `--format=${LOG_FORMAT}`, '--no-color']),
     ]);
     if (!st.ok) throw new Error(`git status failed: ${(st.stderr || st.stdout).trim()}`);
     const s = parseStatus(st.stdout);
-    const repo: GitRepo = { root, branch: s.branch, head: s.head, upstream: s.upstream, ahead: s.ahead, behind: s.behind, remotes: rem.ok ? parseRemotes(rem.stdout) : [], files: s.files, log: log.ok ? parseLog(log.stdout) : [] };
+    const commits = log.ok ? parseLog(log.stdout) : [];
+    const repo: GitRepo = { root, branch: s.branch, head: s.head, upstream: s.upstream, ahead: s.ahead, behind: s.behind, remotes: rem.ok ? parseRemotes(rem.stdout) : [], files: s.files, log: commits.slice(0, n), more: commits.length > n };
     return { git, dir, repo };
+  }
+
+  /** the repository's root, for a command that reads it */
+  private async reading(): Promise<{ exe: string; root: string }> {
+    const exe = await this.git();
+    const root = await this.rootOf(exe, this.project());
+    if (!root) throw new Error('The project is not in a git repository');
+    return { exe, root };
+  }
+
+  /** the two points of a range as git names them: a commit (checked to be one), the empty tree for nothing, and no
+   *  name for the folder as it is now */
+  private async points(exe: string, root: string, range: GitRange): Promise<string[]> {
+    const commit = async (h: string) => {
+      if (!HASH.test(h)) throw new Error(`${h} is not a commit's hash`);
+      const r = await runGit(exe, root, ['rev-parse', '--verify', '-q', `${h}^{commit}`]);
+      if (!r.ok || !r.stdout.trim()) throw new Error(`There is no commit ${h} in the repository`);
+      return r.stdout.trim();
+    };
+    const from = range.from ? await commit(range.from) : await this.emptyTree(exe, root);
+    return range.to ? [from, await commit(range.to)] : [from];
+  }
+
+  /** the tree with nothing in it (what is before the first commit), in the repository's own hash */
+  private async emptyTree(exe: string, root: string): Promise<string> {
+    const r = await runGit(exe, root, ['hash-object', '-t', 'tree', '--stdin'], { input: '' });
+    if (!r.ok || !r.stdout.trim()) throw new Error(`git hash-object failed: ${(r.stderr || r.stdout).trim()}`);
+    return r.stdout.trim();
+  }
+
+  /** the files that are not the same at the range's two points; with the folder as one of them, the files git does not
+   *  track yet too (new there) */
+  compare(range: GitRange): Promise<GitCompareResult> {
+    return this.serial(async () => {
+      const { exe, root } = await this.reading();
+      const revs = await this.points(exe, root, range);
+      const base = ['diff', '--no-color', '--no-ext-diff', '-M', '-z'];
+      const [names, nums] = [await runGit(exe, root, [...base, '--name-status', ...revs, '--']), await runGit(exe, root, [...base, '--numstat', ...revs, '--'])];
+      if (!names.ok) throw new Error((names.stderr || names.stdout).trim() || 'git diff failed');
+      const files = addNumstat(parseNameStatus(names.stdout), nums.ok ? nums.stdout : '');
+      if (!range.to) {
+        const others = await runGit(exe, root, ['ls-files', '--others', '--exclude-standard', '-z']);
+        const had = new Set(files.map(f => f.path));
+        if (others.ok) for (const p of others.stdout.split('\0')) if (p && !had.has(p)) files.push({ path: p, change: 'A', untracked: true });
+      }
+      files.sort((a, b) => a.path.localeCompare(b.path));
+      return { range, files };
+    });
   }
 
   /** the commands of one step, one after another while they work, and the repository after them */
@@ -220,18 +281,19 @@ export class GitService {
     });
   }
 
-  /** the changes of one file: staged or not; an untracked one is shown whole, as new */
+  /** the changes of one file: staged or not, or between the two points of a range; an untracked one is shown whole,
+   *  as new */
   async diff(req: GitDiffRequest): Promise<GitDiffResult> {
     const [path, from] = checkPaths([req.path, ...(req.from ? [req.from] : [])])!;
     return this.serial(async () => {
-      const exe = await this.git();
-      const root = await this.rootOf(exe, this.project());
-      if (!root) throw new Error('The project is not in a git repository');
-      if (!req.staged) {
+      const { exe, root } = await this.reading();
+      const revs = req.range ? await this.points(exe, root, req.range) : [];
+      // the folder as one side: a file git does not track yet is new there
+      if (!req.staged && (!req.range || !req.range.to)) {
         const tracked = await runGit(exe, root, ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path]);
         if (!tracked.ok) return newFile(join(root, path), path);
       }
-      const r = await runGit(exe, root, ['--literal-pathspecs', 'diff', '--no-color', '--no-ext-diff', '-M', ...(req.staged ? ['--cached'] : []), '--', ...(from ? [from] : []), path], { limit: DIFF_LIMIT });
+      const r = await runGit(exe, root, ['--literal-pathspecs', 'diff', '--no-color', '--no-ext-diff', '-M', ...(req.range ? revs : req.staged ? ['--cached'] : []), '--', ...(from ? [from] : []), path], { limit: DIFF_LIMIT });
       if (!r.ok) throw new Error((r.stderr || r.stdout).trim() || 'git diff failed');
       return { text: r.stdout, truncated: r.truncated, binary: /^Binary files .* differ$/m.test(r.stdout) && !/^@@/m.test(r.stdout) };
     });

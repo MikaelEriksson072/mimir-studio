@@ -1,6 +1,6 @@
 /* Git for a project's folder (spec 13.10b): what git's own output says, read the same way in the main process and in
  * the tests. The main process runs git (electron/main/git.ts); the renderer only shows what this reads. */
-import type { GitChange, GitCommit, GitFile, GitRemote } from './ipc';
+import type { GitChange, GitCommit, GitFile, GitRangeFile, GitRemote } from './ipc';
 
 /** what a new repository made by Mimir leaves out: KickAss.jar's output, made again by every build */
 export const GIT_IGNORE = `# Mimir: KickAss.jar's output, made again by every build (F7, F5)
@@ -89,13 +89,53 @@ export function parseRemotes(out: string): GitRemote[] {
   return [...by.values()];
 }
 
-/** the fields of LOG_FORMAT, apart; each commit ends in a record separator */
-export const LOG_FORMAT = '%H%x1f%h%x1f%an%x1f%at%x1f%s%x1e';
+/** the fields of LOG_FORMAT, apart (the message's body last: it may hold anything but the record separator); each
+ *  commit ends in a record separator */
+export const LOG_FORMAT = '%H%x1f%h%x1f%an%x1f%at%x1f%P%x1f%s%x1f%b%x1e';
 export function parseLog(out: string): GitCommit[] {
   return out.split('\x1e').map(s => s.replace(/^\r?\n/, '')).filter(Boolean).map(s => {
-    const [hash = '', short = '', author = '', at = '0', subject = ''] = s.split('\x1f');
-    return { hash, short, author, time: (+at || 0) * 1000, subject };
+    const [hash = '', short = '', author = '', at = '0', parents = '', subject = '', ...body] = s.split('\x1f');
+    return { hash, short, author, time: (+at || 0) * 1000, subject, parents: parents.split(' ').filter(Boolean), body: body.join('\x1f').replace(/\r\n/g, '\n').trim() };
   }).filter(c => c.hash);
+}
+
+/**
+ * `git diff --name-status -z` read: each file's change and path, a rename's or copy's old path before its new one
+ * (R100, C075: the letter, then how alike the two are).
+ */
+export function parseNameStatus(out: string): GitRangeFile[] {
+  const f = out.split('\0'), files: GitRangeFile[] = [];
+  for (let i = 0; i < f.length; i++) {
+    const code = f[i];
+    if (!code) continue;
+    const c = change(code[0]);
+    if (code[0] === 'R' || code[0] === 'C') { const from = f[++i] ?? '', path = f[++i] ?? ''; if (path) files.push({ path, from, change: c }); continue; }
+    const path = f[++i];
+    if (path) files.push({ path, change: c === '.' ? 'M' : c });
+  }
+  return files;
+}
+
+/**
+ * `git diff --numstat -z` read into `files` (by path): the lines added and taken away, `-` for both in a binary file.
+ * A rename's entry has an empty path, then its old and its new path.
+ */
+export function addNumstat(files: GitRangeFile[], out: string): GitRangeFile[] {
+  const by = new Map(files.map(x => [x.path, x]));
+  const f = out.split('\0');
+  for (let i = 0; i < f.length; i++) {
+    const e = f[i];
+    if (!e) continue;
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(e);
+    if (!m) continue;
+    let path = m[3];
+    if (!path) { i++; path = f[++i] ?? ''; }
+    const file = by.get(path);
+    if (!file) continue;
+    if (m[1] === '-') file.binary = true;
+    else { file.added = +m[1]; file.removed = +m[2]; }
+  }
+  return files;
 }
 
 /** What is wrong with `p` as a path in the repository the renderer names (relative, with / or \, nothing above the

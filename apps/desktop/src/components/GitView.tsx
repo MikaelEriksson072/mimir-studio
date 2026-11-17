@@ -1,11 +1,12 @@
 /* The Git tab (spec 13.10b): the project's repository. Its branch and where it pushes, the changes staged and those that
  * are not (a click shows a file's changes, its button or a double-click stages or unstages it), a commit message,
- * Push when there is a remote (and a field for origin's URL when there is none), and the newest commits. git runs in
- * the main process (electron/main/git.ts), always in the project's repository; without a project, or in a folder that
- * is no repository yet, the tab says so and offers what makes one. */
+ * Push when there is a remote (and a field for origin's URL when there is none), and the newest commits: a click on
+ * one shows the files it changed and their changes, compared with the commit before it, another commit (Ctrl+click
+ * it) or the folder as it is now. git runs in the main process (electron/main/git.ts), always in the project's
+ * repository; without a project, or in a folder that is no repository yet, the tab says so and offers what makes one. */
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { CHANGE_WORD, conflictFiles, remoteUrlProblem, stagedFiles, unstagedFiles } from '../../shared/git';
-import type { GitChange, GitDiffResult, GitFile, GitOpResult, GitStatus, ProjectHome } from '../../shared/ipc';
+import type { GitChange, GitCommit, GitCompareResult, GitDiffRequest, GitDiffResult, GitFile, GitOpResult, GitRange, GitRangeFile, GitStatus, ProjectHome } from '../../shared/ipc';
 import { Icon } from '../lib/icons';
 import { cx, errorText } from '../lib/util';
 
@@ -40,6 +41,26 @@ function failure(output: string): string {
 /** what a file is shown with: the changes staged, or those that are not */
 interface Shown { path: string; from?: string; staged: boolean }
 
+/** how many commits the list grows by */
+const LOG_STEP = 20;
+
+/** a commit chosen in the list: what it is compared with (the commit before it, the folder as it is now, or another
+ *  commit), and the file of the comparison shown (null: the first) */
+interface Picked { commit: GitCommit; vs: 'parent' | 'work' | GitCommit; file: string | null }
+
+/** the two points a chosen commit is compared at: from the older to the newer */
+function pickedRange(p: Picked, log: GitCommit[]): GitRange {
+  const c = p.commit;
+  if (p.vs === 'parent') return { from: c.parents[0] ?? null, to: c.hash };
+  if (p.vs === 'work') return { from: c.hash, to: null };
+  const i = log.findIndex(x => x.hash === c.hash), j = log.findIndex(x => x.hash === (p.vs as GitCommit).hash);
+  const otherOlder = i >= 0 && j >= 0 ? j > i : p.vs.time <= c.time;
+  return otherOlder ? { from: p.vs.hash, to: c.hash } : { from: c.hash, to: p.vs.hash };
+}
+
+/** a commit's short hash, from the list when it is there */
+const shortOf = (h: string, log: GitCommit[]) => log.find(c => c.hash === h)?.short ?? h.slice(0, 7);
+
 export interface GitViewProps {
   /** the project (null: work without a project) */
   home: ProjectHome | null;
@@ -65,20 +86,27 @@ export function GitView({ home, saveNow, onCreateProject, onTerminal, toast }: G
   const [msg, setMsgState] = useState('');
   const setMsg = (m: string) => { setMsgState(m); if (root) { if (m) drafts.set(root, m); else drafts.delete(root); } };
   useEffect(() => { setMsgState(drafts.get(root) ?? ''); }, [root]);
-  const [shown, setShown] = useState<Shown | null>(null);
-  const [diff, setDiff] = useState<{ for: Shown; res: GitDiffResult } | { for: Shown; error: string } | null>(null);
+  const [shown, setShownState] = useState<Shown | null>(null);
+  const [picked, setPickedState] = useState<Picked | null>(null);
+  /** a file's changes, or a commit's: one at a time */
+  const setShown = (s: Shown | null) => { setShownState(s); if (s) setPickedState(null); };
+  const setPicked = (p: Picked | null) => { setPickedState(p); if (p) setShownState(null); };
+  const [diff, setDiff] = useState<{ key: string; res: GitDiffResult } | { key: string; error: string } | null>(null);
+  const [cmp, setCmp] = useState<{ key: string; res: GitCompareResult } | { key: string; error: string } | null>(null);
   /** origin's URL being written (null: not editing) */
   const [remoteEdit, setRemoteEdit] = useState<string | null>(null);
   /** a look again at the shown file's changes (focus, Refresh, a step done) */
   const [tick, setTick] = useState(0);
   const msgRef = useRef<HTMLTextAreaElement>(null);
+  /** how many commits are listed (Show more lists more) */
+  const logN = useRef(LOG_STEP);
 
   const refresh = useCallback(async () => {
     if (!kr || busyRef.current) return;
-    try { setSt(await kr.gitStatus()); setError(null); } catch (e) { setError(errorText(e)); }
+    try { setSt(await kr.gitStatus({ log: logN.current })); setError(null); } catch (e) { setError(errorText(e)); }
   }, [kr]);
 
-  useEffect(() => { setSt(null); setShown(null); setOut(null); void refresh(); }, [home?.dir, refresh]);
+  useEffect(() => { setSt(null); setShownState(null); setPickedState(null); setOut(null); logN.current = LOG_STEP; void refresh(); }, [home?.dir, refresh]);
   useEffect(() => {
     const again = () => { if (document.visibilityState === 'visible') { void refresh(); setTick(n => n + 1); } };
     window.addEventListener('focus', again);
@@ -91,13 +119,43 @@ export function GitView({ home, saveNow, onCreateProject, onTerminal, toast }: G
   const conflicts = useMemo(() => conflictFiles(repo?.files ?? []), [repo]);
   /** the shown file as the status has it now: its changes are looked at again when they are another */
   const shownSig = shown ? JSON.stringify(repo?.files.find(f => f.path === shown.path) ?? null) + (repo?.head ?? '') : '';
+  // a file that has no changes any more (committed, or changed back) is no longer shown
+  useEffect(() => { if (shown && repo && !repo.files.some(f => f.path === shown.path)) setShownState(null); }, [repo]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** the chosen commit's comparison: its files, and the one shown */
+  const range = picked ? pickedRange(picked, repo?.log ?? []) : null;
+  const rangeKey = range ? `${range.from ?? 'nothing'}..${range.to ?? 'work'}` : '';
+  /** with the folder as one side, the comparison is looked at again when the folder changes */
+  const workSig = range && !range.to ? JSON.stringify(repo?.files ?? []) + (repo?.head ?? '') : '';
   useEffect(() => {
-    if (!kr || !shown) { setDiff(null); return; }
+    if (!kr || !range) { setCmp(null); return; }
     let gone = false;
-    kr.gitDiff(shown).then(res => { if (!gone) setDiff({ for: shown, res }); }, (e: unknown) => { if (!gone) setDiff({ for: shown, error: errorText(e) }); });
+    const key = rangeKey;
+    kr.gitCompare(range).then(res => { if (!gone) setCmp({ key, res }); }, (e: unknown) => { if (!gone) setCmp({ key, error: errorText(e) }); });
     return () => { gone = true; };
-  }, [kr, shown, shownSig, tick]);
+  }, [kr, rangeKey, workSig, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cmpNow = cmp && cmp.key === rangeKey ? cmp : null;
+  const cmpFiles = cmpNow && 'res' in cmpNow ? cmpNow.res.files : null;
+  const pickedFile = picked && cmpFiles ? cmpFiles.find(f => f.path === picked.file) ?? cmpFiles[0] ?? null : null;
+
+  /** the changes shown: the file's, or those of the chosen commit's file */
+  const diffReq: GitDiffRequest | null = shown ? shown : range && pickedFile ? { path: pickedFile.path, ...(pickedFile.from ? { from: pickedFile.from } : {}), range } : null;
+  const diffKey = shown ? `file|${shown.path}|${shown.staged}` : range && pickedFile ? `range|${rangeKey}|${pickedFile.path}` : '';
+  useEffect(() => {
+    if (!kr || !diffReq) { setDiff(null); return; }
+    let gone = false;
+    const key = diffKey;
+    kr.gitDiff(diffReq).then(res => { if (!gone) setDiff({ key, res }); }, (e: unknown) => { if (!gone) setDiff({ key, error: errorText(e) }); });
+    return () => { gone = true; };
+  }, [kr, diffKey, shownSig, workSig, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** a commit of the list chosen; with Ctrl, the chosen one is compared with it */
+  const pickCommit = (c: GitCommit, ctrl = false) => {
+    if (ctrl && picked && picked.commit.hash !== c.hash) { setPicked({ ...picked, vs: c }); return; }
+    if (picked?.commit.hash === c.hash) return;
+    setPicked({ commit: c, vs: 'parent', file: null });
+  };
+  const showMore = () => { logN.current += LOG_STEP; void refresh(); };
 
   /** a step: its git commands, then the repository after them; what git wrote is kept below the lists */
   const op = async (what: string, fn: () => Promise<GitOpResult>, done?: (r: GitOpResult) => void) => {
@@ -222,10 +280,19 @@ export function GitView({ home, saveNow, onCreateProject, onTerminal, toast }: G
         <section className="git-sec" aria-label="Commits">
           <h3>Commits{repo.log.length ? <span className="muted"> · the newest {repo.log.length}</span> : null}</h3>
           {repo.log.length ? <ul className="git-log">
-            {repo.log.map(c => <li key={c.hash} title={`${c.hash}\n${c.author}, ${new Date(c.time).toLocaleString()}`}>
-              <span className="mono git-hash">{c.short}</span><span className="git-subject">{c.subject}</span><span className="muted git-when">{ago(c.time)}</span>
-            </li>)}
+            {repo.log.map(c => {
+              const on = picked?.commit.hash === c.hash, vs = !!picked && typeof picked.vs === 'object' && picked.vs.hash === c.hash;
+              return <li key={c.hash} className={cx('git-commit', on && 'on', vs && 'vs')} tabIndex={0} aria-current={on || undefined}
+                onClick={e => pickCommit(c, e.ctrlKey || e.metaKey)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); pickCommit(c, e.ctrlKey || e.metaKey); } }}
+                title={`${c.hash}\n${c.author}, ${new Date(c.time).toLocaleString()}\n\nClick: the files this commit changed and their changes.${picked && !on ? `\nCtrl+click: compare ${picked.commit.short} with this commit.` : '\nCtrl+click another commit to compare the two.'}`}>
+                <span className="mono git-hash">{c.short}</span><span className="git-subject">{c.subject}</span>
+                {vs && <span className="pill" title={`${picked!.commit.short} is compared with this commit`}>compared</span>}
+                <span className="muted git-when">{ago(c.time)}</span>
+              </li>;
+            })}
           </ul> : <div className="empty small">No commits yet.</div>}
+          {repo.more && <button className="btn tiny ghost git-more" disabled={!!busy} onClick={showMore} title="List older commits too">Show {LOG_STEP} more</button>}
         </section>
 
         {out && <details className={cx('git-out', !out.ok && 'bad')} open={!out.ok}>
@@ -236,16 +303,25 @@ export function GitView({ home, saveNow, onCreateProject, onTerminal, toast }: G
         <div className="git-foot muted small">Pull, branches and the rest: <button className="btn small ghost" onClick={onTerminal}><Icon name="prompt" size={13} />Terminal</button> <span>Git {st.git.version}</span></div>
       </div>
 
-      <div className="git-diff" aria-label="The file's changes">
-        {shown ? <>
+      <div className="git-diff" role="region" aria-label={picked ? 'The commit' : "The file's changes"}>
+        {picked ? <CommitPane picked={picked} log={repo.log} range={range!} files={cmpFiles} error={cmpNow && 'error' in cmpNow ? cmpNow.error : null} file={pickedFile}
+          diff={diff && diff.key === diffKey ? diff : null} onPick={setPicked} onClose={() => setPicked(null)} />
+        : shown ? <>
           <div className="git-diff-head">
             <span className="mono git-diff-path" title={shown.path}>{shown.from ? `${shown.from} → ` : ''}{shown.path}</span>
             <span className="pill">{shown.staged ? 'staged' : 'not staged'}</span>
             <span className="grow" />
             <button className="icon-btn" onClick={() => setShown(null)} aria-label="Close the changes" title="Close"><Icon name="x" size={14} /></button>
           </div>
-          <DiffText diff={diff && diff.for.path === shown.path && diff.for.staged === shown.staged ? diff : null} />
-        </> : <div className="empty">Click a file to see its changes.</div>}
+          <DiffText diff={diff && diff.key === diffKey ? diff : null} />
+        </> : <div className="empty git-hint">
+          {staged.length || changes.length || conflicts.length ? <p>Click a file under {conflicts.length ? 'Conflicts, ' : ''}Changes or Staged to see its changes, or a commit to see what it changed.</p>
+          : repo.log.length ? <>
+            <p>Nothing has changed since the last commit, so there are no files to stage here.</p>
+            <p>Click a commit to see the files it changed and their changes, and compare it with the commit before it, another commit or the folder as it is now.</p>
+            <button className="btn small" onClick={() => pickCommit(repo.log[0])}><Icon name="git" size={13} />Show the last commit ({repo.log[0].short})</button>
+          </> : <p>No files and no commits yet.</p>}
+        </div>}
       </div>
     </div>
   );
@@ -305,11 +381,84 @@ function GitList({ title, files, staged, shown, busy, onShow, act, all, note }: 
   );
 }
 
-function DiffText({ diff }: { diff: { res: GitDiffResult } | { error: string } | null }) {
+interface CommitPaneProps {
+  picked: Picked;
+  log: GitCommit[];
+  range: GitRange;
+  /** the files of the comparison (null: not read yet) */
+  files: GitRangeFile[] | null;
+  error: string | null;
+  file: GitRangeFile | null;
+  diff: { res: GitDiffResult } | { error: string } | null;
+  onPick: (p: Picked) => void;
+  onClose: () => void;
+}
+
+/** a chosen commit: its message, what it is compared with, the files that are not the same and the shown one's changes */
+function CommitPane({ picked, log, range, files, error, file, diff, onPick, onClose }: CommitPaneProps) {
+  const c = picked.commit;
+  const vsValue = picked.vs === 'parent' ? 'parent' : picked.vs === 'work' ? 'work' : picked.vs.hash;
+  // the commit compared with stays a choice when the list no longer has it
+  const others = [...log.filter(x => x.hash !== c.hash), ...(typeof picked.vs === 'object' && !log.some(x => x.hash === (picked.vs as GitCommit).hash) ? [picked.vs] : [])];
+  const pick = (v: string) => {
+    const vs = v === 'parent' || v === 'work' ? v : others.find(x => x.hash === v);
+    if (vs) onPick({ ...picked, vs });
+  };
+  const side = (h: string | null, end: 'from' | 'to') => (h ? <span className="mono git-hash">{shortOf(h, log)}</span> : <span>{end === 'from' ? 'nothing' : 'the folder now'}</span>);
+  const added = files?.reduce((n, f) => n + (f.added ?? 0), 0) ?? 0, removed = files?.reduce((n, f) => n + (f.removed ?? 0), 0) ?? 0;
+  return <>
+    <div className="git-diff-head">
+      <Icon name="git" size={14} />
+      <span className="mono git-hash">{c.short}</span>
+      <span className="git-diff-path git-cmt-subject" title={c.subject}>{c.subject}</span>
+      <span className="grow" />
+      <button className="icon-btn" onClick={onClose} aria-label="Close the commit" title="Close"><Icon name="x" size={14} /></button>
+    </div>
+    <div className="git-cmt">
+      <div className="git-cmt-meta muted" title={c.hash}>{c.author} · {new Date(c.time).toLocaleString()} · {ago(c.time)}{c.parents.length > 1 ? ` · a merge of ${c.parents.length} commits` : ''}</div>
+      {c.body && <div className="git-cmt-body">{c.body}</div>}
+      <label className="git-cmp">
+        <span>Compared with</span>
+        <select value={vsValue} onChange={e => pick(e.target.value)} aria-label="Compared with">
+          <option value="parent">{c.parents[0] ? `the commit before it (${shortOf(c.parents[0], log)}): what it changed` : 'nothing: it is the first commit'}</option>
+          <option value="work">the folder as it is now</option>
+          {others.length > 0 && <optgroup label="Another commit">
+            {others.map(x => <option key={x.hash} value={x.hash}>{x.short} {x.subject.length > 60 ? `${x.subject.slice(0, 60)}…` : x.subject} ({ago(x.time)})</option>)}
+          </optgroup>}
+        </select>
+      </label>
+      <div className="git-cmp-sum">
+        {side(range.from, 'from')} → {side(range.to, 'to')}
+        <span className="muted"> · {files ? `${files.length} file${files.length === 1 ? '' : 's'}${files.length ? ` · +${added} −${removed}` : ''}` : '…'}</span>
+      </div>
+      {error && <div className="np-error">{error}</div>}
+      {files && (files.length ? <ul className="git-files git-cmp-files" aria-label="Files">
+        {files.map(f => {
+          const at = f.path.lastIndexOf('/'), on = file?.path === f.path, l = f.untracked ? 'U' : f.change;
+          const show = () => onPick({ ...picked, file: f.path });
+          return <li key={f.path} className={cx('git-file', on && 'on')} tabIndex={0} aria-current={on || undefined} onClick={show}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); show(); } }}
+            title={`${f.path}: ${f.untracked ? 'untracked: new in the folder, git does not have it yet' : CHANGE_WORD[f.change]}${f.from ? ` (from ${f.from})` : ''}`}>
+            <span className={cx('git-letter', `gl-${l}`)}>{l}</span>
+            <span className="git-name">{f.path.slice(at + 1)}</span>
+            {at > 0 && <span className="git-dir muted">{f.path.slice(0, at)}</span>}
+            <span className="git-count">{f.binary ? <span className="muted">binary</span> : f.added != null ? <><span className="git-add">+{f.added}</span> <span className="git-del">−{f.removed}</span></> : null}</span>
+          </li>;
+        })}
+      </ul> : <div className="empty small">The files are the same at both: nothing differs.</div>)}
+    </div>
+    {file && <div className="git-diff-head git-diff-sub">
+      <span className="mono git-diff-path" title={file.path}>{file.from ? `${file.from} → ` : ''}{file.path}</span>
+    </div>}
+    {file && <DiffText diff={diff} empty="No lines differ: the file was renamed, or only its mode changed." />}
+  </>;
+}
+
+function DiffText({ diff, empty }: { diff: { res: GitDiffResult } | { error: string } | null; empty?: string }) {
   if (!diff) return <div className="empty">…</div>;
   if ('error' in diff) return <div className="np-error">{diff.error}</div>;
   const { text, truncated, binary } = diff.res;
-  if (!text.trim()) return <div className="empty">No changes of this kind: the file's changes are in the other list.</div>;
+  if (!text.trim()) return <div className="empty">{empty ?? "No changes of this kind: the file's changes are in the other list."}</div>;
   if (binary) return <div className="empty">A binary file: git keeps its bytes, and has no lines to show.</div>;
   const lines = text.split('\n');
   return (

@@ -3137,13 +3137,14 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `window:closing` | main → renderer | fönstret ska stängas (krysset, Alt+F4, File → Exit): sidan svarar med `window:close` inom 2,5 s, annars stängs det ändå (13.10) |
 | `window:close` | renderer → main | `{ close }`: sidans svar, fönstret stängs nu (`true`) eller väntar medan sidan frågar användaren (`false`) |
 | `git:version` | renderer → main | → `{ path, version }` eller `null`: den git som finns (13.10b) |
-| `git:status` | renderer → main | → `{ git, dir, repo }`: projektets förråd, dess gren, uppströmsgren, före/efter, remotes, ändrade filer och de senaste commitarna (`repo` `null`: mappen är inget förråd; `dir` `null`: inget projekt) |
+| `git:status` | renderer → main | `{ log? }` → `{ git, dir, repo }`: projektets förråd, dess gren, uppströmsgren, före/efter, remotes, ändrade filer och de `log` senaste commitarna (20; med föräldrar och meddelandets resten, `more`: det finns äldre) (`repo` `null`: mappen är inget förråd; `dir` `null`: inget projekt) |
 | `git:init` | renderer → main | ett förråd i projektets mapp, med Mimirs `.gitignore` och `.gitattributes` → `{ ok, output, argv, status }` (som alla steg nedan: vad git skrev, dess kommandorader och förrådet efteråt) |
 | `git:stage` / `git:unstage` | renderer → main | `{ paths? }`: filer från förrådets rot (inga: alla ändringar) |
 | `git:commit` | renderer → main | `{ message }`: det som är stagat, med meddelandet på stdin |
 | `git:push` | renderer → main | grenen till sin uppströmsgren, annars till origin som en gren med samma namn (som då blir uppströmsgren) |
 | `git:remote` | renderer → main | `{ url }`: origin läggs till, eller får en ny URL |
-| `git:diff` | renderer → main | `{ path, from?, staged }` → `{ text, truncated, binary }`: en fils ändringar, stagade eller inte; en ospårad fil visas hel |
+| `git:diff` | renderer → main | `{ path, from?, staged?, range? }` → `{ text, truncated, binary }`: en fils ändringar, stagade eller inte, eller mellan `range`:s två punkter; en ospårad fil visas hel |
+| `git:compare` | renderer → main | `{ from, to }` → `{ range, files }`: filerna som inte är lika mellan två punkter, med ändring och rader (`from` en commits hash eller `null`: ingenting; `to` en commits hash eller `null`: mappen nu, med ospårade filer) |
 
 ### 13.4b Smart attach
 
@@ -5140,11 +5141,22 @@ avstängd och säger det.
   `user@host:path`), och pennan byter origins URL. Git för Windows inloggning (Git Credential Manager) frågar själv
   första gången det pushas; en terminal frågar aldrig (`GIT_TERMINAL_PROMPT=0`), och en push som inte är klar efter
   5 minuter avbryts.
-- **Commits**: de 20 senaste, med kort hash, rubrik och när.
+- **Commits**: de 20 senaste, med kort hash, rubrik och när (**Show 20 more** listar äldre, högst 2 000). Ett klick
+  på en commit visar den till höger: rubriken, vem och när, meddelandets resten, **Compared with** och filerna som inte
+  är lika med sin bokstav och sina rader `+n −n` (eller *binary*); ett klick på en fil visar dess ändringar (den
+  första från början). *Compared with* är från början **commiten före den** (`<förälder> → <commit>`: vad den
+  ändrade; den första commiten jämförs med ingenting, allt i den är nytt), eller **mappen som den är nu**
+  (`<commit> → the folder now`, med filer git inte spårar än som nya) eller **en annan commit** i listan; Ctrl+klick
+  på en annan commit väljer den direkt (raden får en accentkant och *compared*). Två commitar jämförs alltid från den
+  äldre till den nyare. Med mappen som ena sidan tittar jämförelsen om när mappen ändras.
 - **Utdata**: vad git skrev vid det senaste steget, med kommandoraden (öppen när det misslyckades; notisen säger
   gits felrad).
 - Till höger **den valda filens ändringar** (`git diff`, stagade eller inte; en ospårad fil visas hel, en binär fil
-  sägs vara binär), högst 512 KB. En fil som stagas följer med till den stagade sidan.
+  sägs vara binär), högst 512 KB, eller den valda commiten. En fil som stagas följer med till den stagade sidan; en
+  fil som inte längre har några ändringar (committad, eller ändrad tillbaka) stängs. Utan något valt säger rutan vad
+  som går att klicka på: med ändringar en fil under *Changes* eller *Staged*, eller en commit; i en mapp som är som
+  den senaste commiten lämnade den (inga filer att staga, filerna i Explorern öppnas i listningen) en commit, med
+  knappen **Show the last commit**.
 
 Projektfilen sparas (som inför att fönstret stängs) innan något stagas eller committas, så det som går in är arbetet
 som det är. Fliken tittar på förrådet igen när den visas, när fönstret får fokus, efter varje steg och var fjärde
@@ -5159,7 +5171,9 @@ verktygen i raden).
 genom ett skal, och alltid i förrådet för det projekt som är öppet: renderaren namnger filer i det, aldrig en mapp, ett
 program, en remote att pusha till eller en gren. Sökvägarna prövas (relativa, inget `..`) och går till git som de är
 (`--literal-pathspecs`, `--pathspec-from-file` med NUL mellan, så varken jokertecken eller kommandoradens längd spelar
-in); en URL som börjar med `-` eller inte är en URL tas inte emot. Ett kommando i taget (två samtidigt skulle mötas vid
+in); en URL som börjar med `-` eller inte är en URL tas inte emot. En commit namnges bara med sin hash (7-64
+hexsiffror, aldrig en gren, en tagg eller en revision som `HEAD~1`) och prövas med `git rev-parse --verify` att vara en
+commit; ingenting före den första commiten är det tomma trädet (`git hash-object -t tree --stdin`). Ett kommando i taget (två samtidigt skulle mötas vid
 gits `index.lock`), och `git status` tar inga lås (`--no-optional-locks`). Gits utdata läses i `shared/git.ts`
 (`git status --porcelain=v2 --branch -z`, `git remote -v`, `git log`).
 
@@ -5169,10 +5183,14 @@ riktiga git i temp-mappar med en egen git-konfiguration: förrådet på `main` m
 (`build` utelämnad), en sökväg läst som den är (`a*` är inget jokertecken), stage och unstage före och efter den
 första commiten, ett meddelande med `#`-rader, ändringarna stagade och inte, en ospårad och en binär fil, origin
 tillagd och bytt, push som sätter uppströmsgrenen och push dit sedan (till ett nakent förråd via `file://`), och ett
-förråd inuti ett annat med användarens `.gitignore` kvar. `e2e/git.spec.ts`: ett nytt projekt med rutan ibockad blir ett
+förråd inuti ett annat med användarens `.gitignore` kvar; en commits filer från sin förälder (ändrad, omdöpt, binär, rader
++/−), den första från ingenting, en commit mot mappen (en ändring som inte är stagad, en som är det och en ospårad
+fil), att bara hashar tas emot, och `log`/`more`. `e2e/git.spec.ts`: ett nytt projekt med rutan ibockad blir ett
 förråd, en PRG öppnas, fliken listar filerna och visar en fils ändringar, en fil och sedan alla stagas, Ctrl+Enter
 committar, origin läggs till och Push pushar och sätter uppströmsgrenen, och en ändring som sparas i projektfilen syns
-som ändrad och blir en commit att pusha; utan projekt säger fliken att det behövs ett och visar formuläret med rutan.
+som ändrad och blir en commit att pusha, rutan i en ren mapp säger att man klickar på en commit, *Show the last commit*
+visar dess fil och ändringar, den första commiten jämförs med ingenting, Ctrl+klick jämför två commitar och *Compared
+with* jämför med mappen; utan projekt säger fliken att det behövs ett och visar formuläret med rutan.
 
 ## 14. UI/UX-specifikation
 

@@ -55,6 +55,7 @@ export const CHANNELS = {
   gitPush: 'git:push',
   gitRemote: 'git:remote',
   gitDiff: 'git:diff',
+  gitCompare: 'git:compare',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
@@ -351,7 +352,9 @@ export type GitChange = '.' | 'M' | 'T' | 'A' | 'D' | 'R' | 'C' | 'U' | '?';
  *  the folder that is not (`work`); `from`: a rename's or copy's old path */
 export interface GitFile { path: string; from?: string; index: GitChange; work: GitChange; kind: 'changed' | 'untracked' | 'conflict' }
 export interface GitRemote { name: string; url: string }
-export interface GitCommit { hash: string; short: string; author: string; time: number; subject: string }
+/** a commit: `parents` their hashes (none: the first commit; two or more: a merge), `body` the message after its
+ *  subject line */
+export interface GitCommit { hash: string; short: string; author: string; time: number; subject: string; parents: string[]; body: string }
 export interface GitRepo {
   /** the repository's folder: the project's, or one above it */
   root: string;
@@ -368,6 +371,8 @@ export interface GitRepo {
   files: GitFile[];
   /** the newest commits, the newest first */
   log: GitCommit[];
+  /** there are older commits than the log lists */
+  more: boolean;
 }
 /** `dir`: the project's folder (null: work without a project); `repo` null: it is in no repository */
 export interface GitStatus { git: GitVersion; dir: string | null; repo: GitRepo | null }
@@ -378,9 +383,19 @@ export interface GitPathsRequest { paths?: string[] }
 export interface GitCommitRequest { message: string }
 /** origin's URL: added, or changed when there is an origin */
 export interface GitRemoteRequest { url: string }
-/** the changes of one file: staged (`git diff --cached`) or not; an untracked file is shown whole */
-export interface GitDiffRequest { path: string; from?: string; staged: boolean }
+/** `log`: how many of the newest commits to list (20 when not said) */
+export interface GitStatusRequest { log?: number }
+/** Two points of the history compared: `from` a commit's hash (null: nothing, before the first commit), `to` a commit's
+ *  hash (null: the folder as it is now). A commit and its parent is what the commit changed. */
+export interface GitRange { from: string | null; to: string | null }
+/** the changes of one file: staged (`git diff --cached`) or not, or between the two points of `range`; an untracked
+ *  file is shown whole */
+export interface GitDiffRequest { path: string; from?: string; staged?: boolean; range?: GitRange }
 export interface GitDiffResult { text: string; truncated: boolean; binary: boolean }
+/** a file that is not the same at the two points of a range: its change (A, M, D, T, R, C), the lines added and
+ *  taken away (none for a binary file, or one git does not track yet: `untracked`, new in the folder) */
+export interface GitRangeFile { path: string; from?: string; change: GitChange; added?: number; removed?: number; binary?: boolean; untracked?: boolean }
+export interface GitCompareResult { range: GitRange; files: GitRangeFile[] }
 /** how making a project's repository went: `root` the repository's folder; `nested`: the folder above it that was
  *  a repository already (the new one is a repository of its own inside it); `ok` false: `message` says why not */
 export interface GitInitOutcome { ok: boolean; root: string; nested: string | null; message: string }
@@ -454,7 +469,7 @@ export interface KrApi {
   /** the git found on this computer; null: none */
   gitVersion(): Promise<GitVersion>;
   /** the project's repository: its branch, remotes, changed files and newest commits */
-  gitStatus(): Promise<GitStatus>;
+  gitStatus(req?: GitStatusRequest): Promise<GitStatus>;
   /** a repository made in the project's folder, with Mimir's .gitignore and .gitattributes */
   gitInit(): Promise<GitOpResult>;
   gitStage(req?: GitPathsRequest): Promise<GitOpResult>;
@@ -464,4 +479,6 @@ export interface KrApi {
   gitPush(): Promise<GitOpResult>;
   gitRemote(req: GitRemoteRequest): Promise<GitOpResult>;
   gitDiff(req: GitDiffRequest): Promise<GitDiffResult>;
+  /** the files that are not the same at the range's two points */
+  gitCompare(req: GitRange): Promise<GitCompareResult>;
 }

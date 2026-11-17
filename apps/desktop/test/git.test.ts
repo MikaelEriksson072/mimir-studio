@@ -2,12 +2,12 @@
  * GitService against the real git in temp folders, with a git configuration of its own (not the user's). */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CHANGE_WORD, conflictFiles, GIT_ATTRIBUTES, gitPathProblem, parseLog, parseRemotes, parseStatus, remoteUrlProblem, stagedFiles, unstagedFiles } from '../shared/git';
+import { addNumstat, CHANGE_WORD, conflictFiles, GIT_ATTRIBUTES, gitPathProblem, parseLog, parseNameStatus, parseRemotes, parseStatus, remoteUrlProblem, stagedFiles, unstagedFiles } from '../shared/git';
 import { findGit, GitService, initRepository } from '../electron/main/git';
-import { gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRemoteSchema, projectCreateSchema } from '../electron/main/schemas';
+import { gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRangeSchema, gitRemoteSchema, gitStatusSchema, projectCreateSchema } from '../electron/main/schemas';
 import { createProject } from '@mimir/core';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-git-test-'));
@@ -54,9 +54,28 @@ describe('git status read', () => {
   it('reads the remotes, each once with the URL it pushes to, and the log', () => {
     expect(parseRemotes('origin\thttps://github.com/a/b.git (fetch)\norigin\tgit@github.com:a/b.git (push)\nbackup\t//nas/b.git (fetch)\nbackup\t//nas/b.git (push)\n'))
       .toEqual([{ name: 'origin', url: 'git@github.com:a/b.git' }, { name: 'backup', url: '//nas/b.git' }]);
-    expect(parseLog('abc\x1fab\x1fMe\x1f1700000000\x1fFirst: a subject\x1e\ndef\x1fde\x1fYou\x1f1700000100\x1fSecond\x1e\n'))
-      .toEqual([{ hash: 'abc', short: 'ab', author: 'Me', time: 1700000000000, subject: 'First: a subject' }, { hash: 'def', short: 'de', author: 'You', time: 1700000100000, subject: 'Second' }]);
+    expect(parseLog('abc\x1fab\x1fMe\x1f1700000000\x1fdef\x1fFirst: a subject\x1fA body\r\n\r\nof two lines\n\x1e\ndef\x1fde\x1fYou\x1f1700000100\x1f\x1fSecond\x1f\x1e\n'))
+      .toEqual([
+        { hash: 'abc', short: 'ab', author: 'Me', time: 1700000000000, subject: 'First: a subject', parents: ['def'], body: 'A body\n\nof two lines' },
+        { hash: 'def', short: 'de', author: 'You', time: 1700000100000, subject: 'Second', parents: [], body: '' },
+      ]);
+    // a merge has two parents
+    expect(parseLog('m\x1fm\x1fMe\x1f1\x1fa b\x1fMerge\x1f\x1e')[0].parents).toEqual(['a', 'b']);
     expect(parseLog('')).toEqual([]);
+  });
+
+  it('reads the files between two points of the history, with their lines added and taken away', () => {
+    const files = parseNameStatus('M\0a b.txt\0A\0new.asm\0D\0gone.asm\0R087\0old name.asm\0new name.asm\0C100\0x.asm\0y.asm\0T\0link\0');
+    expect(files).toEqual([
+      { path: 'a b.txt', change: 'M' }, { path: 'new.asm', change: 'A' }, { path: 'gone.asm', change: 'D' },
+      { path: 'new name.asm', from: 'old name.asm', change: 'R' }, { path: 'y.asm', from: 'x.asm', change: 'C' }, { path: 'link', change: 'T' },
+    ]);
+    addNumstat(files, '3\t1\ta b.txt\x002\t0\tnew.asm\x000\t5\tgone.asm\x001\t1\t\0old name.asm\0new name.asm\0-\t-\tlink\0');
+    expect(files.map(f => [f.path, f.added, f.removed, f.binary])).toEqual([
+      ['a b.txt', 3, 1, undefined], ['new.asm', 2, 0, undefined], ['gone.asm', 0, 5, undefined],
+      ['new name.asm', 1, 1, undefined], ['y.asm', undefined, undefined, undefined], ['link', undefined, undefined, true],
+    ]);
+    expect(parseNameStatus('')).toEqual([]);
   });
 });
 
@@ -79,6 +98,15 @@ describe('what the renderer may name', () => {
     expect(gitCommitSchema.safeParse({ message: '' }).success).toBe(false);
     expect(gitRemoteSchema.safeParse({ url: 'https://x/y.git', name: 'evil' }).success).toBe(false);
     expect(gitDiffSchema.safeParse({ path: 'a', staged: true }).success).toBe(true);
+    // commits by their hashes only: never a branch, a tag or a revision git would read as an option
+    const h = '92b1f93c0ffee';
+    expect(gitDiffSchema.safeParse({ path: 'a', range: { from: null, to: h } }).success).toBe(true);
+    expect(gitRangeSchema.safeParse({ from: h, to: null }).success).toBe(true);
+    for (const bad of ['main', 'HEAD~1', '--output=x', 'abc', `${h}^`, `${h}..main`]) expect(gitRangeSchema.safeParse({ from: bad, to: null }).success).toBe(false);
+    expect(gitRangeSchema.safeParse({ from: h }).success).toBe(false);
+    expect(gitStatusSchema.safeParse({ log: 40 }).success).toBe(true);
+    expect(gitStatusSchema.safeParse({ log: 0 }).success).toBe(false);
+    expect(gitStatusSchema.safeParse(undefined).success).toBe(true);
     const project = createProject({ name: 'x', files: [] });
     expect(projectCreateSchema.safeParse({ name: 'x', parent: 'C:/p', project, git: true }).success).toBe(true);
   });
@@ -212,6 +240,80 @@ describe.skipIf(!GIT)('the GitService with the real git', () => {
       const b = await svc.remote('https://github.com/me/demo.git');
       expect(b.status.repo!.remotes).toEqual([{ name: 'origin', url: 'https://github.com/me/demo.git' }]);
     } finally { rmSync(dir, { recursive: true, force: true }); rmSync(bare, { recursive: true, force: true }); }
+  });
+
+  it('shows what a commit changed, two commits compared and a commit compared with the folder', async () => {
+    const dir = tmp();
+    try {
+      writeFileSync(join(dir, 'main.asm'), 'lda #0\nrts\n');
+      writeFileSync(join(dir, 'old.asm'), 'one\ntwo\nthree\nfour\nfive\n');
+      const svc = new GitService(() => dir);
+      await svc.init();
+      await svc.stage();
+      await svc.commit('First');
+      writeFileSync(join(dir, 'main.asm'), 'lda #1\nrts\n');
+      writeFileSync(join(dir, 'x.prg'), Buffer.from([0, 0x10, 0xa9, 0]));
+      renameSync(join(dir, 'old.asm'), join(dir, 'new.asm'));
+      await svc.stage();
+      const c2 = await svc.commit('Second\n\nWith a body');
+      const [second, first] = c2.status.repo!.log;
+      expect(second).toMatchObject({ subject: 'Second', body: 'With a body', parents: [first.hash] });
+      expect(first.parents).toEqual([]);
+
+      // what the second commit changed: from its parent
+      const what = await svc.compare({ from: first.hash, to: second.hash });
+      expect(what.files).toEqual([
+        { path: 'main.asm', change: 'M', added: 1, removed: 1 },
+        { path: 'new.asm', from: 'old.asm', change: 'R', added: 0, removed: 0 },
+        { path: 'x.prg', change: 'A', binary: true },
+      ]);
+      expect((await svc.diff({ path: 'main.asm', range: { from: first.hash, to: second.hash } })).text).toMatch(/-lda #0\n\+lda #1/);
+      expect((await svc.diff({ path: 'new.asm', from: 'old.asm', range: { from: first.hash, to: second.hash } })).text).toMatch(/rename from old\.asm\nrename to new\.asm/);
+      expect(await svc.diff({ path: 'x.prg', range: { from: first.hash, to: second.hash } })).toMatchObject({ binary: true });
+
+      // the first commit: from nothing, everything in it is new
+      const all = await svc.compare({ from: null, to: first.hash });
+      expect(all.files.map(f => `${f.change} ${f.path} +${f.added}`)).toEqual(['A .gitattributes +15', 'A .gitignore +2', 'A main.asm +2', 'A old.asm +5']);
+
+      // the second commit compared with the folder: a change not staged, one staged and a file git does not track yet
+      writeFileSync(join(dir, 'main.asm'), 'lda #2\nrts\n');
+      writeFileSync(join(dir, 'new.asm'), 'six\n');
+      await svc.stage(['new.asm']);
+      writeFileSync(join(dir, 'later.asm'), 'nop\n');
+      const work = await svc.compare({ from: second.hash, to: null });
+      expect(work.files).toEqual([
+        { path: 'later.asm', change: 'A', untracked: true },
+        { path: 'main.asm', change: 'M', added: 1, removed: 1 },
+        { path: 'new.asm', change: 'M', added: 1, removed: 5 },
+      ]);
+      expect((await svc.diff({ path: 'main.asm', range: { from: second.hash, to: null } })).text).toMatch(/-lda #1\n\+lda #2/);
+      expect((await svc.diff({ path: 'later.asm', range: { from: second.hash, to: null } })).text).toBe('new file later.asm\n@@ -0,0 +1,1 @@\n+nop\n');
+      // the first commit compared with the folder
+      expect((await svc.diff({ path: 'main.asm', range: { from: first.hash, to: null } })).text).toMatch(/-lda #0\n\+lda #2/);
+
+      // hashes only, and only of commits that are there
+      await expect(svc.compare({ from: 'main', to: null })).rejects.toThrow(/not a commit's hash/);
+      await expect(svc.compare({ from: 'deadbeefdeadbeef', to: null })).rejects.toThrow(/no commit deadbeefdeadbeef/);
+      await expect(svc.compare({ from: first.hash.slice(0, 7), to: second.hash })).resolves.toMatchObject({ files: expect.any(Array) });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('lists as many commits as asked, and says when there are older ones', async () => {
+    const dir = tmp();
+    try {
+      const svc = new GitService(() => dir);
+      await svc.init();
+      for (let i = 1; i <= 3; i++) { writeFileSync(join(dir, 'n.txt'), `${i}\n`); await svc.stage(); await svc.commit(`Commit ${i}`); }
+      const st = await svc.status(2);
+      expect(st.repo!.log.map(c => c.subject)).toEqual(['Commit 3', 'Commit 2']);
+      expect(st.repo!.more).toBe(true);
+      // a step's status lists as many as the last one asked for
+      writeFileSync(join(dir, 'n.txt'), '4\n');
+      expect((await svc.stage()).status.repo!.log).toHaveLength(2);
+      const all = await svc.status(20);
+      expect(all.repo!.log).toHaveLength(3);
+      expect(all.repo!.more).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('makes a repository of its own inside another, and leaves one that is there as it is', async () => {

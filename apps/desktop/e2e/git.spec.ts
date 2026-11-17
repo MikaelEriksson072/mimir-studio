@@ -119,6 +119,41 @@ test.describe('git', () => {
         await expect(page.locator('.git-head')).not.toContainText('↑');
         expect(git(bare, 'log', '--format=%s', 'main')).toBe('Name the sine position\nThe raster demo, re-assembled');
       });
+
+      await test.step('a click on a commit shows the files it changed; Ctrl+click and Compared with compare it', async () => {
+        const [second, first] = git(dir, 'log', '--format=%h').split('\n');
+        // nothing to stage: the pane says to click a commit, not a file
+        const pane = page.locator('.git-diff');
+        await expect(pane).toContainText('Nothing has changed since the last commit');
+        const commits = page.getByRole('region', { name: 'Commits' });
+        await pane.getByRole('button', { name: `Show the last commit (${second})` }).click();
+        const commit = page.getByRole('region', { name: 'The commit' });
+        const files = commit.getByLabel('Files').locator('.git-file');
+        await expect(commits.locator('li.on')).toContainText('Name the sine position');
+        await expect(commit.locator('.git-diff-head').first()).toContainText('Name the sine position');
+        await expect(commit.locator('.git-cmp-sum')).toContainText(`${first} → ${second}`);
+        await expect(files).toHaveText([/scroller\.mimir\.json/]);
+        await expect(commit.locator('.git-diff-text')).toContainText('sine_pos');
+        // the first commit: from nothing, all of it new
+        await commits.locator('li', { hasText: 'The raster demo' }).click();
+        await expect(commit.getByLabel('Compared with').locator('option:checked')).toHaveText('nothing: it is the first commit');
+        await expect(files).toHaveText([/\.gitattributes/, /\.gitignore/, /scroller\.mimir\.json/]);
+        await files.filter({ hasText: '.gitignore' }).click();
+        await expect(commit.locator('.git-diff-text')).toContainText('+build/');
+        // Ctrl+click: the two commits compared, from the older to the newer
+        await commits.locator('li', { hasText: 'Name the sine position' }).click({ modifiers: ['Control'] });
+        await expect(commits.locator('li.vs')).toContainText('Name the sine position');
+        await expect(commit.locator('.git-cmp-sum')).toContainText(`${first} → ${second}`);
+        await expect(files).toHaveText([/scroller\.mimir\.json/]);
+        // the first commit compared with the folder as it is now
+        await commit.getByLabel('Compared with').selectOption('work');
+        await expect(commit.locator('.git-cmp-sum')).toContainText(`${first} → the folder now`);
+        await expect(files).toHaveText([/scroller\.mimir\.json/]);
+        await expect(commit.locator('.git-diff-text')).toContainText('sine_pos');
+        // closed, the pane says what to click again
+        await commit.getByRole('button', { name: 'Close the commit' }).click();
+        await expect(pane).toContainText('Nothing has changed since the last commit');
+      });
     });
   });
 

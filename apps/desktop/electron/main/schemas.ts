@@ -317,4 +317,8 @@ const gitPath = z.string().min(1).max(4096);
 export const gitPathsSchema = z.object({ paths: z.array(gitPath).min(1).max(20000).optional() }).strict();
 export const gitCommitSchema = z.object({ message: z.string().min(1).max(64 * 1024) }).strict();
 export const gitRemoteSchema = z.object({ url: z.string().min(1).max(2048) }).strict();
-export const gitDiffSchema = z.object({ path: gitPath, from: gitPath.optional(), staged: z.boolean() }).strict();
+/** a commit, by its hash (never a branch, a tag or another revision git would read) */
+const gitHash = z.string().regex(/^[0-9a-f]{7,64}$/i);
+export const gitRangeSchema = z.object({ from: gitHash.nullable(), to: gitHash.nullable() }).strict();
+export const gitStatusSchema = z.undefined().or(z.object({ log: z.number().int().min(1).max(2000).optional() }).strict());
+export const gitDiffSchema = z.object({ path: gitPath, from: gitPath.optional(), staged: z.boolean().optional(), range: gitRangeSchema.optional() }).strict();
