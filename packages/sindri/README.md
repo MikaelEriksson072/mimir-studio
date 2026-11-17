@@ -40,7 +40,19 @@ VICE 3.10 with test programs after a cycle-exact raster sync (`test/timing.test.
 an instruction's last cycle with the level it had a cycle before, so a raster IRQ that comes in the last cycle waits
 for the next instruction, and a taken branch that stays in its page polls a cycle earlier still. A CIA timer started
 by a write counts from the third cycle after it, and from the fourth when the write also loads it (force load); an
-indexed read across a page reads I/O in its extra last cycle. Before November 2026 an IRQ was taken after the
+indexed read across a page reads I/O in its extra last cycle. A write to a control register that loads a running timer
+again or stops it keeps an underflow the old count reached up to two cycles after the write (a load) or one (a stop):
+measured in VICE with timer A one-shot from 562 started by `STA $DD0E`, loaded again 563 cycles or more after that
+write, or stopped 564 or more after it, `LDA $DD0D` right after shows the underflow. Until 17 November 2026 the timer
+was set anew before the C64 counted the writing instruction's earlier cycles, and an underflow in them was lost (up to
+568 cycles): Firebird's tape loader restarts the timer at each pulse and takes an underflow for a 1, and on the
+Preservers' dump of Seabase Delta a FLAG edge came just after the handler had read `$dc0d` for a timer A interrupt, the
+next restart came 96 cycles late, and a long pulse (664 cycles) read as a 0; the loader then never found its next
+block. A read of `$dc0d`/`$dd0d` sees, the same way, an underflow the timer reaches in the reading instruction's own
+cycles up to the read's, and takes it: the flag does not come up again after the read. Measured in VICE: `LDA $DD0D`
+reading 565 cycles or more after the start shows the underflow, and a second read 8 cycles later shows it only when
+it came after the first. Sindri saw it from 569 cycles before, an underflow in the reading instruction coming up after
+the read and staying for the next one. Before November 2026 an IRQ was taken after the
 instruction in which it came and a forced load counted as a start: The Wild Bunch (#1 of 2006), which corrects its IRQ
 jitter with CIA timer A, read its timer a few cycles off and branched past the end of its delay into a JAM, and a
 copy of Royal Arte (#1 of 2001) took a stray IRQ at the one place in a copy loop where it breaks the demo. A CIA
@@ -168,7 +180,18 @@ limit, though seven programs got further (Dominion and Super Slalom to their gam
 before on 703 programs of the archive (Games Top200's 229 disks, the 161 one-file demos of Onefile-top200, 213 intros,
 100 Year-top20 disks), 6 runs waited for time and one result changed: a BASIC intro (Fuck 'Em All) whose setup counts
 FOR loops now gets to its GET loop, and the saved program has the code at `$c000-$c730` it calls; the C64 time grew by
-1.5 %. On the tapes see below. When an intro waits before anything
+1.5 %. On the tapes see below. A program that counts down in a few bytes of RAM waits for time too: its code outside
+the interrupt handlers wrote 1 to 8 bytes of RAM in the window (the stack left out), read no I/O register and no byte
+an interrupt handler wrote last, and ran into no BRK, in the last window or the one before (the count may have run
+out in the last one, the work after it not yet progress). Thrust's Firebird jingle waits between its notes in three
+nested `dec abs / bne` loops at `$6118` (3 bytes, 12 s in all) before the loader reads on; Sindri settled there after
+1.5 s, now both Thrust tapes load whole and reach the game. A main loop that counts while it waits for the raster or
+for its interrupt handler reads an I/O register or what the handler wrote, and a crash going round a BRK through a
+vector in RAM (I.C.U.P.S: `$ffff ISC $252f,X` / `$0002 BRK`) writes a byte each time but runs into a BRK: they settle
+as before. Measured on 17 November 2026 against the version before on the same 703 programs: 15 waited for a count,
+72.7 s more C64 time (1.1 %), and one result changed: RaytraceNightmare (No Bounds, 2023) counts on and its saved
+layer reaches `$ffff` instead of `$c7df`. Sindri's speed per instruction is the same. Of the 57 tapes with Firebird's
+loader 51 now load whole (48 before: both Thrust tapes and the Preservers' Seabase Delta), none fewer. When an intro waits before anything
 was unpacked, keys are pressed in turn (space and fire first, then return, N, F1, Y, F7, 1) until it reacts to one;
 then the list goes round again, from space when a new program started, else from the key it took. A trainer menu that
 asks its questions one after another ("Unlimited lives (Y/N)") takes N with little: it puts the next question up. That

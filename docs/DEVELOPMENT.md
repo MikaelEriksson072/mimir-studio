@@ -994,9 +994,12 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     each game its own way, so the files are the bytes as loaded. Measured old against new on all 1 931 tapes: 371
     Firebird files on 57 tapes, none with an error, unknown stretches 14 181 to 9 333, tapes with none left 988 to
     1 045, no file of another format changed. Sindri loaded every file of 48 of the 57 tapes, and all 2 604 288 bytes
-    are the reader's (RAM writes logged while the motor ran); the other nine stop before the rest is loaded (levels
-    loaded while playing, a menu, a title shown for 2 150 frames, Thrust's jingle with delay loops in RAM, and Revs' and
-    one Seabase Delta dump's loaders, which let the rest of the tape pass; not looked into yet). Fixture `fixtures/tap/firebird-demo.tap`, unit
+    are the reader's (RAM writes logged while the motor ran). Of the nine others, three were Sindri's and are fixed
+    (51 tapes, 2 720 704 bytes): Thrust's jingle waits in countdowns in RAM (a wait for time now), and on the
+    Preservers' Seabase Delta a CIA timer loaded again lost an underflow (CIA reloads, stops and ICR reads now as in
+    VICE). The six left stop in the games' own code as in VICE: levels loaded while playing (Blood Money, Flying
+    Shark), menus (Captain Fizz, Revs Gold's track selector), a title shown for 2 150 frames (Star Trek), and a Revs
+    dump without the track and main files its loader asks for next. Fixture `fixtures/tap/firebird-demo.tap`, unit
     tests in `test/tap.test.ts`, an e2e test that inserts it.
 
 ## Roadmap

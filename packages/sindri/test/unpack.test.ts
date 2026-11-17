@@ -389,6 +389,59 @@ go:` }).prg);
       expect(r.layers[0].presses[0]).toMatch(/^space \+ fire/);
     });
 
+    it('waits for an intro that counts down in RAM before it decrunches, pressing no keys (Thrust\'s jingle)', () => {
+      // three nested DEC abs / BNE loops from 80, as Firebird's jingle waits between its notes: 4.7 s, longer than a
+      // program that writes nothing settles in
+      const r = go(pack(PROGRAM, { before: `
+       lda #80
+       jsr delay
+       jmp go
+delay: sta c1
+d1:    sta c2
+d2:    sta c3
+d3:    dec c3
+       bne d3
+       dec c2
+       bne d2
+       dec c1
+       bne d1
+       rts
+c1:    .byte 0
+c2:    .byte 0
+c3:    .byte 0
+go:` }).prg);
+      expectProgram(r);
+      expect(r.layers[0].presses).toEqual([]);
+    });
+
+    it('presses keys for an intro that counts while it waits for a frame counter its interrupt handler counts', () => {
+      // counting in RAM, but the loop reads what the interrupt handler writes: as a frame wait, not a wait for time
+      const r = go(pack(PROGRAM, { before: `
+       sei
+       lda #<irq
+       sta $0314
+       lda #>irq
+       sta $0315
+       cli
+wait:  inc mine
+       lda count
+       cmp #240
+       bne wait
+       sei
+       lda #$31
+       sta $0314
+       lda #$ea
+       sta $0315
+       jmp go
+irq:   inc count
+       jmp $ea31
+count: .byte 0
+mine:  .byte 0
+go:` }).prg);
+      expectProgram(r);
+      expect(r.layers[0].presses[0]).toMatch(/^space \+ fire/);
+    });
+
     it('presses keys for an intro that watches the clock and reads the keyboard', () => {
       const r = go(pack(PROGRAM, { before: 'lda #0\n sta $dc00\nwait: lda $a2\n lda $dc01\n cmp #$ef\n bne wait' }).prg);
       expectProgram(r);
@@ -401,6 +454,31 @@ go:` }).prg);
       expect(r.stop.reason).toBe('settled');
       expect(r.stop.cycle).toBeGreaterThan(30_000_000);
       expect(r.stop.cycle).toBeLessThan(31_000_000);
+    });
+
+    it('gives a program that counts in RAM for ever 30 s, then takes it for settled', () => {
+      const p = asm(`${SYS_LINE}\ncount: inc $2000\n jmp count`);
+      const r = unpack(p.prg, { roms: mode === 'ROMs' ? roms : null, keys: false });
+      expect(r.stop.reason).toBe('settled');
+      expect(r.stop.cycle).toBeGreaterThan(30_000_000);
+      expect(r.stop.cycle).toBeLessThan(31_000_000);
+    });
+
+    it('takes a crash that goes round a BRK through a vector in RAM for settled, not for a wait for time', () => {
+      // a byte written each time round, as a count would (I.C.U.P.S's game ends so, in $ffff ISC $252f,X / $0002 BRK)
+      const p = asm(`${SYS_LINE}
+       sei
+       lda #$35
+       sta $01
+       lda #<crash
+       sta $fffe
+       lda #>crash
+       sta $ffff
+crash: inc $2000
+       brk`);
+      const r = unpack(p.prg, { roms: mode === 'ROMs' ? roms : null, keys: false });
+      expect(r.stop.reason).toBe('settled');
+      expect(r.stop.cycle).toBeLessThan(3_000_000);
     });
 
     it('goes on to the next key when a menu only complains about the one pressed', () => {

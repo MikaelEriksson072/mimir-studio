@@ -1131,6 +1131,20 @@ laddas av skrivningen (force load) börjar räkna en cykel senare än en som bar
 en sidgräns läser I/O i sin extra cykel. Det C64:an gör med ATN, CLK och DATA når stationen en cykel efter skrivningen,
 som i VICE. Så packas The Wild Bunch (2006), Megaparts 2 (1990), en kopia av Royal Arte (2001) och Uncensored (2014,
 som återvänder till READY med ett eget avbrott igång) upp nu; på 675 andra filer kom 8 längre och ingen kortare.
+En skrivning till en CIA:s kontrollregister som laddar om en timer som går (force load) eller stoppar den behåller ett
+underflöde som den gamla räkningen hann till upp till två cykler efter skrivningen (omladdning) eller en (stopp)
+(`Cia.write` med skrivningens cykel i instruktionen). Förut sattes timern om innan C64:an hade räknat fram den
+skrivande instruktionens tidigare cykler, så ett underflöde i dem försvann. Mätt i VICE 3.10 med timer A som one-shot
+från 562, startad med `STA $DD0E`: omladdad 563 cykler eller mer efter den skrivningen, eller stoppad 564 eller mer
+efter, visar `LDA $DD0D` direkt efter underflödet; Sindri tappade det upp till 568 cykler. Firebirds bandladdare
+startar om timern vid varje puls och tar ett underflöde som en etta: på Preservers dump av Seabase Delta kom en
+FLAG-flank just efter att avbrottsrutinen läst `$dc0d` för ett timer A-avbrott, nästa omstart kom 96 cykler sent, och
+en lång puls (664 cykler) lästes som en nolla; laddaren hittade sedan inte nästa block och bandet tog slut. Nu laddas
+den hel. En läsning av `$dc0d`/`$dd0d` ser på samma sätt ett underflöde som timern når i den läsande instruktionens
+egna cykler, till och med läsningens cykel, och tar det: flaggan kommer inte upp igen efter läsningen (`Cia.read`,
+`ackA`/`ackB`). Mätt i VICE: `LDA $DD0D` som läser 565 cykler eller mer efter starten ser underflödet, och en andra
+läsning 8 cykler senare ser det bara när det kom efter den första. Förut såg Sindri det först från 569 cykler, och ett
+underflöde i den läsande instruktionen kom upp efter läsningen och stod kvar till nästa (`test/timing.test.ts`).
 
 **Varje körning börjar likadant.** C64:an står vid READY efter sin uppstart, och stationen startade en stund innan,
 har just läst diskens ID och har motorn igång, som efter `LOAD`. Den första körningen i en process (i appen den första
@@ -1342,6 +1356,20 @@ GET-slinga, och det sparade programmet har koden vid `$c000-$c730` som det anrop
 se 13.5f. Testerna `test/unpack.test.ts` i Sindri: väntan på jiffy-klockan (inga tangenter), en bildräknare (tangenter
 som förut), klockan och tangentbordet (tangenter), en väntan som aldrig tar slut (vilar efter 30 s), BASIC:s FOR-slinga
 före nästa del och en FOR-slinga mellan GET (vilar som förut).
+Ett program som räknar ner i några byte i RAM väntar också på tiden: dess kod utanför avbrottsrutinerna skrev 1 till 8
+byte RAM i fönstret (stacken oräknad, `C64.mainWritten`), läste inget I/O-register (`READ_IO`), ingen byte som en
+avbrottsrutin skrev senast (`READ_IRQ`, `C64.readKind`) och körde ingen BRK (`RAN_BRK`), i det sista fönstret eller
+det före (räkningen kan ha tagit slut i det sista, och programmets arbete efter den har inte hunnit bli ett framsteg).
+Thrusts Firebird-jingel väntar mellan tonerna i tre nästlade `dec abs / bne` på `$6118` (3 byte, 12 s i allt) innan
+laddaren läser vidare; förut vilade Sindri där efter 1,5 s, nu laddas båda Thrust-banden hela och når spelet. En
+huvudslinga som räknar medan den väntar på rastern eller på sin avbrottsrutin läser ett I/O-register eller det rutinen
+skrev, och en krasch som går runt en BRK genom en vektor i RAM (I.C.U.P.S: `$ffff ISC $252f,X` / `$0002 BRK`) skriver
+en byte varje varv men kör en BRK: de vilar som förut. Mätt 2026-11-17 mot versionen före på samma 703 program: 15
+väntade på en nedräkning, 72,7 s C64-tid till (1,1 %), och ett resultat ändrades: RaytraceNightmare (No Bounds, 2023)
+räknar vidare och det sparade lagret når `$ffff` i stället för `$c7df`. Sindris hastighet per instruktion är densamma.
+Av de 57 banden med Firebirds laddare laddas nu 51 hela (48 förut; Thrust ×2 och Preservers Seabase Delta, se *Timing*
+ovan), inget förlorat. Testerna: en nedräkning före uppackningen (inga tangenter), en räknande slinga som väntar på en
+bildräknare (tangenter), en räkning som aldrig tar slut (vilar efter 30 s) och en krasch runt en BRK (vilar direkt).
 
 **`$01` vid programstarten.** Sindri säger vilket `$01` det uppackade programmet startar med (`saved.port`, i
 lagerrapporten `start with SYS 41643 = $a2ab, $01=$36`). *Unpack* sparar det med programstarten när det inte är `$37`
@@ -3781,13 +3809,16 @@ inget kvar från 988 till 1 045 (alla 57 läses till slutet), utan att någon fi
 kedjor börjar med block 0 vid `$0200` och ledarbyten `$0f`, ledarna har 9–11 byte, och det sista blocket hoppar in i
 sig självt (`$bf00` på 15 band, annars `$c400`, `$0800`, `$cf00` …). Andra träffar på mönstret (Jack Nicklaus, Pub
 Games, Grand Monster Slam, Tour de France) var data av en och samma byte, ledarbyte `$00`, `$ff` eller `$aa`, och ger
-inga filer. På 48 av de 57 banden laddade Sindri alla filer, och alla 2 604 288 byte är läsarens (lagrade medan motorn
-gick). De andra nio stannar i programmets egen kod innan resten är laddat: Blood Money och Flying Shark laddar sina
-nivåer under spelet, Captain Fizz väntar på F1, F3 eller F5 i en meny, Star Trek visar sin titel tills avbrottet
-räknat 2 150 bildrutor (43 s; en väntan på en räknare som avbrottet ökar väntar Sindri inte ut, *Program som väntar på tiden* i 8.11b), Thrust (två
-avbilder) spelar Firebirds jingel med fördröjningsloopar i RAM som Sindri tar för att programmet står still, och Revs
-(två) och Preservers Seabase Delta spelar bandet till slutet utan att laddaren tar resten (C64Tapes-orgs Seabase Delta
-laddas helt). `test/tap.test.ts` läser det
+inga filer. På 51 av de 57 banden laddar Sindri alla filer, och alla 2 720 704 byte är läsarens (lagrade medan motorn
+gick). Först var det 48: Thrust (två avbilder) spelar Firebirds jingel med nedräkningar i RAM som Sindri tog för att
+programmet står still, och på Preservers Seabase Delta läste Sindri en lång puls som en nolla efter ett sent avbrott
+(en CIA-timer som laddas om tappade ett underflöde); båda är rättade (*Program som väntar på tiden* och *Timing* i
+8.11b). De andra sex stannar i programmets egen kod, som i VICE: Blood Money och Flying Shark laddar sina nivåer under
+spelet, Captain Fizz väntar på F1, F3 eller F5 i en meny, Star Trek visar sin titel tills avbrottet räknat 2 150
+bildrutor (43 s; en väntan på en räknare som avbrottet ökar väntar Sindri inte ut, *Program som väntar på tiden* i
+8.11b), Revs laddar Silverstone-banan och väntar sedan på Brands Hatch (ledarbyte `$16`) och huvudfilen (`$17`), som
+inte finns på det bandet (VICE står på "LOADING BRANDS HATCH TRACK" efter bandets slut), och Revs Gold Edition väntar
+i sin banväljare på två siffertangenter. `test/tap.test.ts` läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
 kod för andra steget), och fixturerna `fixtures/tap/mimir-demo.tap` och `fixtures/tap/cyberload-demo.tap` (de fyra

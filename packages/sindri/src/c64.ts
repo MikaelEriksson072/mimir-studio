@@ -36,19 +36,22 @@ export const POWER_ON: Uint8Array = (() => {
  * What the program outside its interrupt handlers reads, which tells a pause from a wait for the user (C64.mainReads):
  * the clock (the KERNAL's jiffy clock at $a0-$a2, the CIAs' time-of-day clocks), the user's input (the keyboard and
  * joystick ports, the paddles, the keyboard buffer and its count, the key held down, the shift keys), BASIC's NEXT
- * going round a FOR loop (Session marks it).
+ * going round a FOR loop (Session marks it), any I/O register, and a byte an interrupt handler wrote last (a frame
+ * counter, a flag; C64.readKind marks them). RAN_BRK: the program ran into a BRK (Session marks it; a crash, mostly).
  */
-export const READ_CLOCK = 1, READ_INPUT = 2, READ_NEXT = 4;
+export const READ_CLOCK = 1, READ_INPUT = 2, READ_NEXT = 4, READ_IO = 8, READ_IRQ = 16, RAN_BRK = 32;
 const READ_KIND: Uint8Array = (() => {
   const k = new Uint8Array(0x10000);
   k.fill(READ_CLOCK, 0xa0, 0xa3);
   for (const a of [0xc5, 0xc6, 0xcb, 0x028d, 0x028e]) k[a] = READ_INPUT;
   k.fill(READ_INPUT, 0x0277, 0x0281);
+  // (the I/O area counts only while I/O is mapped in: C64.read)
+  k.fill(READ_IO, 0xd000, 0xe000);
   for (let a = 0xdc00; a < 0xde00; a += 0x10) {
-    if (a < 0xdd00) k[a] = k[a + 1] = READ_INPUT;
-    k.fill(READ_CLOCK, a + 8, a + 12);
+    if (a < 0xdd00) k[a] = k[a + 1] = READ_INPUT | READ_IO;
+    k.fill(READ_CLOCK | READ_IO, a + 8, a + 12);
   }
-  for (let a = 0xd400; a < 0xd800; a += 0x20) k[a + 0x19] = k[a + 0x1a] = READ_INPUT;
+  for (let a = 0xd400; a < 0xd800; a += 0x20) k[a + 0x19] = k[a + 0x1a] = READ_INPUT | READ_IO;
   return k;
 })();
 
@@ -291,6 +294,9 @@ export class Cia {
   startedA = 0; startedB = 0;
   /** an underflow of timer A in the last cycle of the last advance, which timer B counts in the next */
   carryB = 0;
+  /** a read of the ICR saw an underflow in the reading instruction's own cycles (and cleared it): the advance for that
+   *  instruction does not raise the flag again */
+  private ackA = false; private ackB = false;
   /** TOD: tenths, seconds, minutes, hours (BCD) */
   readonly tod = new Uint8Array([0, 0, 0, 1]);
   private todCycles = 0;
@@ -320,7 +326,7 @@ export class Cia {
       this.ta -= na;
       while (this.ta < 0) {
         underflowsA++;
-        this.icr |= 1;
+        if (this.ackA) this.ackA = false; else this.icr |= 1;
         if (this.cra & 8) { this.cra &= ~1; this.ta = this.tal; break; }
         this.ta += this.tal + 1;
       }
@@ -340,12 +346,13 @@ export class Cia {
         }
         this.tb -= count;
         while (this.tb < 0) {
-          this.icr |= 2;
+          if (this.ackB) this.ackB = false; else this.icr |= 2;
           if (this.crb & 8) { this.crb &= ~1; this.tb = this.tbl; break; }
           this.tb += this.tbl + 1;
         }
       }
     }
+    this.ackA = this.ackB = false;
     this.rose = -1;
     if (!was && this.irq) {
       const a = this.mask & 1 && atA >= 0 ? atA : n, b = this.mask & 2 && atB >= 0 ? atB : n;
@@ -397,13 +404,31 @@ export class Cia {
       case 0xa: return this.tod[2];
       case 0xb: return this.tod[3];
       case 0xc: return this.sdr;
-      case 0xd: { const v = this.icr | (this.irq ? 0x80 : 0); this.icr = 0; return v; }
+      case 0xd: {
+        // (with an underflow in the reading instruction's cycles up to the read's own: measured in VICE 3.10, timer A
+        // one-shot from 562 started by STA $DD0E, LDA $DD0D reading 565 cycles or more after that write shows it;
+        // Sindri saw it from 569, the flag then coming up after the read and staying for the next one)
+        let icr = this.icr;
+        if (this.cra & 1 && !(this.cra & 0x20) && this.underflowsIn(this.ta, this.waitA, at + 1)) { icr |= 1; this.ackA = true; }
+        if (this.crb & 1 && !(this.crb & 0x60) && this.underflowsIn(this.tb, this.waitB, at + 1)) { icr |= 2; this.ackB = true; }
+        this.icr = 0;
+        return icr | (icr & this.mask & 0x1f ? 0x80 : 0);
+      }
       case 0xe: return this.cra & 0xef;
       default: return this.crb & 0xef;
     }
   }
 
-  write(r: number, v: number): void {
+  /**
+   * A write to a register, `at` cycles into the writing instruction (its last cycle). A write to a control register
+   * that loads a running timer again or stops it keeps an underflow its old count reached up to two cycles after the
+   * write (a load) or one (a stop): the 6526 has counted it by then. The timer's count otherwise goes on from the
+   * write. Measured in VICE 3.10 (x64sc) with timer A one-shot from 562, started by STA $DD0E: loaded again 563
+   * cycles or more after that write, or stopped 564 or more after it, LDA $DD0D right after shows the underflow (Sindri
+   * lost it up to 568 cycles, and Seabase Delta's Firebird loader, which restarts the timer at each pulse and takes
+   * an underflow for a 1, read a long pulse after a late interrupt as a 0)
+   */
+  write(r: number, v: number, at = 0): void {
     switch (r) {
       case 0x0: this.pra = v; return;
       case 0x1: this.prb = v; return;
@@ -416,9 +441,21 @@ export class Cia {
       case 0x8: case 0x9: case 0xa: case 0xb: if (!(this.crb & 0x80)) this.tod[r - 8] = v; return;
       case 0xc: this.sdr = v; return;
       case 0xd: if (v & 0x80) this.mask |= v & 0x1f; else this.mask &= ~v & 0x1f; return;
-      case 0xe: if (v & 0x10) this.ta = this.tal; this.startedA = v & 0x10 ? 2 : v & 1 && !(this.cra & 1) ? 1 : 0; this.cra = v & 0xef; return;
-      default: if (v & 0x10) this.tb = this.tbl; this.startedB = v & 0x10 ? 2 : v & 1 && !(this.crb & 1) ? 1 : 0; this.crb = v & 0xef;
+      case 0xe:
+        if (this.cra & 1 && !(this.cra & 0x20) && (v & 0x10 || !(v & 1)) && this.underflowsIn(this.ta, this.waitA, at + (v & 1 ? 3 : 2))) this.icr |= 1;
+        if (v & 0x10) this.ta = this.tal;
+        this.startedA = v & 0x10 ? 2 : v & 1 && !(this.cra & 1) ? 1 : 0; this.cra = v & 0xef; return;
+      default:
+        if (this.crb & 1 && !(this.crb & 0x60) && (v & 0x10 || !(v & 1)) && this.underflowsIn(this.tb, this.waitB, at + (v & 1 ? 3 : 2))) this.icr |= 2;
+        if (v & 0x10) this.tb = this.tbl;
+        this.startedB = v & 0x10 ? 2 : v & 1 && !(this.crb & 1) ? 1 : 0; this.crb = v & 0xef;
     }
+  }
+
+  /** whether a timer counting the clock at `t`, waiting `wait` cycles yet, underflows within the next `n` cycles (as
+   *  advance counts them: in the cycle it goes on from 0) */
+  private underflowsIn(t: number, wait: number, n: number): boolean {
+    return t < n - Math.min(n, wait);
   }
 }
 
@@ -639,9 +676,18 @@ export class C64 implements Bus {
   /** writes to I/O registers since the counter was reset (VIC, SID, CIA), for telling programs from depackers */
   ioWrites = 0;
   /** an interrupt handler runs (Session keeps it), and what the code outside them read since Session last cleared it
-   *  (READ_CLOCK, READ_INPUT, READ_NEXT) */
+   *  (READ_CLOCK, READ_INPUT, READ_NEXT, READ_IO, READ_IRQ, and RAN_BRK) */
   inIrq = false;
   mainReads = 0;
+  /** READ_KIND, and READ_IRQ on the bytes an interrupt handler wrote last (not the stack: every interrupt pushes) */
+  private readonly readKind = READ_KIND.slice();
+  /**
+   * The bytes the code outside the interrupt handlers wrote since Session last cleared it (mainWindow), each counted
+   * once, the stack left out: a loop that counts down a few bytes in RAM writes a handful, a program at work many
+   */
+  mainWritten = 0;
+  private readonly mainMark = new Uint32Array(0x10000);
+  private mainWindow = 1;
 
   private fade = 0;
   private fadeUntil = 0;
@@ -738,7 +784,7 @@ export class C64 implements Bus {
   // --- the bus ----------------------------------------------------------------------------------------------------
   read(a: number, cycle?: number): number {
     if (!this.inIrq) {
-      const k = READ_KIND[a];
+      const k = this.readKind[a];
       if (k && (a < 0xd000 || this.map[a >> 8] === IO)) this.mainReads |= k;
     }
     switch (this.map[a >> 8]) {
@@ -775,11 +821,24 @@ export class C64 implements Bus {
       if (a - this.lastFresh === 1 || this.lastFresh - a === 1) this.fresh++;
       this.lastFresh = a;
     }
+    if ((a & 0xff00) !== 0x100) {
+      if (this.inIrq) this.readKind[a] |= READ_IRQ;
+      else {
+        this.readKind[a] &= ~READ_IRQ;
+        if (this.mainMark[a] !== this.mainWindow) { this.mainMark[a] = this.mainWindow; this.mainWritten++; }
+      }
+    }
     this.wid[a] = this.inRom && a < 0x400 ? BOOT : this.tag;
     this.wtime[a] = this.icount;
     if (!this.firstWrite[a]) this.firstWrite[a] = this.icount;
     if (!this.firstTouch[a]) this.firstTouch[a] = this.icount;
     this.ram[a] = v;
+  }
+
+  /** mainWritten, counting from 0 again */
+  clearMainWritten(): void {
+    this.mainWritten = 0;
+    this.mainWindow++;
   }
 
   /** the dummy read of a one-byte instruction in $d000-$dfff (Bus.dummy): I/O registers see it, RAM and ROM do not care */
@@ -838,7 +897,7 @@ export class C64 implements Bus {
       else this.sidRegs[r] = v;
     }
     else if (a < 0xdc00) this.color[a & 0x3ff] = v & 0x0f;
-    else if (a < 0xdd00) { this.cia1.write(a & 0x0f, v); this.timerStart(this.cia1); }
+    else if (a < 0xdd00) { this.cia1.write(a & 0x0f, v, this.lastCycle); this.timerStart(this.cia1); }
     else if (a < 0xde00) {
       const serial = this.drive && (a & 0x0d) === 0;
       // what the C64 does to ATN, CLK and DATA reaches the drive a cycle after the write, as in VICE (maincpu_clk + 1):
@@ -847,7 +906,7 @@ export class C64 implements Bus {
       // (one cycle off, every tenth byte arrived wrong). (Until the C64's IRQs were taken in the right cycle, a delay on
       // ATN broke Krill's loader and others; see docs/pirateslayer.md)
       if (serial) this.syncDrive(this.busCycle + 1);
-      this.cia2.write(a & 0x0f, v);
+      this.cia2.write(a & 0x0f, v, this.lastCycle);
       this.timerStart(this.cia2);
       if (serial) this.serialOut();
     }

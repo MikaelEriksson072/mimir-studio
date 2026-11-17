@@ -284,6 +284,58 @@ describe('CIA timers', () => {
     expect(reads(0x11)).toEqual([5, 1, 4]);
   });
 
+  /**
+   * CIA 2's timer A one-shot from 562 (a tape loader's threshold, Firebird's), started by STA $DD0E #$19, then for k =
+   * 558 ... 573 the code `after(k)` gives, which ends reading $DD0D: whether its underflow flag is up. The code starts
+   * right after the write; delay(d) is d cycles. The same program (with the screen off and a BASIC line in front) gave
+   * the same rows in VICE 3.10 (x64sc).
+   */
+  const delay = (d: number): string => (d % 2 ? '       bit $ea\n' : '') + '       nop\n'.repeat((d - (d % 2 ? 3 : 0)) / 2);
+  const flags = (after: (k: number) => string): string => {
+    let body = '';
+    for (let i = 0; i < 16; i++) {
+      body += `       lda #$32
+       sta $dd04
+       lda #$02
+       sta $dd05
+       lda #$00
+       sta $dd0e
+       lda $dd0d
+       lda #$19
+       sta $dd0e
+${after(558 + i)}       and #$01
+       sta $0340+${i}
+`;
+    }
+    // (5 KB of code: from $2000)
+    const m = machine(`
+* = $2000
+       sei
+       lda #$7f
+       sta $dc0d
+       sta $dd0d
+${body}       jmp *
+`, 0x2000);
+    // (about 300 instructions each)
+    run(m, 16 * 400);
+    return [...m.ram.subarray(0x0340, 0x0350)].join('');
+  };
+
+  it('keep an underflow the old count reached up to two cycles after a write that loads them again, one after a stop', () => {
+    // written again with `second` k cycles after the start (the STA's write), LDA $DD0D right after: loaded again 563
+    // cycles after the start, or stopped 564 after it, the flag stays up
+    const kept = (second: number) => flags(k => `${delay(k - 6)}       lda #$${second.toString(16)}\n       sta $dd0e\n       lda $dd0d\n`);
+    expect(kept(0x19)).toBe('0000011111111111');
+    expect(kept(0x08)).toBe('0000001111111111');
+  });
+
+  it('show an underflow to a read of the ICR up to the read\'s own cycle, and only to that read', () => {
+    // LDA $DD0D reading k cycles after the start: from 565 on it sees the underflow
+    expect(flags(k => `${delay(k - 4)}       lda $dd0d\n`)).toBe('0000000111111111');
+    // and takes it: a second read 8 cycles later sees it only when it came after the first
+    expect(flags(k => `${delay(k - 4)}       lda $dd0d\n       nop\n       nop\n       lda $dd0d\n`)).toBe('1111111000000000');
+  });
+
   it('are read in the last cycle of an indexed read that crosses a page', () => {
     const m = machine(`
 * = $c000

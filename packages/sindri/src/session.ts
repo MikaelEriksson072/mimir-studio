@@ -15,7 +15,7 @@
  * loaders' alike. With a tape, the datasette plays it from where the file ended: the program's own tape loader reads
  * it, and the KERNAL's LOAD from the tape reads on from there (a T64's files only LOAD reads). Then the newest layer is
  * the unpacked program. An intro that waits before anything was unpacked gets keys pressed (space and fire first). */
-import { BASIC, BOOT, C64, KERNAL, LOADED, POWER_ON, READ_CLOCK, READ_INPUT, READ_NEXT, ZP, type MachineState, type Roms } from './c64.ts';
+import { BASIC, BOOT, C64, KERNAL, LOADED, POWER_ON, RAN_BRK, READ_CLOCK, READ_INPUT, READ_IO, READ_IRQ, READ_NEXT, ZP, type MachineState, type Roms } from './c64.ts';
 import { OP_IRQ, OP_NMI } from './cpu.ts';
 import { LEN } from './opcodes.ts';
 import { initStandIn, KERNAL_VECTORS, standInRoms } from './standin.ts';
@@ -325,6 +325,13 @@ const TAPE_PAUSE_PATIENCE = 5_000_000;
  *  FOR I=0 TO 7000 in BASIC (7 s); then they load on. (A main loop that waits for a byte its interrupt handler counts
  *  is not taken for one: demos that wait for the next frame so made the C64 time 2.5 times as long) */
 const TIME_PATIENCE = 30_000_000;
+/** a program waits for time when its code outside the interrupt handlers writes no more bytes of RAM than this in a
+ *  window (and some), the stack left out, reading no I/O register and no byte an interrupt handler wrote: it counts
+ *  down in RAM. Thrust's Firebird jingle waits between its notes in three nested `dec abs / bne` loops at $6118 (3
+ *  bytes, 12 s in all), then the tape loads on. (A main loop that keeps a few variables while it waits for the raster
+ *  or for its interrupt handler reads an I/O register or what that handler wrote; a crash going round a BRK through a
+ *  vector in RAM, such as I.C.U.P.S's at $0002/$ffff, writes a byte each time but runs into a BRK) */
+const COUNTERS = 8;
 
 /** Unpack a PRG (load address first). */
 export function unpack(file: Uint8Array, options: UnpackOptions = {}): UnpackResult {
@@ -388,8 +395,9 @@ class Session {
   private windowIcount = 0;
   private freshSum = 0;
   private holdUntil = 0;
-  /** the fresh writes of the last windows, with the cycle each began */
-  private windowFresh: { at: number; fresh: number; reads: number }[] = [];
+  /** the fresh writes of the last windows, with the cycle each began, what the code outside the interrupt handlers read
+   *  (C64.mainReads) and how many bytes it wrote (C64.mainWritten) */
+  private windowFresh: { at: number; fresh: number; reads: number; written: number }[] = [];
   /** the open calls that are interrupts, and how many there are */
   private readonly callIrq = new Uint8Array(CALLS);
   private irqOpen = 0;
@@ -843,7 +851,7 @@ class Session {
       if (this.started) {
         const op = cpu.lastOp;
         if (op === 0x20) this.call((pc + 3) & 0xffff);
-        else if (op === 0x00) this.call((pc + 2) & 0xffff);
+        else if (op === 0x00) { this.call((pc + 2) & 0xffff); m.mainReads |= RAN_BRK; }
       }
       if (m.irqDue() && !(cpu.lastOp === 0x40 ? cpu.i : iWas)) { this.interrupted(pc); m.advance(m.takeIrq()); this.call(this.irqRet, true); }
       if (m.nmiDue()) { this.interrupted(pc); m.advance(m.takeNmi()); this.call(this.irqRet, true); }
@@ -1042,10 +1050,11 @@ class Session {
       if (bus - this.windowBus >= LOADS) this.progressAt = now;
       this.windowBus = bus;
       this.freshSum += m.fresh;
-      this.windowFresh.push({ at: this.windowEnd - this.settleCycles / 3, fresh: m.fresh, reads: m.mainReads });
+      this.windowFresh.push({ at: this.windowEnd - this.settleCycles / 3, fresh: m.fresh, reads: m.mainReads, written: m.mainWritten });
       if (this.windowFresh.length > 4) this.windowFresh.shift();
       m.fresh = 0;
       m.mainReads = 0;
+      m.clearMainWritten();
       this.shots = [this.shots.at(-1) ?? [], this.screenRows()];
       m.freshMark = this.windowIcount;
       this.windowIcount = m.icount;
@@ -1068,20 +1077,25 @@ class Session {
 
   /**
    * The program waits for time, not for the user: in the windows since it last made progress its code outside the
-   * interrupt handlers read no input, and in the last one it read the clock, or BASIC went round a FOR loop. It has
-   * TIME_PATIENCE from its last progress, once until it makes progress again.
+   * interrupt handlers read no input, and in the last one it read the clock, BASIC went round a FOR loop, or it
+   * counted in a few bytes of RAM (it wrote at most COUNTERS, and read no I/O register and no byte an interrupt
+   * handler wrote, and ran into no BRK), or it so counted in the window before (the count may have run out in the
+   * last one, the program going on with its work, which has not made progress yet). It has TIME_PATIENCE from its
+   * last progress, once until it makes progress again.
    */
   private waitsForTime(now: number): boolean {
     const third = this.settleCycles / 3;
     let reads = 0;
     for (const w of this.windowFresh) if (w.at + third > this.progressAt) reads |= w.reads;
-    const last = this.windowFresh.at(-1)?.reads ?? 0;
-    const waits = !this.timeSpent && !(reads & READ_INPUT) && (last & (READ_CLOCK | READ_NEXT)) !== 0;
+    const n = this.windowFresh.length, last = this.windowFresh[n - 1]?.reads ?? 0;
+    const counter = [this.windowFresh[n - 1], this.windowFresh[n - 2]].find(w => w && w.at + third > this.progressAt
+      && w.written > 0 && w.written <= COUNTERS && !(w.reads & (READ_IO | READ_IRQ | RAN_BRK)));
+    const waits = !this.timeSpent && !(reads & READ_INPUT) && ((last & (READ_CLOCK | READ_NEXT)) !== 0 || counter != null);
     if (!waits) return false;
     const pc = this.m.cpu.pc;
     if (this.timeWait !== this.progressAt) {
       this.timeWait = this.progressAt;
-      const what = last & READ_NEXT ? 'BASIC goes round a FOR loop' : 'reads the clock';
+      const what = last & READ_NEXT ? 'BASIC goes round a FOR loop' : last & READ_CLOCK ? 'reads the clock' : `counts in ${counter!.written} bytes of RAM`;
       this.trace(`waiting at ${hex4(pc)}: ${what} and no keys, so it waits for time (up to ${TIME_PATIENCE / 1e6} s)`);
     }
     if (now - this.progressAt < TIME_PATIENCE) return true;
