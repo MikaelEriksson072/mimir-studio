@@ -5439,9 +5439,18 @@ markerar dess byte, och över en rad byte dess pixlar. En rad med bitar är 244 
 10 px; i en smalare inspektor (under 290 px, multicolor under 308) visas bara adressen och värdena (container query).
 Rubriken säger spritens pekare, talet som skrivs till `$07f8`-`$07ff` för att visa den (*Sprite $80* för `$2000`: dess
 64 byte räknade i dess 16 KB VIC-bank, som Graphics-fliken; verktygstipset säger banken; *64 bytes* när byten inte
-börjar på 64), och dess adresser, som går dit i listningen. Tangenterna som för tecken: `↑` `↓` en rad i
-förhandsvisningen, som har 4 sprites i raden (färre när blocket har färre). Ett annat läge än Sprite stänger den. Under
-en förhandsvisning som Sprite utan förstorad sprite står *Click a sprite to see it enlarged.*
+börjar på 64), och dess adresser, som går dit i listningen.
+
+En sprite stegar genom minnet, inte bara bland förhandsvisningens: ofta följer flera sprites efter varandra (en
+animations bilder) fast blocket bara har den första, som pekaren visar. `←` `→` och pilknapparna visar de 64 byte före
+och efter, förbi blockets början och slut (till `$0000` och `$ffc0`, i samma fas som blocket när det inte börjar på 64),
+`↑` `↓` en rad i förhandsvisningen bort (4 sprites, färre när blocket har färre), och `Home` och `End` går tillbaka
+till blockets första och sista. Listningens markör flyttas inte. En sprite utanför förhandsvisningens ramas inte in, och
+en rad under rubriken säger vems byte det är: *After this block: Fill at $2040*, *Before this block: music_1000
+(Music)*, *…: not loaded* (*this selection* för en markering). Ett klick på dess adress går dit i listningen, och det
+blocket visas då som Sprite med samma sprite förstorad (i samma färger), så att man kan stega vidare där. Ett annat
+läge än Sprite stänger den. Under en förhandsvisning som Sprite utan förstorad sprite står *Click a sprite to see it
+enlarged.* (`spriteStep` i `charzoom.ts`; `carry` i `Inspector.tsx` för adressen.)
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:

@@ -6188,12 +6188,9 @@ test('a click on a sprite in the inspector\'s Sprite preview shows it enlarged, 
     expect(b[21]).toBe('203f 00 not drawn');
     await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 0%; top: 0%; width: 100%; height: 100%/);
     await expect(insp).not.toContainText('Click a sprite to see it enlarged.');
-    // it has the keys; one sprite has nothing to step to
+    // it has the keys, and in its block nothing says where it is
     await expect(zoom).toBeFocused();
-    await page.keyboard.press('ArrowRight');
-    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $80 enlarged');
-    await expect(zoom.getByRole('button', { name: 'Next sprite' })).toBeDisabled();
-    await expect(zoom.getByRole('button', { name: 'Previous sprite' })).toBeDisabled();
+    await expect(zoom.locator('.cz-where')).toHaveCount(0);
   });
 
   await test.step('the pointer over a row of its bytes marks that row of pixels, and over a row of pixels its bytes', async () => {
@@ -6206,6 +6203,42 @@ test('a click on a sprite in the inspector\'s Sprite preview shows it enlarged, 
     await expect(zoom.locator('.sz-bytes > div.on')).toContainText('201e ff ff ff');
     await page.mouse.move(g.x - 40, g.y - 40);
     await expect(grid.locator('i.on')).toHaveCount(0);
+  });
+
+  await test.step('a block of one sprite: the keys and the arrows step through memory, 64 bytes at a time, past it', async () => {
+    await zoom.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $81 enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$2040–$207f');
+    await expect(zoom.locator('.cz-where')).toHaveText('After this block: Fill at $2040');
+    expect((await rows.allTextContents())[0]).toMatch(/^2040 /);
+    // not one of the preview's: nothing is framed, and the listing stays where it is
+    await expect(insp.locator('.gfx-picked')).toHaveCount(0);
+    await expect(statusBar(page)).toContainText('$2000');
+    await page.keyboard.press('ArrowDown');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $82 enlarged');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $7f enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$1fc0–$1fff');
+    await expect(zoom.locator('.cz-where')).toHaveText(/^Before this block: /);
+    await page.keyboard.press('Home');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $80 enlarged');
+    await expect(zoom.locator('.cz-where')).toHaveCount(0);
+    await expect(insp.locator('.gfx-picked')).toHaveCount(1);
+    await expect(zoom.getByRole('button', { name: 'Previous sprite' })).toBeEnabled();
+    await zoom.getByRole('button', { name: 'Next sprite' }).click();
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $81 enlarged');
+  });
+
+  await test.step('the address of a sprite past the block goes there, previewed as Sprite with the sprite still enlarged', async () => {
+    await zoom.getByRole('button', { name: '$2040–$207f' }).click();
+    await expect(statusBar(page)).toContainText('$2040');
+    await expect(previewAs('Sprite')).toHaveAttribute('aria-pressed', 'true');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $81 enlarged');
+    await expect(zoom.locator('.cz-where')).toHaveCount(0);
+    await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 0%; top: 0%/);
   });
 
   await test.step('the charset at $3000 as sprites: 32 of them, 4 a row, and the keys and the arrows step', async () => {
@@ -6226,6 +6259,10 @@ test('a click on a sprite in the inspector\'s Sprite preview shows it enlarged, 
     await page.keyboard.press('End');
     await expect(zoom).toHaveAttribute('aria-label', 'Sprite $df enlarged');
     await expect(zoom.locator('.cz-head')).toContainText('$37c0–$37ff');
+    // and on past the charset
+    await page.keyboard.press('ArrowRight');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $e0 enlarged');
+    await expect(zoom.locator('.cz-where')).toHaveText(/^After this block: /);
     await page.keyboard.press('Home');
     await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c0 enlarged');
     await zoom.getByRole('button', { name: 'Next sprite' }).click();

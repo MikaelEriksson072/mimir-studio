@@ -843,6 +843,8 @@ main.main { container: editor / inline-size; }
 .cz-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 8px; font-size: 12px; }
 .cz-head > * { white-space: nowrap; }
 .cz-name { font-weight: 600; }
+/* a sprite stepped to outside the preview's: whose bytes they are */
+.cz-where { margin: -4px 0 8px; font-size: 11.5px; }
 .cz-nav { display: inline-flex; margin-left: auto; }
 .cz-nav .icon-btn { width: 22px; height: 22px; }
 .cz-nav .icon-btn:disabled { opacity: 0.35; cursor: default; }

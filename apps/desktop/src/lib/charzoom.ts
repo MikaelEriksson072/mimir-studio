@@ -37,6 +37,30 @@ export function spritePixels(mem: Uint8Array, addr: number, mc: boolean): number
   return Array.from({ length: 21 }, (_, r) => [0, 1, 2].flatMap(c => bytePixels(mem[(addr + r * 3 + c) & 0xffff], mc)));
 }
 
+/** the highest address a sprite's 64 bytes can start at */
+export const SPRITE_LAST = 0x10000 - 64;
+
+/** where a key takes the enlarged sprite at `addr`, through memory and not only the preview's sprites (the frames of an
+ *  animation often follow a block of one sprite): ← → the 64 bytes before and after, ↑ ↓ a row of the preview (`count`
+ *  sprites from `start`) away, staying put at the ends of memory; Home and End the preview's first and last sprite;
+ *  null for other keys */
+export function spriteStep(addr: number, key: string, start: number, count: number): number | null {
+  if (key === 'Home') return start;
+  if (key === 'End') return start + (count - 1) * 64;
+  const row = 64 * spriteCols(count);
+  const d = key === 'ArrowLeft' ? -64 : key === 'ArrowRight' ? 64 : key === 'ArrowUp' ? -row : key === 'ArrowDown' ? row : 0;
+  if (!d) return null;
+  const to = addr + d;
+  return to < 0 || to > SPRITE_LAST ? addr : to;
+}
+
+/** which of the preview's sprites (`count` from `start`) is the one at `addr`; null for bytes outside them or not on
+ *  one */
+export function spriteIndex(addr: number, start: number, count: number): number | null {
+  const d = addr - start;
+  return d >= 0 && d % 64 === 0 && d / 64 < count ? d / 64 : null;
+}
+
 /** the sprite pointer that shows the sprite (its 64 bytes' number in their 16 KB VIC bank), as the Graphics tab gives
  *  it; null when the bytes do not start on 64 (a selection not on 64) */
 export const spriteNumber = (addr: number): number | null => (addr % 64 === 0 ? (addr & 0x3fff) >> 6 : null);

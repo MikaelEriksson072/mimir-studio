@@ -1,6 +1,6 @@
 /* The Inspector's enlarged character and sprite (src/lib/charzoom.ts): the one a click is on, its pixels, the keys. */
 import { describe, expect, it } from 'vitest';
-import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, spriteCols, spriteCount, spriteNumber, spritePixels } from '../src/lib/charzoom';
+import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, SPRITE_LAST, spriteCols, spriteCount, spriteIndex, spriteNumber, spritePixels, spriteStep } from '../src/lib/charzoom';
 
 describe('the enlarged character', () => {
   it('counts the characters the preview draws: one per 8 bytes, at least one, at most 256', () => {
@@ -123,12 +123,38 @@ describe('the enlarged sprite', () => {
     expect(spritePixels(mem, 0xfff0, false)[6].join('')).toBe('000000030000000000000000');
   });
 
-  it('steps 4 a row with the keys, staying at the edges', () => {
-    expect(charStep(1, 'ArrowDown', 32, 4)).toBe(5);
-    expect(charStep(5, 'ArrowUp', 32, 4)).toBe(1);
-    expect(charStep(30, 'ArrowDown', 32, 4)).toBe(30);
-    expect(charStep(0, 'ArrowRight', 1, 1)).toBe(0);
-    expect(charStep(0, 'End', 32, 4)).toBe(31);
+  it('steps through memory with the keys, past the preview\'s sprites, staying at the ends of memory', () => {
+    // a block of one sprite at $2000: the frames after it and before it
+    expect(spriteStep(0x2000, 'ArrowRight', 0x2000, 1)).toBe(0x2040);
+    expect(spriteStep(0x2040, 'ArrowRight', 0x2000, 1)).toBe(0x2080);
+    expect(spriteStep(0x2000, 'ArrowLeft', 0x2000, 1)).toBe(0x1fc0);
+    // one a row in its preview: ↑ ↓ a sprite too
+    expect(spriteStep(0x2000, 'ArrowDown', 0x2000, 1)).toBe(0x2040);
+    // Home and End: the preview's first and last
+    expect(spriteStep(0x2380, 'Home', 0x2000, 1)).toBe(0x2000);
+    expect(spriteStep(0x1000, 'End', 0x2000, 1)).toBe(0x2000);
+    // 32 sprites from $3000, 4 a row
+    expect(spriteStep(0x3040, 'ArrowDown', 0x3000, 32)).toBe(0x3140);
+    expect(spriteStep(0x3140, 'ArrowUp', 0x3000, 32)).toBe(0x3040);
+    expect(spriteStep(0x37c0, 'ArrowRight', 0x3000, 32)).toBe(0x3800);
+    expect(spriteStep(0x3000, 'End', 0x3000, 32)).toBe(0x37c0);
+    // the ends of memory
+    expect(spriteStep(0x0000, 'ArrowLeft', 0x2000, 1)).toBe(0x0000);
+    expect(spriteStep(0x0040, 'ArrowUp', 0x3000, 32)).toBe(0x0040);
+    expect(spriteStep(0xffc0, 'ArrowRight', 0x2000, 1)).toBe(0xffc0);
+    expect(SPRITE_LAST).toBe(0xffc0);
+    // a preview not on 64 keeps its phase
+    expect(spriteStep(0x2010, 'ArrowRight', 0x2010, 1)).toBe(0x2050);
+    expect(spriteStep(0x2010, 'Enter', 0x2010, 1)).toBeNull();
+  });
+
+  it('knows which of the preview\'s sprites one is, if any', () => {
+    expect(spriteIndex(0x3040, 0x3000, 32)).toBe(1);
+    expect(spriteIndex(0x37c0, 0x3000, 32)).toBe(31);
+    expect(spriteIndex(0x3800, 0x3000, 32)).toBeNull();
+    expect(spriteIndex(0x2fc0, 0x3000, 32)).toBeNull();
+    expect(spriteIndex(0x3008, 0x3000, 32)).toBeNull();
+    expect(spriteIndex(0x2000, 0x2000, 1)).toBe(0);
   });
 
   it('numbers a sprite by its pointer in its VIC bank', () => {
