@@ -281,6 +281,15 @@ make an existing project a repository too).
    starts the packed file, and *Templates…* in the source view makes your own, starting from the original `build.bat`
    and `build.sh` with placeholders (`{source}`, `{name}`, `{out}` …) that every project fills in.
 
+**The library** keeps the SID tunes, sprites and charsets you find, for every project. Right-click a music, sprite
+or charset block and choose *Add to library* (or use the button in the inspector, the command palette, or the Graphics
+tab for a selection drawn as characters or sprites): it becomes a file other tools read too (`.sid`, `.spr`, `.64c`)
+named after where it was found, such as `Comaland side 1 - file25_1000 - music_1000 ($1000-$1fff).sid`, in a folder of
+its kind (`SIDs`, `Sprites`, `Chars`) in `Mimir\Library` in your documents folder (*Settings → General* moves it). The
+*Library* button in the activity bar lists everything with a picture of it and where it came from; a SID plays in
+VICE or DeepSID from its row, and the *Library* tab shows each one large: a charset or sprites in colours of their own,
+sprites as an animation, a SID with its texts. Files you put in those folders yourself are in the library too.
+
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
 the Spindle, Bitfire, Booze, Sparkle, Krill and Covert scripts, the IFFL parts and Pirate Slayer (when there is one), statistics and the build output. With a
 disk mounted, Build & Run writes the files the project opened from it back into a copy of the disk as they were built

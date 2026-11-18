@@ -318,12 +318,12 @@ main.main { container: editor / inline-size; }
 }
 @container editor (max-width: 1245px) {
   .main-tabs .tab { padding: 0 5px; }
-  .main-tabs .tab-spec, .main-tabs .tab-scripts:not(.on), .main-tabs .tab-git:not(.on) { padding: 0 4px; }
+  .main-tabs .tab-spec, .main-tabs .tab-scripts:not(.on), .main-tabs .tab-git:not(.on), .main-tabs .tab-library:not(.on) { padding: 0 4px; }
   .main-tabs .tab-tools .btn.small { padding: 0 4px; }
   .main-tabs .tool-block { display: none; }
   .main-tabs .tab-label { max-width: 8em; }
   .main-tabs .tab-source .tab-label { max-width: 5em; }
-  .main-tabs .tab-spec .tab-label, .main-tabs .tab-scripts:not(.on) .tab-label, .main-tabs .tab-git:not(.on) .tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .main-tabs .tab-spec .tab-label, .main-tabs .tab-scripts:not(.on) .tab-label, .main-tabs .tab-git:not(.on) .tab-label, .main-tabs .tab-library:not(.on) .tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 @container editor (max-width: 820px) {
   .main-tabs .tab-tools { display: none; }
@@ -1889,3 +1889,78 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .np-git small { line-height: 1.5; }
 .check.off { color: var(--fg-3); }
 .git-file:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* ---------- the library (spec 10.6): the Library view, the Library tab and Add to library ---------- */
+.lib-thumb { display: block; image-rendering: pixelated; max-width: 100%; height: auto; }
+.lib-title .icon-btn { width: 24px; height: 24px; align-self: center; }
+.lib-n { color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.lib-kinds button { padding: 2px 4px; white-space: nowrap; }
+.seg button.on .lib-n { color: var(--fg-2); }
+.lib-list { flex: 1; overflow: auto; padding: 0 6px 8px; display: flex; flex-direction: column; gap: 2px; }
+.lib-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; color: var(--fg-2); min-width: 0; }
+.lib-row:hover { background: var(--row-hover); color: var(--fg); }
+.lib-row.on { background: var(--sel); color: var(--fg); }
+.lib-row-pic { flex: none; width: 48px; min-height: 28px; display: grid; place-items: center; border-radius: 4px; background: #161434; overflow: hidden; color: var(--g-music); }
+.lib-row-meta { flex: 1; min-width: 0; }
+.lib-row-name { font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-row-from, .lib-card-from { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-btn.lib-play { width: 22px; height: 22px; border-radius: 50%; color: var(--g-music); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--g-music) 45%, transparent); }
+.icon-btn.lib-play:hover { background: var(--g-music); color: #fff; }
+.icon-btn.lib-play svg { margin-left: 1px; }
+.lib-empty { margin: 6px 14px; }
+.lib-empty p { margin: 0 0 6px; }
+.lib-side .side-hint { margin: 6px 14px; }
+.lib-dir { margin: 4px 14px 12px; text-align: left; font-size: 11px; color: var(--fg-3); overflow-wrap: anywhere; }
+
+.lib-tab { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); }
+/* nothing picked: the cards take the whole tab */
+.lib-tab.none { grid-template-columns: minmax(0, 1fr); }
+.lib-tab.none .lib-gallery { border-right: 0; }
+.lib-gallery { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+.lib-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.lib-bar .seg { margin-left: 0; }
+.lib-bar .lib-search { margin: 0; width: 240px; max-width: 100%; }
+.lib-cards-wrap { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px 16px; }
+.lib-group + .lib-group { margin-top: 14px; }
+.lib-group-head { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-2); }
+.lib-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.lib-card { display: flex; flex-direction: column; gap: 3px; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; min-width: 0; color: var(--fg-2); }
+.lib-card:hover { border-color: var(--line-2); background: var(--panel-2); }
+.lib-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.lib-card-pic { display: grid; place-items: center; min-height: 72px; padding: 6px; border-radius: 6px; background: #161434; margin-bottom: 4px; overflow: hidden; }
+.lib-card-sid { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--g-music); text-align: center; }
+.lib-card-sid span { color: #c9c6ef; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-card-name { font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-hint { max-width: 520px; margin: 30px auto; text-align: center; line-height: 1.5; }
+.lib-hint h2 { font-size: 15px; margin: 8px 0; color: var(--fg); }
+.lib-hint .icon { color: var(--fg-3); }
+.lib-detail { min-width: 0; min-height: 0; overflow: auto; padding: 10px 14px 16px; background: var(--panel); }
+.lib-show-head { display: flex; align-items: center; gap: 6px; min-height: 32px; margin-bottom: 6px; }
+.lib-show-head > .icon { color: var(--accent-hi); flex: none; }
+.lib-show-name { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.lib-rename { flex: 1; min-width: 0; height: 28px; border-radius: 6px; border: 1px solid var(--accent); background: var(--editor); color: var(--fg); padding: 0 8px; outline: none; }
+.lib-trash { margin: 0 0 10px; align-items: center; }
+.lib-trash span { flex: 1 1 200px; }
+.lib-play-row { align-items: center; }
+.lib-play-row .btn { flex: 0 1 auto; }
+.lib-song { display: inline-flex; align-items: center; gap: 5px; color: var(--fg-2); }
+.lib-song select, .lib-anim-tools select { height: 24px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); font-size: 12px; }
+.lib-kv { grid-template-columns: 92px minmax(0, 1fr); }
+.lib-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; font-size: 12px; color: var(--fg-2); }
+.lib-big { padding: 10px; border-radius: 6px; background: #161434; border: 1px solid var(--line); overflow: auto; margin-bottom: 8px; }
+.lib-big-pic { cursor: crosshair; max-width: none; }
+.lib-pick { margin: 0 0 10px; padding: 6px 8px; border-radius: 6px; background: var(--panel-2); color: var(--fg-2); }
+.lib-pick-bytes { margin-top: 2px; color: var(--fg); overflow-wrap: anywhere; }
+.lib-anim { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; flex-wrap: wrap; }
+.lib-anim-pic { padding: 8px; border-radius: 6px; background: #161434; border: 1px solid var(--line); }
+.lib-anim-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; color: var(--fg-2); }
+.lib-anim-tools input { width: 52px; height: 24px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--editor); color: var(--fg); padding: 0 4px; }
+.lib-file { text-align: left; overflow-wrap: anywhere; }
+@container editor (max-width: 760px) { .lib-tab:not(.none) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(220px, 1fr); } .lib-gallery { border-right: 0; border-bottom: 1px solid var(--line); } }
+
+.modal.lib-add { width: min(560px, 100%); }
+.lib-add .field input { width: 100%; min-width: 0; }
+.lib-add-what { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 4px 0 12px; }
+.lib-add-what .lib-thumb { padding: 6px; background: #161434; border-radius: 6px; box-sizing: content-box; }
+.lib-add-sid { padding: 6px 8px; border-radius: 6px; background: var(--panel-2); color: var(--fg); }
+.lib-add-file { margin: 2px 0 6px; overflow-wrap: anywhere; }

@@ -17,7 +17,7 @@ test('Settings: pages by group, More, a search over every page, and the page it 
     await expect(tab('General')).toHaveAttribute('aria-selected', 'true');
     await expect(search).toBeFocused();
     const panel = dialog.getByRole('tabpanel');
-    await expect(panel.getByRole('heading', { level: 3 })).toHaveText(['Starting and opening files', 'Listing', 'Names', 'Panels']);
+    await expect(panel.getByRole('heading', { level: 3 })).toHaveText(['Starting and opening files', 'Listing', 'Names', 'Library', 'Panels']);
     await expect(panel).toContainText('Kept by the app, for every project.');
     await tab('Analysis').click();
     await expect(panel).toContainText('Saved in the project; a file you open next keeps them.');

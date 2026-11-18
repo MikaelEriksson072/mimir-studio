@@ -282,12 +282,13 @@ export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array,
 }
 
 /**
- * The selection as an image at 1x, drawn as the tab draws it but without the gaps: characters 16 to a row, sprites 8, a
+ * The selection as an image at 1x, drawn as the tab draws it but without the gaps: characters 16 to a row, sprites 8 (or
+ * `per`), a
  * bitmap as 320 x 200 or its `bitmapRows` (one per 8 KB, under each other), a screen as 320 x 200 (multicolour pixels two
  * wide; screens drawn with `font`, one per 1 KB), the fonts of a font-per-row picture as its rows (each 320 x 8, with the
  * 40 `codes`). Cells past the end of the selection stay transparent.
  */
-export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[]; bitmapRows?: number } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
+export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[]; bitmapRows?: number; per?: number } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
   const pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => hexRgb(C64[i & 15]));
   const bmRows = bitmapRowsOf(opts.bitmapRows ?? BITMAP_ROWS);
   const g = kind === 'chars' ? { unit: 8, w: 8, h: 8, per: 16 } : kind === 'sprites' ? { unit: 64, w: 24, h: 21, per: 8 }
@@ -295,7 +296,9 @@ export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr,
       : { unit: 0x2000, w: 320, h: bmRows * 8, per: 1 };
   // a font per row: the rows whose font lies in the selection (memory the picture skips is no row)
   const bases = kind === 'fontrows' && opts.rows ? opts.rows.filter(a => a >= start && a < end) : null;
-  const n = bases ? Math.max(1, bases.length) : Math.max(1, Math.ceil((end - start) / g.unit)), cols = Math.min(g.per, n), rows = Math.ceil(n / cols);
+  // (`per`: characters or sprites a row, instead of 16 and 8)
+  const per = opts.per != null && opts.per >= 1 && (kind === 'chars' || kind === 'sprites') ? Math.floor(opts.per) : g.per;
+  const n = bases ? Math.max(1, bases.length) : Math.max(1, Math.ceil((end - start) / g.unit)), cols = Math.min(per, n), rows = Math.ceil(n / cols);
   const width = cols * g.w, height = rows * g.h, rgba = new Uint8ClampedArray(width * height * 4);
   const put = (x: number, y: number, c: number[]) => { const o = (y * width + x) * 4; rgba[o] = c[0]; rgba[o + 1] = c[1]; rgba[o + 2] = c[2]; rgba[o + 3] = 255; };
   const bits = (b: number, x: number, y: number) => {

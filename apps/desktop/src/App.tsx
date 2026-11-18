@@ -9,6 +9,7 @@ import {
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
+  charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
@@ -69,6 +70,10 @@ import { ViewOffsetModal, type ViewOffsetDraft } from './components/ViewOffset';
 import { PatchModal, type PatchDraft } from './components/Patch';
 import { MemoryGfx } from './components/MemoryGfx';
 import { MemoryDump } from './components/MemoryDump';
+import { LibraryTab } from './components/LibraryTab';
+import { LibraryAddModal, type LibraryAnswer, type LibraryDraft } from './components/LibraryAdd';
+import { useLibrary, type LibraryRef } from './store/library';
+import { deepSidName, LIB_COLORS, LIB_KIND, libraryKindOf, sameInLibrary } from './lib/library';
 import type { BankChoice } from './components/ViewModes';
 import { bookmarkList, bookmarkSpan } from './components/Bookmarks';
 import type { PackProgress, PackResult } from './components/Pack';
@@ -196,7 +201,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | 'templates' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | 'templates' | 'library' | null>(null);
   /** the block the Block size dialog changes (its start when the dialog opened) */
   const [sizeAt, setSizeAt] = useState<Addr | null>(null);
   /** the patch dialog's range and code */
@@ -2254,10 +2259,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  where they run, calls init with the song in A and play each frame from a raster interrupt (c64/sidplayer.ts); or
    *  in DeepSID, the online player, as the .sid the export writes (electron/main/deepsid.ts). A snapshot's player that init
    *  no longer starts again plays on from the snapshot: init puts back the bytes outside the block it reads (musicPlayData) */
-  const playMusic = async (at: Addr | null | undefined) => {
-    if (!kr) return needDesktop();
-    const b = at != null ? findBlock(A.blocks, at) : null;
-    if (!b || b.type !== 'music') { toast('Put the cursor on a music block to play it', 'warn'); return; }
+  /** What a music block plays with (in VICE, in DeepSID and as the library's .sid): its bytes, init and play
+   *  (musicPlayData), its name and its addresses */
+  const musicData = (b: Block) => {
     const m = A.music.find(x => x.start === b.start);
     const load = spaceAddr(b.start), init = spaceAddr(m?.init ?? b.props.init ?? b.start), play = spaceAddr(m?.play ?? b.props.play ?? b.start + 3);
     const name = R.labels.get(b.start)?.name ?? `music_${h4(load)}`, span = `$${h4(load)}-$${h4(load + b.end - b.start - 1)}`;
@@ -2268,6 +2272,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       parts: dg.parts.map(([s, e]) => ({ load: spaceAddr(s), data: A.mem.slice(s, e) })),
       ...(dg.irq ? { irq: { ...dg.irq, handler: spaceAddr(dg.irq.handler) } } : {}),
     });
+    return { m, load, init, play, name, span, dg, d };
+  };
+  const playMusic = async (at: Addr | null | undefined) => {
+    if (!kr) return needDesktop();
+    const b = at != null ? findBlock(A.blocks, at) : null;
+    if (!b || b.type !== 'music') { toast('Put the cursor on a music block to play it', 'warn'); return; }
+    const { m, load, init, play, name, span, dg, d } = musicData(b);
     const kept = (m?.resume ?? []).filter(([a]) => a < 0xd400 || a > 0xd418), sidToo = kept.length < (m?.resume?.length ?? 0);
     const partsText = dg?.parts.length ? ` with its samples and song (${dg.parts.map(([s, e]) => `$${h4(spaceAddr(s))}-$${h4(spaceAddr(e - 1))}`).join(', ')})` : '';
     const it = dg?.nmi ? 'NMI' : 'IRQ';
@@ -2305,6 +2316,114 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           : `VICE plays ${name} (${span}): init $${h4(init)} with song $00, then play $${h4(play)} each frame. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before`, 'ok');
       for (const x of p.warnings) toast(x, 'warn');
     } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }
+  };
+  /* ---- the library (spec 10.6): SID music, sprites and charsets kept for every project ---- */
+  const libListing = useLibrary(s => s.listing);
+  const libState = useLibrary.getState;
+  // read when the app starts, so the Library button shows how much is in it
+  useEffect(() => { void libState().load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /** what goes in the Add to library dialog */
+  const [libDraft, setLibDraft] = useState<LibraryDraft | null>(null);
+  /** the Library tab is in the tab row once it was opened in this run */
+  const [libTabSeen, setLibTabSeen] = useState(false);
+  /** where bytes at `start`-`end` (work addresses) were taken from: the project, the file they are in, and the disk or
+   *  tape that file was opened from while it is mounted */
+  const librarySource = (start: Addr, end: Addr): LibrarySource => {
+    const f = project.files[A.owner[start]];
+    const media = f && disk && diskOf.current.get(f.id) === disk.bytes ? disk.name : f && tape && tapeOf.current.get(f.id)?.tap === tape.bytes ? tape.name : undefined;
+    const proj = home?.name ?? project.name;
+    return { ...(proj ? { project: proj } : {}), ...(f ? { file: f.name } : {}), ...(media ? { disk: media } : {}), start: spaceAddr(start), end: spaceAddr(end - 1) + 1 };
+  };
+  /** The block at `at` (a music, sprite or charset block) in the Add to library dialog; `gfx`: a selection the Graphics
+   *  tab shows as characters or sprites, drawn as there */
+  const startLibraryAdd = (at: Addr | null | undefined, gfx?: { start: Addr; end: Addr; kind: 'chars' | 'sprites'; mc: boolean; colors: LibraryColors }) => {
+    if (!kr) return needDesktop();
+    const b = gfx ? null : at != null ? findBlock(A.blocks, at) : null;
+    const kind: LibraryKind | null = gfx ? gfx.kind : b ? libraryKindOf(b.type) : null;
+    if (!kind || (!b && !gfx)) { toast('Put the cursor on a music, sprite or charset block to add it to the library', 'warn'); return; }
+    const start = gfx ? gfx.start : b!.start, end = gfx ? gfx.end : b!.end;
+    const from = librarySource(start, end);
+    if (kind === 'sid') {
+      const { d, name, dg } = musicData(b!);
+      const sid = musicSidFile(d, name);
+      setLibDraft({ kind, bytes: sid, data: sid, name, from, ...(dg && d.digi && d.play === 0 ? { digi: d.digi, ...(d.busy?.length ? { busy: d.busy.map(([s, e]): [number, number] => [s, e]) } : {}) } : {}) });
+    } else {
+      const raw = A.mem.slice(start, end);
+      const bytes = kind === 'chars' ? charsetFile(raw, spaceAddr(start)) : spriteFile(raw);
+      const label = R.labels.get(start)?.name ?? `${kind === 'chars' ? 'charset' : 'sprites'}_${h4(spaceAddr(start))}`;
+      const mc = gfx ? gfx.mc : blockMc(A, b!);
+      setLibDraft({ kind, bytes, data: kind === 'chars' ? raw : bytes, name: label, from, mc, colors: gfx ? gfx.colors : { ...useUi.getState().gfx.colors } });
+    }
+    if (!libState().listing) void libState().load();
+    setModal('library');
+  };
+  const addToLibrary = async (a: LibraryAnswer) => {
+    const dr = libDraft;
+    if (!dr) return;
+    setModal(null); setLibDraft(null);
+    const from: LibrarySource = { ...dr.from, ...(a.fromText ? { text: a.fromText } : {}) };
+    const bytes = dr.kind === 'sid' ? sidWithTexts(dr.bytes, { name: a.name, author: a.author || '<?>', released: a.fromText }) : dr.bytes;
+    try {
+      const r = await libState().add({ kind: dr.kind, stem: libraryStem(a.name, { ...from, text: a.fromText }), bytes,
+        entry: { name: a.name, from, ...(dr.mc != null ? { mc: dr.mc } : {}), ...(dr.colors ? { colors: dr.colors } : {}), ...(dr.digi ? { digi: dr.digi } : {}), ...(dr.busy ? { busy: dr.busy } : {}) } });
+      toast(`Added to the library: ${LIB_KIND[dr.kind].folder}\\${r.item.file}`, 'ok');
+    } catch (e) { toast(`Could not add it to the library: ${errorText(e)}`, 'err'); }
+  };
+  /** the Library view and tab, with `ref` shown */
+  const showLibrary = (ref?: LibraryRef) => {
+    if (ref) libState().set({ selected: ref, ...(libState().kind !== 'all' && libState().kind !== ref.kind ? { kind: ref.kind } : {}) });
+    setLibTabSeen(true);
+    setUi({ tab: 'library', ...(narrow ? {} : { activity: 'library', sidePanel: true }) });
+    setDrawer(null);
+  };
+  /** A SID of the library played: in DeepSID as it is, in VICE with Mimir's player (init with the song, then play
+   *  each frame; an RSID's interrupts as they start them, a sample player's as the entry says) */
+  const playLibrary = async (item: LibraryItem, o: { player?: 'vice' | 'deepsid'; song?: number } = {}) => {
+    if (!kr) return needDesktop();
+    if (item.kind !== 'sid') { showLibrary({ kind: item.kind, file: item.file }); return; }
+    let s: ReturnType<typeof parsePsid>;
+    try { s = parsePsid(item.data); } catch (e) { toast(`${item.file} is not a .sid Mimir can play: ${errorText(e)}`, 'err'); return; }
+    const where = o.player ?? toolchain.musicPlayer;
+    if (where === 'deepsid') {
+      try {
+        const file = deepSidName(item.name, item.data);
+        toast(`Opening ${item.name} in DeepSID…`, 'info');
+        const r = await kr.playInDeepSid({ name: file, sid: item.data });
+        if (r.played) toast(`DeepSID plays ${item.name}, as ${file}`, 'ok');
+        else toast(`DeepSID did not start ${item.name}: ${r.problem}. Its window ${/did not open/.test(r.problem ?? '') ? 'is' : 'stays'} open: press L there (Load SID) and choose ${r.path}`, 'warn');
+      } catch (e) { toast(`Could not play ${item.name} in DeepSID: ${errorText(e)}`, 'err'); }
+      return;
+    }
+    try {
+      const song = o.song ?? Math.max(0, s.startSong - 1);
+      const digi = item.digi ?? (s.play === 0 ? { nmi: false, hz: 0 } : undefined);
+      const p = sidPlayer({ data: s.data, load: s.location, init: s.init, play: s.play, song, title: item.name, ...(digi ? { digi } : {}), ...(item.busy ? { busy: item.busy } : {}) });
+      const w = await kr.writeExport({ target: 'temp', name: 'play', files: { 'library.prg': p.prg } });
+      if (!w) return;
+      await kr.run({ prgPath: `${w.dir}/library.prg` });
+      toast(`VICE plays ${item.name}${s.songs > 1 ? `, song ${song + 1} of ${s.songs}` : ''}: ${s.play ? `init $${h4(s.init)}, then play $${h4(s.play)} each frame. Keys 1-9 and 0 start songs $00-$09` : `init $${h4(s.init)} starts the interrupts that play it`}`, 'ok');
+      for (const x of p.warnings) toast(x, 'warn');
+    } catch (e) { toast(`Could not play ${item.name}: ${errorText(e)}`, 'err'); }
+  };
+  const revealLibrary = (ref?: { kind?: LibraryKind; file?: string }) => {
+    if (!kr) return needDesktop();
+    kr.libraryReveal(ref ?? {}).catch(e => toast(`Could not open the library's folder: ${errorText(e)}`, 'err'));
+  };
+  /** an item's right-click menu (the Library view and tab) */
+  const libraryMenu = (item: LibraryItem, x: number, y: number) => {
+    const other = toolchain.musicPlayer === 'vice' ? 'deepsid' : 'vice';
+    setMenu({ x, y, items: [
+      { header: item.name },
+      ...(item.kind === 'sid' ? [
+        { label: `Play in ${musicPlayerName}`, icon: 'play', run: () => void playLibrary(item) },
+        { label: `Play in ${other === 'vice' ? 'VICE' : 'DeepSID'}`, run: () => void playLibrary(item, { player: other }) },
+        { sep: true },
+      ] satisfies MenuItem[] : []),
+      { label: 'Show it in the Library tab', icon: 'library', run: () => showLibrary({ kind: item.kind, file: item.file }) },
+      { label: 'Show its file', icon: 'folder', run: () => revealLibrary({ kind: item.kind, file: item.file }) },
+      { sep: true },
+      { label: 'Move to the Recycle Bin', icon: 'trash', run: () => { libState().remove({ kind: item.kind, file: item.file }).then(() => toast(`${item.file} is in the Recycle Bin`, 'ok'), e => toast(`Could not move it to the Recycle Bin: ${errorText(e)}`, 'err')); } },
+    ] });
   };
   const goPatch = (p: Patch) => { navigate(p.start, { center: true, listing: true }); setSel({ start: p.start, end: patchEnd(p), multi: true, anchor: p.start, anchorEnd: patchEnd(p) }); setTimeout(() => listRef.current?.focus(), 0); };
   /** the listing at a view offset's first byte, with its bytes selected (10.4) */
@@ -3003,6 +3122,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const saveSettings = async (s: Settings, prefs: AppPrefs) => {
     const tc = pickToolchain(s);
     try { setToolchain(kr ? await kr.setSettings(tc) : tc); } catch (e) { toast(`Toolchain settings rejected: ${errorText(e)}`, 'err'); return; }
+    // another library folder: the library is read from it (10.6)
+    if (tc.libraryDir !== toolchain.libraryDir && libState().listing) void libState().load();
     setUi(prefs);
     setDrawer(d => (d === 'insp' ? null : d));
     update('Settings', d => { for (const k of Object.keys(s) as (keyof Settings)[]) if (!(TOOLCHAIN_KEYS as readonly string[]).includes(k)) (d.settings as Record<string, unknown>)[k] = s[k]; });
@@ -3130,6 +3251,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'build-debugger', label: `Build with ${asmTool} & run in ${debuggerName} (started as in VICE; Settings → Toolchain picks the debugger)`, key: 'Shift+F5', run: () => void runBuild(true) },
     { id: 'pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} (build, verify, pack as the Pack view says)`, run: () => void runPack() },
     { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack', sidePanel: true }) },
+    { id: 'library-show', label: 'Show the library: the SIDs, sprites and charsets kept for every project', run: () => showLibrary() },
+    { id: 'library-add', label: 'Add the block at the cursor to the library (a music, sprite or charset block)…', run: () => startLibraryAdd(cursor) },
     ...(packRes?.ok && packRes.path ? [
       ...(packRes.argv[1] === 'sfx' ? [{ id: 'pack-run', label: `Run the packed ${packRes.name} in VICE`, run: () => void runPacked() }] : []),
       { id: 'pack-save', label: `Save the packed ${packRes.name} as…`, run: () => void savePacked() },
@@ -3492,6 +3615,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setMenu({
       x: e.clientX, y: e.clientY, items: [
         ...(b?.type === 'music' ? [{ label: `Play music in ${musicPlayerName} (${R.labels.get(b.start)?.name ?? `$${h4(spaceAddr(b.start))}`})`, icon: 'play', run: () => void playMusic(b.start) }] satisfies MenuItem[] : []),
+        ...(b && libraryKindOf(b.type) ? [{ label: `Add to library (${LIB_KIND[libraryKindOf(b.type)!].folder})…`, icon: 'library', run: () => startLibraryAdd(b.start) }] satisfies MenuItem[] : []),
         ...(p ? [{ label: `Patch "${p.name}"`, icon: 'code', children: [
           { label: 'Edit patch…', key: 'P', run: () => editPatch(p) },
           { label: p.off ? 'Switch on' : 'Switch off (the original bytes come back)', run: () => switchOnePatch(p, !!p.off) },
@@ -3678,7 +3802,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       { label: home ? 'Save project' : 'Save: create a project from this work…', key: 'Ctrl+S', run: () => void saveProject() },
     ] });
   };
-  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'script' | 'git', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'script', 'Scripts'], ['git', 'git', 'Git'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md']];
+  // (the Library tab once it was opened: the Library view's button opens it, 10.6)
+  const tabs: [typeof tab, 'list' | 'code' | 'doc' | 'image' | 'chip' | 'disk' | 'script' | 'git' | 'library', string][] =[['listing', 'list', 'Listing'], ['drive', 'disk', 'Drive code'], ['gfx', 'image', 'Graphics'], ['mem', 'chip', 'Memory'], ['scripts', 'script', 'Scripts'], ['git', 'git', 'Git'], ['source', 'code', mainSource(R)], ['spec', 'doc', 'SPEC.md'],
+    ...(tab === 'library' || libTabSeen ? [['library', 'library', 'Library']] as [typeof tab, 'library', string][] : [])];
 
   return (
     <AssemblerContext.Provider value={asm}>
@@ -3692,13 +3818,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onOverview={() => setModal('overview')} canOverview={project.files.length > 0 || !!project.cart}
         onToggleSide={() => setDrawer(d => d === 'side' ? null : 'side')} onToggleInspector={() => setDrawer(d => d === 'insp' ? null : 'insp')} />
 
-      <ActivityBar activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
-          // the view shown: its button collapses the side panel; collapsed, any view's button brings it back
+      <ActivityBar activity={sidePanel || narrow ? activity : null} specOpen={tab === 'spec'} counts={{ bookmarks: Object.keys(project.bookmarks).length, scripts: userScripts.length, pack: project.pack?.ranges?.length ?? 0, library: libListing?.items.length ?? 0 }} busy={{ pack: !!packRun, scripts: !!scriptRunning }} onActivity={(a: Activity) => {
+          // the view shown: its button collapses the side panel; collapsed, any view's button brings it back. The
+          // Library's button shows the Library tab too (10.6)
+          if (a === 'library' && !(sidePanel && a === activity && !narrow)) { setLibTabSeen(true); setUi({ tab: 'library' }); }
           if (narrow) { setUi({ activity: a }); setDrawer('side'); } else if (sidePanel && a === activity) toggleSide(); else setUi({ activity: a, sidePanel: true });
         }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />
 
       <aside className="sidebar"><ErrorBoundary>
-        <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }} onLabel={a => { pickLabel(a); setDrawer(null); }}
+        <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor}
+          library={{ desktop: !!kr, playerName: musicPlayerName, onShow: ref => showLibrary(ref), onPlay: i => void playLibrary(i), onMenu: libraryMenu, onReveal: k => revealLibrary(k ? { kind: k } : undefined) }} onNavigate={a => { nav(a); setDrawer(null); }} onLabel={a => { pickLabel(a); setDrawer(null); }}
           onAdd={() => void openPrgs(project.files.length > 0, 'add')} onDemo={() => loadDemo()}
           quicksave={{ info: qsInfo, follow: followQuicksave, onOpen: () => void openQuicksave(), onFollow: v => setUi({ followQuicksave: v }),
             kept: qsList, onOpenKept: q => void openKeptQuicksave(q), onRenameKept: (q, name) => void renameKeptQuicksave(q, name), onSaveKept: q => void saveKeptQuicksave(q),
@@ -3839,6 +3968,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 }} />}
               {tab === 'spec' && <SpecView />}
               {tab === 'git' && <GitView home={home} saveNow={saveNow} onCreateProject={() => setModal('project')} onTerminal={() => void openTerminal()} toast={toast} />}
+              {tab === 'library' && <LibraryTab desktop={!!kr} player={toolchain.musicPlayer} onPlay={(i, o) => void playLibrary(i, o)} onReveal={ref => revealLibrary(ref)} onMenu={libraryMenu} toast={toast} />}
               {tab === 'scripts' && <ScriptsView scripts={userScripts} lang={codeLang} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
@@ -3850,7 +3980,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
-                onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />)(allGfx ? (a: Addr) => a : inBank)}
+                onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)}
+                onLibrary={(r, kind, mc, cols) => startLibraryAdd(null, { start: g(r.start), end: g(r.end), kind, mc, colors: { ...cols } })} />)(allGfx ? (a: Addr) => a : inBank)}
               {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
                 spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
                 onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}
@@ -3902,7 +4033,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onAddToLibrary={a => startLibraryAdd(a)}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpPair={pairZp} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
@@ -3927,6 +4058,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
+      {modal === 'library' && libDraft && <LibraryAddModal draft={libDraft} same={sameInLibrary(libListing?.items ?? [], libDraft.kind, libDraft.data)} onAdd={a => void addToLibrary(a)}
+        onShow={i => { setModal(null); setLibDraft(null); showLibrary({ kind: i.kind, file: i.file }); }} onClose={() => { setModal(null); setLibDraft(null); }} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
       {modal === 'size' && sizeAt != null && <BlockSizeModal A={A} R={R} at={sizeAt} onResize={resizeInto} onClose={() => { setModal(null); setSizeAt(null); }} />}
       {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}

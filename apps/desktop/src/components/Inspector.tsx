@@ -11,6 +11,7 @@ import { Heatmap, type CanvasColors, type HeatMode } from './Heatmap';
 import { GfxPreview, GfxZoom, type GfxMode } from './GfxPreview';
 import { charCount, SPRITE_LAST, spriteCount, spriteIndex } from '../lib/charzoom';
 import { blockMc } from '../lib/gfxlines';
+import { libraryKindOf } from '../lib/library';
 import { CyclesSection } from './Cycles';
 import { asmWords, useAssembler } from '../lib/assembler';
 
@@ -22,6 +23,8 @@ interface InspectorProps {
   onBlockComment: (a: Addr, text: string) => void; onClearOverride: (b: Block) => void;
   /** play the music block that starts at `start`, in VICE or DeepSID as `musicPlayer` says (Settings → Toolchain) */
   onPlayMusic?: (start: Addr) => void;
+  /** the music, sprite or charset block that starts at `start` to the library (spec 10.6) */
+  onAddToLibrary?: (start: Addr) => void;
   musicPlayer?: MusicPlayer;
   onBankZone: (range: { start: Addr; end: Addr }, part: 'port' | 'vicBank', v: number | null) => void;
   onMerge: (dir: 'prev' | 'next', at: Addr) => void;
@@ -60,7 +63,7 @@ interface InspectorProps {
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice' }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice', onAddToLibrary }: InspectorProps) {
   const words = asmWords(useAssembler());
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
@@ -200,6 +203,8 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
                 {blk.props.mc != null ? <button className="linkish small" onClick={() => onFormat(blk, { mc: null })} title="Draw it as the VIC registers say ($d01c for sprites, $d016 for a charset or bitmap)">as the VIC registers say</button>
                   : <span className="muted small">as the VIC registers say</span>}
               </div> : <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>}
+              {blockMcOn && blk && onAddToLibrary && libraryKindOf(blk.type) && <div className="merge-row"><button className="btn small" onClick={() => onAddToLibrary(blk.start)}
+                title={`Keep a copy of the ${blk.type === 'sprite' ? 'sprites' : 'charset'} in the library (the Library view in the activity bar), for every project, named after where it was found`}><Icon name="library" size={13} />Add to library</button></div>}
               {zoomKind && zoomed != null ? <GfxZoom kind={zoomKind} mem={B.A.mem} start={zStart} addr={zoomed} count={nZoom} mc={mcShown} focus={zoomClicks}
                 where={zoomWhere} onPick={setZoom} onClose={() => setZoom(null)} onGo={zoomGo} />
                 : zoomKind && <p className="muted small">Click a {zoomKind === 'sprite' ? 'sprite' : 'character'} to see it enlarged.</p>}
@@ -223,7 +228,8 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
                   ? 'DeepSID, the online SID player, plays the .sid the export writes, in a window of its own: its Load SID sends the file to DeepSID\'s server. Settings → Toolchain picks VICE or DeepSID'
                   : music.digi && !music.play ? 'VICE plays the block\'s bytes with its samples and song: init with song $00 starts the interrupt that plays them, and nothing is called each frame. Settings → Toolchain picks VICE or DeepSID'
                   : 'VICE plays the block\'s bytes (those the .sid holds): init with song $00, then play each frame from a raster interrupt. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before. Settings → Toolchain picks VICE or DeepSID'}>
-                Play in {musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE'}</button></div>}
+                Play in {musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE'}</button>
+                {onAddToLibrary && <button className="btn small" onClick={() => onAddToLibrary(blk.start)} title="Keep the tune as a .sid in the library (the Library view in the activity bar), for every project, named after where it was found"><Icon name="library" size={13} />Add to library</button>}</div>}
             </>
           ) : textPreview ? <pre className="text-prev">{textPreview}</pre>
             : blk.type === 'code' ? <CodeSummary A={A} blk={blk} />

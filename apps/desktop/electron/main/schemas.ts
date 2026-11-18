@@ -1,6 +1,6 @@
 /* zod schemas for everything that crosses the IPC boundary or is read from disk (spec 4.2). */
 import { z } from 'zod';
-import { extraProblem, isBookmarkColor, LEGACY_PROJECT_FORMAT, MAX_BLANKS, type BlockKind } from '@mimir/core';
+import { extraProblem, isBookmarkColor, isLibraryFileName, LEGACY_PROJECT_FORMAT, LIBRARY_MAX_BYTES, MAX_BLANKS, type BlockKind } from '@mimir/core';
 
 const addr = z.number().int().min(0).max(0x10000);
 /** an address in the project's work: in a cartridge's bank s, s * $10000 + the address (spec 13.9b) */
@@ -101,6 +101,7 @@ export const toolchainSettingsSchema = z.object({
   c64DebuggerPath: z.string().max(1024),
   c64DebuggerArgs: z.string().max(1024),
   debuggerWait: z.number().int().min(0).max(60000),
+  libraryDir: z.string().max(1024),
 });
 
 /** settings:locate: which tool's folder to ask for, and the path in the form (where the dialog opens) */
@@ -322,3 +323,29 @@ const gitHash = z.string().regex(/^[0-9a-f]{7,64}$/i);
 export const gitRangeSchema = z.object({ from: gitHash.nullable(), to: gitHash.nullable() }).strict();
 export const gitStatusSchema = z.undefined().or(z.object({ log: z.number().int().min(1).max(2000).optional() }).strict());
 export const gitDiffSchema = z.object({ path: gitPath, from: gitPath.optional(), staged: z.boolean().optional(), range: gitRangeSchema.optional() }).strict();
+
+/* ---- the library (spec 10.6): a file by its kind and its plain name in that kind's folder, never a path ---- */
+const libraryKind = z.enum(['sid', 'sprites', 'chars']);
+const colorNo = z.number().int().min(0).max(15);
+const libraryColors = z.object({ bg: colorNo, fg: colorNo, mc1: colorNo, mc2: colorNo }).strict();
+/** a file's name in the library without its extension: no folder in it (main makes it safe and unique) */
+const libraryStem = z.string().trim().min(1).max(200).refine(s => !/[\\/]/.test(s) && s !== '.' && s !== '..', 'a folder in the name');
+export const libraryAddSchema = z.object({
+  kind: libraryKind,
+  stem: libraryStem,
+  bytes: z.instanceof(Uint8Array).refine(b => b.length > 0 && b.length <= LIBRARY_MAX_BYTES, 'empty or more than a C64 holds'),
+  entry: z.object({
+    name: z.string().max(200),
+    from: z.object({ text: z.string().max(400).optional(), project: z.string().max(400).optional(), file: z.string().max(400).optional(), disk: z.string().max(400).optional(), start: z.number().int().min(0).max(0xffff).optional(), end: addr.optional() }).strict().optional(),
+    mc: z.boolean().optional(),
+    colors: libraryColors.optional(),
+    digi: z.object({ nmi: z.boolean(), hz: z.number().min(0).max(1e6), irq: z.object({ handler: z.number().int().min(0).max(0xffff), kernal: z.boolean() }).strict().optional() }).strict().optional(),
+    busy: z.array(z.tuple([z.number().int().min(0).max(0xffff), addr])).max(256).optional(),
+  }).strict(),
+}).strict();
+export const libraryFileSchema = z.object({ kind: libraryKind, file: z.string().min(1).max(255) }).strict().refine(r => isLibraryFileName(r.kind, r.file), 'not a plain file name of the kind');
+export const libraryUpdateSchema = z.object({ kind: libraryKind, file: z.string().min(1).max(255), name: z.string().max(200).optional(), stem: libraryStem.optional(), mc: z.boolean().optional(), colors: libraryColors.optional() }).strict()
+  .refine(r => isLibraryFileName(r.kind, r.file), 'not a plain file name of the kind');
+export const libraryRevealSchema = z.object({ kind: libraryKind.optional(), file: z.string().min(1).max(255).optional() }).strict()
+  .refine(r => r.file == null || (r.kind != null && isLibraryFileName(r.kind, r.file)), 'not a plain file name of the kind');
+export const libraryPickSchema = z.object({ current: z.string().max(1024).optional() }).strict();

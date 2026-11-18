@@ -485,6 +485,9 @@ test('Escape closes the right-click menu, and only that: the listing does not go
   await cur.click({ button: 'right' });
   await page.mouse.move(2, 2);
   const hot = page.locator('.ctx-item.hot');
+  // (a charset's menu starts with Add to library, 10.6)
+  await page.keyboard.press('ArrowDown');
+  await expect(hot).toHaveText('Add to library (Chars)…');
   for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
   await expect(hot).toHaveText('Insert above');
   await page.keyboard.press('ArrowRight');
@@ -9173,8 +9176,8 @@ test('a selection shows how many bytes it takes in, in the right margin beside i
     // its first line 60 px above the listing's top
     const l = (await listing(page).boundingBox())!, before = (await count.boundingBox())!;
     await listing(page).evaluate((el, by) => { el.scrollTop += by; }, before.y - l.y + 60);
-    await expect.poll(async () => (await count.boundingBox())!.y).toBeLessThan(l.y + 10);
-    expect((await count.boundingBox())!.y).toBeGreaterThanOrEqual(l.y);
+    // (it scrolls up with its line for a frame before it stands at the top: wait for it there)
+    await expect.poll(async () => { const y = (await count.boundingBox())!.y; return y >= l.y && y < l.y + 10; }).toBe(true);
   });
 
   await test.step('with the Text columns the count stands left of them', async () => {

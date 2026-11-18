@@ -143,6 +143,9 @@ export interface Settings {
   /** how long (ms) Retro Debugger waits before it loads the program and jumps to its start (`-wait`): the C64 must be
    *  at READY by then */
   debuggerWait: number;
+  /** the library's folder (spec 10.6): the SID music, sprites and charsets added to it, a folder for each; empty: Mimir\Library
+   *  in the user's documents folder */
+  libraryDir: string;
 }
 
 export type MusicPlayer = 'vice' | 'deepsid';
@@ -151,7 +154,7 @@ export type AssemblerId = 'kick' | '64tass';
 /** Retro Debugger, or C64 Debugger (both Marcin Skoczylas', with VICE inside) */
 export type DebuggerKind = 'retro' | 'c64d';
 
-export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'tassPath' | 'tassArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer' | 'debugger' | 'retroDebuggerPath' | 'retroDebuggerArgs' | 'c64DebuggerPath' | 'c64DebuggerArgs' | 'debuggerWait'>;
+export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'tassPath' | 'tassArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer' | 'debugger' | 'retroDebuggerPath' | 'retroDebuggerArgs' | 'c64DebuggerPath' | 'c64DebuggerArgs' | 'debuggerWait' | 'libraryDir'>;
 
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment.
  *  `below`: empty lines between it and the line (the empty lines of Project.blanks go above it). */

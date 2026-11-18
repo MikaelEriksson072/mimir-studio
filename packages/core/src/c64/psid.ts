@@ -24,6 +24,10 @@ export interface PsidInfo {
   startSong: number;
   name: string;
   author: string;
+  /** the third text: the year and the group or publisher, as the HVSC writes it */
+  released: string;
+  /** an RSID: a real C64's environment, init starts the interrupts that play */
+  rsid: boolean;
   data: Uint8Array;
 }
 
@@ -35,5 +39,5 @@ export function parsePsid(u8: Uint8Array): PsidInfo {
   let load = be(8), data = u8.subarray(off);
   if (load === 0) { load = data[0] | (data[1] << 8); data = data.subarray(2); }
   const str = (o: number) => String.fromCharCode(...u8.subarray(o, o + 32)).replace(/\0.*$/, '');
-  return { location: load, init: be(0x0a) || load, play: be(0x0c), size: data.length, songs: be(0x0e), startSong: be(0x10), name: str(0x16), author: str(0x36), data };
+  return { location: load, init: be(0x0a) || load, play: be(0x0c), size: data.length, songs: be(0x0e), startSong: be(0x10), name: str(0x16), author: str(0x36), released: str(0x56), rsid: magic === 'RSID', data };
 }

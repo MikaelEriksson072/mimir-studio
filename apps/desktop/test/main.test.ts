@@ -1,7 +1,7 @@
 /* Main-process logic without Electron: path policy, settings store, IPC schemas, toolchain runner. */
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { analyze, createProject, DEFAULT_PACK, demoProject, packWithBrokkr as packWithBrokkrCore, deserializeProject, LEGACY_PROJECT_FORMAT, makeD64, makePsid, render, serializeProject, type SerializedProject, type ToolchainSettings } from '@mimir/core';
@@ -13,21 +13,22 @@ import { RecentFolders } from '../electron/main/recent';
 import { answerClose, askBeforeClose, CLOSE_ANSWER_MS, type ClosingWindow } from '../electron/main/closing';
 import { findInFolder, startFolder, toolLook } from '../electron/main/locate';
 import { bundledExomizer, defaultToolchainSettings, SettingsStore } from '../electron/main/settings';
-import { deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
+import { deepSidPlaySchema, diskOpenSchema, libraryAddSchema, libraryFileSchema, libraryRevealSchema, libraryUpdateSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, runSchema, serializedProjectSchema, smartAttachSchema, windowCloseSchema } from '../electron/main/schemas';
 import { buildWithAssembler, currentEditor, keepPacked, openInEditor, packWithBrokkr, packWithExomizer } from '../electron/main/toolchain';
 import { QUICKSAVE_FILE, QuicksaveHistory, QuicksaveWatcher, quicksaveFileName, quicksaveFiles, quicksaveInfo, quicksaveName, readQuicksave, viceConfigDir } from '../electron/main/quicksave';
 import { readDiskImage, readPrgFiles, readProjectFile, writeProjectFile } from '../electron/main/project-fs';
 import { charRomFiles, readCharRom } from '../electron/main/chargen';
+import { defaultLibraryDir, LibraryStore } from '../electron/main/library';
 import { createProjectFolder, gatherWork, homeOf, isOwnTemp, nearestFolder, ProjectStore, RECENT_PROJECTS } from '../electron/main/projects';
 import { projectNameOf, projectNameProblem } from '../shared/projects';
 import { smartKind, smartPlan } from '../shared/smart-attach';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
-const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', tassPath: '', tassArgs: '', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000, ...patch });
+const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', tassPath: '', tassArgs: '', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000, libraryDir: '', ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
-    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play', 'window:close', 'window:closing', 'git:version', 'git:status', 'git:init', 'git:stage', 'git:unstage', 'git:commit', 'git:push', 'git:remote', 'git:diff', 'git:compare'].sort());
+    expect(Object.values(CHANNELS).sort()).toEqual(['disk:open', 'tape:open', 'file:smart', 'export:write', 'fs:changed', 'prg:open', 'project:open', 'project:save', 'project:start', 'project:create', 'project:parent', 'project:unsaved', 'project:reveal', 'project:forget', 'settings:get', 'settings:set', 'settings:locate', 'terminal:open', 'editor:open', 'editor:find', 'asm:pick', 'toolchain:build', 'toolchain:identify', 'toolchain:pack', 'pack:folder', 'toolchain:roms', 'toolchain:run', 'toolchain:unpack', 'vice:attach', 'vice:command', 'file:save', 'vice:quicksave', 'vice:quicksave-info', 'vice:quicksaves', 'vice:quicksave-open', 'vice:quicksave-rename', 'vice:quicksave-save', 'vice:quicksave-favourite', 'vice:quicksaved', 'vice:chargen', 'deepsid:play', 'window:close', 'window:closing', 'git:version', 'git:status', 'git:init', 'git:stage', 'git:unstage', 'git:commit', 'git:push', 'git:remote', 'git:diff', 'git:compare', 'library:list', 'library:add', 'library:update', 'library:remove', 'library:reveal', 'library:pick'].sort());
   });
 });
 
@@ -1125,5 +1126,75 @@ describe("VICE's character ROM (screens in the Graphics tab)", () => {
     const r = await readCharRom(files);
     expect(r).toMatchObject({ found: true, path: files[1] });
     expect(r.found && [...r.bytes.subarray(0, 4)]).toEqual([0, 1, 2, 3]);
+  });
+});
+
+describe('the library (spec 10.6)', () => {
+  const tune = () => makePsid(new Uint8Array([0x60, 0x60, 0x60]), 0x1000, 0x1000, 0x1001, 'Tune');
+  const store = (dir: string, trashed: string[] = []) => new LibraryStore(() => dir, async p => { trashed.push(p); rmSync(p); });
+
+  it('is empty before anything is added, and writes nothing then', async () => {
+    const dir = join(tmp(), 'Library');
+    expect(await store(dir).list()).toEqual({ dir, exists: false, items: [] });
+    expect(existsSync(dir)).toBe(false);
+    expect(defaultLibraryDir(join('C:', 'Docs'))).toBe(join('C:', 'Docs', 'Mimir', 'Library'));
+  });
+
+  it('writes a file under a name of its own in its kind\'s folder, with its entry', async () => {
+    const dir = join(tmp(), 'Library'), lib = store(dir);
+    const r = await lib.add({ kind: 'sid', stem: 'Game - music_1000 ($1000-$1002)', bytes: tune(), entry: { name: 'music_1000', from: { text: 'Game', file: 'game.prg', start: 0x1000, end: 0x1003 } } });
+    expect(r.item).toMatchObject({ kind: 'sid', file: 'Game - music_1000 ($1000-$1002).sid', name: 'music_1000', from: { text: 'Game', file: 'game.prg' } });
+    expect(existsSync(join(dir, 'SIDs', 'Game - music_1000 ($1000-$1002).sid'))).toBe(true);
+    // the same name again: a file of its own; a name with a folder in it is made safe
+    const again = await lib.add({ kind: 'sid', stem: 'Game - music_1000 ($1000-$1002)', bytes: tune(), entry: { name: 'music_1000' } });
+    expect(again.item.file).toBe('Game - music_1000 ($1000-$1002) (2).sid');
+    const chars = await lib.add({ kind: 'chars', stem: 'a:b', bytes: new Uint8Array([0, 0x30, 1, 2, 3, 4, 5, 6, 7, 8]), entry: { name: 'font', mc: true, colors: { bg: 0, fg: 1, mc1: 2, mc2: 3 } } });
+    expect(chars.item).toMatchObject({ kind: 'chars', file: 'a_b.64c', load: 0x3000, mc: true, colors: { bg: 0, fg: 1, mc1: 2, mc2: 3 } });
+    expect([...chars.item.data]).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(chars.listing.items.map(i => i.file)).toEqual(['Game - music_1000 ($1000-$1002) (2).sid', 'Game - music_1000 ($1000-$1002).sid', 'a_b.64c']);
+    // not of its kind
+    await expect(lib.add({ kind: 'sid', stem: 'x', bytes: new Uint8Array(200), entry: { name: 'x' } })).rejects.toThrow(/not a PSID/);
+  });
+
+  it('renames a file and its .sid name, keeps how a charset is drawn', async () => {
+    const dir = join(tmp(), 'Library'), lib = store(dir);
+    const { item } = await lib.add({ kind: 'sid', stem: 'Game - music', bytes: tune(), entry: { name: 'music', from: { text: 'Game' } } });
+    const r = await lib.update({ kind: 'sid', file: item.file, name: 'Title tune', stem: 'Game - Title tune' });
+    expect(r.item).toMatchObject({ file: 'Game - Title tune.sid', name: 'Title tune', from: { text: 'Game' } });
+    expect(existsSync(join(dir, 'SIDs', 'Game - music.sid'))).toBe(false);
+    const sid = new Uint8Array(readFileSync(join(dir, 'SIDs', 'Game - Title tune.sid')));
+    expect(String.fromCharCode(...sid.subarray(0x16, 0x20))).toBe('Title tune');
+    const c = await lib.add({ kind: 'sprites', stem: 'man', bytes: new Uint8Array(64), entry: { name: 'man' } });
+    expect((await lib.update({ kind: 'sprites', file: c.item.file, mc: true, colors: { bg: 6, fg: 1, mc1: 2, mc2: 5 } })).item).toMatchObject({ file: 'man.spr', mc: true, colors: { bg: 6, fg: 1, mc1: 2, mc2: 5 } });
+    expect(() => lib.path('sid', '../x.sid')).toThrow();
+  });
+
+  it('finds a file renamed by hand, lists one put there by hand, and moves one to the Recycle Bin', async () => {
+    const dir = join(tmp(), 'Library'), trashed: string[] = [], lib = store(dir, trashed);
+    await lib.add({ kind: 'sid', stem: 'old name', bytes: tune(), entry: { name: 'Tune', from: { text: 'Game' } } });
+    renameSync(join(dir, 'SIDs', 'old name.sid'), join(dir, 'SIDs', 'new name.sid'));
+    mkdirSync(join(dir, 'Chars'));
+    writeFileSync(join(dir, 'Chars', 'my font.bin'), new Uint8Array(2048));
+    writeFileSync(join(dir, 'Chars', 'notes.txt'), 'not a charset');
+    const l = await lib.list();
+    expect(l.items.map(i => [i.file, i.name, i.from?.text ?? null, !!i.own])).toEqual([['new name.sid', 'Tune', 'Game', false], ['my font.bin', 'my font', null, true]]);
+    expect(JSON.parse(readFileSync(join(dir, 'library.json'), 'utf8')).items.map((e: { file: string }) => e.file)).toEqual(['new name.sid']);
+    const after = await lib.remove({ kind: 'sid', file: 'new name.sid' });
+    expect(trashed).toEqual([join(dir, 'SIDs', 'new name.sid')]);
+    expect(after.items.map(i => i.file)).toEqual(['my font.bin']);
+    expect(JSON.parse(readFileSync(join(dir, 'library.json'), 'utf8')).items).toEqual([]);
+  });
+
+  it('takes only plain file names of the kind over IPC', () => {
+    const tuneBytes = tune();
+    expect(libraryAddSchema.safeParse({ kind: 'sid', stem: 'x', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(true);
+    expect(libraryAddSchema.safeParse({ kind: 'sid', stem: '../x', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(false);
+    expect(libraryAddSchema.safeParse({ kind: 'bitmap', stem: 'x', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(false);
+    expect(libraryFileSchema.safeParse({ kind: 'sid', file: 'x.sid' }).success).toBe(true);
+    expect(libraryFileSchema.safeParse({ kind: 'sid', file: '..\\x.sid' }).success).toBe(false);
+    expect(libraryFileSchema.safeParse({ kind: 'chars', file: 'x.sid' }).success).toBe(false);
+    expect(libraryUpdateSchema.safeParse({ kind: 'chars', file: 'x.64c', colors: { bg: 0, fg: 1, mc1: 2, mc2: 16 } }).success).toBe(false);
+    expect(libraryRevealSchema.safeParse({}).success).toBe(true);
+    expect(libraryRevealSchema.safeParse({ file: 'x.sid' }).success).toBe(false);
   });
 });

@@ -87,8 +87,9 @@ export const test = base.extend<Fixtures & Options>({
   userData: async ({}, use) => {
     const dir = tempDir('profile');
     // the VICE quicksave is looked for in the profile, never in the user's VICE settings folder (the app keeps a copy
-    // of the one it finds); a test that needs one sets its own file in Settings
-    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ viceQuicksave: join(dir, 'vice', 'C64SC.vsf') }));
+    // of the one it finds); a test that needs one sets its own file in Settings. The library (spec 10.6) is in the
+    // profile too, never in the user's documents folder
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ viceQuicksave: join(dir, 'vice', 'C64SC.vsf'), libraryDir: join(dir, 'library') }));
     await use(dir);
     removeDir(dir);
   },

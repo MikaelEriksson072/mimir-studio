@@ -31,6 +31,9 @@ export const ICONS = {
   shield: 'M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6zM8.8 12l2.2 2.2 4.2-4.4',
   // a scroll with code on it: the user's scripts (spec 10.3), the Scripts view and tab
   script: 'M19 17V5a2 2 0 0 0-2-2H4M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3M11.5 7.5 9.5 10l2 2.5M14 7.5l2 2.5-2 2.5',
+  // books on a shelf, one leaning: the library of SIDs, sprites and charsets (spec 10.6)
+  library: 'M4 4h4v16H4zM10 4h4v16h-4zM15.6 5.3l3.4-.9 3.5 14.5-3.4.9zM3 20.5h12',
+  pause: 'M8 5v14M16 5v14',
 } as const;
 
 export type IconName = keyof typeof ICONS;

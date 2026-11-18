@@ -67,6 +67,8 @@ interface MemoryGfxProps {
   onShow: (a: Addr) => void;
   /** save a file through a save dialog (its suggested name and bytes) */
   onSave: (name: string, bytes: Uint8Array) => void;
+  /** the selection as characters or sprites to the library (spec 10.6), drawn as here */
+  onLibrary?: (range: { start: Addr; end: Addr }, kind: 'chars' | 'sprites', mc: boolean, colors: GfxColors) => void;
   /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
   bank?: BankPickProps | null;
   /** where the editor was in memory (14.6b): the tab opens with it at the top (null: at the cursor) */
@@ -99,7 +101,7 @@ async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArr
 
 const plainAddr = (a: Addr) => `$${h4(a)}`;
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onUnmark, onShow, onSave, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
@@ -493,6 +495,8 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onUnma
           {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && bitmapRows < BITMAP_ROWS)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
           {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}
           <button className="btn small" disabled={!gfxIn.length} title={unmarkTitle} onClick={() => onUnmark(range)}>Unmark</button>
+          {onLibrary && (kind === 'chars' || kind === 'sprites') && <button className="btn small" title={`Keep a copy of the selection as ${kind === 'chars' ? 'a charset' : 'sprites'} in the library (the Library view in the activity bar), in these colours, for every project`}
+            onClick={() => onLibrary(range, kind, mc, colors)}><Icon name="library" size={13} />Add to library</button>}
           <span className="gfxv-save" ref={saveRef}>
             <button className="btn small" aria-haspopup="menu" aria-expanded={saveOpen} onClick={() => setSaveOpen(o => !o)} title="Save the selection as a file"><Icon name="download" size={13} />Save…</button>
             {saveOpen && <div className="gfxv-menu" role="menu" aria-label="Save the selection as">

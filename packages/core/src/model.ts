@@ -89,6 +89,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // Build & Run in a debugger (Shift+F5): Retro Debugger or C64 Debugger, where they are; Retro Debugger loads the
   // program 3 s after it starts, when the C64 is at READY
   debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000,
+  // the library's folder (empty: Mimir\Library in the documents folder)
+  libraryDir: '',
 };
 
-export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'tassPath', 'tassArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer', 'debugger', 'retroDebuggerPath', 'retroDebuggerArgs', 'c64DebuggerPath', 'c64DebuggerArgs', 'debuggerWait'] as const;
+export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'tassPath', 'tassArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer', 'debugger', 'retroDebuggerPath', 'retroDebuggerArgs', 'c64DebuggerPath', 'c64DebuggerArgs', 'debuggerWait', 'libraryDir'] as const;

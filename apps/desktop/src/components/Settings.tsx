@@ -141,6 +141,13 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
           + 'A routine of a few instructions is not learned: with its addresses left out it would be every loop of its kind. The right-click menu forgets a name that was suggested wrongly; the command palette learns all the routines already named in the open project.\n'
           + 'Off: nothing new is learned. What is known is still suggested.'),
       ] },
+      { title: 'Library', items: [
+        { id: 'libraryDir', label: 'Library folder', help: 'Where the SID tunes, sprites and charsets you add to the library are kept. Empty: Mimir\\Library in your documents folder.',
+          more: 'The library has a folder for each kind (SIDs, Sprites, Chars), each a file other tools read too (.sid, .spr, .64c) named after where it was found, and library.json, which keeps where each was taken from and how it is drawn. Files you put in those folders yourself are in the library too. A folder picked here is used from the next time the library is read; the files in the old one stay there.',
+          words: 'sid sprites chars charset library folder',
+          control: <div className="field-row"><input id="set-libraryDir" className="mono" value={s.libraryDir} placeholder="Mimir\Library in the documents folder" aria-describedby="set-libraryDir-help" onChange={e => set('libraryDir', e.target.value)} spellCheck={false} />
+            {desktop && kr && <button type="button" className="btn small" aria-label="Choose the library folder" onClick={() => { kr.libraryPick({ current: s.libraryDir }).then(r => { if (r) set('libraryDir', r.dir); }).catch(() => undefined); }}>Choose…</button>}</div> },
+      ] },
       { title: 'Panels', items: [
         psel('inspector', 'Inspector (the panel on the right)', [['open', 'Always open'], ['auto', 'Folded in: opens when you need it, folds in when you click outside it']],
           'Folded in, it is a strip at the right edge and the listing gets its room.',

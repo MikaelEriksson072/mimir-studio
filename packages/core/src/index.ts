@@ -109,4 +109,5 @@ export {
 export { splitArgs } from './util/args';
 export { safeStem, sourceStem } from './util/names';
 export { fileOffsetBases, offsetText } from './offsets';
+export { charsetFile, fileStem, isLibraryFileName, LIBRARY_EXT, LIBRARY_FOLDERS, LIBRARY_INDEX, LIBRARY_KINDS, LIBRARY_MAX_BYTES, LIBRARY_READS, libraryHash, libraryIndexJson, libraryItems, libraryRange, librarySourceText, libraryStem, readLibraryFile, readLibraryIndex, safeFileName, sidWithTexts, spriteFile, uniqueLibraryName, type LibraryColors, type LibraryDigi, type LibraryEntry, type LibraryFile, type LibraryItem, type LibraryKind, type LibrarySource } from './library';
 export { knownRoutines, learnable, learnProject, learnRoutine, readRoutineLibrary, ROUTINE_MAX, ROUTINE_MIN, routineAt, routineSuggestions, sameRoutine, startsRoutine, type KnownRoutine, type Routine, type RoutineMatch } from './routines';

@@ -2,14 +2,14 @@ import { Icon, type IconName } from '../lib/icons';
 import { cx } from '../lib/util';
 import type { Activity } from '../store/ui';
 
-const ITEMS: [Activity, IconName, string][] = [['explorer', 'files', 'Explorer'], ['blocks', 'blocks', 'Blocks'], ['symbols', 'tag', 'Symbols'], ['bookmarks', 'bookmark', 'Bookmarks (Ctrl+B)'], ['scripts', 'script', 'Scripts'], ['pack', 'pack', 'Pack (Brokkr or Exomizer)']];
+const ITEMS: [Activity, IconName, string][] = [['explorer', 'files', 'Explorer'], ['blocks', 'blocks', 'Blocks'], ['symbols', 'tag', 'Symbols'], ['bookmarks', 'bookmark', 'Bookmarks (Ctrl+B)'], ['scripts', 'script', 'Scripts'], ['pack', 'pack', 'Pack (Brokkr or Exomizer)'], ['library', 'library', 'Library (SIDs, sprites, charsets)']];
 /** what a view at work is doing, in its button's tip */
 const BUSY: Partial<Record<Activity, string>> = { pack: 'packing', scripts: 'a script is running' };
 
 export function ActivityBar({ activity, specOpen, counts = {}, busy = {}, onActivity, onSpec, onPalette }: {
   /** the view the side panel shows; null: the side panel is collapsed */
   activity: Activity | null; specOpen: boolean;
-  /** a number shown on a view's button (the bookmarks, the scripts, the ranges to pack) */
+  /** a number shown on a view's button (the bookmarks, the scripts, the ranges to pack, what is in the library) */
   counts?: Partial<Record<Activity, number>>;
   /** views at work (Pack while it packs, Scripts while one runs): a spinner on the button instead of the number */
   busy?: Partial<Record<Activity, boolean>>;

@@ -2,7 +2,7 @@
  * validated with zod before it touches the file system or starts a process. */
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions, type WebContents } from 'electron';
 import { existsSync, statSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { guessAssembler, type AssemblerId } from '@mimir/core';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -28,7 +28,9 @@ import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema, windowCloseSchema,
   gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRangeSchema, gitRemoteSchema, gitStatusSchema,
+  libraryAddSchema, libraryFileSchema, libraryPickSchema, libraryRevealSchema, libraryUpdateSchema,
 } from './schemas';
+import type { LibraryStore } from './library';
 import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
 
@@ -48,6 +50,8 @@ export interface IpcDeps {
   projects: ProjectStore;
   /** git in the repository of the project that is open */
   git: GitService;
+  /** the library's folder (spec 10.6) */
+  library: LibraryStore;
 }
 
 const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undefined;
@@ -80,7 +84,7 @@ async function sourceAssembler(path: string): Promise<AssemblerId> {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { policy, settings, watcher, recent, quicksave, history, projects, git } = deps;
+  const { policy, settings, watcher, recent, quicksave, history, projects, git, library } = deps;
   quicksave.watch(quicksaveFiles(settings.get().viceQuicksave));
   // the quicksave there is now (from before the app started, or in a newly set file) joins the kept ones
   const keepCurrent = () => quicksaveInfo(quicksaveFiles(settings.get().viceQuicksave)).then(i => (i.found && i.saved ? history.add(i.path, i.saved) : null)).catch(() => null);
@@ -349,6 +353,25 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.gitRemote, gitRemoteSchema, req => git.remote(req.url));
   handle(CHANNELS.gitDiff, gitDiffSchema, req => git.diff(req));
   handle(CHANNELS.gitCompare, gitRangeSchema, req => git.compare(req));
+  // the library (10.6): a file only by its kind and plain name in that kind's folder, the folder from the settings
+  handle(CHANNELS.libraryList, none, () => library.list());
+  handle(CHANNELS.libraryAdd, libraryAddSchema, req => library.add(req));
+  handle(CHANNELS.libraryUpdate, libraryUpdateSchema, req => library.update(req));
+  handle(CHANNELS.libraryRemove, libraryFileSchema, req => library.remove(req));
+  handle(CHANNELS.libraryReveal, libraryRevealSchema, async req => {
+    if (req.kind && req.file) { shell.showItemInFolder(library.path(req.kind, req.file)); return; }
+    // a folder not made yet is made, so the file manager has something to show
+    const dir = req.kind ? library.folder(req.kind) : library.root();
+    await mkdir(dir, { recursive: true });
+    const problem = await shell.openPath(dir);
+    if (problem) throw new Error(problem);
+  });
+  // Settings → Library folder → Choose…: nothing is stored here (Save settings goes through settings:set)
+  handle(CHANNELS.libraryPick, libraryPickSchema, async (req, e) => {
+    const start = startFolder(req.current ?? '') ?? recent.folder('tool');
+    const [dir] = await pickPaths(e, { title: 'Choose the folder for the library', properties: ['openDirectory', 'createDirectory', 'promptToCreate'], ...(start ? { defaultPath: start } : {}) });
+    return dir ? { dir } : null;
+  });
   handle(CHANNELS.settingsGet, z.undefined().or(z.object({}).strict()), () => settings.get());
   handle(CHANNELS.settingsSet, toolchainSettingsSchema.partial(), req => {
     const next = settings.set(req);

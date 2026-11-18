@@ -79,6 +79,12 @@ const api: KrApi = {
   gitRemote: req => invoke(CHANNELS.gitRemote, req),
   gitDiff: req => invoke(CHANNELS.gitDiff, req),
   gitCompare: req => invoke(CHANNELS.gitCompare, req),
+  libraryList: () => invoke(CHANNELS.libraryList),
+  libraryAdd: req => invoke(CHANNELS.libraryAdd, req),
+  libraryUpdate: req => invoke(CHANNELS.libraryUpdate, req),
+  libraryRemove: req => invoke(CHANNELS.libraryRemove, req),
+  libraryReveal: req => invoke(CHANNELS.libraryReveal, req ?? {}),
+  libraryPick: req => invoke(CHANNELS.libraryPick, req ?? {}),
 };
 
 contextBridge.exposeInMainWorld('kr', api);

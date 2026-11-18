@@ -3,7 +3,7 @@
  * process registers exactly these channels and the preload exposes
  * exactly these functions as `window.kr`.
  * ===================================================================== */
-import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
+import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LibraryColors, LibraryEntry, LibraryItem, LibraryKind, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
 
 export const CHANNELS = {
   projectOpen: 'project:open',
@@ -56,6 +56,12 @@ export const CHANNELS = {
   gitRemote: 'git:remote',
   gitDiff: 'git:diff',
   gitCompare: 'git:compare',
+  libraryList: 'library:list',
+  libraryAdd: 'library:add',
+  libraryUpdate: 'library:update',
+  libraryRemove: 'library:remove',
+  libraryReveal: 'library:reveal',
+  libraryPick: 'library:pick',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
@@ -400,6 +406,27 @@ export interface GitCompareResult { range: GitRange; files: GitRangeFile[] }
  *  a repository already (the new one is a repository of its own inside it); `ok` false: `message` says why not */
 export interface GitInitOutcome { ok: boolean; root: string; nested: string | null; message: string }
 
+/* ---------------------------------------------------------------------
+ * The library (spec 10.6): the SID music, sprites and charsets the user added, in the library's folder (Settings →
+ * General → Library folder; a folder for each kind and library.json). The renderer names a file by its kind and its
+ * plain name in that kind's folder, never by a path.
+ * --------------------------------------------------------------------- */
+
+/** the library's folder and what is in it; `exists`: the folder is there (nothing was added yet when it is not) */
+export interface LibraryListing { dir: string; exists: boolean; items: LibraryItem[] }
+/** a file for the library: its kind, the name its file gets without the extension (made unique in the folder), its
+ *  bytes as the file has them (a .sid, raw sprites, a charset with its load address) and what library.json keeps */
+export interface LibraryAddRequest { kind: LibraryKind; stem: string; bytes: Uint8Array; entry: Pick<LibraryEntry, 'name' | 'from' | 'mc' | 'colors' | 'digi' | 'busy'> }
+/** a file of the library, by its kind and its name in that kind's folder */
+export interface LibraryFileRequest { kind: LibraryKind; file: string }
+/** a file of the library changed: `name` its name (a .sid's too), `stem` the file renamed to it (made unique in the
+ *  folder), `mc` and `colors` how it is drawn */
+export interface LibraryUpdateRequest extends LibraryFileRequest { name?: string; stem?: string; mc?: boolean; colors?: LibraryColors }
+/** the file added or changed, and the library after it */
+export interface LibraryChangeResult { item: LibraryItem; listing: LibraryListing }
+/** the file manager at a file of the library, or at its folder (a kind's, or the library's) */
+export interface LibraryRevealRequest { kind?: LibraryKind; file?: string }
+
 export interface KrApi {
   openProject(req?: ProjectOpenRequest): Promise<ProjectOpenResult | null>;
   saveProject(req: ProjectSaveRequest): Promise<ProjectSaveResult | null>;
@@ -481,4 +508,13 @@ export interface KrApi {
   gitDiff(req: GitDiffRequest): Promise<GitDiffResult>;
   /** the files that are not the same at the range's two points */
   gitCompare(req: GitRange): Promise<GitCompareResult>;
+  /** the library's folder and its files (spec 10.6) */
+  libraryList(): Promise<LibraryListing>;
+  libraryAdd(req: LibraryAddRequest): Promise<LibraryChangeResult>;
+  libraryUpdate(req: LibraryUpdateRequest): Promise<LibraryChangeResult>;
+  /** the file moved to the Recycle Bin, and its entry taken out of library.json */
+  libraryRemove(req: LibraryFileRequest): Promise<LibraryListing>;
+  libraryReveal(req?: LibraryRevealRequest): Promise<void>;
+  /** a folder dialog for the library's folder (Settings stores it); null: cancelled */
+  libraryPick(req?: { current?: string }): Promise<{ dir: string } | null>;
 }

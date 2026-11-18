@@ -2582,6 +2582,65 @@ igenkänning i ett som är länkat någon annanstans, en annan omaskad byte, fö
 `apps/desktop/e2e/overview.spec.ts` (namnge, nästa projekt får förslaget i översikten, paletten och menyn, glömma,
 inställningen).
 
+### 10.6 Biblioteket (SID-musik, sprites och teckenset)
+
+Det man hittar i ett program, en låt, en sprite-animation, ett teckenset, ska man kunna spara undan och titta på och
+lyssna på igen, oavsett vilket projekt som är öppet. Biblioteket är därför en mapp på datorn, inte en del av projektet:
+en mapp för varje sort med filer som andra verktyg också läser, och namn som säger var de hittades. Det rena (namn,
+filformat, indexet) står i `packages/core/src/library.ts`; mappen läses och skrivs bara av huvudprocessen
+(`apps/desktop/electron/main/library.ts`), och appen visar den (`store/library.ts`, `lib/library.ts`,
+`components/Library*.tsx`).
+
+- **Mappen.** Settings → General → *Library folder* (`libraryDir` bland verktygsinställningarna; tom: `Mimir\Library` i
+  dokumentmappen, bredvid projekten). I den finns `SIDs`, `Sprites` och `Chars`, och `library.json`. Mappen skapas först
+  när något läggs till. Testerna har biblioteket i sin egen profil (`e2e/fixtures.ts`), aldrig i dokumentmappen.
+- **Filerna.** En låt är en PSID (en samplingsspelare utan play en RSID), samma `.sid` som DeepSID får (`musicSidFile`,
+  8.6): blockets byte med init och play, och för en snapshots spelare rutinen som lägger tillbaka det den läser utanför
+  blocket. Dess tre texter är namnet, kompositören (*Author*, `<?>` när den inte anges) och varifrån den togs
+  (*Released*), som HVSC:s låtar har dem (`sidWithTexts`, Latin-1, 31 tecken). Sprites är `.spr`, 64 byte var (en sista
+  som inte är hel fylls ut med nollor), ett teckenset `.64c`, laddadressen först. Filer som användaren lagt i mapparna
+  själv läses också: `.sid`; `.spr`, `.bin`, `.raw`; `.64c`, `.chr`, `.bin`, `.raw` (en fil som är 2 byte längre än
+  hela sprites eller tecken har en laddadress först; `readLibraryFile`).
+- **Namnen.** Varifrån, namnet och adresserna: `Comaland side 1 - file25_1000 - music_1000 ($1000-$1fff).sid`.
+  Varifrån (`librarySourceText`) är disken eller bandet filen öppnades från (medan det sitter i), filen bytena låg i och
+  projektet, vart och ett en gång: ett namn som ett annat redan innehåller utelämnas, jämfört med bara bokstäver och
+  siffror (projektet *Comaland* med disken *Comaland side 1*; projektet *INTRO 3 V1.0_FLA-unpacked* och filen
+  *INTRO_3_V1_0_FLA-unpacked.prg* är samma namn, och projektets står kvar), diskens och filens ändelse utelämnas
+  (`.d64`, `.prg`, inte en versions `.0`). Namnet görs till ett som Windows tar (`safeFileName`: inga `\ / : * ? " <
+  > |`, inget `-` eller `.` först, inget enhetsnamn, högst 140 tecken med adresserna kvar när resten kortas) och unikt
+  i mappen (`… (2).sid`).
+- **library.json** håller det filen inte kan säga: namnet, när den lades till, var den togs (texten, projektet, filen,
+  disken, adresserna), hur sprites och tecken ritas (multicolor och färger) och för en samplingsspelare dess avbrott
+  (som VICE-spelaren behöver). Varje post har bytenas hash, så en fil som döpts om utanför Mimir hittar sin post igen;
+  poster vars fil är borta tas bort, och en fil utan post visas som *put in the folder by hand* (`libraryItems`).
+- **Lägga till.** Ett musik-, sprite- eller teckensetblock: högerklick → *Add to library (SIDs/Sprites/Chars)…*,
+  knappen *Add to library* i inspektorn (vid *Play in VICE*, under förhandsvisningen av grafik), kommandopaletten (*Add
+  the block at the cursor to the library*), och i Graphics-fliken ett urval som visas som tecken eller sprites (med
+  flikens färger). Dialogen fyller i blockets namn och varifrån, en låt får också *Author*, och den visar filens namn
+  medan man skriver. Finns samma byte redan (en `.sid` oavsett dess texter, `sameInLibrary`) säger dialogen det och
+  knappen blir *Add again*. Meddelandet säger var filen hamnade (*Added to the library: SIDs\…*).
+- **Titta och lyssna.** Knappen *Library* i aktivitetsfältet visar vyn i sidopanelen och fliken *Library* (som står i
+  flikraden när den öppnats). Vyn listar allt, det nyaste först, med en bild (de första tecknen, de två första
+  spritesarna) och var det togs; *All / SIDs / Sprites / Chars* väljer sort och filtret letar i namn, källa och
+  kompositör. En låts uppspelningsknapp, eller dubbelklick, spelar den i VICE eller DeepSID som Settings → Toolchain
+  säger. Fliken visar korten, och det valda stort bredvid dem: tecknen och spritesarna med multicolor, fyra färger,
+  antal per rad och zoom (sparas för det, en halv sekund efter senaste ändringen), sprites också som en animation
+  (bildruta för bildruta, 2–50 per sekund, från och till), ett klick på ett tecken eller en sprite visar dess byte; en
+  låts texter, adresser, init och play med *Play in VICE* och *Play in DeepSID* och, med flera låtar, vilken som startar.
+  VICE spelar en `.sid` ur biblioteket med Mimirs spelare (`sidPlayer`, 8.6): init med låten, sedan play varje
+  bildruta, en RSID med de avbrott init startar. Högerklick spelar, visar filen, flyttar den till papperskorgen.
+- **Ändra.** *Rename* döper om både posten och filen (`Comaland side 1 - Title tune ($1000-$1fff).sid`, en låts egen
+  text också); *Move to the Recycle Bin* frågar först och flyttar filen dit (`shell.trashItem`), så den kan tas
+  tillbaka. Den som döper om eller tar bort filer i Utforskaren ser det när biblioteket läses igen (knappen i vyn).
+- **IPC.** `library:list`, `library:add`, `library:update`, `library:remove`, `library:reveal`, `library:pick` (13.4);
+  sidan anger alltid en fil med sort och rent filnamn i sortens mapp, aldrig en sökväg, och huvudprocessen kontrollerar
+  det (`isLibraryFileName`).
+
+Test: `packages/core/test/library.test.ts` (namnen, filformaten, `.sid`-texterna, `library.json` med filer som döpts
+om, ändrats och lagts dit för hand), `apps/desktop/test/main.test.ts` (mappen: lägga till, döpa om, papperskorgen,
+IPC-scheman), `apps/desktop/test/library.test.ts` (vad som får läggas till, sökningen, samma byte, bilderna) och
+`apps/desktop/e2e/library.spec.ts`.
+
 ## 11. Kick Assembler-generatorn
 
 ### 11.1 Filens struktur
@@ -3216,6 +3275,12 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `git:remote` | renderer → main | `{ url }`: origin läggs till, eller får en ny URL |
 | `git:diff` | renderer → main | `{ path, from?, staged?, range? }` → `{ text, truncated, binary }`: en fils ändringar, stagade eller inte, eller mellan `range`:s två punkter; en ospårad fil visas hel |
 | `git:compare` | renderer → main | `{ from, to }` → `{ range, files }`: filerna som inte är lika mellan två punkter, med ändring och rader (`from` en commits hash eller `null`: ingenting; `to` en commits hash eller `null`: mappen nu, med ospårade filer) |
+| `library:list` | renderer → main | → `{ dir, exists, items }`: bibliotekets mapp och dess filer med deras poster i `library.json` (10.6) |
+| `library:add` | renderer → main | `{ kind, stem, bytes, entry }` → `{ item, listing }`: filen skriven i sortens mapp under ett säkert, unikt namn |
+| `library:update` | renderer → main | `{ kind, file, name?, stem?, mc?, colors? }` → `{ item, listing }`: namnet (filen döps om till `stem`), hur den ritas |
+| `library:remove` | renderer → main | `{ kind, file }` → bibliotekets innehåll: filen till papperskorgen, posten ut ur `library.json` |
+| `library:reveal` | renderer → main | `{ kind?, file? }`: filhanteraren vid filen, eller vid sortens eller bibliotekets mapp |
+| `library:pick` | renderer → main | `{ current? }` → `{ dir }` eller `null`: en mappdialog för bibliotekets mapp (Settings sparar den) |
 
 ### 13.4b Smart attach
 

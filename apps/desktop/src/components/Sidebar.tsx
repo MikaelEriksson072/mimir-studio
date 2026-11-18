@@ -18,10 +18,13 @@ import { C64Screen, screenItems } from './C64Screen';
 import { DiskScreen } from './DiskScreen';
 import { MemoryStrip, type CanvasColors } from './Heatmap';
 import { PackView, type PackViewProps } from './Pack';
+import { LibraryView, type LibraryViewProps } from './LibraryView';
 import { SideSection } from './SideSection';
 
 interface SidebarProps {
   view: Activity; A: AnalysisResult; R: RenderResult; project: Project; colors: CanvasColors; cursor: Addr | null;
+  /** the Library view (spec 10.6) */
+  library: LibraryViewProps;
   onNavigate: (a: Addr) => void; onDemo: () => void; onRemoveFile: (i: number) => void;
   /** a label picked in Symbols: the listing goes to it with the box of its references (else onNavigate) */
   onLabel?: (a: Addr) => void;
@@ -147,7 +150,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -205,6 +208,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLab
   if (view === 'bookmarks') return <BookmarksView A={A} editing={bmEditing} bookmarks={project.bookmarks} R={R} cursor={cursor} selected={bmSel} onSelect={onBmSelect} onGo={onBmGo} onAdd={onBmAdd} onEdit={onBmEdit} onDelete={onBmDelete} />;
   if (view === 'scripts') return <ScriptsSideView {...scripts} />;
   if (view === 'pack') return <PackView {...pack} />;
+  if (view === 'library') return <LibraryView {...library} />;
   if (view === 'blocks') return <BlocksView A={A} R={R} cursor={cursor} q={q} setQ={setQ} onNavigate={onNavigate} onPlayMusic={onPlayMusic} musicPlayer={musicPlayer} onShowBlock={onShowBlock} />;
   // symbols
   const ql = q.toLowerCase();
