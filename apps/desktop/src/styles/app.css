@@ -548,6 +548,30 @@ main.main { container: editor / inline-size; }
 .row.filebar { font: 600 11px/20px var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); padding-left: 12px; gap: 6px; background: var(--bg); }
 .edit-pop { position: absolute; left: 150px; z-index: 5; width: min(440px, calc(100% - 170px)); padding: 8px 10px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--accent); box-shadow: var(--shadow); font-family: var(--font-ui); display: flex; flex-direction: column; gap: 5px; }
 .edit-pop label { font-size: 11px; color: var(--fg-2); }
+/* a picked label's references (lib/labelrefs.ts): a box beside its line, right of the code of the lines it lies over */
+.xref-pop { position: absolute; z-index: 6; width: max-content; max-width: min(560px, calc(100% - 16px)); padding: 4px 0 5px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); font: 12px/18px var(--font-code); color: var(--fg); font-variant-ligatures: none; user-select: none; }
+.xref-pop.zp { border-color: color-mix(in srgb, var(--warn) 60%, var(--line-2)); }
+.xref-pop-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 4px 10px; margin-bottom: 2px; border-bottom: 1px solid var(--line); font: 11.5px/22px var(--font-ui); color: var(--fg-2); white-space: nowrap; }
+.xref-pop-head .mono { font-family: var(--font-code); }
+.xref-pop-n { margin-left: auto; padding-left: 10px; color: var(--fg-3); }
+.xref-pop-head .icon-btn { width: 22px; height: 22px; }
+.xref-pop-list { overflow-y: auto; overscroll-behavior: contain; }
+.xref-pop table { border-collapse: collapse; }
+.xref-pop tr { height: 20px; cursor: pointer; }
+.xref-pop tr:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.xref-pop tr.via { box-shadow: inset 2px 0 var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.xref-pop td { padding: 0 6px; white-space: nowrap; }
+.xref-pop td:first-child { padding-left: 10px; }
+.xref-pop td:last-child { padding-right: 10px; }
+.xref-pop .xp-adr { color: var(--fg-3); }
+.xref-pop .xp-src { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
+.xref-pop .xp-src .ind { display: none; }
+.xref-pop .xp-src .link { cursor: inherit; text-decoration: none; }
+.xref-pop .xp-in { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; }
+.xref-pop .kind { font-family: var(--font-ui); }
+.xref-pop-none { max-width: 44ch; padding: 2px 10px 0; font: 11.5px/16px var(--font-ui); color: var(--fg-3); white-space: normal; }
+/* the label line the box is for */
+.row.xref-at .syn-label.def, .row.xref-at .cp > .syn-label { box-shadow: inset 0 -1px 0 var(--accent-hi); }
 /* zero-page variables: a tag on their .label line and in the rename editor, which also gets a warning border */
 /* timing code: the instructions a branch enters part of the way in, to wait (5.4b) */
 .row.delay .src { color: var(--fg-2); }
@@ -762,7 +786,7 @@ main.main { container: editor / inline-size; }
 /* the Covert script tab: the tool's command file and command line under the files */
 .covert-script { margin: 6px 10px 10px; padding: 6px 8px; font-size: 12px; color: var(--fg-2); background: var(--panel-2); border-radius: 4px; white-space: pre; overflow-x: auto; }
 .kind { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--line); color: var(--fg-2); }
-.kind-call { color: var(--syn-mn); } .kind-write, .kind-rmw { color: var(--syn-ill); } .kind-read { color: var(--syn-hw); } .kind-branch, .kind-jump { color: var(--syn-dir); } .kind-ptr { color: var(--syn-label); }
+.kind-call { color: var(--syn-mn); } .kind-write, .kind-rmw { color: var(--syn-ill); } .kind-read { color: var(--syn-hw); } .kind-branch, .kind-jump { color: var(--syn-dir); } .kind-ptr { color: var(--syn-label); } .kind-lo, .kind-hi { color: var(--syn-num); } .kind-name { color: var(--fg-2); }
 
 .stats { padding: 12px 14px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 14px; }

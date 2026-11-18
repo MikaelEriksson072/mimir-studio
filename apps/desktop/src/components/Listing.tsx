@@ -7,6 +7,7 @@ import { cellParts, type Cell } from '../lib/cells';
 import { asmWords, commentStart, insHead, useAssembler } from '../lib/assembler';
 import { Icon } from '../lib/icons';
 import { peekOf, peekOrder, type Peek, type PeekNames } from '../lib/peek';
+import { XREF_KIND, type LabelRef } from '../lib/labelrefs';
 import type { Changed, Editing, ScrollReq, Sel, ViewAt } from '../lib/types';
 import { useUi, type Gutter } from '../store/ui';
 import { CycleCell, type CycleView } from './Cycles';
@@ -194,6 +195,9 @@ interface ListingProps {
   /** the scripts at each address (spec 10.3): linked to it, or their code uses its name; a click opens one */
   scriptMarks?: ReadonlyMap<Addr, ScriptMark[]>;
   onScriptMark?: (id: string, line?: number) => void;
+  /** the label picked: the box of its references beside its line; a click on one goes there (`onXref`), the box's
+   *  buttons close it and show the Cross-references tab */
+  xrefs?: XrefBox | null; onXref?: (a: Addr) => void; onXrefClose?: () => void; onXrefPanel?: () => void;
 }
 
 /** the line of the last loaded byte of `start`..`end` (a bookmark's area), -1 when it has none */
@@ -239,7 +243,7 @@ function ScriptTag({ marks, onOpen }: { marks: ScriptMark[]; onOpen?: (id: strin
     <Icon name="prompt" size={11} />{marks[0].name}{marks.length > 1 ? ` +${marks.length - 1}` : ''}</span>;
 }
 
-export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, breakpoints, watches, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth, scriptMarks, onScriptMark }: ListingProps) {
+export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded, A, lineOf, cursor, picked, sel, onClickLine, onDragTo, onDragCells, onMove, onToken, onContext, scrollReq, editing, onCommitEdit, onCancelEdit, labelError, setLabelError, listRef, gutter, bookmarks, onBookmark, breakpoints, watches, cycles, patches = [], keepView, holdView, offsetAt, changed, find, names, startAt, onView, onPeekPick, onSprites, onWidth, scriptMarks, onScriptMark, xrefs, onXref, onXrefClose, onXrefPanel }: ListingProps) {
   const words = asmWords(useAssembler());
   const box = useRef<HTMLDivElement | null>(null);
   const [top, setTop] = useState(0);
@@ -374,7 +378,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const p = pointer.current, el = box.current, k = peekKeys.current;
     const over = p && el && !k.quiet ? document.elementFromPoint(p.x, p.y) : null;
     const onPeek = !!over?.closest('.peek');
-    if (!p || !el || !over || (!onPeek && (!el.contains(over) || over.closest('.edit-pop')))) { clearTimeout(k.cell); k.cellAt = null; if (!settle) setPeekRow(null); return; }
+    if (!p || !el || !over || (!onPeek && (!el.contains(over) || over.closest('.edit-pop, .xref-pop')))) { clearTimeout(k.cell); k.cellAt = null; if (!settle) setPeekRow(null); return; }
     const r = el.getBoundingClientRect(), i = gfxHead(latest.current.lines, Math.floor((p.y - r.top + el.scrollTop) / ROW));
     const top = r.top + i * ROW - el.scrollTop, now = Date.now();
     const aim = document.querySelector('.peek')?.getBoundingClientRect();
@@ -664,7 +668,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     const bp = l.k === 'ins' && !!breakpoints?.has(l.a), wt = n > 0 && watches?.length ? watches.filter(w => w >= l.a && w < l.a + n) : [];
     const ptTip = pt && (pt.script ? `Changed by the script "${pt.name}" when it ran: $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} (the Scripts tab runs it again or takes it out)` : `Patched: "${pt.name}" wrote $${h4(pt.start)}-$${h4(patchEnd(pt) - 1)} over the original (P edits it)`);
     rows.push(
-      <div key={i} data-i={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', bp && 'bp', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l))} style={{ top: i * ROW, ...tint(i) }}
+      <div key={i} data-i={i} className={cx('row', `k-${l.k}`, isSel && 'sel', i === curLine && 'cur', 'preview' in l && l.preview && 'preview', 'delay' in l && l.delay && 'delay', blk && excluded.has(blk.start) && 'excluded', cycles && steps.get(l.a) && !steps.get(l.a)!.counted && l.k === 'ins' && 'cy-skip', mv && 'movable', drop && 'drop-into', moving?.from === i && 'moving-src', pt && 'patched', bp && 'bp', marks.has(i) && 'bm', run && 'in-reloc', voffAt(l.a) && 'in-voff', hit(l), !editing && xrefs?.line === i && 'xref-at')} style={{ top: i * ROW, ...tint(i) }}
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l, cellOf(e))}>
         <span className="gut" style={g ? { background: `var(--g-${g})` } : undefined} />{stripe(i)}{mark(i)}
         {offCell(n > 0 || l.k === 'lbl' ? l.a : null)}<span className={cx('adr', byLine && 'lno', !byLine && (n > 0 || l.k === 'lbl') && voffAt(l.a) && 'shifted')} title={tip ?? runTip ?? (byLine || !(n > 0 || l.k === 'lbl') ? undefined : voffTip(l.a))}>{byLine ? lineNo[i] : n > 0 || l.k === 'lbl' ? adrText(l.a) : ''}</span>
@@ -689,6 +693,8 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
       pop = <EditPopover key={editing.kind + editing.addr + (editing.block ? 'b' : '') + (editing.blank ?? '')} top={at * ROW + under * ROW + 2} editing={editing} onCommit={onCommitEdit} onCancel={onCancelEdit} error={labelError} setError={setLabelError} />;
     }
   }
+  // the box of the picked label's references (none while an editor is open)
+  const xpop = xrefs && !editing && onXref ? <XrefPop key={`${xrefs.line}/${xrefs.name}`} box={xrefs} onGo={onXref} onClose={() => onXrefClose?.()} onPanel={() => onXrefPanel?.()} /> : null;
   let chip = null;
   if (moving) {
     const { m, moves } = moving, dir = m && m === moves.prev ? 'prev' : 'next';
@@ -717,7 +723,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   return (
     <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => { setTop(e.currentTarget.scrollTop); if (peekRow) peekNow(); report(); }} aria-label="Disassembly listing"
       onMouseMove={peekMove} onMouseLeave={e => { if (e.relatedTarget instanceof Element && e.relatedTarget.closest('.peek')) return; pointer.current = null; clearTimeout(peekKeys.current.timer); clearTimeout(peekKeys.current.cell); peekKeys.current.cellAt = null; setPeekRow(null); }}>
-      <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{chip}</div>
+      <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{xpop}{chip}</div>
       {peek && peekRow && <PeekBox list={box.current} peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} rowH={(peekRow.line.k === 'gfx' ? peekRow.line.rows : 1) * ROW} sel={sel?.bytes ? sel : null} onPick={(a, extend) => onPeekPick?.(a, extend)} />}
     </div>
   );
@@ -835,6 +841,79 @@ function SpriteCount({ b, onSprites }: { b: Block; onSprites: (b: Block, n: numb
       <span title="Sprites one after the other from the start of the block, 64 bytes each">{whole} sprite{whole === 1 ? '' : 's'}{rest ? ` + ${rest} byte${rest === 1 ? '' : 's'}` : ''}</span>
       <button aria-label="One sprite more" title={`${whole + 1} sprites: $${h4(b.start)}–$${h4(b.start + (whole + 1) * 64 - 1)}`} onClick={() => onSprites(b, whole + 1)}>+</button>
     </span>
+  );
+}
+
+/** The box of a label's references (lib/labelrefs.ts) beside its line `line`. */
+export interface XrefBox { line: number; name: string; adr: string; zp: boolean; refs: LabelRef[]; via: Addr | null }
+
+/** how many references the box shows before it scrolls */
+const XREF_ROWS = 10;
+
+/** A label's references, in a box under its line (above it where the listing ends under it), so the line stays free
+ *  for its own clicks and menu, and right of the code of the lines it lies over, so that code stays in sight (where
+ *  there is no room, at the listing's right edge). A click on a reference goes there (`onGo`); the one gone to last
+ *  (`via`) is marked when the cursor comes back to the label. */
+function XrefPop({ box, onGo, onClose, onPanel }: { box: XrefBox; onGo: (a: Addr) => void; onClose: () => void; onPanel: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  /** above the line: decided once the line is in view (the listing may still be on its way there), so the
+   *  box does not jump while the listing scrolls */
+  const up = useRef<boolean | null>(null);
+  const top = box.line * ROW;
+  // after every render of the listing: the rows it lies over are drawn only once they are in view (the listing draws
+  // the rows on screen), and the listing may scroll to the label after the box comes
+  useLayoutEffect(() => {
+    const el = ref.current, list = el?.closest<HTMLElement>('.listing');
+    if (!el || !list) return;
+    const lr = list.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+    // under the label's line, or above it where the listing ends under it and there is room above
+    const rowTop = lr.top + top - list.scrollTop;
+    if (up.current == null && rowTop >= lr.top - 1 && rowTop + ROW <= lr.bottom + 1) up.current = rowTop + ROW + h > lr.bottom - 8 && rowTop - h >= lr.top + 4;
+    const y = up.current ? top - h : top + ROW;
+    const y0 = lr.top + y - list.scrollTop, y1 = y0 + h;
+    // (the code's text: its box is padded out to where the comments start)
+    let code = 0;
+    const text = document.createRange();
+    for (const r of list.querySelectorAll<HTMLElement>('.row:not(.hdr):not(.k-gfx)')) {
+      const rr = r.getBoundingClientRect();
+      if (rr.bottom <= y0 || rr.top >= y1) continue;
+      const src = r.querySelector<HTMLElement>('.src'), cp = src?.querySelector<HTMLElement>(':scope > .cp, :scope > .syn-label');
+      if (!src || !cp) continue;
+      text.selectNodeContents(cp);
+      code = Math.max(code, Math.min(text.getBoundingClientRect().right, src.getBoundingClientRect().right));
+    }
+    const room = list.clientWidth - 8;
+    const left = Math.round(Math.max(8, Math.min((code ? code - lr.left + list.scrollLeft : 150) + 24, room - w)));
+    // (only a change: an update from a layout effect after every render would never end)
+    if (!pos || pos.left !== left || pos.top !== y) setPos({ left, top: y });
+  });
+  const s = box.refs.length === 1 ? '' : 's';
+  return (
+    <div ref={ref} className={cx('xref-pop', box.zp && 'zp')} role="dialog" aria-label={`References to ${box.name}`}
+      style={pos ? { left: pos.left, top: pos.top } : { top, visibility: 'hidden' }}
+      onMouseDown={e => { e.stopPropagation(); if (!(e.target as HTMLElement).closest('button')) e.preventDefault(); }} onDoubleClick={e => e.stopPropagation()}>
+      <div className="xref-pop-head">
+        <span className="mono syn-label">{box.name}</span><span className="muted mono">{box.adr}</span>
+        <span className="xref-pop-n">{box.refs.length ? `${box.refs.length} reference${s}` : 'no references'}</span>
+        <button className="icon-btn" aria-label="Show in the Cross-references tab" title="Show in the Cross-references tab of the bottom panel (X)" onClick={onPanel}><Icon name="target" size={13} /></button>
+        <button className="icon-btn" aria-label="Close the references" title="Close (Esc)" onClick={onClose}><Icon name="x" size={13} /></button>
+      </div>
+      {box.refs.length ? (
+        <div className="xref-pop-list" style={{ maxHeight: XREF_ROWS * ROW }}>
+          <table><tbody>
+            {box.refs.map(r => (
+              <tr key={`${r.from}/${r.kind}`} className={cx(r.from === box.via && 'via')} title={`Go to $${h4(r.shown)}${r.where ? ` (${r.where})` : ''}`}
+                onMouseDown={e => { if (e.button !== 0) return; e.preventDefault(); onGo(r.from); }}>
+                <td className="mono xp-adr">{h4(r.shown)}</td>
+                <td><span className={cx('kind', `kind-${r.kind}`)}>{XREF_KIND[r.kind]}</span></td>
+                <td className="mono xp-src">{r.line ? <LineBody l={{ ...r.line, cmt: '' }} onToken={() => { }} /> : <span className="muted">${h4(r.from)}</span>}</td>
+                <td className="mono xp-in muted">{r.where ?? ''}</td>
+              </tr>))}
+          </tbody></table>
+        </div>
+      ) : <div className="xref-pop-none">Nothing references it: an entry point, a vector or data reached only through a computed address has none.</div>}
+    </div>
   );
 }
 

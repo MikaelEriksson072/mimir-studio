@@ -9063,3 +9063,83 @@ test('scripts: the output has a tab each for Init, Watch, In the program, Scratc
     await expect(page.getByRole('region', { name: 'Watch' })).toBeVisible();
   });
 });
+
+test('a label clicked shows who references it in a box beside it: a click on one goes there and Esc comes back to the label with the box; the line under it, a rename or Esc closes it; the Symbols view and a zero-page .label line open it too', async ({ page }) => {
+  await waitForListing(page);
+  const labelRow = (name: string) => listing(page).locator('.row.k-lbl', { has: page.locator('.syn-label', { hasText: new RegExp(`^${name}:$`) }) });
+  const box = page.getByRole('dialog', { name: /^References to / });
+  const cells = (i: number) => box.locator('tbody tr').nth(i).locator('td');
+
+  await test.step('the IRQ handler: the two lines that set the vector with its low and high byte, beside its line', async () => {
+    await goTo(page, 'irq_08b7');
+    await labelRow('irq_08b7').locator('.syn-label').click();
+    await expect(box).toHaveAccessibleName('References to irq_08b7');
+    await expect(box.locator('.xref-pop-head')).toContainText('2 references');
+    await expect(box.locator('tbody tr')).toHaveCount(2);
+    await expect(cells(0)).toHaveText(['0839', 'low byte', 'lda #<irq_08b7', 'start+41']);
+    await expect(cells(1)).toHaveText(['083e', 'high byte', 'lda #>irq_08b7', 'start+46']);
+    await expect(labelRow('irq_08b7')).toHaveClass(/xref-at/);
+    // under the label's line, which stays free for a click or its menu anywhere on it
+    await labelRow('irq_08b7').click({ trial: true, button: 'right' });
+    // beside the code of the lines it lies over, not over it
+    const over = await box.evaluate(b => {
+      const br = b.getBoundingClientRect(), text = document.createRange();
+      return [...document.querySelectorAll('.listing .row:not(.hdr)')].filter(r => { const rr = r.getBoundingClientRect(); return rr.bottom > br.top + 1 && rr.top < br.bottom - 1; })
+        .flatMap(r => { const cp = r.querySelector('.src > .cp, .src > .syn-label'); if (!cp) return []; text.selectNodeContents(cp); return text.getBoundingClientRect().right > br.left ? [cp.textContent] : []; });
+    });
+    expect(over).toEqual([]);
+  });
+
+  await test.step('a click on a reference goes there; Esc comes back to the label with the box, the reference marked; Esc again closes it', async () => {
+    await cells(0).first().click();
+    await expect(statusBar(page)).toContainText('$0839');
+    await expect(box).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(statusBar(page)).toContainText('$08b7 · irq_08b7');
+    await expect(box).toBeVisible();
+    await expect(box.locator('tbody tr').nth(0)).toHaveClass(/via/);
+    await page.keyboard.press('Escape');
+    await expect(box).toBeHidden();
+    await expect(statusBar(page)).toContainText('$08b7 · irq_08b7');
+  });
+
+  await test.step('a click on the line under the label closes it, and a double-click on the label renames it with no box', async () => {
+    await goTo(page, OLD);
+    await labelRow(OLD).locator('.syn-label').click();
+    await expect(box).toHaveAccessibleName(`References to ${OLD}`);
+    await expect(cells(0)).toHaveText(['08da', 'read', `ldx ${OLD}`, 'loop_08c2+24']);
+    await expect(cells(1)).toHaveText(['08e3', 'read+write', `inc ${OLD}`, 'loop_08c2+33']);
+    await listing(page).locator('.row.k-dat', { has: page.locator('.adr', { hasText: /^092d$/ }) }).locator('.adr').click();
+    await expect(box).toBeHidden();
+    await labelRow(OLD).locator('.syn-label').dblclick();
+    await expect(page.getByLabel('Label at $092d')).toBeVisible();
+    await expect(box).toBeHidden();
+    await page.getByLabel('Label at $092d').press('Escape');
+  });
+
+  await test.step('the Cross-references tab (X) lists the same, with the label of the code each is in', async () => {
+    await goTo(page, 'irq_08b7');
+    await page.keyboard.press('x');
+    const xref = page.locator('.xref');
+    await expect(xref.locator('.xref-head')).toContainText('References to irq_08b7');
+    await expect(xref.locator('tbody tr td:nth-child(3)')).toHaveText(['lda #<irq_08b7', 'lda #>irq_08b7']);
+    await expect(xref.locator('tbody tr td:nth-child(4)')).toHaveText(['start+41', 'start+46']);
+  });
+
+  await test.step('a label picked in the Symbols view: the listing goes there with the box', async () => {
+    await page.getByRole('button', { name: 'Symbols', exact: true }).click();
+    await page.locator('.sym-row', { has: page.locator('.sym-name', { hasText: /^sine_09b5$/ }) }).click();
+    await expect(box).toHaveAccessibleName('References to sine_09b5');
+    await expect(cells(0)).toHaveText(['08dd', 'read', 'lda sine_09b5,x', 'loop_08c2+27']);
+    await expect(labelRow('sine_09b5')).toHaveClass(/xref-at/);
+  });
+
+  await test.step('a zero-page variable\'s .label line in the file head: its accesses, $fc\'s with them', async () => {
+    await listing(page).evaluate(el => { el.scrollTop = 0; });
+    await listing(page).locator('.row.k-dir', { hasText: '.label ptr_fb' }).locator('.src').click();
+    await expect(box).toHaveAccessibleName('References to ptr_fb');
+    await expect(box).toHaveClass(/zp/);
+    await expect(box.locator('tbody tr td:nth-child(3)')).toHaveText(['sta ptr_fb', 'sta ptr_fb+1', 'jmp (ptr_fb)']);
+    await expect(box.locator('tbody tr td:nth-child(2)')).toHaveText(['write', 'write', 'pointer']);
+  });
+});

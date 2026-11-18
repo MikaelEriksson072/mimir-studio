@@ -28,7 +28,8 @@ import { useRoutines } from './store/routines';
 import { useBuildTemplates } from './store/buildTemplates';
 import { runScriptInWorker } from './lib/scriptrun';
 import { useAnalysis, verifyInWorker } from './lib/analysis';
-import { cx, errorText, filesKey, ROW, store, uid } from './lib/util';
+import { bankAdr, cx, errorText, filesKey, ROW, store, uid } from './lib/util';
+import { labelRefs } from './lib/labelrefs';
 
 /** what the Scripts tab folded in when it opened, to bring back when another tab opens */
 interface ScriptsFold { sidePanel: boolean; panelOpen: boolean; inspector: InspectorMode }
@@ -54,7 +55,7 @@ import { TitleBar } from './components/TitleBar';
 import { ActivityBar } from './components/ActivityBar';
 import { StatusBar } from './components/StatusBar';
 import { Sidebar, tapeOpens } from './components/Sidebar';
-import { Listing, type ListingFind, type ScriptMark } from './components/Listing';
+import { Listing, type ListingFind, type ScriptMark, type XrefBox } from './components/Listing';
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
 import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, CovertPanel, IfflPanel, KrillPanel, LogList, MessagesPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
@@ -2348,6 +2349,37 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   }, [pickedDef, cursor, view]);
   /** the zero-page variable clicked last, while the cursor is still there: `;`, `/`, `*` and N act on it */
   const pickedZp = (at?: Addr) => (at == null && pickedDef?.zp && pickedDef.at === cursor ? { ...pickedDef, line: pickedLine ?? pickedDef.line } : null);
+  /** the label picked (its line clicked in the listing, or the label in the Symbols view): a box beside its line lists
+   *  who references it (lib/labelrefs.ts). `a` the label's address (`zp`: a zero-page variable), `line` its line when
+   *  picked, `at` the cursor then: the box is there while the cursor is. `via`: the reference gone to from the box,
+   *  where the box waits (hidden) so that Esc or Alt+← back at the label shows it again */
+  const [xrefPick, setXrefPick] = useState<{ a: Addr; zp: boolean; line: number; at: Addr; via: Addr | null } | null>(null);
+  useEffect(() => { if (xrefPick && cursor !== xrefPick.at && cursor !== xrefPick.via) setXrefPick(null); }, [cursor]); // eslint-disable-line react-hooks/exhaustive-deps
+  // renaming the label (a double-click on it) closes the box
+  useEffect(() => { if (editing) setXrefPick(null); }, [editing]);
+  /** the line of the picked label in the listing now (the lines move when blocks fold or the analysis lands): its own
+   *  line, a `.label` line in the file head, or a zero-page variable's (nearest the one clicked) */
+  const xrefLine = useMemo((): number | null => {
+    const p = xrefPick;
+    if (!p || cursor !== p.at) return null;
+    const ls = view.lines, name = p.zp ? null : R.labels.get(p.a)?.name;
+    const is = (l: ListingLine | undefined) => !!l && (p.zp ? l.k === 'dir' && l.zp === p.a
+      : (l.k === 'lbl' && l.a === p.a) || (l.k === 'dir' && l.zp == null && name != null && isLabelDefinition(l) && l.tok.find(t => t.t === 'def')?.s === name));
+    if (is(ls[p.line])) return p.line;
+    // its own line is above the line of its address (with comment lines and empty lines between)
+    if (!p.zp && lineOf[p.a] >= 0) for (let j = lineOf[p.a]; j >= 0 && j > lineOf[p.a] - 200 && ls[j].a === p.a; j--) if (is(ls[j])) return j;
+    let best = -1;
+    ls.forEach((l, i) => { if (is(l) && (best < 0 || Math.abs(i - p.line) < Math.abs(best - p.line))) best = i; });
+    return best >= 0 ? best : null;
+  }, [xrefPick, cursor, view, lineOf, R]);
+  const xrefBox = useMemo((): XrefBox | null => {
+    const p = xrefPick;
+    if (!p || xrefLine == null) return null;
+    const name = (p.zp ? R.zp.get(p.a)?.name : R.labels.get(p.a)?.name) ?? `$${h4(p.a)}`;
+    return { line: xrefLine, name, adr: p.zp ? `$${h2(p.a)}` : bankAdr(A, shownAddress(R.viewOffsets, p.a)), zp: p.zp, refs: labelRefs(A, R, p.a, p.zp), via: p.via };
+  }, [xrefPick, xrefLine, A, R]);
+  /** a reference in the box: the listing goes there (in the history, so Esc comes back to the label and the box) */
+  const goXref = (from: Addr) => { setXrefPick(p => (p ? { ...p, via: from } : p)); navigate(from, { center: true }); listRef.current?.focus(); };
   const startDefRename = (d: { addr: Addr; zp: boolean }, line: number) => {
     setLabelError(null);
     setEditing({ kind: 'label', addr: d.addr, value: (d.zp ? R.zp.get(d.addr)?.name : R.labels.get(d.addr)?.name) ?? '', zp: d.zp, line });
@@ -3172,8 +3204,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     }
     pickCell(next, extend);
   };
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment };
+  const closeXref = () => setXrefPick(null);
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -3236,8 +3269,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         // byte by byte through the data lines (Shift selects)
         case 'ArrowRight': case 'ArrowLeft': e.preventDefault(); k.stepCell(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); return;
         case 'Enter': { const l = k.curLine; const tk = l && 'tok' in l ? l.tok.find(x => x.to != null && (x.t === 'lbl' || x.t === 'kw')) : undefined; if (tk) { e.preventDefault(); navigate(tk.to!); } return; }
-        // with the find widget open, Esc closes only it
-        case 'Escape': e.preventDefault(); if (k.findOpen) k.closeFind(); else goBack(); return;
+        // with a label's references beside it, Esc closes only them; with the find widget open, only it
+        case 'Escape': e.preventDefault(); if (k.xrefOpen) k.closeXref(); else if (k.findOpen) k.closeFind(); else goBack(); return;
         case 'Backspace': e.preventDefault(); goBack(); return;
         // with the pointer resting on a comment: it goes (elsewhere Delete does nothing in the listing)
         case 'Delete': if (k.removeHoveredComment()) e.preventDefault(); return;
@@ -3253,11 +3286,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
 
   const onClickLine = (l: ListingLine, i: number, e: ReactMouseEvent, dbl?: boolean, cell?: Cell | null) => {
     // a byte of a data line is picked by itself; Shift+click on one selects byte by byte up to it
-    if (cell && !dbl) { setPickedDef(null); pickCell(cell, e.shiftKey && cursor != null); listRef.current?.focus(); return; }
+    if (cell && !dbl) { setPickedDef(null); setXrefPick(null); pickCell(cell, e.shiftKey && cursor != null); listRef.current?.focus(); return; }
     // Shift+click extends the selection; on a block header it takes in the whole block
-    if (e.shiftKey && cursor != null) { if (extendTo(l)) setCursor(l.a); return; }
+    if (e.shiftKey && cursor != null) { setXrefPick(null); if (extendTo(l)) setCursor(l.a); return; }
     const def = labelDefAt(l), zl = zpDefOf(l, i);
     setPickedDef(def ? { ...def, line: zl?.line ?? i, at: l.a } : zl ? { ...zl, at: l.a } : null);
+    // a label's line (its own, or its `.label` line): the box of its references opens beside it (a double-click renames)
+    if (!dbl) setXrefPick(l.k === 'lbl' ? { a: l.a, zp: false, line: i, at: l.a, via: null } : def ? { a: def.addr, zp: def.zp, line: i, at: l.a, via: null } : null);
     // a comment line of a zero-page variable opens its editor
     if (zl && dbl && l.k === 'cmt') { navigate(l.a, { noHistory: true }); startNote(!!project.notes[zl.addr]?.block, undefined, zl); return; }
     if (def && dbl) { navigate(l.a, { noHistory: true }); startDefRename(def, i); return; }
@@ -3558,6 +3593,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return () => window.removeEventListener('pointerdown', down, true);
   }, [inspOut]);
   const nav = (a: Addr) => navigate(a, { center: true, listing: true });
+  /** a label picked in the Symbols view: the listing goes to it and the box of its references opens */
+  const pickLabel = (a: Addr) => {
+    nav(a);
+    if (a >= 0 && a < A.owner.length && A.owner[a] >= 0) setXrefPick({ a, zp: false, line: lineOf[a] >= 0 ? lineOf[a] : 0, at: a, via: null });
+  };
   /** where the links of the analysis overview go, once it has closed (14.1b) */
   const overviewLinks: OverviewLinks = {
     addr: nav,
@@ -3658,7 +3698,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         }} onSpec={() => setUi({ tab: 'spec' })} onPalette={() => setModal('palette')} />
 
       <aside className="sidebar"><ErrorBoundary>
-        <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }}
+        <Sidebar view={activity} A={A} R={R} project={project} colors={colors} cursor={cursor} onNavigate={a => { nav(a); setDrawer(null); }} onLabel={a => { pickLabel(a); setDrawer(null); }}
           onAdd={() => void openPrgs(project.files.length > 0, 'add')} onDemo={() => loadDemo()}
           quicksave={{ info: qsInfo, follow: followQuicksave, onOpen: () => void openQuicksave(), onFollow: v => setUi({ followQuicksave: v }),
             kept: qsList, onOpenKept: q => void openKeptQuicksave(q), onRenameKept: (q, name) => void renameKeptQuicksave(q, name), onSaveKept: q => void saveKeptQuicksave(q),
@@ -3781,6 +3821,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 scrollReq={scrollReq} editing={editing} onCommitEdit={commitEdit} onCancelEdit={() => { setEditing(null); listRef.current?.focus(); }}
                 labelError={labelError} setLabelError={setLabelError} listRef={listRef} gutter={gutter} offsetAt={offsets ? offsetAt : null} breakpoints={breakpointSet} watches={project.watches} bookmarks={project.bookmarks} onBookmark={a => showBookmarks(a)}
                 patches={patchesOn(project.patches)} keepView={`${dataAsCode}/${gfxPictures}`} holdView={swaps} onSprites={setSprites} onWidth={setListW} cycles={cycles ? { path, taken, onToggle: toggleTaken } : null} changed={changed} find={listingFind} names={R} scriptMarks={scriptMarks} onScriptMark={openUserScript}
+                xrefs={xrefBox} onXref={goXref} onXrefClose={() => { closeXref(); listRef.current?.focus(); }} onXrefPanel={() => { closeXref(); setUi({ bottom: 'xrefs', panelOpen: true }); listRef.current?.focus(); }}
                 startAt={viewAt.current} onView={seeAt} />
               {findOpen && <FindBar q={findQ} opts={findOpts} onQuery={setFindQ} onOpts={setFindOpts} count={findHits.length} at={findAt >= 0 ? findAt + 1 : null} onStep={stepFind} onClose={closeFind} focusKey={findFocus} />}
               </div>

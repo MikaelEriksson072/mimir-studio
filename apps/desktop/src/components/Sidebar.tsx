@@ -23,6 +23,8 @@ import { SideSection } from './SideSection';
 interface SidebarProps {
   view: Activity; A: AnalysisResult; R: RenderResult; project: Project; colors: CanvasColors; cursor: Addr | null;
   onNavigate: (a: Addr) => void; onDemo: () => void; onRemoveFile: (i: number) => void;
+  /** a label picked in Symbols: the listing goes to it with the box of its references (else onNavigate) */
+  onLabel?: (a: Addr) => void;
   /** add PRG files to the project (the File menu opens new ones) */
   onAdd: () => void;
   /** set the program start (null: back to the detected one) */
@@ -145,7 +147,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -217,7 +219,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onAdd
       <div className="side-search"><Icon name="search" size={14} /><label htmlFor="sym-q" className="sr-only">Filter symbols</label><input id="sym-q" value={q} onChange={e => setQ(e.target.value)} placeholder="Filter symbols" /></div>
       <div className="blk-list">
         {symTab === 'labels' ? labels.map(([a, l]) => (
-          <button key={a} className={cx('sym-row', cursor === a && 'on')} onClick={() => onNavigate(a)}>
+          <button key={a} className={cx('sym-row', cursor === a && 'on')} title="Go to it, with who references it beside it" onClick={() => (onLabel ?? onNavigate)(a)}>
             <span className={cx('mono sym-name', l.user && 'user')}>{l.name}</span><span className="muted mono small">{bankAdr(A, a)}</span><span className="sym-refs">{(A.xrefs.get(a) || []).length}</span>
           </button>)) : hw.map(e => (
           <div key={e.sym.name} className="sym-row static" title={e.sym.desc}>
