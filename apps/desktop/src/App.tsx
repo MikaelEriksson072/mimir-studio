@@ -676,7 +676,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     else toast('VICE saved a new quicksave: F9 opens it', 'info');
   }), [toast, refreshQuicksave]);
   /* ---- the mounted .d64 or .g64 ---- */
-  const mountBytes = (name: string, path: string | null, bytes: Uint8Array, sides: DiskSide[] = []) => {
+  /** a disk mounted takes the tape out of the datasette, and a tape put in takes the disk out (the one loaded last is
+   *  the one worked on, and Build & Run gives VICE no medium left from before); both stay when they come together
+   *  (`keepOther`: Smart attach or a drop with both) */
+  const mountBytes = (name: string, path: string | null, bytes: Uint8Array, sides: DiskSide[] = [], keepOther = false) => {
     const img = parseD64(bytes);
     let pirateslayer: PirateSlayerDisk | null = null;
     try { pirateslayer = readPirateSlayerDisk(bytes); } catch { /* not one */ }
@@ -696,6 +699,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     let iffl: IfflDisk | null = null;
     try { iffl = readIfflDisk(bytes); } catch { /* none */ }
     setDisk({ name, path, bytes, img, spindle, bitfire, booze, sparkle, krill, covert, iffl, pirateslayer, sides });
+    const out = !keepOther && tape ? `; ejected ${tape.name}` : '';
+    if (!keepOther) setTape(null);
     showSection('disk');
     const kind = spindle ? `, a Spindle 3 disk with ${spindle.jobs.length} job${spindle.jobs.length === 1 ? '' : 's'}`
       : bitfire ? `, a Bitfire disk with ${bitfire.files.length} file${bitfire.files.length === 1 ? '' : 's'} of its own`
@@ -706,7 +711,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       : pirateslayer ? `; ${pirateslayer.summary}` : '';
     const ifflText = iffl ? `; ${iffl.files.map(f => `"${f.name}"`).join(', ')} ${iffl.files.length === 1 ? 'is an IFFL file' : 'are IFFL files'} with ${iffl.files.reduce((a, f) => a + f.parts.length, 0)} parts (the IFFL parts tab)` : '';
     const then = sides.length ? `; then ${sides.map(s => s.name).join(', ')}, which Sindri turns to when the program asks` : '';
-    toast(`Mounted ${name}: "${img.name}"${img.format === 'G64' ? ' (G64)' : ''}, ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}${ifflText}${then}`, 'ok');
+    toast(`Mounted ${name}: "${img.name}"${img.format === 'G64' ? ' (G64)' : ''}, ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}${ifflText}${then}${out}`, 'ok');
   };
   const mountDisk = async () => {
     if (!kr) return needDesktop();
@@ -714,15 +719,18 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   const ejectDisk = () => { if (disk) toast(`Ejected ${disk.name}`, 'info'); setDisk(null); };
   /* ---- the tape in the datasette (13.5e) ---- */
-  const insertTapeBytes = (name: string, path: string | null, bytes: Uint8Array) => {
+  /** (the disk goes out, as `mountBytes` says, unless `keepOther`) */
+  const insertTapeBytes = (name: string, path: string | null, bytes: Uint8Array, keepOther = false) => {
     const img = readTape(bytes);
     setTape({ name, path, bytes, img });
+    const out = !keepOther && disk ? `; ejected ${disk.name}` : '';
+    if (!keepOther) setDisk(null);
     showSection('tape');
     // a T64 tape archive (13.5j): its directory's files, no pulses
-    if (img.t64) { toast(`Inserted ${name} (a T64${img.t64.name ? `, "${img.t64.name}"` : ''}): ${img.files.length} file${img.files.length === 1 ? '' : 's'}`, 'ok'); return; }
+    if (img.t64) { toast(`Inserted ${name} (a T64${img.t64.name ? `, "${img.t64.name}"` : ''}): ${img.files.length} file${img.files.length === 1 ? '' : 's'}${out}`, 'ok'); return; }
     const LABEL: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', megasave: 'Mega-Save', novaload: 'Novaload', cyberload: 'Cyberload', firebird: 'Firebird', t64: 'T64' };
     const kinds = (Object.keys(LABEL) as TapeFile['format'][]).map(k => { const n = img.files.filter(f => f.format === k).length; return n ? `${n} ${LABEL[k]}` : ''; }).filter(Boolean).join(', ');
-    toast(`Inserted ${name} (${Math.round(img.seconds)} s): ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kinds ? ` (${kinds})` : ''}${img.unknown.length ? `, and turbo data of a loader Sindri runs` : ''}`, 'ok');
+    toast(`Inserted ${name} (${Math.round(img.seconds)} s): ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kinds ? ` (${kinds})` : ''}${img.unknown.length ? `, and turbo data of a loader Sindri runs` : ''}${out}`, 'ok');
   };
   const insertTape = async () => {
     if (!kr) return needDesktop();
@@ -778,8 +786,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       for (const p of r.problems) toast(`${p.name}: ${p.message}`, 'err');
       if (r.left.length) toast(`Not opened: ${r.left.map(l => `${l.name} (${l.why})`).join(', ')}`, 'warn');
       if (r.project) { await openProject(r.project); return; }
-      if (r.disk) mountBytes(r.disk.name, r.disk.path, r.disk.bytes, r.disk.sides);
-      if (r.tape) insertTapeBytes(r.tape.name, r.tape.path, r.tape.bytes);
+      if (r.disk) mountBytes(r.disk.name, r.disk.path, r.disk.bytes, r.disk.sides, !!r.tape);
+      if (r.tape) insertTapeBytes(r.tape.name, r.tape.path, r.tape.bytes, !!r.disk);
       if (r.files.length) addFiles(r.files, false, { show: true });
       if (r.asm) setPackSource(r.asm);
     } catch (e) { toast(errorText(e), 'err'); }
@@ -1223,6 +1231,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const readDropped = async (list: FileList, add: boolean) => {
     const prgs: OpenedPrg[] = [];
     const disks: DiskSide[] = [];
+    // a disk and a tape dropped together both stay (else the one dropped takes the other out)
+    const both = Array.from(list).some(f => /\.[dg]64$/i.test(f.name)) && Array.from(list).some(f => /\.t(ap|64)$/i.test(f.name));
     for (const f of Array.from(list)) {
       const buf = new Uint8Array(await f.arrayBuffer());
       try {
@@ -1232,7 +1242,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           continue;
         }
         if (/\.[dg]64$/i.test(f.name)) { disks.push({ name: f.name, bytes: buf }); continue; }
-        if (/\.t(ap|64)$/i.test(f.name)) { insertTapeBytes(f.name, null, buf); continue; }
+        if (/\.t(ap|64)$/i.test(f.name)) { insertTapeBytes(f.name, null, buf, both); continue; }
         // a cartridge image (known by its header): the chips of its boot bank, with the image
         if (isCrt(buf)) { const o = openCartridge(f.name, buf); prgs.push(...o.files.map(x => ({ ...withId(x), cart: o.cart }))); continue; }
         // a .prg, or a VICE snapshot (known by its header)
@@ -1244,7 +1254,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       // (several disks of one release: its first side, the others after it; else the last one, as before)
       const names = disks.map(d => d.name), sidesAfter = (d: DiskSide) => nextSides(d.name, names);
       const first = disks.reduce((a, d) => (sidesAfter(d).length >= sidesAfter(a).length ? d : a));
-      try { mountBytes(first.name, null, first.bytes, sidesAfter(first).map(n => disks.find(d => d.name === n)!)); } catch (e) { toast(`${first.name}: ${errorText(e)}`, 'err'); }
+      try { mountBytes(first.name, null, first.bytes, sidesAfter(first).map(n => disks.find(d => d.name === n)!), both); } catch (e) { toast(`${first.name}: ${errorText(e)}`, 'err'); }
     }
     addFiles(prgs, add);
   };

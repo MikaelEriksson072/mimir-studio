@@ -3235,7 +3235,8 @@ får väljas) som visar allt Mimir öppnar, och varje fils **filändelse** avgö
 
 Väljs flera filer öppnas PRG:erna, snapshotarna och cartridgen tillsammans, som med *Open PRG files…*, medan en disk
 monteras, ett band läggs i datasetten och en källa packas åt gången: de andra lämnas, och en rad säger vilka och varför (*Not opened: b.asm (Brokkr
-packs one source at a time)*). Ett projekt öppnas för sig, eftersom det tar arbetets plats: är ett projekt bland filerna
+packs one source at a time)*). En disk och ett band valda tillsammans ligger båda kvar (annars matar den ena ut den
+andra, 13.5e). Ett projekt öppnas för sig, eftersom det tar arbetets plats: är ett projekt bland filerna
 öppnas bara det (`smartPlan`). En fil som inte kan läsas sägs med sitt namn, och de andra öppnas ändå.
 
 *Pack a file* över arbetet är samma vy som startskärmens (13.8b), i ett lager över fönstret: arbetet står kvar som det
@@ -3570,9 +3571,12 @@ och en fil packad på plats.
 ### 13.5e Bandavbilder (.tap)
 
 **Insert tape image (TAP, T64)…** (File-menyn, kommandopaletten, knappen *Insert TAP/T64…* på den tomma startsidan, Smart attach,
-eller dra och släpp en `.tap`) lägger ett band i datasetten. En C64 kan ha både en disk och ett band, så bandet är ett
-eget tillstånd bredvid den monterade disken, med en egen sektion *Tape* i Explorer (under *Disk*) och en egen
-utmatningsknapp. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
+eller dra och släpp en `.tap`) lägger ett band i datasetten. Bandet är ett eget tillstånd bredvid den monterade
+disken, med en egen sektion *Tape* i Explorer (under *Disk*) och en egen utmatningsknapp, men det som laddas sist är
+det man arbetar med: ett band som läggs i matar ut disken, och en disk som monteras matar ut bandet (toasten slutar
+då med *; ejected spel.tap*), så att Explorer, bottenpanelens flikar och Build & Run inte har kvar ett medium från
+förut. Båda ligger kvar bara när de kommer i samma steg: Smart attach med en disk och ett band, eller båda släppta på
+fönstret på en gång. `readTape()` (`packages/core/src/c64/tap.ts`) läser avbilden:
 
 - **Pulserna.** En TAP (`C64-TAPE-RAW`) har längden på varje puls som datasettens läshuvud skickar till CIA1:s
   FLAG-linje, från en fallande flank till nästa: version 0 en byte per puls i enheter om 8 cykler (0 = en paus),

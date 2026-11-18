@@ -70,8 +70,9 @@ app.whenReady().then(() => {
   // the app's own page may write to the clipboard ("Copy file", "Copy command"); everything else
   // (camera, notifications, geolocation …) is denied
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => callback(permission === 'clipboard-sanitized-write' && isTrustedUrl(wc.getURL())));
-  // the app's own windows (not DeepSID's)
-  const appWindows = () => BrowserWindow.getAllWindows().filter(w => isTrustedUrl(w.webContents.getURL()));
+  // the app's own windows (not DeepSID's); a window closing may still be listed with its contents destroyed, and
+  // reading its URL then throws ("Object has been destroyed": a change in a watched folder as the app quit)
+  const appWindows = () => BrowserWindow.getAllWindows().filter(w => !w.isDestroyed() && !w.webContents.isDestroyed() && isTrustedUrl(w.webContents.getURL()));
   const watcher = new ExportWatcher(path => {
     for (const w of appWindows()) w.webContents.send(CHANNELS.fsChanged, { path });
   });

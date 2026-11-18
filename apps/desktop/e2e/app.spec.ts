@@ -6392,6 +6392,75 @@ test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeT
   });
 });
 
+test('a disk mounted takes the tape out of the datasette and a tape put in takes the disk out, unless they come together', async ({ app, page }) => {
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  const tapeFiles = page.getByRole('list', { name: 'Files on mimir-demo.tap' });
+  const diskFiles = page.getByRole('list', { name: 'Files on mimir-demo.d64' });
+  const tapeTab = page.getByRole('tab', { name: /^Tape/ });
+  const insert = async () => { await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/mimir-demo.tap')] }); await fromFileMenu(page, 'Insert tape image (TAP, T64)…'); };
+  const mount = async () => { await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64')] }); await fromFileMenu(page, 'Mount disk image (D64, G64)…'); };
+  const drop = async (...names: string[]) => {
+    const files = names.map(n => ({ name: n.replace(/.*\//, ''), b64: readFileSync(join(repoDir, n)).toString('base64') }));
+    await page.evaluate(fs => {
+      const dt = new DataTransfer();
+      for (const f of fs) dt.items.add(new File([Uint8Array.from(atob(f.b64), c => c.charCodeAt(0))], f.name));
+      window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, files);
+  };
+
+  await test.step('the tape in the datasette, its tab shown', async () => {
+    await insert();
+    await expect(toast(page, /^Inserted mimir-demo\.tap \(\d+ s\): 4 files \(1 KERNAL, 3 TapeTool\)$/)).toBeVisible();
+    await tapeTab.click();
+    await expect(page.getByRole('table', { name: 'Tape files' })).toBeVisible();
+  });
+
+  await test.step('a disk mounted: the tape is ejected, its section and its tab gone', async () => {
+    await mount();
+    await expect(toast(page, /^Mounted mimir-demo\.d64: .*; ejected mimir-demo\.tap$/)).toBeVisible();
+    await expect(diskFiles.getByRole('listitem')).toHaveCount(3);
+    await expect(tapeFiles).toHaveCount(0);
+    await expect(tapeTab).toHaveCount(0);
+    await expect(page.getByRole('table', { name: 'Tape files' })).toHaveCount(0);
+  });
+
+  await test.step('a tape put in: the disk is ejected', async () => {
+    await insert();
+    await expect(toast(page, /^Inserted mimir-demo\.tap \(\d+ s\): 4 files \(1 KERNAL, 3 TapeTool\); ejected mimir-demo\.d64$/)).toBeVisible();
+    await expect(tapeFiles.getByRole('listitem')).toHaveCount(4);
+    await expect(diskFiles).toHaveCount(0);
+    await expect(tapeTab).toHaveCount(1);
+  });
+
+  await test.step('a disk dropped takes the tape out too; a disk and a tape dropped together both stay', async () => {
+    await drop('fixtures/d64/mimir-demo.d64');
+    await expect(diskFiles.getByRole('listitem')).toHaveCount(3);
+    await expect(tapeFiles).toHaveCount(0);
+    await expect(toast(page, /^Mounted mimir-demo\.d64: .*; ejected mimir-demo\.tap$/).last()).toBeVisible();
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    // (the tape comes first in the drop: the disk mounted after it leaves it in)
+    await drop('fixtures/tap/mimir-demo.tap', 'fixtures/d64/mimir-demo.d64');
+    await expect(diskFiles.getByRole('listitem')).toHaveCount(3);
+    await expect(tapeFiles.getByRole('listitem')).toHaveCount(4);
+    await expect(toast(page, /^Mounted mimir-demo\.d64: "[^"]*", 3 files$/)).toBeVisible();
+  });
+
+  await test.step('Smart attach with a disk and a tape keeps both; then a disk alone takes the tape out', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await page.getByRole('button', { name: 'Eject tape' }).click();
+    await expect(diskFiles).toHaveCount(0);
+    await expect(tapeFiles).toHaveCount(0);
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64'), join(repoDir, 'fixtures/tap/mimir-demo.tap')] });
+    await fromFileMenu(page, 'Smart attach…');
+    await expect(diskFiles.getByRole('listitem')).toHaveCount(3);
+    await expect(tapeFiles.getByRole('listitem')).toHaveCount(4);
+    await mount();
+    await expect(tapeFiles).toHaveCount(0);
+    await expect(diskFiles.getByRole('listitem')).toHaveCount(3);
+  });
+});
+
 test('a Cyberload tape: its four stages read as files in the Explorer and the Tape tab, the fourth stage\'s file opens', async ({ app, page }) => {
   // fixtures/tap/cyberload-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, then Cyberload's stages in
   // its formats with bytes of our own, the raster demo the fourth stage's file "DEMO"
