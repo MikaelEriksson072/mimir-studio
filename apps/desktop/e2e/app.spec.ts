@@ -6142,6 +6142,129 @@ test('a click on a character in the inspector\'s Chars preview shows it enlarged
   });
 });
 
+test('a click on a sprite in the inspector\'s Sprite preview shows it enlarged, with its bytes; the keys step to another', async ({ page }) => {
+  await waitForListing(page);
+  const insp = page.locator('.inspector');
+  const canvas = insp.getByLabel('sprite preview');
+  const zoom = insp.locator('.sprite-zoom');
+  const grid = zoom.locator('.sz-grid');
+  const previewAs = (name: string) => insp.getByRole('group', { name: 'Preview as' }).getByRole('button', { name, exact: true });
+  /** clicks the sprite at a column and row of the preview (`cols` a row, each 26 × 23 pixels), where the canvas is now */
+  const pick = async (col: number, row: number, cols: number) => {
+    await canvas.scrollIntoViewIfNeeded();
+    const b = (await canvas.boundingBox())!, w = b.width / cols, h = w * 23 / 26;
+    await page.mouse.click(Math.round(b.x + (col + 0.5) * w), Math.round(b.y + (row + 0.5) * h));
+  };
+  const cells = () => grid.locator('i').evaluateAll(els => els.map(e => (e as HTMLElement).dataset.c).join(''));
+  const rows = zoom.locator('.sz-bytes > div');
+  // the demo's ball at $2000 (spr_2000): 3 where a pixel is set
+  const BALL = ['.........######.........', '......############......', '....################....', '...##################...',
+    '..########..##########..', '..#######....#########..', '.########....##########.', '.#########..###########.',
+    '.######################.', '########################', '########################', '########################',
+    '.######################.', '.######################.', '.######################.', '..####################..',
+    '..####################..', '...##################...', '....################....', '......############......',
+    '.........######.........'].map(r => r.replace(/#/g, '3').replace(/\./g, '0')).join('');
+
+  await test.step('the sprite at $2000: its preview says what a click does, and nothing is enlarged yet', async () => {
+    await goTo(page, '$2000');
+    await expect(canvas).toBeVisible();
+    await expect(insp).toContainText('Click a sprite to see it enlarged.');
+    await expect(zoom).toHaveCount(0);
+  });
+
+  await test.step('a click shows sprite $80 (its pointer), 24 × 21 pixels, its 21 rows of 3 bytes and the 64th, not drawn', async () => {
+    await pick(0, 0, 1);
+    await expect(zoom).toBeVisible();
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $80 enlarged');
+    await expect(zoom.locator('.cz-name')).toHaveAttribute('title', 'Its sprite pointer: $80 in VIC bank 0');
+    await expect(zoom.locator('.cz-head')).toContainText('$2000–$203f');
+    await expect(grid).toHaveAttribute('aria-label', 'Sprite $80, 24 by 21 pixels');
+    expect(await cells()).toBe(BALL);
+    const b = await rows.allTextContents();
+    expect(b).toHaveLength(22);
+    expect(b[0]).toBe('2000 00 7e 00 00000000 01111110 00000000');
+    expect(b[4]).toBe('200c 3f cf fc 00111111 11001111 11111100');
+    expect(b[9]).toBe('201b ff ff ff 11111111 11111111 11111111');
+    expect(b[21]).toBe('203f 00 not drawn');
+    await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 0%; top: 0%; width: 100%; height: 100%/);
+    await expect(insp).not.toContainText('Click a sprite to see it enlarged.');
+    // it has the keys; one sprite has nothing to step to
+    await expect(zoom).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $80 enlarged');
+    await expect(zoom.getByRole('button', { name: 'Next sprite' })).toBeDisabled();
+    await expect(zoom.getByRole('button', { name: 'Previous sprite' })).toBeDisabled();
+  });
+
+  await test.step('the pointer over a row of its bytes marks that row of pixels, and over a row of pixels its bytes', async () => {
+    await rows.nth(4).hover();
+    await expect(zoom.locator('.sz-bytes > div.on')).toHaveText('200c 3f cf fc 00111111 11001111 11111100');
+    await expect(grid.locator('i.on')).toHaveCount(24);
+    expect(await grid.locator('i.on').evaluateAll(els => [...new Set(els.map(e => (e as HTMLElement).dataset.y))])).toEqual(['4']);
+    const g = (await grid.boundingBox())!;
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height * 10.5 / 21);
+    await expect(zoom.locator('.sz-bytes > div.on')).toContainText('201e ff ff ff');
+    await page.mouse.move(g.x - 40, g.y - 40);
+    await expect(grid.locator('i.on')).toHaveCount(0);
+  });
+
+  await test.step('the charset at $3000 as sprites: 32 of them, 4 a row, and the keys and the arrows step', async () => {
+    await goTo(page, 'charset_3000');
+    await previewAs('Sprite').click();
+    await expect(canvas).toBeVisible();
+    await expect(zoom).toHaveCount(0);
+    await pick(1, 0, 4);
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c1 enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$3040–$307f');
+    await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 25%; top: 0%/);
+    await page.keyboard.press('ArrowDown');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c5 enlarged');
+    await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 25%; top: 12\.5%/);
+    await page.keyboard.press('ArrowRight');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c6 enlarged');
+    await expect(statusBar(page)).toContainText('$3000 · charset_3000');
+    await page.keyboard.press('End');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $df enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$37c0–$37ff');
+    await page.keyboard.press('Home');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c0 enlarged');
+    await zoom.getByRole('button', { name: 'Next sprite' }).click();
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c1 enlarged');
+  });
+
+  await test.step('multicolour: 12 × 21 pixels, the bits in pairs', async () => {
+    const mc = insp.getByRole('checkbox', { name: 'Multicolor' });
+    await mc.click();
+    await expect(mc).toBeChecked();
+    await expect(grid).toHaveAttribute('aria-label', 'Sprite $c1, multicolor 12 by 21 pixels');
+    await expect(grid.locator('i')).toHaveCount(252);
+    await expect(rows.first().locator('.bits i')).toHaveCount(12);
+    await mc.click();
+    await expect(mc).not.toBeChecked();
+    await expect(grid.locator('i')).toHaveCount(504);
+  });
+
+  await test.step('its address goes to its bytes in the listing; Esc closes it, and Chars shows none', async () => {
+    await zoom.getByRole('button', { name: '$3040–$307f' }).click();
+    await expect(statusBar(page)).toContainText('$3040');
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c1 enlarged');
+    await zoom.focus();
+    await page.keyboard.press('Escape');
+    await expect(zoom).toHaveCount(0);
+    await expect(statusBar(page)).toContainText('$3040');
+    await pick(2, 0, 4);
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c2 enlarged');
+    await zoom.getByRole('button', { name: 'Close the enlarged sprite' }).click();
+    await expect(zoom).toHaveCount(0);
+    await pick(3, 0, 4);
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $c3 enlarged');
+    await previewAs('Chars').click();
+    await expect(zoom).toHaveCount(0);
+    await expect(insp.locator('.gfx-zoom')).toHaveCount(0);
+    await expect(insp).toContainText('Click a character to see it enlarged.');
+  });
+});
+
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');

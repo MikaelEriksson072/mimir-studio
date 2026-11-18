@@ -1,6 +1,6 @@
-/* The Inspector's enlarged character (src/lib/charzoom.ts): the character a click is on, its pixels, the keys. */
+/* The Inspector's enlarged character and sprite (src/lib/charzoom.ts): the one a click is on, its pixels, the keys. */
 import { describe, expect, it } from 'vitest';
-import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep } from '../src/lib/charzoom';
+import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, spriteCols, spriteCount, spriteNumber, spritePixels } from '../src/lib/charzoom';
 
 describe('the enlarged character', () => {
   it('counts the characters the preview draws: one per 8 bytes, at least one, at most 256', () => {
@@ -75,5 +75,68 @@ describe('the enlarged character', () => {
     expect(charBits(0x7c, false)).toBe('01111100');
     expect(charBits(0x1b, true)).toBe('00 01 10 11');
     expect(charBits(0, true)).toBe('00 00 00 00');
+  });
+});
+
+describe('the enlarged sprite', () => {
+  it('counts the sprites the preview draws, at most 32, and 4 a row', () => {
+    expect(spriteCount(64)).toBe(1);
+    expect(spriteCount(63)).toBe(1);
+    expect(spriteCount(256)).toBe(4);
+    expect(spriteCount(2048)).toBe(32);
+    expect(spriteCount(8000)).toBe(32);
+    expect(spriteCols(1)).toBe(1);
+    expect(spriteCols(3)).toBe(3);
+    expect(spriteCols(32)).toBe(4);
+  });
+
+  it('finds the sprite under a point of the preview: 4 a row', () => {
+    // 32 sprites: 4 × 8
+    expect(charIndexAt(1.5 / 4, 0.5 / 8, 32, 4)).toBe(1);
+    expect(charIndexAt(0.5 / 4, 1.5 / 8, 32, 4)).toBe(4);
+    expect(charIndexAt(0.99, 0.99, 32, 4)).toBe(31);
+    // 6 sprites: the second row has 2
+    expect(charIndexAt(1.5 / 4, 0.75, 6, 4)).toBe(5);
+    expect(charIndexAt(2.5 / 4, 0.75, 6, 4)).toBeNull();
+    // one sprite fills the preview
+    expect(charIndexAt(0.9, 0.9, 1, 1)).toBe(0);
+  });
+
+  it('gives the pixels of a sprite, 3 bytes a row, hires and multicolour', () => {
+    const mem = new Uint8Array(0x10000);
+    // row 0: $00 $7e $00, row 20: $ff $00 $1b
+    mem.set([0x00, 0x7e, 0x00], 0x2000);
+    mem.set([0xff, 0x00, 0x1b], 0x2000 + 60);
+    mem[0x2000 + 63] = 0xff; // the 64th byte, not drawn
+    const hi = spritePixels(mem, 0x2000, false);
+    expect(hi).toHaveLength(21);
+    expect(hi.every(r => r.length === 24)).toBe(true);
+    expect(hi[0].join('')).toBe('000000000333333000000000');
+    expect(hi[20].join('')).toBe('333333330000000000033033');
+    const mc = spritePixels(mem, 0x2000, true);
+    expect(mc.every(r => r.length === 12)).toBe(true);
+    // $7e = 01 11 11 10; $1b = 00 01 10 11
+    expect(mc[0].join('')).toBe('000013320000');
+    expect(mc[20].join('')).toBe('333300000123');
+    // 64 bytes from $fff0 (a selection, not on 64) wrap to $0000: row 6 is $0002-$0004
+    mem[0x0002] = 0x01;
+    expect(spritePixels(mem, 0xfff0, false)[6].join('')).toBe('000000030000000000000000');
+  });
+
+  it('steps 4 a row with the keys, staying at the edges', () => {
+    expect(charStep(1, 'ArrowDown', 32, 4)).toBe(5);
+    expect(charStep(5, 'ArrowUp', 32, 4)).toBe(1);
+    expect(charStep(30, 'ArrowDown', 32, 4)).toBe(30);
+    expect(charStep(0, 'ArrowRight', 1, 1)).toBe(0);
+    expect(charStep(0, 'End', 32, 4)).toBe(31);
+  });
+
+  it('numbers a sprite by its pointer in its VIC bank', () => {
+    expect(spriteNumber(0x2000)).toBe(0x80);
+    expect(spriteNumber(0x3040)).toBe(0xc1);
+    expect(spriteNumber(0x0340)).toBe(0x0d);
+    expect(spriteNumber(0xc000)).toBe(0x00);
+    expect(spriteNumber(0x7fc0)).toBe(0xff);
+    expect(spriteNumber(0x2008)).toBeNull();
   });
 });

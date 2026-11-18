@@ -257,7 +257,8 @@ make an existing project a repository too).
    *Settings → General* turns it off, and the command palette shows it again.
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
-   the way it was, the memory map and a preview. `G` goes to an address or label, `Ctrl+F` finds text (labels,
+   the way it was, the memory map and a preview, where a click on a character or a sprite shows it enlarged with its
+   bytes (the arrow keys step to the next). `G` goes to an address or label, `Ctrl+F` finds text (labels,
    instructions, operands, comments), `Ctrl+↓` / `Ctrl+↑` go to the next or previous block and `X` lists who
    references the line. Pointing at an undocumented opcode says what it does and which flags it changes. Hold `Ctrl`
    over a line to see its block the other way: code as bytes with their PETSCII and screen-code text, data as code.

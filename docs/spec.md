@@ -5428,7 +5428,20 @@ klicket: `←` `→` tecknet före och efter, `↑` `↓` en rad i förhandsvisn
 `End` det första och sista, och `Esc` stänger den, liksom krysset; listningens markör flyttas inte av dem. Pilknapparna
 i rubriken stegar också. Ett annat block, en annan markering eller ett annat läge än Chars stänger den. Under en
 förhandsvisning som Chars utan förstorat tecken står *Click a character to see it enlarged.*
-(`CharZoom` i `GfxPreview.tsx`, `apps/desktop/src/lib/charzoom.ts`.)
+(`GfxZoom` i `GfxPreview.tsx`, `apps/desktop/src/lib/charzoom.ts`.)
+
+**En sprite förstorad:** på samma sätt visar ett klick på en sprite i *Preview* som Sprite (ett sprite-block, eller andra
+byte med *Sprite* valt) den förstorad under förhandsvisningen, inramad i den. Rutan visar spritens 24 × 21 pixlar
+(multicolor 12 × 21, varje pixel dubbelt bred) så breda som inspektorn ger plats för, med en linje mellan dem (10 px var
+i inspektorns standardbredd 312 px, upp till 14 px), och under dem dess 21 rader om 3 byte: adressen, värdena i hex och
+bitarna (i par i multicolor), och sist den 64:e byten, som VIC inte ritar (*not drawn*). Pekaren över en rad pixlar
+markerar dess byte, och över en rad byte dess pixlar. En rad med bitar är 244 px bred (multicolor 262) i JetBrains Mono
+10 px; i en smalare inspektor (under 290 px, multicolor under 308) visas bara adressen och värdena (container query).
+Rubriken säger spritens pekare, talet som skrivs till `$07f8`-`$07ff` för att visa den (*Sprite $80* för `$2000`: dess
+64 byte räknade i dess 16 KB VIC-bank, som Graphics-fliken; verktygstipset säger banken; *64 bytes* när byten inte
+börjar på 64), och dess adresser, som går dit i listningen. Tangenterna som för tecken: `↑` `↓` en rad i
+förhandsvisningen, som har 4 sprites i raden (färre när blocket har färre). Ett annat läge än Sprite stänger den. Under
+en förhandsvisning som Sprite utan förstorad sprite står *Click a sprite to see it enlarged.*
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:

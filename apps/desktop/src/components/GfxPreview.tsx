@@ -1,21 +1,22 @@
-/* Graphics preview: sprites, charset, bitmap (hires or multicolor), and a character of it enlarged. */
-import { useEffect, useMemo, useRef } from 'react';
+/* Graphics preview: sprites, charset, bitmap (hires or multicolor), and a character or a sprite of it enlarged. */
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { h2, h4, type Addr } from '@mimir/core';
 import { C64, cx, hexRgb } from '../lib/util';
 import { Icon } from '../lib/icons';
-import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep } from '../lib/charzoom';
+import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, spriteCols, spriteCount, spriteNumber, spritePixels } from '../lib/charzoom';
 
 export type GfxMode = 'sprite' | 'chars' | 'bitmap';
 
 /** the preview's colours by index: the background (blue), multicolour 01 (light blue) and 10 (yellow), a set pixel (white) */
 const PAL = [C64[6], C64[14], C64[7], C64[1]];
 
-/** `pick`/`onPick` (Chars only): the character shown enlarged, marked here, and a click on one picks it (spec 14.1) */
+/** `pick`/`onPick` (Chars and Sprite): the character or sprite shown enlarged, marked here, and a click on one picks it
+ *  (spec 14.1) */
 export function GfxPreview({ mem, start, end, mode, mc, pick, onPick }: { mem: Uint8Array; start: Addr; end: Addr; mode: GfxMode; mc: boolean; pick?: number | null; onPick?: (i: number) => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const geom = useMemo(() => {
     const n = end - start;
-    if (mode === 'sprite') { const count = Math.max(1, Math.min(32, Math.floor(n / 64))); const cols = Math.min(4, count); return { w: cols * 26, h: Math.ceil(count / cols) * 23, count, cols }; }
+    if (mode === 'sprite') { const count = spriteCount(n); const cols = spriteCols(count); return { w: cols * 26, h: Math.ceil(count / cols) * 23, count, cols }; }
     if (mode === 'chars') { const count = charCount(n); const cols = CHAR_COLS; return { w: cols * 8, h: Math.ceil(count / cols) * 8, count, cols }; }
     return { w: 320, h: 200, count: 1, cols: 1 };
   }, [start, end, mode]);
@@ -41,11 +42,11 @@ export function GfxPreview({ mem, start, end, mode, mc, pick, onPick }: { mem: U
   }, [mem, start, end, mode, mc, geom]);
   const scale = mode === 'bitmap' ? 1 : mode === 'sprite' ? (geom.count === 1 ? 4 : 2) : 2;
   const canvas = <canvas ref={ref} width={geom.w} height={geom.h} className="gfx" style={{ width: Math.min(geom.w * scale, 272), aspectRatio: `${geom.w} / ${geom.h}` }} aria-label={`${mode} preview`} />;
-  if (mode !== 'chars' || !onPick) return canvas;
+  if (mode === 'bitmap' || !onPick) return canvas;
   const rows = Math.ceil(geom.count / geom.cols);
   const picked = pick != null && pick < geom.count ? pick : null;
   return (
-    <div className="gfx-pick" title="Click a character to see it enlarged"
+    <div className="gfx-pick" title={`Click a ${mode === 'sprite' ? 'sprite' : 'character'} to see it enlarged`}
       onClick={e => { const r = e.currentTarget.getBoundingClientRect(); const i = charIndexAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, geom.count, geom.cols); if (i != null) onPick(i); }}>
       {canvas}
       {picked != null && <i className="gfx-picked" aria-hidden="true"
@@ -54,49 +55,81 @@ export function GfxPreview({ mem, start, end, mode, mc, pick, onPick }: { mem: U
   );
 }
 
-/** One character of the Chars preview enlarged (spec 14.1): its 8 × 8 pixels (multicolour 4 × 8, each two wide) in the
- *  preview's colours with a line between them, and its 8 bytes in hex and bits beside the rows they draw. ← → step to
- *  the character before and after, ↑ ↓ a row of the preview, Home and End to the first and the last, Esc closes it.
- *  `start`: where the preview's first character is; `index`: the one shown; `focus` changes with each click on one in
- *  the preview, which gives it the keys. */
-export function CharZoom({ mem, start, index, count, mc, focus, onPick, onClose, onGo }: {
-  mem: Uint8Array; start: Addr; index: number; count: number; mc: boolean; focus: number;
+/** One character of the Chars preview, or one sprite of the Sprite preview, enlarged (spec 14.1).
+ *  A character: its 8 × 8 pixels (multicolour 4 × 8, each two wide) in the preview's colours with a line between them,
+ *  and its 8 bytes in hex and bits beside the rows they draw. A sprite: its 24 × 21 pixels (multicolour 12 × 21) as
+ *  wide as the inspector lets them be, its 21 rows of 3 bytes under them and the 64th byte, which the VIC does not
+ *  draw; the pointer over a row of the pixels or the bytes marks it in both. ← → step to the one before and after, ↑ ↓
+ *  a row of the preview, Home and End to the first and the last, Esc closes it. `start`: where the preview's first one
+ *  is; `index`: the one shown; `focus` changes with each click on one in the preview, which gives it the keys. */
+export function GfxZoom({ kind, mem, start, index, count, mc, focus, onPick, onClose, onGo }: {
+  kind: 'chars' | 'sprite'; mem: Uint8Array; start: Addr; index: number; count: number; mc: boolean; focus: number;
   onPick: (i: number) => void; onClose: () => void; onGo: (a: Addr) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { const el = ref.current; if (!el) return; el.focus({ preventScroll: true }); el.scrollIntoView?.({ block: 'nearest' }); }, [focus]);
-  const addr = (start + index * 8) & 0xffff;
-  const n = charNumber(addr);
-  const name = n != null ? `Char $${h2(n)}` : '8 bytes';
-  const px = charPixels(mem, addr, mc);
-  const bytes = Array.from({ length: 8 }, (_, r) => mem[(addr + r) & 0xffff]);
+  // the sprite's row under the pointer, in its pixels or its bytes
+  const [row, setRow] = useState<number | null>(null);
+  const sprite = kind === 'sprite';
+  const size = sprite ? 64 : 8;
+  const addr = (start + index * size) & 0xffff;
+  const n = sprite ? spriteNumber(addr) : charNumber(addr);
+  const what = sprite ? 'sprite' : 'character';
+  const name = n != null ? `${sprite ? 'Sprite' : 'Char'} $${h2(n)}` : `${size} bytes`;
+  const px = sprite ? spritePixels(mem, addr, mc) : charPixels(mem, addr, mc);
+  const w = px[0].length;
+  const byte = (a: number) => mem[a & 0xffff];
   return (
-    <div ref={ref} className="char-zoom" tabIndex={0} role="group" aria-label={`${name} enlarged`}
+    <div ref={ref} className={cx('gfx-zoom', sprite ? 'sprite-zoom' : 'char-zoom')} tabIndex={0} role="group" aria-label={`${name} enlarged`}
       onKeyDown={e => {
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
-        const to = charStep(index, e.key, count);
+        const to = charStep(index, e.key, count, sprite ? spriteCols(count) : CHAR_COLS);
         if (to == null) return;
         e.preventDefault(); e.stopPropagation();
         if (to !== index) onPick(to);
       }}>
       <div className="cz-head">
-        <span className="cz-name">{name}</span>
-        <button className="linkish mono" title="Go to its bytes in the listing" onClick={() => onGo(addr)}>${h4(addr)}–${h4(addr + 7)}</button>
+        <span className="cz-name" title={sprite && n != null ? `Its sprite pointer: $${h2(n)} in VIC bank ${addr >> 14}` : undefined}>{name}</span>
+        <button className="linkish mono" title="Go to its bytes in the listing" onClick={() => onGo(addr)}>${h4(addr)}–${h4(addr + size - 1)}</button>
         <span className="cz-nav">
-          <button className="icon-btn" aria-label="Previous character" title="The character before (←)" disabled={index === 0} onClick={() => onPick(index - 1)}><Icon name="left" size={14} /></button>
-          <button className="icon-btn" aria-label="Next character" title="The character after (→)" disabled={index >= count - 1} onClick={() => onPick(index + 1)}><Icon name="right" size={14} /></button>
-          <button className="icon-btn" aria-label="Close the enlarged character" title="Close (Esc)" onClick={onClose}><Icon name="x" size={14} /></button>
+          <button className="icon-btn" aria-label={`Previous ${what}`} title={`The ${what} before (←)`} disabled={index === 0} onClick={() => onPick(index - 1)}><Icon name="left" size={14} /></button>
+          <button className="icon-btn" aria-label={`Next ${what}`} title={`The ${what} after (→)`} disabled={index >= count - 1} onClick={() => onPick(index + 1)}><Icon name="right" size={14} /></button>
+          <button className="icon-btn" aria-label={`Close the enlarged ${what}`} title="Close (Esc)" onClick={onClose}><Icon name="x" size={14} /></button>
         </span>
       </div>
-      <div className="cz-body">
-        <div className={cx('cz-grid', mc && 'mc')} role="img" aria-label={`${name}, ${mc ? 'multicolor 4' : '8'} by 8 pixels`}>
-          {px.flatMap((row, y) => row.map((c, x) => <i key={y * 8 + x} data-c={c} style={{ background: PAL[c] }} />))}
+      {sprite ? (
+        <div className="cz-body sz-body" onMouseLeave={() => setRow(null)}>
+          <div className={cx('cz-grid', 'sz-grid', mc && 'mc')} role="img" aria-label={`${name}, ${mc ? 'multicolor 12' : '24'} by 21 pixels`}
+            onMouseOver={e => { const y = (e.target as HTMLElement).dataset.y; setRow(y != null ? +y : null); }}>
+            {px.flatMap((r, y) => r.map((c, x) => <i key={y * w + x} data-c={c} data-y={y} className={y === row ? 'on' : undefined} style={{ background: PAL[c] }} />))}
+          </div>
+          {/* the bits go when the inspector is too narrow for them (a container query) */}
+          <div className={cx('cz-bytes', 'sz-bytes', 'mono', mc && 'mc')} aria-label="Its bytes">
+            {px.map((_, r) => {
+              const a = addr + r * 3, b = [0, 1, 2].map(k => byte(a + k));
+              return (
+                <div key={r} className={r === row ? 'on' : undefined} onMouseEnter={() => setRow(r)}>
+                  <span className="muted">{h4(a)}</span> <b>{b.map(h2).join(' ')}</b>
+                  <span className="bits">{b.map((v, k) => <span key={k}> <span>{mc ? charBits(v, true).split(' ').map((p, j) => <i key={j}>{p}</i>) : charBits(v, false)}</span></span>)}</span>
+                </div>
+              );
+            })}
+            <div className="sz-pad" title="A sprite takes 64 bytes; the VIC draws 63 of them" onMouseEnter={() => setRow(null)}>
+              <span className="muted">{h4(addr + 63)}</span> <b>{h2(byte(addr + 63))}</b> <span className="muted">not drawn</span>
+            </div>
+          </div>
         </div>
-        <div className="cz-bytes mono" aria-label="Its bytes">
-          {bytes.map((b, r) => <div key={r}><span className="muted">{h4(addr + r)}</span> <b>{h2(b)}</b> <span>{mc ? charBits(b, true).split(' ').map((p, k) => <i key={k}>{p}</i>) : charBits(b, false)}</span></div>)}
+      ) : (
+        <div className="cz-body">
+          <div className={cx('cz-grid', mc && 'mc')} role="img" aria-label={`${name}, ${mc ? 'multicolor 4' : '8'} by 8 pixels`}>
+            {px.flatMap((r, y) => r.map((c, x) => <i key={y * w + x} data-c={c} style={{ background: PAL[c] }} />))}
+          </div>
+          <div className="cz-bytes mono" aria-label="Its bytes">
+            {px.map((_, r) => { const b = byte(addr + r); return <div key={r}><span className="muted">{h4(addr + r)}</span> <b>{h2(b)}</b> <span>{mc ? charBits(b, true).split(' ').map((p, k) => <i key={k}>{p}</i>) : charBits(b, false)}</span></div>; })}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

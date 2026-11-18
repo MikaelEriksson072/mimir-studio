@@ -834,12 +834,14 @@ main.main { container: editor / inline-size; }
 .check input { margin-top: 2px; accent-color: var(--accent); }
 .gfx-box { display: grid; place-items: center; padding: 10px; border-radius: 6px; background: #161434; border: 1px solid var(--line); }
 .gfx { image-rendering: pixelated; display: block; max-width: 100%; height: auto; }
-/* the inspector's Chars preview: a click on a character shows it enlarged (14.1), the one shown is framed */
+/* the inspector's Chars and Sprite previews: a click on a character or a sprite shows it enlarged (14.1), the one
+ * shown is framed */
 .gfx-pick { position: relative; max-width: 100%; cursor: zoom-in; }
 .gfx-picked { position: absolute; outline: 2px solid var(--accent); outline-offset: 1px; pointer-events: none; }
-.char-zoom { margin-top: 8px; padding: 8px 10px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--editor); outline: none; }
-.char-zoom:focus { border-color: var(--accent); }
-.cz-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.gfx-zoom { margin-top: 8px; padding: 8px 10px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--editor); outline: none; }
+.gfx-zoom:focus { border-color: var(--accent); }
+.cz-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 8px; font-size: 12px; }
+.cz-head > * { white-space: nowrap; }
 .cz-name { font-weight: 600; }
 .cz-nav { display: inline-flex; margin-left: auto; }
 .cz-nav .icon-btn { width: 22px; height: 22px; }
@@ -853,6 +855,21 @@ main.main { container: editor / inline-size; }
 .cz-bytes b { font-weight: 600; color: var(--fg); }
 .cz-bytes i { font-style: normal; }
 .cz-bytes i + i { margin-left: 4px; }
+/* a sprite: 24 × 21 pixels as wide as the inspector lets them be (up to 14 px), multicolour 12 × 21; its bytes under
+ * them, a row a line; the row under the pointer marked in both. A row with its bits is 244 px (multicolour 262) in
+ * JetBrains Mono at 10 px: in a narrower box (the inspector under 290 px, multicolour under 308) the bits go */
+.sprite-zoom { container: sprite-zoom / inline-size; }
+.sz-body { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 8px; }
+.sz-grid { width: 100%; max-width: 361px; aspect-ratio: 265 / 232; grid-template-columns: repeat(24, minmax(0, 1fr)); grid-template-rows: repeat(21, minmax(0, 1fr)); }
+.sz-grid.mc { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.sz-grid i.on { filter: brightness(1.3); box-shadow: inset 0 1px var(--accent), inset 0 -1px var(--accent); }
+.sz-bytes { min-width: 0; grid-auto-rows: 13px; row-gap: 0; padding-top: 0; font-size: 10px; line-height: 13px; overflow-x: auto; }
+.sz-bytes > div { padding: 0 2px; border-radius: 2px; }
+.sz-bytes > div.on { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.sz-bytes i + i { margin-left: 2px; }
+.sz-pad { margin-top: 2px; }
+@container sprite-zoom (max-width: 245px) { .sz-bytes .bits { display: none; } }
+@container sprite-zoom (max-width: 263px) { .sz-bytes.mc .bits { display: none; } }
 /* the inspector: multicolour as set for the block, or back to what the VIC registers say */
 .mc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .text-prev { margin: 0; padding: 8px 10px; border-radius: 6px; background: #352879; color: #a59cff; font: 12px/1.5 var(--font-code); white-space: pre-wrap; word-break: break-all; }
