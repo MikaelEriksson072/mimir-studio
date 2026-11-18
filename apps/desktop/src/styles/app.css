@@ -362,6 +362,11 @@ main.main { container: editor / inline-size; }
 .listing .cell.cur { outline: 1px solid var(--accent-hi); outline-offset: 0; }
 .move-chip { position: absolute; left: 76px; z-index: 6; padding: 1px 8px; border-radius: 6px; font: 12px/18px var(--font-ui); color: var(--fg-2); background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); pointer-events: none; white-space: nowrap; }
 .move-chip.ok { color: var(--fg); border-color: var(--accent); }
+/* how many bytes a selection takes in, in the right margin beside it (lib/selcount.ts): at its first line, kept in view
+   while part of it is; with the Text columns shown left of them (their width in the listing's ch: 2 × 11ch + margins) */
+.sel-count-at { position: absolute; right: 12px; z-index: 5; height: 18px; display: flex; align-items: center; pointer-events: none; }
+.sel-count-at.tcols { right: calc(22ch + 44px); }
+.sel-count { padding: 0 7px; border-radius: 4px; font: 600 11px/16px var(--font-ui); color: var(--fg); background: var(--panel-2); border: 1px solid var(--accent); box-shadow: var(--shadow); white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none; }
 /* the Text columns (V): a line's bytes as PETSCII and as screen codes at its right, as the Memory tab draws them */
 .tcol { flex: none; width: 11ch; margin-left: 10px; white-space: pre; overflow: hidden; color: var(--fg-2); }
 .tcol + .tcol { margin-right: 12px; }

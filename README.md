@@ -267,7 +267,8 @@ make an existing project a repository too).
    over a line to see its block the other way: code as bytes with their PETSCII and screen-code text, data as code.
    Click a byte, a character or an instruction in that box to pick it in the listing.
 3. **Fix what the heuristics got wrong.** `N` renames, `;` comments, and `C`, `D`, `W` and `T` mark the selection as
-   code, bytes, words or text. A click on a byte in a data line picks just that byte (`←` / `→` step byte by byte,
+   code, bytes, words or text; how many bytes the selection takes in stands in the right margin beside it (in the
+   source view too, for the lines selected there). A click on a byte in a data line picks just that byte (`←` / `→` step byte by byte,
    `Shift` selects): `S` splits the block there, `J` joins the bytes from it to the end of the block with the next
    block (`Shift+J`: the block's start up to it with the block before), and `L` sets the block's start, end or size.
    Right-click for everything else: what you do most is at the top, the rest is grouped under *Block*, *Program* and

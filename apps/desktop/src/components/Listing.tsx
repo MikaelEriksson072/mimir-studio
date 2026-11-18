@@ -14,6 +14,7 @@ import { CycleCell, type CycleView } from './Cycles';
 import { bookmarkCss, bookmarkSpan } from './Bookmarks';
 import { GfxStrip } from './GfxStrip';
 import { gfxHead, gfxItemAt, gfxSize } from '../lib/gfxlines';
+import { listingSelCount, selCountText } from '../lib/selcount';
 
 const TOKEN_CLASS: Record<Token['t'], string> = { lbl: 'syn-label', hw: 'syn-hw', kw: 'syn-kw', num: 'syn-num', str: 'syn-str', dir: 'syn-dir', def: 'syn-label', p: 'syn-p' };
 
@@ -347,6 +348,12 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     startDrag(i, e.clientX, e.clientY, handle ? movesOf(A, l) : null, !e.shiftKey ? cell : null);
   };
 
+  // the bytes a selection of more than one byte takes in (a click on one line selects it, which is no selection here)
+  const selCount = useMemo(() => {
+    if (!sel?.multi || sel.end - sel.start < 2) return null;
+    const c = listingSelCount(lineOf, sel.start, sel.end);
+    return c && c.bytes > 1 ? c : null;
+  }, [sel?.multi, sel?.start, sel?.end, lineOf]);
   // The peek: Ctrl held over a line shows its block the other way than the listing does (lib/peek.ts), right under the
   // line. Ctrl pressed shows it after a moment, so Ctrl+C and the other keys with Ctrl show none; a key pressed with
   // Ctrl closes it until Ctrl is let go. `x`: where the pointer came onto the row; `top`: the row's top on screen;
@@ -695,6 +702,16 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   }
   // the box of the picked label's references (none while an editor is open)
   const xpop = xrefs && !editing && onXref ? <XrefPop key={`${xrefs.line}/${xrefs.name}`} box={xrefs} onGo={onXref} onClose={() => onXrefClose?.()} onPanel={() => onXrefPanel?.()} /> : null;
+  // how many bytes the selection takes in, in the right margin beside it (at its first line, and kept in view while
+  // part of it is); left of the Text columns when they are shown
+  let count = null;
+  if (selCount && !moving) {
+    const lf = lines[selCount.last], y0 = selCount.first * ROW, y1 = (selCount.last + (lf?.k === 'gfx' ? lf.rows : 1)) * ROW;
+    if (y1 > top && y0 < top + height) {
+      const y = Math.min(Math.max(y0 + 1, top + 4), y1 - ROW + 1);
+      count = <div className={cx('sel-count-at', textCols && 'tcols')} style={{ top: y }} aria-hidden="true"><span className="sel-count" data-testid="sel-count">{selCountText(selCount.bytes)}</span></div>;
+    }
+  }
   let chip = null;
   if (moving) {
     const { m, moves } = moving, dir = m && m === moves.prev ? 'prev' : 'next';
@@ -723,7 +740,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
   return (
     <div className={cx('listing', moving && 'moving')} ref={el => { box.current = el; listRef.current = el; }} tabIndex={0} onScroll={e => { setTop(e.currentTarget.scrollTop); if (peekRow) peekNow(); report(); }} aria-label="Disassembly listing"
       onMouseMove={peekMove} onMouseLeave={e => { if (e.relatedTarget instanceof Element && e.relatedTarget.closest('.peek')) return; pointer.current = null; clearTimeout(peekKeys.current.timer); clearTimeout(peekKeys.current.cell); peekKeys.current.cellAt = null; setPeekRow(null); }}>
-      <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{pop}{xpop}{chip}</div>
+      <div style={{ height: lines.length * ROW + 40, position: 'relative' }}>{rows}{changedFrame}{count}{pop}{xpop}{chip}</div>
       {peek && peekRow && <PeekBox list={box.current} peek={peek} A={A} names={names} lower={lower} x={peekRow.x} top={peekRow.top} rowH={(peekRow.line.k === 'gfx' ? peekRow.line.rows : 1) * ROW} sel={sel?.bytes ? sel : null} onPick={(a, extend) => onPeekPick?.(a, extend)} />}
     </div>
   );

@@ -9143,3 +9143,71 @@ test('a label clicked shows who references it in a box beside it: a click on one
     await expect(box.locator('tbody tr td:nth-child(2)')).toHaveText(['write', 'write', 'pointer']);
   });
 });
+
+test('a selection shows how many bytes it takes in, in the right margin beside it: in the listing, kept in view, left of the Text columns, and in the source tab', async ({ page }) => {
+  await waitForListing(page);
+  const count = page.getByTestId('sel-count');
+  const row = (adr: string) => listing(page).locator('.row', { has: page.locator('.adr', { hasText: new RegExp(`^${adr}$`) }) }).last();
+
+  await test.step('a range of lines: the count beside its first line, at the listing’s right edge', async () => {
+    await goTo(page, '$0816-$0826');
+    await expect(statusBar(page)).toContainText('sel $0816–$0826 (17 B)');
+    await expect(count).toHaveText('17 bytes ($11)');
+    const c = (await count.boundingBox())!, r = (await row('0816').boundingBox())!, l = (await listing(page).boundingBox())!;
+    expect(c.y).toBeGreaterThanOrEqual(r.y);
+    expect(c.y + c.height).toBeLessThanOrEqual(r.y + r.height);
+    expect(c.x + c.width).toBeGreaterThan(l.x + l.width - 40);
+  });
+
+  await test.step('a click on one line is no selection to count; a block header takes in the whole block', async () => {
+    await row('0819').click();
+    await expect(count).toHaveCount(0);
+    // the code block start, $0810-$0865
+    await headerRow(page, '0810').click();
+    await expect(count).toHaveText('86 bytes ($56)');
+  });
+
+  await test.step('scrolled down into a long selection the count stays at the top of the listing', async () => {
+    await goTo(page, 'colors_0939-$0ab4');
+    await expect(count).toHaveText('380 bytes ($017c)');
+    // its first line 60 px above the listing's top
+    const l = (await listing(page).boundingBox())!, before = (await count.boundingBox())!;
+    await listing(page).evaluate((el, by) => { el.scrollTop += by; }, before.y - l.y + 60);
+    await expect.poll(async () => (await count.boundingBox())!.y).toBeLessThan(l.y + 10);
+    expect((await count.boundingBox())!.y).toBeGreaterThanOrEqual(l.y);
+  });
+
+  await test.step('with the Text columns the count stands left of them', async () => {
+    await goTo(page, '$0816-$0826');
+    await listing(page).focus();
+    await page.keyboard.press('v');
+    await expect(row('0816').locator('.tcol')).toHaveCount(2);
+    const c = (await count.boundingBox())!, t = (await row('0816').locator('.tcol').first().boundingBox())!;
+    expect(c.x + c.width).toBeLessThan(t.x);
+    await page.keyboard.press('v');
+    await expect(listing(page).locator('.tcol')).toHaveCount(0);
+  });
+
+  await test.step('in the source tab: the bytes of the lines selected, beside the first of them', async () => {
+    await page.getByRole('tab', { name: 'raster-demo.asm' }).click();
+    const editor = page.locator('.mon-host .view-lines'), src = page.getByTestId('source-sel-count');
+    await expect(editor).toBeVisible();
+    await editor.click();
+    await page.keyboard.press('Control+f');
+    await page.keyboard.type('BasicUpstart2(start)');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Home');
+    await expect(src).toBeHidden();
+    // down to the start of the .fill line: BasicUpstart2's 12 bytes (the lines between have none)
+    for (let k = 0; k < 4; k++) await page.keyboard.press('Shift+ArrowDown');
+    await expect(src).toHaveText('12 bytes ($0c)');
+    // and the .fill line: 3 more
+    await page.keyboard.press('Shift+End');
+    await expect(src).toHaveText('15 bytes ($0f)');
+    const line = (await editor.locator('.view-line', { hasText: 'BasicUpstart2(start)' }).boundingBox())!, c = (await src.boundingBox())!;
+    expect(Math.abs(c.y - line.y)).toBeLessThan(4);
+    await page.keyboard.press('ArrowRight');
+    await expect(src).toBeHidden();
+  });
+});

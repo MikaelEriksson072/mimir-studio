@@ -8,6 +8,7 @@ import { Icon } from '../lib/icons';
 import { templateKey } from './BuildTemplates';
 import type { Changed, NavOptions } from '../lib/types';
 import { LineBody, lineScriptMarks, scriptMarkTip, type ScriptMark } from './Listing';
+import { selCountText, sourceSelCount } from '../lib/selcount';
 
 type MonacoNs = typeof Monaco;
 
@@ -81,6 +82,8 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
   const padRef = useRef(onPadMenu); padRef.current = onPadMenu;
   const markRef = useRef(onScriptMark); markRef.current = onScriptMark;
   const ctxAt = useRef<{ x: number; y: number } | null>(null);
+  /** places the count of the selected lines' bytes again (the file's lines changed) */
+  const placeCountRef = useRef<() => void>(() => { });
   /** the scripts marked after each line of the file shown (by line number) */
   const markLines = useRef(new Map<number, ScriptMark[]>());
   const marksDeco = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
@@ -149,6 +152,27 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
           padRef.current?.(lo, hi, at.x, at.y);
         },
       });
+      // how many bytes the lines selected hold, in the right margin beside them (left of the minimap): at the first
+      // line selected, kept in view while part of the selection is (an overlay widget placed here, lib/selcount.ts)
+      const countNode = document.createElement('div');
+      countNode.className = 'sel-count mon-sel-count'; countNode.dataset.testid = 'source-sel-count'; countNode.style.display = 'none';
+      editor.addOverlayWidget({ getId: () => 'mimir.sel-count', getDomNode: () => countNode, getPosition: () => null });
+      const placeCount = () => {
+        const lines = rRef.current.fileLines[edPath.current], sels = editor.getSelections();
+        const c = lines && sels ? sourceSelCount(lines, sels) : null;
+        const li = editor.getLayoutInfo(), st = editor.getScrollTop(), lh = editor.getOption(monaco.editor.EditorOption.lineHeight);
+        const y0 = c ? editor.getTopForLineNumber(c.first) - st : 0, y1 = c ? editor.getTopForLineNumber(c.last) + lh - st : 0;
+        if (!c || y1 <= 0 || y0 >= li.height) { countNode.style.display = 'none'; return; }
+        countNode.textContent = selCountText(c.bytes);
+        countNode.style.display = '';
+        countNode.style.top = `${Math.min(Math.max(y0 + 1, 4), y1 - lh + 1)}px`;
+        countNode.style.right = `${li.width - li.contentLeft - li.contentWidth + 12}px`;
+      };
+      placeCountRef.current = placeCount;
+      editor.onDidChangeCursorSelection(placeCount);
+      editor.onDidScrollChange(placeCount);
+      editor.onDidLayoutChange(placeCount);
+      editor.onDidChangeModel(placeCount);
       // a click on a script's mark after a line opens the script
       editor.onMouseDown(ev => {
         const el = ev.target.element as HTMLElement | null, n = ev.target.position?.lineNumber;
@@ -193,6 +217,7 @@ export function SourceView({ R, A, S, path, setPath, cursor, onNavigate, theme, 
     if (e.getModel() !== m) e.setModel(m);
     edPath.current = cur.path;
     e.updateOptions({ readOnly: !isScript(cur.path) });
+    placeCountRef.current();
   }, [state, cur?.path, cur?.text]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the assembler's errors (Kick Assembler's or 64tass's) as editor markers
