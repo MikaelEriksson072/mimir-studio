@@ -276,6 +276,33 @@ describe('Freeload and US Gold\'s loader', () => {
       expect(t.unknown).toHaveLength(1);
     }
   });
+
+  it("read a file whose header's end takes in its sum, with the tape ending there (Gauntlet's first level)", () => {
+    // Gauntlet's level tape: "A" at $2000-$2e01, 3 584 bytes and their XOR as the last byte, a pulse of 1 256 cycles
+    // and a pause; then the levels "A1", each with its sum after it. The game's loader stores all 3 585 bytes.
+    const level = bytes(3584, 9);
+    const tape = (last: number) => {
+      const a = new TurboWriter(0x21, 0x44), a1 = new TurboWriter(0x21, 0x44);
+      pilotFile(a, { pilot: 0x20, sync: 0xff, name: 'a', load: 0x2000, data: Uint8Array.from([...level, last]), sum: null, trail: 0 });
+      a.pulses.push(0x9d);
+      pilotFile(a1, { pilot: 0x20, sync: 0xff, name: 'a1', load: 0x2000, data: bytes(5120, 10), trail: 0 });
+      return readTape(withTurbo(makeTap({ files: [] }), [...a.pulses, 0, 0x20, 0x4e, 0, ...a1.pulses]));
+    };
+    const xor = level.reduce((a, v) => a ^ v, 0);
+    const img = tape(xor);
+    expect(img.files.map(f => [f.name, f.load, f.end, f.data.length, f.errors])).toEqual([
+      ['A', 0x2000, 0x2e01, 3585, []],
+      ['A1', 0x2000, 0x3400, 5120, []],
+    ]);
+    expect(img.files[0].data).toEqual(Uint8Array.from([...level, xor]));
+    expect(img.files[0].note).toMatch(/takes in the sum: the last byte it loads, at \$2e00, is the XOR/);
+    expect(img.files[1].note).toBeUndefined();
+    expect(img.unknown).toEqual([]);
+    // a last byte that is not the XOR of the others: turbo data no format reads
+    const bad = tape(xor ^ 0x10);
+    expect(bad.files.map(f => f.name)).toEqual(['A1']);
+    expect(bad.unknown).toHaveLength(1);
+  });
 });
 
 describe('Mega-Save', () => {

@@ -721,6 +721,13 @@ function pilotFiles(p: TapPulses, bits: Uint8Array, base: number): { files: Tape
       };
       // the checksum tells the format from data that happens to hold its pilot and sync
       if (sum === x) { out.push(file([])); k = at; reg = 0; continue; }
+      // a header whose end takes in the sum, and the stretch ends there: the last byte loaded is the XOR of the bytes
+      // before it, and the loader reads its sum off what comes after (Gauntlet's first level "A": $2000-$2e01, its
+      // sum at $2e00; the game's loader stores 3 585 bytes and reads the sum from the next file's pilot, unchecked)
+      if (sum < 0 && x === 0 && data.length > 1 && bits.length - (at - 8) < 8) {
+        out.push({ ...file([]), to: base + bits.length, note: `the header's end takes in the sum: the last byte it loads, at $${hex4(stop - 1)}, is the XOR of the bytes before it, and the tape has no sum after it` });
+        k = at; reg = 0; continue;
+      }
       let pilot = 2;
       while (msbByte(bits, k - 16 - pilot * 8) === fmt.pilot) pilot++;
       if (sum >= 0 && bits.length - at < PILOT_TAIL && pilot >= PILOT_LONG) doubtful.push(file([`checksum: the data's XOR is $${hex2(x)}, the tape says $${hex2(sum)}`]));

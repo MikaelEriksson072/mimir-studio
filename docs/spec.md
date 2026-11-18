@@ -3675,7 +3675,12 @@ fönstret på en gång. `readTape()` (`packages/core/src/c64/tap.ts`) läser avb
   kontrollerar inte alla summor (Ghostbusters bootfil, Kixx, jämför bara summan för den sista filen i en rad, inte för
   teckensnittet vid `$7000` före den). Filen får felet `checksum: the data's XOR is …, the tape says …`. Utan någon fil
   vars summa stämmer (Hero Quest, Epyx band) är det ett annat format med samma ledare och synk, och Rainbow Islands
-  nivåfiler har 35 byte till efter summan: de förblir okänd turbodata.
+  nivåfiler har 35 byte till efter summan: de förblir okänd turbodata. Ett huvud vars slut tar med summan läses också:
+  slutar sträckan där summan skulle börja (färre än 8 bitar kvar) och är XOR av all data 0, så är den sista byten
+  summan av de andra. Gauntlets första nivå `A` på nivåbandet (`$2000`–`$2e01`, i The Deeper Dungeons `$2000`–`$3401`):
+  spelet ber om `A` en gång och sedan `A1` för varje nivå, dess laddare (vid `$0934`, via LOAD-vektorn) lagrar alla
+  3 585 byte, summan vid `$2e00`, läser en summa ur nästa fils ledare och spelet ser inte på status. Filen tas med de
+  byte laddaren lagrar och anteckningen `the header's end takes in the sum …`, utan fel.
 - **Mega-Save** (Palace, Hewson, Level 9, Alligata, Llamasoft, CRL …; Tazz, Cauldron, Firelord, Iridis Alpha): laddaren
   i bootfilens bandhuvud (`$0351`, startad av bootfilen vid `$02a7`) startar om CIA2:s timer B vid varje puls, en
   one-shot från `$0107`, `$016e` eller `$01fa` cykler (de tre hastigheterna), och en 1 är att den hann ta slut; högsta
@@ -3873,7 +3878,9 @@ dem i sista blocket på rena pulser (Turbo Esprits A: laddaren sätter status `$
 och VICE laddar vidare). Freeload- och US Gold-filer med en summa som inte stämmer (2026-11-17): i båda samlingarna två,
 Ghostbusters (Kixx) teckensnitt vid `$7000` och Chicago 30:s fil vid `$e000`, båda med de byte deras laddare lagrar när
 Sindri kör banden (Ghostbusters laddare kopierar teckensnittets första 1 KB till `$f000`); inga andra filer eller
-sträckor ändrades (sträckorna med okänd turbodata 14 183 till 14 181). Firebirds laddare (2026-11-17): i båda
+sträckor ändrades (sträckorna med okänd turbodata 14 183 till 14 181). Huvuden vars slut tar med summan (2026-11-18):
+av arkivets 2 860 band fick bara Gauntlets fem nivåband sin fil `A` (tre av Gauntlet, två av The Deeper Dungeons, alla
+lästa till slutet nu), utan att någon annan fil eller sträcka ändrades. Firebirds laddare (2026-11-17): i båda
 samlingarna 371 filer på 57 band, ingen med fel; sträckorna med okänd turbodata gick från 14 181 till 9 333 och band med
 inget kvar från 988 till 1 045 (alla 57 läses till slutet), utan att någon fil i ett annat format ändrades. Alla
 kedjor börjar med block 0 vid `$0200` och ledarbyten `$0f`, ledarna har 9–11 byte, och det sista blocket hoppar in i
