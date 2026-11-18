@@ -3755,6 +3755,89 @@ test('a bitmap of fewer rows marked where the VIC shows a whole one is a block o
   await expect(listing(page).locator('.gfx-strip.gfx-bitmap').first()).toHaveCSS('height', '80px');
 });
 
+test('Unmark in the Graphics tab makes the graphics in the selection data, in every view', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Graphics' }).click();
+  const view = page.getByLabel('Memory as graphics');
+  const go = async (to: string) => { await view.getByLabel('Go to address, label or range').fill(to); await view.getByLabel('Go to address, label or range').press('Enter'); };
+  const sel = view.getByRole('status'), unmark = view.getByRole('button', { name: 'Unmark', exact: true });
+  const mode = (name: string) => view.getByRole('button', { name, exact: true });
+  /** Ctrl+Z with the picture focused (not the Go field, which would undo its own text) */
+  const undo = async () => { await view.focus(); await page.keyboard.press('Control+z'); };
+
+  await test.step('characters: the whole charset becomes data, and Ctrl+Z takes it back', async () => {
+    await mode('Characters').click();
+    // the sprite at $2000, the fill after it, the charset at $3000 (2 KB)
+    await go('$2040');
+    await expect(sel).toContainText('· Fill');
+    await expect(unmark).toBeDisabled();
+    await expect(unmark).toHaveAttribute('title', /^Nothing in the selection is marked as graphics/);
+    await go('$3000');
+    await view.getByRole('button', { name: 'Whole charset (2 KB)' }).click();
+    await expect(unmark).toBeEnabled();
+    await expect(unmark).toHaveAttribute('title', /Charset charset_3000 \(\$3000–\$37ff\)/);
+    await unmark.click();
+    await expect(toast(page, '$3000–$37ff is data now (was Charset)')).toBeVisible();
+    await expect(sel).toContainText('$3000–$37ff (2048 bytes) · Data ($3000–$37ff)');
+    await expect(unmark).toBeDisabled();
+    await undo();
+    await expect(sel).toContainText('· Charset charset_3000 ($3000–$37ff)');
+  });
+
+  await test.step('sprites: the sprite selected', async () => {
+    await mode('Sprites').click();
+    await go('$2000');
+    await expect(sel).toContainText('$2000–$203f (64 bytes) · Sprites spr_2000');
+    await unmark.click();
+    await expect(toast(page, '$2000–$203f is data now (was Sprite data)')).toBeVisible();
+    await expect(sel).toContainText('· Data ($2000–$203f)');
+    await undo();
+    await expect(sel).toContainText('· Sprites spr_2000');
+  });
+
+  await test.step('bitmaps: the sprite and the charset in the 8000 bytes, the fill between them stays', async () => {
+    await mode('Bitmaps').click();
+    await go('$2000');
+    await expect(sel).toContainText('$2000–$3f3f (8000 bytes)');
+    await unmark.click();
+    await expect(toast(page, '2 stretches of graphics in $2000–$3f3f are data now (were Sprite data, Charset)')).toBeVisible();
+    await expect(unmark).toBeDisabled();
+    await mode('Characters').click();
+    for (const [at, block] of [['$2000', 'Data ($2000–$203f)'], ['$2040', 'Fill ($2040–$2fff)'], ['$3000', 'Data ($3000–$37ff)']]) {
+      await go(at);
+      await expect(sel).toContainText(`· ${block}`);
+    }
+    await undo();
+    await expect(sel).toContainText('· Charset charset_3000');
+  });
+
+  await test.step('screens: the screen cuts the charset, whose rest stays a charset', async () => {
+    await mode('Screens').click();
+    await go('$3000');
+    await expect(sel).toContainText('$3000–$33e7 (1000 bytes) · Charset charset_3000');
+    await unmark.click();
+    await expect(toast(page, '$3000–$33e7 is data now (was Charset)')).toBeVisible();
+    await expect(sel).toContainText('· Data ($3000–$33e7)');
+    await go('$33e8');
+    await expect(sel).toContainText('· Charset charset_33e8 ($33e8–$37ff)');
+    await undo();
+  });
+
+  await test.step('a font per row: the font of the row clicked', async () => {
+    await mode('Font per row').click();
+    const first = view.getByLabel('Font of the first row');
+    await first.fill('$3000');
+    await first.press('Enter');
+    const picture = view.locator('.gfxv-canvas');
+    const b = (await picture.boundingBox())!;
+    await page.mouse.click(b.x + 100, b.y + 4);
+    await expect(sel).toContainText('$3000–$37ff (2048 bytes) · Charset charset_3000');
+    await unmark.click();
+    await expect(toast(page, '$3000–$37ff is data now (was Charset)')).toBeVisible();
+    await expect(sel).toContainText('· Data ($3000–$37ff)');
+  });
+});
+
 test('edit build.bat in the source view: the export writes it, Restore generated takes it back', async ({ workDir: work, app, page }) => {
   await waitForListing(page);
   await page.getByRole('tab', { name: 'raster-demo.asm' }).click();

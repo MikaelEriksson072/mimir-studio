@@ -1,7 +1,7 @@
 /* Editing helpers the UI and the CLI share: they turn an intent into the override that does it. */
 import type { Addr, AnalysisResult, Block, BlockKind, ListingLine, NumberFormat, Override, OverrideProps, Project } from './types';
 import { findBlock } from './analyze/classify';
-import { MARK_AS, MARK_TYPE } from './model';
+import { kindInfo, MARK_AS, MARK_TYPE } from './model';
 import { h4 } from './util/hex';
 import { relocAt } from './relocs';
 
@@ -315,6 +315,42 @@ export function markOverride(A: AnalysisResult, start: Addr, end: Addr, id: stri
   if (type === 'code' && (prev || next || A.blocks.some(b => b.type === 'code' && b.props.one && b.start < end && start < b.end))) props.one = true;
   const s = prev ? prev.start : start, e = next ? next.end : end;
   return { override: { start: s, end: e, type, ...(Object.keys(props).length ? { props } : {}) }, prev, next };
+}
+
+export interface GfxUnmark {
+  /** append them to `project.overrides`: the parts outside the range of the graphics blocks it cuts, then the data */
+  overrides: Override[];
+  /** the graphics in the range that become data (end excluded; graphics blocks touching in one file are one part) and
+   *  the blocks they are in */
+  parts: { start: Addr; end: Addr; blocks: Block[] }[];
+  /** the data blocks right before and after the parts that Auto merge takes in */
+  merged: Block[];
+}
+
+/**
+ * Unmark (the Graphics tab): the graphics blocks (Charset, Sprite data, Bitmap, Screen matrix) in `start`..`end` (end
+ * excluded), cut to it, become data (Bytes). A graphics block the range cuts keeps its type for the part outside it
+ * (keepCutTypes), and the other blocks in the range are left as they are. Auto merge (`merge`) takes in the data blocks
+ * before and after each part, as Mark as Bytes does; two parts that take in the same block are one override.
+ */
+export function gfxToData(A: AnalysisResult, start: Addr, end: Addr, merge = true): GfxUnmark {
+  const parts: GfxUnmark['parts'] = [];
+  for (const b of A.blocks) {
+    if (b.end <= start || b.start >= end || kindInfo(b.type).group !== 'gfx') continue;
+    const s = Math.max(b.start, start), e = Math.min(b.end, end), last = parts[parts.length - 1];
+    if (last && last.end === s && last.blocks[0].file === b.file && relocAt(A, last.start) === relocAt(A, s)) { last.end = e; last.blocks.push(b); }
+    else parts.push({ start: s, end: e, blocks: [b] });
+  }
+  const keep: Override[] = [], data: Override[] = [], merged: Block[] = [];
+  for (const p of parts) {
+    keep.push(...keepCutTypes(A, p.start, p.end));
+    const m = markOverride(A, p.start, p.end, 'bytes', merge), o = m.override, before = data[data.length - 1];
+    for (const n of [m.prev, m.next]) if (n && !merged.includes(n)) merged.push(n);
+    // the data block between two parts, taken in by both
+    if (before && o.start < before.end) before.end = Math.max(before.end, o.end);
+    else data.push({ ...o });
+  }
+  return { overrides: [...keep, ...data], parts, merged };
 }
 
 export interface RangeMerge {

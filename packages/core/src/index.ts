@@ -81,7 +81,7 @@ export type { DemoProgram } from './demo';
 export { makeShowcase, showcaseProject, type ShowcaseProgram } from './showcase';
 // bytes the program copies elsewhere to run there (8.1b)
 export { addReloc, codeWhereLoaded, loadAddress, loadRange, moveKeys, moveReloc, relocAt, relocLoadedAt, relocProblem, removeReloc, type RelocKeys } from './relocs';
-export { FORMATTABLE, formatOverride, keepCutTypes, lineMove, markIdOf, markOverride, mergeOverride, mergeRange, moveBlockKeys, moveBytes, moveFrom, resizeBlock, splitBlock, type BlockMerge, type BlockResize, type BlockSplit, type ByteMove, type MarkMerge, type RangeMerge } from './edit';
+export { FORMATTABLE, formatOverride, gfxToData, keepCutTypes, lineMove, markIdOf, markOverride, mergeOverride, mergeRange, moveBlockKeys, moveBytes, moveFrom, resizeBlock, splitBlock, type BlockMerge, type BlockResize, type BlockSplit, type ByteMove, type GfxUnmark, type MarkMerge, type RangeMerge } from './edit';
 export { createProject, demoProject, serializeProject, deserializeProject, projectNameFor, withId, newId, b64enc, b64dec } from './project';
 export { buildScripts, BUILD_SCRIPTS, builtCartridge, cartBuild, cartridgeFiles, expectedCartridge, readme, projectScripts, projectTextFiles, templateScripts, exportFiles, type CartBuild } from './export';
 export {

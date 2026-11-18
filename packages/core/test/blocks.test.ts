@@ -2,7 +2,7 @@
  * neighbouring block, giving a block a new range, and marking bytes inside a line (the rest keeps its type). */
 import { describe, expect, it } from 'vitest';
 import {
-  analyze, findBlock, keepCutTypes, makeDemo, markOverride, moveBlockKeys, moveFrom, parsePrg, render, resizeBlock, splitBlock, verify,
+  analyze, findBlock, gfxToData, keepCutTypes, makeDemo, markOverride, moveBlockKeys, moveFrom, parsePrg, render, resizeBlock, splitBlock, verify,
   type AnalysisResult, type Override, type ProjectInput,
 } from '../src';
 import { fromSource } from './helpers/programs';
@@ -265,5 +265,59 @@ describe('the showcase', () => {
       for (const k of r.rekeys) moveBlockKeys(keys, k.from, k.to);
       expect(keys.blockComments).toEqual({ 0x0935: 'colours', 0x0950: 'title' });
     });
+  });
+});
+
+describe('Unmark in the Graphics tab: the graphics in a range become data', () => {
+  const p = demoInput();
+  const A0 = analyze(p);
+  const SPR = 0x2000, FILL = 0x2040, CHARS = 0x3000, CHARS_END = 0x3800;
+
+  it('has the blocks the tests use', () => {
+    expect(spans(A0, SPR, CHARS_END)).toEqual([[SPR, FILL, 'sprite'], [FILL, CHARS, 'fill'], [CHARS, CHARS_END, 'charset']]);
+  });
+
+  it('makes a whole charset data', () => {
+    const u = gfxToData(A0, CHARS, CHARS_END);
+    expect(u.parts.map(x => [x.start, x.end, x.blocks.map(b => b.type)])).toEqual([[CHARS, CHARS_END, ['charset']]]);
+    expect(u.overrides).toEqual([{ start: CHARS, end: CHARS_END, type: 'data' }]);
+    const { A } = withOverrides(p, u.overrides);
+    expect(findBlock(A.blocks, CHARS)).toMatchObject({ start: CHARS, end: CHARS_END, type: 'data', user: true });
+  });
+
+  it('keeps the type of the parts of a graphics block the range cuts', () => {
+    const u = gfxToData(A0, 0x3100, 0x3200);
+    expect(u.overrides).toEqual([
+      { start: CHARS, end: 0x3100, type: 'charset' }, { start: 0x3200, end: CHARS_END, type: 'charset' },
+      { start: 0x3100, end: 0x3200, type: 'data' },
+    ]);
+    expect(spans(withOverrides(p, u.overrides).A, CHARS, CHARS_END)).toEqual([[CHARS, 0x3100, 'charset'], [0x3100, 0x3200, 'data'], [0x3200, CHARS_END, 'charset']]);
+  });
+
+  it('leaves the blocks in the range that are not graphics as they are', () => {
+    const u = gfxToData(A0, SPR, CHARS_END);
+    expect(u.parts.map(x => [x.start, x.end])).toEqual([[SPR, FILL], [CHARS, CHARS_END]]);
+    expect(u.overrides).toEqual([{ start: SPR, end: FILL, type: 'data' }, { start: CHARS, end: CHARS_END, type: 'data' }]);
+    expect(spans(withOverrides(p, u.overrides).A, SPR, CHARS_END)).toEqual([[SPR, FILL, 'data'], [FILL, CHARS, 'fill'], [CHARS, CHARS_END, 'data']]);
+    // nothing to unmark
+    expect(gfxToData(A0, FILL, CHARS)).toEqual({ overrides: [], parts: [], merged: [] });
+  });
+
+  it('makes graphics blocks that touch one part', () => {
+    const { A } = withOverrides(p, [{ start: FILL, end: CHARS, type: 'sprite' }]);
+    const u = gfxToData(A, SPR, CHARS_END);
+    expect(u.parts.map(x => [x.start, x.end, x.blocks.length])).toEqual([[SPR, CHARS_END, 3]]);
+    expect(u.overrides).toEqual([{ start: SPR, end: CHARS_END, type: 'data' }]);
+  });
+
+  it('takes in the data before and after it with Auto merge, one override for a block two parts take in', () => {
+    const { A } = withOverrides(p, [{ start: FILL, end: CHARS, type: 'data' }]);
+    const u = gfxToData(A, SPR, CHARS_END);
+    expect(u.merged.map(b => [b.start, b.end])).toEqual([[FILL, CHARS]]);
+    expect(u.overrides).toEqual([{ start: SPR, end: CHARS_END, type: 'data' }]);
+    expect(spans(withOverrides(p, [{ start: FILL, end: CHARS, type: 'data' }, ...u.overrides]).A, SPR, CHARS_END)).toEqual([[SPR, CHARS_END, 'data']]);
+    const off = gfxToData(A, SPR, CHARS_END, false);
+    expect(off.merged).toEqual([]);
+    expect(off.overrides).toEqual([{ start: SPR, end: FILL, type: 'data' }, { start: CHARS, end: CHARS_END, type: 'data' }]);
   });
 });

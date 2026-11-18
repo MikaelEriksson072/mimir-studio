@@ -6,7 +6,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
-  keepCutTypes, moveFrom, splitBlock, type BlockResize,
+  gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
@@ -1369,6 +1369,22 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     toast(side ? `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what} and merged with the ${what} ${side}: one block $${h4(o.start)}–$${h4(o.end - 1)}${merged > 1 ? ` (${merged} blocks)` : ''}`
       : `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
     showChanged(o.start, o.end, side ? `Marked as ${what} and merged` : `Marked as ${what}`);
+  };
+  /** Unmark (the Graphics tab): the graphics blocks in `r`, cut to it, become data; the rest of a block it cuts keeps
+   *  its type and the other blocks in it stay as they are (gfxToData) */
+  const unmark = (r: Range) => {
+    const u = gfxToData(A, r.start, r.end, useUi.getState().autoMerge);
+    if (!u.parts.length) { toast(`$${h4(r.start)}–$${h4(r.end - 1)} has no graphics to unmark`, 'warn'); return; }
+    const rl = A.relocs.find(x => u.parts.some(p => x.start < p.end && p.start < x.end));
+    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside ${words.pseudopc}`, 'warn'); return; }
+    const span = (p: Range) => `$${h4(p.start)}–$${h4(p.end - 1)}`;
+    // named as Mark as names them (Sprite data, Screen matrix)
+    const kinds = [...new Set(u.parts.flatMap(p => p.blocks.map(b => MARK_AS.find(m => m.id === markIdOf(b))?.label ?? kindInfo(b.type).label)))].join(', ');
+    const many = u.parts.length > 1, where = many ? `${u.parts.length} stretches of graphics in $${h4(r.start)}–$${h4(r.end - 1)}` : span(u.parts[0]);
+    const first = u.parts[0], last = u.parts[u.parts.length - 1];
+    update(`Unmark ${where.replace('–', '-')} (${kinds}): data`, d => { d.overrides.push(...u.overrides); });
+    toast(`${where} ${many ? 'are' : 'is'} data now (${many ? 'were' : 'was'} ${kinds})${u.merged.length ? `, one block with the data next to it` : ''}`, 'ok');
+    showChanged(Math.min(first.start, ...u.merged.map(b => b.start)), Math.max(last.end, ...u.merged.map(b => b.end)), 'Unmarked: data');
   };
   /** a data, table or word block's number format and items a row (an override like the block, with them) */
   const setFormat = (b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }) => {
@@ -3792,7 +3808,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
-                onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />)(allGfx ? (a: Addr) => a : inBank)}
+                onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
+                onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)} />)(allGfx ? (a: Addr) => a : inBank)}
               {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
                 spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
                 onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}

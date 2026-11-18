@@ -147,8 +147,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
 - **A list of all raster IRQs.** Every interrupt handler appears with the raster line it runs at (`$d012`, and bit 8
   from `$d011`), who sets it and where.
 - **A Graphics tab.** It shows all 64 KB as characters, sprites, bitmaps, screens or a font per character row. You
-  select what you find, mark it and save it as raw bytes, a `.prg`, a Koala or Art Studio picture, a PNG or `.byte`
-  source.
+  select what you find, mark it (or unmark graphics that are not, which makes them data) and save it as raw bytes, a
+  `.prg`, a Koala or Art Studio picture, a PNG or `.byte` source.
 - **Graphics as pictures in the listing.** Sprites, charsets and bitmaps are drawn as they look instead of as `.byte`
   rows: a charset as rows of characters by screen code, sprites side by side with their labels under them, a bitmap
   as its picture. Multicolour follows `$d01c` and `$d016`, or what you set for the block. A click picks a character,

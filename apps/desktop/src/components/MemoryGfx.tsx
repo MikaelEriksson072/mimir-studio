@@ -2,7 +2,7 @@
  * find graphics by eye (as in ICU64). Screens are drawn with VICE's character ROM, the built-in letters or a charset in
  * memory. *Font per row* draws a picture whose character rows each have their own font (2 KB apart, passing over memory
  * where no font can be) and the same 40 screen codes. A click selects a cell, Shift+click or a drag more; the selection is the listing's and is marked as Charset,
- * Sprite data, Bitmap or Screen matrix from here, or saved: as bytes, with a load address, as a Koala or Art Studio
+ * Sprite data, Bitmap or Screen matrix from here, its graphics unmarked (made data), or saved: as bytes, with a load address, as a Koala or Art Studio
  * picture, as a PNG image or as .byte source. A cartridge's bank is picked in the head: the picture stays where it is,
  * and the cursor goes along, to the same address when the bank has it; *All banks* lays every bank's loaded memory out
  * one after the other, at bank addresses (`1:$8000`). The tab opens where the editor was in memory (the listing's or
@@ -62,6 +62,8 @@ interface MemoryGfxProps {
   A: AnalysisResult; R: RenderResult; cursor: Addr | null; sel: Sel | null;
   onSelect: (start: Addr, end: Addr) => void; onClear: () => void;
   onMark: (id: string, range: { start: Addr; end: Addr }) => void;
+  /** Unmark: the graphics blocks in the range, cut to it, become data */
+  onUnmark: (range: { start: Addr; end: Addr }) => void;
   onShow: (a: Addr) => void;
   /** save a file through a save dialog (its suggested name and bytes) */
   onSave: (name: string, bytes: Uint8Array) => void;
@@ -97,7 +99,7 @@ async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArr
 
 const plainAddr = (a: Addr) => `$${h4(a)}`;
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow, onSave, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onUnmark, onShow, onSave, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
@@ -352,6 +354,11 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
     blockText(hover),
   ].join(' · ');
   const marks = MARKS[kind];
+  // the graphics blocks the selection has bytes in: Unmark makes those bytes data (in every view)
+  const gfxIn = useMemo(() => (range ? A.blocks.filter(b => b.start < range.end && range.start < b.end && groupOfKind(b.type) === 'gfx') : []), [A, range?.start, range?.end]); // eslint-disable-line react-hooks/exhaustive-deps
+  const unmarkTitle = gfxIn.length
+    ? `Make the graphics in the selection data again (.byte): ${gfxIn.slice(0, 4).map(b => blockText(b.start)).join(', ')}${gfxIn.length > 4 ? ` and ${gfxIn.length - 4} more` : ''}. The part of a block outside the selection keeps its type, and what is not graphics stays as it is`
+    : 'Nothing in the selection is marked as graphics (Charset, Sprite data, Bitmap or Screen matrix)';
   // saving the selection: the file is named after the block it starts (its label) or after the kind and address
   const [saveOpen, setSaveOpen] = useState(false);
   const saveRef = useRef<HTMLSpanElement>(null);
@@ -485,6 +492,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onShow
           <span className="grow" />
           {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && bitmapRows < BITMAP_ROWS)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
           {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}
+          <button className="btn small" disabled={!gfxIn.length} title={unmarkTitle} onClick={() => onUnmark(range)}>Unmark</button>
           <span className="gfxv-save" ref={saveRef}>
             <button className="btn small" aria-haspopup="menu" aria-expanded={saveOpen} onClick={() => setSaveOpen(o => !o)} title="Save the selection as a file"><Icon name="download" size={13} />Save…</button>
             {saveOpen && <div className="gfxv-menu" role="menu" aria-label="Save the selection as">

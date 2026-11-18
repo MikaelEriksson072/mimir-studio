@@ -5665,6 +5665,14 @@ rad och kolumn i bitmappen, samt blocket den ligger i. Valen sparas per använda
   *Whole bitmap*.
 - *Mark as Charset / Sprite data / Bitmap / Screen matrix* sätter blocktypen (en override som `C`/`D`/…, ångras med `Ctrl+Z`). Vyns egen
   typ ligger först.
+- *Unmark* (i alla lägen) gör grafiken i markeringen till data igen (Bytes, `.byte`), till exempel en charset som analysen
+  hittade där det inte finns någon (`gfxToData`). Bara grafikblocken (Charset, Sprite data, Bitmap, Screen matrix) och
+  bara deras byte i markeringen blir data; delen av ett block utanför markeringen behåller sin typ (`keepCutTypes`), och
+  det som inte är grafik (kod, fill, text …) lämnas som det är. Grafikblock som ligger kant i kant i samma fil blir ett
+  datablock. *Auto merge* tar med datablocken före och efter, som *Mark as Bytes*. Det är en data-override, inte en
+  borttagen override, så analysen hittar inte grafiken igen; `Ctrl+Z` tar tillbaka den. Knappen är grå när inget i
+  markeringen är grafik, och dess title räknar upp blocken. Toasten säger vad som blev data (`$3000–$37ff is data now
+  (was Charset)`, eller `2 stretches of graphics in $2000–$3f3f are data now (were Sprite data, Charset)`).
 - *Show in listing* och dubbelklick går till platsen i listningen. `Esc` tar bort markeringen.
 
 **Spara (*Save…*):** markeringen sparas med en spara-dialog (`file:save`) i ett av dessa format:
