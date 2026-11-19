@@ -9067,7 +9067,7 @@ test('scripts: the output has a tab each for Init, Watch, In the program, Scratc
   });
 });
 
-test('a label clicked shows who references it in a box beside it: a click on one goes there and Esc comes back to the label with the box; the line under it, a rename or Esc closes it; the Symbols view and a zero-page .label line open it too', async ({ page }) => {
+test('a label clicked shows who references it in a box beside it: a click on one goes there and Esc comes back to the label with the box; a new click on the label, the line under it, a rename or Esc closes it; the Symbols view and a zero-page .label line open it too', async ({ page }) => {
   await waitForListing(page);
   const labelRow = (name: string) => listing(page).locator('.row.k-lbl', { has: page.locator('.syn-label', { hasText: new RegExp(`^${name}:$`) }) });
   const box = page.getByRole('dialog', { name: /^References to / });
@@ -9102,6 +9102,20 @@ test('a label clicked shows who references it in a box beside it: a click on one
     await expect(box).toBeVisible();
     await expect(box.locator('tbody tr').nth(0)).toHaveClass(/via/);
     await page.keyboard.press('Escape');
+    await expect(box).toBeHidden();
+    await expect(statusBar(page)).toContainText('$08b7 · irq_08b7');
+  });
+
+  await test.step('a new click on the label\'s line while its box is up closes it, the next opens it again', async () => {
+    await labelRow('irq_08b7').locator('.syn-label').click();
+    await expect(box).toHaveAccessibleName('References to irq_08b7');
+    await labelRow('irq_08b7').locator('.syn-label').click();
+    await expect(box).toBeHidden();
+    await expect(page.getByLabel('Label at $08b7')).toBeHidden();
+    // anywhere on the line
+    await labelRow('irq_08b7').click();
+    await expect(box).toHaveAccessibleName('References to irq_08b7');
+    await labelRow('irq_08b7').click();
     await expect(box).toBeHidden();
     await expect(statusBar(page)).toContainText('$08b7 · irq_08b7');
   });
@@ -9144,6 +9158,9 @@ test('a label clicked shows who references it in a box beside it: a click on one
     await expect(box).toHaveClass(/zp/);
     await expect(box.locator('tbody tr td:nth-child(3)')).toHaveText(['sta ptr_fb', 'sta ptr_fb+1', 'jmp (ptr_fb)']);
     await expect(box.locator('tbody tr td:nth-child(2)')).toHaveText(['write', 'write', 'pointer']);
+    // a new click on the .label line closes it
+    await listing(page).locator('.row.k-dir', { hasText: '.label ptr_fb' }).locator('.src').click();
+    await expect(box).toBeHidden();
   });
 });
 

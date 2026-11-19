@@ -264,8 +264,8 @@ make an existing project a repository too).
    instructions, operands, comments), `Ctrl+↓` / `Ctrl+↑` go to the next or previous block and `X` lists who
    references the line. Click a label (or pick it in the *Symbols* view) and a small box beside it lists who references
    it: calls, jumps, reads and writes, and the lines that only name it, as `lda #<irq` setting a vector, each with the
-   routine it is in; a click goes there, and `Esc` comes back to the label with the box. Pointing at an undocumented
-   opcode says what it does and which flags it changes. Hold `Ctrl`
+   routine it is in; a click goes there, and `Esc` comes back to the label with the box. A new click on the label
+   closes it. Pointing at an undocumented opcode says what it does and which flags it changes. Hold `Ctrl`
    over a line to see its block the other way: code as bytes with their PETSCII and screen-code text, data as code.
    Click a byte, a character or an instruction in that box to pick it in the listing.
 3. **Fix what the heuristics got wrong.** `N` renames, `;` comments, and `C`, `D`, `W` and `T` mark the selection as

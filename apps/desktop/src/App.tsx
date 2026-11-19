@@ -3431,8 +3431,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (e.shiftKey && cursor != null) { setXrefPick(null); if (extendTo(l)) setCursor(l.a); return; }
     const def = labelDefAt(l), zl = zpDefOf(l, i);
     setPickedDef(def ? { ...def, line: zl?.line ?? i, at: l.a } : zl ? { ...zl, at: l.a } : null);
-    // a label's line (its own, or its `.label` line): the box of its references opens beside it (a double-click renames)
-    if (!dbl) setXrefPick(l.k === 'lbl' ? { a: l.a, zp: false, line: i, at: l.a, via: null } : def ? { a: def.addr, zp: def.zp, line: i, at: l.a, via: null } : null);
+    // a label's line (its own, or its `.label` line): the box of its references opens beside it, and a press on the line
+    // while its box is up closes it again (a double-click renames, with no box)
+    const shut = xrefBox != null && xrefBox.line === i;
+    if (!dbl) setXrefPick(shut ? null : l.k === 'lbl' ? { a: l.a, zp: false, line: i, at: l.a, via: null } : def ? { a: def.addr, zp: def.zp, line: i, at: l.a, via: null } : null);
     // a comment line of a zero-page variable opens its editor
     if (zl && dbl && l.k === 'cmt') { navigate(l.a, { noHistory: true }); startNote(!!project.notes[zl.addr]?.block, undefined, zl); return; }
     if (def && dbl) { navigate(l.a, { noHistory: true }); startDefRename(def, i); return; }
