@@ -5713,11 +5713,16 @@ pixlar, 14 px var med en linje mellan dem, i förhandsvisningens färger (multic
 bredvid raderna de ritar dess 8 byte: adressen, värdet i hex och bitarna (i par i multicolor). Rubriken säger tecknets
 nummer i dess 2 KB, som Graphics-fliken (*Char $41*; *8 bytes* när byten inte börjar på ett tecken, en markering som
 inte börjar på 8), och dess adresser, som går dit i listningen; tecknet står kvar förstorat. Rutan får tangenterna vid
-klicket: `←` `→` tecknet före och efter, `↑` `↓` en rad i förhandsvisningen (16 tecken; står kvar vid kanten), `Home` och
-`End` det första och sista, och `Esc` stänger den, liksom krysset; listningens markör flyttas inte av dem. Pilknapparna
-i rubriken stegar också. Ett annat block, en annan markering eller ett annat läge än Chars stänger den. Under en
-förhandsvisning som Chars utan förstorat tecken står *Click a character to see it enlarged.*
-(`GfxZoom` i `GfxPreview.tsx`, `apps/desktop/src/lib/charzoom.ts`.)
+klicket: `←` `→` tecknet före och efter, `↑` `↓` en rad i förhandsvisningen bort (16 tecken, 128 byte), `Home` och `End`
+blockets första och sista, och `Esc` stänger den, liksom krysset; listningens markör flyttas inte av dem. Pilknapparna
+i rubriken stegar också. Tecknen stegar genom minnet, 8 byte åt gången, inte bara bland förhandsvisningens: förbi
+blockets (eller markeringens) början och slut, till `$0000` och `$fff8` (i samma fas som blocket när det inte börjar
+på 8). Så kan man bläddra igenom en hel font från ett enda tecken, eller från en font som analysen delat i flera block,
+utan att markera flera tecken i listningen. Ett tecken utanför förhandsvisningens ramas inte in, och en rad under
+rubriken säger vems byte det är, som för en sprite nedan (*Before this block: Fill at $2040*); ett klick på dess adress
+går dit i listningen, och det blocket visas då som Chars med samma tecken förstorat. Ett annat block, en annan
+markering eller ett annat läge än Chars stänger den. Under en förhandsvisning som Chars utan förstorat tecken står
+*Click a character to see it enlarged.* (`GfxZoom` i `GfxPreview.tsx`, `charStep` i `apps/desktop/src/lib/charzoom.ts`.)
 
 **En sprite förstorad:** på samma sätt visar ett klick på en sprite i *Preview* som Sprite (ett sprite-block, eller andra
 byte med *Sprite* valt) den förstorad under förhandsvisningen, inramad i den. Rutan visar spritens 24 × 21 pixlar
@@ -5730,7 +5735,7 @@ Rubriken säger spritens pekare, talet som skrivs till `$07f8`-`$07ff` för att 
 64 byte räknade i dess 16 KB VIC-bank, som Graphics-fliken; verktygstipset säger banken; *64 bytes* när byten inte
 börjar på 64), och dess adresser, som går dit i listningen.
 
-En sprite stegar genom minnet, inte bara bland förhandsvisningens: ofta följer flera sprites efter varandra (en
+En sprite stegar också genom minnet, inte bara bland förhandsvisningens: ofta följer flera sprites efter varandra (en
 animations bilder) fast blocket bara har den första, som pekaren visar. `←` `→` och pilknapparna visar de 64 byte före
 och efter, förbi blockets början och slut (till `$0000` och `$ffc0`, i samma fas som blocket när det inte börjar på 64),
 `↑` `↓` en rad i förhandsvisningen bort (4 sprites, färre när blocket har färre), och `Home` och `End` går tillbaka
@@ -5739,7 +5744,7 @@ en rad under rubriken säger vems byte det är: *After this block: Fill at $2040
 (Music)*, *…: not loaded* (*this selection* för en markering). Ett klick på dess adress går dit i listningen, och det
 blocket visas då som Sprite med samma sprite förstorad (i samma färger), så att man kan stega vidare där. Ett annat
 läge än Sprite stänger den. Under en förhandsvisning som Sprite utan förstorad sprite står *Click a sprite to see it
-enlarged.* (`spriteStep` i `charzoom.ts`; `carry` i `Inspector.tsx` för adressen.)
+enlarged.* (`spriteStep` i `charzoom.ts`; `carry` i `Inspector.tsx` för adressen, för tecken och sprites.)
 
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:

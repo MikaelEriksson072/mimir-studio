@@ -9,7 +9,7 @@ import type { Sel } from '../lib/types';
 import { useUi } from '../store/ui';
 import { Heatmap, type CanvasColors, type HeatMode } from './Heatmap';
 import { GfxPreview, GfxZoom, type GfxMode } from './GfxPreview';
-import { charCount, SPRITE_LAST, spriteCount, spriteIndex } from '../lib/charzoom';
+import { charCount, charIndex, spriteCount, spriteIndex } from '../lib/charzoom';
 import { blockMc } from '../lib/gfxlines';
 import { libraryKindOf } from '../lib/library';
 import { CyclesSection } from './Cycles';
@@ -61,6 +61,9 @@ interface InspectorProps {
   bank?: { A: AnalysisResult; base: Addr; cursor: Addr | null; sel: Sel | null; number: number | null };
 }
 
+/** what the preview shows enlarged (14.1) */
+type ZoomKind = 'chars' | 'sprite';
+
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
 export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice', onAddToLibrary }: InspectorProps) {
@@ -70,12 +73,13 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   const fit = useUi(s => s.heatFit), setUi = useUi(s => s.set);
   const [view, setView] = useState<'auto' | GfxMode>('auto');
   const [mc, setMc] = useState(false);
-  // an enlarged sprite the zoom's address went to in the listing (14.1), in another block or out of a selection: the
-  // preview there shows it as Sprite with that sprite enlarged, in the colours it had (`a` with the bank's base)
-  const carry = useRef<{ a: Addr; mc: boolean } | null>(null);
+  // an enlarged character or sprite the zoom's address went to in the listing (14.1), in another block or out of a
+  // selection: the preview there shows it as Chars or Sprite with the same one enlarged, in the colours it had (`a`
+  // with the bank's base)
+  const carry = useRef<{ a: Addr; mc: boolean; kind: ZoomKind } | null>(null);
   useEffect(() => {
     const c = carry.current;
-    if (c && blk && c.a >= blk.start && c.a < blk.end && blk.type !== 'sprite') { setView('sprite'); setMc(c.mc); } else setView('auto');
+    if (c && blk && c.a >= blk.start && c.a < blk.end && blk.type !== (c.kind === 'sprite' ? 'sprite' : 'charset')) { setView(c.kind); setMc(c.mc); } else setView('auto');
   }, [blk?.start]); // eslint-disable-line react-hooks/exhaustive-deps
   const range = sel && sel.multi ? sel : blk ? { start: blk.start, end: blk.end } : null;
   const autoMode: GfxMode | null = blk ? (blk.type === 'sprite' ? 'sprite' : blk.type === 'charset' ? 'chars' : blk.type === 'bitmap' ? 'bitmap' : null) : null;
@@ -83,14 +87,15 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   // a graphics block shown as what it is: multicolour as set for it (the listing's pictures draw it so too)
   const blockMcOn = !!blk && view === 'auto' && autoMode != null && (sel == null || !sel.multi || (sel.start === blk.start && sel.end === blk.end));
   const mcShown = blockMcOn && blk ? blockMc(A, blk) : mc;
-  // the character of the Chars preview or the sprite shown enlarged (14.1), by its address in the preview's memory
-  // (B.A.mem), and a count of the clicks that picked one (they focus it). Another block, selection or mode closes it,
-  // but for a sprite carried there (it waits for the view to become Sprite)
-  const [zoom, setZoom] = useState<Addr | null>(null);
+  // the character or sprite shown enlarged (14.1): its address in the preview's memory (B.A.mem), what it is and the
+  // start of the block or selection whose preview it was picked in, and a count of the clicks that picked one (they
+  // focus it). Another block, selection or mode closes it, but for one carried there (it waits for the view to become
+  // Chars or Sprite)
+  const [zoom, setZoom] = useState<{ a: Addr; kind: ZoomKind; at: Addr } | null>(null);
   const [zoomClicks, setZoomClicks] = useState(0);
   useEffect(() => {
     const c = carry.current;
-    if (c && range && c.a >= range.start && c.a < range.end) { if (mode !== 'sprite') return; carry.current = null; setZoom(c.a - B.base); return; }
+    if (c && range && c.a >= range.start && c.a < range.end) { if (mode !== c.kind) return; carry.current = null; setZoom({ a: c.a - B.base, kind: c.kind, at: range.start }); return; }
     carry.current = null;
     setZoom(null);
   }, [range?.start, mode, B.base]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -98,23 +103,24 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   const zoomKind = mode === 'chars' || mode === 'sprite' ? mode : null;
   const zStart = range ? range.start - B.base : 0;
   const nZoom = range && zoomKind ? (zoomKind === 'chars' ? charCount : spriteCount)(gfxEnd - range.start) : 0;
-  // a character is one of the preview's; a sprite can be anywhere in memory, the one framed in the preview if it is there
-  // (nothing while a carried sprite waits for the view to become Sprite: a charset there would show it as a character)
-  const zoomed = zoomKind && zoom != null && !(carry.current && zoomKind !== 'sprite') && (zoomKind === 'sprite' ? zoom >= 0 && zoom <= SPRITE_LAST : zoom >= zStart && (zoom - zStart) % 8 === 0 && (zoom - zStart) / 8 < nZoom) ? zoom : null;
-  const zoomPick = zoomed == null ? null : zoomKind === 'sprite' ? spriteIndex(zoomed, zStart, nZoom) : (zoomed - zStart) / 8;
-  // whose bytes a sprite outside the preview's is
+  // anywhere in memory, framed in the preview when it is one of its; only the kind picked here (nothing while one
+  // carried from elsewhere waits for the view: a charset there would show a sprite as a character)
+  const zoomed = zoomKind && range && zoom && zoom.kind === zoomKind && zoom.at === range.start ? zoom.a : null;
+  const zoomPick = zoomed == null ? null : (zoomKind === 'sprite' ? spriteIndex : charIndex)(zoomed, zStart, nZoom);
+  const pickZoom = (a: Addr) => { if (zoomKind && range) setZoom({ a, kind: zoomKind, at: range.start }); };
+  // whose bytes a character or sprite outside the preview's is
   const zoomWhere = (() => {
-    if (zoomKind !== 'sprite' || zoomed == null || !range) return null;
+    if (!zoomKind || zoomed == null || !range) return null;
     const a = zoomed + B.base;
     if (a >= range.start && a < range.end) return null;
     const side = `${a < range.start ? 'Before' : 'After'} this ${sel && sel.multi ? 'selection' : 'block'}`;
     const b = findBlock(A.blocks, a), name = b && R.labels.get(b.start)?.name;
     return !b ? `${side}: not loaded` : name ? `${side}: ${name} (${kindInfo(b.type).label})` : `${side}: ${kindInfo(b.type).label} at $${h4(b.start)}`;
   })();
-  /** the zoom's address goes to its bytes; a sprite in another block (or out of the selection) goes there enlarged */
+  /** the zoom's address goes to its bytes; one in another block (or out of the selection) goes there enlarged */
   const zoomGo = (a: Addr) => {
     const abs = B.base + a;
-    if (zoomKind === 'sprite' && range && (abs < range.start || abs >= range.end) && findBlock(A.blocks, abs)) carry.current = { a: abs, mc: mcShown };
+    if (zoomKind && range && (abs < range.start || abs >= range.end) && findBlock(A.blocks, abs)) carry.current = { a: abs, mc: mcShown, kind: zoomKind };
     onNavigate(abs);
   };
   const groups = useMemo(() => { const g: Partial<Record<TypeGroup, number>> = {}; for (const [t, n] of Object.entries(A.stats.bytesByType)) { const k = groupOfType(+t); g[k] = (g[k] || 0) + n; } return g; }, [A]);
@@ -197,7 +203,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
           {mode && range ? (
             <>
               <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={gfxEnd - B.base} mode={mode} mc={mcShown}
-                pick={zoomPick} onPick={zoomKind ? i => { setZoom(zStart + i * (zoomKind === 'sprite' ? 64 : 8)); setZoomClicks(c => c + 1); } : undefined} /></div>
+                pick={zoomPick} onPick={zoomKind ? i => { pickZoom(zStart + i * (zoomKind === 'sprite' ? 64 : 8)); setZoomClicks(c => c + 1); } : undefined} /></div>
               {blockMcOn && blk ? <div className="mc-row">
                 <label className="check" title="Saved with the block: the listing's pictures draw it so too"><input type="checkbox" checked={mcShown} onChange={e => onFormat(blk, { mc: e.target.checked })} /> Multicolor</label>
                 {blk.props.mc != null ? <button className="linkish small" onClick={() => onFormat(blk, { mc: null })} title="Draw it as the VIC registers say ($d01c for sprites, $d016 for a charset or bitmap)">as the VIC registers say</button>
@@ -206,7 +212,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
               {blockMcOn && blk && onAddToLibrary && libraryKindOf(blk.type) && <div className="merge-row"><button className="btn small" onClick={() => onAddToLibrary(blk.start)}
                 title={`Keep a copy of the ${blk.type === 'sprite' ? 'sprites' : 'charset'} in the library (the Library view in the activity bar), for every project, named after where it was found`}><Icon name="library" size={13} />Add to library</button></div>}
               {zoomKind && zoomed != null ? <GfxZoom kind={zoomKind} mem={B.A.mem} start={zStart} addr={zoomed} count={nZoom} mc={mcShown} focus={zoomClicks}
-                where={zoomWhere} onPick={setZoom} onClose={() => setZoom(null)} onGo={zoomGo} />
+                where={zoomWhere} onPick={pickZoom} onClose={() => setZoom(null)} onGo={zoomGo} />
                 : zoomKind && <p className="muted small">Click a {zoomKind === 'sprite' ? 'sprite' : 'character'} to see it enlarged.</p>}
             </>
           ) : music ? (

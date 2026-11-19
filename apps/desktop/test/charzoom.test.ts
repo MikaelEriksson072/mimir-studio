@@ -1,6 +1,6 @@
 /* The Inspector's enlarged character and sprite (src/lib/charzoom.ts): the one a click is on, its pixels, the keys. */
 import { describe, expect, it } from 'vitest';
-import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, SPRITE_LAST, spriteCols, spriteCount, spriteIndex, spriteNumber, spritePixels, spriteStep } from '../src/lib/charzoom';
+import { CHAR_COLS, CHAR_LAST, charBits, charCount, charIndex, charIndexAt, charNumber, charPixels, charStep, SPRITE_LAST, spriteCols, spriteCount, spriteIndex, spriteNumber, spritePixels, spriteStep } from '../src/lib/charzoom';
 
 describe('the enlarged character', () => {
   it('counts the characters the preview draws: one per 8 bytes, at least one, at most 256', () => {
@@ -49,20 +49,45 @@ describe('the enlarged character', () => {
     expect(charPixels(mem, 0xfffc, false)[4]).toEqual([3, 3, 3, 3, 3, 3, 3, 3]);
   });
 
-  it('steps with the keys: one, a row, the first and the last, staying at the edges', () => {
-    expect(charStep(1, 'ArrowRight', 256)).toBe(2);
-    expect(charStep(1, 'ArrowLeft', 256)).toBe(0);
-    expect(charStep(0, 'ArrowLeft', 256)).toBe(0);
-    expect(charStep(255, 'ArrowRight', 256)).toBe(255);
-    expect(charStep(1, 'ArrowDown', 256)).toBe(17);
-    expect(charStep(17, 'ArrowUp', 256)).toBe(1);
-    expect(charStep(5, 'ArrowUp', 256)).toBe(5);
-    expect(charStep(10, 'ArrowDown', 20)).toBe(10);
-    expect(charStep(3, 'ArrowDown', 20)).toBe(19);
-    expect(charStep(9, 'Home', 20)).toBe(0);
-    expect(charStep(9, 'End', 20)).toBe(19);
-    expect(charStep(9, 'a', 20)).toBeNull();
-    expect(charStep(9, 'Enter', 20)).toBeNull();
+  it('steps through memory with the keys, past the preview\'s characters, staying at the ends of memory', () => {
+    // a charset at $3000, 256 characters, 16 a row
+    expect(charStep(0x3008, 'ArrowRight', 0x3000, 256)).toBe(0x3010);
+    expect(charStep(0x3008, 'ArrowLeft', 0x3000, 256)).toBe(0x3000);
+    expect(charStep(0x3008, 'ArrowDown', 0x3000, 256)).toBe(0x3088);
+    expect(charStep(0x3088, 'ArrowUp', 0x3000, 256)).toBe(0x3008);
+    expect(charStep(0x3123, 'Home', 0x3000, 256)).toBe(0x3000);
+    expect(charStep(0x3123, 'End', 0x3000, 256)).toBe(0x37f8);
+    // past the first and the last
+    expect(charStep(0x3000, 'ArrowLeft', 0x3000, 256)).toBe(0x2ff8);
+    expect(charStep(0x37f8, 'ArrowRight', 0x3000, 256)).toBe(0x3800);
+    expect(charStep(0x3010, 'ArrowUp', 0x3000, 256)).toBe(0x2f90);
+    expect(charStep(0x37f0, 'ArrowDown', 0x3000, 256)).toBe(0x3870);
+    // a block of one character (no selection of more): on through the font, a row of 16 for ↑ ↓
+    expect(charStep(0x2000, 'ArrowRight', 0x2000, 1)).toBe(0x2008);
+    expect(charStep(0x2000, 'ArrowDown', 0x2000, 1)).toBe(0x2080);
+    expect(charStep(0x2468, 'Home', 0x2000, 1)).toBe(0x2000);
+    expect(charStep(0x2468, 'End', 0x2000, 1)).toBe(0x2000);
+    // the ends of memory
+    expect(charStep(0x0000, 'ArrowLeft', 0x3000, 256)).toBe(0x0000);
+    expect(charStep(0x0070, 'ArrowUp', 0x3000, 256)).toBe(0x0070);
+    expect(charStep(0xfff8, 'ArrowRight', 0x3000, 256)).toBe(0xfff8);
+    expect(charStep(0xff80, 'ArrowDown', 0x3000, 256)).toBe(0xff80);
+    expect(charStep(0xff78, 'ArrowDown', 0x3000, 256)).toBe(0xfff8);
+    expect(CHAR_LAST).toBe(0xfff8);
+    // a preview not on 8 keeps its phase
+    expect(charStep(0x3003, 'ArrowRight', 0x3003, 1)).toBe(0x300b);
+    expect(charStep(0x3003, 'a', 0x3003, 1)).toBeNull();
+    expect(charStep(0x3003, 'Enter', 0x3003, 1)).toBeNull();
+  });
+
+  it('knows which of the preview\'s characters one is, if any', () => {
+    expect(charIndex(0x3008, 0x3000, 256)).toBe(1);
+    expect(charIndex(0x37f8, 0x3000, 256)).toBe(255);
+    expect(charIndex(0x3800, 0x3000, 256)).toBeNull();
+    expect(charIndex(0x2ff8, 0x3000, 256)).toBeNull();
+    expect(charIndex(0x3004, 0x3000, 256)).toBeNull();
+    expect(charIndex(0x2000, 0x2000, 1)).toBe(0);
+    expect(charIndex(0x2008, 0x2000, 1)).toBeNull();
   });
 
   it('numbers a character in its 2 KB charset and writes its bytes as bits', () => {

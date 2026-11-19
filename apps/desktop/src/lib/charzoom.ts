@@ -40,41 +40,50 @@ export function spritePixels(mem: Uint8Array, addr: number, mc: boolean): number
 /** the highest address a sprite's 64 bytes can start at */
 export const SPRITE_LAST = 0x10000 - 64;
 
-/** where a key takes the enlarged sprite at `addr`, through memory and not only the preview's sprites (the frames of an
- *  animation often follow a block of one sprite): ← → the 64 bytes before and after, ↑ ↓ a row of the preview (`count`
- *  sprites from `start`) away, staying put at the ends of memory; Home and End the preview's first and last sprite;
- *  null for other keys */
-export function spriteStep(addr: number, key: string, start: number, count: number): number | null {
+/** the highest address a character's 8 bytes can start at */
+export const CHAR_LAST = 0x10000 - 8;
+
+/** where a key takes the enlarged character or sprite at `addr` (`size` bytes each), through memory and not only the
+ *  preview's (`count` from `start`, `cols` a row): ← → the one before and after, ↑ ↓ a row of the preview away, staying
+ *  put at the ends of memory; Home and End the preview's first and last; null for other keys */
+function memStep(addr: number, key: string, start: number, count: number, size: number, cols: number): number | null {
   if (key === 'Home') return start;
-  if (key === 'End') return start + (count - 1) * 64;
-  const row = 64 * spriteCols(count);
-  const d = key === 'ArrowLeft' ? -64 : key === 'ArrowRight' ? 64 : key === 'ArrowUp' ? -row : key === 'ArrowDown' ? row : 0;
+  if (key === 'End') return start + (count - 1) * size;
+  const row = size * cols;
+  const d = key === 'ArrowLeft' ? -size : key === 'ArrowRight' ? size : key === 'ArrowUp' ? -row : key === 'ArrowDown' ? row : 0;
   if (!d) return null;
   const to = addr + d;
-  return to < 0 || to > SPRITE_LAST ? addr : to;
+  return to < 0 || to > 0x10000 - size ? addr : to;
+}
+
+/** where a key takes the enlarged sprite at `addr`, through memory (the frames of an animation often follow a block of
+ *  one sprite): ← → the 64 bytes before and after, ↑ ↓ a row of the preview (4 sprites, fewer when it has fewer) away,
+ *  staying put at the ends of memory; Home and End the preview's first and last sprite; null for other keys */
+export const spriteStep = (addr: number, key: string, start: number, count: number): number | null => memStep(addr, key, start, count, 64, spriteCols(count));
+
+/** where a key takes the enlarged character at `addr`, through memory (a font is often more than the block or the
+ *  selection the cursor is on): ← → the 8 bytes before and after, ↑ ↓ a row of the preview (16 characters, 128 bytes)
+ *  away, staying put at the ends of memory; Home and End the preview's first and last character; null for other keys */
+export const charStep = (addr: number, key: string, start: number, count: number): number | null => memStep(addr, key, start, count, 8, CHAR_COLS);
+
+/** which of the preview's `count` ones from `start` (`size` bytes each) the one at `addr` is; null for bytes outside
+ *  them or not on one */
+function indexIn(addr: number, start: number, count: number, size: number): number | null {
+  const d = addr - start;
+  return d >= 0 && d % size === 0 && d / size < count ? d / size : null;
 }
 
 /** which of the preview's sprites (`count` from `start`) is the one at `addr`; null for bytes outside them or not on
  *  one */
-export function spriteIndex(addr: number, start: number, count: number): number | null {
-  const d = addr - start;
-  return d >= 0 && d % 64 === 0 && d / 64 < count ? d / 64 : null;
-}
+export const spriteIndex = (addr: number, start: number, count: number): number | null => indexIn(addr, start, count, 64);
+
+/** which of the preview's characters (`count` from `start`) is the one at `addr`; null for bytes outside them or not
+ *  on one */
+export const charIndex = (addr: number, start: number, count: number): number | null => indexIn(addr, start, count, 8);
 
 /** the sprite pointer that shows the sprite (its 64 bytes' number in their 16 KB VIC bank), as the Graphics tab gives
  *  it; null when the bytes do not start on 64 (a selection not on 64) */
 export const spriteNumber = (addr: number): number | null => (addr % 64 === 0 ? (addr & 0x3fff) >> 6 : null);
-
-/** the character (or sprite) a key steps to: ← → the one before and after, ↑ ↓ the one a row of the preview away
- *  (staying put at the edges), Home and End the first and the last; null for other keys */
-export function charStep(i: number, key: string, count: number, cols = CHAR_COLS): number | null {
-  if (key === 'Home') return 0;
-  if (key === 'End') return count - 1;
-  const d = key === 'ArrowLeft' ? -1 : key === 'ArrowRight' ? 1 : key === 'ArrowUp' ? -cols : key === 'ArrowDown' ? cols : 0;
-  if (!d) return null;
-  const to = i + d;
-  return to < 0 || to >= count ? i : to;
-}
 
 /** the character's number in its 2 KB charset (the screen code that shows it), as the Graphics tab gives it; null when
  *  the 8 bytes do not start on a character (a selection not on 8) */

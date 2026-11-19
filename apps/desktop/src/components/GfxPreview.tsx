@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { h2, h4, type Addr } from '@mimir/core';
 import { C64, cx, hexRgb } from '../lib/util';
 import { Icon } from '../lib/icons';
-import { CHAR_COLS, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, SPRITE_LAST, spriteCols, spriteCount, spriteNumber, spritePixels, spriteStep } from '../lib/charzoom';
+import { CHAR_COLS, CHAR_LAST, charBits, charCount, charIndexAt, charNumber, charPixels, charStep, SPRITE_LAST, spriteCols, spriteCount, spriteNumber, spritePixels, spriteStep } from '../lib/charzoom';
 
 export type GfxMode = 'sprite' | 'chars' | 'bitmap';
 
@@ -60,11 +60,11 @@ export function GfxPreview({ mem, start, end, mode, mc, pick, onPick }: { mem: U
  *  and its 8 bytes in hex and bits beside the rows they draw. A sprite: its 24 × 21 pixels (multicolour 12 × 21) as
  *  wide as the inspector lets them be, its 21 rows of 3 bytes under them and the 64th byte, which the VIC does not
  *  draw; the pointer over a row of the pixels or the bytes marks it in both. ← → step to the one before and after, ↑ ↓
- *  a row of the preview, Home and End to the first and the last, Esc closes it. A character steps among the preview's;
- *  a sprite through memory, 64 bytes at a time, past the preview's first and last (the frames of an animation often
- *  follow a block of one sprite), and `where` then says whose bytes they are. `start`: where the preview's first one
- *  is, `count` how many it shows; `addr`: the one shown; `focus` changes with each click on one in the preview, which
- *  gives it the keys. */
+ *  a row of the preview, Home and End to the preview's first and last, Esc closes it. Both step through memory, 8 or
+ *  64 bytes at a time, past the preview's first and last (a font is often more than the block or selection the cursor
+ *  is on; the frames of an animation often follow a block of one sprite), and `where` then says whose bytes they are.
+ *  `start`: where the preview's first one is, `count` how many it shows; `addr`: the one shown; `focus` changes with
+ *  each click on one in the preview, which gives it the keys. */
 export function GfxZoom({ kind, mem, start, addr, count, mc, focus, where, onPick, onClose, onGo }: {
   kind: 'chars' | 'sprite'; mem: Uint8Array; start: Addr; addr: Addr; count: number; mc: boolean; focus: number; where?: string | null;
   onPick: (a: Addr) => void; onClose: () => void; onGo: (a: Addr) => void;
@@ -75,15 +75,10 @@ export function GfxZoom({ kind, mem, start, addr, count, mc, focus, where, onPic
   const [row, setRow] = useState<number | null>(null);
   const sprite = kind === 'sprite';
   const size = sprite ? 64 : 8;
-  // a character's place among the preview's; where a key or an arrow takes the one shown
-  const index = (addr - start) / 8;
-  const step = (key: string): Addr | null => {
-    if (sprite) return spriteStep(addr, key, start, count);
-    const to = charStep(index, key, count, CHAR_COLS);
-    return to == null ? null : start + to * 8;
-  };
-  const prev = sprite ? (addr - 64 >= 0 ? addr - 64 : null) : (index > 0 ? addr - 8 : null);
-  const next = sprite ? (addr + 64 <= SPRITE_LAST ? addr + 64 : null) : (index < count - 1 ? addr + 8 : null);
+  // where a key or an arrow takes the one shown: through memory, to its ends
+  const step = (key: string): Addr | null => (sprite ? spriteStep : charStep)(addr, key, start, count);
+  const prev = addr - size >= 0 ? addr - size : null;
+  const next = addr + size <= (sprite ? SPRITE_LAST : CHAR_LAST) ? addr + size : null;
   const n = sprite ? spriteNumber(addr) : charNumber(addr);
   const what = sprite ? 'sprite' : 'character';
   const name = n != null ? `${sprite ? 'Sprite' : 'Char'} $${h2(n)}` : `${size} bytes`;
@@ -104,12 +99,12 @@ export function GfxZoom({ kind, mem, start, addr, count, mc, focus, where, onPic
         <span className="cz-name" title={sprite && n != null ? `Its sprite pointer: $${h2(n)} in VIC bank ${addr >> 14}` : undefined}>{name}</span>
         <button className="linkish mono" title="Go to its bytes in the listing" onClick={() => onGo(addr)}>${h4(addr)}–${h4(addr + size - 1)}</button>
         <span className="cz-nav">
-          <button className="icon-btn" aria-label={`Previous ${what}`} title={sprite ? 'The 64 bytes before it in memory (←)' : `The ${what} before (←)`} disabled={prev == null} onClick={() => prev != null && onPick(prev)}><Icon name="left" size={14} /></button>
-          <button className="icon-btn" aria-label={`Next ${what}`} title={sprite ? 'The 64 bytes after it in memory (→)' : `The ${what} after (→)`} disabled={next == null} onClick={() => next != null && onPick(next)}><Icon name="right" size={14} /></button>
+          <button className="icon-btn" aria-label={`Previous ${what}`} title={`The ${size} bytes before it in memory (←)`} disabled={prev == null} onClick={() => prev != null && onPick(prev)}><Icon name="left" size={14} /></button>
+          <button className="icon-btn" aria-label={`Next ${what}`} title={`The ${size} bytes after it in memory (→)`} disabled={next == null} onClick={() => next != null && onPick(next)}><Icon name="right" size={14} /></button>
           <button className="icon-btn" aria-label={`Close the enlarged ${what}`} title="Close (Esc)" onClick={onClose}><Icon name="x" size={14} /></button>
         </span>
       </div>
-      {where && <div className="cz-where muted small" title="Home and End go back to the block's first and last sprite">{where}</div>}
+      {where && <div className="cz-where muted small" title={`Home and End go back to the preview's first and last ${what}`}>{where}</div>}
       {sprite ? (
         <div className="cz-body sz-body" onMouseLeave={() => setRow(null)}>
           <div className={cx('cz-grid', 'sz-grid', mc && 'mc')} role="img" aria-label={`${name}, ${mc ? 'multicolor 12' : '24'} by 21 pixels`}

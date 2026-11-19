@@ -273,7 +273,7 @@ make an existing project a repository too).
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview, where a click on a character or a sprite shows it enlarged with its
-   bytes (the arrow keys step to the next). `G` goes to an address or label, `Ctrl+F` finds text (labels,
+   bytes (the arrow keys step on through memory, past the block, without selecting more of it). `G` goes to an address or label, `Ctrl+F` finds text (labels,
    instructions, operands, comments), `Ctrl+↓` / `Ctrl+↑` go to the next or previous block and `X` lists who
    references the line. Click a label (or pick it in the *Symbols* view) and a small box beside it lists who references
    it: calls, jumps, reads and writes, and the lines that only name it, as `lda #<irq` setting a vector, each with the

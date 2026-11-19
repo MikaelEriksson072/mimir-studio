@@ -6051,6 +6051,7 @@ test('a click on a character in the inspector\'s Chars preview shows it enlarged
   const canvas = insp.getByLabel('chars preview');
   const zoom = insp.locator('.char-zoom');
   const grid = zoom.locator('.cz-grid');
+  const previewAs = (name: string) => insp.getByRole('group', { name: 'Preview as' }).getByRole('button', { name, exact: true });
   /** clicks the character at a column and row of the preview (16 a row), where the canvas is now */
   const pick = async (col: number, row: number) => {
     await canvas.scrollIntoViewIfNeeded();
@@ -6079,8 +6080,9 @@ test('a click on a character in the inspector\'s Chars preview shows it enlarged
     expect(await bytes()).toEqual(['3008 7c 01111100', '3009 c6 11000110', '300a c6 11000110', '300b fe 11111110', '300c c6 11000110', '300d c6 11000110', '300e c6 11000110', '300f 00 00000000']);
     await expect(insp.locator('.gfx-picked')).toHaveAttribute('style', /left: 6\.25%; top: 0%/);
     await expect(insp).not.toContainText('Click a character to see it enlarged.');
-    // it has the keys
+    // it has the keys, and in its block nothing says where it is
     await expect(zoom).toBeFocused();
+    await expect(zoom.locator('.cz-where')).toHaveCount(0);
   });
 
   await test.step('the arrows step to the character after, a row down and the one before; the listing stays where it is', async () => {
@@ -6096,10 +6098,33 @@ test('a click on a character in the inspector\'s Chars preview shows it enlarged
     await page.keyboard.press('End');
     await expect(zoom).toHaveAttribute('aria-label', 'Char $ff enlarged');
     await expect(zoom.locator('.cz-head')).toContainText('$37f8–$37ff');
-    await expect(zoom.getByRole('button', { name: 'Next character' })).toBeDisabled();
+    await expect(zoom.locator('.cz-where')).toHaveCount(0);
+  });
+
+  await test.step('the keys and the arrows step on through memory, 8 bytes at a time, past the first and last of the charset', async () => {
+    await page.keyboard.press('ArrowRight');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $00 enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$3800–$3807');
+    await expect(zoom.locator('.cz-where')).toHaveText('After this block: not loaded');
+    // not one of the preview's: nothing is framed, and the listing stays where it is
+    await expect(insp.locator('.gfx-picked')).toHaveCount(0);
+    await expect(statusBar(page)).toContainText('$3000 · charset_3000');
     await page.keyboard.press('Home');
     await expect(zoom).toHaveAttribute('aria-label', 'Char $00 enlarged');
-    await expect(zoom.getByRole('button', { name: 'Previous character' })).toBeDisabled();
+    await expect(zoom.locator('.cz-head')).toContainText('$3000–$3007');
+    await expect(zoom.locator('.cz-where')).toHaveCount(0);
+    await expect(insp.locator('.gfx-picked')).toHaveCount(1);
+    await expect(zoom.getByRole('button', { name: 'Previous character' })).toBeEnabled();
+    await page.keyboard.press('ArrowLeft');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $ff enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$2ff8–$2fff');
+    await expect(zoom.locator('.cz-where')).toHaveText('Before this block: Fill at $2040');
+    await page.keyboard.press('ArrowUp');
+    await expect(zoom.locator('.cz-head')).toContainText('$2f78–$2f7f');
+    await page.keyboard.press('ArrowDown');
+    await zoom.getByRole('button', { name: 'Next character' }).click();
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $00 enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$3000–$3007');
     await zoom.getByRole('button', { name: 'Next character' }).click();
     await expect(zoom).toHaveAttribute('aria-label', 'Char $01 enlarged');
   });
@@ -6142,6 +6167,24 @@ test('a click on a character in the inspector\'s Chars preview shows it enlarged
     await goTo(page, 'charset_3000');
     await expect(canvas).toBeVisible();
     await expect(zoom).toHaveCount(0);
+  });
+
+  await test.step('the address of a character before the charset goes there, previewed as Chars with the character still enlarged', async () => {
+    await pick(0, 0);
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $00 enlarged');
+    await page.keyboard.press('ArrowLeft');
+    await expect(zoom.locator('.cz-where')).toHaveText('Before this block: Fill at $2040');
+    await zoom.getByRole('button', { name: '$2ff8–$2fff' }).click();
+    await expect(statusBar(page)).toContainText('$2ff8');
+    await expect(previewAs('Chars')).toHaveAttribute('aria-pressed', 'true');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $ff enlarged');
+    await expect(zoom.locator('.cz-head')).toContainText('$2ff8–$2fff');
+    await expect(zoom.locator('.cz-where')).toHaveCount(0);
+    // and on from there, into the charset
+    await expect(zoom).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(zoom).toHaveAttribute('aria-label', 'Char $00 enlarged');
+    await expect(zoom.locator('.cz-where')).toHaveText(/^After this block: charset_3000 /);
   });
 });
 
