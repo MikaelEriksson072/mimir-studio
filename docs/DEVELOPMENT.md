@@ -1056,6 +1056,19 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     their boot, 12 unpack nothing after loading; tapes with both answers 87 -> 27 with the loader rule. Fixture
     `fixtures/tap/loader-start-demo.tap`, unit tests in `test/tap.test.ts` (with a two-stage loader) and desktop
     `test/packing.test.ts`, an e2e test.
+50. Sindri starts a program at an address (`entry`, `-e`: a program it saved, a project's start) with the file in
+    memory as it has it, as Build & Run's monitor load leaves it in VICE (spec, *Hur Sindri startar filen*). It types
+    `LOAD` and `SYS` at the prompt, and `READY.` and the typed line went onto the screen (`$0540`, `$0568`) over a
+    program that covers it: Delta's game (`$02a1-$ffff` from `$1770`) keeps its sound routine at `$0403-$059a` and ran
+    into a BRK at its first sound. The trap at SYS's `JMP ($0014)` (`$e144`) now puts back the file's bytes the KERNAL
+    and BASIC wrote since the load (`putBack`, all but `$0014-$0015`) and counts the program's use of them from there.
+    Delta now plays on in Sindri; in x64sc the program started from the monitor plays after fire, and with the 13 bytes
+    written in it crashes. Measured on 655 archive files (Top200 game D64s, Preservers and C64Tapes-org tapes,
+    Onefile-top200, OneLoad64): the 501 saved programs started at an address, each run alone old and new; from `$0800`
+    up 186/186 the same, below 297 of 315; 6 JAMs in the typed bytes now run, 3 "unpacked" that were the IRQ vector
+    into `$0000` (Great Gurianos twice now reaches the game, Way of the Exploding Fist JAMs after RETURN instead), 4 next
+    layers' saves lose `READY.` and the SYS line, 5 go on differently in their own code. Test in Sindri's
+    `test/unpack.test.ts`.
 
 ## Roadmap
 

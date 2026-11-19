@@ -25,6 +25,12 @@ both CIAs with timers, interrupts and the keyboard and joysticks, and the SID re
 oscillator at `$d41b` as an 8580 makes it). With the
 C64 ROMs it starts the machine, types `LOAD`, loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
 autostarts through the vectors or the stack, and packers that call the KERNAL work as they do on the real machine.
+Started at an address (`entry`, `-e`), as a program Sindri saved is, it types `SYS` instead, and the file is in memory
+as it has it when the jump comes, as Mimir's Build & Run puts it in VICE (loaded from the monitor, nothing typed after
+it): LOAD's relinking of BASIC's lines at `$0801` is left out, and right before the jump the file's bytes that
+`READY.` and the typed line wrote over (on the screen at `$0540` and `$0568`, in the input and keyboard buffers) are
+put back. Delta's game, which Sindri saves as `$02a1-$ffff` from `$1770`, has its sound routine on the screen's
+`$0403-$059a`; with 13 of its bytes typed over it ran into a BRK at its first sound.
 
 The RAM powers on as VICE (x64sc 3.10) fills it by default (`POWER_ON`): four bytes of `$00` and four of `$ff` from
 `$0002` on, inverted in every other 16 KB; the start-up then clears `$0002-$0101` and `$0200-$03ff` and leaves the rest
@@ -415,7 +421,7 @@ address, unp64 unpacks.
 | `--disk FILE` | put this D64 or G64 in the drive for a PRG given on its own |
 | `--next FILE` | the disk to turn to when the program asks for it and waits (a demo's next side); once for each, in order |
 | `--tape FILE` | put this TAP or T64 in the datasette for a PRG given on its own |
-| `-e ADDR` | start with `SYS ADDR` instead of `RUN` |
+| `-e ADDR` | start with `SYS ADDR` instead of `RUN`, with the file in memory as it has it (nothing typed over it) |
 | `--port VALUE` | with `-e`: `$01` as the program starts there, set right before the jump (a saved program's start hint, `$36` say: a game that starts under the BASIC ROM) |
 | `-l ADDR` | load the file at `ADDR` instead of its own load address |
 | `--layer N` | save layer N instead of the newest (the report lists them) |
