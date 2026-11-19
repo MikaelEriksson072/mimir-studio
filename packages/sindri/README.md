@@ -25,6 +25,14 @@ both CIAs with timers, interrupts and the keyboard and joysticks, and the SID re
 oscillator at `$d41b` as an 8580 makes it). With the
 C64 ROMs it starts the machine, types `LOAD`, loads the file and types `RUN`, as a real C64 does; so BASIC start lines,
 autostarts through the vectors or the stack, and packers that call the KERNAL work as they do on the real machine.
+When BASIC would get text after `RUN` from the screen row it is typed on, Sindri types `RUN:`, as VICE's autostart
+does with `-autostartwithcolon`: RETURN hands BASIC the whole row, and a file that loads into the screen can have its
+text there. Channel 42 Intro (FBI Crew) loads at `$0450` with its text over rows 2-24, and `RUN` followed by that text
+is `RUN` to a line number, `?UNDEF'D STATEMENT ERROR`, on a C64 too (VICE says so when `RUN` is typed, and with its
+autostart's default); `RUN:` starts its line `6000 SYS2061`. Graphics and reversed spaces are no text to BASIC (the
+screen editor reads a reversed space as a space, the tokenizer drops `$80-$fe`), and there, as on an empty row, `RUN`
+is typed without the colon. `SYS` never gets one: the number ends at the first letter and the program starts, and a
+colon would be one more of the file's bytes typed over (Coop Demo by Digitech keeps its loader's table on that row).
 Started at an address (`entry`, `-e`), as a program Sindri saved is, it types `SYS` instead, and the file is in memory
 as it has it when the jump comes, as Mimir's Build & Run puts it in VICE (loaded from the monitor, nothing typed after
 it): LOAD's relinking of BASIC's lines at `$0801` is left out, and right before the jump the file's bytes that

@@ -814,6 +814,29 @@ class Session {
     m.ram[0xc6] = bytes.length;
   }
 
+  /**
+   * Type RUN, with a colon after it when BASIC would get text after it from the screen line, as VICE's autostart types
+   * it with -autostartwithcolon. RETURN hands BASIC the whole logical line, and a file that loads into the screen can
+   * have its text on the row RUN is typed on: RUN followed by text is RUN to a line number, ?UNDEF'D STATEMENT ERROR
+   * (Channel 42 Intro by FBI Crew loads at $0450 with its text over rows 2-24 and has 6000 SYS2061 at $0801; VICE says
+   * so after LOAD"*",8,1 and RUN typed, and with its autostart's default). After the colon the rest of the line is a
+   * statement BASIC never reaches when the program starts. What BASIC gets is what the screen editor reads ($e63a: a
+   * reversed character as the plain one outside quotes) less what the tokenizer drops ($a582: $80-$fe outside quotes),
+   * so after a row of graphics and reversed spaces RUN is typed as it is. SYS is typed without a colon: the number ends
+   * at the first letter and the program starts, and the colon would be one more of the file's bytes typed over (Coop
+   * Demo by Digitech keeps its loader's table on that row, and a seventh byte gone breaks it).
+   */
+  private typeRun(): void {
+    const m = this.m, line = m.ram[0xd1] | (m.ram[0xd2] << 8);
+    let text = false;
+    for (let y = m.ram[0xd3] + 3; y <= m.ram[0xd5] && !text; y++) {
+      const sc = m.ram[(line + y) & 0xffff];
+      const c = (sc & 0x3f) | (sc & 0x40 ? 0x80 : 0) | (sc & 0x20 ? 0 : 0x40);
+      text = c !== 0x20 && (c < 0x80 || c === 0xde);
+    }
+    this.typeLine(text ? 'RUN:' : 'RUN');
+  }
+
   /** the program's first instruction in RAM: the first layer begins */
   private start(pc: number): void {
     const m = this.m;
@@ -1355,7 +1378,9 @@ class Session {
         if (this.phase === 'loaded') {
           if (this.started) { this.stop('ready', 'returned to the READY prompt'); return true; }
           const basicStart = m.ram[0x2b] | (m.ram[0x2c] << 8);
-          this.typeLine(this.o.entry != null ? `SYS${this.o.entry}` : this.hasBasic(basicStart) ? 'RUN' : `SYS${this.loadAt}`);
+          if (this.o.entry != null) this.typeLine(`SYS${this.o.entry}`);
+          else if (this.hasBasic(basicStart)) this.typeRun();
+          else this.typeLine(`SYS${this.loadAt}`);
           this.setPhase('run');
         } else if (this.phase === 'run') {
           if (!this.started && !this.triedSys && this.loadAt !== (m.ram[0x2b] | (m.ram[0x2c] << 8))) {

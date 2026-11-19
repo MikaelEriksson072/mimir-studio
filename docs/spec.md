@@ -1199,6 +1199,24 @@ krasch: Great Gurianos (två kopior) når nu spelet, Way of the Exploding Fist s
 efter RETURN som Sindri trycker; i 4 har nästa lagers sparade program inte längre `READY.` och `SYS`-raden i sig
 (Driller, Out Run två gånger, Octapolis); 5 går vidare annorlunda i sin egen kod (Bionic Commandos stod förut still på
 `$0370` och spelar nu vidare). Inte packade 322 → 330, uppackade 74 → 71, misslyckade 105 → 100.
+Får BASIC text efter `RUN` från skärmraden det skrivs på skriver Sindri `RUN:`, som VICE:s autostart gör med
+`-autostartwithcolon`: RETURN ger BASIC hela den logiska raden, och en fil som laddas in i skärmen kan ha sin text där.
+Channel 42 Intro (FBI Crew) laddas på `$0450` med sin text över rad 2-24 och har `6000 SYS2061` på `$0801`; `RUN`
+följt av texten är `RUN` till ett radnummer, `?UNDEF'D STATEMENT ERROR`, också i VICE när man skriver `RUN` och med
+autostartens förval, och förut skrev Sindri då `SYS1104` och stannade på en BRK på `$cad3`. Med `RUN:` går den genom
+CruelCrunch till samma program som unp64 sparar (`$0801-$27e3`, start `$080b`, varenda byte) och vidare genom ECA
+Compactor till introt på `$0900`. Vad BASIC får är det skärmeditorn läser (`$e63a`: ett inverterat tecken som det vanliga
+utanför citattecken) minus det tokeniseraren stryker (`$a582`: `$80-$fe` utanför citattecken), så efter en rad med
+grafik och inverterade mellanslag skrivs `RUN` som förut. `SYS` får inget kolon: talet slutar vid första bokstaven och
+programmet startar, och kolonet vore en byte till av filen som skrivs över (Coop Demo av Digitech har sin laddares
+tabell på den raden; en sjunde byte borta och laddaren stannar på en BRK). Mätt på arkivets intros och demos (första
+programmet på varje D64 och T64 och lösa PRG:er, 57 095 olika): av de 1527 som laddas över skärmen packas 1154 upp,
+förut 1061; ingen slutar packas upp, 1433 körs precis som förut, och 200 andra program ur arkivet likaså. Av de 94 som
+sparar ett annat program är 84 byte för byte vad unp64 sparar (81 det lager unp64 återvänder till, 2 ett annat lager,
+1 där båda har byte), 4 skiljer bara där unp64 skriver om BASIC-raden (`SYS`-talet eller länken), 2 är identiska fast
+unp64 inte anger någon återhoppsadress, 2 känner unp64 inte igen, och i 2 slutar Sindris lager vid ECA-uppackaren eller
+skiljer 87 byte (We Hate Cats, Rawhead; Intro 1988, Depredators). Picture Demo (The Discmonsters, `0 SYS2061`) är den
+enda där `RUN` med texten efter också startade (`RUN` till rad 0): den sparas med ett kolon i stället för ett E.
 En VICE-snapshot laddas och startas inte: Sindri fortsätter från dess maskin (se *Snapshots* nedan). `RUN` skulle starta
 programmet från början, för från `$0200` har snapshoten programmets `SYS`-rad på `$0801`.
 
