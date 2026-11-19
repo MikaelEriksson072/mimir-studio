@@ -84,7 +84,7 @@ import { CloseNotSavedModal, CloseUnsavedModal, CreateProjectModal, gitNote, Sta
 import { useCanvasColors, type HeatMode } from './components/Heatmap';
 import type { AsmPickResult, EditorFindResult, IdentifyResponse, OpenedPrg, PrgOpenKind, ProjectHome, QuicksaveEntry, QuicksaveInfo, RunRequest, RunResult } from '../shared/ipc';
 import { QuickPack } from './components/QuickPack';
-import { AnalysisOverview, type OverviewLinks } from './components/Overview';
+import { AnalysisOverview, type OverviewLinks, type PackCheck, type PackLook } from './components/Overview';
 import { GFX_KIND, snapshotPc } from './lib/overview';
 
 const SourceView = lazy(() => import('./components/SourceView').then(m => ({ default: m.SourceView })));
@@ -1080,6 +1080,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const unpackLabel = external ? `Unpack with ${unpackerName}` : 'Unpack';
   const [runs, setRuns] = useState<Record<string, UnpackRun>>({});
   const running = useRef(new Map<string, Promise<UnpackRun>>());
+  /** the checks for packing (a Sindri run by its runKey, unp64 -i by its idKey): when each began, and how long it took
+   *  once it is done (failed: it never ran to an end). The analysis overview says it is still looking (a run can take
+   *  half a minute, and Sindri runs one file at a time) */
+  const [checks, setChecks] = useState<Record<string, PackCheck>>({});
+  const checkBegins = (key: string) => setChecks(m => ({ ...m, [key]: { since: Date.now() } }));
+  const checkEnds = (key: string, failed = false) => setChecks(m => {
+    const c = m[key];
+    return c && c.took == null ? { ...m, [key]: { ...c, took: Date.now() - c.since, ...(failed ? { failed } : {}) } } : m;
+  });
   /** Where Sindri starts file `f`: at the program start when it is in the file (Unpack set it, or the user), with SYS
    *  as Build & Run starts it, else as LOAD leaves it. A program Unpack saved can start in the middle of its bytes (a
    *  cracked game's trainer menu at $2000 in $03dc-$f700, waiting for a key in front of the packed game). */
@@ -1099,7 +1108,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const t = tapeOf.current.get(f.id);
       p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? []);
       running.current.set(key, p);
-      p.then(r => setRuns(m => ({ ...m, [key]: r })), () => running.current.delete(key));
+      checkBegins(key);
+      p.then(r => { setRuns(m => ({ ...m, [key]: r })); checkEnds(key); }, () => { running.current.delete(key); checkEnds(key, true); });
     }
     return p;
   };
@@ -1118,9 +1128,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const key = idKey(f);
       if (asked.current.has(key)) continue;
       asked.current.add(key);
-      kr.identifyPacker({ name: f.name, prg: makePrg(f.load, f.bytes) }).then(r => setIdentified(m => ({ ...m, [key]: r }))).catch(() => { /* the heuristics still report it */ });
+      checkBegins(key);
+      kr.identifyPacker({ name: f.name, prg: makePrg(f.load, f.bytes) }).then(r => { setIdentified(m => ({ ...m, [key]: r })); checkEnds(key, !r.supported); })
+        .catch(() => checkEnds(key, true)); // the heuristics still report it
     }
   }, [project.files, toolchain.unpackerPath]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** the check for packing of each file as it is now (the analysis overview shows those under way) */
+  const lookingFor = project.files.flatMap((f, i): PackLook[] => {
+    const c = checks[external ? idKey(f) : runKey(f)];
+    return c ? [{ ...c, id: f.id, i, by: unpackerName }] : [];
+  });
   const packing = useMemo(() => A.files.map((af, i): PackingInfo | null => {
     const f = project.files[i];
     // a cartridge's chip is no packed program (and is in a bank of its own). A snapshot's RAM is judged by Sindri going
@@ -4052,7 +4069,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />
       </div>}
-      {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
+      {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} looking={lookingFor} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
         known={suggested} onNameKnown={() => nameKnown()} links={overviewLinks} onClose={() => setModal(null)} />}
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}

@@ -253,8 +253,10 @@ make an existing project a repository too).
    tape image (TAP, T64)…* for a tape. *Add PRG file…* in the Explorer adds more PRGs to the project. You can also drop the file on the window. *Demo* in the Explorer loads a showcase with a guided tour (`F2`).
    Once the analysis is done, the **analysis overview** opens in the middle of the window: what it found, part by part
    (the program start, packing, loaders, problems, the blocks by type, code, graphics and music), with links to each
-   part and to the listing, the `.asm` source, *Graphics* and *Memory*. A link, a click outside it or `Esc` closes it;
-   *Settings → General* turns it off, and the command palette shows it again.
+   part and to the listing, the `.asm` source, *Graphics* and *Memory*. While Sindri is still running a file to see
+   whether it unpacks itself (some take seconds), a card says it is looking, and then whether the file is packed. A
+   link, a click outside it or `Esc` closes it; *Settings → General* turns it off, and the command palette shows it
+   again.
 2. **Read the listing.** Blocks are coloured by type. Left of each address, as in SourceGen, is where the byte is in the
    file you opened (`+000050`; *Offset* turns that column off). The inspector on the right shows why each block was classified
    the way it was, the memory map and a preview, where a click on a character or a sprite shows it enlarged with its

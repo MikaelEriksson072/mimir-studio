@@ -2,7 +2,7 @@
  * analysis found, part by part; its links go there and close it, as a click outside it and Esc do; the music found
  * plays from a Play button, which leaves it open. Settings → General
  * (and the box at its foot) turns it off; the tests start with it off (fixtures.ts). */
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, repoDir, test } from './fixtures';
@@ -279,4 +279,82 @@ test('the overview of the analysis opens after a load, and its links go where th
     await expect(showSetting).not.toBeChecked();
     await settings.getByRole('button', { name: 'Cancel' }).click();
   });
+});
+
+/** A program that writes memory slowly, a byte every 2 600 cycles or so from $0900 to $bfff (Sindri takes a few seconds
+ *  over it), then decodes `inc $d020 / jmp $c000` (EOR $55) to $c000 and runs it there: one layer for Sindri to take
+ *  off. `decode` false: it waits where it is instead, and nothing unpacks itself. */
+const slowPrg = (decode: boolean): Buffer => {
+  const basic = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00]; // 10 SYS2061
+  const fill = [
+    0xa9, 0x00, 0x85, 0xfb, 0xa9, 0x09, 0x85, 0xfc, 0xa0, 0x00, // ($fb) = $0900
+    0xa9, 0x02, 0x85, 0xfd, 0xa2, 0x00, 0xca, 0xd0, 0xfd, 0xc6, 0xfd, 0xd0, 0xf7, // wait 2 x 256 dex
+    0x91, 0xfb, 0xe6, 0xfb, 0xd0, 0xed, 0xe6, 0xfc, 0xa5, 0xfc, 0xc9, 0xc0, 0xd0, 0xe5, // a byte, on to $c000
+  ];
+  const payload = [0xee, 0x20, 0xd0, 0x4c, 0x00, 0xc0].map(b => b ^ 0x55);
+  const end = decode
+    ? [0xa2, 0x00, 0xbd, 0x44, 0x08, 0x49, 0x55, 0x9d, 0x00, 0xc0, 0xe8, 0xe0, payload.length, 0xd0, 0xf3, 0x4c, 0x00, 0xc0, ...payload]
+    : [0x4c, 0x32, 0x08]; // jmp *
+  return Buffer.from([0x01, 0x08, ...basic, ...fill, ...end]);
+};
+
+/* Sindri runs every file opened to see whether it unpacks itself, and some take seconds: until it is done the overview
+ * says it is looking, with the seconds; then the file is packed (with Unpack), or not packed. */
+test('the overview says while Sindri is still looking for packing, and then what it found', async ({ app, page }) => {
+  const dir = mkdtempSync(join(tmpdir(), 'mimir-e2e-slow-'));
+  try {
+    writeFileSync(join(dir, 'slow-packed.prg'), slowPrg(true));
+    writeFileSync(join(dir, 'slow-plain.prg'), slowPrg(false));
+    await waitForListing(page);
+    const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+    const looking = overview.getByRole('region', { name: 'Looking for packing' });
+    const open = async (name: string) => {
+      await stubDialogs(app, { open: [join(dir, name)] });
+      await fromFileMenu(page, 'Open PRG files…');
+      await expect(toast(page, `Loaded ${name}`).last()).toBeVisible();
+    };
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await settings.getByLabel('Show an overview of the analysis when a file is opened').check();
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+
+    await test.step('a file Sindri is still running: a card says it is looking, with a spinner and the seconds', async () => {
+      await open('slow-packed.prg');
+      await expect(overview).toBeVisible();
+      await expect(looking).toContainText('slow-packed.prg: Sindri is running it to see whether it unpacks itself…');
+      await expect(looking.locator('.spinner')).toBeVisible();
+      await expect(looking).toContainText(/\(\d+ s\)/);
+      // nothing has called it packed yet
+      await expect(overview.getByRole('region', { name: 'Packed', exact: true })).toHaveCount(0);
+    });
+
+    await test.step('once a layer comes off, the card is the Packed one, with Unpack', async () => {
+      const packed = overview.getByRole('region', { name: 'Packed', exact: true });
+      await expect(packed).toContainText('slow-packed.prg is packed', { timeout: 60_000 });
+      await expect(packed).toContainText('$c000');
+      await expect(looking).toHaveCount(0);
+      await expect(packed.getByRole('button', { name: 'Unpack' })).toBeEnabled();
+      await page.keyboard.press('Escape');
+      await expect(overview).toBeHidden();
+    });
+
+    await test.step('a file that is not packed: looking, then "Not packed"; opened again later, the overview says neither', async () => {
+      await open('slow-plain.prg');
+      await expect(overview).toBeVisible();
+      await expect(looking).toContainText('slow-plain.prg: Sindri is running it');
+      const done = overview.getByRole('region', { name: 'Not packed' });
+      await expect(done).toContainText(/slow-plain\.prg is not packed: Sindri ran it and nothing unpacked itself \(\d+ s\)\./, { timeout: 60_000 });
+      await expect(looking).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(overview).toBeHidden();
+      await page.locator('.titlebar').getByRole('button', { name: 'Analysis overview', exact: true }).click();
+      await expect(overview).toBeVisible();
+      await expect(overview.getByRole('region', { name: 'Program start' })).toBeVisible();
+      await expect(done).toHaveCount(0);
+      await expect(looking).toHaveCount(0);
+      await page.keyboard.press('Escape');
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

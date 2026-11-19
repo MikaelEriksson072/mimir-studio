@@ -4,8 +4,10 @@
  * block (its folder in the Blocks view), a loader's parts, the tabs Listing, the .asm source, Graphics and Memory; the
  * music found has a Play button (VICE or DeepSID, as the Blocks view's), which leaves the window open. A link, a click
  * outside the window or Esc closes it; Settings → General (or the box at its foot) turns it off. The title bar's
- * Analysis overview button (and the command palette) opens it again at any time. */
-import { Fragment, type ReactNode } from 'react';
+ * Analysis overview button (and the command palette) opens it again at any time. While Sindri (or unp64 -i) is still
+ * running a file to see whether it is packed, which can take half a minute, a card says it is looking, and what it
+ * found once it is done. */
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project, type RoutineMatch } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { IconName } from '../lib/icon-paths';
@@ -14,6 +16,25 @@ import type { UiProblem } from '../lib/types';
 import { bankAdr, cx, fmtBytes, GROUP_LABEL, musicPlayTitle } from '../lib/util';
 import type { BottomTab, EditorTab } from '../store/ui';
 import { Modal } from './Modal';
+
+/** a check of whether a file is packed: Sindri running it (or unp64 -i naming its packer) */
+export interface PackCheck {
+  /** when it began (Date.now()) */
+  since: number;
+  /** ms it took, once it is done */
+  took?: number;
+  /** it never came to an end (the run failed, or the unpacker could not say) */
+  failed?: boolean;
+}
+
+/** the check of a file of the project */
+export interface PackLook extends PackCheck {
+  id: string;
+  /** its index in the project's files */
+  i: number;
+  /** who looks: Sindri, or the external unpacker's name */
+  by: string;
+}
 
 /** where the overview's links go (the window closes first) */
 export interface OverviewLinks {
@@ -36,6 +57,9 @@ interface OverviewProps {
   /** the project was opened from a VICE snapshot: where its CPU was when it was saved */
   snap?: SnapshotPc | null;
   packing: readonly (PackingInfo | null)[]; problems: readonly UiProblem[];
+  /** the checks of whether the files are packed (those still running show; those done show their end if they were
+   *  running while the overview was open) */
+  looking?: readonly PackLook[];
   /** the .asm file the source tab shows first */
   source: string;
   unpackLabel: string;
@@ -70,7 +94,30 @@ function Card({ icon, title, n, wide, className, children }: { icon: IconName; t
 const Link = ({ onClick, title, className, children }: { onClick: () => void; title?: string; className?: string; children: ReactNode }) =>
   <button type="button" className={cx('ov-link', className)} title={title} onClick={onClick}>{children}</button>;
 
-export function AnalysisOverview({ A, project, labels, snap, packing, problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, links, onClose }: OverviewProps) {
+/** the whole seconds since `since`, counting up while it shows (nothing in the first second) */
+function Seconds({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const s = Math.floor((now - since) / 1000);
+  return s >= 1 ? <span className="ov-secs"> ({s} s)</span> : null;
+}
+
+/** what the one looking does while it looks */
+const lookText = (by: string) => (by === 'Sindri' ? 'Sindri is running it to see whether it unpacks itself' : `${by} is naming its packer`);
+
+/** The checks the overview has seen running (by file and when it began): once one is done, a file that turned out
+ *  packed has its Packed card, and one that did not says so in place of the card that was looking. A check done before
+ *  the overview opened says nothing (it would be a card for every file that is not packed). */
+function useSeenRunning(looks: readonly PackLook[]) {
+  const [seen, setSeen] = useState<ReadonlySet<string>>(() => new Set());
+  const key = looks.filter(l => l.took == null).map(l => `${l.id}@${l.since}`).join();
+  useEffect(() => {
+    if (key) setSeen(m => (key.split(',').every(k => m.has(k)) ? m : new Set([...m, ...key.split(',')])));
+  }, [key]);
+  return (l: PackLook) => seen.has(`${l.id}@${l.since}`);
+}
+
+export function AnalysisOverview({ A, project, labels, snap, packing, looking = [], problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, links, onClose }: OverviewProps) {
   /** every link closes the window, then goes there */
   const go = (f: () => void) => () => { onClose(); f(); };
   const start = startOf(A, project);
@@ -81,6 +128,13 @@ export function AnalysisOverview({ A, project, labels, snap, packing, problems, 
   const probs = problemCounts(problems);
   const { subs, handlers } = routinesOf(A);
   const packed = packing.flatMap((p, i) => (p ? [{ p, i }] : []));
+  const seen = useSeenRunning(looking);
+  /** the check of file `i` while it runs */
+  const lookAt = (i: number) => looking.find(l => l.i === i && l.took == null);
+  // the files still looked for that nothing has called packed yet, and those the overview saw looked for that are done
+  // and not packed (or whose check failed)
+  const lookCards = looking.filter(l => l.took == null ? !packing[l.i] : seen(l) && (l.failed || !packing[l.i]))
+    .map(l => ({ l, name: project.files[l.i]?.name ?? '' }));
   const drive = A.loaders.some(l => l.parts.some(p => p.role === 'drivecode' && !p.outside));
   const name = (a: Addr) => labels.get(a)?.name;
   const loaded = A.stats.total;
@@ -128,11 +182,33 @@ export function AnalysisOverview({ A, project, labels, snap, packing, problems, 
           {packed.map(({ p, i }) => (
             <Card key={`pack-${i}`} icon="pack" title={p.verdict === 'packed' ? 'Packed' : 'Maybe packed'} wide className="ov-packed">
               <p><b>{A.files[i]?.name}</b> {p.verdict === 'packed' ? 'is packed' : 'may be packed'}{p.signature ? ` (${p.signature})` : ''}: {p.reasons.join('; ')}. What the analysis sees is the decruncher{p.decruncher != null ? ` at $${h4(p.decruncher)}` : ''} and the packed data, not the program.</p>
+              {lookAt(i) && <p className="ov-look" role="status"><span className="spinner" aria-hidden />
+                <span>{lookText(lookAt(i)!.by)}<Seconds since={lookAt(i)!.since} />: {lookAt(i)!.by === 'Sindri' ? 'what comes off names the packer' : 'the name it gives replaces the guess'}.</span></p>}
               <div className="ov-more">
                 <button type="button" className="btn small primary" disabled={busy} onClick={go(() => links.unpack(i))}>{unpackLabel}</button>
                 {p.decruncher != null && <Link onClick={go(() => links.addr(p.decruncher!))}>The decruncher</Link>}
               </div>
             </Card>))}
+
+          {lookCards.map(({ l, name: fname }) => {
+            const sindri = l.by === 'Sindri';
+            if (l.took == null) return (
+              <Card key={`look-${l.id}`} icon="pack" title="Looking for packing" wide className="ov-looking">
+                <p className="ov-look" role="status"><span className="spinner" aria-hidden />
+                  <span><b>{fname}</b>: {lookText(l.by)}…<Seconds since={l.since} /></span></p>
+                <p className="muted">{sindri
+                  ? 'Some packers show only when they run: if a layer comes off, the file shows here as packed, with Unpack. Until then the rest of the overview is of the file as it was opened.'
+                  : 'If it knows the packer, the file shows here as packed, with Unpack.'}</p>
+              </Card>);
+            const secs = l.took >= 1000 ? ` (${Math.round(l.took / 1000)} s)` : '';
+            return l.failed
+              ? <Card key={`look-${l.id}`} icon="warn" title="Packing not checked" wide className="ov-looked">
+                <p><b>{fname}</b>: {sindri ? 'Sindri could not run it' : `${l.by} could not say which packer it is`}{secs}. {packing[l.i] ? 'The card above is what the analysis sees in its bytes.' : 'The analysis sees no packer in its bytes.'}</p>
+              </Card>
+              : <Card key={`look-${l.id}`} icon="ok" title="Not packed" wide className="ov-looked">
+                <p><b>{fname}</b> {sindri ? 'is not packed: Sindri ran it and nothing unpacked itself' : `is not packed as far as ${l.by} knows: it names no packer`}{secs}.</p>
+              </Card>;
+          })}
 
           {snap && <Card icon="chip" title="Snapshot PC" className="ov-pc">
             {snap.loaded
