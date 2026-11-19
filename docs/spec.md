@@ -5709,6 +5709,16 @@ på ett stycke går dit i listningen. Raden **Open** har snabblänkar till flika
 Sedan kommer analysens delar, ett kort var:
 - **Packed** (bara när en fil är packad eller kan vara det, över hela bredden): vad packningsanalysen säger och knappen
   *Unpack* (eller *Unpack with …*), och en länk till dekrunchern.
+- **Looking for packing** (över hela bredden, medan Sindri ännu kör en fil som inget har kallat packad): en snurra,
+  filens namn, *Sindri is running it to see whether it unpacks itself…* och sekunderna sedan körningen började. Sindri
+  kör varje fil som öppnas i en egen worker, en i taget (8.11b), och en fil kan ta upp till en halv minut (ett program
+  som väntar på tid, en lång dekrunchning); översikten väntar inte på det utan säger att den letar. När ett lager kommer
+  av blir kortet *Packed* med *Unpack*. Kör Sindri klart utan att något packar upp sig blir det **Not packed** (*… is not
+  packed: Sindri ran it and nothing unpacked itself (4 s).*), och en körning som misslyckas ger *Packing not checked*.
+  Ett *Packed*-kort (heuristiken såg packningen först) har samma rad med snurran medan Sindri kör. Med unp64 som extern
+  uppackare säger kortet att unp64 namnger packaren (`unp64 -i`). Svaret visas bara för en körning som översikten såg
+  pågå: öppnad igen senare säger den inget om filer som inte är packade. (`checks` och `lookingFor` i `App.tsx`,
+  `PackLook` i `Overview.tsx`.)
 - **Snapshot PC** (bara för en VICE-snapshot, 13.7): var CPU:n var när VICE sparade den. Kortet visar adressen och
   etiketten som en länk till listningen, som redan står där, och registren som VICE:s monitor visar dem
   (`A $41  X $00  Y $0a  SP $ed  $01 $37  NV-BDIZC 00100100`). En PC i ROM, I/O eller utanför RAM-et som öppnades
@@ -5746,16 +5756,6 @@ avslaget, med vad analysen av filerna nu säger; utan filer (ingen fil öppnad, 
 Kommandopaletten har samma sak som *Show the analysis overview*. Vad korten säger räknas fram i
 `apps/desktop/src/lib/overview.ts` och läggs ut i
 `components/Overview.tsx`. E2E-testerna börjar med översikten av (fixturen sätter valet och laddar om fönstret), så att
-- **Looking for packing** (över hela bredden, medan Sindri ännu kör en fil som inget har kallat packad): en snurra,
-  filens namn, *Sindri is running it to see whether it unpacks itself…* och sekunderna sedan körningen började. Sindri
-  kör varje fil som öppnas i en egen worker, en i taget (8.11b), och en fil kan ta upp till en halv minut (ett program
-  som väntar på tid, en lång dekrunchning); översikten väntar inte på det utan säger att den letar. När ett lager kommer
-  av blir kortet *Packed* med *Unpack*. Kör Sindri klart utan att något packar upp sig blir det **Not packed** (*… is not
-  packed: Sindri ran it and nothing unpacked itself (4 s).*), och en körning som misslyckas ger *Packing not checked*.
-  Ett *Packed*-kort (heuristiken såg packningen först) har samma rad med snurran medan Sindri kör. Med unp64 som extern
-  uppackare säger kortet att unp64 namnger packaren (`unp64 -i`). Svaret visas bara för en körning som översikten såg
-  pågå: öppnad igen senare säger den inget om filer som inte är packade. (`checks` och `lookingFor` i `App.tsx`,
-  `PackLook` i `Overview.tsx`.)
 den inte täcker fönstret när de öppnar filer; dess eget test slår på den.
 
 ### 14.2 Visuellt språk
