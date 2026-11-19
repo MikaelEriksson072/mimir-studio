@@ -6830,6 +6830,36 @@ test('a Microload tape: its files are listed and open, as Bigtop Barney\'s are',
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
+test('Unpack on a turbo file its loader starts elsewhere runs the tape from its boot file, as Delta\'s file_1000 needs', async ({ app, page }) => {
+  // fixtures/tap/loader-start-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file whose loader reads the
+  // TinyHeader file into $0800 and starts it at $080d: a JAM at $0800, then the raster demo packed by fakePack. Alone,
+  // SYS $0800 stops at once (as SYS $1000 did on the packed game Delta's Wildload chain loads at $1000-$beff)
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/loader-start-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted loader-start-demo\.tap \(\d+ s\): 3 files \(1 KERNAL, 2 TapeTool\)$/)).toBeVisible();
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$02a7–$0303', '$0800–$390c', '$4000–$40ff']);
+  await table.getByRole('row', { name: /TinyHeader file/ }).click();
+  await expect(toast(page, 'Loaded tinyheader.prg at $0800')).toBeVisible();
+
+  const bar = page.locator('.pack-bar');
+  await expect(bar).toContainText('tinyheader.prg is packed.', { timeout: 60_000 });
+  await expect(bar).toContainText('A loader on the tape loads it: Sindri ran the tape\'s boot file "LOADER DEMO", and after its loader had loaded it peels off 2 layers');
+  await expect(bar).toContainText(/the program starts at \$0810/);
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(toast(page, /^Unpacked tinyheader\.prg: \d+ bytes at \$0800-\$37ff$/)).toBeVisible({ timeout: 60_000 });
+  const done = page.locator('.unpack-bar');
+  await expect(done).toContainText('tinyheader-unpacked.prg, $0800-$37ff, starting at $0810 (set as the program start).');
+  await expect(done).toContainText('A loader on the tape loads it: Sindri ran the tape\'s boot file "LOADER DEMO" (alone, from $0800, it stopped: jam).');
+  await done.getByText('Layer report').click();
+  await expect(done.locator('.unpack-log')).toContainText('Alone, started at $0800, it stopped: jam, the CPU stopped on the JAM opcode at $0800');
+  await expect(done.locator('.unpack-log')).toContainText('A loader on the tape loads it: run from the tape\'s boot file "LOADER DEMO"; layer 1 on started after its loader had loaded the file');
+  await expectFiles(page, ['tinyheader-unpacked.prg']);
+});
+
 test('a tape with Firebird\'s loader: its first stage\'s chain and a file of the second kind are listed and open, as Bubble Bobble\'s are', async ({ app, page }) => {
   // fixtures/tap/firebird-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file, then Firebird's first stage
   // (64 bytes at $0200, the raster demo in blocks from $0801, a last block at $bf00 the loader jumps to) and a table at

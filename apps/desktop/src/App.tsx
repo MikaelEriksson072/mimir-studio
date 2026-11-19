@@ -7,7 +7,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
@@ -744,8 +744,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   const ejectTape = () => { if (tape) toast(`Ejected ${tape.name}`, 'info'); setTape(null); };
   /** the tape each file opened from it came from, and where it stood after the file: Sindri plays it on from there.
-   *  `header`: the file is a KERNAL file's header (the tape buffer), not a program Sindri runs */
-  const tapeOf = useRef(new Map<string, { tap: Uint8Array; file: TapeFile; header: boolean }>());
+   *  `header`: the file is a KERNAL file's header (the tape buffer), not a program Sindri runs; `boot`: the KERNAL
+   *  program whose loader loads it, for a file of a turbo loader (tapeBoot: Sindri runs the tape from it when the file
+   *  does not run from where it loads) */
+  const tapeOf = useRef(new Map<string, { tap: Uint8Array; file: TapeFile; header: boolean; boot?: TapeFile | null }>());
   /** a file from the tape as a PRG; a KERNAL file whose header holds code opens with its header, the tape buffer at
    *  $033c, as a second file (where many tape loaders keep their code) */
   const openFromTape = (f: TapeFile, add: boolean) => {
@@ -754,7 +756,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try {
       const base = tapeFileName(f).replace(/\.\w+$/, '');
       const file = withId(parsePrg(`${base}.prg`, makePrg(f.load, f.data)));
-      tapeOf.current.set(file.id, { tap: tape.bytes, file: f, header: false });
+      tapeOf.current.set(file.id, { tap: tape.bytes, file: f, header: false, boot: tapeBoot(tape.img, f) });
       const files = [file];
       if (f.headerCode && f.header) {
         const h = withId(parsePrg(`${base}-header.prg`, makePrg(0x033c, f.header)));
@@ -1105,8 +1107,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const key = runKey(f);
     let p = running.current.get(key);
     if (!p) {
-      const t = tapeOf.current.get(f.id);
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? []);
+      const t = tapeOf.current.get(f.id), b = t?.boot;
+      // (a turbo file goes with the boot file whose loader loads it: Sindri runs that when the file does not run alone)
+      const boot = b?.load != null ? { name: tapeFileName(b).replace(/\.\w+$/, ''), prg: makePrg(b.load, b.data), at: b.to } : null;
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to, boot } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? []);
       running.current.set(key, p);
       checkBegins(key);
       p.then(r => { setRuns(m => ({ ...m, [key]: r })); checkEnds(key); }, () => { running.current.delete(key); checkEnds(key, true); });
@@ -1188,22 +1192,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       try {
         const run = await runFor(f);
         const output = unpackLog(run, f.name, f.load, f.bytes.length);
+        // a turbo file that did not run from where it loads: Sindri ran the tape's boot file, whose loader loads it
+        const b = run.boot, viaBoot = b?.after != null;
+        const loads = b && viaBoot ? ` A loader on the tape loads it: Sindri ran the tape's boot file "${b.name}" (alone, from $${h4(b.alone.entry)}, it stopped: ${b.alone.stop.reason}).` : '';
         if (!run.unpacked || !run.saved) {
           const stop = `${run.stop.reason}${run.stop.detail ? `, ${run.stop.detail}` : ''}`;
           // a program that ran as it is to where programs end up is not packed: nothing went wrong (a one-block intro)
           if (notPacked(run)) {
-            setUnpacked({ ok: true, title: `${f.name} is not packed: Sindri ran it${f.vsf ? ' on from the snapshot' : ''}, and it never jumped into code it wrote (it stopped: ${stop}). There is nothing to unpack.`, output, label: 'Layer report' });
+            setUnpacked({ ok: true, title: viaBoot ? `${f.name} is not packed:${loads} The program its loader started after loading it never jumped into code it wrote (it stopped: ${stop}). There is nothing to unpack; Unpack on the boot file "${b.name}" gives the program as its loader starts it.` : `${f.name} is not packed: Sindri ran it${f.vsf ? ' on from the snapshot' : ''}, and it never jumped into code it wrote (it stopped: ${stop}). There is nothing to unpack.`, output, label: 'Layer report' });
             toast(`${f.name} is not packed`, 'info');
             return;
           }
-          setUnpacked({ ok: false, title: `Sindri found nothing to unpack in ${f.name}: it stopped (${stop}) before a layer came off.`, output, label: 'Layer report' });
+          setUnpacked({ ok: false, title: viaBoot ? `Sindri found nothing to unpack in ${f.name}:${loads} Nothing unpacked itself after its loader had loaded it (it stopped: ${stop}).` : `Sindri found nothing to unpack in ${f.name}: it stopped (${stop}) before a layer came off${b ? `, and the tape's boot file "${b.name}", run too, never loaded it` : ''}.`, output, label: 'Layer report' });
           toast(`Sindri could not unpack ${f.name}`, 'err');
           return;
         }
         const names = packerNames(run);
         // a BASIC program starts with RUN: the analysis finds its SYS line itself
         const where = takeUnpacked(i, f, run.saved.prg, run.saved.basic ? null : run.saved.entry, run.saved.basic ? null : run.saved.port);
-        setUnpacked({ ok: true, title: `Unpacked ${f.name}${names ? ` (${names})` : ''}${when}: ${where}.`, output, label: 'Layer report' });
+        setUnpacked({ ok: true, title: `Unpacked ${f.name}${names ? ` (${names})` : ''}${when}: ${where}.${loads}`, output, label: 'Layer report' });
       } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
       return;
     }

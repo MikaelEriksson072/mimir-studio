@@ -100,6 +100,9 @@ export interface LayerReport {
   from: number | null;
   /** the C64 time it started, in cycles after the program started */
   cycle: number;
+  /** with a tape: where it stood when the layer started (the next pulse; a T64: its directory slot). A layer that
+   *  starts once the tape has passed a file of a turbo loader started after that file was loaded */
+  tape?: number;
   /** it is a BASIC program started with RUN (entry is then the BASIC routine jumped to) */
   basic: boolean;
   kind: Kind;
@@ -234,6 +237,8 @@ class Layer {
   image: Uint8Array | null = null;
   /** the drive's bus changes when it started (Drive.busChanges) */
   driveBus = 0;
+  /** where the tape stood when it started (Datasette.pos), null without one */
+  tape: number | null = null;
   activity: Activity | null = null;
   calls: { entry: number; via: Via }[] = [];
   printed = '';
@@ -796,6 +801,7 @@ class Session {
     this.phase = 'run';
     const root = new Layer(0, null, pc, 'start', null, m.cycles, m.icount, this.snapshot());
     root.driveBus = this.busChanges();
+    root.tape = this.tape?.pos ?? null;
     this.layers = [root];
     this.owner.fill(0, Math.max(2, this.loadAt), this.loadAt + this.data.length);
     this.cur = root; this.curId = 0;
@@ -967,6 +973,7 @@ class Session {
     const layer = new Layer(++this.nextId, parent, pc, VIA[op] ?? 'jmp', from, m.cycles, m.icount, this.snapshot());
     layer.basic = basic;
     layer.driveBus = this.busChanges();
+    layer.tape = this.tape?.pos ?? null;
     const kinds = new Map(this.layers.filter(l => l.activity).map(l => [l.id, l.activity!.kind]));
     layer.mask = contentMask(m, parent.id, parent.snapshot.ram, kinds);
     for (let a = 0; a < 0x10000; a++) if (layer.mask[a]) this.owner[a] = layer.id;
@@ -1597,7 +1604,7 @@ class Session {
     const packer = a.kind === 'program' ? null : identify(a.opcodes);
     const range = index > 0 && l.mask ? this.rangeOf(l) : null;
     return {
-      index, entry: l.entry, via: l.via, from: l.from, cycle: l.cycle - this.startCycle, basic: l.basic,
+      index, entry: l.entry, via: l.via, from: l.from, cycle: l.cycle - this.startCycle, ...(l.tape != null ? { tape: l.tape } : {}), basic: l.basic,
       kind: a.kind, code: a.code, instructions: a.instructions,
       written: a.written, writtenBytes: a.writtenBytes, read: a.read, readBytes: a.readBytes,
       calls: l.calls, fingerprint: fingerprintId(a.opcodes), opcodes: a.opcodes, packer,

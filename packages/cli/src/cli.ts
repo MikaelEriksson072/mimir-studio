@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
-  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, unpackedName, unpackLog, unpackPrg, verify,
+  exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, tapeBoot, tapeFileName, unpackedName, unpackLog, unpackPrg, verify,
   covertSummary, krillPackerName, readBitfireDisk, readBoozeDisk, readCovertDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
@@ -408,10 +408,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
           // after it
           const tap = prg, want = flags.get('file');
           const re = typeof want === 'string' ? new RegExp(`^${want.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\?/g, '.').replace(/\*.*$/, '.*')}${want.includes('*') ? '' : '$'}`, 'i') : null;
-          const f = readTape(tap).files.find(e => e.load != null && e.data.length && (e.type === 'PRG' || e.type === 'BASIC') && (!re || re.test(e.name)));
+          const img = readTape(tap);
+          const f = img.files.find(e => e.load != null && e.data.length && (e.type === 'PRG' || e.type === 'BASIC') && (!re || re.test(e.name)));
           if (!f) { io.err(typeof want === 'string' ? `no program named "${want}" on ${name}` : `no program on ${name}`); return 2; }
           prg = makePrg(f.load!, f.data);
-          tape = { tap, at: f.to };
+          // (a turbo loader's file goes with the boot file whose loader loads it: run from there when it does not run alone)
+          const b = tapeBoot(img, f);
+          tape = { tap, at: f.to, boot: b?.load != null ? { name: tapeFileName(b).replace(/\.\w+$/, ''), prg: makePrg(b.load, b.data), at: b.to } : null };
           name = `${name}: "${f.name}"`;
           base = `${basename(path).replace(/\.t(ap|64)$/i, '')}-${f.name.replace(/[^A-Za-z0-9 _-]/g, '_').trim() || 'file'}`;
         }

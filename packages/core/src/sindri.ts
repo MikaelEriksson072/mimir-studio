@@ -4,19 +4,44 @@
  * from, a 1541 is on the serial bus and the program goes on loading. Here: a run whose result can be posted from a
  * worker, the packers the layers' fingerprints name, and the layer report the app and the CLI show.
  * ===================================================================== */
-import { notPacked, NOT_PACKED, unpack, vsfMachine, type LayerReport, type Roms, type UnpackResult } from '@mimir/sindri';
+import { notPacked as ranAsItIs, NOT_PACKED, unpack, vsfMachine, type LayerReport, type Roms, type UnpackResult } from '@mimir/sindri';
+import { readTape } from './c64/tap';
 import { h4 } from './util/hex';
 
 export type { LayerReport, Roms } from '@mimir/sindri';
-export { notPacked } from '@mimir/sindri';
 
 /** A run of Sindri without its save() function, so that it can cross a worker boundary; `snapshot`: it went on from
- *  a VICE snapshot whose CPU was there */
-export type UnpackRun = Omit<UnpackResult, 'save'> & { snapshot?: number };
+ *  a VICE snapshot whose CPU was there; `boot`: the file is one a loader on the tape loads, and Sindri ran the tape's
+ *  boot file too (BootRun) */
+export type UnpackRun = Omit<UnpackResult, 'save'> & { snapshot?: number; boot?: BootRun };
+
+/**
+ * A file of a turbo loader that did not run from where it loads (a crash, a JAM: a Wildload chain's block is a part of
+ * the program, not its start), and the run of the tape's boot file that loads it (tapeBoot), as LOAD and RUN on a C64.
+ * `after`: the first layer of the boot's run that started once the tape had passed the file (its loader had loaded
+ * it); the run is then the boot's, and it unpacked the file when a layer from there on unpacked something (the
+ * program the loader started). `loading`: the layers from there on that are the loader going on: the tape passed the
+ * end of another file on it while they ran (Firetrack's second stage at $1000, which loads the rest of the chain, is
+ * no depacker of the blocks before it). Null: the boot's loader never got past the file in the run (a level the game
+ * loads later), and the run is the file's own.
+ */
+export interface BootRun { name: string; after: number | null; loading: number[]; alone: { entry: number; stop: UnpackResult['stop'] } }
 
 /** The tape a file came from (a TAP image, or a T64 tape archive) and, when it is not one of its KERNAL files, where
- *  the tape stands once the file has loaded (a pulse: TapeFile.to; a T64's slot after the file). */
-export interface UnpackTape { tap: Uint8Array; at?: number | null }
+ *  the tape stands once the file has loaded (a pulse: TapeFile.to; a T64's slot after the file). `boot`: the file is
+ *  one a loader on the tape loads (a turbo file), and this KERNAL program before it is the boot file whose loader does
+ *  (tapeBoot): its name, its PRG and where the tape stands after it (its TapeFile.to). */
+export interface UnpackTape { tap: Uint8Array; at?: number | null; boot?: { name: string; prg: Uint8Array; at: number } | null }
+
+/**
+ * The program is not packed: it ran as it is (Sindri's notPacked: one layer, it settled or went back to READY, no BRK
+ * on the way). A turbo file run from the tape's boot is not packed when the program its loader started after loading
+ * it ran as it is to such an end.
+ */
+export function notPacked(run: Pick<UnpackRun, 'unpacked' | 'layers' | 'stop' | 'brk' | 'boot'>): boolean {
+  if (run.boot?.after == null) return ranAsItIs(run);
+  return !run.unpacked && run.brk == null && conclusive(run);
+}
 
 /**
  * Unpack a PRG (load address first); without ROMs Sindri runs with its stand-ins for the KERNAL and BASIC. With
@@ -34,8 +59,53 @@ export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8
     roms, disk, ...(disk && disks.length ? { disks: [...disks] } : {}), ...(resume ? { resume } : entry != null ? { entry, ...(port != null ? { port } : {}) } : {}),
     ...(tape ? { tape: tape.tap, ...(tape.at != null ? { tapeAt: tape.at } : {}) } : {}),
   });
-  return resume ? { ...run, snapshot: resume.cpu.pc } : run;
+  if (resume) return { ...run, snapshot: resume.cpu.pc };
+  // a turbo file that did not run from where it loads (a chain's block SYSed into its data): Sindri runs the tape as a
+  // C64 loads it, from the boot file whose loader loads the file with the rest of the program (a start the user set
+  // is where it starts)
+  const boot = tape?.boot;
+  if (!boot || tape.at == null || entry != null || run.unpacked || ranAsItIs(run)) return run;
+  const b = bootRun(boot, tape.tap, roms);
+  return fromBoot(run, b.run, b.ends, boot.name, tape.at, run.layers[0]?.entry ?? (prg[0] | (prg[1] << 8)));
 }
+
+/** the tape's boot file's run, and where the files and turbo stretches on the tape end (pulses), kept for the next file
+ *  of the same tape (Unpack, and the check of each file opened from a chain, run the same boot) */
+let lastBoot: { key: string; run: UnpackRun; ends: number[] } | null = null;
+function bootRun(boot: NonNullable<UnpackTape['boot']>, tap: Uint8Array, roms: Roms | null): { run: UnpackRun; ends: number[] } {
+  const key = `${roms?.source ?? '-'}:${boot.at}:${tap.length}:${fnv(tap)}:${fnv(boot.prg)}`;
+  if (lastBoot?.key === key) return lastBoot;
+  const { save: _save, ...run } = unpack(boot.prg, { roms, tape: tap, tapeAt: boot.at });
+  const img = readTape(tap);
+  lastBoot = { key, run, ends: [...img.files.map(f => f.to), ...img.unknown.map(u => u.to)] };
+  return lastBoot;
+}
+function fnv(u8: Uint8Array): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < u8.length; i++) h = Math.imul(h ^ u8[i], 0x01000193);
+  return h >>> 0;
+}
+
+/** The file's run (`own`, started at `entry`) or the boot's (`b`) when its loader got past the file (`past`: the pulse
+ *  after the file; `ends`: where the tape's files and stretches end): unpacked when a layer that started from there on,
+ *  and is not the loader going on, unpacked something before the program it saved */
+function fromBoot(own: UnpackRun, b: UnpackRun, ends: number[], name: string, past: number, entry: number): UnpackRun {
+  const alone = { entry, stop: own.stop };
+  const after = b.layers.findIndex(l => l.tape != null && l.tape >= past);
+  if (after < 0) return { ...own, boot: { name, after: null, loading: [], alone } };
+  // (a layer the tape passed a file's end in loaded it: the next layer began further on)
+  const loading = b.layers.flatMap((l, i) => {
+    const from = l.tape, to = b.layers[i + 1]?.tape;
+    return i >= after && from != null && to != null && ends.some(e => e > from && e <= to) ? [i] : [];
+  });
+  const boot = { name, after, loading, alone };
+  return { ...b, unpacked: !!b.saved && afterLoad(b.layers, boot, b.saved.layer).length > 0, boot };
+}
+
+/** the layers of a boot's run that unpacked something once its loader had loaded the file (from `after`, without the
+ *  loader going on), before the program it saved (`upTo`) */
+const afterLoad = (layers: LayerReport[], b: Pick<BootRun, 'after' | 'loading'>, upTo: number): LayerReport[] =>
+  depackers({ layers: layers.slice(b.after ?? layers.length, upTo).filter(l => !b.loading.includes(l.index)) });
 
 /**
  * Where the packed data was: what the decrunchers and decoders read in runs of 256 bytes or more (a mover's source is
@@ -65,8 +135,18 @@ export function depackerText(l: LayerReport): string {
 /** What a run found, in a sentence for the packed notice: the layers it peeled off and where the program starts. */
 export function unpackSummary(run: UnpackRun): string {
   const from = run.snapshot != null ? `Going on from the snapshot (the CPU at $${h4(run.snapshot)}), ` : '';
+  const b = run.boot;
+  if (b?.after != null) {
+    const loads = `A loader on the tape loads it: Sindri ran the tape's boot file "${b.name}"`;
+    const prog = run.saved ? `; the program starts at $${h4(run.saved.entry)}` : '';
+    if (notPacked(run)) return `${loads}, and the program its loader started after loading it ran as it is: not packed (it stopped: ${stopText(run)})`;
+    if (!run.unpacked) return `${loads}, and nothing unpacked itself after its loader had loaded it (it stopped: ${stopText(run)})`;
+    const d = afterLoad(run.layers, b, run.saved!.layer);
+    return `${loads}, and after its loader had loaded it peels off ${d.length} layer${d.length === 1 ? '' : 's'}: ${d.map(depackerText).join(', then ')}${prog}`;
+  }
+  const never = b ? `; the tape's boot file "${b.name}", run too, never loaded it` : '';
   if (notPacked(run)) return `${from}Sindri finds it not packed: it ran as it is and never jumped into code it wrote (it stopped: ${stopText(run)})`;
-  if (!run.unpacked) return `${from}Sindri peels off no layer (it stopped: ${stopText(run)})`;
+  if (!run.unpacked) return `${from}Sindri peels off no layer (it stopped: ${stopText(run)})${never}`;
   const d = depackers(run);
   const prog = run.saved ? `; the program starts at $${h4(run.saved.entry)}` : '';
   const data = run.snapshot != null && packedData(run).length ? `; the packed data was at ${rangesText(packedData(run))}` : '';
@@ -115,10 +195,18 @@ export function unpackLog(run: UnpackRun, name: string, load: number, size: numb
   const out = [`${name}: ${rangeText({ start: load, end: load + size - 1 })} (${kb(size)})${run.basic.length ? `, ${run.basic.slice(0, 2).join(' / ')}` : ''}`, `ROMs: ${run.roms}`];
   if (run.snapshot != null) out.push(`Snapshot: going on from where it was taken, the CPU at ${hex(run.snapshot)} (its RAM, VIC-II and CIAs; not its 1541)`);
   if (run.drive) out.push(`Drive: ${run.drive}`);
+  const b = run.boot;
+  // (a turbo file that did not run from where it loads: the tape's boot file was run, as on a C64)
+  if (b) {
+    out.push(`Alone, started at ${hex(b.alone.entry)}, it stopped: ${stopText(b.alone)}`);
+    out.push(b.after != null
+      ? `A loader on the tape loads it: run from the tape's boot file "${b.name}"; layer ${b.after} on started after its loader had loaded the file${b.loading.length ? ` (layer${b.loading.length === 1 ? '' : 's'} ${b.loading.join(', ')}: the loader going on, loading more of the tape)` : ''}`
+      : `The tape's boot file "${b.name}", run too, never loaded it: its loader did not get past the file`);
+  }
   if (run.tape) out.push(`Tape: ${run.tape}`);
   for (const l of run.layers) out.push(...layerLines(l));
   out.push(`stopped after ${(run.cycles / 985248).toFixed(1)} s of C64 time (${Math.round(run.ms)} ms): ${stopText(run)}`);
-  if (!run.unpacked) out.push(notPacked(run) ? NOT_PACKED : 'nothing was unpacked');
+  if (!run.unpacked) out.push(!notPacked(run) ? (b?.after != null ? 'nothing was unpacked after its loader had loaded it' : 'nothing was unpacked') : b?.after != null ? 'not packed: the program its loader started ran as it is and never jumped into code it wrote' : NOT_PACKED);
   else if (run.saved) {
     const s = run.saved;
     const port = s.port !== 0x37 ? `, $01=$${s.port.toString(16).padStart(2, '0')}` : '';

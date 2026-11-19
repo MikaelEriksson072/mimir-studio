@@ -5,8 +5,10 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makePrg, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackPrg } from '../src';
-import { blockFile, demoTape, firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
+import { makePrg, makeTap, notPacked, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackLog, unpackPrg, unpackSummary, type TapeFile } from '../src';
+import { findC64Roms } from '../src/node';
+import { fakePack } from './helpers/fake-packer';
+import { blockFile, bootLoader, demoTape, firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, loaderStartTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, tinyLoader, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
 import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -819,5 +821,88 @@ describe('the tape in Build & Run and in Sindri', () => {
     const saved = run.saved!.prg, at = 0x0801 - run.saved!.start + 2;
     expect([...saved.subarray(at, at + demo.length - 2)]).toEqual([...demo.subarray(2)]);
     expect(run.saved!.entry).toBe(0x0810);
+  });
+
+  it('runs a turbo file that does not run from where it loads from the tape\'s boot file, whose loader loads and starts it (Delta\'s chain)', () => {
+    // a turbo file is a part of what its loader loads (a Wildload chain's block: Delta's file_1000, the packed game at
+    // $1000-$beff), started by the loader elsewhere: SYS to where it loads hit a JAM, and Unpack found nothing
+    const packed = fakePack(demo, 0x0810);
+    const tape = loaderStartTape(packed, 0x080d);
+    const path = join(__dirname, '../../../fixtures/tap/loader-start-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, tape);
+    expect(new Uint8Array(readFileSync(path))).toEqual(tape);
+    const img = readTape(tape);
+    expect(img.files.map(f => [f.format, f.name, f.load])).toEqual([['cbm', 'LOADER DEMO', 0x02a7], ['tapetool', 'TinyHeader file', 0x0800], ['tapetool', 'file 1', 0x4000]]);
+    const [boot, file, jams] = img.files;
+    // the KERNAL program before a turbo file is the boot file whose loader loads it; a KERNAL file is a program of its own
+    expect(tapeBoot(img, file)).toBe(boot);
+    expect(tapeBoot(img, jams)).toBe(boot);
+    expect(tapeBoot(img, boot)).toBeNull();
+    const withBoot = (f: TapeFile) => ({ tap: tape, at: f.to, boot: { name: boot.name, prg: makePrg(boot.load!, boot.data), at: boot.to } });
+    const roms0 = findC64Roms();
+    for (const roms of roms0 ? [null, roms0] : [null]) {
+      // alone, as before: SYS $0800, a JAM
+      expect(unpackPrg(makePrg(file.load!, file.data), roms, null, null, { tap: tape, at: file.to })).toMatchObject({ unpacked: false, stop: { reason: 'jam', pc: 0x0800 } });
+      const run = unpackPrg(makePrg(file.load!, file.data), roms, null, null, withBoot(file));
+      expect(run.boot).toEqual({ name: 'LOADER DEMO', after: 1, loading: [], alone: { entry: 0x0800, stop: expect.objectContaining({ reason: 'jam', pc: 0x0800 }) } });
+      expect(run.layers.map(l => l.entry)).toEqual([0x0351, 0x080d, 0x0340, 0x0810]);
+      expect(run.layers[1].tape).toBeGreaterThanOrEqual(file.to);
+      expect(run.unpacked).toBe(true);
+      // (with the JAM the loader put at $0800 in front of it)
+      expect(run.saved).toMatchObject({ start: 0x0800, end: 0x37ff, entry: 0x0810 });
+      expect(run.saved!.prg).toEqual(makePrg(0x0800, Uint8Array.from([0x02, ...demo.subarray(2)])));
+      expect(unpackSummary(run)).toMatch(/^A loader on the tape loads it: Sindri ran the tape's boot file "LOADER DEMO", and after its loader had loaded it peels off 2 layers: an unknown mover at \$080d .*, then an unknown decoder at \$0340 .*; the program starts at \$0810$/);
+      const log = unpackLog(run, 'tinyheader.prg', 0x0800, file.data.length).split('\n');
+      expect(log).toContain('Alone, started at $0800, it stopped: jam, the CPU stopped on the JAM opcode at $0800');
+      expect(log).toContain('A loader on the tape loads it: run from the tape\'s boot file "LOADER DEMO"; layer 1 on started after its loader had loaded the file');
+      expect(log.at(-1)).toBe('saved layer 3: $0800-$37ff (12.0 KB), start with SYS 2064 = $0810');
+
+      // a file the boot's loader never gets to (a level the game loads later): the file's own run, and why
+      const never = unpackPrg(makePrg(jams.load!, jams.data), roms, null, null, withBoot(jams));
+      expect(never).toMatchObject({ unpacked: false, stop: { reason: 'jam', pc: 0x4000 }, boot: { name: 'LOADER DEMO', after: null } });
+      expect(notPacked(never)).toBe(false);
+      expect(unpackSummary(never)).toBe('Sindri peels off no layer (it stopped: jam, the CPU stopped on the JAM opcode at $4000); the tape\'s boot file "LOADER DEMO", run too, never loaded it');
+      expect(unpackLog(never, 'file1.prg', 0x4000, 256)).toContain('The tape\'s boot file "LOADER DEMO", run too, never loaded it: its loader did not get past the file');
+
+      // the program the loader starts runs as it is: not packed, with the reason
+      const plain = readTape(loaderStartTape(demo, 0x0810));
+      const notYet = unpackPrg(makePrg(0x0800, plain.files[1].data), roms, null, null, { tap: loaderStartTape(demo, 0x0810), at: plain.files[1].to, boot: { name: 'LOADER DEMO', prg: makePrg(0x02a7, plain.files[0].data), at: plain.files[0].to } });
+      expect(notYet).toMatchObject({ unpacked: false, boot: { after: 1 }, stop: { reason: 'settled' } });
+      expect(notPacked(notYet)).toBe(true);
+      expect(unpackSummary(notYet)).toMatch(/^A loader on the tape loads it: Sindri ran the tape's boot file "LOADER DEMO", and the program its loader started after loading it ran as it is: not packed \(it stopped: settled/);
+      expect(unpackLog(notYet, 'tinyheader.prg', 0x0800, 1).split('\n').at(-1)).toBe('not packed: the program its loader started ran as it is and never jumped into code it wrote');
+
+      // a file that runs from where it loads is run so, as before (the boot file's own loader, here)
+      expect(unpackPrg(makePrg(boot.load!, boot.data), roms, null, null, { tap: tape, at: boot.to }).boot).toBeUndefined();
+    }
+  });
+
+  it('counts a loader stage the file holds, which loads the rest of the tape, as loading, not as unpacking it (Firetrack\'s second stage at $1000)', () => {
+    // the boot's loader reads a second stage into $c000 (a JAM, then the loader at $c001) and starts it at $c001; that
+    // reads the program into $0800 (a JAM, then the PRG) and starts it at `entry`
+    const twoStages = (prg: Uint8Array, entry: number) => {
+      const data = Uint8Array.from([0x02, ...prg.subarray(2)]);
+      const stage = Uint8Array.from([0x02, ...tinyLoader(0xc001, 0x0800, 0x0800 + data.length, entry)]);
+      const boot = bootLoader(0xc000, 0xc000 + stage.length, 0xc001);
+      const w = new TurboWriter();
+      w.leader(0xc0); tinyFile(w, stage); w.leader(0x40); tinyFile(w, data); w.leader(0x40);
+      return withTurbo(makeTap({ files: [{ name: 'STAGES', load: 0x02a7, data: boot.data, header: boot.header }] }), w.pulses);
+    };
+    const roms0 = findC64Roms();
+    for (const roms of roms0 ? [null, roms0] : [null]) {
+      for (const [prg, entry, packed] of [[fakePack(demo, 0x0810), 0x080d, true], [demo, 0x0810, false]] as const) {
+        const tape = twoStages(prg, entry), img = readTape(tape);
+        const [boot, stage] = img.files;
+        expect([stage.format, stage.load]).toEqual(['tapetool', 0xc000]);
+        const run = unpackPrg(makePrg(stage.load!, stage.data), roms, null, null, { tap: tape, at: stage.to, boot: { name: boot.name, prg: makePrg(boot.load!, boot.data), at: boot.to } });
+        expect(run.layers.map(l => l.entry)).toEqual(packed ? [0x0351, 0xc001, 0x080d, 0x0340, 0x0810] : [0x0351, 0xc001, 0x0810]);
+        // the second stage began after the tape had passed the file, and loaded the program while it ran
+        expect(run.boot).toMatchObject({ name: 'STAGES', after: 1, loading: [1], alone: { entry: 0xc000, stop: { reason: 'jam', pc: 0xc000 } } });
+        expect(run.unpacked).toBe(packed);
+        expect(notPacked(run)).toBe(!packed);
+        expect(unpackSummary(run)).toMatch(packed ? /after its loader had loaded it peels off 2 layers: an unknown mover at \$080d .*, then an unknown decoder at \$0340 / : /the program its loader started after loading it ran as it is: not packed/);
+        expect(unpackLog(run, 'stage.prg', 0xc000, stage.data.length)).toContain('layer 1 on started after its loader had loaded the file (layer 1: the loader going on, loading more of the tape)');
+      }
+    }
   });
 });

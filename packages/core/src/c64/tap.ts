@@ -1571,6 +1571,23 @@ export function tapeFileName(f: Pick<TapeFile, 'name' | 'type' | 'format' | 'id'
 }
 
 /**
+ * The KERNAL program whose loader loads `f`, a file of a turbo loader's format (13.5f): the last KERNAL program before
+ * it on the tape, as LOAD on a C64 loads it, with its loader reading on from the tape. A turbo file is a part of what
+ * the loader loads (a Wildload chain's block, a Cyberload part): its load address is no place to start it, the loader
+ * starts what it loaded. Null for a KERNAL file or a T64's (a program of its own), and for one with no KERNAL program
+ * before it.
+ */
+export function tapeBoot(img: Pick<TapeImage, 'files'>, f: TapeFile): TapeFile | null {
+  if (f.format === 'cbm' || f.format === 't64') return null;
+  let boot: TapeFile | null = null;
+  for (const x of img.files) {
+    if (x.at >= f.at) break;
+    if (x.format === 'cbm' && (x.type === 'PRG' || x.type === 'BASIC') && x.load != null && x.data.length) boot = x;
+  }
+  return boot;
+}
+
+/**
  * A TapeTool tape written again (13.5g): the files to save next to TapeTool.exe and its command lines, one a file as
  * TapeTool's ExampleBuild.bat has them. The boot file (a KERNAL header with the loader in the tape buffer, its data
  * once: `ocb1`) is saved as `boot.bin`, its name, the rest of the header and the data one after another, and given to

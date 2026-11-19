@@ -316,7 +316,19 @@ export function withTurbo(kernal: Uint8Array, turbo: number[]): Uint8Array {
  *  TinyHeader loaders do (a pulse on the FLAG line; CIA1's timer A, one shot from 367 cycles, has run out after a 1),
  *  then starts it at `entry` with the ROMs in. The boot file's data ($02a7-$0303) starts it through $0302. */
 export function bootLoader(load: number, end: number, entry: number): { header: Uint8Array; data: Uint8Array } {
-  const src = `.pc = $0351
+  const code = tinyLoader(0x0351, load, end, entry);
+  const header = new Uint8Array(171).fill(0x20);
+  header.set(code, 0);
+  // $02a7-$0303: nothing but the vectors at $0300: BASIC's error vector as it is, and $0302 to the loader
+  const data = new Uint8Array(0x0304 - 0x02a7).fill(0xea);
+  data.set([0x8b, 0xe3, 0x51, 0x03], 0x0300 - 0x02a7);
+  return { header, data };
+}
+
+/** The boot file's loader (bootLoader) assembled at `pc`: a second stage the first one loads reads the next TinyHeader
+ *  file the same way, as Firetrack's second stage at $1000 loads the rest of its Wildload chain. */
+export function tinyLoader(pc: number, load: number, end: number, entry: number): Uint8Array {
+  const src = `.pc = $${pc.toString(16).padStart(4, '0')}
 loader:
   sei
   lda #$7f
@@ -377,14 +389,9 @@ e2:
   pla
   rts
 `;
-  const r = assemble({ 'boot.asm': src }, 'boot.asm');
+  const r = assemble({ 'loader.asm': src }, 'loader.asm');
   if (r.errors.length) throw new Error(r.errors.map(e => e.msg).join('; '));
-  const header = new Uint8Array(171).fill(0x20);
-  header.set(r.mem.subarray(0x0351, r.max + 1), 0);
-  // $02a7-$0303: nothing but the vectors at $0300: BASIC's error vector as it is, and $0302 to the loader
-  const data = new Uint8Array(0x0304 - 0x02a7).fill(0xea);
-  data.set([0x8b, 0xe3, 0x51, 0x03], 0x0300 - 0x02a7);
-  return { header, data };
+  return r.mem.slice(pc, r.max + 1);
 }
 
 /** fixtures/tap/mimir-demo.tap: the boot file with our loader, the raster demo as the TinyHeader file it loads and
@@ -400,6 +407,24 @@ export function demoTape(demo: Uint8Array): Uint8Array {
   blockFile(w, 1, 0x4000, sineTable(), { order: [1, 0] });
   w.leader(0x40);
   blockFile(w, 2, 0x5000, runs(), { packed: true });
+  w.leader(0x40);
+  return withTurbo(kernal, w.pulses);
+}
+
+/** fixtures/tap/loader-start-demo.tap (with fakePack's raster demo): a KERNAL boot file "LOADER DEMO" with our loader,
+ *  which reads the TinyHeader file into $0800 and starts it at `entry`, as a turbo loader starts what it loads, not
+ *  where it loads: the file is a JAM at $0800 and `prg` (a PRG at $0801) after it, so that SYS to where it loads stops
+ *  at once; then a TapeTool file of JAMs at $4000 that the loader never reads. */
+export function loaderStartTape(prg: Uint8Array, entry: number): Uint8Array {
+  if ((prg[0] | (prg[1] << 8)) !== 0x0801) throw new Error('loaderStartTape: the program must load at $0801');
+  const data = Uint8Array.from([0x02, ...prg.subarray(2)]);
+  const boot = bootLoader(0x0800, 0x0800 + data.length, entry);
+  const kernal = makeTap({ files: [{ name: 'LOADER DEMO', load: 0x02a7, data: boot.data, header: boot.header }] });
+  const w = new TurboWriter();
+  w.leader(0xc0);
+  tinyFile(w, data);
+  w.leader(0x40);
+  blockFile(w, 1, 0x4000, new Uint8Array(256).fill(0x02));
   w.leader(0x40);
   return withTurbo(kernal, w.pulses);
 }

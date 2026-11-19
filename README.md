@@ -72,7 +72,10 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     release's next sides from the disk's folder go in when the demo asks for them; a G64's
     tracks are read bit by bit, half tracks and copy-protection tracks with no SYNC too. A file opened
     from a tape gets the tape in an emulated datasette, wound to after the file with PLAY held down, so a tape boot
-    file's own turbo loader (Novaload, Cyberload, TapeTool's and the rest) goes on loading the game. Freezer backups
+    file's own turbo loader (Novaload, Cyberload, TapeTool's and the rest) goes on loading the game; a file that loader
+    loads (a block of a Wildload chain, such as the packed game Delta's chain loads at `$1000`) and that does not run
+    from where it loads is run as a C64 loads it, from the tape's boot file, and Unpack gives the program its loader
+    loads it into (or says it is not packed, and why). Freezer backups
     (the Action Replay's, the Freeze Machine's and the Super Snapshot's) are known as packed by their depacker, and a
     backup saved as two files loads its second file with its disk;
   - the script of a Spindle trackmo: Pefchain builds a small driver after each part from its line of the script, and
@@ -313,7 +316,8 @@ pnpm mimir analyse game.prg
 `--bank <n>` for one of them) or saved projects (`.mimir.json`).
 `--deep` runs the deep analysis. `unpack game.prg [-o unpacked.prg]` unpacks a packed program and prints its layers; `unpack demo.d64` takes the disk's
 first PRG (or `--file NAME`) with the disk in the drive and the release's next sides from its folder to turn to, `unpack game.tap` (or `game.t64`) the tape's first program with the tape in the
-datasette (`--tape` puts a tape in it for a PRG). `measure <folder>` runs every program in it in Sindri and sets
+datasette (`--file NAME` another one: a turbo loader's file that does not run alone is run from the boot file before it,
+as the app does; `--tape` puts a tape in it for a PRG). `measure <folder>` runs every program in it in Sindri and sets
 what the analysis made of each byte against what the program did with it (the code it ran, the data it read), and
 counts the problems by kind: run it with and without a setting (`--deep`, `--set codeIslands=false`) to see what the
 setting does.

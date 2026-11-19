@@ -3816,7 +3816,9 @@ KERNAL-fil i två, och Sindri körde dem tillsammans. Annars skulle huvudfilen l
 bandbufferten (Tuskers första steg, `$029f-$07e7`, och spelet, `$0200-$fd94`), den senare filen vinna de byten, och det
 uppackade programmet inte gå att bygga byte för byte (Build & Run: *Build failed verification*); med två filer satte
 Unpack inte heller någon programstart. Var de enda två filerna i projektet blir det uppackade ett projekt för sig, med
-starten och `$01` från Sindri. SEQ-filer, slutmarkören och filer utan känd laddadress (en TinyHeader-fil vars bootladdare inte kunde
+starten och `$01` från Sindri. En fil i en turboladdares format (ett block i en Wildload-kedja, en Cyberload-del, en
+TinyHeader-fil …) som inte kör där den laddas körs av Sindri från bandets bootfil, vars laddare laddar den, och
+**Unpack** ger programmet laddaren laddar den i (13.5f, *En turbofil som inte startar där den laddas*). SEQ-filer, slutmarkören och filer utan känd laddadress (en TinyHeader-fil vars bootladdare inte kunde
 läsas) listas men öppnas inte. Under listan står hur många TapeTool-filer och sträckor med okänd turbodata bandet har.
 
 **Bandet som på en C64.** Samma inställning som disken, Settings → General → *The disk and the tape in the Explorer* →
@@ -4025,6 +4027,40 @@ som PLAY håller låg, räknas inte. Mätt på bootfilerna från de 98 första s
 som läser sina data med KERNAL:ns egna rutiner; 80 sparar ett senare lager än bootfilen (67 innan). Ett band tar median
 2,1 s (max 10,0 s) för i snitt 163 s C64-tid. Utan IRQ-vektorn vid `$029f/$02a0` och motorspärren kom bara 14 av de första 25
 längre än bootfilen (11-A-Side Soccer, APB och 3D Pool startar genom vektorn).
+
+**En turbofil som inte startar där den laddas.** En fil i en turboladdares format (13.5e: ett block i en Wildload-kedja,
+en Cyberload-del, en TinyHeader-fil …) är en del av det laddaren laddar, och laddaren startar det den laddat, inte där
+filen laddas. Deltas (Thalamus) `file_1000` är det packade spelet som kedjan laddar till `$1000-$beff`: Sindri körde den
+med `SYS 4096`, stannade efter tre instruktioner i en JAM vid `$1005`, och Unpack sa *Sindri found nothing to unpack in
+file_1000*. Bootfilen vars laddare laddar en turbofil är den sista KERNAL-filen före den på bandet (`tapeBoot()` i
+`tap.ts`; ingen för en KERNAL-fil, en T64:s eller en fil utan någon före sig). Packar filen körd för sig inte upp något och
+är den inte heller *not packed* (en krasch till READY, en JAM, en gräns), kör Sindri bandet som en C64 laddar det:
+bootfilen med bandet efter den, som när bootfilen själv öppnas (`unpackPrg` med `UnpackTape.boot` i
+`packages/core/src/sindri.ts`; körningen sparas för nästa fil från samma band). Sindri skriver nu var bandet stod när
+varje lager började (`LayerReport.tape`, pulsen), så det första lager som började när bandet passerat filens slut är det
+första efter att laddaren laddat den (`BootRun.after`), och ett lager under vilket bandet passerar slutet på en annan fil
+eller sträcka på bandet är laddaren som läser vidare, inte en uppackare (`BootRun.loading`: Firetracks andra steg vid
+`$1000`, som laddar resten av kedjan, packar inte upp blocken före sig). Kör bootfilen så långt är körningen filens: den
+är uppackad när ett lager därifrån fram till programmet Sindri sparar, utom laddarens, packade upp något, och Unpack tar
+programmet i filens ställe (Delta: `$02a1-$ffff` med start `$1770`, genom kedjans slut vid `$02eb` och Super
+Compressors lager, byte för byte VICE:s RAM när spelet startar vid `$1770`). Startade laddaren ett program som kör som det
+är, och slutar körningen där program hamnar utan BRK, är svaret *not packed* med skälet (*… is not packed: A loader on
+the tape loads it: Sindri ran the tape's boot file "…" (alone, from $…, it stopped: jam). The program its loader started
+after loading it never jumped into code it wrote …*), och att Unpack på bootfilen ger programmet som laddaren startar
+det. Kommer bootfilens laddare aldrig förbi filen (en bana spelet laddar senare, en Turbo Tape-fil man laddar själv) står
+filens egen körning kvar, och rapporten säger att bootfilen också kördes. En fil som kör där den laddas körs som förut,
+och en programstart som användaren satt gäller. Lagerrapporten börjar med vad filen gjorde för sig (*Alone, started at
+$1000, it stopped: jam, …*) och vilket lager som började efter laddningen; packningsnotisen säger *A loader on the tape
+loads it: Sindri ran the tape's boot file "DELTA", and after its loader had loaded it peels off 7 layers: …*.
+`mimir unpack spel.tap --file file_1000` gör detsamma. Mätt 2026-11-19 på 4 132 turbofiler med en bootfil före sig på
+441 band (alla 93 med Wildload eller Microload, var fjärde av de andra 1 394 band i arkivet som har sådana): 653 kör där
+de laddas som förut; de 3 479 som inte gör det (2 638 till READY efter en BRK, 722 i en JAM, 90 startade inte) gav alla
+*Sindri found nothing to unpack*, nu ger 919 programmet laddaren laddar dem i, 1 089 *not packed* med skälet, 1 459 når
+bootfilen aldrig (som förut, med anmärkningen) och 12 packar inte upp något efter laddningen. Wildload: 980 filer på 59
+band, 343 uppackade och 468 *not packed* genom bootfilen, 47 som den inte når, 119 som kör där de laddas. Utan regeln om
+laddarens lager hade 87 av banden filer med båda svaren, nu 27 (som Bomb Jack II, vars laddare vid `$0100` läser bandet
+och skriver `$4000-$ffff` i ett och samma lager). En körning av en fil som faller tillbaka tar median 35 ms, eftersom bootfilens körning sparas; den
+första på ett band tar bootfilens tid (Delta 6 s).
 
 `mimir unpack spel.tap [--file NAMN]` packar upp bandets första program (eller det namngivna) med bandet i datasetten,
 `--tape band.tap` lägger ett band i datasetten för en PRG; Sindris egen CLI tar samma (`sindri spel.tap`, `--tape`).

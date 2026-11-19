@@ -324,7 +324,11 @@ With a tape (a TAP image, given instead of the file or with `--tape`) a datasett
   and Sindri took that for the program, saving the loader at `$fd03` (which loads the parts again from the tape) in
   place of the game at `$6440`. The report's `Tape:` line says where the tape stood
   and how far it played; pulses read count as loading for the parts a layer loaded and ran. The saved port is the
-  program's: bit 4, which PLAY holds low, is left out.
+  program's: bit 4, which PLAY holds low, is left out;
+- each layer says where the tape stood when it began (`LayerReport.tape`, the next pulse): a layer that began once the
+  tape had passed a turbo file began after the loader had loaded that file. Mimir uses it to run a turbo loader's file
+  that does not run from where it loads (a Wildload chain's block) from the tape's boot file, and to tell the layers
+  that unpack it from the loader reading on.
 
 A T64 (the C64S emulator's tape archive, given instead of the file or with `--tape`) holds a tape's files, not its
 pulses: a 64-byte header (a signature line such as `C64S tape image file`, the version, the directory's room and the

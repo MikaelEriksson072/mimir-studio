@@ -32,6 +32,11 @@ describe('onlyRelocates (8.1b)', () => {
     expect(onlyRelocates(run([[0x080d, 'decruncher'], [0x2000, 'program']]), A([{ start: 0x1000, end: 0x1011, to: 0x2000 }]))).toBe(false);
     expect(onlyRelocates(undefined, A([]))).toBe(false);
   });
+
+  it('a run from the tape\'s boot file, whose loader loads the file, has the boot\'s layers: they say nothing of the file\'s relocations', () => {
+    const boot = { name: 'BOOT', after: 1, loading: [], alone: { entry: 0x1000, stop: { reason: 'jam' as const, pc: 0x1005, detail: '', cycle: 0 } } };
+    expect(onlyRelocates({ ...mover([{ start: 0x2000, end: 0x2010 }]), boot }, A([{ start: 0x1000, end: 0x1011, to: 0x2000 }]))).toBe(false);
+  });
 });
 
 describe('withUnpackRun', () => {
