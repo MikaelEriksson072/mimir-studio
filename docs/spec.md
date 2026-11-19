@@ -4782,6 +4782,86 @@ packades upp. `readIfflDisk()` (`packages/core/src/c64/iffl-disk.ts`) läser dis
   bakifrån med båda Exomizer, kedjor, det som avvisas; tabellen; `fixtures/d64/iffl-demo.d64` med raster-demot som en
   del, en del av två bitar och en opackad tabell) och ett e2e-test som klickar på filen, öppnar delar och sparar dem.
 
+### 13.5n Diskar för DLoC:s loader (Six, Dark Lords of Chaos) – Halloween 2026
+
+Halloween 2026 (Dark Lords of Chaos, 31 oktober 2026, CSDb 265406, nummer 7 på topplistan) är gruppens första demo med
+flera delar på en disk. Six skrev koden, och enligt släppets produktionsanteckningar är allt gjort med gruppens egna
+verktyg: egen assembler, egen packare och egen loader (med idéer från GIJOE och Bitfire). Mimir sa förut bara *A fast
+loader (not one of the known ones)* om installern och ingenting om delarna. Källkoden är inte offentlig, så allt nedan
+är läst ur demots egen disk: bootfilen uppackad, drivkoden ur C64-minnet där installern har den, och en körning i
+Sindri med disken i driven som loggade varje anrop av loadern.
+
+**Hur loadern fungerar.**
+- Disken är en vanlig DOS-disk. C64:an ber om en fil med dess namn (A = längden, X/Y = var namnet ligger), drivkoden
+  letar i katalogen efter den första stängda PRG-filen vars namn börjar med de byten och skickar sektorerna i den
+  ordning DOS:en länkar dem. Varje block börjar med sin längd (`$fe` för en hel sektor, 0 slutar filen, `$ff`: hittades
+  inte). Namnet går till driven en bit i taget på DATA med CLK som klocka; filen kommer 2 bitar i taget med ATN som
+  klocka (C64:an skriver `$dd00`, driven väntar på bit 7 i `$1800`). Drivkoden läser själv GCR-byten och har DOS:ens
+  jobbkö som reserv.
+- Den residenta delen ligger på `$fc00` med en tabell av hopp: `$fc00` laddar en fil, packar upp den medan den laddas
+  och startar den; `$fc03` öppnar en fil (carry 0: till dess laddadress, 1: till adressen i `$fb/$fc`); `$fc06` läser
+  A byte till av den; `$fc09` packar upp en ZX0-ström i minnet (X/Y pekar på vart, sedan strömmen); `$fc0c` och `$fc0f`
+  anropar programmet före och efter en laddning.
+- En fil för `$fc00` är: vart den packas upp (2 byte), var den startar (2 byte), sedan en ZX0-ström i ZX0:s första
+  format (bitarna från toppen av en byte; en ny offsets höga del + 1 som en interfolierad Elias-gamma med bitarna som de
+  är, 256 slutar strömmen; den låga byten med 7 bitar och längdens första bit). En del slutar med att ladda nästa:
+  `lda #längd / ldx #<namn / ldy #>namn / jmp $fc00`. Delarna packas upp till `$0801` med en BASIC-rad `2026 SYS …`, så
+  varje del går också att köra för sig.
+- Bootfilen (`HALLOWEEN`) är ett BASIC-program som LOAD och RUN laddar, packat med Sixs egen packare: en
+  självuppackande fil vars första kod kopierar uppackningskoden till `$0100` och `$0180`, flyttar strömmen till
+  `$df00-$ffff` och packar upp den till `$0801-$42a9` med samma ZX0-kod. Det uppackade mäter PAL/NTSC, laddar upp
+  drivkoden med M-W till `$0300-$06ff` och `$0745-$07fd`, startar den med M-E `$0300`, kopierar den residenta delen till
+  `$fc00` och laddar `INTRO`.
+- Ordningen i Halloween 2026: `HALLOWEEN` → `INTRO` → `GHOST` → `LEAVES`; sista delen öppnar `CREDITS` och `MORPHS`
+  (inte packade) genom en egen tabell (`$aca4`: namnens adresser och längder) och läser dem några byte i taget med
+  `$fc06` medan den spelar, om och om igen.
+
+**Det Mimir läser.** `readDlocDisk()` (`packages/core/src/c64/dloc-disk.ts`) läser katalogens filer (`DlocDisk`,
+`DlocEntry`, `DlocFile`): en fil för `$fc00` packas upp (`unpackDlocFile`, med `unpackZx0`) när strömmen slutar precis
+där filen slutar och startadressen ligger i det uppackade; bootfilen packas upp som Sixs packare gör det
+(`unpackDlocBoot`: koden hittas efter sitt mönster, och dess pekare, sidor och slutets `jmp` läses ur den). Anropen av
+loadern läses ur delarnas kod, bootens uppackade kod med (`DlocCall`): ett `jsr`/`jmp` till tabellens fyra rutiner, med
+A, X och Y (och `clc`/`sec`) som sätts direkt före; ett namn i X/Y blir filen driven skulle hitta. En del som öppnar
+filer med register som sätts någon annanstans får de av diskens filnamn som står i dess minne (`DlocName`; `LEAVES`:
+`CREDITS` på `$acaa`, `MORPHS` på `$acb1`). Ordningen följs från bootfilen genom laddningarna, med filerna en del
+öppnar efter den. Tabellens adress tas från loaderns egen kod när den finns (det första hoppet går till koden direkt
+efter tabellen), annars `$fc00`.
+
+**Regeln:** en disk räknas när loaderns kod finns i en fil (som den är, uppackad eller i det bootfilen packar upp sig
+till: C64:ans mottagarloop eller drivens sändning) eller när minst två filer är packade för `$fc00` och minst dubbelt så
+många som de filer som varken är packade, BASIC-program eller öppnas av en del. Den prövas efter de andra loadrarnas
+läsare.
+
+**I appen** säger toasten och Explorerns disk-del *DLoC's loader* med en sammanfattning (*3 files packed with ZX0, 3
+load calls read from the code; HALLOWEEN → INTRO → GHOST → LEAVES (a part reads CREDITS, MORPHS)*), och fliken
+**DLoC script** listar filerna i den ordning de laddas: var en fil laddas eller packas upp, start, storlek, filnamn
+och vem som laddar den. En rad öppnar filen i Mimir uppackad (bootfilen: det packaren packar upp den till, med
+`2026 SYS 2067`), + lägger till den. Under den står anropen och skriptet: varje fil i ordning med sina anrop, och
+c1541:s kommandorad som skriver disken igen (`c1541 -format "halloween 2026,26" d64 … -write intro.zx0 "intro" …`;
+disken är en vanlig DOS-disk, så den räcker). *Copy script* kopierar det, *Save files…* sparar varje fil som den är på
+disken (`.zx0` för en packad del) och uppackad (`<namn>_0801.prg`) med skriptet (`<disk>-dloc.txt`). En del packas om
+med `zx0 -c` (det första formatet) med adress och start framför. `mimir disks` räknar disken som `dloc`.
+
+**Analysen** känner loadern (`dloc` i `analyze/loaders.ts`): mottagarloopen (ATN vänds för varje bitpar, `lda $dd00 /
+and #$c0`), sändningen av namnet, tabellen av hopp med laddrutinen efter, drivkodens sändning av en byte som två nibblar
+ur en tabell, och (svaga, de finns hos andra också) katalogsökningen och ZX0-uppackaren. Både bootens uppackade bild och
+den residenta delen på `$fc00` får nu namnet. **Sindri** namnger bootens två lager *DLoC / Six's ZX0 packer (stage 1)*
+och *(depacker)* (`packages/sindri/data/signatures.json`; närmast någon annan packare i listan är 12 %).
+
+**Kontrollen:**
+- Sindri körde demot med disken i driven i 25 C64-minuter: alla tre `$fc00`-laddningar (INTRO, GHOST, LEAVES) är byte
+  för byte det `unpackDlocFile` gör av filerna (50 999, 50 670 och 51 135 byte), och `unpackDlocBoot` ger bootens
+  `$0801-$42a9` så när som på de 7 byte installern själv skriver om när den kör (`$08d4-$08e9`, `$42a1-$42a5`).
+- Referensarkivet, alla D64 och G64 (277 829 diskar, 16 minuter): läsaren tar 5, samma Halloween 2026-disk i fem
+  mappar; ingen annan disk, och ingen av de andra loadrarnas läsare tar den.
+- **Tester:** `packages/core/test/dloc-disk.test.ts` (en egen ZX0-skrivare i det första formatet och en boot lagd som
+  Sixs packare lägger den, `test/helpers/dloc-disk.ts`; inget av Sixs kod), `fixtures/d64/dloc-demo.d64` (en boot som
+  laddar `PART1`, raster-demot packat, `PART2` som öppnar `DATA` med namn och `MUSIC` genom en tabell), loader-testet i
+  `loaders.test.ts` och ett e2e-test som monterar disken, öppnar delar och sparar dem.
+
+Inte gjort: drivkodens felvägar (`$ff` för en fil som inte finns, återförsök med DOS:ens jobb) och PAL/NTSC-mätningen
+är bara lästa, inte prövade. Six skriver på CSDb att loadern "kvävs" av fler enheter på bussen.
+
 ### 13.6 Terminal
 
 **Terminal** i titelraden (och kommandopaletten) öppnar ett terminalfönster i mappen du arbetar i: den senast

@@ -47,8 +47,8 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   - routines nothing traced reaches, such as an init that ran before a snapshot was taken;
   - fast loaders: Spindle, Krill's loader (version 146 and older too, by the version text its installer keeps and by
     its resident part's pollblock; its calls in the program are read back as its script, as Triad's Continuum has them), Bitfire,
-    Sparkle, BoozeLoader (HCL's, in Booze Design's demos since 2008), the Covert Bitops loader (versions 2 and 3), and
-    any other one by its drive code;
+    Sparkle, BoozeLoader (HCL's, in Booze Design's demos since 2008), the Covert Bitops loader (versions 2 and 3), DLoC's
+    loader (Six's, in Dark Lords of Chaos' Halloween 2026), and any other one by its drive code;
   - Pirate Slayer, Electronic Arts' copy protection (1986-1989): its loader in the analysis, and on a mounted disk its
     key track (on a G64: track 2 with no SYNC, read bit by bit), its boot (EA and LOADER, the stack-page EA, or a
     game's own) and what it does, in the *Pirate Slayer* tab, with the game's files outside the directory (sector
@@ -126,6 +126,13 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     (makedisk or maked64). The *Covert script* tab lists the files, loads each one into Mimir unpacked, copies the
     tool's command file and command line that write the disk again, and *Save files…* saves every file as it is on the
     disk and unpacked, with the command file; `mimir disks <folder>` counts the disks each loader's reader takes;
+  - the files of a disk for DLoC's loader (Six/Dark Lords of Chaos, Halloween 2026): ordinary DOS files a part loads
+    by name, each unpacked as the loader unpacks it while it loads (where it goes, where it starts, a ZX0 stream in
+    ZX0's first format), the boot unpacked as Six's self-extracting packer unpacks it, the calls of the loader read
+    from the parts' code (and the names a part opens through a table of its own), and from them the order the files
+    load in. The *DLoC script* tab lists the files in that order, loads each one into Mimir unpacked, copies the script
+    (each file with its calls, and c1541's command line that writes the disk again), and *Save files…* saves every
+    file as it is on the disk and unpacked, with the script; Sindri names the boot's packer;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
     Gold's loader, Mega-Save (Palace's, Hewson's, Level 9's …), Novaload (Novagen's, Elite's, Encore's …: the files its LOAD reads by name and the pages the loader in the boot file's header reads), Cyberload (all four stages: the loader's own two, the third's blocks with an address of their own and
     the files the fourth loads by name, the game's levels too), Wildload (Activision's, Thalamus' Hits, Electric Dreams',
@@ -299,7 +306,7 @@ VICE or DeepSID from its row, and the *Library* tab shows each one large: a char
 sprites as an animation, a SID with its texts. Files you put in those folders yourself are in the library too.
 
 The bottom panel holds the analysis log, problems (with the *Deep analysis* switch), cross-references, the raster IRQs,
-the Spindle, Bitfire, Booze, Sparkle, Krill and Covert scripts, the IFFL parts and Pirate Slayer (when there is one), statistics and the build output. With a
+the Spindle, Bitfire, Booze, Sparkle, Krill, Covert and DLoC scripts, the IFFL parts and Pirate Slayer (when there is one), statistics and the build output. With a
 disk mounted, Build & Run writes the files the project opened from it back into a copy of the disk as they were built
 (a G64's sectors encoded again in place, its copy protection untouched), and autostarts that copy when the project
 starts with the disk's first program, so the disk's own boot loads them.

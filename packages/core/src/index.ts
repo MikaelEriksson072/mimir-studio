@@ -47,6 +47,7 @@ export {
 } from './c64/covert-disk';
 export { cc1541Script, cc1541Text, KRILL_EXOMIZER_PROTOCOLS, KRILL_PACKER, krillCallRegs, krillCallText, krillDiskPrg, krillFileName, krillFilePrg, krillFileTs, krillPackerName, krillTableEntries, krillUnpackedName, readKrillDisk, unpackKrillDoynax, unpackKrillExomizer, unpackKrillTinyCrunch, unpackKrillZx0, type KrillCall, type KrillDisk, type KrillEntry, type KrillFile, type KrillPacker, type KrillReg, type KrillRegs, type KrillUnpacked } from './c64/krill-disk';
 export { IFFL_ENTRIES, IFFL_PACKER, IFFL_TABLE, ifflPartName, ifflPieceName, ifflPiecePrg, readIffl, readIfflDisk, unpackIfflPart, type IfflDisk, type IfflFile, type IfflPacker, type IfflPart, type IfflPiece } from './c64/iffl-disk';
+export { c1541Name, DLOC_BASE, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, unpackDlocBoot, unpackDlocFile, unpackZx0, type DlocBoot, type DlocCall, type DlocDisk, type DlocEntry, type DlocFile, type DlocName, type DlocRoutine, type DlocScript, type DlocUnpacked } from './c64/dloc-disk';
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
 export { sidPlayer, musicPlayData, musicSidFile, type SidPlayer, type SidPlayerOptions, type MusicPlayData, type MusicPlayDigi } from './c64/sidplayer';

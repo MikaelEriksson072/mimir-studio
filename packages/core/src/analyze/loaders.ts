@@ -138,6 +138,21 @@ const KNOWN: Known[] = [
       { pat: pat('20 00 00 57 2D 4D 05 00 45 2D 4D'), role: 'command', what: 'drive commands M-W (32 bytes at a time) and M-E $0500, stored backwards: version 2\'s installer sends them from the end' },
     ],
   },
+  {
+    // Six's loader for Dark Lords of Chaos (Halloween 2026): read from that demo, as its source is not public (spec
+    // 13.5n); its resident part is at $fc00, its drive code at $0300-$06ff and $0745-$07fd
+    id: 'dloc', name: "DLoC's loader (Six/Dark Lords of Chaos)",
+    how: '2-bit, the C64 writing ATN to $dd00 as the clock (the drive waits on it); the name goes to the drive a bit at a time on DATA with CLK as the clock (lda #length / ldx #<name / ldy #>name / jmp $fc00), the drive finds the file in the directory and sends its sectors, and the C64 unpacks it with ZX0 while it loads ($fc03 and $fc06 open a file and read it a few bytes at a time)',
+    signs: [
+      { pat: pat('A5 .. 8D 00 DD 20 .. .. EA EA EA AD 00 DD A6 .. 8E 00 DD 29 C0 85'), role: 'resident', what: 'receives a byte: turns ATN for each bit pair and reads CLK and DATA four times (lda $dd00 / and #$c0 …)' },
+      { pat: pat('85 .. 20 .. .. 20 .. .. 20 .. .. A5 .. 20 .. .. EA A5 .. 46 .. 90 02 09 20 8D 00 DD 60'), role: 'resident', what: 'sends a byte of the name: a bit on DATA each time CLK turns' },
+      { pat: pat('4C .. .. 4C .. .. 4C .. .. 4C .. .. 4C .. .. 4C .. .. 78 8D .. .. 8E .. .. 8C .. .. A8 F0'), role: 'resident', what: 'its table of jumps (load and start, open, read, unpack, and two calls of the program), then the load: A the name\'s length, X/Y the name' },
+      { pat: pat('BD .. 07 2C 00 18 10 FB 8D 00 18 BD .. 07 2C 00 18 30 FB 8D 00 18'), role: 'drivecode', what: 'code for the 1541: it sends a byte as two nibbles from a table, each as two bit pairs while ATN turns' },
+      { pat: pat('B9 01 06 29 83 C9 82 D0'), role: 'drivecode', what: 'code for the 1541: it looks for the file in the directory, a closed PRG whose name starts with the bytes the C64 sent', weak: true },
+      // the same ZX0 unpacking code is in Six's self-extracting files
+      { pat: pat('A0 FF 84 .. 84 .. C8 84 .. A2 40 A9 01 85 .. 8A 0A 90 .. 20 .. .. 98 E5 .. B0 .. 38 6A 85'), role: 'resident', what: 'ZX0 unpacker (the first format), which unpacks a file while it loads', weak: true },
+    ],
+  },
   // the Action Replay: its ROM holds the code it copies to the stack page and the drive, and the loader file it saves
   // with a Warp*25 backup has the same code
   {

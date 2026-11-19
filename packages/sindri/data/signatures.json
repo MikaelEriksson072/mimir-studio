@@ -2131,6 +2131,18 @@
    "kind": "decruncher",
    "opcodes": "a906b020aaf0b991c8cad08898658590e69838658590e6a4d0a906b020e93849a8496585b0c618e985a5e985b999c8d0e6a9f0c6e6d038a0c6b0062a0690d020e9904a85b16a85e6d0e6a9a0b0062a0600d0a020b0aab12a85e6d0e68ab0062ab00601f060489820856860c68468854c",
    "seen": 2
+  },
+  {
+   "name": "DLoC / Six's ZX0 packer (stage 1)",
+   "kind": "mover",
+   "opcodes": "a29a78a985a2bd9de8e0d0a2bd9de8e0d0a2a0b999c8d0eeeecad0a985a985a985a9854c",
+   "seen": 1
+  },
+  {
+   "name": "DLoC / Six's ZX0 packer (depacker)",
+   "kind": "decruncher",
+   "opcodes": "a08484c884a2a9858a0a902098e5b0386a85b1e6f06a85a9b0a9858a20a549a8496585b0c618658da5658db991c8d0e6a5f0c6eed0a985584c2048a6d0b191eaeaeae6f0e6f0cad0a5d0e886680a904c2098e538d0e64ce6b0e6b0e6d00a260a90d0b1e6f02ab00a26260a90f0aa60",
+   "seen": 1
   }
  ]
 }

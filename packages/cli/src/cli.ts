@@ -7,7 +7,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
   exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, tapeBoot, tapeFileName, unpackedName, unpackLog, unpackPrg, verify,
-  covertSummary, krillPackerName, readBitfireDisk, readBoozeDisk, readCovertDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
+  covertSummary, dlocSummary, krillPackerName, readBitfireDisk, readBoozeDisk, readCovertDisk, readDlocDisk, readKrillDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
 import { find64tass, findC64Roms, findKickAssJar, findVice, run64tass, runKickAssembler, splitArgs, writeVfs, type KickRunResult } from '@mimir/core/node';
@@ -28,7 +28,7 @@ Usage:
   mimir disks   <disk.d64 | disk.g64 | folder>... [--list] [--json]
                 reads each disk image (a folder: every D64 and G64 in it and below) as the app does when
                 it mounts one, and counts the disks each loader's reader takes (Spindle, Bitfire,
-                BoozeLoader, Sparkle, Krill's loader, the Covert Bitops loader, Pirate Slayer), all and
+                BoozeLoader, Sparkle, Krill's loader, the Covert Bitops loader, DLoC's loader, Pirate Slayer), all and
                 different ones; --list prints a line per disk a reader takes
   mimir demo    [-o raster-demo.prg]
 
@@ -222,6 +222,7 @@ const DISK_READERS: [string, (d: Uint8Array) => string | null][] = [
     return r && `${r.files.filter(f => f.unpacked).length} of ${r.files.length} files packed with ${krillPackerName(r)}${r.by === 'ts' ? `, loaded by track and sector${outside ? ` (${outside} not in the directory)` : ''}` : ''}${r.calls.length ? `, ${r.calls.length} call${r.calls.length === 1 ? '' : 's'} in the files` : ''}${r.found === 'code' ? ", the loader's code in a file" : ''}`;
   }],
   ['covert', d => { const r = readCovertDisk(d); return r && `${covertSummary(r)}; found by ${r.found}${r.tool ? `, laid out by ${r.tool}` : ''}`; }],
+  ['dloc', d => { const r = readDlocDisk(d); return r && `${dlocSummary(r)}; found by ${r.found}`; }],
 ];
 
 /** `mimir disks`: which loader's reader takes each disk image, counted. */

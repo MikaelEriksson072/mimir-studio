@@ -7,7 +7,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
@@ -17,7 +17,7 @@ import {
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
-  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
+  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
@@ -59,7 +59,7 @@ import { Sidebar, tapeOpens } from './components/Sidebar';
 import { Listing, type ListingFind, type ScriptMark, type XrefBox } from './components/Listing';
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
-import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, CovertPanel, IfflPanel, KrillPanel, LogList, MessagesPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
+import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, CovertPanel, DlocPanel, IfflPanel, KrillPanel, LogList, MessagesPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
@@ -130,7 +130,7 @@ function extendSel(s: Sel | null, from: Range | null, r: Range): Sel {
 }
 
 /** the bottom panel's tabs of a loader's script or the tape, which the analysis overview links to */
-const SCRIPT_TABS: readonly BottomTab[] = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'pirateslayer', 'tape'];
+const SCRIPT_TABS: readonly BottomTab[] = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer', 'tape'];
 
 /** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
 type Note = { text: string; n: number };
@@ -701,10 +701,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try { if (!spindle && !bitfire && !booze && !sparkle) krill = readKrillDisk(bytes); } catch { /* not one */ }
     let covert: CovertDisk | null = null;
     try { if (!spindle && !bitfire && !booze && !sparkle && !krill) covert = readCovertDisk(bytes); } catch { /* not one */ }
+    let dloc: DlocDisk | null = null;
+    try { if (!spindle && !bitfire && !booze && !sparkle && !krill && !covert) dloc = readDlocDisk(bytes); } catch { /* not one */ }
     // an IFFL file is beside whatever else the disk is: one file holding the parts a game loads
     let iffl: IfflDisk | null = null;
     try { iffl = readIfflDisk(bytes); } catch { /* none */ }
-    setDisk({ name, path, bytes, img, spindle, bitfire, booze, sparkle, krill, covert, iffl, pirateslayer, sides });
+    setDisk({ name, path, bytes, img, spindle, bitfire, booze, sparkle, krill, covert, dloc, iffl, pirateslayer, sides });
     const out = !keepOther && tape ? `; ejected ${tape.name}` : '';
     if (!keepOther) setTape(null);
     showSection('disk');
@@ -714,6 +716,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       : sparkle ? `, a Sparkle disk with ${sparkle.bundles.length} bundle${sparkle.bundles.length === 1 ? '' : 's'} of files${sparkle.side != null ? ` (side ${sparkle.side})` : ''}`
       : krill ? `, a disk for Krill's loader with ${krill.files.filter(f => f.unpacked).length} files packed with ${krillPackerName(krill)}${krill.by === 'ts' ? `, loaded by track and sector${krill.files.some(f => f.entry < 0) ? ` (${krill.files.filter(f => f.entry < 0).length} not in the directory)` : ''}` : ''}`
       : covert ? `, a disk for the Covert Bitops loader (${covertSummary(covert)})`
+      : dloc ? `, a disk for DLoC's loader (${dlocSummary(dloc)})`
       : pirateslayer ? `; ${pirateslayer.summary}` : '';
     const ifflText = iffl ? `; ${iffl.files.map(f => `"${f.name}"`).join(', ')} ${iffl.files.length === 1 ? 'is an IFFL file' : 'are IFFL files'} with ${iffl.files.reduce((a, f) => a + f.parts.length, 0)} parts (the IFFL parts tab)` : '';
     const then = sides.length ? `; then ${sides.map(s => s.name).join(', ')}, which Sindri turns to when the program asks` : '';
@@ -956,6 +959,31 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try {
       const w = await kr.writeExport({ target: 'pick', files });
       if (w) toast(`Saved ${n} file${n === 1 ? '' : 's'} of ${disk.name} to ${w.dir} (${unpacked} of them unpacked as well), ${seq}, ${s.tool}'s command file that writes the disk again, and ${notes}`, 'ok');
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /** a file of a disk for DLoC's loader as a PRG: unpacked, at where it unpacks to (the boot: what Six's packer unpacks
+   *  it to); else as it loads */
+  const openDlocFile = (f: DlocFile, add: boolean) => {
+    const d = disk?.dloc;
+    if (!d) return;
+    try { addFiles(fromLoader(f, [withId(parsePrg(dlocUnpackedName(f, d), dlocFilePrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /** every file of a disk for DLoC's loader in a folder: as it is on the disk (what c1541 writes), and unpacked as a
+   *  PRG when it is packed, with the script (the files in the order they load, and c1541's command line) */
+  const saveDlocFiles = async () => {
+    if (!kr) return needDesktop();
+    const d = disk?.dloc;
+    if (!disk || !d) return;
+    const files: Record<string, Uint8Array | string> = {};
+    for (const f of d.files) {
+      files[dlocFileName(f, d)] = f.data.slice();
+      if (f.unpacked || f.boot) files[dlocUnpackedName(f, d)] = dlocFilePrg(f);
+    }
+    const n = d.files.length, unpacked = d.files.filter(f => f.unpacked || f.boot).length, script = `${disk.name.replace(/\.(d64|g64)$/i, '')}-dloc.txt`;
+    files[script] = `${dlocScriptText(dlocScript(d, disk.name)).join('\r\n')}\r\n`;
+    try {
+      const w = await kr.writeExport({ target: 'pick', files });
+      if (w) toast(`Saved ${n} file${n === 1 ? '' : 's'} of ${disk.name} to ${w.dir} (${unpacked} of them unpacked as well), and ${script}: the files in the order they load and c1541's command line that writes the disk again`, 'ok');
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file outside the directory of a Pirate Slayer disk as a PRG at its load address, decoded (as much as memory holds) */
@@ -3734,7 +3762,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ...packing.flatMap((p, i) => (p ? [{ lvl: 'warn' as const, msg: `${A.files[i].name} ${p.verdict === 'packed' ? 'is packed' : 'may be packed'}${p.signature ? ` (${p.signature})` : ''}: ${p.reasons.join('; ')}. Unpack it (${unpackLabel}) to see the program.`, addr: p.decruncher, cat: 'packing' }] : [])),
   ], [A, R, kickProblems, packing, unpackLabel]);
   // the Spindle script tab is there when the analysis found Spindle's drivers
-  const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'sparkle' || !!disk?.sparkle) && (k !== 'krill' || !!disk?.krill || !!A.krill?.steps.length) && (k !== 'covert' || !!disk?.covert) && (k !== 'iffl' || !!disk?.iffl) && (k !== 'pirateslayer' || !!disk?.pirateslayer) && (k !== 'tape' || !!tape));
+  const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'sparkle' || !!disk?.sparkle) && (k !== 'krill' || !!disk?.krill || !!A.krill?.steps.length) && (k !== 'covert' || !!disk?.covert) && (k !== 'dloc' || !!disk?.dloc) && (k !== 'iffl' || !!disk?.iffl) && (k !== 'pirateslayer' || !!disk?.pirateslayer) && (k !== 'tape' || !!tape));
   const shownBottom = bottomTabs.some(([k]) => k === bottom) ? bottom : 'log';
   /** the Relocated tab's count: the relocated blocks (placed or not) and the copy loops found */
   const relocCount = project.relocs.length + A.copies.length;
@@ -3881,7 +3909,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           scripts={{ list: userScripts, checks: scriptChecks, patches: project.patches, onNew: () => newUserScript(), onOpen: id => { openUserScript(id); setDrawer(null); }, onRun: id => void runUserScript(id), onRemove: removeUserScript, onAdd: addLibraryScript }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onShowBlock={b => { showBlock(b); setDrawer(null); }}
-          disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowCovert={() => setUi({ bottom: 'covert', panelOpen: true })} onShowIffl={() => setUi({ bottom: 'iffl', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
+          disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowCovert={() => setUi({ bottom: 'covert', panelOpen: true })} onShowDloc={() => setUi({ bottom: 'dloc', panelOpen: true })} onShowIffl={() => setUi({ bottom: 'iffl', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
           tape={tape} onEjectTape={ejectTape} onShowTape={() => setUi({ bottom: 'tape', panelOpen: true })} onOpenFromTape={(f, add) => { openFromTape(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
@@ -4034,7 +4062,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         {tab !== 'spec' && panelOpen && <Splitter dir="h" onDrag={d => { const s = useUi.getState().sizes; setUi({ sizes: { ...s, bottom: Math.max(120, Math.min(520, Math.min(s.bottom, bottomRef.current?.offsetHeight ?? s.bottom) - d)) } }); }} />}
         {tab !== 'spec' && <section ref={bottomRef} className={cx('bottom', !panelOpen && 'collapsed')} aria-label="Panels">
           <div className="tabs small" role="tablist">
-            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'messages' ? messages.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : k === 'sparkle' ? (disk?.sparkle?.bundles.length ?? 0) : k === 'krill' ? (A.krill?.steps.length ?? 0) + (disk?.krill?.files.length ?? 0) : k === 'covert' ? (disk?.covert?.files.length ?? 0) : k === 'iffl' ? (disk?.iffl?.files.reduce((a, f) => a + f.parts.length, 0) ?? 0) : k === 'tape' ? (tape?.img.files.length ?? 0) : null; return (
+            {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'messages' ? messages.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : k === 'sparkle' ? (disk?.sparkle?.bundles.length ?? 0) : k === 'krill' ? (A.krill?.steps.length ?? 0) + (disk?.krill?.files.length ?? 0) : k === 'covert' ? (disk?.covert?.files.length ?? 0) : k === 'dloc' ? (disk?.dloc?.files.length ?? 0) : k === 'iffl' ? (disk?.iffl?.files.reduce((a, f) => a + f.parts.length, 0) ?? 0) : k === 'tape' ? (tape?.img.files.length ?? 0) : null; return (
               <button key={k} role="tab" aria-selected={shownBottom === k} className={cx('tab', shownBottom === k && 'on')} onClick={() => setUi({ bottom: k, panelOpen: true })}>{l}{n != null && <span className={cx('count', k === 'problems' && problems.some(p => p.lvl === 'err') && 'bad')}>{n}</span>}</button>); })}
             <span className="grow" />
             <button className="icon-btn panel-toggle" onClick={() => setUi({ panelOpen: !panelOpen })} aria-label={panelOpen ? 'Collapse panel' : 'Expand panel'} title={panelOpen ? 'Collapse panel' : 'Expand panel'}><Icon name="down" size={14} className={panelOpen ? '' : 'flip'} /></button>
@@ -4053,7 +4081,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {shownBottom === 'iffl' && disk?.iffl && <IfflPanel disk={disk} open={loaderOpen} onOpenPart={openIfflPart} onSaveParts={() => void saveIfflParts()} />}
             {shownBottom === 'krill' && <KrillPanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openKrillFile} onSaveFiles={() => void saveKrillFiles()} />}
             {shownBottom === 'covert' && disk?.covert && <CovertPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openCovertFile} onSaveFiles={() => void saveCovertFiles()} />}
-            {shownBottom === 'pirateslayer' && disk?.pirateslayer && <PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onSaveFiles={() => void savePirateSlayerFiles()} />}
+            {shownBottom === 'dloc' && disk?.dloc && <DlocPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openDlocFile} onSaveFiles={() => void saveDlocFiles()} />}
+            {shownBottom === 'pirateslayer' && disk?.pirateslayer &&<PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onSaveFiles={() => void savePirateSlayerFiles()} />}
             {shownBottom === 'tape' && tape && <TapePanel tape={tape} open={tapeOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onSaveFiles={() => void saveTapeFiles()} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
             {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild({ ...project, settings: S })} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}

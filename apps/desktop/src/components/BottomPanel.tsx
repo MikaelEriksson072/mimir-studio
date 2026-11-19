@@ -1,9 +1,9 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
- * disk's files, the BoozeLoader script, a Sparkle disk's bundles, the files of a disk for Krill's loader and of one for
- * the Covert Bitops loader, Pirate Slayer
+ * disk's files, the BoozeLoader script, a Sparkle disk's bundles, the files of disks for Krill's loader, the Covert
+ * Bitops loader and DLoC's loader, Pirate Slayer
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocScript, dlocScriptText, dlocUnpackedName, type DlocFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   ASSEMBLERS, assemblerOf, shownAddress, shownTarget, viewOffsetAt,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
@@ -557,6 +557,73 @@ export function CovertPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { d
   );
 }
 
+/** The DLoC script tab (spec 13.5n): a disk for DLoC's loader (Six/Dark Lords of Chaos), its directory's files a row
+ *  each in the order they load; a row opens the file as a PRG, unpacked when it is packed (the boot: what Six's packer
+ *  unpacks it to), + adds it. Below, the calls of the loader read from the parts' code, and the script: each file in
+ *  that order with its calls, and c1541's command line that writes the disk again. Copy script copies it; Save files…
+ *  saves every file as it is on the disk and unpacked, with the script. */
+export function DlocPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: DlocFile, add: boolean) => void; onSaveFiles: () => void }) {
+  const d = disk.dloc!;
+  const text = dlocScriptText(dlocScript(d, disk.name));
+  const n = d.files.length, unpacked = d.files.filter(f => f.unpacked || f.boot).length;
+  const rows = [...d.order, ...d.files.map(f => f.entry).filter(e => !d.order.includes(e))].map(e => d.entries[e].file!);
+  const notes = (f: DlocFile) => {
+    const e = d.entries[f.entry], u = f.unpacked, by = d.calls.filter(c => c.file === f.entry), named = d.names.filter(x => x.file === f.entry);
+    return [
+      f.boot ? `the boot (LOAD and RUN), packed with Six's packer: starts at $${h4(f.boot.run)} when it has unpacked itself` : f.basic ? 'a BASIC program: loaded with LOAD and RUN'
+        : u ? `ZX0, unpacked while it loads; starts at $${h4(u.run)}` : 'not packed: loaded or read as it is',
+      f.code && "the loader's own code",
+      by.length && `${by.some(c => c.routine === 'load') ? 'loaded' : 'opened'} by ${by.map(c => `$${h4(c.at)} in "${d.entries[c.in].name}"`).join(', ')}`,
+      named.length && `named in ${named.map(x => `"${d.entries[x.in].name}" at $${h4(x.at)}`).join(', ')}`,
+      `from ${f.sectors[0][0]}/${f.sectors[0][1]}`,
+      e.blocks !== f.sectors.length && `the directory shows ${e.blocks} block${e.blocks === 1 ? '' : 's'} (${f.sectors.length})`,
+    ].filter(Boolean).join(' · ');
+  };
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>Files of {disk.name} (DLoC's loader): {n} file{n === 1 ? '' : 's'}, {unpacked} unpacked <span className="muted">· the loader has no load script: a part loads the next by its name (lda #length / ldx #&lt;name / ldy #&gt;name / jmp ${h4(d.base)}), so the calls in the parts' code are the script; {d.found === 'code' ? "the loader's own code is on the disk" : 'found by its files, packed with ZX0 as the loader reads them'}</span></span>
+        <button className="btn small" onClick={() => onCopy(text.join('\n'), 'Copied the DLoC script')}><Icon name="copy" size={14} />Copy script</button>
+        <button className="btn small" onClick={onSaveFiles} title="Save every file as it is on the disk and unpacked to a folder, with the script and c1541's command line that writes the disk again"><Icon name="download" size={14} />Save files…</button>
+      </div>
+      <table className="tbl" aria-label="DLoC files"><thead><tr><th>Entry</th><th>Name</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
+        {rows.map(f => {
+          const name = dlocFileName(f, d), u = f.unpacked ?? f.boot;
+          return (
+            <tr key={f.entry} className={cx(open.has(f) && 'on')} {...mark(open.has(f), u ? `Open ${dlocUnpackedName(f, d)}: unpacked, as a PRG at $${h4(u.start)}` : `Open ${name} as a PRG at $${h4(f.load)}, as it loads`)} onClick={() => onOpenFile(f, false)}>
+              <td className="mono">${h2(f.entry)}</td>
+              <td className="mono">"{d.entries[f.entry].name}"</td>
+              <td className="mono">{f.unpacked ? <span className="muted">packed</span> : `$${h4(f.load)}–$${h4(Math.min(f.load + f.data.length - 2, 0x10000) - 1)}`}</td>
+              <td className="mono">{u ? `$${h4(u.start)}–$${h4(u.end - 1)}` : <span className="muted">—</span>}</td>
+              <td className="mono">{u ? `${f.data.length} → ${u.bytes.length}` : f.data.length}</td>
+              <td className="mono">{name}</td>
+              <td className="muted">{notes(f)}</td>
+              <td><button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(f, true); }}><Icon name="plus" size={13} /></button></td>
+            </tr>
+          );
+        })}
+      </tbody></table>
+      {d.calls.length > 0 && (
+        <table className="tbl" aria-label="DLoC calls"><thead><tr><th>At</th><th>In</th><th>Routine</th><th>File</th><th>Call</th></tr></thead><tbody>
+          {d.calls.map(c => {
+            const f = c.file != null ? d.entries[c.file].file : null, on = !!f && open.has(f);
+            return (
+              <tr key={`${c.in}:${c.jsr}`} className={cx(on && 'on')} {...mark(on)}>
+                <td className="mono">${h4(c.at)}</td>
+                <td className="mono">"{d.entries[c.in].name}"</td>
+                <td>{DLOC_ROUTINE[c.routine]}</td>
+                <td className="mono">{c.file != null ? `"${d.entries[c.file].name}"` : <span className="muted">{c.routine === 'load' || c.routine === 'open' ? 'set elsewhere' : '—'}</span>}</td>
+                <td className="mono">{dlocCallText(c, d)}</td>
+              </tr>
+            );
+          })}
+        </tbody></table>
+      )}
+      <pre className="covert-script mono" aria-label="DLoC script">{text.join('\n')}</pre>
+    </div>
+  );
+}
+
 /** The Pirate Slayer tab (spec 13.5h): Electronic Arts' copy protection on the mounted disk: its key track (on a G64:
  *  where, how framed, each copy a turn), the boot and what it does, where the drive's check is, the boot's text, and
  *  the files outside the directory, a row each: a row opens the file as a PRG at its load address, decoded; + adds it.
@@ -878,4 +945,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['iffl', 'IFFL parts'], ['covert', 'Covert script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['iffl', 'IFFL parts'], ['covert', 'Covert script'], ['dloc', 'DLoC script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

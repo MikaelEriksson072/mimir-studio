@@ -331,6 +331,51 @@ done: rts
     expect(classic[0].parts[0].what).toMatch(/^receive loop: the classic 2-bit loop .* as in the Covert Bitops loader and many older loaders$/);
   });
 
+  it("know DLoC's loader (Six, Halloween 2026) by its receive loop, its table of jumps and its drive code", () => {
+    // written here from the demo's resident part at $fc00 and its drive code (its source is not public)
+    const dloc = loaders(` jsr $fc00
+ rts
+.pc = $fc00
+ jmp load
+ jmp open
+ jmp read
+ jmp unpack
+ jmp $fbe8
+ jmp $fbeb
+load: sei
+ sta name_len
+ stx name_lo
+ sty name_hi
+ tay
+ beq open
+open: rts
+read: lda $9f
+ sta $dd00
+ jsr wait
+ nop
+ nop
+ nop
+ lda $dd00
+ ldx $9e
+ stx $dd00
+ and #$c0
+ sta $93
+ rts
+unpack: rts
+wait: rts
+name_len: .byte 0
+name_lo: .byte 0
+name_hi: .byte 0
+.pc = $3b00
+drive: .byte $bd,$c1,$07,$2c,$00,$18,$10,$fb,$8d,$00,$18,$bd,$d1,$07,$2c,$00,$18,$30,$fb,$8d,$00,$18,$60
+`);
+    expect(dloc.map(l => l.id)).toEqual(['dloc']);
+    expect(dloc[0].parts.map(p => [p.role, p.what])).toEqual([
+      ['drivecode', 'code for the 1541: it sends a byte as two nibbles from a table, each as two bit pairs while ATN turns'],
+      ['resident', "its table of jumps (load and start, open, read, unpack, and two calls of the program), then the load: A the name's length, X/Y the name"],
+    ]);
+  });
+
   it("know version 146 of Krill's loader by its installer's version text (GoatLight's boot)", () => {
     // "Krill's Loader, version 146" in PETSCII upper and lower case
     const text = [0xcb, 0x52, 0x49, 0x4c, 0x4c, 0x27, 0x53, 0x20, 0xcc, 0x4f, 0x41, 0x44, 0x45, 0x52, 0x2c, 0x20, 0x56, 0x45, 0x52, 0x53, 0x49, 0x4f, 0x4e, 0x20, 0x31, 0x34, 0x36];

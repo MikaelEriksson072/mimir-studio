@@ -228,7 +228,7 @@ apps/desktop     Electron app
 docs/spec.md     technical specification
 fixtures/prg     test programs (raster-demo.prg, and the loader, packed and Spindle demos)
 fixtures/d64     disk images (mimir-demo.d64, spindle-demo.d64, a Spindle 3 disk, bitfire-demo.d64, a Bitfire one,
-                 krill-demo.d64, one for Krill's loader, and others)
+                 krill-demo.d64, one for Krill's loader, dloc-demo.d64, one for DLoC's loader, and others)
 fixtures/tap     mimir-demo.tap: a boot file whose own loader reads the raster demo in TapeTool's TinyHeader format, and
                  TapeTool files in blocks (written by packages/core/test/helpers/tapetool-tape.ts)
 fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from source (packages/core/test/crt.test.ts)
@@ -421,7 +421,7 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   who sets it (the main code, the handler before it in a raster chain, or the handler itself) and where. A row goes to
   the handler. `rasterIrqs()` in `packages/core/src/analyze/raster.ts`; see spec 8.11d.
 - **Loaders.** `findLoaders()` (`packages/core/src/analyze/loaders.ts`) names the loader a program uses: Spindle (2 and
-  3), Krill's loader, Bitfire, Sparkle and the Covert Bitops loader by their own receive loops and install commands (the
+  3), Krill's loader, Bitfire, Sparkle, the Covert Bitops loader and DLoC's loader by their own receive loops and install commands (the
   byte patterns come from their sources), the Action Replay's fastload, Warp*25, tape backups and turbo tape, Novaload,
   the big tape publishers' loaders (Freeload, US Gold's, Mega-Save, Cyberload, Interceptor Micros', Mastertronic's, Firebird's,
   Novaload's IRQ version, learned from the code Sindri ran from their tapes), the Super Snapshot's turbo and copiers
@@ -1069,6 +1069,25 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     into `$0000` (Great Gurianos twice now reaches the game, Way of the Exploding Fist JAMs after RETURN instead), 4 next
     layers' saves lose `READY.` and the SYS line, 5 go on differently in their own code. Test in Sindri's
     `test/unpack.test.ts`.
+51. Disks for DLoC's loader (spec 13.5n) are new: Halloween 2026 (Dark Lords of Chaos, Six's code, own assembler,
+    packer and loader) was "a fast loader (not one of the known ones)" in its installer and nothing in its resident
+    part. Read from the demo itself (its source is not public): the boot unpacked by Sindri, the drive code where the
+    installer keeps it, and a Sindri run with the disk that logged every call of the loader. `readDlocDisk`
+    (`packages/core/src/c64/dloc-disk.ts`) reads the ordinary DOS files the loader asks for by name (A the length, X/Y
+    the name; the drive takes the first closed PRG whose name starts so), unpacks a part as `$fc00` does (where it
+    goes, where it starts, a ZX0 stream in ZX0's first format: `unpackDlocFile`, `unpackZx0`), the boot as Six's
+    self-extracting packer does (`unpackDlocBoot`, by its code's pattern and pointers), the calls in the parts' code
+    (`jsr`/`jmp` to the table at `$fc00` with A, X, Y and the carry set right before; an immediate load is preferred to
+    a `sec` its operand ends in, and the carry is taken only right before the call, as a branch's operand can be `$18`),
+    the names of the disk's files in a part that opens them through a table of its own, and from those the order they
+    load in. The DLoC script tab lists the files in that order, opens them unpacked, copies the script (each file with
+    its calls, and c1541's command line: the disk is a plain DOS disk) and saves the files. The loader search knows it
+    (`dloc`: receive loop, the name's send, the table of jumps, the drive's nibble send; the directory search and the
+    ZX0 unpacker weak), and Sindri's signature list names the boot's two layers (12% like the nearest). Checked: the
+    three parts' `$fc00` loads in a 25-minute Sindri run are byte for byte what the reader unpacks, the boot's image
+    is too but for the 7 bytes the installer rewrites, and on the archive's 277 829 D64/G64 the reader takes only the
+    5 copies of Halloween 2026 (one disk in five folders). Tests: `test/dloc-disk.test.ts` (own ZX0 writer, a boot
+    laid out as Six's packer lays it out, the fixture `fixtures/d64/dloc-demo.d64`), `loaders.test.ts`, an e2e test.
 
 ## Roadmap
 

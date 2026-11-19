@@ -7516,6 +7516,77 @@ test('a mounted disk for the Covert Bitops loader: its files in the Covert scrip
   });
 });
 
+test("a mounted disk for DLoC's loader: its files in the order they load, the parts' calls, opened unpacked, the script copied and saved", async ({ workDir, app, page }) => {
+  // fixtures/d64/dloc-demo.d64 (packages/core/test/dloc-disk.test.ts): a boot laid out as Six's packer lays it out that
+  // loads PART1 by its name, PART1 the raster demo packed with ZX0 (and a load of PART2 after it), PART2 opening DATA
+  // by its name and MUSIC through a table, both not packed
+  const summary = '2 files packed with ZX0, 3 load calls read from the code; BOOT → PART1 → PART2 (a part reads DATA, MUSIC)';
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/dloc-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, `Mounted dloc-demo.d64: "DLOC DEMO", 5 files, a disk for DLoC's loader (${summary})`)).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText(`DLoC's loader: ${summary}; files loaded by name`);
+  const files = page.getByRole('table', { name: 'DLoC files' });
+
+  await test.step('the Explorer opens the tab: a row per file in the order they load, the calls and the script under them', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'DLoC script' }).click();
+    await expect(page.getByRole('tab', { name: /DLoC script/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /DLoC script/ })).toContainText('5');
+    await expect(page.locator('.spindle-head').first()).toContainText("Files of dloc-demo.d64 (DLoC's loader): 5 files, 3 unpacked");
+    await expect(files.locator('tbody tr td:nth-child(2)')).toHaveText(['"BOOT"', '"PART1"', '"PART2"', '"DATA"', '"MUSIC"']);
+    await expect(files.locator('tbody tr td:nth-child(4)')).toHaveText(['$0801–$081b', '$0801–$380d', '$0801–$0fe6', '—', '—']);
+    await expect(files.locator('tbody tr td:nth-child(6)')).toHaveText(['boot.prg', 'part1.zx0', 'part2.zx0', 'data.prg', 'music.prg']);
+    await expect(files.locator('tbody tr').nth(1).locator('td:nth-child(7)')).toHaveText('ZX0, unpacked while it loads; starts at $0810 · loaded by $0813 in "BOOT" · from 1/2');
+    await expect(files.locator('tbody tr').nth(4).locator('td:nth-child(7)')).toContainText('named in "PART2" at $0a03');
+    await expect(page.getByRole('table', { name: 'DLoC calls' }).locator('tbody tr td:nth-child(5)')).toHaveText([
+      'lda #$05 / ldx #<name / ldy #>name / jmp $fc00 ("PART1")', 'lda #$05 / ldx #<name / ldy #>name / jmp $fc00 ("PART2")',
+      'lda #$04 / ldx #<name / ldy #>name / clc / jsr $fc03 ("DATA")', 'sec / jsr $fc03', 'lda #$08 / jsr $fc06', 'ldx #$00 / ldy #$0b / jsr $fc09',
+    ]);
+    await expect(page.getByLabel('DLoC script', { exact: true })).toContainText(';       $3800: loads "PART2"');
+    await expect(page.getByLabel('DLoC script', { exact: true })).toContainText('c1541 -format "dloc demo,26" d64 dloc-demo.d64 -write boot.prg "boot" -write part1.zx0 "part1"');
+  });
+
+  await test.step('a row loads its file into Mimir unpacked, as a PRG at where it unpacks to; + adds one', async () => {
+    await files.getByRole('row', { name: /part1\.zx0/ }).click();
+    await expect(toast(page, 'Loaded part1_0801.prg at $0801')).toBeVisible();
+    // the raster demo, as it was before it was packed
+    await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+    await expect(inProject(files, 6)).toHaveText(['part1.zx0']);
+    await files.getByRole('button', { name: 'Add boot.prg to this project' }).click();
+    await expectFiles(page, ['part1_0801.prg', 'boot_0801.prg']);
+    await expect(inProject(files, 6)).toHaveText(['boot.prg', 'part1.zx0']);
+  });
+
+  await test.step('it copies the script: the files in the order they load and c1541 writing the disk again', async () => {
+    await page.getByRole('button', { name: 'Copy script' }).click();
+    await expect(toast(page, 'Copied the DLoC script')).toBeVisible();
+    const text = (await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n');
+    expect(text[0]).toBe("; DLoC's loader (Six/Dark Lords of Chaos), read by Mimir Studio from dloc-demo.d64: 5 files, 2 of them packed with ZX0.");
+    expect(text).toContain(';       $0a03: the name "MUSIC" (what it opens)');
+    expect(text[text.length - 1]).toBe('c1541 -format "dloc demo,26" d64 dloc-demo.d64 -write boot.prg "boot" -write part1.zx0 "part1" -write part2.zx0 "part2" -write data.prg "data" -write music.prg "music"');
+  });
+
+  await test.step('Save files… saves every file as it is on the disk and unpacked, with the script', async () => {
+    const out = join(workDir, 'dloc-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 5 files of dloc-demo\.d64 to .* \(3 of them unpacked as well\), and dloc-demo-dloc\.txt: the files in the order they load and c1541's command line that writes the disk again$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['boot.prg', 'boot_0801.prg', 'data.prg', 'dloc-demo-dloc.txt', 'music.prg', 'part1.zx0', 'part1_0801.prg', 'part2.zx0', 'part2_0801.prg']);
+    const demo = readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg'));
+    expect(readFileSync(join(out, 'part1_0801.prg')).subarray(0, demo.length)).toEqual(demo);
+    // as it is on the disk: where it unpacks to and where it starts, then the stream
+    expect([...readFileSync(join(out, 'part1.zx0')).subarray(0, 4)]).toEqual([0x01, 0x08, 0x10, 0x08]);
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /DLoC script/ })).toHaveCount(0);
+  });
+});
+
 test('the tab row fits a small window: the listing tools lose their labels, then move into the ⋯ menu', async ({ app, page }) => {
   await waitForListing(page);
   const row = page.locator('main.main > .tabs');

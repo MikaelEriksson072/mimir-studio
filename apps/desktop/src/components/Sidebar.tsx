@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, kindInfo, krillPackerName, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeDirectory, tapeDirEntry, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, dlocSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, kindInfo, krillPackerName, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeDirectory, tapeDirEntry, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -60,6 +60,8 @@ interface SidebarProps {
   onShowKrill: () => void;
   /** open the Covert script tab (a disk for the Covert Bitops loader: its files, the calls, the tool's command file) */
   onShowCovert: () => void;
+  /** open the DLoC script tab (a disk for DLoC's loader: its files in the order they load, the calls, c1541's command line) */
+  onShowDloc: () => void;
   /** open the IFFL parts tab (a disk with an IFFL file: the parts a game loads from it) */
   onShowIffl: () => void;
   onShowPirateSlayer: () => void;
@@ -150,7 +152,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -183,7 +185,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLab
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} />}
+        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowDloc={onShowDloc} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} />}
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
@@ -620,7 +622,7 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
  *  screen after LOAD"$",8 and LIST, where Aa switches the character set. A PRG opens with a click or Enter; + adds it
  *  to the project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
  *  ("The work is not saved" → Save as a project…) */
-function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowIffl, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowIffl: () => void; onShowPirateSlayer: () => void }) {
+function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowDloc: () => void; onShowIffl: () => void; onShowPirateSlayer: () => void }) {
   const { img } = disk;
   // Settings → General: the directory as a C64 lists it, and its character set switched as Commodore+Shift does (for
   // this disk; null: as the listing leaves it)
@@ -703,6 +705,12 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
         <div className="disk-spindle">
           <span><b>Covert Bitops loader:</b> {covertSummary(disk.covert)}; files loaded by name{disk.covert.tool ? `, laid out by ${disk.covert.tool}` : ''}</span>
           <button className="btn small" onClick={onShowCovert}>Covert script</button>
+        </div>
+      )}
+      {disk.dloc && (
+        <div className="disk-spindle">
+          <span><b>DLoC's loader:</b> {dlocSummary(disk.dloc)}; files loaded by name</span>
+          <button className="btn small" onClick={onShowDloc}>DLoC script</button>
         </div>
       )}
       {disk.pirateslayer && (
