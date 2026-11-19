@@ -1180,6 +1180,25 @@ därifrån (LINKPRG) och skriver länkpekare i det som ligger på `$0801`, vilke
 gör (över en fil som inte når dit länkar den om ett tomt program och ändrar inget, och får göra det som förut). Ett program
 som Sindri sparat kan ha kod där: Cybernoid II:s spel (`$0208-$ffff`, start `$1400`) körde in i en JAM på `$08e3`
 när Sindri körde det igen, och kommer nu förbi trainermenyn till spelet på `$0476`.
+Av samma skäl står filen i minnet som den är när hoppet kommer: Sindri skriver `LOAD` och `SYS` vid prompten, så BASIC:s
+`READY.` efter laddningen (rad 8, `$0540`) och den inskrivna raden (rad 9, `$0568`, och i inmatnings- och
+tangentbuffertarna) hamnar över ett program som täcker skärmen; Build & Run laddar ett sådant program från VICE:s
+monitor och skriver inget efter det. Precis före hoppet (`JMP ($0014)` på `$e144`) lägger Sindri därför tillbaka de
+byte i filen som KERNAL och BASIC skrivit över sedan laddningen, och räknar vad programmet gör med dem därifrån
+(`$0014-$0015` står kvar: hoppet läser dem). Deltas spel (`$02a1-$ffff`, start `$1770`, som Sindri sparar ur
+bandets laddare) har sin ljudrutin på `$0403-$059a`: 13 byte av den blev `READY.` och `SYS6000`, spelet körde in i dem
+vid första ljudet efter fire och slutade i en BRK på `$0118`. Nu kommer det in i spelet och väntar i sin huvudslinga
+på `$17cc` som när Sindri kör bandet; i x64sc kör samma program startat från monitorn spelet efter fire, och med de 13
+byten skrivna dit kraschar det. Mätt gammalt mot nytt på 655 filer ur arkivet (115 spel-D64:or ur CSDB Top200, 145
+band ur Preservers och 116 ur C64Tapes-org, 161 demos ur Onefile-top200, 118 OneLoad64-spel): de 501 program Sindri
+sparade som startar på en adress kördes var för sig från sin start. Från `$0800` och uppåt är alla 186 likadana. Under
+`$0800` (315) lades byte tillbaka i 239, och 297 slutar som förut. Av de 18 andra körde 6 förut in i `READY.`:s eller
+`SYS`-radens byte och stannade på en JAM, och kör nu (Bubble Bobble, MASK, Joe Blade 2, Gore n Goners, Transcend the
+Game, Asterix and the Magic Cauldron); 3 som förut packades upp hoppade genom KERNAL:s IRQ-vektor till `$0000`, en
+krasch: Great Gurianos (två kopior) når nu spelet, Way of the Exploding Fist stannar i stället på en JAM på `$902c`
+efter RETURN som Sindri trycker; i 4 har nästa lagers sparade program inte längre `READY.` och `SYS`-raden i sig
+(Driller, Out Run två gånger, Octapolis); 5 går vidare annorlunda i sin egen kod (Bionic Commandos stod förut still på
+`$0370` och spelar nu vidare). Inte packade 322 → 330, uppackade 74 → 71, misslyckade 105 → 100.
 En VICE-snapshot laddas och startas inte: Sindri fortsätter från dess maskin (se *Snapshots* nedan). `RUN` skulle starta
 programmet från början, för från `$0200` har snapshoten programmets `SYS`-rad på `$0801`.
 

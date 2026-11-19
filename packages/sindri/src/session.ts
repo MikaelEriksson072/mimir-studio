@@ -782,6 +782,26 @@ class Session {
     for (const t of [this.m.firstOp, this.m.firstArg, this.m.firstRead, this.m.firstWrite]) t.fill(0);
   }
 
+  /**
+   * The file's bytes that something wrote over since the load, put back as the file has them, and what the run does
+   * with them counted from here: a program started at an address is in memory as VICE's monitor loads it, with nothing
+   * typed after it (the trap at SYS's jump). $0014-$0015 stay, as the jump reads them.
+   */
+  private putBack(): void {
+    const m = this.m, put: Range[] = [];
+    for (let i = 0; i < this.data.length; i++) {
+      const a = this.loadAt + i;
+      if (a < 2 || a > 0xffff || a === 0x14 || a === 0x15 || m.ram[a] === this.data[i]) continue;
+      m.ram[a] = this.data[i];
+      m.wid[a] = LOADED;
+      m.wtime[a] = m.icount;
+      const last = put[put.length - 1];
+      if (last && a - last.end <= 8) last.end = a; else put.push({ start: a, end: a });
+    }
+    this.runFromHere();
+    if (put.length) this.trace(`put back the file's bytes typing wrote over: ${put.map(r => r.start === r.end ? hex4(r.start) : `${hex4(r.start)}-${hex4(r.end)}`).join(' ')}`);
+  }
+
   /** Type a line into the keyboard buffer (10 characters at most, RETURN added). */
   private typeLine(text: string): void {
     const m = this.m, bytes = [...text].map(c => c.charCodeAt(0)).concat(0x0d).slice(0, 10);
@@ -1356,11 +1376,19 @@ class Session {
         const link = (m.ram[0x2b] | (m.ram[0x2c] << 8)) + 1;
         return link >= this.loadAt && link < this.loadAt + this.data.length ? this.rts() : false;
       });
-      // SYS jumps to the program with JMP ($0014): a start with its own $01 gets it right before (as Build & Run's
-      // stub sets it), so a program under the BASIC ROM is what runs, not the ROM
+      // SYS jumps to the program with JMP ($0014). Started at an address, the file is in memory as it has it, as Build &
+      // Run puts it: VICE loads a program over the screen from the monitor at the READY prompt and types nothing after
+      // it. Here LOAD and SYS were typed at the prompt, and READY. and the SYS line went onto the screen: over a program
+      // that covers it, its bytes (Delta's game, $02a1-$ffff from $1770, has its sound routine at $0403-$059a, and
+      // READY. on row 8 and SYS6000 on row 9 were 13 bytes of it: the game ran into a BRK at its first sound). So
+      // right before the jump the file's bytes the KERNAL and BASIC wrote over since the load are put back (putBack).
+      // A start with its own $01 gets it then too (as Build & Run's stub sets it), so a program under the BASIC ROM
+      // is what runs, not the ROM
       const port = this.o.port, entry = this.o.entry;
-      if (port != null && entry != null) this.trap(0xe144, KERNAL, () => {
-        if (!this.started && (m.ram[0x14] | (m.ram[0x15] << 8)) === entry) m.write(1, port & 0xff);
+      if (entry != null) this.trap(0xe144, KERNAL, () => {
+        if (this.started || (m.ram[0x14] | (m.ram[0x15] << 8)) !== entry) return false;
+        this.putBack();
+        if (port != null) m.write(1, port & 0xff);
         return false;
       });
       return;

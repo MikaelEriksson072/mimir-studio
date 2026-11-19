@@ -27,7 +27,7 @@ unpacks on from there (the keys Sindri presses get past the menu). The 1541 is n
   --next FILE    the disk to turn to when the program waits with nothing left to try (a demo's next side, as
                  its "turn disk" asks); give it again for more sides, in order
   --tape FILE    put this TAP or T64 in the datasette for a PRG given on its own
-  -e ADDR        start with SYS ADDR instead of RUN
+  -e ADDR        start with SYS ADDR instead of RUN, with the file in memory as it has it
   --port VALUE   with -e: $01 as the program starts there (a saved program's start hint, $36 say)
   -l ADDR        load the file at ADDR instead of its own load address
   --layer N      save layer N instead of the newest (see the report)
