@@ -5809,7 +5809,13 @@ Det finns fem lägen:
   vyn står rad, kolumn, tecknet och fonten (`row 0, column 0: char $08 of the font at $3000`) och adressen till
   teckenraden under pekaren. *Mark as Charset* sätter blocktypen för fonterna. Vänsterkanten visar varje rads font.
 
-**Visning:** zoom 1–4×, hires eller multicolor (bitpar: BG, MC1, MC2, FG). Färgerna väljs ur C64-paletten. *Offset*
+**Visning:** zoom 1–4×, hires eller multicolor (bitpar: BG, MC1, MC2, FG). Färgerna väljs ur C64-paletten. Slås
+*Multicolor* på eller av med en markering i sprites, en charset eller en bitmapp av den typ vyn ritar (Sprites: Sprite
+data, Chars och Font per row: Charset, Bitmaps: Bitmap; inte Screens), sparas det för de blocken, som inspektorns
+*Multicolor*, och listningens bilder ritar dem likadant (`gfxMcChanges` i `apps/desktop/src/lib/gfxlines.ts`; en
+inställning bara där VIC-registren säger annat, annars tas den bort så att blocket följer dem igen). Toasten säger det
+(*Charset $3000–$37ff drawn multicolour in the listing too*), och `Ctrl+Z` tar tillbaka det. Utan markering, eller med
+en markering utanför sådana block, är det bara vyns val. *Offset*
 flyttar rutnätet byte för byte, för data som inte börjar på en cellgräns. Byte som inte är laddade ritas i en egen
 blågrå ton. Byte i ett block som redan är grafik (Charset, Sprite data, Bitmap eller Screen matrix, satt av analysen
 eller användaren) ritas tonade mot grafikens orange (`MARKED_TINT`, `--g-gfx`: varje färg 45 % av vägen dit, så svart
@@ -5832,7 +5838,9 @@ rad och kolumn i bitmappen, samt blocket den ligger i. Valen sparas per använda
 - Knapparna visas bara när de ändrar något. Ett klick på en hel bitmapp väljer redan alla 8000 byte, så då finns ingen
   *Whole bitmap*.
 - *Mark as Charset / Sprite data / Bitmap / Screen matrix* sätter blocktypen (en override som `C`/`D`/…, ångras med `Ctrl+Z`). Vyns egen
-  typ ligger först.
+  typ ligger först. Charset, Sprite data och Bitmap tar med vyns *Multicolor* (utom i Screens, där byten är skärmkoder):
+  blocket ritas i listningen som det såg ut här (`markMc`; en inställning bara där VIC-registren säger annat, och den
+  går före inställningen hos ett block som *Auto merge* tar med). Toasten säger *(multicolour)*.
 - *Unmark* (i alla lägen) gör grafiken i markeringen till data igen (Bytes, `.byte`), till exempel en charset som analysen
   hittade där det inte finns någon (`gfxToData`). Bara grafikblocken (Charset, Sprite data, Bitmap, Screen matrix) och
   bara deras byte i markeringen blir data; delen av ett block utanför markeringen behåller sin typ (`keepCutTypes`), och

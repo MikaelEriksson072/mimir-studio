@@ -4,7 +4,7 @@
  * picture taller than a row of the listing is followed by lines that only make its room (`pad`), so every line keeps
  * the listing's row height. Labels, comment lines and the .import of a binary file stay lines of their own, and
  * break the picture where they are. The export and the source view do not change. Pure, so the tests share it. */
-import { findBlock, h4, type Addr, type AnalysisResult, type Block, type GfxLine, type ListingLine } from '@mimir/core';
+import { findBlock, h4, type Addr, type AnalysisResult, type Block, type GfxLine, type ListingLine, type Override } from '@mimir/core';
 import { fileLineNumbers } from './lines';
 import { C64, hexRgb } from './palette';
 import type { GfxColors } from './gfxview';
@@ -32,14 +32,44 @@ export const SPRITE_CAPTION = 13;
  *  $d01c for the sprites whose pointer points into the block (any bit when no pointer does); a charset: $d016's
  *  multicolour bit when no bitmap mode is set (which it is then for); a bitmap: $d016's multicolour bit. */
 export function blockMc(A: AnalysisResult, b: Block): boolean {
-  if (b.props.mc != null) return b.props.mc;
-  if (b.type === 'sprite') {
+  return b.props.mc ?? vicMc(A, b.type, b.start, b.end);
+}
+
+/** whether `start`..`end` as a block of `type` is multicolour as the VIC evidence says (blockMc without a setting) */
+export function vicMc(A: AnalysisResult, type: Block['type'], start: Addr, end: Addr): boolean {
+  if (type === 'sprite') {
     const m = A.vic.spriteMc ?? 0;
     if (!m) return false;
-    const refs = A.vic.sprites.filter(s => s.addr >= b.start && s.addr < b.end);
+    const refs = A.vic.sprites.filter(s => s.addr >= start && s.addr < end);
     return refs.length ? refs.some(s => (m >> s.n) & 1) : true;
   }
-  return b.type === 'charset' ? A.vic.multicolor && !A.vic.bitmap : A.vic.multicolor;
+  return type === 'charset' ? A.vic.multicolor && !A.vic.bitmap : A.vic.multicolor;
+}
+
+/** The block setting (OverrideProps.mc) that draws `start`..`end` as a block of `type` multicolour or not (`mc`), as
+ *  set where it is seen (the Graphics tab): null when the VIC evidence says the same, so it keeps following it. */
+export function mcSetting(A: AnalysisResult, type: Block['type'], start: Addr, end: Addr, mc: boolean): boolean | null {
+  return vicMc(A, type, start, end) === mc ? null : mc;
+}
+
+/** Mark as override `o` with sprites, a charset or a bitmap drawn multicolour or not (`mc`) as where they were marked
+ *  (the Graphics tab): its setting (mcSetting) over the one of a block it merges with; other types as they are */
+export function markMc(A: AnalysisResult, o: Override, mc: boolean): Override {
+  if (o.type !== 'sprite' && o.type !== 'charset' && o.type !== 'bitmap') return o;
+  const v = mcSetting(A, o.type, o.start, o.end, mc), { props: p0, ...base } = o, { mc: _, ...rest } = p0 ?? {};
+  const props = v == null ? rest : { ...rest, mc: v };
+  return Object.keys(props).length ? { ...base, props } : base;
+}
+
+/** the block type each Graphics tab view draws (lib/gfxview GfxKind): its multicolour is that block's */
+const GFX_VIEW_BLOCK: Record<string, Block['type'] | undefined> = { sprites: 'sprite', chars: 'charset', fontrows: 'charset', bitmap: 'bitmap' };
+
+/** Multicolor switched in Graphics tab view `view` with `start`..`end` selected: the blocks of the type it draws that the
+ *  selection has bytes in and that are not drawn so yet, each with the setting that draws it so (mcSetting) */
+export function gfxMcChanges(A: AnalysisResult, view: string, start: Addr, end: Addr, mc: boolean): { b: Block; mc: boolean | null }[] {
+  const type = GFX_VIEW_BLOCK[view];
+  if (!type) return [];
+  return A.blocks.filter(b => b.type === type && b.start < end && start < b.end && blockMc(A, b) !== mc).map(b => ({ b, mc: mcSetting(A, b.type, b.start, b.end, mc) }));
 }
 
 /** how many items a picture line holds (the last one may lack bytes) */

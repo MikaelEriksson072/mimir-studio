@@ -39,7 +39,7 @@ const SCRIPTS_FOLD_KEY = 'kr.scriptsFold';
 const MUSIC_FIELD_TEXT: Record<MusicField, string> = { location: 'music: where it is loaded (LoadSid)', init: 'music: its init routine', play: 'music: its play routine', size: 'music: its length in bytes, no address' };
 import { blockStep, foldLines } from './lib/fold';
 import { closeWindow, holdClose, whenClosing } from './lib/closing';
-import { blockMc, gfxColsFor, gfxListing } from './lib/gfxlines';
+import { blockMc, gfxColsFor, gfxListing, gfxMcChanges, markMc } from './lib/gfxlines';
 import { gfxLayout } from './lib/gfxview';
 import { blockView } from './lib/blockfolders';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
@@ -1365,8 +1365,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return { start: curLine && curLine.a != null ? curLine.a : cursor, end: b.end };
   };
   /** `name`: a text is named by its first word (the Memory tab), unless its start has a name you gave it; `bytes`:
-   *  the selection the range is, when it was picked byte by byte (by default the selection's, without a range) */
-  const mark = (id: string, range?: { start: Addr; end: Addr }, opts?: { name?: boolean; bytes?: Sel | null }) => {
+   *  the selection the range is, when it was picked byte by byte (by default the selection's, without a range); `mc`:
+   *  Multicolor where the bytes were seen (the Graphics tab), which sprites, a charset or a bitmap are then drawn as */
+  const mark = (id: string, range?: { start: Addr; end: Addr }, opts?: { name?: boolean; bytes?: Sel | null; mc?: boolean }) => {
     const s = opts?.bytes !== undefined ? opts.bytes : !range && sel?.bytes ? sel : null;
     const r0 = range || targetRange(); if (!r0) return;
     // bytes picked in a line: one byte as Code starts the code there, to the end of its block, and as Words is a word
@@ -1377,20 +1378,22 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const rl = A.relocs.find(x => x.start < r.end && r.start < x.end);
     if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside ${words.pseudopc}`, 'warn'); return; }
     // Auto merge (Settings → General): the blocks of that type right before and after the range join it
-    const mo = markOverride(A, r.start, r.end, id, useUi.getState().autoMerge), o = mo.override;
+    // sprites, a charset or a bitmap marked where they were seen (the Graphics tab): drawn in the listing as there
+    const mo = markOverride(A, r.start, r.end, id, useUi.getState().autoMerge), o = opts?.mc != null ? markMc(A, mo.override, opts.mc) : mo.override;
     const keep = s?.bytes ? keepCutTypes(A, o.start, o.end) : [];
     const m = MARK_AS.find(x => x.id === id), enc = m?.props?.enc, what = m ? m.label : id;
+    const mcText = opts?.mc && (o.type === 'sprite' || o.type === 'charset' || o.type === 'bitmap') ? ' (multicolour)' : '';
     const name = opts?.name && enc && !mo.prev && !R.labels.get(r.start)?.user ? textLabel(A.mem, r.start, r.end, enc.startsWith('screen'), enc.endsWith('mixed'), n => nameTaken(n, r.start)) : null;
     // the analysis merges every block (and earlier override) inside the range into the new one; code stays split per
     // routine unless it is merged with the code next to it
     const merged = id === 'code' && !o.props?.one ? 0 : A.blocks.filter(b => b.start < o.end && b.end > o.start).length;
     const side = mo.prev && mo.next ? 'blocks before and after it' : mo.prev ? 'block before it' : mo.next ? 'block after it' : '';
-    update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${what}${side ? ` with the ${what} ${side}` : ''}${name ? ` named ${name}` : ''}`, d => {
+    update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as ${what}${mcText}${side ? ` with the ${what} ${side}` : ''}${name ? ` named ${name}` : ''}`, d => {
       d.overrides.push(...keep, o);
       if (name) d.labels[r.start] = name;
     });
-    toast(side ? `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what} and merged with the ${what} ${side}: one block $${h4(o.start)}–$${h4(o.end - 1)}${merged > 1 ? ` (${merged} blocks)` : ''}`
-      : `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
+    toast(side ? `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what}${mcText} and merged with the ${what} ${side}: one block $${h4(o.start)}–$${h4(o.end - 1)}${merged > 1 ? ` (${merged} blocks)` : ''}`
+      : `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what}${mcText}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
     showChanged(o.start, o.end, side ? `Marked as ${what} and merged` : `Marked as ${what}`);
   };
   /** Unmark (the Graphics tab): the graphics blocks in `r`, cut to it, become data; the rest of a block it cuts keeps
@@ -1414,6 +1417,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const what = change.mc !== undefined ? (change.mc == null ? 'colours as the VIC registers say' : change.mc ? 'multicolour' : 'hires') : change.fmt !== undefined ? `${change.fmt === 'bin' ? 'binary' : change.fmt === 'dec' ? 'decimal' : change.fmt === 'hex' ? 'hex' : 'addresses'} numbers` : `${change.row ?? 'default'} a row`;
     update(`$${h4(b.start)}-$${h4(b.end - 1)}: ${what}`, d => { d.overrides.push(formatOverride(b, change, d.overrides)); });
     showChanged(b.start, b.end, what[0].toUpperCase() + what.slice(1));
+  };
+  /** Multicolor switched in the Graphics tab with `r` selected: the sprites, charsets or bitmaps of the type its `view`
+   *  draws that the selection is in are drawn so in the listing too (their setting, as the inspector's Multicolor) */
+  const setGfxMc = (r: Range, view: string, mc: boolean) => {
+    const ch = gfxMcChanges(A, view, r.start, r.end, mc);
+    if (!ch.length) return;
+    const what = mc ? 'multicolour' : 'hires', span = (b: Block) => `$${h4(b.start)}–$${h4(b.end - 1)}`;
+    update(`${ch.map(c => span(c.b).replace('–', '-')).join(', ')}: ${what}`, d => { for (const c of ch) d.overrides.push(formatOverride(c.b, { mc: c.mc }, d.overrides)); });
+    toast(`${kindInfo(ch[0].b.type).label} ${ch.map(c => span(c.b)).slice(0, 3).join(', ')}${ch.length > 3 ? ` and ${ch.length - 3} more` : ''} drawn ${what} in the listing too`, 'ok');
   };
   /** the code in `r` runs with this $01 value / VIC bank; null returns it to detection */
   const setBankZone = (r: Range, part: 'port' | 'vicBank', v: number | null) => {
@@ -3998,7 +4010,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
-                onMark={(id, r) => mark(id, r && { start: g(r.start), end: g(r.end) })} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
+                onMark={(id, r, mc) => mark(id, r && { start: g(r.start), end: g(r.end) }, { mc })} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
+                onMulticolor={(r, view, mc) => setGfxMc({ start: g(r.start), end: g(r.end) }, view, mc)}
                 onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)}
                 onLibrary={(r, kind, mc, cols) => startLibraryAdd(null, { start: g(r.start), end: g(r.end), kind, mc, colors: { ...cols } })} />)(allGfx ? (a: Addr) => a : inBank)}
               {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}

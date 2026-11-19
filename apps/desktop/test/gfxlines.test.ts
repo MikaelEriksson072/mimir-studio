@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { analyze, assemble, formatOverride, parsePrg, render, resizeBlock, showcaseProject, type GfxLine, type ListingLine, type ProjectInput } from '@mimir/core';
-import { blockMc, drawGfxLine, gfxCells, gfxHead, gfxItemAt, gfxItemBox, gfxListing, gfxRects, gfxSize } from '../src/lib/gfxlines';
+import { analyze, assemble, formatOverride, markOverride, parsePrg, render, resizeBlock, showcaseProject, type GfxLine, type ListingLine, type ProjectInput } from '@mimir/core';
+import { blockMc, drawGfxLine, gfxMcChanges, markMc, mcSetting, vicMc, gfxCells, gfxHead, gfxItemAt, gfxItemBox, gfxListing, gfxRects, gfxSize } from '../src/lib/gfxlines';
 import { cellAt, cellsOf } from '../src/lib/cells';
 import { foldLines } from '../src/lib/fold';
 import { findText } from '../src/lib/find';
@@ -124,6 +124,50 @@ describe('graphics as pictures in the listing', () => {
     expect(pics(gfxListing(render(B, q).lines, B).lines).filter(l => l.kind === 'chars').every(l => l.mc)).toBe(true);
     const C = render(A, p, { dataAsCode: true });
     expect(pics(gfxListing(C.lines, A).lines)).toEqual([]);
+  });
+
+  it('draws sprites and a charset as Multicolor was where they were marked (the Graphics tab)', () => {
+    // the font at $2800 is hires as the VIC says ($d016 multicolour, but a bitmap mode), the sprites multicolour ($d01c)
+    expect(vicMc(A, 'charset', 0x2800, 0x3000)).toBe(false);
+    expect(vicMc(A, 'sprite', 0x2000, 0x2100)).toBe(true);
+    // a setting only where the VIC says otherwise
+    expect(mcSetting(A, 'charset', 0x2800, 0x3000, true)).toBe(true);
+    expect(mcSetting(A, 'charset', 0x2800, 0x3000, false)).toBeNull();
+    expect(mcSetting(A, 'sprite', 0x2000, 0x2100, false)).toBe(false);
+    expect(mcSetting(A, 'sprite', 0x2000, 0x2100, true)).toBeNull();
+    // Mark as Charset with Multicolor on: the listing draws its characters multicolour
+    const o = markMc(A, markOverride(A, 0x2800, 0x3000, 'charset').override, true);
+    expect(o.props?.mc).toBe(true);
+    const q: ProjectInput = { ...p, overrides: [...(p.overrides ?? []), o] };
+    const B = analyze(q), chars = pics(gfxListing(render(B, q).lines, B).lines).filter(l => l.kind === 'chars');
+    expect(chars.length).toBeGreaterThan(0);
+    expect(chars.every(l => l.mc)).toBe(true);
+    // with it off, as the VIC says: no setting; and a mark that is no graphics is left as it is
+    expect(markMc(A, markOverride(A, 0x2800, 0x3000, 'charset').override, false).props?.mc).toBeUndefined();
+    const bytes = markOverride(A, 0x2800, 0x3000, 'bytes').override;
+    expect(markMc(A, bytes, true)).toBe(bytes);
+    // marked hires where the block it merges with is set multicolour: hires (what was seen gives the setting)
+    const set = formatOverride(B.blocks.find(x => x.type === 'charset')!, { mc: true });
+    expect(markMc(B, { ...set }, false).props?.mc).toBeUndefined();
+  });
+
+  it('switching Multicolor in the Graphics tab sets it for the blocks of the kind shown that the selection is in', () => {
+    // the charset at $2800 drawn as characters, multicolour: one change, a setting
+    const ch = gfxMcChanges(A, 'chars', 0x2810, 0x2820, true);
+    expect(ch.map(c => [c.b.start, c.mc])).toEqual([[0x2800, true]]);
+    expect(gfxMcChanges(A, 'fontrows', 0x2810, 0x2820, true).map(c => c.b.start)).toEqual([0x2800]);
+    // already drawn so, or not the kind the view draws, or screens: nothing
+    expect(gfxMcChanges(A, 'chars', 0x2810, 0x2820, false)).toEqual([]);
+    expect(gfxMcChanges(A, 'sprites', 0x2810, 0x2820, true)).toEqual([]);
+    expect(gfxMcChanges(A, 'screens', 0x2810, 0x2820, true)).toEqual([]);
+    // the sprites hires: a setting; back to multicolour once set: the setting goes (as the VIC registers say)
+    const sp = gfxMcChanges(A, 'sprites', 0x2000, 0x2100, false);
+    expect(sp.map(c => [c.b.type, c.mc])).toEqual(sp.map(() => ['sprite', false]));
+    expect(sp.length).toBeGreaterThan(0);
+    const q: ProjectInput = { ...p, overrides: [...(p.overrides ?? []), ...sp.map(c => formatOverride(c.b, { mc: c.mc }))] };
+    const B = analyze(q);
+    expect(pics(gfxListing(render(B, q).lines, B).lines).filter(l => l.kind === 'sprite').some(l => l.mc)).toBe(false);
+    expect(gfxMcChanges(B, 'sprites', 0x2000, 0x2100, true).map(c => c.mc)).toEqual(sp.map(() => null));
   });
 });
 

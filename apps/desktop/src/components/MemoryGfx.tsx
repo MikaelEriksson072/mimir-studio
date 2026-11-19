@@ -61,7 +61,11 @@ const CODE_KINDS: BlockKind[] = ['screen', 'text', 'data', 'table', 'words', 'lo
 interface MemoryGfxProps {
   A: AnalysisResult; R: RenderResult; cursor: Addr | null; sel: Sel | null;
   onSelect: (start: Addr, end: Addr) => void; onClear: () => void;
-  onMark: (id: string, range: { start: Addr; end: Addr }) => void;
+  /** Mark as: `mc` is Multicolor as the bytes are drawn here (not given for screens, whose bytes are screen codes): the
+   *  block draws so in the listing too */
+  onMark: (id: string, range: { start: Addr; end: Addr }, mc?: boolean) => void;
+  /** Multicolor switched with a selection: the blocks of the type this view draws that it has bytes in draw so too */
+  onMulticolor?: (range: { start: Addr; end: Addr }, view: GfxKind, mc: boolean) => void;
   /** Unmark: the graphics blocks in the range, cut to it, become data */
   onUnmark: (range: { start: Addr; end: Addr }) => void;
   onShow: (a: Addr) => void;
@@ -101,7 +105,7 @@ async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArr
 
 const plainAddr = (a: Addr) => `$${h4(a)}`;
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
@@ -478,7 +482,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onUnma
             </select></label>
         </OptGroup>}
         <OptGroup title="Colours">
-          <label className="check gfxv-mc"><input type="checkbox" checked={mc} onChange={e => set({ mc: e.target.checked })} /><span>Multicolor</span></label>
+          <label className="check gfxv-mc" title={kind === 'screens' ? 'Draw the characters multicolour: pairs of bits, each two pixels wide' : `Draw multicolour: pairs of bits, each two pixels wide. ${kind === 'sprites' ? 'Sprite data' : kind === 'bitmap' ? 'A bitmap' : 'A charset'} the selection is in is drawn so in the listing too, and Mark as takes it with it`}><input type="checkbox" checked={mc} onChange={e => { set({ mc: e.target.checked }); if (range && kind !== 'screens') onMulticolor?.(range, kind, e.target.checked); }} /><span>Multicolor</span></label>
           <label className="check gfxv-mc" title="Bytes in a block that is already graphics (Charset, Sprite data, Bitmap or Screen matrix, set by the analysis or by you) are drawn tinted orange, the graphics colour, so what is left to find stands out. Saved files keep their own colours">
             <input type="checkbox" checked={marked} onChange={e => set({ marked: e.target.checked })} /><i className="gfxv-marked" style={{ background: `rgb(${MARKED_TINT.join(',')})` }} /><span>Marked graphics</span></label>
           {(['bg', 'fg', ...(mc ? ['mc1', 'mc2'] : [])] as (keyof GfxPrefs['colors'])[]).map(k => (
@@ -493,7 +497,7 @@ export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onUnma
           <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           <span className="grow" />
           {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && bitmapRows < BITMAP_ROWS)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
-          {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range)}>Mark as {label}</button>)}
+          {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range, kind === 'screens' ? undefined : mc)}>Mark as {label}</button>)}
           <button className="btn small" disabled={!gfxIn.length} title={unmarkTitle} onClick={() => onUnmark(range)}>Unmark</button>
           {onLibrary && (kind === 'chars' || kind === 'sprites') && <button className="btn small" title={`Keep a copy of the selection as ${kind === 'chars' ? 'a charset' : 'sprites'} in the library (the Library view in the activity bar), in these colours, for every project`}
             onClick={() => onLibrary(range, kind, mc, colors)}><Icon name="library" size={13} />Add to library</button>}
