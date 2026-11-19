@@ -1434,7 +1434,8 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | US Golds bandladdare | Freeloads bitläsning med ledaren `$20` och synken `$ff` (`cmp #$20 / beq / cmp #$ff / beq`): 720, Masters of the Universe, Super Huey II, Turbo Out Run |
 | Mega-Save | väntan på ledaren `$63` och synkbyten `$64`…`$ff` i laddaren i bandhuvudet (`cmp #$63 / bne / ldy #$64 / jsr … / cmp #$63 / beq / cpy zp / bne`), och bitläsningen i bootfilen (`lda $dc0d / and #$10 / beq / lda $dd0d / stx $dd07 / lsr / lsr / lda #$19 / sta $dd0f / rts`: en puls startar om CIA2:s timer B, svag). Palace (Cauldron), Hewson, Level 9, Alligata, Llamasoft, CRL (TAPCleans namn; Final TAP kallade den CHR, efter Cauldron, Hewson och Rainbird) |
 | Cyberload | bitläsningen `lda #$10 / bit $dc0d / beq / lda $dc04 / cmp $dc04 / beq / clc / lda #$19 / sta $dc0e / php` (TapeTool har samma utan `php`, och med `pha` före), och bootfilens dekryptering av laddaren i bandhuvudet (`ldy #… / eor $0350,y / sta $0350,y / dey / bne / eor #… / sta $dc0d`). Tredje och fjärde steget läser bandet i ett avbrott: bitläsningen `lda $dc0d / lsr / lda #$11 / sta $dc0e` (svag) och sökandet efter ledarbyten `$0f` bit för bit innan det går över till hela byte genom att skriva om sina egna grenar (`cmp #$0f / bne / lda #$18 / sta … / lda #$00 / sta … / lda #$01 / sta zp`), så att Tuskers `$f800` och `$fd00` också heter Cyberload. Thalamus, Activision, Hewson, System 3, Silverbird, Virgin, Elite, Accolade, MicroProse (texten "CYBERLOAD NOW LOADING …" i skärmkoder i bootfilen). Bandformaten i 13.5e |
-| Interceptor Micros laddare | bitläsningen `sty $d020 / eor #$02 / lsr / lsr / ror`, minst signifikanta biten först, väntan på ledaren `$a0` (`cmp #$a0 / bne / lda #$27 / sta $0119`), och bootkoden i bandhuvudet som läser laddaren med KERNAL:ns `$f84a` och dekrypterar den till stacksidan (`lda $00ff,y / eor …,y / sta $00ff,y / dey / bne`). Activision, Thalamus Hits, Electric Dreams, Domark (texten "(C) INTERCEPTOR MICROS 1987") |
+| Wildload (Interceptor Micros) | bitläsningen `sty $d020 / eor #$02 / lsr / lsr / ror`, minst signifikanta biten först, väntan på ledaren `$a0` (`cmp #$a0 / bne / lda #$27 / sta $0119`), och bootkoden i bandhuvudet som läser laddaren med KERNAL:ns `$f84a` och dekrypterar den till stacksidan (`lda $00ff,y / eor …,y / sta $00ff,y / dey / bne`). Activision, Thalamus Hits, Electric Dreams, Domark, Image Works, Incentive, Mirrorsoft (texten "WILD SAVE (C) INTERCEPTOR MICROS 1987 WRITTEN BY ANDREW CHALLIS JANUARY 1987" i bandbufferten, som varje kedjas första block fyller). Formatet heter Wildload i TAPClean och läses i 13.5e; Interceptors egna spel har ett annat, Microload |
+| Microload | avbrottet i bandhuvudet (`$0351`): bitläsningen `lda #$91 / sta $dd0e / lda $dd0d / lsr / lda $dc0d / ror zp` (CIA2:s timer A startas om vid varje puls; svag) och väntan på ledaren `$a0` och synken `$0a`…`$01` genom grenar den skriver om (`cmp #$a0 / bne / lda # / sta / bne / cmp #$a0 / beq / cmp #$0a / beq`; svag), och lagringen som räknar upp den negativa längden (`sta (zp),y / eor zp / sta zp / inc zp / bne +4 / inc zp / dec zp`). Rainbow Arts, Magic Bytes och Golden Goblins bootfiler har de två svaga (så de heter inte Microload). Interceptor Micros egna spel, Electric Dreams, Epyx, Players. Bandformatet i 13.5e |
 | Mastertronics bandladdare | bitläsningen `lda #$10 / bit $dc0d / beq / lda #$11 / sta $dd0e / lda $dd0d / lsr / bit $dc0d / rol` (CIA2:s timer A som one-shot från `$01b6`) och 9 bitar per byte (`ldx #$09 / jsr … / inc $d020 / dex / bne`). Mastertronic, M.A.D., Codemasters, Firebirds och Silverbirds budgetband, Durell (17 band) |
 | Firebirds bandladdare | avbrottet `lda $dc0d / pha / and #$01 / ora zp / sta zp / pla / clc / and #$10 / beq / lda #$19 / sta $dd0e / lda $dd0d / lsr / rol` (FLAG-linjen, sedan CIA2:s timer A) och väntan på en ledarbyte och dess komplement (`cmp zp / beq / eor #$ff / cmp zp / bne`, svag); samma kod i första steget och i den andra laddaren programmet anropar (Bubble Bobbles `$1c00` och `$4900`). Firebird, Silverbird, Rainbird, Psygnosis, Odin, Thor, Activision, Melbourne House. Den piper inte (ingen SID-skrivning), så den kallas inte Bleepload. Bandformaten i 13.5e |
 | Super Snapshot turbo (LMS) | Turbo V5, LOAD och SAVE. LOAD tar emot fyra byte per handskakning till `$aa–$ad` (`bit $dd00 / bvs / ldy #$03 / nop / bit $80 / lda $dd00 / lsr / lsr / nop / nop / ora $dd00 …`), och koden den kopierar till `$0200` lägger dem i minnet med ROM:en avbankade (`lda #$34 / sta $01 / lda $aa / sta ($93),y …`, 51 byte); filens första byte byts en bit i taget (`sta $a6 / ldx #8 / bit $dd00 / bvc …`): laddadressen, och bit 7 för Warp*25. En byte till GET, katalogen och filkopieraren och en från SAVE, båda på en rad utan badline (`bit $dd00 / bpl / sec / lda $d012 / sbc $26 / bcc / and #$07 / cmp #$02 / bcc`, sedan `lda $2a` respektive `lda #$07 / sta $dd00`); drivkoden skickas två halvbyte i taget med MK4:ans badline-väntan (`cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); kommandona `M-R $fffe`, `M-W $0150` och `$0173` (35 byte var) och `M-E $0150`; drivkoden: starten vid `$0150`, 1541-koden vid `$0300` och `$0400`, SAVE:s vid `$0500`, 1581-koden vid `$0503` (`lda #$d2 / sta $4001`). En fil med bit 7 satt läses som Action Replays Warp*25 med Action Replays kod (mottagarloopen och avkodningen ovan; drivkoden är densamma, omflyttad), och de delarna blir turbons |
@@ -3707,6 +3708,41 @@ fönstret på en gång. `readTape()` (`packages/core/src/c64/tap.ts`) läser avb
   Formaten lästes ur Paperboys (Elite) bootkod och den LOAD den lägger i `$0330`, körda i Sindri med bandet: alla
   81 356 byte de lagrade är desamma som läsaren ger, i samma ordning. Den äldre Novaload (Turbo Esprit) läser samma
   filer med samma summor. Ett block eller en sida vars summa inte stämmer behålls, med felet.
+- **Wildload**, Interceptor Micros laddare (TAPClean:s namn; varje kedjas första block fyller bandbufferten med "WILD
+  SAVE (C) INTERCEPTOR MICROS 1987 WRITTEN BY ANDREW CHALLIS JANUARY 1987", och analysen, 8.11c, kallar den Wildload
+  (Interceptor Micros). Activision, Thalamus Hits, Electric Dreams, Domark, Image Works, Incentive, Mirrorsoft …; Delta,
+  Karnov, International Karate, APB, Joe Blade):
+  bootfilen, som startar genom IRQ-vektorn som KERNAL:ns LOAD lägger tillbaka från `$029f`, läser laddarens 208 byte
+  till stacksidan med KERNAL:n (`$f84a`), dekrypterar dem med sitt bandhuvud och läser resten i ett avbrott på
+  FLAG-linjen: CIA1:s timer A, omstartad från `$03e0` vid varje puls, har gått under `$0200` (bit 1 i dess höga byte)
+  efter en puls längre än cirka 480 cykler, och det är en 1; lägsta biten först. En ledare av `$a0` (som laddaren letar
+  efter bit för bit; banden har 230–256, minst 32 här), synkbyten `$0a`…`$01`, sedan block direkt efter varandra: ett
+  huvud på 5 byte (adressen till blockets sista byte, antal byte, en flagga), byten från den sista och nedåt, var och en
+  XOR den låga byten i sin adress, och XOR av byten den lagrat. Ett huvud med flaggan `$fe` avslutar kedjan (laddaren
+  hoppar in i det den laddat, på olika ställen i olika spel), `$ff` får den att leta efter nästa ledare; annars är det
+  ett block, som lagras med `$01` = 0 när flaggan är 0 (i RAM under I/O), annars med `$01` = 5, så att ett block vid
+  `$d000`–`$dfff` hamnar i VIC:ens och CIA:ornas register och färgminnet: så sätter kedjan upp laddbilden. Varje block
+  är en fil `file_<start>`, och Tape-flikens anteckning säger när ett block går till I/O eller under den och vad
+  laddaren gör efter kedjans sista block. Det första blocket i en kedja ska ha en summa som stämmer: Microload
+  (Interceptors egna band: Bigtop Barney, Front Line) och Rainbow Arts laddare har samma ledare och synk men andra
+  huvuden. Ett senare block vars summa inte stämmer behålls, med felet, och ett som bandet tar slut i ger de byte som
+  finns på det. Formatet lästes ur Deltas (Thalamus) laddare, körd i Sindri med bandet: alla 55 398 byte den lagrade
+  är läsarens, i samma ordning.
+- **Microload** (TAPClean:s namn; Interceptor Micros egna spel: Bigtop Barney, Front Line, Guzzler, Melonmania; och
+  Electric Dreams Aliens, Chameleon, Dandy, Epyx Movie Monster Game, Winter Games, Jumpman, Players Velocipede, Ronald
+  Rubberduck, och den första filen på Magic Bytes band): laddaren ligger i bootfilens bandhuvud, vid `$0351`, och
+  bootfilen vid `$02a7`, som BASIC:s väntevektor `$0302` startar, gör den till avbrottet vid `$fffe`. Varje puls på
+  FLAG-linjen startar om CIA2:s timer A från `$014d`, och en 1 är att den hann ta slut (333 cykler); lägsta biten först.
+  En ledare av `$a0` (som laddaren letar efter bit för bit; 255 byte på banden, 857 på Magic Bytes, minst 32 här),
+  synkbyten `$0a`…`$01` (laddaren skriver om sin egen gren för varje steg), sedan starten och längden som ett negativt
+  tal (som räknas upp till 0), datan från första byten och uppåt och deras XOR. En summa som inte stämmer startar om
+  datorn (`$fcf2`). Bootfilen säger hur många filer laddaren läser (`$fa`) och var spelet startar; den första filens
+  kod körs medan resten laddas. Varje fil heter `file_<start>`. Bandet stannar efter varje fil, så en fil vars summa
+  inte stämmer tas bara där sträckan slutar med den (med felet): Wildloads kedjor och Rainbow Arts block (ett
+  blocknummer före starten) har samma ledare och synk, och lästa som Microload hamnar deras längder någon annanstans.
+  En Wildload-kedja eller en Microload-fil tar sina pulser: en fil i ett annat format inne i dem är deras data som
+  råkar ha dess ledare, synk och en summa som stämmer (en Freeload-fil på 64 byte i Ronald Rubberducks `$0800`).
+  Formatet lästes ur Bigtop Barneys bootkod, körd i Sindri med bandet.
 - **Cyberload** (System 3, Thalamus, Activision, Accolade, Electronic Arts, MicroProse, Gremlin, Virgin …): en puls
   längre än CIA1:s timer A (one-shot, oftast cirka 500 cykler) är en 1, högsta biten först, och varje synkbyte har en
   ledare av `$0f`-byte före sig (minst fyra här). Laddaren laddar i fyra steg efter KERNAL-bootfilen, var och ett i ett
@@ -3895,11 +3931,38 @@ spelet, Captain Fizz väntar på F1, F3 eller F5 i en meny, Star Trek visar sin 
 bildrutor (43 s; en väntan på en räknare som avbrottet ökar väntar Sindri inte ut, *Program som väntar på tiden* i
 8.11b), Revs laddar Silverstone-banan och väntar sedan på Brands Hatch (ledarbyte `$16`) och huvudfilen (`$17`), som
 inte finns på det bandet (VICE står på "LOADING BRANDS HATCH TRACK" efter bandets slut), och Revs Gold Edition väntar
-i sin banväljare på två siffertangenter. `test/tap.test.ts` läser det
+i sin banväljare på två siffertangenter. Wildload (2026-11-18): av arkivets 3 286 band (utom Private) 1 064 filer på
+63 band (Activision, Thalamus Hits, Electric Dreams, Domark, Image Works, Incentive, Mirrorsoft, Players …), 4 383 276
+byte, ingen med fel; sträckorna med okänd turbodata gick från 10 119 till 9 880 och band med inget kvar från 1 668 till
+1 730, utan att någon fil i ett annat format ändrades. Alla 239 kedjor slutar med ett huvud med `$fe` eller `$ff`, alla
+ledare har 230–256 byte, och alla bootfiler dekrypterar samma laddare, bara med en annan kantfärg, nollsidans variabler
+flyttade (Firetrack, Explorer), timer B (Quedex) eller ett annat hopp efter kedjan (`$02eb` i Delta). Kvar är Karnov
+sida B:s två första sträckor, som är skadade på avbilden (pulser på 128–144 cykler bland bitarna, synken bryts efter
+`$0a $09 $08`). Microloads band (Interceptors egna, 224 och 432 cykler, Bigtop Barney, Front Line) och Rainbow Arts och
+Magic Bytes (cirka 200 och 440 cykler, ledare på 800–1 000 byte) har samma ledare och synk, men deras första block
+stämmer inte som Wildload och ger inga filer. Sindri körde de 59 banden med en bootfil: på 48 laddar den alla
+Wildload-block, och alla 3 142 703 byte laddaren lagrade (`sta (zp),y` efter `eor zp`, var laddaren än låg) är
+läsarens i samma ordning. De andra elva stannar i spelens egen kod: nivåer och banor som laddas under spelet (Karnov,
+Super Hang-On, Super Sprint, Championship Baseball, Quedex), Bombuzal som väntar vid `$0a0a`, och två avbilder där
+Wildload-spelet kommer efter ett annat spels bootfil (Basket Master: Imagines Freeload-filer och sedan Championship
+Sprint; Zzap-bandet). Microload (2026-11-19): 185 filer på 35 band, 2 263 780 byte, ingen med fel; sträckorna med
+okänd turbodata gick från 9 880 till 9 699 och band med inget kvar från 1 730 till 1 763. Den enda andra ändringen är en
+Freeload-fil på 64 byte vid `$8040` som försvann på båda avbilderna av Ronald Rubberduck: den låg inne i Microload-filen
+vid `$0800`, vars byte laddaren lagrar (Sindri). Alla 35 bootfiler har samma laddare, bara antalet filer och var
+spelet startar skiljer, och alla ledare har 255 byte utom Magic Bytes 857. Kvar på de banden är Rainbow Arts block
+(Clever & Smart, Western Games). Sindri körde de 34 banden med en bootfil: på 28 laddar den alla filer, och alla
+1 481 929 byte laddaren lagrade är läsarens i samma ordning; de andra laddar mer senare (Winter Games grenar, Movie
+Monster Games delar, Aliens, Vampire's Empire) eller börjar med ett BASIC-program (Token of Ghall). `test/tap.test.ts`
+läser det
 `makeTap()` skriver (namn, typer, adresser, båda kopiorna, en trasig puls i en kopia eller båda), versionerna 0–2,
 relokeringen, TapeTool och Turbo Tape, Cyberloads fyra steg (skrivna av `test/helpers/cyberload-tape.ts`, med en egen
-kod för andra steget), och fixturerna `fixtures/tap/mimir-demo.tap` och `fixtures/tap/cyberload-demo.tap` (de fyra
-stegen, rasterdemot fjärde stegets fil `DEMO`).
+kod för andra steget), Wildloads kedjor (`wildChain` i `test/helpers/tapetool-tape.ts`: block som laddas nedifrån, I/O
+och RAM under den, båda slutflaggorna, en summa som inte stämmer, ett block bandet tar slut i, en sträcka som börjar
+med bitarna 1, 0, 1), Microloads filer (`microFile`: Magic Bytes längre ledare, en fil upp till minnets slut, en summa
+som inte stämmer där sträckan slutar och där den inte gör det, Rainbow Arts block och Wildloads kedja som inte ger
+några, en Freeload-fil i en Microload-fils bitar som inte blir en egen), och fixturerna `fixtures/tap/mimir-demo.tap`,
+`fixtures/tap/cyberload-demo.tap` (de fyra stegen, rasterdemot fjärde stegets fil `DEMO`),
+`fixtures/tap/wildload-demo.tap` och `fixtures/tap/microload-demo.tap`.
 
 ### 13.5f Datasetten i Sindri och i VICE
 

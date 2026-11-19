@@ -598,6 +598,13 @@ describe("the Action Replay's loaders", () => {
     expect(ids(withIrq(loadIrq))).toEqual(['novaload']);
     // waiting for another sync byte: a tape loader, not named
     expect(ids(withIrq(loadIrq.replace('sbc #$aa', 'sbc #$ab')))).toEqual(['tape?']);
+    // Microload (Bigtop Barney's tape header): CIA2's timer A restarted at each pulse, whether it ran out, the pilot $a0
+    // and the sync bytes through branches it writes, and the store that counts the negative length up
+    const microRead = ' dec $db15\n pha\n lda #$91\n sta $dd0e\n lda $dd0d\n lsr\n lda $dc0d\n ror $bd\n lda $bd\n dey\n beq step\n pla\n rti\nstep: cmp #$a0\n bne bit\n lda #$0d\n sta $0367\n bne next\n cmp #$a0\n beq next\n cmp #$0a\n beq next\nbit: iny\n pla\n rti\nnext: ldy #$08\n pla\n rti\n';
+    const microStore = 'store: sta ($fc),y\n eor $ab\n sta $ab\n inc $fc\n bne cnt\n inc $fd\n dec $fb\ncnt: inc $fe\n bne next\n inc $ff\n jmp next';
+    expect(ids(withIrq(microRead + microStore))).toEqual(['microload']);
+    // Rainbow Arts' and Magic Bytes' boots read the bits and the pilot with the same code: a tape loader, not named
+    expect(ids(withIrq(microRead))).toEqual(['tape?']);
     // Cyberload: TapeTool's bit reading without its pha, with a php after
     const cyber = ids(' lda #$f3\n sta $dc04\n lda #$01\n sta $dc05\n jsr bit\n rts\nbit: lda #$10\nw: bit $dc0d\n beq w\n lda $dc04\n cmp $dc04\n beq one\n clc\none: lda #$19\n sta $dc0e\n php\n dec $f0\n plp\n rts\n');
     expect(cyber).toEqual(['cyberload']);

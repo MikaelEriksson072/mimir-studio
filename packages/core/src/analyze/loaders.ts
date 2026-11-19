@@ -244,8 +244,8 @@ const KNOWN: Known[] = [
     text: 'CYBERLOAD',
   },
   {
-    id: 'interceptor', name: 'Interceptor Micros\' loader',
-    how: 'tape: an IRQ on the FLAG line, bit 1 of CIA1\'s timer A high byte, the lowest bit first; a pilot of $a0, the sync bytes $0a … $00, the start page and the length as a negative number, the data and their XOR. It runs in the stack page. Interceptor\'s, and Activision\'s, Thalamus\' Hits, Electric Dreams\' and Domark\'s tapes',
+    id: 'interceptor', name: 'Wildload (Interceptor Micros)',
+    how: 'tape: an IRQ on the FLAG line, bit 1 of CIA1\'s timer A high byte (restarted from $03e0 at each pulse: a 1 after about 480 cycles), the lowest bit first; a pilot of $a0, the sync bytes $0a … $01, then a chain of blocks with nothing between them, each a header (the address of its last byte, how many bytes, a flag: $fe ends the chain, $ff waits for the next pilot, 0 stores under the I/O), its bytes from the last one down, each XOR the low byte of its address, and their XOR. It runs in the stack page, where the boot in the tape header reads it with the KERNAL and decrypts it. Each chain\'s first block fills the tape buffer with "WILD SAVE (C) INTERCEPTOR MICROS 1987 WRITTEN BY ANDREW CHALLIS JANUARY 1987"; TAPClean calls the format Wildload (Interceptor\'s own games have Microload, another). Activision\'s, Thalamus\' Hits, Electric Dreams\', Domark\'s, Image Works\', Incentive\'s and Mirrorsoft\'s tapes',
     signs: [
       { pat: pat('8C 20 D0 49 02 4A 4A 66'), role: 'tape', what: 'reads a bit in its IRQ: bit 1 of CIA1\'s timer A high byte, into the byte (ror), the border flashing' },
       { pat: pat('C9 A0 D0 0B A9 27 8D 19 01'), role: 'tape', what: 'waits for the pilot byte $a0' },
@@ -253,6 +253,17 @@ const KNOWN: Known[] = [
       { pat: pat('B9 FF 00 59 .. .. 99 FF 00 88 D0'), role: 'tape', what: 'the boot in the tape header: decrypts the loader it read with the KERNAL ($f84a) into the stack page' },
     ],
     text: 'INTERCEPTOR MICROS',
+  },
+  // Interceptor Micros' own games, and Electric Dreams', Epyx's, Players': the loader is the tape header's IRQ (Bigtop
+  // Barney's); Rainbow Arts' and Magic Bytes' boots read the bits and the pilot with the same code (Golden Goblins' too)
+  {
+    id: 'microload', name: 'Microload',
+    how: 'tape: the IRQ in the tape header ($0351, the boot file at $02a7 makes it the IRQ at $fffe) restarts CIA2\'s timer A from $014d at each pulse on the FLAG line, and a 1 is that it ran out (333 cycles), the lowest bit first; a pilot of $a0 found bit by bit, the sync bytes $0a … $01 (the loader writes its own branch for each step), then the start, the length as a negative number counted up to 0, the data from the first byte up and their XOR; a sum that does not fit resets the C64. The boot file says how many files it reads and where it starts the game. TAPClean\'s name. Interceptor Micros\' own games (Bigtop Barney, Front Line, Guzzler), Electric Dreams\', Epyx\'s, Players\', the first file of Magic Bytes\' tapes',
+    signs: [
+      { pat: pat('A9 91 8D 0E DD AD 0D DD 4A AD 0D DC 66'), role: 'tape', what: 'reads a bit in its IRQ: restarts CIA2\'s timer A and takes whether it ran out (lsr of $dd0d), into the byte (ror)', weak: true },
+      { pat: pat('C9 A0 D0 .. A9 .. 8D .. .. D0 .. C9 A0 F0 .. C9 0A F0'), role: 'tape', what: 'waits for the pilot byte $a0 bit by bit, then the sync bytes $0a … $01 (it writes its own branch for each step)', weak: true },
+      { pat: pat('91 .. 45 .. 85 .. E6 .. D0 04 E6 .. C6'), role: 'tape', what: 'stores a byte and adds it to the XOR, then counts the address up and the negative length up to 0' },
+    ],
   },
   {
     id: 'mastertronic', name: "Mastertronic's tape loader",

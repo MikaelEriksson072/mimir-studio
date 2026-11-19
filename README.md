@@ -59,7 +59,7 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     loader file of a Warp*25 backup (the MK4's too) and the loader in a tape backup's header. Novaload, which the
     7.2's Nova transfer reads, is known as well;
   - the big publishers' tape loaders, learned from their tapes: Novaload (and its IRQ version), Ocean's Freeload, US
-    Gold's, Mega-Save, Cyberload, Interceptor Micros', Mastertronic's and Firebird's, each by its own code that reads
+    Gold's, Mega-Save, Cyberload, Interceptor Micros' Wildload and Microload, Mastertronic's and Firebird's, each by its own code that reads
     the tape;
   - the Super Snapshot's loaders (V5): its turbo, LOAD and SAVE for the 1541 and the 1581 (it reads the Action Replay's
     Warp*25 files with the Action Replay's code, which then counts as the turbo's), the disk copier and the file copier,
@@ -125,7 +125,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     disk and unpacked, with the command file; `mimir disks <folder>` counts the disks each loader's reader takes;
   - tapes (`.tap`): the KERNAL's own files (both copies read, the cleaner one taken), Turbo Tape 64, Freeload, US
     Gold's loader, Mega-Save (Palace's, Hewson's, Level 9's …), Novaload (Novagen's, Elite's, Encore's …: the files its LOAD reads by name and the pages the loader in the boot file's header reads), Cyberload (all four stages: the loader's own two, the third's blocks with an address of their own and
-    the files the fourth loads by name, the game's levels too), Firebird's loader (Firebird's, Silverbird's, Rainbird's,
+    the files the fourth loads by name, the game's levels too), Wildload (Activision's, Thalamus' Hits, Electric Dreams',
+    Domark's …: the chains of blocks its loader in the stack page reads, each loaded from its last byte down), Microload
+    (Interceptor Micros' own games, Electric Dreams', Epyx's, Players' …), Firebird's loader (Firebird's, Silverbird's, Rainbird's,
     Psygnosis', Odin's …: the chain of blocks its first stage reads, and the files of the second loader a program calls)
     and Martin Piper's TapeTool (the TinyHeader file its boot
     loader reads, files in checksum blocks in any order, RLE packed blocks) are

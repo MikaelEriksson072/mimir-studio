@@ -23,6 +23,11 @@
  *   of 10 bytes (start, end, …), the data and their XOR;
  * - Novaload (Novagen's, Elite's, Encore's, US Gold's Americana …): the lowest bit first, a pilot of 0 bits, a 1 and $aa;
  *   a file its LOAD reads (the name, start, end, blocks with a running sum) or the pages its boot file's loader reads;
+ * - Wildload (Interceptor Micros' loader, on Activision's, Thalamus' Hits, Electric Dreams', Domark's … tapes): the
+ *   lowest bit first, a pilot of $a0, the sync bytes $0a … $01, then a chain of blocks loaded from their last byte down
+ *   (wildFiles);
+ * - Microload (Interceptor Micros' own games, Electric Dreams', Epyx's …): the same pilot and sync, then the start, the
+ *   length as a negative number, the data and their XOR (microFiles);
  * - Cyberload (System 3's, Thalamus', Activision's, Accolade's …): a pilot of $0f before every sync byte, the loader's
  *   four stages each in a format of its own (cyberFirst, cyberSecond, cyberBlocks, cyberNamedFiles);
  * - Firebird's loader (Firebird's, Silverbird's, Rainbird's, Psygnosis', Odin's …): blocks of a pilot byte, its
@@ -94,7 +99,7 @@ export function tapPulses(u8: Uint8Array): TapPulses {
 }
 
 /** `t64`: a file of a T64 tape archive (t64.ts), which holds the files, not the pulses */
-export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'novaload' | 'cyberload' | 'firebird' | 't64';
+export type TapeFormat = 'cbm' | 'tapetool' | 'turbotape' | 'freeload' | 'usgold' | 'megasave' | 'novaload' | 'wildload' | 'microload' | 'cyberload' | 'firebird' | 't64';
 /** CBM: a program (type 3, loads where it was saved), a BASIC program (type 1, relocatable: LOAD puts it at the start
  *  of BASIC), a SEQ file (type 4, its data in type 2 blocks), the end-of-tape marker (type 5), or data without a header */
 export type TapeFileType = 'PRG' | 'BASIC' | 'SEQ' | 'END' | 'DATA';
@@ -901,6 +906,150 @@ function novaPages(p: TapPulses, bits: Uint8Array, base: number, k: number): { f
   return { files, end: at };
 }
 
+/* ---- Wildload ---- */
+
+/* Wildload (TAPClean's name), Interceptor Micros' loader: each chain's first block fills the tape buffer with "WILD SAVE
+ * (C) INTERCEPTOR MICROS 1987 WRITTEN BY ANDREW CHALLIS JANUARY 1987". Activision's, Thalamus' Hits, Electric Dreams',
+ * Domark's, Image Works', Incentive's, Mirrorsoft's … tapes (Interceptor's own games have Microload, another format with
+ * the same pilot and sync bytes: the start, the length as a negative number, the data from the first byte up). The boot
+ * file, started through the IRQ vector the KERNAL's LOAD puts back from $029f, reads the loader's 208 bytes into the
+ * stack page with the KERNAL ($f84a), decrypts them with its tape header and reads the rest in an IRQ on the FLAG line:
+ * CIA1's timer A, restarted from $03e0 at each pulse, is below $0200 (bit 1 of its high byte) after a pulse longer than
+ * about 480 cycles, a 1; the lowest bit first. A pilot of $a0 (found bit by bit), the sync bytes $0a … $01, then blocks one after another with nothing between
+ * them: a header of 5 bytes (the address of the block's last byte, how many bytes it has, a flag), its bytes from the
+ * last one down, each XOR the low byte of its address, and the XOR of the bytes it stored. A header with the flag $fe ends
+ * the chain (the loader jumps into what it loaded), $ff makes it look for the next pilot; any other flag is a block,
+ * stored with $01 = 0 when the flag is 0 (into the RAM under the I/O), else with $01 = 5, so a block at $d000-$dfff goes
+ * to the VIC's and the CIAs' registers and the colour RAM: the loading picture's. Learned from Delta's (Thalamus) loader,
+ * run in Sindri with the tape: every byte it stored is the reader's, in the same order. */
+
+/** pilot bytes a Wildload chain needs before its sync (its tapes have 230 to 256) */
+const WILD_PILOT = 32;
+/** the sync bytes after the pilot $a0, Wildload's and Microload's: $0a … $01 */
+const A0_SYNC = 10;
+
+/** What a pilot of $a0 (at least `min` bytes, found bit by bit, the lowest bit first) and the sync bytes $0a … $01
+ *  lead to: `read` gets the pilot's first bit and the bit after the sync, and gives what it read and the bit it ends
+ *  at, or null; the scan goes on from there, or from the end of the pilot (as the loaders look for it bit by bit again
+ *  after a byte that is not the sync). */
+function a0Pilots<T>(bits: Uint8Array, min: number, read: (from: number, at: number) => { v: T; end: number } | null): T[] {
+  const out: T[] = [];
+  let reg = 0;
+  for (let k = 0; k < bits.length; k++) {
+    reg = (reg >> 1) | (bits[k] << 7);
+    // (a byte needs eight bits: three bits 1, 0, 1 at the start of the stretch make $a0 too)
+    if (reg !== 0xa0 || k < 7) continue;
+    const from = k - 7;
+    let at = from, n = 0, s = 0;
+    while (lsbByte(bits, at) === 0xa0) { at += 8; n++; }
+    while (s < A0_SYNC && lsbByte(bits, at + 8 * s) === 0x0a - s) s++;
+    const r = n >= min && s === A0_SYNC ? read(from, at + 8 * A0_SYNC) : null;
+    k = (r ? r.end : at) - 1;
+    reg = r ? 0 : 0xa0;
+    if (r) out.push(r.v);
+  }
+  return out;
+}
+
+function wildFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
+  return a0Pilots(bits, WILD_PILOT, (from, at) => { const c = wildChain(p, bits, base, from, at); return c && { v: c.files, end: c.end }; }).flat();
+}
+
+/** The blocks of a Wildload chain from its first header at bit `at` (its pilot at `from`): a file each, up to the header
+ *  that ends the chain. The first block's sum has to match (other loaders have the pilot $a0 and the same sync bytes:
+ *  Microload, Rainbow Arts'); a later one whose sum does not is kept with an error. */
+function wildChain(p: TapPulses, bits: Uint8Array, base: number, from: number, at: number): { files: TapeFile[]; end: number } | null {
+  const files: TapeFile[] = [];
+  const io = (load: number, end: number) => load < 0xe000 && end > 0xd000;
+  for (;;) {
+    const head = Array.from({ length: 5 }, (_, i) => lsbByte(bits, at + 8 * i));
+    if (head.includes(-1)) break;
+    const top = head[0] | (head[1] << 8), count = head[2] | (head[3] << 8), flag = head[4];
+    if (flag === 0xfe || flag === 0xff || !count) {
+      const last = files[files.length - 1];
+      if (!last) return null;
+      at += 40;
+      last.to = base + at;
+      last.note = [last.note, flag === 0xff ? 'the loader looks for the next pilot after it (flag $ff)' : 'the end of the chain: the loader stops after it (flag $fe)'].filter(Boolean).join('; ');
+      break;
+    }
+    // a block that would go on below $0000 is not a header
+    if (count > top + 1) break;
+    const data = new Uint8Array(count);
+    let pos = at + 40, x = 0, got = 0;
+    for (; got < count; got++, pos += 8) {
+      const v = lsbByte(bits, pos);
+      if (v < 0) break;
+      data[count - 1 - got] = v ^ ((top - got) & 0xff);
+      x ^= data[count - 1 - got];
+    }
+    const sum = got === count ? lsbByte(bits, pos) : -1;
+    if (sum !== x && !files.length) return null;
+    const load = top + 1 - got, end = top + 1, errors: string[] = [];
+    if (got < count) errors.push(`the data runs past the end of the turbo stretch: ${got} of its ${count} bytes are on it`);
+    else if (sum < 0) errors.push('the data runs past the end of the turbo stretch: its sum is not on it');
+    else if (sum !== x) errors.push(`checksum: the data's XOR is $${hex2(x)}, the tape says $${hex2(sum)}`);
+    const note = io(load, end) ? (flag ? 'stored with the I/O in ($01 = 5): its bytes at $d000-$dfff go to the VIC\'s and the CIAs\' registers and the colour RAM' : 'stored with $01 = 0: into the RAM under the I/O') : undefined;
+    files.push({ format: 'wildload', name: `file_${hex4(load)}`, type: 'PRG', load, end, data: data.subarray(count - got), ...fileAt(p, base + (files.length ? at : from)), to: base + Math.min(pos + 8, bits.length), errors, ...(note ? { note } : {}) });
+    if (errors.length && got < count) { at = pos; break; }
+    at = pos + 8;
+  }
+  return files.length ? { files, end: Math.min(at, bits.length) } : null;
+}
+
+/* ---- Microload ---- */
+
+/* Microload (TAPClean's name): Interceptor Micros' own games (Bigtop Barney, Front Line, Guzzler, Melonmania),
+ * Electric Dreams' (Aliens, Chameleon, Dandy), Epyx's (Movie Monster Game, Winter Games, Jumpman), Players' (Velocipede,
+ * Ronald Rubberduck) and the first file of Magic Bytes' tapes (Western Games, Vampire's Empire). The loader is in the boot
+ * file's tape header, at $0351 (the boot file at $02a7, which BASIC's idle vector at $0302 starts, makes it the IRQ at
+ * $fffe): a pulse on the FLAG line restarts CIA2's timer A from $014d, and a 1 is that it ran out (333 cycles), the lowest
+ * bit first. A pilot of $a0 (found bit by bit; 255 bytes on the tapes, 857 on Magic Bytes'), the sync bytes $0a … $01,
+ * then the start and the length as a negative number (counted up to 0), the data from the first byte up and their XOR. A
+ * sum that does not fit resets the C64 ($fcf2). The boot file says how many files the loader reads ($fa) and where it
+ * starts the game; the first file's code runs while the others load. Learned from Bigtop Barney's boot, run in Sindri
+ * with the tape. */
+
+/** pilot bytes a Microload file needs before its sync (the tapes have 255 or 857) */
+const MICRO_PILOT = 32;
+/** the pulses a stretch goes on after a file whose sum does not fit (the tape stops after each file: the stretch ends) */
+const MICRO_TAIL = 16;
+
+function microFiles(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
+  return a0Pilots(bits, MICRO_PILOT, (from, at) => microFile(p, bits, base, from, at));
+}
+
+/** Wildload's chains and Microload's files in a stretch: a Microload file is not taken where a chain is (they have the
+ *  same pilot and sync bytes) */
+function wildAndMicro(p: TapPulses, bits: Uint8Array, base: number): TapeFile[] {
+  const wild = wildFiles(p, bits, base);
+  return [...wild, ...microFiles(p, bits, base).filter(m => !wild.some(w => w.at < m.to && m.at < w.to))];
+}
+
+/** A Microload file from its header at bit `at` (its pilot at `from`). One whose sum does not fit is taken only where
+ *  the stretch ends with it: Wildload's and Rainbow Arts' blocks have the same pilot and sync, and read this way their
+ *  lengths take them elsewhere. */
+function microFile(p: TapPulses, bits: Uint8Array, base: number, from: number, at: number): { v: TapeFile; end: number } | null {
+  const head = Array.from({ length: 4 }, (_, i) => lsbByte(bits, at + 8 * i));
+  if (head.includes(-1)) return null;
+  const load = head[0] | (head[1] << 8), neg = head[2] | (head[3] << 8), length = 0x10000 - neg;
+  if (!neg || load + length > 0x10000) return null;
+  const data = new Uint8Array(length);
+  let pos = at + 32, x = 0;
+  for (let i = 0; i < length; i++, pos += 8) {
+    const v = lsbByte(bits, pos);
+    if (v < 0) return null;
+    data[i] = v;
+    x ^= v;
+  }
+  const sum = lsbByte(bits, pos);
+  if (sum < 0) return null;
+  pos += 8;
+  if (sum !== x && bits.length - pos > MICRO_TAIL) return null;
+  const errors = sum === x ? [] : [`checksum: the data's XOR is $${hex2(x)}, the tape says $${hex2(sum)}`];
+  return { v: { format: 'microload', name: `file_${hex4(load)}`, type: 'PRG', load, end: load + length, data, ...fileAt(p, base + from), to: base + pos, errors }, end: pos };
+}
+
 /* ---- Cyberload ---- */
 
 /* Cyberload (System 3, Thalamus, Hewson, Activision …) loads in stages after the KERNAL boot file, each with a pulse
@@ -1369,7 +1518,11 @@ export function readTape(u8: Uint8Array): TapeImage {
       }
       const pilot = pilotFiles(p, bits, r.from);
       doubtful.push(...pilot.doubtful.map(f => ({ f, s: stretches.length })));
-      found.push(...turboTapeFiles(p, bits, r.from), ...pilot.files, ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from), ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2));
+      // Wildload's chains and Microload's files take their pulses: another format's file inside them is their data
+      // holding its pilot, sync and a sum that fits by chance (a Freeload file of 64 bytes in Ronald Rubberduck's $0800)
+      const wm = wildAndMicro(p, bits, r.from);
+      const own = (f: TapeFile) => !wm.some(w => w.at < f.to && f.at < w.to);
+      found.push(...[...turboTapeFiles(p, bits, r.from), ...pilot.files, ...megaSaveFiles(p, bits, r.from), ...novaFiles(p, bits, r.from)].filter(own), ...wm, ...cyberNamedFiles(p, bits, r, (two.short + two.long) / 2).filter(own));
       // Cyberload's first stage in the stretch after its boot file, and the second after it with the keys it holds
       if (keys) { const f = cyberSecond(p, bits, r, 0, keys); if (f) found.push(f); keys = null; }
       const boot = files.filter(f => f.format === 'cbm' && f.headerCode && f.to <= r.from).pop();

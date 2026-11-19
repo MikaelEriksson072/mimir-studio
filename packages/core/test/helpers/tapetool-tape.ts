@@ -232,6 +232,75 @@ export function firebirdDemoTape(demo: Uint8Array): Uint8Array {
   return withTurbo(kernal, w.pulses);
 }
 
+/** A Wildload chain, the lowest bit first: a pilot of $a0 (its tapes have 256), the sync bytes $0a … $01, then each
+ *  block's header (the address of its last byte, how many bytes it has, its flag: 1 unless given), its bytes from the
+ *  last one down, each XOR the low byte of its address, and the XOR of the bytes; then the header that ends the chain
+ *  (`end`: $fe, the loader stops; $ff, it looks for the next pilot) and 7 pulses, as on the tapes. `bad` spoils that
+ *  block's sum, `cut` stops the tape after that many of the last block's bytes. */
+export function wildChain(w: TurboWriter, blocks: { load: number; data: Uint8Array; flag?: number }[], o: { end?: number; pilot?: number; bad?: number; cut?: number } = {}): void {
+  for (let i = 0; i < (o.pilot ?? 256); i++) novaByte(w, 0xa0);
+  for (let s = 0x0a; s >= 1; s--) novaByte(w, s);
+  for (const [n, b] of blocks.entries()) {
+    const top = b.load + b.data.length - 1;
+    for (const v of [top & 0xff, top >> 8, b.data.length & 0xff, b.data.length >> 8, b.flag ?? 1]) novaByte(w, v);
+    let x = 0;
+    for (let i = b.data.length - 1; i >= 0; i--) {
+      if (o.cut !== undefined && n === blocks.length - 1 && b.data.length - 1 - i === o.cut) return;
+      novaByte(w, b.data[i] ^ ((b.load + i) & 0xff));
+      x ^= b.data[i];
+    }
+    novaByte(w, n === o.bad ? x ^ 0x5a : x);
+  }
+  for (const v of [0, 0, 0, 0, o.end ?? 0xfe]) novaByte(w, v);
+  for (let i = 0; i < 7; i++) w.bit(0);
+}
+
+/** fixtures/tap/wildload-demo.tap: a KERNAL boot file "WILD DEMO" (bytes of our own, no loader), then a Wildload chain
+ *  at Delta's speed (a 0 of 384 cycles, a 1 of 568) as Delta's starts: 192 bytes into the tape buffer, a byte for the
+ *  VIC's $d011 (the I/O in), 512 bytes under the I/O at $d800 (flag 0), `demo` (a PRG) from its load address, ending
+ *  with $ff; after a pause a second chain with a table at $c000 that ends the loading ($fe). */
+export function wildloadDemoTape(demo: Uint8Array): Uint8Array {
+  const kernal = makeTap({ files: [{ name: 'WILD DEMO', load: 0x029f, data: Uint8Array.from({ length: 97 }, (_, i) => (i * 11 + 3) & 0xff), header: Uint8Array.from({ length: 171 }, (_, i) => (i * 13 + 5) & 0xff) }] });
+  const w = new TurboWriter(48, 71);
+  const load = demo[0] | (demo[1] << 8);
+  wildChain(w, [
+    { load: 0x033c, data: Uint8Array.from({ length: 192 }, (_, i) => (i * 3 + 1) & 0xff) },
+    { load: 0xd011, data: Uint8Array.of(0x0b) },
+    { load: 0xd800, data: Uint8Array.from({ length: 512 }, (_, i) => (i * 5 + 2) & 0xff), flag: 0 },
+    { load, data: demo.subarray(2) },
+  ], { end: 0xff });
+  firebirdPause(w);
+  wildChain(w, [{ load: 0xc000, data: Uint8Array.from({ length: 512 }, (_, i) => (i * 7) & 0xff) }]);
+  return withTurbo(kernal, w.pulses);
+}
+
+/** A Microload file, the lowest bit first: a pilot of $a0 (255 on the tapes), the sync bytes $0a … $01, the start and
+ *  the length as a negative number, the data from the first byte up and their XOR, then a pause (the tape stops after
+ *  each file), unless `tail` gives the bits that follow instead. `bad` spoils the sum. */
+export function microFile(w: TurboWriter, o: { load: number; data: ArrayLike<number>; pilot?: number; bad?: boolean; tail?: number[] }): void {
+  for (let i = 0; i < (o.pilot ?? 255); i++) novaByte(w, 0xa0);
+  for (let s = 0x0a; s >= 1; s--) novaByte(w, s);
+  const neg = 0x10000 - o.data.length;
+  for (const v of [o.load & 0xff, o.load >> 8, neg & 0xff, neg >> 8]) novaByte(w, v);
+  let x = 0;
+  for (let i = 0; i < o.data.length; i++) { novaByte(w, o.data[i]); x ^= o.data[i]; }
+  novaByte(w, o.bad ? x ^ 0x5a : x);
+  if (o.tail) for (const b of o.tail) w.bit(b);
+  else firebirdPause(w);
+}
+
+/** fixtures/tap/microload-demo.tap: a KERNAL boot file "MICRO DEMO" at $02a7 (bytes of our own, no loader), then
+ *  Microload's files at Bigtop Barney's speed (a 0 of 224 cycles, a 1 of 432): a table at $e000, `demo` (a PRG) from its
+ *  load address and a table at $c000, each after its own pilot. */
+export function microloadDemoTape(demo: Uint8Array): Uint8Array {
+  const kernal = makeTap({ files: [{ name: 'MICRO DEMO', load: 0x02a7, data: Uint8Array.from({ length: 93 }, (_, i) => (i * 11 + 3) & 0xff), header: Uint8Array.from({ length: 171 }, (_, i) => (i * 13 + 5) & 0xff) }] });
+  const w = new TurboWriter(28, 54);
+  microFile(w, { load: 0xe000, data: Uint8Array.from({ length: 1024 }, (_, i) => (i * 3 + 1) & 0xff) });
+  microFile(w, { load: demo[0] | (demo[1] << 8), data: demo.subarray(2) });
+  microFile(w, { load: 0xc000, data: Uint8Array.from({ length: 512 }, (_, i) => (i * 7) & 0xff) });
+  return withTurbo(kernal, w.pulses);
+}
+
 /** A whole tape: a KERNAL tape (makeTap) with turbo pulses after it. */
 export function withTurbo(kernal: Uint8Array, turbo: number[]): Uint8Array {
   const p = tapPulses(kernal), n = p.cycles.length + turbo.length;

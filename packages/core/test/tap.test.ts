@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePrg, makeTap, readTape, replaceTapeFile, tapeFileName, tapeToolRle, tapeToolScript, tapPulses, unpackPrg } from '../src';
-import { blockFile, demoTape, firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
+import { blockFile, demoTape, firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
 import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
@@ -437,6 +437,167 @@ describe('Novaload', () => {
       ['novaload', 'DEMO', 0x0801, 0x0801 + demo.length - 2, []],
     ]);
     expect(img.files[3].data).toEqual(demo.subarray(2));
+  });
+});
+
+describe('Wildload', () => {
+  /** Delta's speed: a 0 of 384 cycles, a 1 of 568 */
+  const wild = () => new TurboWriter(48, 71);
+  const tape = (w: TurboWriter) => readTape(withTurbo(makeTap({ files: [] }), w.pulses));
+  const io = "stored with the I/O in ($01 = 5): its bytes at $d000-$dfff go to the VIC's and the CIAs' registers and the colour RAM";
+
+  it('reads a chain: blocks one after another, each loaded from its last byte down, XOR the low byte of its address', () => {
+    const w = wild();
+    // the stretch starts with the bits 1, 0, 1: $a0 before a whole byte has gone in (Joystick 10's tape hung the reader
+    // on it, going back to a pilot before the stretch again and again)
+    w.bit(1); w.bit(0); w.bit(1);
+    // Delta's chain (Thalamus): the tape buffer, the game's code in pieces, a byte at $0002 the boot waits for, and the
+    // header with $fe; a block at the top of memory, one of a byte, registers with the I/O in and RAM under it
+    wildChain(w, [
+      { load: 0x033c, data: bytes(192, 1) },
+      { load: 0xe000, data: bytes(0x1ffe, 2) },
+      { load: 0x0002, data: Uint8Array.of(1) },
+      { load: 0xd016, data: Uint8Array.of(0x18) },
+      { load: 0xd011, data: Uint8Array.of(0x3b) },
+      { load: 0xc800, data: bytes(0x1000, 3), flag: 0 },
+      { load: 0xff00, data: bytes(256, 4) },
+    ], { end: 0xff });
+    wildChain(w, [{ load: 0x1000, data: bytes(0xaf00, 5) }, { load: 0x02a7, data: bytes(89, 6) }]);
+    const img = tape(w);
+    expect(img.files.map(f => [f.format, f.name, f.type, f.load, f.end, f.note, f.errors])).toEqual([
+      ['wildload', 'file_033c', 'PRG', 0x033c, 0x03fc, undefined, []],
+      ['wildload', 'file_e000', 'PRG', 0xe000, 0xfffe, undefined, []],
+      ['wildload', 'file_0002', 'PRG', 0x0002, 0x0003, undefined, []],
+      ['wildload', 'file_d016', 'PRG', 0xd016, 0xd017, io, []],
+      ['wildload', 'file_d011', 'PRG', 0xd011, 0xd012, io, []],
+      ['wildload', 'file_c800', 'PRG', 0xc800, 0xd800, 'stored with $01 = 0: into the RAM under the I/O', []],
+      ['wildload', 'file_ff00', 'PRG', 0xff00, 0x10000, 'the loader looks for the next pilot after it (flag $ff)', []],
+      ['wildload', 'file_1000', 'PRG', 0x1000, 0xbf00, undefined, []],
+      ['wildload', 'file_02a7', 'PRG', 0x02a7, 0x0300, 'the end of the chain: the loader stops after it (flag $fe)', []],
+    ]);
+    expect(img.files[1].data).toEqual(bytes(0x1ffe, 2));
+    expect(img.files[7].data).toEqual(bytes(0xaf00, 5));
+    expect(img.unknown).toEqual([]);
+    // the first block from its pilot, the next from its header right after the sum before it
+    expect(img.files[1].at).toBe(img.files[0].to);
+    expect(tapeFileName(img.files[0])).toBe('file_033c.prg');
+  });
+
+  it('keeps a later block whose sum does not fit and one the tape stops in, saying so; takes nothing else with the pilot $a0', () => {
+    const w = wild();
+    wildChain(w, [{ load: 0x0800, data: bytes(300, 1) }, { load: 0x2000, data: bytes(500, 2) }, { load: 0x4000, data: bytes(200, 3) }], { bad: 1, end: 0xff });
+    w.pulses.push(0, 0x20, 0x4e, 0);
+    wildChain(w, [{ load: 0x5000, data: bytes(100, 4) }, { load: 0x6000, data: bytes(1000, 5) }], { cut: 600 });
+    const img = tape(w);
+    expect(img.files.map(f => [f.name, f.load, f.end, f.errors])).toEqual([
+      ['file_0800', 0x0800, 0x0800 + 300, []],
+      ['file_2000', 0x2000, 0x2000 + 500, [`checksum: the data's XOR is $${bytes(500, 2).reduce((a, v) => a ^ v, 0).toString(16).padStart(2, '0')}, the tape says $${(bytes(500, 2).reduce((a, v) => a ^ v, 0) ^ 0x5a).toString(16).padStart(2, '0')}`]],
+      ['file_4000', 0x4000, 0x4000 + 200, []],
+      ['file_5000', 0x5000, 0x5000 + 100, []],
+      // its top 600 bytes, as the loader stores them from the last one down
+      ['file_6190', 0x6000 + 400, 0x6000 + 1000, ['the data runs past the end of the turbo stretch: 600 of its 1000 bytes are on it']],
+    ]);
+    expect(img.files[4].data).toEqual(bytes(1000, 5).subarray(400));
+    // a first block whose sum does not fit, and a short pilot: no files
+    const n = wild();
+    wildChain(n, [{ load: 0x0800, data: bytes(300, 1) }, { load: 0x2000, data: bytes(500, 2) }], { bad: 0 });
+    wildChain(n, [{ load: 0x0800, data: bytes(300, 1) }], { pilot: 20 });
+    for (let i = 0; i < 256; i++) n.bytes([0x05]);
+    expect(tape(n).files).toEqual([]);
+  });
+
+  it('is fixtures/tap/wildload-demo.tap, which the e2e tests insert: a chain as Delta\'s starts with the demo, then a table', () => {
+    const t = wildloadDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/wildload-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, t);
+    expect(new Uint8Array(readFileSync(path))).toEqual(t);
+    const img = readTape(t);
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors])).toEqual([
+      ['cbm', 'WILD DEMO', 0x029f, 0x029f + 97, []],
+      ['wildload', 'file_033c', 0x033c, 0x03fc, []],
+      ['wildload', 'file_d011', 0xd011, 0xd012, []],
+      ['wildload', 'file_d800', 0xd800, 0xda00, []],
+      ['wildload', 'file_0801', 0x0801, 0x0801 + demo.length - 2, []],
+      ['wildload', 'file_c000', 0xc000, 0xc200, []],
+    ]);
+    expect(img.files[4].data).toEqual(demo.subarray(2));
+  });
+});
+
+describe('Microload', () => {
+  /** Bigtop Barney's speed: a 0 of 224 cycles, a 1 of 432 */
+  const micro = () => new TurboWriter(28, 54);
+  const tape = (w: TurboWriter) => readTape(withTurbo(makeTap({ files: [] }), w.pulses));
+
+  it('reads its files: a pilot of $a0, $0a … $01, the start, the length as a negative number, the data up, their XOR', () => {
+    const w = micro();
+    // Bigtop Barney's first files (Interceptor Micros): the code that runs while the rest loads, a picture, the boot's
+    // page again; one up to the top of memory, and Magic Bytes' longer pilot
+    w.bit(1); w.bit(0); w.bit(1);
+    microFile(w, { load: 0xe000, data: bytes(0x1c00, 1) });
+    microFile(w, { load: 0x2000, data: bytes(0x2000, 2) });
+    microFile(w, { load: 0x02a7, data: bytes(88, 3) });
+    microFile(w, { load: 0xff00, data: bytes(256, 4) });
+    microFile(w, { load: 0x0818, data: bytes(3000, 5), pilot: 857 });
+    const img = tape(w);
+    expect(img.files.map(f => [f.format, f.name, f.type, f.load, f.end, f.errors])).toEqual([
+      ['microload', 'file_e000', 'PRG', 0xe000, 0xfc00, []],
+      ['microload', 'file_2000', 'PRG', 0x2000, 0x4000, []],
+      ['microload', 'file_02a7', 'PRG', 0x02a7, 0x02ff, []],
+      ['microload', 'file_ff00', 'PRG', 0xff00, 0x10000, []],
+      ['microload', 'file_0818', 'PRG', 0x0818, 0x0818 + 3000, []],
+    ]);
+    expect(img.files[1].data).toEqual(bytes(0x2000, 2));
+    expect(img.unknown).toEqual([]);
+  });
+
+  it('keeps a file whose sum does not fit where the tape stops after it; takes nothing else, and no file inside one', () => {
+    const w = micro();
+    microFile(w, { load: 0x4000, data: bytes(1000, 1), bad: true });
+    const img = tape(w);
+    const x = bytes(1000, 1).reduce((a, v) => a ^ v, 0);
+    expect(img.files.map(f => [f.name, f.load, f.end, f.errors])).toEqual([
+      ['file_4000', 0x4000, 0x4000 + 1000, [`checksum: the data's XOR is $${x.toString(16).padStart(2, '0')}, the tape says $${(x ^ 0x5a).toString(16).padStart(2, '0')}`]],
+    ]);
+    // a sum that does not fit with the stretch going on after it, a short pilot, and Wildload's chain and Rainbow Arts'
+    // block (a block number before the start), which have the same pilot and sync: no Microload files
+    const n = micro();
+    microFile(n, { load: 0x4000, data: bytes(1000, 1), bad: true, tail: [...bytes(200, 2)].flatMap(v => [v & 1, (v >> 1) & 1, (v >> 2) & 1, (v >> 3) & 1, (v >> 4) & 1, (v >> 5) & 1, (v >> 6) & 1, (v >> 7) & 1]) });
+    microFile(n, { load: 0x4000, data: bytes(1000, 3), pilot: 20 });
+    // Rainbow Arts' block: the pilot, the sync, its number 5, the start $5000, the length 1 000 as a negative number,
+    // the data and their XOR
+    const lsb = (v: number) => { for (let i = 0; i < 8; i++) n.bit((v >> i) & 1); };
+    const ra = bytes(1000, 4);
+    [...Array(992).fill(0xa0), 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0x05, 0x00, 0x50, 0x18, 0xfc, ...ra, ra.reduce((a, v) => a ^ v, 0)].forEach(lsb);
+    expect(tape(n).files).toEqual([]);
+    const wn = micro();
+    wildChain(wn, [{ load: 0x0800, data: bytes(300, 1) }, { load: 0x2000, data: bytes(500, 2) }]);
+    expect(tape(wn).files.map(f => f.format)).toEqual(['wildload', 'wildload']);
+    // a Freeload file (the top bit first: pilot $40, sync $5a, start, end, data, XOR) in a Microload file's bits: its
+    // data, not a file of its own (Ronald Rubberduck's $0800 holds one at $8040)
+    const free = [0x40, 0x40, 0x40, 0x5a, 0x40, 0x80, 0x80, 0x80, ...bytes(64, 5), bytes(64, 5).reduce((a, v) => a ^ v, 0)];
+    const fbits = free.flatMap(v => [7, 6, 5, 4, 3, 2, 1, 0].map(i => (v >> i) & 1));
+    const packed = Array.from({ length: fbits.length / 8 }, (_, k) => fbits.slice(k * 8, k * 8 + 8).reduce((a, b, i) => a | (b << i), 0));
+    const host = micro();
+    microFile(host, { load: 0x0800, data: [...bytes(500, 6), ...packed, ...bytes(500, 7)] });
+    expect(tape(host).files.map(f => [f.format, f.name])).toEqual([['microload', 'file_0800']]);
+  });
+
+  it('is fixtures/tap/microload-demo.tap, which the e2e tests insert: a table, the demo, a table', () => {
+    const t = microloadDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/microload-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, t);
+    expect(new Uint8Array(readFileSync(path))).toEqual(t);
+    const img = readTape(t);
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors])).toEqual([
+      ['cbm', 'MICRO DEMO', 0x02a7, 0x02a7 + 93, []],
+      ['microload', 'file_e000', 0xe000, 0xe400, []],
+      ['microload', 'file_0801', 0x0801, 0x0801 + demo.length - 2, []],
+      ['microload', 'file_c000', 0xc000, 0xc200, []],
+    ]);
+    expect(img.files[2].data).toEqual(demo.subarray(2));
   });
 });
 
