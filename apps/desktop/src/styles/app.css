@@ -781,6 +781,9 @@ main.main { container: editor / inline-size; }
 .spindle .routine { white-space: nowrap; }
 .spindle + .spindle { border-top: 1px solid var(--line); }
 .spindle tbody tr.job-first td { border-top: 1px solid var(--line); }
+.spindle .spin-anim { display: inline-flex; align-items: center; gap: 3px; font-size: inherit; }
+.spindle .spin-anim svg { flex: none; }
+.spindle td.spin-acts { white-space: nowrap; text-align: right; }
 .spindle td .pill { margin-left: 6px; }
 .disk-spindle { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; color: var(--fg-2); }
 .disk-spindle > span { flex: 1; min-width: 0; }

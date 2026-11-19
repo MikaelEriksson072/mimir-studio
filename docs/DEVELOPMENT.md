@@ -228,7 +228,8 @@ apps/desktop     Electron app
 docs/spec.md     technical specification
 fixtures/prg     test programs (raster-demo.prg, and the loader, packed and Spindle demos)
 fixtures/d64     disk images (mimir-demo.d64, spindle-demo.d64, a Spindle 3 disk, bitfire-demo.d64, a Bitfire one,
-                 krill-demo.d64, one for Krill's loader, dloc-demo.d64, one for DLoC's loader, and others)
+                 krill-demo.d64, one for Krill's loader, dloc-demo.d64, one for DLoC's loader, petscii-anim.d64, a Spindle
+                 disk whose job 2 plays a PETSCII animation, and others)
 fixtures/tap     mimir-demo.tap: a boot file whose own loader reads the raster demo in TapeTool's TinyHeader format, and
                  TapeTool files in blocks (written by packages/core/test/helpers/tapetool-tape.ts)
 fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from source (packages/core/test/crt.test.ts)
@@ -1088,6 +1089,22 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     is too but for the 7 bytes the installer rewrites, and on the archive's 277 829 D64/G64 the reader takes only the
     5 copies of Halloween 2026 (one disk in five folders). Tests: `test/dloc-disk.test.ts` (own ZX0 writer, a boot
     laid out as Six's packer lays it out, the fixture `fixtures/d64/dloc-demo.d64`), `loaders.test.ts`, an e2e test.
+52. PETSCII animations (spec 14.5b) are new. Breadbin of Horror's `job0d_8000.bin` (side 1, Spindle job 13) "could not
+    be unpacked": it is no packed program but the stream a player in the part draws one frame at a time (Sindri ran it
+    from `$8000` into a JAM). Read from the part's code: `findPetsciiAnims` (`packages/core/src/c64/petscii-anim.ts`)
+    finds the player by its run loop and the run's header, the stream pointer's settings, the frame counter the code
+    counts down after each call and the state it sets with each start (the order the sequences play in), tells the
+    colour table by its values, and reads the frames as the player draws them (the changes to the frame before; a skip
+    of 15 takes bytes after it while they are `$ff`). Graphics has a sixth mode, *Animations*
+    (`components/AnimGfx.tsx`, `lib/animview.ts`): the frames in a grid, a frame's bytes selected by a click, Ctrl over
+    a frame, Play, and Save… as bytes, a PNG or an animated GIF (`gifAnimation`, `packages/core/src/util/gif.ts`). The
+    Spindle script tab opens a whole job (*Open job N*) and says when a job's code plays an animation. Checked: from job
+    13's code alone, 105 frames in four sequences, the last ending one byte past the job; at the player's 31st and
+    71st call the screen and colour RAM in VICE are the reader's frames 30 and 70 (counted from 1); the other 25 jobs
+    have none, and of
+    161 120 demo and intro files in the archive only Breadbin's 12 copies have the player's loop. Tests:
+    `test/petscii-anim.test.ts` (own encoder and a player of the same shape, the fixture `fixtures/d64/petscii-anim.d64`,
+    a GIF reader in `test/helpers/gif.ts`), `apps/desktop/test/animview.test.ts`, an e2e test.
 
 ## Roadmap
 

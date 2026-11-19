@@ -3474,6 +3474,10 @@ början av Spindle 3:s residenta sida och hela kedjan går att följa till slute
   *loads under I/O*).
 - Ett klick på raden öppnar biten som en PRG på dess adress, och **+** lägger till den i projektet.
 - **Copy script** kopierar skriptet så som Spin läser det, med flaggorna för `spin` i en kommentar.
+- Knappen **Open job N** på ett jobbs första rad (för jobb med fler än en bit) öppnar alla dess bitar som ett projekt:
+  en dels kod, tabeller och data tillsammans.
+- Spelar ett jobbs kod en PETSCII-animation står det i anmärkningarna (*PETSCII animation: 105 frames
+  ($8000–$cc4d)*), och ett klick öppnar jobbet och visar rutorna i Graphics → Animations (14.5b).
 - Har snapshoten också Pefchain-drivers (8.11f) står de under laddskriptet.
 
 **Mätt:**
@@ -5896,7 +5900,8 @@ första byte står i översta raden, genast om fliken är öppen och annars när
 lägena och se vad filen är. Ett läge där raden börjar före filen (40 tecken à 320 byte) har filens första byte i raden,
 inte radens början: Characters → Screens med en fil på `$3000` ger skärmen på `$3000`, inte den på `$2c00`.
 
-Det finns fem lägen:
+Det finns sex lägen. Det sjätte, **Animations**, ritar inte minnet utan rutorna i en PETSCII-animation som en spelare i
+minnet spelar (14.5b). De andra fem är:
 - **Characters:** 8 byte per tecken, 16, 32, 40 (standard, en skärms bredd) eller 64 per rad. Med *Other…* skrivs
   vilket antal som helst från 1 till 128 in. `Enter` eller att lämna fältet tar det, och piltangenterna stegar det. Ett
   sparat 32, den tidigare standarden, blir 40 en gång (`GfxPrefs.v` 2). Ett annat valt antal behålls.
@@ -6041,6 +6046,76 @@ väljer en rad och alla rader och sparar en rad som .png (320 × 8). Ett fjärde
 *Whole bitmap* för en hel bitmapp, ramar på 320 × 80 och klick som väljer 3200 byte, rad och kolumn under pekaren och
 ingen byte under raderna, en .png på 320 × 80 och höjden sparad, och *Whole bitmap* som väljer 8000 byte och ritar 25
 rader igen med den bitmappen överst. `test/gfxview.test.ts` prövar höjdens geometri, ritning och bild.
+
+### 14.5b Animationer (PETSCII-animationer som programmet spelar)
+
+En PETSCII-animation är ingen packad fil: inget packar upp den till minnet. En spelare i programmet läser en ruta i taget
+ur en ström och skriver den på skärmen, så Sindri hittar inget att packa upp (Breadbin of Horrors `job0d_8000.bin`
+körd från `$8000` stannar på en JAM vid `$8006`). Läget **Animations** i Graphics läser strömmen som spelaren läser den
+och visar varje ruta som skärmen spelaren lämnar: 1000 skärmkoder och 1000 färger. `findPetsciiAnims()`
+(`packages/core/src/c64/petscii-anim.ts`) hittar spelarna i minnet och läser deras rutor. Vyn ligger i
+`apps/desktop/src/components/AnimGfx.tsx`, och geometrin och ritningen i `src/lib/animview.ts`.
+
+**Formatet** är det som spelaren i The Pumpkins' Breadbin of Horror har (sida 1, Spindle-jobb 13: pumpan som växer ur
+en grodd, får ett ansikte och zoomar in i munnen):
+- En ruta är körningar fram till en 0-byte. Positionen börjar på 0, skärmens första tecken, i varje ruta.
+- En körning är en byte H. Först flyttas positionen H & 15 steg. Är det 15 läggs byten efter till, och fler så länge de
+  är `$ff`; den första som inte är det avslutar och läggs också till. Sedan följer H >> 4 index (0 är 256 för
+  spelaren).
+- Ett index x lägger skärmkoden `chars[x]` och färgen `colours[x]` (spelarens två tabeller) på positionen och flyttar
+  den ett steg.
+- Spelaren ritar på skärmen den inte visar, efter att ha kopierat den den visar dit. En ruta är alltså det som ändras från
+  rutan före, och den första ritas över en skärm med mellanslag.
+
+**Spelaren** känns igen på sin kod: slingan som skriver en körning (`lda (ptr),y / tax / lda chars,x / sta (scr),y /
+lda colours,x / sta (col),y / iny / dec n / bne / jmp next`) och före den körningens huvud (`and #$0f / cmp #$0f /
+beq`, `cpx #$ff / beq`, fyra `lsr` till n). Alla dess byte måste vara laddade. Ur koden läses också:
+- **Var rutorna börjar:** koden som sätter strömpekaren (`lda #<start / sta ptr / lda #>start / sta ptr+1`, åt vilket
+  håll som helst). Varje sådan är en sekvens.
+- **Hur många:** räknaren som koden sätter bredvid (den som koden räknar ned efter varje anrop av spelaren: `jsr
+  spelaren / dec räknaren / bne`). En sekvens utan räknare läses tills strömmen inte längre går att läsa, till nästa
+  sekvens början eller till en ruta som inte ändrar något (så att nollor efter strömmen inte blir rutor).
+- **Ordningen:** sekvenserna spelas i ordningen på det tillstånd koden sätter med var och en (ett värde som lagras på
+  samma ställe i alla, Breadbins `$8d` = 0–3), annars i den ordning de står i koden.
+- **Vilken tabell som är färger:** den vars värden (vid de index rutorna använder) alla är under 16. Är båda eller ingen
+  det är den första skärmens, som i Breadbins spelare.
+
+En sekvens kan börja mitt i en annan och spela samma byte igen (Breadbin: `$9dc8` är ruta 50–64 i den första). Rutorna
+ritas då över skärmen som den förra sekvensen lämnade. En rad i strömmen som skriver förbi skärmen (position + antal
+över 1024), byte som inte är laddade eller en ruta utan slut ger färre rutor än koden spelar, och vyn säger varför.
+
+**Vyn:**
+- Varje ruta är 320 × 200 med 1–4 per rad (*Per row*, `GfxPrefs.animCols`), zoom 1–4. Tecknen ritas med teckenuppsättningen
+  i *Charset*, samma val som i Screens: VICE:s tecken-ROM, de inbyggda tecknen eller 2 KB av minnet. Varje tecken har sin
+  egen färg över bakgrunden *BG*.
+- En ruta motsvarar sina byte i strömmen. Ett klick väljer dem, så att listningen och inspektorn följer med, och
+  `Shift`+klick eller dragning väljer rutorna emellan. Är byten spelade två gånger markeras båda rutorna.
+- Under vyn står rutan, sekvensen, byten och tecknet under pekaren, med rutorna räknade från 1 (Breadbin: `frame 66 of
+  105 · sequence 2 of 4, frame 2 of 15 (from $bffb) · …`, sedan rutans byte, hur många tecken den skriver, och rad,
+  kolumn, skärmkod och färg). Vänsterkanten visar rutans nummer och adress.
+- **`Ctrl` över en ruta** visar den ensam över hela fönstret. Mushjulet stegar till rutan före eller efter, och ett klick
+  väljer den.
+- **Play** spelar rutorna över hela fönstret från den första valda, om och om igen, tills `Esc`, mellanslag eller ett
+  klick. *Speed* är hur många bildrutor (1/50 s på en PAL-C64) varje ruta visas, 1–8 (`GfxPrefs.animSpeed`, 4 som
+  standard = 12,5 rutor per sekund, som Breadbin anropar spelaren var fjärde bildruta).
+- **Save…** sparar markeringens byte (.bin, .prg), dess rutor som en bild (.png, så många per rad som vyn) eller som en
+  animerad GIF (.gif), och hela animationen som en animerad GIF. GIF:en (`gifAnimation` i `packages/core/src/util/gif.ts`)
+  har C64-paletten, *Speed* som fördröjning och spelas om och om igen.
+- Finns flera spelare väljs animationen i *Animation*. Finns ingen säger vyn vad som behövs: spelarens kod, tabellerna och
+  rutorna i minnet. Med alla banker på en gång visar Graphics här en bank (läget tar bara 64 KB).
+
+**Från en Spindle-disk** (13.5b): spelaren, tabellerna och strömmen är bitar av samma jobb. Ett jobb vars bitar har en
+spelare säger det i laddskriptets anmärkningar (*PETSCII animation: 105 frames ($8000–$cc4d)*). Ett klick på den öppnar
+hela jobbet och visar rutorna i Graphics → Animations. Knappen *Open job N* öppnar ett jobbs alla bitar som ett projekt.
+
+**Mätt:** på Breadbin of Horrors sida 1 hittar läsaren av koden enbart spelaren vid `$faaf`, pekaren `$80`, räknaren `$8c`
+och tabellerna `$cd00` (tecken) och `$cdfb` (färger). Den läser 105 rutor i fyra sekvenser (`$8000` × 64, `$bffb` × 15,
+`$9dc8` × 15, `$aa1b` × 11), och den sista slutar en byte efter jobbets byte (`$cc4e`). I VICE är skärmen (`$0400`) och
+färg-RAM:et vid spelarens 31:a och 71:a anrop exakt läsarens ruta 30 och 70 (räknat från 1), med `$d018` = `$15` (tecken-ROM:en med
+stora bokstäver) och svart bakgrund. De andra 25 jobben har ingen spelare, och i arkivets 161 120 demo- och introfiler finns
+spelarens slinga bara i Breadbins kopior (12). Test: `packages/core/test/petscii-anim.test.ts` (egen kodare och en egen
+spelare med samma form, fixturen `fixtures/d64/petscii-anim.d64`), `apps/desktop/test/animview.test.ts` och e2e-testet
+*a Spindle job whose code plays a PETSCII animation*.
 
 ### 14.6 Minnesvyn (Memory)
 

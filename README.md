@@ -83,8 +83,9 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
     such as `space` or `ed = 0b`). The *Spindle script* tab lists them, and *Copy script* copies them as Pefchain reads
     them. A VICE snapshot of a running trackmo holds the parts that are loaded;
   - the load script of a Spindle 3 disk: Spin crunches each loader call's files onto the disk, and Mimir reads the
-    jobs back, decrunched, so every chunk opens as a PRG at its address. *Copy script* copies the script as Spin
-    reads it (the file names are not on the disk);
+    jobs back, decrunched, so every chunk opens as a PRG at its address, or a whole job at once. *Copy script* copies
+    the script as Spin reads it (the file names are not on the disk), and a job whose code plays a PETSCII animation
+    says so and shows its frames in Graphics;
   - the files of a Bitfire disk: Bitfire has no load script, as each part loads the next file, but its disk keeps the
     files in a directory of their own in the order they load. The *Bitfire script* tab lists them, unpacked when bitnax
     (Bitfire 0.x) or dali (1.x) packed them, and *Copy script* copies the d64write command line that builds the disk;
@@ -160,7 +161,10 @@ it in [VICE](https://vice-emu.sourceforge.io/) with one key.
   from `$d011`), who sets it and where.
 - **A Graphics tab.** It shows all 64 KB as characters, sprites, bitmaps, screens or a font per character row. You
   select what you find, mark it (or unmark graphics that are not, which makes them data) and save it as raw bytes, a
-  `.prg`, a Koala or Art Studio picture, a PNG or `.byte` source.
+  `.prg`, a Koala or Art Studio picture, a PNG or `.byte` source. *Animations* shows the frames of a PETSCII animation
+  that a player in the program draws one at a time (no packer: the stream of changes from frame to frame that The
+  Pumpkins' Breadbin of Horror draws its pumpkin with, 105 frames), each as the screen it leaves, plays them, and
+  saves them as a PNG or an animated GIF.
 - **Graphics as pictures in the listing.** Sprites, charsets and bitmaps are drawn as they look instead of as `.byte`
   rows: a charset as rows of characters by screen code, sprites side by side with their labels under them, a bitmap
   as its picture. Multicolour follows `$d01c` and `$d016`, or what you set for the block: the inspector's Multicolor,

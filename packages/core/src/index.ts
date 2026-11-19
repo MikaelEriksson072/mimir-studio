@@ -52,6 +52,8 @@ export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpa
 export { makePsid, parsePsid } from './c64/psid';
 export { sidPlayer, musicPlayData, musicSidFile, type SidPlayer, type SidPlayerOptions, type MusicPlayData, type MusicPlayDigi } from './c64/sidplayer';
 export { artStudioPicture, ART_STUDIO_LOAD, BITMAP_SIZE, gfxSource, koalaPicture, KOALA_LOAD, SCREEN_SIZE, type GfxFileColors, type GfxFileKind } from './c64/gfxfiles';
+export { findPetsciiAnims, petsciiFrameAt, petsciiFramePixels, PETSCII_SCREEN, type PetsciiAnim, type PetsciiFrame, type PetsciiPlayer, type PetsciiSequence } from './c64/petscii-anim';
+export { gifAnimation } from './util/gif';
 export type { PsidInfo } from './c64/psid';
 
 export { findBlock } from './analyze';

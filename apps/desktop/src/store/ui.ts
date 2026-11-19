@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { DEFAULT_PACK, MONITOR_PER_ROW, type BlockKind, type MonitorMode, type MonitorPerRow, type PackPrefs } from '@mimir/core';
 import { store } from '../lib/util';
 import { bitmapRowsOf, spriteColsOf } from '../lib/gfxview';
+import { animColsOf, animSpeedOf } from '../lib/animview';
 
 export type Theme = 'dark' | 'light';
 export type EditorTab = 'listing' | 'drive' | 'source' | 'spec' | 'gfx' | 'mem' | 'scripts' | 'git' | 'library';
@@ -19,7 +20,10 @@ export type DiskLook = 'mimir' | 'c64';
 export type Gutter = 'addr' | 'line';
 /** the Graphics tab: memory as characters, sprites or bitmaps, and how it is drawn */
 export interface GfxPrefs {
-  kind: 'chars' | 'sprites' | 'bitmap' | 'screens' | 'fontrows';
+  /** `anim`: the frames of a PETSCII animation a player in memory draws (spec 14.5b), not memory as cells */
+  kind: 'chars' | 'sprites' | 'bitmap' | 'screens' | 'fontrows' | 'anim';
+  /** animations: frames a row (1-4), and the video frames (1/50 s) each is shown when played (1-8) */
+  animCols: number; animSpeed: number;
   charCols: number; spriteCols: number; screenCols: number; zoom: number; mc: boolean; offset: number;
   colors: { bg: number; fg: number; mc1: number; mc2: number };
   /** what screens are drawn with: VICE's character ROM ('rom', 'rom-lower'), the built-in letters ('builtin') or the
@@ -35,7 +39,7 @@ export interface GfxPrefs {
   /** the version of these settings (2: 40 characters a row is the default) */
   v?: number;
 }
-const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25, marked: true };
+const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', animCols: 2, animSpeed: 4, charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25, marked: true };
 /** The saved Graphics settings over the defaults. 40 characters a row (a screen's width) became the default: the old
  *  default 32 moves to it once (`v` 2), a count picked before stays. A bitmap height that is not 1-25 rows is 25,
  *  sprites a row that are not 1-24 are 8. */
@@ -44,6 +48,8 @@ export function gfxPrefs(saved: Partial<GfxPrefs>): GfxPrefs {
   if ((saved.v ?? 1) < 2 && saved.charCols === 32) p.charCols = 40;
   p.bitmapRows = bitmapRowsOf(p.bitmapRows);
   p.spriteCols = spriteColsOf(p.spriteCols);
+  p.animCols = animColsOf(p.animCols);
+  p.animSpeed = animSpeedOf(p.animSpeed);
   return p;
 }
 /** the Memory tab: VICE's m, i (PETSCII) or ii (screen codes), each as hex and text with `perRow` bytes a row, which

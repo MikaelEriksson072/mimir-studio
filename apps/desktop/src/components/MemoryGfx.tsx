@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import { createPortal } from 'react-dom';
 import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture, makePrg, validLabel, type Addr, type AnalysisResult, type BlockKind, type RenderResult } from '@mimir/core';
 import { Icon } from '../lib/icons';
-import { BankPick, OptGroup, ViewModes, type BankPickProps, type ViewMode } from './ViewModes';
+import { BankPick, OptGroup, ViewModes, type BankPickProps } from './ViewModes';
 import { parseGoto } from '../lib/goto';
 import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
@@ -21,14 +21,9 @@ import type { Sel } from '../lib/types';
 import { useUi, type GfxPrefs } from '../store/ui';
 import type { CharRomResult } from '../../shared/ipc';
 import { charRom } from '../lib/charrom';
+import { AnimGfx } from './AnimGfx';
+import { GFX_MODES, pngOf } from '../lib/gfxmodes';
 
-const GFX_MODES: ViewMode<GfxKind>[] = [
-  { key: 'chars', label: 'Characters', icon: 'grid', sub: '8×8', title: 'Memory as characters: 8 bytes, 8 × 8 pixels each' },
-  { key: 'sprites', label: 'Sprites', icon: 'sprite', sub: '24×21', title: 'Memory as sprites: 64 bytes, 24 × 21 pixels each' },
-  { key: 'bitmap', label: 'Bitmaps', icon: 'image', sub: '320×200', title: 'Memory as bitmaps: 8000 bytes, 320 × 200 pixels each' },
-  { key: 'screens', label: 'Screens', icon: 'screen', sub: '40×25', title: 'Memory as screens: 1000 screen codes, 40 × 25 characters each' },
-  { key: 'fontrows', label: 'Font per row', icon: 'rows', title: 'A picture whose character rows each have their own font' },
-];
 /** what the view shows, beside the mode switch (whose buttons say the size); bitmaps say their bytes */
 const SHOWS: Record<Exclude<GfxKind, 'bitmap'>, string> = {
   chars: '8 bytes each', sprites: '64 bytes each', screens: '1000 screen codes each', fontrows: 'a font for each row',
@@ -58,7 +53,7 @@ const FOCUS_MS = 150;
 const CODE_KINDS: BlockKind[] = ['screen', 'text', 'data', 'table', 'words', 'lohi', 'fill', 'charset', 'bitmap', 'sprite', 'music', 'basic', 'code'];
 
 
-interface MemoryGfxProps {
+export interface MemoryGfxProps {
   A: AnalysisResult; R: RenderResult; cursor: Addr | null; sel: Sel | null;
   onSelect: (start: Addr, end: Addr) => void; onClear: () => void;
   /** Mark as: `mc` is Multicolor as the bytes are drawn here (not given for screens, whose bytes are screen codes): the
@@ -93,23 +88,21 @@ interface MemoryGfxProps {
 /** a way to save the selection: the menu text, the file extension, and the bytes */
 interface SaveAs { id: string; label: string; ext: string; make: () => Uint8Array | Promise<Uint8Array> }
 
-/** an image as PNG bytes, through a canvas */
-async function pngOf(img: { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> }): Promise<Uint8Array> {
-  const cv = document.createElement('canvas');
-  cv.width = img.width; cv.height = img.height;
-  cv.getContext('2d')!.putImageData(new ImageData(img.rgba, img.width, img.height), 0, 0);
-  const blob = await new Promise<Blob | null>(done => cv.toBlob(done, 'image/png'));
-  if (!blob) throw new Error('the image could not be made');
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
 const plainAddr = (a: Addr) => `$${h4(a)}`;
 
-export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+/** The tab: memory as cells, or an animation's frames (a view of its own, spec 14.5b). */
+export function MemoryGfx(p: MemoryGfxProps) {
+  const kind = useUi(s => s.gfx.kind);
+  return kind === 'anim' ? <AnimGfx {...p} /> : <MemoryView {...p} />;
+}
+
+function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
-  const { kind, zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows, marked } = prefs;
+  const { zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows, marked } = prefs;
+  // (MemoryGfx shows Animations with a view of its own)
+  const kind = prefs.kind as GfxKind;
   // how each byte is drawn: not loaded, loaded, or in a block already marked as graphics (tinted orange when `marked`)
   const shades = useMemo(() => {
     const s = new Uint8Array(A.mem.length);
