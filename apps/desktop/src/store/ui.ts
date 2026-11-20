@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 import { DEFAULT_PACK, MONITOR_PER_ROW, type BlockKind, type MonitorMode, type MonitorPerRow, type PackPrefs } from '@mimir/core';
 import { store } from '../lib/util';
-import { bitmapRowsOf, spriteColsOf } from '../lib/gfxview';
+import { bitmapWindowOf, spriteColsOf } from '../lib/gfxview';
 import { animColsOf, animSpeedOf } from '../lib/animview';
 
 export type Theme = 'dark' | 'light';
@@ -34,21 +34,25 @@ export interface GfxPrefs {
   /** a font per row: where the 40 screen codes are, the first row's font (the next rows' follow 2 KB apart), how many rows,
    *  and whether memory where no font can be is passed over */
   rowCodes: number; rowFonts: number; rowCount: number; rowSkip: boolean;
-  /** bitmaps: how many character rows of each are drawn and selected, 1-25 (fewer for a picture smaller than the screen) */
-  bitmapRows: number;
+  /** bitmaps: the part of each that is drawn and selected (lib/gfxview BitmapWindow): character rows from `bitmapTop`
+   *  (0-24), `bitmapRows` of them (1-25), and columns from `bitmapLeft` (0-39), `bitmapCols` of them (1-40). Less than
+   *  the whole for a picture smaller than the screen, a logo in the middle of it */
+  bitmapTop: number; bitmapRows: number; bitmapLeft: number; bitmapCols: number;
   /** bytes in a block already marked as graphics (charset, sprites, bitmap, screen matrix) are drawn tinted orange */
   marked: boolean;
   /** the version of these settings (2: 40 characters a row is the default) */
   v?: number;
 }
-const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', animCols: 2, animSpeed: 4, charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, vicColors: true, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25, marked: true };
+const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', animCols: 2, animSpeed: 4, charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, vicColors: true, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapTop: 0, bitmapRows: 25, bitmapLeft: 0, bitmapCols: 40, marked: true };
 /** The saved Graphics settings over the defaults. 40 characters a row (a screen's width) became the default: the old
- *  default 32 moves to it once (`v` 2), a count picked before stays. A bitmap height that is not 1-25 rows is 25,
- *  sprites a row that are not 1-24 are 8. */
+ *  default 32 moves to it once (`v` 2), a count picked before stays. A bitmap's part that does not fit in it fits
+ *  (a first row or column outside it is 0, too many rows or columns are the rest of the bitmap), sprites a row that are
+ *  not 1-24 are 8. */
 export function gfxPrefs(saved: Partial<GfxPrefs>): GfxPrefs {
   const p = { ...GFX_DEFAULTS, ...saved, v: 2 };
   if ((saved.v ?? 1) < 2 && saved.charCols === 32) p.charCols = 40;
-  p.bitmapRows = bitmapRowsOf(p.bitmapRows);
+  const w = bitmapWindowOf({ top: p.bitmapTop, rows: p.bitmapRows, left: p.bitmapLeft, cols: p.bitmapCols });
+  p.bitmapTop = w.top; p.bitmapRows = w.rows; p.bitmapLeft = w.left; p.bitmapCols = w.cols;
   p.spriteCols = spriteColsOf(p.spriteCols);
   p.animCols = animColsOf(p.animCols);
   p.animSpeed = animSpeedOf(p.animSpeed);

@@ -1162,6 +1162,8 @@ button.tpl-ph:disabled { cursor: default; color: var(--fg-2); }
 .gfxv-addr:focus { border-color: var(--accent); }
 .gfxv-addr.bad { border-color: var(--err); }
 .gfxv-addr.gfxv-count { width: 52px; }
+/* a bitmap's first and last row or column: two digits */
+.gfxv-addr.gfxv-num { width: 36px; padding: 0 4px; text-align: center; }
 .mon-find { display: flex; align-items: center; gap: 6px; flex: 1 0 100%; }
 .gfxv .seg button.on { color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent), 0 0 0 1px var(--line-2); }
 .opt-group.mon-find { flex: 1 1 300px; flex-wrap: nowrap; min-width: 0; }

@@ -3727,14 +3727,14 @@ test('the Graphics tab draws bitmaps of fewer rows: a click selects those rows, 
   await page.getByRole('tab', { name: 'Graphics' }).click();
   const view = page.getByLabel('Memory as graphics');
   const go = async (to: string) => { await view.getByLabel('Go to address, label or range').fill(to); await view.getByLabel('Go to address, label or range').press('Enter'); };
-  const sel = view.getByRole('status'), canvas = view.locator('.gfxv-canvas'), height = view.getByLabel('Bitmap height in character rows');
+  const sel = view.getByRole('status'), canvas = view.locator('.gfxv-canvas'), lastRow = view.getByLabel('Last bitmap row');
   const whole = view.getByRole('button', { name: 'Whole bitmap (8000 bytes)' }), mode = view.getByRole('button', { name: 'Bitmaps' });
   /** a point of the picture (pixels at zoom 2), where it is now */
   const point = async (x: number, y: number) => { const b = (await canvas.boundingBox())!; return [b.x + x * 2, b.y + y * 2] as const; };
 
   await test.step('a whole bitmap: a click already selects all of it, so there is no Whole bitmap', async () => {
     await mode.click();
-    await expect(height).toHaveValue('25');
+    await expect(lastRow).toHaveValue('24');
     await expect(mode).toContainText('320×200');
     await go('$2000');
     await expect(sel).toContainText('$2000–$3f3f (8000 bytes)');
@@ -3742,7 +3742,8 @@ test('the Graphics tab draws bitmaps of fewer rows: a click selects those rows, 
   });
 
   await test.step('10 rows: each 8 KB is drawn 80 pixels high, and a click selects its 3200 bytes', async () => {
-    await height.selectOption('10');
+    await lastRow.fill('9');
+    await lastRow.press('Enter');
     await expect(view.locator('.view-now')).toContainText('3200 bytes each');
     await expect(view.locator('.view-now')).toContainText('10 rows');
     await expect(mode).toContainText('320×80');
@@ -3785,7 +3786,7 @@ test('the Graphics tab draws bitmaps of fewer rows: a click selects those rows, 
   await test.step('Whole bitmap selects all 8000 bytes and draws all 25 rows again, that bitmap at the top', async () => {
     await whole.click();
     await expect(sel).toContainText('$2000–$3f3f (8000 bytes)');
-    await expect(height).toHaveValue('25');
+    await expect(lastRow).toHaveValue('24');
     await expect(canvas.locator('.gfxv-selrect')).toHaveCSS('height', `${200 * 2}px`);
     await expect.poll(() => view.locator('.gfxv-scroll').evaluate(el => el.scrollTop)).toBe(208 * 2);
     await expect(whole).toBeHidden();
@@ -3804,7 +3805,8 @@ test('a bitmap of fewer rows marked where the VIC shows a whole one is a block o
   await page.getByRole('tab', { name: 'Graphics' }).click();
   const view = page.getByLabel('Memory as graphics');
   await view.getByRole('button', { name: 'Bitmaps' }).click();
-  await view.getByLabel('Bitmap height in character rows').selectOption('10');
+  await view.getByLabel('Last bitmap row').fill('9');
+  await view.getByLabel('Last bitmap row').press('Enter');
   await view.getByLabel('Go to address, label or range').fill('$4000');
   await view.getByLabel('Go to address, label or range').press('Enter');
   await expect(view.getByRole('status')).toContainText('$4000–$4c7f (3200 bytes)');
@@ -3818,6 +3820,65 @@ test('a bitmap of fewer rows marked where the VIC shows a whole one is a block o
   await expect(headerRow(page, '4c80')).toContainText('$4c80-$5f3f (4800 bytes)');
   // drawn 80 pixels high: 10 rows
   await expect(listing(page).locator('.gfx-strip.gfx-bitmap').first()).toHaveCSS('height', '80px');
+});
+
+test('a part in the middle of a bitmap: Rows and Columns draw it, a click selects it, Mark as marks a block per row', async ({ page }) => {
+  await waitForListing(page);
+  // the showcase: a bitmap at $4000 the VIC shows, 8000 bytes
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, /^Showcase loaded/)).toBeVisible();
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Graphics' }).click();
+  const view = page.getByLabel('Memory as graphics'), sel = view.getByRole('status'), canvas = view.locator('.gfxv-canvas');
+  const field = async (label: string, v: number) => { await view.getByLabel(label).fill(String(v)); await view.getByLabel(label).press('Enter'); };
+  await view.getByRole('button', { name: 'Bitmaps' }).click();
+
+  await test.step('rows 8-15 and columns 10-29: each 8 KB drawn 160 × 64 pixels', async () => {
+    await field('First bitmap row', 8);
+    await field('Last bitmap row', 15);
+    await field('First bitmap column', 10);
+    await field('Last bitmap column', 29);
+    await expect(view.locator('.view-now')).toContainText('1280 bytes each');
+    await expect(view.locator('.view-now')).toContainText('8 rows × 20 columns');
+    // 8 frames of 64 rows and a gap of 8, 160 wide, at zoom 2
+    await expect(canvas).toHaveCSS('height', `${8 * 72 * 2}px`);
+    await expect(canvas).toHaveCSS('width', `${160 * 2}px`);
+    // the arrow keys step a field; a first row past the last takes the last with it
+    await view.getByLabel('Last bitmap row').press('ArrowUp');
+    await expect(view.locator('.view-now')).toContainText('9 rows × 20 columns');
+    await view.getByLabel('Last bitmap row').press('ArrowDown');
+    await field('First bitmap row', 30);
+    await expect(view.getByLabel('First bitmap row')).toHaveClass(/bad/);
+    await field('First bitmap row', 8);
+  });
+
+  await test.step('a click selects the part, from its first byte to its last; hovering names the row and column', async () => {
+    await view.getByLabel('Go to address, label or range').fill('$4000');
+    await view.getByLabel('Go to address, label or range').press('Enter');
+    await expect(sel).toContainText('$4a50–$53af (2400 bytes)');
+    // the frame at $4000 is the third: 2 × 72 pixels down; its top left is row 8, column 10
+    const b = (await canvas.boundingBox())!;
+    await page.mouse.move(b.x + 1, b.y + 2 * 72 * 2 + 1);
+    await expect(view.locator('.gfxv-info')).toContainText('row 8, column 10 of the bitmap at $4000');
+    await expect(view.getByRole('button', { name: 'Mark as Bitmap' })).toHaveAttribute('title', /8 stretches of 160 bytes/);
+  });
+
+  await test.step('Mark as Bitmap marks the bytes drawn, a block per row; one Ctrl+Z takes them all back', async () => {
+    await view.getByRole('button', { name: 'Mark as Bitmap' }).click();
+    await expect(toast(page, '8 stretches in $4a50–$53af marked as Bitmap')).toBeVisible();
+    await view.getByRole('button', { name: 'Show in listing' }).click();
+    await expect(headerRow(page, '4a50')).toContainText('$4a50-$4aef (160 bytes)');
+    await expect(headerRow(page, '4a50').locator('.hdr-user')).toBeVisible();
+    // the bytes between the rows keep their type, the next row is a block of its own
+    await expect(headerRow(page, '4af0')).toContainText('$4af0-$4b8f (160 bytes)');
+    await expect(headerRow(page, '4b90')).toContainText('$4b90-$4c2f (160 bytes)');
+    await page.getByRole('tab', { name: 'Graphics' }).click();
+    await view.focus();
+    await page.keyboard.press('Control+z');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, '$4000');
+    await expect(headerRow(page, '4000')).toContainText('$4000-$5f3f (8000 bytes)');
+  });
 });
 
 test('Unmark in the Graphics tab makes the graphics in the selection data, in every view', async ({ page }) => {

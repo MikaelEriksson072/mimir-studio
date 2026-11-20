@@ -30,6 +30,8 @@ export interface GfxLayout {
   /** parts of memory laid out one after the other (every bank at once): each row's first address, and where the part
    *  the row is in ends (no cell starts there or after it) */
   parts?: { starts: Addr[]; ends: Addr[] };
+  /** bitmaps: the part of each that is drawn (a cell is that part: `cols` x 8 by `rows` x 8 pixels) */
+  win?: BitmapWindow;
 }
 
 /** bytes a bitmap frame shows: 40 x 25 cells of 8 bytes */
@@ -37,8 +39,45 @@ export const BITMAP_BYTES = 8000;
 /** character rows in a whole bitmap; a bitmap row is 40 cells of 8 bytes (320 bytes, 8 pixel lines) */
 export const BITMAP_ROWS = 25;
 export const BITMAP_ROW_BYTES = 320;
+/** cells in a bitmap row (8 bytes each, 8 pixels wide) */
+export const BITMAP_COLS = 40;
 /** a bitmap height as a whole number of character rows, 1 to 25 (anything else is a whole bitmap) */
 export const bitmapRowsOf = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= BITMAP_ROWS ? n : BITMAP_ROWS);
+
+/** The part of each bitmap that is drawn and selected: character rows `top` to `top + rows - 1` (0-24) and columns
+ *  `left` to `left + cols - 1` (0-39), counted as the VIC counts them. Its bytes stay where they are in the bitmap (a
+ *  logo in the middle of the screen, code in the columns beside it); what is outside it is not drawn. */
+export interface BitmapWindow { top: number; rows: number; left: number; cols: number }
+export const WHOLE_BITMAP: Readonly<BitmapWindow> = { top: 0, rows: BITMAP_ROWS, left: 0, cols: BITMAP_COLS };
+const intIn = (n: unknown, lo: number, hi: number): n is number => typeof n === 'number' && Number.isInteger(n) && n >= lo && n <= hi;
+/** a window that fits in a bitmap: a first row or column outside it is 0, a count that does not fit is the rest of the
+ *  bitmap from there. A number is that many rows from the top, the whole width (as `bitmapRowsOf`) */
+export function bitmapWindowOf(w: number | Partial<Record<keyof BitmapWindow, unknown>> | null | undefined): BitmapWindow {
+  if (w == null || typeof w !== 'object') return { ...WHOLE_BITMAP, rows: bitmapRowsOf(w) };
+  const top = intIn(w.top, 0, BITMAP_ROWS - 1) ? w.top : 0, left = intIn(w.left, 0, BITMAP_COLS - 1) ? w.left : 0;
+  return { top, rows: intIn(w.rows, 1, BITMAP_ROWS - top) ? w.rows : BITMAP_ROWS - top, left, cols: intIn(w.cols, 1, BITMAP_COLS - left) ? w.cols : BITMAP_COLS - left };
+}
+export const isWholeBitmap = (w: BitmapWindow) => w.top === 0 && w.left === 0 && w.rows === BITMAP_ROWS && w.cols === BITMAP_COLS;
+/** a window's bytes counted from the first byte of its bitmap: its first byte, and just past its last */
+export const windowSpan = (w: BitmapWindow) => ({ from: w.top * BITMAP_ROW_BYTES + w.left * 8, to: (w.top + w.rows - 1) * BITMAP_ROW_BYTES + (w.left + w.cols) * 8 });
+/** the bytes of the window in the bitmap at `frame`: a stretch per character row (`cols` cells), or one for all of
+ *  them when the window is as wide as the bitmap; cut to `within` */
+export function windowPieces(frame: Addr, w: BitmapWindow, within?: { start: Addr; end: Addr }): { start: Addr; end: Addr }[] {
+  const s = windowSpan(w), out: { start: Addr; end: Addr }[] = [];
+  const all = w.cols === BITMAP_COLS ? [{ start: frame + s.from, end: frame + s.to }]
+    : Array.from({ length: w.rows }, (_, r) => { const a = frame + (w.top + r) * BITMAP_ROW_BYTES + w.left * 8; return { start: a, end: a + w.cols * 8 }; });
+  for (const p of all) {
+    const a = Math.max(p.start, within?.start ?? p.start), b = Math.min(p.end, within?.end ?? p.end);
+    if (a < b) out.push({ start: a, end: b });
+  }
+  return out;
+}
+/** the bitmap at `frame` as 8000 bytes with only the window's in them (the rest 0): a picture of what is drawn */
+export function windowBitmap(mem: Uint8Array, frame: Addr, w: BitmapWindow): Uint8Array {
+  const out = new Uint8Array(BITMAP_BYTES);
+  for (const p of windowPieces(frame, w)) out.set(mem.subarray(p.start, Math.min(p.end, mem.length)), p.start - frame);
+  return out;
+}
 /** sprites a row can show, 1 to this many */
 export const MAX_SPRITE_COLS = 24;
 /** a count of sprites a row, 1 to 24 (anything else is the default 8) */
@@ -48,24 +87,28 @@ export const SCREEN_BYTES = 1000;
 
 /** `parts`: only these ranges, one after the other (every bank of a cartridge: its loaded memory at bank addresses,
  *  each starting on 8 KB so the cells stay where the VIC has them); the grid's offset moves each part's first cell.
- *  `bitmapRows`: a bitmap's first 1-25 character rows are drawn (a picture smaller than the screen, a logo), still one
- *  per 8 KB, and a bitmap cell is those rows' bytes (320 each) */
-export function gfxLayout(kind: GfxKind, cols: number, offset = 0, parts?: readonly { start: Addr; end: Addr }[], bitmapRows = BITMAP_ROWS): GfxLayout {
+ *  `bitmap`: the part of each bitmap drawn (BitmapWindow; a number: its first 1-25 character rows), a picture smaller
+ *  than the screen, a logo in the middle of it. Still one per 8 KB; a bitmap cell is that part, its bytes from the
+ *  window's first to its last */
+export function gfxLayout(kind: GfxKind, cols: number, offset = 0, parts?: readonly { start: Addr; end: Addr }[], bitmap: number | BitmapWindow = WHOLE_BITMAP): GfxLayout {
+  const win = kind === 'bitmap' ? bitmapWindowOf(bitmap) : undefined;
   const g = kind === 'chars' ? { unit: 8, cellW: 8, cellH: 8, gapX: 0, gapY: 0, cols }
     : kind === 'sprites' ? { unit: 64, cellW: 24, cellH: 21, gapX: 2, gapY: 2, cols }
       : kind === 'screens' ? { unit: 0x400, cellW: 320, cellH: 200, gapX: 8, gapY: 8, cols }
-        : { unit: 0x2000, cellW: 320, cellH: bitmapRowsOf(bitmapRows) * 8, gapX: 0, gapY: 8, cols: 1 };
+        : { unit: 0x2000, cellW: win!.cols * 8, cellH: win!.rows * 8, gapX: 0, gapY: 8, cols: 1 };
   const off = ((offset % g.unit) + g.unit) % g.unit;
-  const width = g.cols * (g.cellW + g.gapX);
+  const width = g.cols * (g.cellW + g.gapX), w = win ? { win } : {};
   if (!parts) {
     const rows = Math.ceil((0x10000 - off) / (g.unit * g.cols));
-    return { kind, ...g, offset: off, rows, width, height: rows * (g.cellH + g.gapY), size: 0x10000 };
+    return { kind, ...g, offset: off, rows, width, height: rows * (g.cellH + g.gapY), size: 0x10000, ...w };
   }
   const starts: Addr[] = [], ends: Addr[] = [];
   for (const p of parts) for (let a = p.start + off; a < p.end; a += g.unit * g.cols) { starts.push(a); ends.push(p.end); }
   const rows = starts.length, size = parts.reduce((n, p) => Math.max(n, p.end), 0);
-  return { kind, ...g, offset: off, rows, width, height: rows * (g.cellH + g.gapY), size, parts: { starts, ends } };
+  return { kind, ...g, offset: off, rows, width, height: rows * (g.cellH + g.gapY), size, parts: { starts, ends }, ...w };
 }
+/** the part of a bitmap layout's bitmaps drawn (a layout made without one: its rows from the top, the whole width) */
+const winOf = (L: GfxLayout): BitmapWindow => L.win ?? { ...WHOLE_BITMAP, rows: Math.max(1, L.cellH >> 3) };
 
 /** the most character rows a font-per-row picture has: a screen's */
 export const FONT_ROWS = 25;
@@ -159,14 +202,15 @@ export function byteAt(L: GfxLayout, x: number, y: number): Addr | null {
     : L.kind === 'screens' ? start + (yi >> 3) * 40 + (xi >> 3)
       // a font per row: the character's line in the row's font
       : L.kind === 'fontrows' ? start + L.codes![xi >> 3] * 8 + yi
-        : start + ((yi >> 3) * 40 + (xi >> 3)) * 8 + (yi & 7);
+        // a bitmap: the window's row and column in the bitmap
+        : (w => start + ((w.top + (yi >> 3)) * BITMAP_COLS + w.left + (xi >> 3)) * 8 + (yi & 7))(winOf(L));
   return a < L.size ? a : null;
 }
 
 /** the cell starting at `start` alone, without gaps: a layout of one row and one column of `L`'s kind, for drawing that
  *  cell by itself (Ctrl over a screen shows it over the whole window) */
 export const cellLayout = (L: GfxLayout, start: Addr): GfxLayout => ({
-  kind: L.kind, unit: L.unit, cols: 1, cellW: L.cellW, cellH: L.cellH, gapX: 0, gapY: 0, offset: start, rows: 1, width: L.cellW, height: L.cellH, size: L.size,
+  kind: L.kind, unit: L.unit, cols: 1, cellW: L.cellW, cellH: L.cellH, gapX: 0, gapY: 0, offset: start, rows: 1, width: L.cellW, height: L.cellH, size: L.size, ...(L.win ? { win: L.win } : {}),
 });
 
 /** the cell before (`d` -1) or after (1) the one starting at `start`, in reading order: along its row, then the row
@@ -185,15 +229,19 @@ export function stepCell(L: GfxLayout, start: Addr, d: 1 | -1): Addr | null {
   }
 }
 
-/** the bytes a cell stands for (a bitmap frame: 8000 or its rows drawn, not the 8 KB step; a screen: 1000, not the 1 KB
- *  step) */
-export const cellBytes = (L: GfxLayout) => (L.kind === 'bitmap' ? (L.cellH >> 3) * BITMAP_ROW_BYTES : L.kind === 'screens' ? SCREEN_BYTES : L.unit);
+/** the bytes a cell stands for (a bitmap frame: 8000, or its window's from the first to the last, not the 8 KB step; a
+ *  screen: 1000, not the 1 KB step) */
+export const cellBytes = (L: GfxLayout) => (L.kind === 'bitmap' ? (s => s.to - s.from)(windowSpan(winOf(L))) : L.kind === 'screens' ? SCREEN_BYTES : L.unit);
+/** where those bytes start in the cell: a bitmap at its window's first byte, the others at the cell's */
+export const cellFrom = (L: GfxLayout) => (L.kind === 'bitmap' ? windowSpan(winOf(L)).from : 0);
 
-/** whole cells from the cell holding `a` to the one holding `b` (either order), as [start, end) */
+/** whole cells from the cell holding `a` to the one holding `b` (either order), as [start, end): a bitmap from the
+ *  first byte of the first one's window to the last byte of the last one's */
 export function cellRange(L: GfxLayout, a: Addr, b: Addr): { start: Addr; end: Addr } | null {
   const x = cellOf(L, Math.min(a, b)), y = cellOf(L, Math.max(a, b));
   if (!x || !y) return null;
-  return { start: x.start, end: Math.min(L.size, y.start + cellBytes(L)) };
+  const f = cellFrom(L);
+  return { start: x.start + f, end: Math.min(L.size, y.start + f + cellBytes(L)) };
 }
 
 /** the rectangles a range covers, one per row (cells are drawn row by row) */
@@ -284,26 +332,28 @@ export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array,
       const own = cells?.('screens', base, i), p = palOf(base + i, own ? palsOf(own.pal) : pals), g = mem[base + i] * 8, x = ox + (i % 40) * 8, y0 = oy + Math.floor(i / 40) * 8;
       for (let y = 0; y < 8; y++) bits(f[g + y], p, x, y0 + y, own ? own.mc : mc);
     }
-    else for (let cy = 0; cy < L.cellH >> 3; cy++) for (let cx = 0; cx < 40; cx++) {
-      const own = cells?.('bitmap', base, cy * 40 + cx), ps = own ? palsOf(own.pal) : pals;
-      for (let y = 0; y < 8; y++) { const a = base + (cy * 40 + cx) * 8 + y; if (a < mem.length) bits(mem[a], palOf(a, ps), ox + cx * 8, oy + cy * 8 + y, own ? own.mc : mc); }
-    }
+    // a bitmap: its window's cells, each where it is in the bitmap
+    else { const w = winOf(L); for (let cy = 0; cy < w.rows; cy++) for (let cx = 0; cx < w.cols; cx++) {
+      const i = (w.top + cy) * BITMAP_COLS + w.left + cx, own = cells?.('bitmap', base, i), ps = own ? palsOf(own.pal) : pals;
+      for (let y = 0; y < 8; y++) { const a = base + i * 8 + y; if (a < mem.length) bits(mem[a], palOf(a, ps), ox + cx * 8, oy + cy * 8 + y, own ? own.mc : mc); }
+    } }
   }
 }
 
 /**
  * The selection as an image at 1x, drawn as the tab draws it but without the gaps: characters 16 to a row, sprites 8 (or
  * `per`), a
- * bitmap as 320 x 200 or its `bitmapRows` (one per 8 KB, under each other), a screen as 320 x 200 (multicolour pixels two
+ * bitmap as 320 x 200 or its window (`bitmap`, BitmapWindow or a number of rows; one per 8 KB, under each other, `start`
+ * the first byte of the first one's window), a screen as 320 x 200 (multicolour pixels two
  * wide; screens drawn with `font`, one per 1 KB), the fonts of a font-per-row picture as its rows (each 320 x 8, with the
  * 40 `codes`). Cells past the end of the selection stay transparent; `cells` gives some colours of their own (CellColors).
  */
-export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[]; bitmapRows?: number; per?: number; cells?: CellColors } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
+export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[]; bitmap?: number | BitmapWindow; per?: number; cells?: CellColors } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
   const rgb = C64.map(hexRgb), pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => rgb[i & 15]);
-  const bmRows = bitmapRowsOf(opts.bitmapRows ?? BITMAP_ROWS);
+  const win = bitmapWindowOf(opts.bitmap), from = kind === 'bitmap' ? windowSpan(win).from : 0;
   const g = kind === 'chars' ? { unit: 8, w: 8, h: 8, per: 16 } : kind === 'sprites' ? { unit: 64, w: 24, h: 21, per: 8 }
     : kind === 'screens' ? { unit: 0x400, w: 320, h: 200, per: 1 } : kind === 'fontrows' ? { unit: 0x800, w: 320, h: 8, per: 1 }
-      : { unit: 0x2000, w: 320, h: bmRows * 8, per: 1 };
+      : { unit: 0x2000, w: win.cols * 8, h: win.rows * 8, per: 1 };
   // a font per row: the rows whose font lies in the selection (memory the picture skips is no row)
   const bases = kind === 'fontrows' && opts.rows ? opts.rows.filter(a => a >= start && a < end) : null;
   // (`per`: characters or sprites a row, instead of 16 and 8)
@@ -328,9 +378,10 @@ export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr,
       const code = mem[base + j], o = own('screens', base, j);
       for (let y = 0; y < 8; y++) bits(f[code * 8 + y], ox + (j % 40) * 8, oy + Math.floor(j / 40) * 8 + y, o.p, o.m);
     }
-    else for (let cy = 0; cy < bmRows; cy++) for (let cx = 0; cx < 40; cx++) {
-      const o = own('bitmap', base, cy * 40 + cx);
-      for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y, o.p, o.m);
+    // a bitmap: the window's cells (`base` is its first byte), each where it is in the bitmap
+    else for (let cy = 0; cy < win.rows; cy++) for (let cx = 0; cx < win.cols; cx++) {
+      const frame = base - from, j = (win.top + cy) * BITMAP_COLS + win.left + cx, o = own('bitmap', frame, j);
+      for (let y = 0; y < 8; y++) byte(frame + j * 8 + y, ox + cx * 8, oy + cy * 8 + y, o.p, o.m);
     }
   }
   return { width, height, rgba };

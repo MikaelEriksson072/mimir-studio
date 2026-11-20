@@ -1,6 +1,6 @@
 /* The memory graphics browser's geometry and drawing (src/lib/gfxview.ts). */
 import { describe, expect, it } from 'vitest';
-import { bitmapAround, bitmapRowsOf, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, LOADED, MARKED, markedRgb, NOT_LOADED, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer, stepCell } from '../src/lib/gfxview';
+import { bitmapAround, bitmapRowsOf, bitmapWindowOf, cellFrom, isWholeBitmap, windowBitmap, windowPieces, windowSpan, WHOLE_BITMAP, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, LOADED, MARKED, markedRgb, NOT_LOADED, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer, stepCell } from '../src/lib/gfxview';
 import { C64, hexRgb } from '../src/lib/palette';
 
 describe('memory graphics layout', () => {
@@ -193,16 +193,86 @@ describe('bitmaps of fewer rows (Height)', () => {
     // frame 1 is 32 pixels down: its row 2 is drawn, its row 3 is the gap
     expect(at(0, 32 + 16)).toEqual(white);
     expect(at(0, 32 + 24)).toEqual([24, 24, 32, 255]);
-    const img = gfxImage('bitmap', mem, 0x2000, 0x2000 + 960, false, colors, { bitmapRows: 3 });
+    const img = gfxImage('bitmap', mem, 0x2000, 0x2000 + 960, false, colors, { bitmap: 3 });
     expect([img.width, img.height]).toEqual([320, 24]);
     expect(rgb(img, 0, 16)).toEqual(white);
     // two frames: the second is the next 8 KB, under the first
-    const two = gfxImage('bitmap', mem, 0x2000, 0x4000 + 960, false, colors, { bitmapRows: 3 });
+    const two = gfxImage('bitmap', mem, 0x2000, 0x4000 + 960, false, colors, { bitmap: 3 });
     expect([two.width, two.height]).toEqual([320, 48]);
     expect([rgb(two, 0, 24), rgb(two, 1, 24)]).toEqual([white, black]);
     // two whole bitmaps: the second starts at the next 8 KB, not 8000 bytes on
     const whole = gfxImage('bitmap', mem, 0x2000, 0x4000 + 8000, false, colors);
     expect([whole.height, ...rgb(whole, 0, 200)]).toEqual([400, ...white]);
+  });
+});
+
+describe('a part of each bitmap (Rows and Columns)', () => {
+  const colors = { bg: 0, fg: 1, mc1: 2, mc2: 5 };
+  const white = [...hexRgb(C64[1]), 255], black = [...hexRgb(C64[0]), 255];
+  const rgb = (img: { width: number; rgba: Uint8ClampedArray }, x: number, y: number) => { const o = (y * img.width + x) * 4; return [img.rgba[o], img.rgba[o + 1], img.rgba[o + 2], img.rgba[o + 3]]; };
+  // rows 8-15 and columns 10-29: a logo in the middle of the screen
+  const w = { top: 8, rows: 8, left: 10, cols: 20 };
+
+  it('fits a saved part in the bitmap: a first row or column outside it is 0, too many is the rest from there', () => {
+    expect(bitmapWindowOf(w)).toEqual(w);
+    expect(bitmapWindowOf({ top: 24, rows: 1, left: 39, cols: 1 })).toEqual({ top: 24, rows: 1, left: 39, cols: 1 });
+    expect(bitmapWindowOf({ top: 20, rows: 10, left: 30, cols: 20 })).toEqual({ top: 20, rows: 5, left: 30, cols: 10 });
+    expect(bitmapWindowOf({ top: 25, rows: 0, left: -1, cols: 2.5 })).toEqual({ ...WHOLE_BITMAP });
+    expect(bitmapWindowOf({ top: '3' as unknown as number, rows: 10 })).toEqual({ top: 0, rows: 10, left: 0, cols: 40 });
+    // a number of rows (the Height before) is those rows from the top, the whole width
+    expect(bitmapWindowOf(10)).toEqual({ top: 0, rows: 10, left: 0, cols: 40 });
+    expect([undefined, null, 30].map(x => isWholeBitmap(bitmapWindowOf(x)))).toEqual([true, true, true]);
+    expect(isWholeBitmap(w)).toBe(false);
+  });
+
+  it('draws the part of each 8 KB, and a click selects its bytes from the first to the last', () => {
+    const B = gfxLayout('bitmap', 1, 0, undefined, w);
+    // 160 x 64 pixels, still one per 8 KB, 8 apart
+    expect(B).toMatchObject({ unit: 0x2000, rows: 8, cellW: 160, cellH: 64, width: 160, height: 8 * 72, win: w });
+    expect(windowSpan(w)).toEqual({ from: 8 * 320 + 80, to: 15 * 320 + 30 * 8 });
+    expect([cellFrom(B), cellBytes(B)]).toEqual([2640, 4800 + 240 - 2640]);
+    // the second frame ($2000) starts 72 pixels down; right of its 20 columns is no bitmap
+    expect(cellAt(B, 159, 72 + 5)).toBe(0x2000);
+    expect(cellAt(B, 160, 72 + 5)).toBeNull();
+    // the pixel at the part's top left is row 8, column 10 of the bitmap
+    expect(byteAt(B, 0, 72)).toBe(0x2000 + (8 * 40 + 10) * 8);
+    expect(byteAt(B, 8 * 3 + 1, 72 + 8 * 2 + 5)).toBe(0x2000 + (10 * 40 + 13) * 8 + 5);
+    expect(cellRange(B, 0x2000, 0x2000)).toEqual({ start: 0x2000 + 2640, end: 0x2000 + 15 * 320 + 240 });
+    expect(cellRange(B, 0x2000, 0x4000)).toEqual({ start: 0x2000 + 2640, end: 0x4000 + 15 * 320 + 240 });
+    // the selection is drawn over the whole cell
+    expect(rangeRects(B, 0x2000 + 2640, 0x2000 + 15 * 320 + 240)).toEqual([{ x: 0, y: 72, w: 160, h: 64 }]);
+    // a layout of one cell keeps the part
+    expect(cellLayout(B, 0x2000).win).toEqual(w);
+  });
+
+  it('draws only the part, each cell where it is in the bitmap, and saves it as an image of that size', () => {
+    const mem = new Uint8Array(0x10000);
+    // row 8, column 10 (the part's top left) and row 8, column 9 (beside it): their top line
+    mem[0x2000 + (8 * 40 + 10) * 8] = 0x80; mem[0x2000 + (8 * 40 + 9) * 8] = 0xff;
+    const B = gfxLayout('bitmap', 1, 0, undefined, w), px = new Uint8ClampedArray(B.width * B.height * 4);
+    drawMemory(px, B, mem, () => true, false, colors);
+    const at = (x: number, y: number) => [...px.subarray((y * B.width + x) * 4, (y * B.width + x) * 4 + 4)];
+    expect([at(0, 72), at(1, 72)]).toEqual([white, black]);
+    const img = gfxImage('bitmap', mem, 0x2000 + windowSpan(w).from, 0x2000 + windowSpan(w).to, false, colors, { bitmap: w });
+    expect([img.width, img.height]).toEqual([160, 64]);
+    expect([rgb(img, 0, 0), rgb(img, 1, 0)]).toEqual([white, black]);
+  });
+
+  it('gives each cell of a snapshot its own colours by its place in the bitmap', () => {
+    const mem = new Uint8Array(0x10000).fill(0xff, 0x2000, 0x4000), seen: number[] = [];
+    const B = gfxLayout('bitmap', 1, 0, undefined, { top: 24, rows: 1, left: 38, cols: 2 });
+    drawMemory(new Uint8ClampedArray(B.width * B.height * 4), B, mem, () => true, false, colors, undefined, undefined, 1, 2, (k, base, i) => { seen.push(base, i); return null; });
+    expect(seen).toEqual([0x2000, 998, 0x2000, 999]);
+  });
+
+  it('marks the bytes drawn: a stretch per row, one for all rows when as wide as the bitmap; a picture of only them', () => {
+    expect(windowPieces(0x2000, { top: 1, rows: 2, left: 4, cols: 2 })).toEqual([{ start: 0x2000 + 320 + 32, end: 0x2000 + 320 + 48 }, { start: 0x2000 + 640 + 32, end: 0x2000 + 640 + 48 }]);
+    expect(windowPieces(0x2000, { top: 1, rows: 2, left: 0, cols: 40 })).toEqual([{ start: 0x2000 + 320, end: 0x2000 + 960 }]);
+    // cut to a selection that starts in the second row's stretch
+    expect(windowPieces(0x2000, { top: 1, rows: 2, left: 4, cols: 2 }, { start: 0x2000 + 640 + 40, end: 0x3000 })).toEqual([{ start: 0x2000 + 640 + 40, end: 0x2000 + 640 + 48 }]);
+    const mem = new Uint8Array(0x10000).fill(7, 0x2000, 0x4000), pic = windowBitmap(mem, 0x2000, { top: 1, rows: 2, left: 4, cols: 2 });
+    expect(pic.length).toBe(8000);
+    expect([pic[320 + 31], pic[320 + 32], pic[320 + 47], pic[320 + 48], pic[640 + 40]]).toEqual([0, 7, 7, 0, 7]);
   });
 });
 

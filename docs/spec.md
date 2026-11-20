@@ -6041,15 +6041,30 @@ minnet spelar (14.5b). De andra fem är:
   vilket antal som helst från 1 till 128 in. `Enter` eller att lämna fältet tar det, och piltangenterna stegar det. Ett
   sparat 32, den tidigare standarden, blir 40 en gång (`GfxPrefs.v` 2). Ett annat valt antal behålls.
 - **Sprites:** 64 byte per sprite, 24 × 21 pixlar, 4, 8 eller 16 per rad.
-- **Bitmaps:** en ram på 320 × 200 (8000 byte) per 8 KB. *Height* (1–25 teckenrader, standard 25) ritar bara varje
-  bitmapps första rader, för en bild som är mindre än skärmen (en logga, till exempel). En teckenrad är 8 pixelrader och
-  320 byte, så med 10 rader är varje ram 320 × 80 och en cell 3200 byte. Ramarna ligger kvar en per 8 KB, och det som
-  ligger under raderna ritas inte. Ett klick väljer då bara radernas byte, och `Shift`+klick eller dragning väljer från
-  den första ramens början till slutet av den sista ramens rader. Lägesknappen visar cellens storlek (*320×80*),
-  raden bredvid hur många byte och rader (*3200 bytes each · 10 rows*), och under vyn står teckenrad och kolumn i
-  bitmappen (`row 9, column 3 of the bitmap at $2000`), så att man ser hur många rader bilden har. Adressen överst står
-  kvar när höjden byts. En PNG blir 320 × (8 × rader) per ram. Höjden sparas med de andra valen (`GfxPrefs.bitmapRows`),
-  och ett sparat värde utanför 1–25 blir 25 (`bitmapRowsOf`). *Mark as Bitmap* på färre rader ger ett block av just de
+- **Bitmaps:** en ram på 320 × 200 (8000 byte) per 8 KB. *Rows* och *Columns* (första och sista teckenrad 0–24 och
+  kolumn 0–39, räknade som VIC räknar dem, standard hela bitmappen) ritar bara den delen av varje bitmapp, för en bild
+  som är mindre än skärmen: en logga, eller en liten del mitt i skärmen där resten av bitmappens minne används till
+  annat (en rastersplit, kod i kolumnerna bredvid). Fälten skrivs in (`Enter` eller att lämna fältet tar dem),
+  piltangenterna och mushjulet stegar dem, en första rad efter den sista tar den sista med sig (och tvärtom), och ett tal
+  utanför gränserna blir rött och tas inte. *All* bredvid ritar hela bitmappen igen. En teckenrad är 8 pixelrader och
+  320 byte, en kolumn 8 pixlar och 8 byte, så rad 8–15 och kolumn 10–29 ger ramar på 160 × 64. Delens byte ligger kvar
+  där de är i bitmappen: pixeln överst till vänster är rad 8, kolumn 10. Ramarna ligger kvar en per 8 KB, och det som
+  ligger utanför delen ritas inte. Ett klick väljer då delens byte från dess första till dess sista (`$4a50-$53af`), och
+  `Shift`+klick eller dragning väljer från den första ramens del till slutet av den sista ramens. Lägesknappen visar
+  cellens storlek (*160×64*), raden bredvid hur många byte som ritas och delens storlek (*1280 bytes each · 8 rows × 20
+  columns*), och under vyn står teckenrad och kolumn i bitmappen (`row 8, column 10 of the bitmap at $4000`), så att man
+  ser var bilden börjar och slutar. Adressen överst står kvar när delen byts. En PNG blir delens storlek per ram, och en
+  Koala- eller Art Studio-bild och *Add to library* tar bitmappens 8000 byte med bara delens byte i (resten 0), så att
+  bilden visar det som ritas. Delen sparas med de andra valen (`GfxPrefs.bitmapTop`, `bitmapRows`, `bitmapLeft`,
+  `bitmapCols`, `lib/gfxview` `BitmapWindow`), och ett sparat värde som inte får plats blir det som får plats: en första
+  rad eller kolumn utanför bitmappen blir 0, för många rader eller kolumner blir resten från där (`bitmapWindowOf`). Ett
+  äldre sparat `bitmapRows` utan de andra är de raderna från toppen, hela bredden. `Shift`+klick på ett bitmappsblock i
+  Blocks ritar det från blockets början med hela bredden, så högt som det är. Är delen smalare än bitmappen markerar
+  *Mark as* (Bitmap, Charset, Sprite data) bara de byte som ritas: en sträcka per teckenrad, var och en ett eget block,
+  i ett enda ångra-steg, så att byten mellan dem (kod bredvid en logga) behåller sina typer (`windowPieces`, App
+  `markPieces`). Knappens tooltip säger hur många sträckor det blir. Lika bred som bitmappen är raderna en enda sträcka,
+  markeringen. Test: `apps/desktop/test/gfxview.test.ts` (*a part of each bitmap*) och e2e-testet *a part in the middle
+  of a bitmap*. *Mark as Bitmap* på färre rader ger ett block av just de
   raderna, även där VIC visar en hel bitmapp. Resten av den blir ett eget bitmappsblock (`$4c80-$5f3f`), som
   VIC-evidensen säger. Förut gick användarens markering vidare över de byte efter den som VIC-evidensen gett samma typ,
   så 10 rader blev 8000 byte igen. Det gäller all grafik användaren markerar (sprites, teckenuppsättningar, bitmappar,

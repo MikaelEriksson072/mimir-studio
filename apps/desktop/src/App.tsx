@@ -1646,6 +1646,20 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       : `$${h4(r.start)}–$${h4(r.end - 1)} marked as ${what}${mcText}${name ? `, named ${name}` : ''}${merged > 1 ? `, merging ${merged} blocks into one` : ''}`, 'ok');
     showChanged(o.start, o.end, side ? `Marked as ${what} and merged` : `Marked as ${what}`);
   };
+  /** Mark as from the Graphics tab's bitmaps drawn narrower than a bitmap: the bytes drawn, a stretch per character row,
+   *  each a block of its own, so the bytes between them (code beside a logo, say) keep their types; one undo step */
+  const markPieces = (id: string, pieces: Range[], mc?: boolean) => {
+    if (pieces.length < 2) { if (pieces[0]) mark(id, pieces[0], { mc }); return; }
+    const rl = A.relocs.find(x => pieces.some(p => x.start < p.end && p.start < x.end));
+    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} runs at $${h4(rl.to)}: mark its bytes there, on the lines inside ${words.pseudopc}`, 'warn'); return; }
+    const m = MARK_AS.find(x => x.id === id), what = m ? m.label : id;
+    const os = pieces.map(p => { const o = markOverride(A, p.start, p.end, id, false).override; return mc != null ? markMc(A, o, mc) : o; });
+    const mcText = mc && (os[0].type === 'sprite' || os[0].type === 'charset' || os[0].type === 'bitmap') ? ' (multicolour)' : '';
+    const first = pieces[0], last = pieces[pieces.length - 1], n = pieces.length;
+    update(`Mark ${n} stretches in $${h4(first.start)}-$${h4(last.end - 1)} as ${what}${mcText}`, d => { d.overrides.push(...os); });
+    toast(`${n} stretches in $${h4(first.start)}–$${h4(last.end - 1)} marked as ${what}${mcText}, one a character row: the bytes between them keep their types`, 'ok');
+    showChanged(first.start, last.end, `Marked as ${what}`);
+  };
   /** Unmark (the Graphics tab): the graphics blocks in `r`, cut to it, become data; the rest of a block it cuts keeps
    *  its type and the other blocks in it stay as they are (gfxToData) */
   const unmark = (r: Range) => {
@@ -2624,7 +2638,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** The block at `at` (a music, sprite, charset or bitmap block) in the Add to library dialog; `gfx`: a selection the
    *  Graphics tab shows as characters, sprites or a bitmap, drawn as there */
-  const startLibraryAdd = (at: Addr | null | undefined, gfx?: { start: Addr; end: Addr; kind: 'chars' | 'sprites' | 'bitmap'; mc: boolean; colors: LibraryColors }) => {
+  const startLibraryAdd = (at: Addr | null | undefined, gfx?: { start: Addr; end: Addr; kind: 'chars' | 'sprites' | 'bitmap'; mc: boolean; colors: LibraryColors; bitmap?: Uint8Array }) => {
     if (!kr) return needDesktop();
     const b = gfx ? null : at != null ? findBlock(A.blocks, at) : null;
     const kind: LibraryKind | null = gfx ? (gfx.kind === 'bitmap' ? 'bitmaps' : gfx.kind) : b ? libraryKindOf(b.type) : null;
@@ -2638,7 +2652,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const mem = A.mem.subarray(base, base + 0x10000);
       const ok = (s: Addr, e: Addr) => { for (let a = s; a < e; a++) { const w = base + a; if (A.owner[w] < 0 || findBlock(A.blocks, w)?.type === 'code') return false; } return true; };
       const screens = A.blocks.filter(x => x.type === 'screen' && x.start >= base && x.start < base + 0x10000).map(x => x.start - base);
-      const bitmap = A.mem.slice(start, Math.min(end, start + 8000));
+      // (a part of a bitmap drawn in the Graphics tab: its 8000 bytes with only that part's)
+      const bitmap = gfx?.bitmap ?? A.mem.slice(start, Math.min(end, start + 8000));
       const label = R.labels.get(start)?.name ?? `bitmap_${h4(at64)}`;
       const mc = gfx ? gfx.mc : blockMc(A, b!);
       setLibDraft({ kind, bytes: bitmap, data: bitmap, name: label, from, mc, colors: gfx ? gfx.colors : { ...useUi.getState().gfx.colors },
@@ -4084,7 +4099,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setSel({ start: b.start, end: b.end, multi: true, anchor: b.start, anchorEnd: b.end });
     if (v.tab === 'gfx') {
       // (a screen's characters are drawn as they are set: its multicolour is the charset's)
-      setUi({ tab: 'gfx', gfx: { ...useUi.getState().gfx, kind: v.kind, offset: b.start % gfxLayout(v.kind, 1).unit, ...(v.kind !== 'screens' ? { mc: blockMc(A, b) } : {}), ...(v.rows ? { bitmapRows: v.rows } : {}) } });
+      setUi({ tab: 'gfx', gfx: { ...useUi.getState().gfx, kind: v.kind, offset: b.start % gfxLayout(v.kind, 1).unit, ...(v.kind !== 'screens' ? { mc: blockMc(A, b) } : {}), ...(v.rows ? { bitmapTop: 0, bitmapRows: v.rows, bitmapLeft: 0, bitmapCols: 40 } : {}) } });
       setGfxGo({ addr: b.start, n });
     } else if (v.tab === 'mem') {
       setUi({ tab: 'mem', mon: { ...useUi.getState().mon, mode: v.mode, ...(v.lower != null ? { lower: v.lower } : {}) } });
@@ -4304,10 +4319,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
-                onMark={(id, r, mc) => mark(id, r && { start: g(r.start), end: g(r.end) }, { mc })} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
+                onMark={(id, r, mc, ps) => (ps && ps.length > 1 ? markPieces(id, ps.map(p => ({ start: g(p.start), end: g(p.end) })), mc) : mark(id, r && { start: g(r.start), end: g(r.end) }, { mc }))} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
                 onMulticolor={(r, view, mc) => setGfxMc({ start: g(r.start), end: g(r.end) }, view, mc)}
                 onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)}
-                onLibrary={(r, kind, mc, cols) => startLibraryAdd(null, { start: g(r.start), end: g(r.end), kind, mc, colors: { ...cols } })} />)(allGfx ? (a: Addr) => a : inBank)}
+                onLibrary={(r, kind, mc, cols, bitmap) => startLibraryAdd(null, { start: g(r.start), end: g(r.end), kind, mc, colors: { ...cols }, ...(bitmap ? { bitmap } : {}) })} />)(allGfx ? (a: Addr) => a : inBank)}
               {tab === 'mem' && (g => <MemoryDump key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
                 spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
                 onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}

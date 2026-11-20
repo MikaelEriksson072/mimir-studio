@@ -16,7 +16,7 @@ import { BankPick, OptGroup, ViewModes, type BankPickProps } from './ViewModes';
 import { parseGoto } from '../lib/goto';
 import { snapshotVic } from '../lib/overview';
 import { vicCellColors, vicGfxColors } from '../lib/vicgfx';
-import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type CellColors, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
+import { bitmapAround, BITMAP_BYTES, BITMAP_COLS, BITMAP_ROW_BYTES, BITMAP_ROWS, bitmapWindowOf, builtinFont, cellFrom, isWholeBitmap, windowBitmap, windowPieces, type BitmapWindow, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type CellColors, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
 import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -59,8 +59,9 @@ export interface MemoryGfxProps {
   A: AnalysisResult; R: RenderResult; cursor: Addr | null; sel: Sel | null;
   onSelect: (start: Addr, end: Addr) => void; onClear: () => void;
   /** Mark as: `mc` is Multicolor as the bytes are drawn here (not given for screens, whose bytes are screen codes): the
-   *  block draws so in the listing too */
-  onMark: (id: string, range: { start: Addr; end: Addr }, mc?: boolean) => void;
+   *  block draws so in the listing too. `pieces`: bitmaps drawn narrower than a bitmap mark only the bytes drawn, a
+   *  stretch per character row, each a block of its own */
+  onMark: (id: string, range: { start: Addr; end: Addr }, mc?: boolean, pieces?: { start: Addr; end: Addr }[]) => void;
   /** Multicolor switched with a selection: the blocks of the type this view draws that it has bytes in draw so too */
   onMulticolor?: (range: { start: Addr; end: Addr }, view: GfxKind, mc: boolean) => void;
   /** Unmark: the graphics blocks in the range, cut to it, become data */
@@ -68,8 +69,9 @@ export interface MemoryGfxProps {
   onShow: (a: Addr) => void;
   /** save a file through a save dialog (its suggested name and bytes) */
   onSave: (name: string, bytes: Uint8Array) => void;
-  /** the selection as characters, sprites or a bitmap to the library (spec 10.6), drawn as here */
-  onLibrary?: (range: { start: Addr; end: Addr }, kind: 'chars' | 'sprites' | 'bitmap', mc: boolean, colors: GfxColors) => void;
+  /** the selection as characters, sprites or a bitmap to the library (spec 10.6), drawn as here; a part of a bitmap is
+   *  its 8000 bytes (`range`) with only that part's in `bitmap` */
+  onLibrary?: (range: { start: Addr; end: Addr }, kind: 'chars' | 'sprites' | 'bitmap', mc: boolean, colors: GfxColors, bitmap?: Uint8Array) => void;
   /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
   bank?: BankPickProps | null;
   /** where the editor was in memory (14.6b): the tab opens with it at the top (null: at the cursor) */
@@ -92,6 +94,11 @@ interface SaveAs { id: string; label: string; ext: string; make: () => Uint8Arra
 
 const plainAddr = (a: Addr) => `$${h4(a)}`;
 
+/** a part of a bitmap in words: its character rows and columns, first to last */
+const winText = (w: BitmapWindow) => `character rows ${w.top}–${w.top + w.rows - 1} and columns ${w.left}–${w.left + w.cols - 1}`;
+/** every bitmap drawn whole again */
+const WHOLE_PREFS: Partial<GfxPrefs> = { bitmapTop: 0, bitmapRows: BITMAP_ROWS, bitmapLeft: 0, bitmapCols: BITMAP_COLS };
+
 /** where each view's colours come from with Snapshot's VIC on (lib/vicgfx.ts) */
 const VIC_COLOURS_OF: Record<GfxKind, string> = {
   chars: 'the background and multicolours $d021-$d023, and the colour most cells have in colour RAM',
@@ -111,7 +118,10 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
-  const { zoom, mc, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows, marked, vicColors } = prefs;
+  const { zoom, mc, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapTop, bitmapRows, bitmapLeft, bitmapCols, marked, vicColors } = prefs;
+  // bitmaps: the part of each drawn (character rows and columns), the whole by default
+  const win = useMemo(() => bitmapWindowOf({ top: bitmapTop, rows: bitmapRows, left: bitmapLeft, cols: bitmapCols }), [bitmapTop, bitmapRows, bitmapLeft, bitmapCols]);
+  const wholeWin = isWholeBitmap(win);
   // (MemoryGfx shows Animations with a view of its own)
   const kind = prefs.kind as GfxKind;
   // a project opened from a VICE snapshot is drawn in its VIC-II's colours while the box is on: the view's colours from
@@ -127,8 +137,8 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
     if (marked) for (const b of A.blocks) if (groupOfKind(b.type) === 'gfx') s.fill(MARKED, b.start, Math.min(b.end, s.length));
     return s;
   }, [A, marked]);
-  // bitmaps of fewer rows than a screen: the mode's button says the size of a cell
-  const modes = useMemo(() => GFX_MODES.map(m => (m.key === 'bitmap' && bitmapRows !== BITMAP_ROWS ? { ...m, sub: `320×${bitmapRows * 8}`, title: `Memory as bitmaps: the first ${bitmapRows} character rows (${bitmapRows * BITMAP_ROW_BYTES} bytes, 320 × ${bitmapRows * 8} pixels) of each 8 KB` } : m)), [bitmapRows]);
+  // a part of each bitmap: the mode's button says the size of a cell
+  const modes = useMemo(() => GFX_MODES.map(m => (m.key === 'bitmap' && !wholeWin ? { ...m, sub: `${win.cols * 8}×${win.rows * 8}`, title: `Memory as bitmaps: ${winText(win)} of each 8 KB (${win.rows * win.cols * 8} bytes, ${win.cols * 8} × ${win.rows * 8} pixels)` } : m)), [win, wholeWin]);
   const cols = kind === 'chars' ? prefs.charCols : kind === 'sprites' ? prefs.spriteCols : kind === 'screens' ? prefs.screenCols : 1;
   // a font per row: the 40 screen codes every row shows; 0-39 when they are not loaded (a screen filled at run time)
   const codesLoaded = Array.from({ length: 40 }, (_, i) => rowCodes + i).every(a => a <= 0xffff && A.owner[a] >= 0);
@@ -145,7 +155,7 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
   /** a wheel step at most every 60 ms, so a touchpad does not race through the list */
   const lastWheel = useRef(0);
   const fontRows = useMemo(() => fontRowStarts(rowFonts, rowCount, rowSkip), [rowFonts, rowCount, rowSkip]);
-  const L = useMemo(() => (kind === 'fontrows' ? fontRowsLayout(fontRows.starts, codes) : gfxLayout(kind, cols, offset, parts ?? undefined, bitmapRows)), [kind, cols, offset, fontRows, codes, parts, bitmapRows]);
+  const L = useMemo(() => (kind === 'fontrows' ? fontRowsLayout(fontRows.starts, codes) : gfxLayout(kind, cols, offset, parts ?? undefined, win)), [kind, cols, offset, fontRows, codes, parts, win]);
   const canvas = useRef<HTMLCanvasElement>(null), scroller = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Addr | null>(null);
   /** a font per row: the row and column under the pointer */
@@ -262,7 +272,7 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
     el.scrollTop = c.y * zoom;
     // the scroll event this sets off is not yours (read back: the browser may have stopped it at the end)
     restored.current = el.scrollTop;
-  }, [kind, cols, zoom, bitmapRows]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [kind, cols, zoom, win]); // eslint-disable-line react-hooks/exhaustive-deps
   // a file opened from a loader while the tab is open: it goes there
   useLayoutEffect(() => { if (goTo && goTo.n !== goneTo.current) showGoTo(goTo); }, [goTo?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   // another layout, or the scrolling that came with it: the rows drawn are the ones on screen
@@ -393,11 +403,23 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
     // `1:$8000` in a file name: bank 1, `1_8000`
     return l && validLabel(l) ? l : `${kind === 'chars' ? 'charset' : kind === 'sprites' ? 'sprites' : kind === 'screens' ? 'screen' : kind === 'fontrows' ? 'fonts' : 'bitmap'}_${fmt(r.start).replace('$', '').replace(':', '_')}`;
   };
+  /** the bitmap the selection starts in (its 8 KB cell's first byte) */
+  const frameOf = (a: Addr) => cellOf(L, a)?.start ?? a;
+  // bitmaps drawn narrower than a bitmap: Mark as marks only the bytes drawn, a stretch per character row in each bitmap
+  // the selection is in (as wide as a bitmap, the rows are one stretch: the selection)
+  const pieces = useMemo(() => {
+    if (!range || kind !== 'bitmap' || win.cols === BITMAP_COLS) return null;
+    const out: { start: Addr; end: Addr }[] = [];
+    for (let f: Addr | null = cellOf(L, range.start)?.start ?? null; f != null && f < range.end; f = stepCell(L, f, 1)) out.push(...windowPieces(f, win, range));
+    return out.length ? out : null;
+  }, [range?.start, range?.end, kind, win, L]); // eslint-disable-line react-hooks/exhaustive-deps
   const saveAs: SaveAs[] = !range ? [] : (() => {
     const data = () => A.mem.slice(range.start, range.end);
+    // a picture of a part of a bitmap: its 8000 bytes with only that part's
+    const bitmap = () => (kind === 'bitmap' && !wholeWin ? windowBitmap(A.mem, frameOf(range.start), win) : data());
     const pictures: SaveAs[] = [
-      { id: 'kla', label: 'Koala Painter picture, multicolour (.kla)', ext: 'kla', make: () => koalaPicture(data(), colors) },
-      { id: 'art', label: 'Art Studio picture, hires (.art)', ext: 'art', make: () => artStudioPicture(data(), colors) },
+      { id: 'kla', label: 'Koala Painter picture, multicolour (.kla)', ext: 'kla', make: () => koalaPicture(bitmap(), colors) },
+      { id: 'art', label: 'Art Studio picture, hires (.art)', ext: 'art', make: () => artStudioPicture(bitmap(), colors) },
     ];
     return [
       { id: 'bin', label: 'Raw bytes (.bin)', ext: 'bin', make: data },
@@ -405,17 +427,17 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
       kind === 'chars' ? { id: '64c', label: 'Charset with its load address (.64c)', ext: '64c', make: () => makePrg(range.start & 0xffff, data()) }
         : { id: 'prg', label: 'With its load address (.prg)', ext: 'prg', make: () => makePrg(range.start & 0xffff, data()) },
       ...(kind === 'bitmap' ? (mc ? pictures : [...pictures].reverse()) : []),
-      { id: 'png', label: 'Image as shown here (.png)', ext: 'png', make: () => pngOf(gfxImage(kind, A.mem, range.start, range.end, mc, colors, { font: kind === 'screens' ? font : undefined, codes, rows: L.rowStarts, bitmapRows, cells })) },
+      { id: 'png', label: 'Image as shown here (.png)', ext: 'png', make: () => pngOf(gfxImage(kind, A.mem, kind === 'bitmap' ? frameOf(range.start) + cellFrom(L) : range.start, range.end, mc, colors, { font: kind === 'screens' ? font : undefined, codes, rows: L.rowStarts, bitmap: win, cells })) },
       // the fonts of a font-per-row picture are characters
       { id: 'asm', label: 'Kick Assembler source, .byte rows (.asm)', ext: 'asm', make: () => new TextEncoder().encode(gfxSource(kind === 'fontrows' ? 'chars' : kind, saveName(range), range.start & 0xffff, data())) },
     ];
   })();
   const save = async (s: SaveAs) => { setSaveOpen(false); if (range) onSave(`${saveName(range)}.${s.ext}`, await s.make()); };
   // the selection made whole: shown only when that is more (or other) than it is. A bitmap is the 8000 bytes from the
-  // start of the grid's frame, and a bitmap of fewer rows is drawn whole again, so the selection can be seen
+  // start of the grid's frame, and a part of a bitmap is drawn whole again, so the selection can be seen
   const whole = kind === 'chars' ? { label: 'Whole charset (2 KB)', title: 'The 2 KB charset the selection starts in, as the VIC sees it', of: charsetAround }
     : kind === 'bitmap' ? {
-      label: 'Whole bitmap (8000 bytes)', title: bitmapRows < BITMAP_ROWS ? `All 25 rows of the bitmap, drawn whole again (Height ${bitmapRows} rows now)` : 'All 25 rows of the bitmap the selection starts in',
+      label: 'Whole bitmap (8000 bytes)', title: !wholeWin ? `All of the bitmap, 40 × 25 cells, drawn whole again (${winText(win)} now)` : 'All 25 rows of the bitmap the selection starts in',
       of: (a: Addr) => { const s = cellOf(L, a)?.start ?? bitmapAround(a).start; return { start: s, end: s + BITMAP_BYTES }; },
     }
       : kind === 'screens' ? { label: 'With the sprite pointers (1 KB)', title: 'The screen and the 24 bytes after it: 16 unused and the 8 sprite pointers', of: (a: Addr) => ({ start: a, end: a + 0x400 }) }
@@ -423,8 +445,8 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
   const wholeOf = whole && range ? (r => ({ start: r.start, end: Math.min(L.size, r.end) }))(whole.of(range.start)) : null;
   const takeWhole = () => {
     if (!wholeOf) return;
-    if (kind === 'bitmap' && bitmapRows < BITMAP_ROWS) {
-      set({ bitmapRows: BITMAP_ROWS });
+    if (kind === 'bitmap' && !wholeWin) {
+      set(WHOLE_PREFS);
       // drawn whole: the bitmap at the top of the picture (after `set`, which takes a scroll just made first)
       topAt.current = wholeOf.start;
     }
@@ -433,8 +455,9 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
 
   const now = <>
     <b>{GFX_MODES.find(m => m.key === kind)!.label}</b>
-    <span>{kind === 'bitmap' ? `${bitmapRows * BITMAP_ROW_BYTES} bytes each` : SHOWS[kind]}</span>
-    {kind === 'chars' || kind === 'sprites' || kind === 'screens' ? <span>{cols} a row</span> : kind === 'fontrows' ? <span>{rowCount} rows</span> : <span>{bitmapRows} {bitmapRows === 1 ? 'row' : 'rows'}</span>}
+    <span>{kind === 'bitmap' ? `${win.rows * win.cols * 8} bytes each` : SHOWS[kind]}</span>
+    {kind === 'chars' || kind === 'sprites' || kind === 'screens' ? <span>{cols} a row</span> : kind === 'fontrows' ? <span>{rowCount} rows</span>
+      : <span>{win.rows} {win.rows === 1 ? 'row' : 'rows'}{win.cols < BITMAP_COLS ? ` × ${win.cols} ${win.cols === 1 ? 'column' : 'columns'}` : ''}</span>}
     <span>{mc ? 'multicolour' : 'hires'}</span>
     <span>{zoom}×</span>
   </>;
@@ -471,10 +494,13 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
         <OptGroup title="Layout">
           {kind === 'chars' && <CountField value={cols} presets={COLS.chars} max={MAX_CHAR_COLS} aria="Characters per row" onSet={n => set({ charCols: n })} />}
           {kind !== 'bitmap' && kind !== 'fontrows' && kind !== 'chars' && <label className="gfxv-field">Per row<select aria-label="Cells per row" value={cols} onChange={e => set(kind === 'sprites' ? { spriteCols: +e.target.value } : { screenCols: +e.target.value })}>{COLS[kind].map(n => <option key={n} value={n}>{n}</option>)}</select></label>}
-          {kind === 'bitmap' && <label className="gfxv-field" title="How many character rows (8 pixel lines, 320 bytes each) of every bitmap are drawn, from its top: fewer for a picture smaller than the screen, a logo say. A click then selects only those rows">Height
-            <select aria-label="Bitmap height in character rows" value={bitmapRows} onChange={e => set({ bitmapRows: +e.target.value })}>
-              {Array.from({ length: BITMAP_ROWS }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} {n === 1 ? 'row' : 'rows'} ({n * 8} px)</option>)}
-            </select></label>}
+          {kind === 'bitmap' && <>
+            <SpanField label="Rows" what="row" first={win.top} last={win.top + win.rows - 1} max={BITMAP_ROWS - 1} onSet={(a, b) => set({ bitmapTop: a, bitmapRows: b - a + 1 })}
+              title="The character rows of every bitmap that are drawn (8 pixel lines, 320 bytes each), the first and the last, 0-24 as the VIC counts them: fewer for a picture smaller than the screen, a logo in the middle say. A click then selects only those bytes" />
+            <SpanField label="Columns" what="column" first={win.left} last={win.left + win.cols - 1} max={BITMAP_COLS - 1} onSet={(a, b) => set({ bitmapLeft: a, bitmapCols: b - a + 1 })}
+              title="The columns of every bitmap that are drawn (8 pixels, 8 bytes each), the first and the last, 0-39 as the VIC counts them. Narrower than the bitmap, Mark as marks only the bytes drawn, a block per character row, so what is beside them (code, say) keeps its type" />
+            {!wholeWin && <button className="btn small ghost" title="Draw all of every bitmap again: rows 0-24, columns 0-39" onClick={() => set(WHOLE_PREFS)}>All</button>}
+          </>}
           <label className="gfxv-field">Zoom<select aria-label="Zoom" value={zoom} onChange={e => set({ zoom: +e.target.value })}>{[1, 2, 3, 4].map(z => <option key={z} value={z}>{z}×</option>)}</select></label>
           {kind !== 'fontrows' && <span className="gfxv-field" title="Move the grid by bytes, for data that does not start on a cell boundary">Offset
             <button className="icon-btn" aria-label="Offset back one byte" onClick={() => set({ offset: offset - 1 })}><Icon name="left" size={13} /></button>
@@ -508,12 +534,18 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
         {range ? <>
           <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           <span className="grow" />
-          {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && bitmapRows < BITMAP_ROWS)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
-          {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range, kind === 'screens' ? undefined : mc)}>Mark as {label}</button>)}
+          {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && !wholeWin)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
+          {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')}
+            title={pieces && pieces.length > 1 ? `Marks the bytes drawn: ${pieces.length} stretches of ${win.cols * 8} bytes, one a character row, each a block of its own. The bytes between them keep their types` : undefined}
+            onClick={() => onMark(id, pieces?.length === 1 ? pieces[0] : range, kind === 'screens' ? undefined : mc, pieces ?? undefined)}>Mark as {label}</button>)}
           <button className="btn small" disabled={!gfxIn.length} title={unmarkTitle} onClick={() => onUnmark(range)}>Unmark</button>
           {onLibrary && (kind === 'chars' || kind === 'sprites' || kind === 'bitmap') && <button className="btn small" title={kind === 'bitmap' ? 'Keep a copy of the bitmap the selection starts as a picture in the library (the Library view in the activity bar), for every project: its screen and colour RAM from where they are found in memory, or in these colours'
             : `Keep a copy of the selection as ${kind === 'chars' ? 'a charset' : 'sprites'} in the library (the Library view in the activity bar), in these colours, for every project`}
-            onClick={() => onLibrary(range, kind, mc, colors)}><Icon name="library" size={13} />Add to library</button>}
+            onClick={() => {
+              // a part of a bitmap: the bitmap's 8000 bytes with only that part's
+              if (kind === 'bitmap' && !wholeWin) { const f = frameOf(range.start); onLibrary({ start: f, end: f + BITMAP_BYTES }, kind, mc, colors, windowBitmap(A.mem, f, win)); }
+              else onLibrary(range, kind, mc, colors);
+            }}><Icon name="library" size={13} />Add to library</button>}
           <span className="gfxv-save" ref={saveRef}>
             <button className="btn small" aria-haspopup="menu" aria-expanded={saveOpen} onClick={() => setSaveOpen(o => !o)} title="Save the selection as a file"><Icon name="download" size={13} />Save…</button>
             {saveOpen && <div className="gfxv-menu" role="menu" aria-label="Save the selection as">
@@ -571,6 +603,44 @@ function CellFocus({ L, at, mem, shades, mc, colors, cells, font, label, childre
       <figcaption className="mono">{children}</figcaption>
     </figure>,
     document.body,
+  );
+}
+
+/** the character rows or columns of a bitmap that are drawn, the first and the last, counted from 0 as the VIC counts
+ *  them. A first past the last takes the last with it, and a last before the first the first */
+function SpanField({ label, what, first, last, max, title, onSet }: { label: string; what: string; first: number; last: number; max: number; title: string; onSet: (first: number, last: number) => void }) {
+  return (
+    <span className="gfxv-field" title={title}>{label}
+      <NumField aria={`First bitmap ${what}`} value={first} max={max} onSet={n => onSet(n, Math.max(n, last))} />
+      <span className="muted">–</span>
+      <NumField aria={`Last bitmap ${what}`} value={last} max={max} onSet={n => onSet(Math.min(first, n), n)} />
+    </span>
+  );
+}
+
+/** a number from 0 to `max`, typed in (Enter or leaving the field takes it) or stepped with the arrow keys or the mouse
+ *  wheel (a step at most every 60 ms, so a touchpad does not race) */
+function NumField({ aria, value, max, onSet }: { aria: string; value: number; max: number; onSet: (n: number) => void }) {
+  const [text, setText] = useState(String(value));
+  const [bad, setBad] = useState(false);
+  const lastWheel = useRef(0);
+  useEffect(() => { setText(String(value)); setBad(false); }, [value]);
+  const take = () => {
+    const t = text.trim(), n = Number(t);
+    if (!t || !Number.isInteger(n) || n < 0 || n > max) { setBad(true); return; }
+    setBad(false);
+    if (n !== value) onSet(n); else setText(String(n));
+  };
+  const step = (d: number) => { const n = Math.min(max, Math.max(0, value + d)); setBad(false); if (n !== value) onSet(n); else setText(String(n)); };
+  return (
+    <input aria-label={aria} className={cx('mono gfxv-addr gfxv-num', bad && 'bad')} value={text} inputMode="numeric" spellCheck={false}
+      title={bad ? `A whole number from 0 to ${max}` : `0 to ${max}: Enter takes it, the arrow keys or the mouse wheel step it`}
+      onChange={e => { setText(e.target.value); setBad(false); }} onBlur={take}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); take(); }
+        else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); step(e.key === 'ArrowUp' ? 1 : -1); }
+      }}
+      onWheel={e => { const now = performance.now(); if (!e.deltaY || now - lastWheel.current < 60) return; lastWheel.current = now; step(e.deltaY < 0 ? 1 : -1); }} />
   );
 }
 
