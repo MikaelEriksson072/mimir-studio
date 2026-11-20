@@ -14,7 +14,9 @@ import { artStudioPicture, findBlock, gfxSource, h2, h4, kindInfo, koalaPicture,
 import { Icon } from '../lib/icons';
 import { BankPick, OptGroup, ViewModes, type BankPickProps } from './ViewModes';
 import { parseGoto } from '../lib/goto';
-import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
+import { snapshotVic } from '../lib/overview';
+import { vicCellColors, vicGfxColors } from '../lib/vicgfx';
+import { bitmapAround, BITMAP_BYTES, BITMAP_ROW_BYTES, BITMAP_ROWS, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type CellColors, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
 import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -90,6 +92,15 @@ interface SaveAs { id: string; label: string; ext: string; make: () => Uint8Arra
 
 const plainAddr = (a: Addr) => `$${h4(a)}`;
 
+/** where each view's colours come from with Snapshot's VIC on (lib/vicgfx.ts) */
+const VIC_COLOURS_OF: Record<GfxKind, string> = {
+  chars: 'the background and multicolours $d021-$d023, and the colour most cells have in colour RAM',
+  fontrows: 'the background and multicolours $d021-$d023, and the colour most cells have in colour RAM',
+  screens: 'the background and multicolours $d021-$d023, and the colour most cells have in colour RAM',
+  sprites: 'the background $d021, the colour most of its sprites have, and the sprite multicolours $d025 and $d026',
+  bitmap: 'the background $d021 and the colours most cells of its screen and colour RAM give',
+};
+
 /** The tab: memory as cells, or an animation's frames (a view of its own, spec 14.5b). */
 export function MemoryGfx(p: MemoryGfxProps) {
   const kind = useUi(s => s.gfx.kind);
@@ -100,9 +111,15 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
-  const { zoom, mc, colors, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows, marked } = prefs;
+  const { zoom, mc, offset, screenFont, rowCodes, rowFonts, rowCount, rowSkip, bitmapRows, marked, vicColors } = prefs;
   // (MemoryGfx shows Animations with a view of its own)
   const kind = prefs.kind as GfxKind;
+  // a project opened from a VICE snapshot is drawn in its VIC-II's colours while the box is on: the view's colours from
+  // its registers and colour RAM, the screen and the bitmap it showed cell by cell (lib/vicgfx.ts)
+  const snapVic = useMemo(() => snapshotVic(A.files), [A.files]);
+  const fromVic = !!snapVic && vicColors;
+  const colors = useMemo(() => (fromVic ? vicGfxColors(snapVic!, A.mem, kind, mc) : prefs.colors), [fromVic, snapVic, A.mem, kind, mc, prefs.colors]);
+  const cells = useMemo(() => (fromVic ? vicCellColors(snapVic!, A.mem) : undefined), [fromVic, snapVic, A.mem]);
   // how each byte is drawn: not loaded, loaded, or in a block already marked as graphics (tinted orange when `marked`)
   const shades = useMemo(() => {
     const s = new Uint8Array(A.mem.length);
@@ -165,9 +182,9 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
     const cv = canvas.current; if (!cv) return;
     const ctx = cv.getContext('2d'), h = (bandRows.to - bandRows.from) * stepY; if (!ctx || h <= 0) return;
     const img = ctx.createImageData(L.width, h);
-    drawMemory(img.data, L, A.mem, a => shades[a] as Shade, mc, colors, kind === 'screens' ? font : undefined, undefined, bandRows.from, bandRows.to);
+    drawMemory(img.data, L, A.mem, a => shades[a] as Shade, mc, colors, kind === 'screens' ? font : undefined, undefined, bandRows.from, bandRows.to, cells);
     ctx.putImageData(img, 0, 0);
-  }, [A, L, mc, colors, kind, font, shades, bandRows.from, bandRows.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [A, L, mc, colors, cells, kind, font, shades, bandRows.from, bandRows.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scrollTo = (a: Addr, G: GfxLayout = L) => { const c = cellOf(G, a), el = scroller.current; if (c && el) el.scrollTop = Math.max(0, c.y * zoom - el.clientHeight / 3); };
   /** the cell of `a` is on screen */
@@ -388,7 +405,7 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
       kind === 'chars' ? { id: '64c', label: 'Charset with its load address (.64c)', ext: '64c', make: () => makePrg(range.start & 0xffff, data()) }
         : { id: 'prg', label: 'With its load address (.prg)', ext: 'prg', make: () => makePrg(range.start & 0xffff, data()) },
       ...(kind === 'bitmap' ? (mc ? pictures : [...pictures].reverse()) : []),
-      { id: 'png', label: 'Image as shown here (.png)', ext: 'png', make: () => pngOf(gfxImage(kind, A.mem, range.start, range.end, mc, colors, { font: kind === 'screens' ? font : undefined, codes, rows: L.rowStarts, bitmapRows })) },
+      { id: 'png', label: 'Image as shown here (.png)', ext: 'png', make: () => pngOf(gfxImage(kind, A.mem, range.start, range.end, mc, colors, { font: kind === 'screens' ? font : undefined, codes, rows: L.rowStarts, bitmapRows, cells })) },
       // the fonts of a font-per-row picture are characters
       { id: 'asm', label: 'Kick Assembler source, .byte rows (.asm)', ext: 'asm', make: () => new TextEncoder().encode(gfxSource(kind === 'fontrows' ? 'chars' : kind, saveName(range), range.start & 0xffff, data())) },
     ];
@@ -478,9 +495,11 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
           <label className="check gfxv-mc" title={kind === 'screens' ? 'Draw the characters multicolour: pairs of bits, each two pixels wide' : `Draw multicolour: pairs of bits, each two pixels wide. ${kind === 'sprites' ? 'Sprite data' : kind === 'bitmap' ? 'A bitmap' : 'A charset'} the selection is in is drawn so in the listing too, and Mark as takes it with it`}><input type="checkbox" checked={mc} onChange={e => { set({ mc: e.target.checked }); if (range && kind !== 'screens') onMulticolor?.(range, kind, e.target.checked); }} /><span>Multicolor</span></label>
           <label className="check gfxv-mc" title="Bytes in a block that is already graphics (Charset, Sprite data, Bitmap or Screen matrix, set by the analysis or by you) are drawn tinted orange, the graphics colour, so what is left to find stands out. Saved files keep their own colours">
             <input type="checkbox" checked={marked} onChange={e => set({ marked: e.target.checked })} /><i className="gfxv-marked" style={{ background: `rgb(${MARKED_TINT.join(',')})` }} /><span>Marked graphics</span></label>
+          {snapVic && <label className="check gfxv-mc" title={`Draw in the colours the snapshot's VIC-II had when VICE saved it: ${VIC_COLOURS_OF[kind]}. The screen it showed ($${h4(snapVic.st.screen)})${snapVic.st.bmm ? ` and its bitmap ($${h4(snapVic.st.bitmap)})` : ''} are drawn cell by cell in their own colours, as on the C64. Picking a colour here draws in your colours instead`}>
+            <input type="checkbox" checked={vicColors} onChange={e => set({ vicColors: e.target.checked })} /><span>Snapshot's VIC</span></label>}
           {(['bg', 'fg', ...(mc ? ['mc1', 'mc2'] : [])] as (keyof GfxPrefs['colors'])[]).map(k => (
             <label key={k} className="gfxv-field gfxv-color" title={`${k === 'bg' ? 'Background (00)' : k === 'fg' ? (mc ? 'Color 11' : 'Foreground') : k === 'mc1' ? 'Color 01' : 'Color 10'}`}>
-              {k.toUpperCase()}<i style={{ background: C64[colors[k]] }} /><select aria-label={`Color ${k}`} value={colors[k]} onChange={e => set({ colors: { ...colors, [k]: +e.target.value } })}>{C64_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}</select>
+              {k.toUpperCase()}<i style={{ background: C64[colors[k]] }} /><select aria-label={`Color ${k}`} value={colors[k]} onChange={e => set({ colors: { ...colors, [k]: +e.target.value }, vicColors: false })}>{C64_NAMES.map((n, i) => <option key={i} value={i}>{n}</option>)}</select>
             </label>
           ))}
         </OptGroup>
@@ -526,7 +545,7 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
       <div className="gfxv-info mono small">{hoverText ?? (cursor != null ? `cursor ${fmt(cursor)} · ${blockText(cursor)}` : ' ')}</div>
       {focus != null && (() => {
         const p = kind === 'screens' ? screenPointer(focus) : null, last = Math.min(L.size, focus + cellBytes(L)) - 1;
-        return <CellFocus L={L} at={focus} mem={A.mem} shades={shades} mc={mc} colors={colors} font={kind === 'screens' ? font : undefined} label={`The ${NAMES[kind]} at ${fmt(focus)}`}>
+        return <CellFocus L={L} at={focus} mem={A.mem} shades={shades} mc={mc} colors={colors} cells={cells} font={kind === 'screens' ? font : undefined} label={`The ${NAMES[kind]} at ${fmt(focus)}`}>
           <span><b>{fmt(focus)}–{fmt(last)}</b>{p ? ` · $d018 = $${p.d018.toString(16)}x in VIC bank ${p.bank}` : ''} · {blockText(focus)}</span>
           <span className="gfx-focus-keys">Wheel: the {NAMES[kind]} before or after · click: select it · let go of Ctrl to close</span>
         </CellFocus>;
@@ -538,14 +557,14 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
 /** one cell (a screen) over the whole window, as large as it fits: drawn as the tab draws it (not loaded bytes dark) but
  *  in its own colours, without the tint of marked graphics. It lets the pointer through, so Ctrl let go finds the tab as
  *  it was */
-function CellFocus({ L, at, mem, shades, mc, colors, font, label, children }: { L: GfxLayout; at: Addr; mem: Uint8Array; shades: Uint8Array; mc: boolean; colors: GfxColors; font?: Uint8Array; label: string; children: ReactNode }) {
+function CellFocus({ L, at, mem, shades, mc, colors, cells, font, label, children }: { L: GfxLayout; at: Addr; mem: Uint8Array; shades: Uint8Array; mc: boolean; colors: GfxColors; cells?: CellColors; font?: Uint8Array; label: string; children: ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
     const ctx = canvas.current?.getContext('2d'); if (!ctx) return;
     const G = cellLayout(L, at), img = ctx.createImageData(G.width, G.height);
-    drawMemory(img.data, G, mem, a => (shades[a] === NOT_LOADED ? NOT_LOADED : LOADED), mc, colors, font);
+    drawMemory(img.data, G, mem, a => (shades[a] === NOT_LOADED ? NOT_LOADED : LOADED), mc, colors, font, undefined, 0, G.rows, cells);
     ctx.putImageData(img, 0, 0);
-  }, [L, at, mem, shades, mc, colors, font]);
+  }, [L, at, mem, shades, mc, colors, cells, font]);
   return createPortal(
     <figure className="gfx-focus" aria-label={label}>
       <canvas ref={canvas} width={L.cellW} height={L.cellH} />

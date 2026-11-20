@@ -6122,6 +6122,26 @@ som markeras i vyn byter färg direkt, och `Ctrl+Z` tar tillbaka den. Rutan *Mar
 början, `GfxPrefs.marked`) slår av och på det. Sparade filer (PNG med flera) har alltid vyns egna färger (`drawMemory`
 tar en `Shade` per byte: inte laddad, laddad eller grafik). Vänsterkanten visar adressen för varje rad och, med
 blockgruppens färg, vad som redan är klassat där.
+
+**Snapshotens färger.** Ett projekt som öppnades från en VICE-snapshot med en VIC-II-modul (13.7) ritas i de färger dess
+VIC hade när VICE sparade den, så länge rutan **Snapshot's VIC** under *Colours* är ikryssad (bara med en snapshot; på
+från början, `GfxPrefs.vicColors`). Varje vy får de färger VIC:en ritar den sortens grafik med (`vicGfxColors` i
+`apps/desktop/src/lib/vicgfx.ts`):
+- **Characters, Font per row och Screens:** BG `$d021`, MC1 `$d022`, MC2 `$d023` och FG den färg flest celler på
+  VIC:ens skärm har i färg-RAM (multicolor: bit 0–2 hos cellerna som ritas multicolor).
+- **Sprites:** BG `$d021`, spritens färg den som flest av de påslagna spritarna har (av dem som ritas som vyn, multicolor
+  eller inte), och spritarnas multicolor `$d025`/`$d026`, i bitparen som `spritePairColors` lägger dem.
+- **Bitmaps:** BG `$d021` och de färger flest celler på skärmen och i färg-RAM ger (multicolor: hög nibble, låg nibble,
+  färg-RAM; hires: låg och hög nibble).
+- **Skärmen och bitmappen VIC:en visade** ritas cell för cell i sina egna färger, som på C64:an (`vicCellColors`, som
+  `drawMemory` och `gfxImage` tar som `CellColors`): bitmappen (i ett bitmappsläge) med varje cells skärmbyte och färg-RAM,
+  multicolor eller hires som VIC:en ritade den, skärmen (i ett textläge) med varje cells färg-RAM över bakgrunden (med
+  ECM den bakgrund koden väljer; i multicolor-text multicolor där färg-RAM har bit 3). Fönstret med en cell (Ctrl) och
+  PNG:n som *Save…* skriver ritas likadant.
+
+Väljs en färg i *Colours* ritas vyn i dina färger igen (rutan går ur, med den valda färgen och resten som VIC:ens). Bitmappen
+VIC:en visade ritas med cellernas färger exakt som `vicScreen` ritar skärmen (`vicgfx.test.ts` jämför dem punkt för punkt).
+Listningens bilder och inspektorn ritar som förut i flikens egna färger.
 Under vyn står byten under pekaren, med teckennummer i sitt 2 KB-teckensnitt, spritepekare och VIC-bank, eller
 rad och kolumn i bitmappen, samt blocket den ligger i. Valen sparas per användare.
 

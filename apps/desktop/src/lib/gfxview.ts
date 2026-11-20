@@ -236,6 +236,11 @@ export function builtinFont(): Uint8Array {
 
 export interface GfxColors { bg: number; fg: number; mc1: number; mc2: number }
 
+/** Colours of their own for some cells (a VICE snapshot's shown screen and bitmap, lib/vicgfx.ts): for cell `i`
+ *  (0-999) of the bitmap or screen at `base`, the colours of the bit pairs 00, 01, 10, 11 (hires 0 and 1 as 00 and 11)
+ *  and whether it is drawn multicolour; null: the view's colours */
+export type CellColors = (kind: GfxKind, base: Addr, i: number) => { pal: readonly number[]; mc: boolean } | null;
+
 /** how `drawMemory` draws a byte: not loaded, loaded, or in a block already marked as graphics */
 export type Shade = 0 | 1 | 2;
 export const NOT_LOADED: Shade = 0, LOADED: Shade = 1, MARKED: Shade = 2;
@@ -250,18 +255,20 @@ export const markedRgb = ([r, g, b]: readonly number[]): number[] => [r * 0.55 +
  * or multicolor (pairs of bits: bg, mc1, mc2, fg). Screens draw each screen code with `font` (2 KB). `shade` says how
  * each byte is drawn: bytes that are not loaded (false, `NOT_LOADED`) dark, so the program stands out, loaded ones (true,
  * `LOADED`) in the colours, and those in a block already marked as graphics (`MARKED`) tinted with the graphics colour,
- * so what is left to find stands out from what is known; gaps get `gap`.
+ * so what is left to find stands out from what is known; gaps get `gap`. `cells` gives some screen and bitmap cells
+ * colours of their own (a snapshot's, CellColors).
  */
-export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array, shade: (a: Addr) => boolean | Shade, mc: boolean, colors: GfxColors, font?: Uint8Array, gap: [number, number, number] = [24, 24, 32], from = 0, to = L.rows): void {
-  const pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => hexRgb(C64[i & 15]));
-  // not loaded: a blue-grey of its own, so it differs from loaded bytes in any colours (a black background too)
-  const dimmed = pal.map(([r, g, b]) => [r * 0.25 + 34, g * 0.25 + 34, b * 0.25 + 52]);
-  const pals = [dimmed, pal, pal.map(c => markedRgb(c))];
-  const palOf = (a: Addr) => pals[Number(shade(a))] ?? pal;
+export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array, shade: (a: Addr) => boolean | Shade, mc: boolean, colors: GfxColors, font?: Uint8Array, gap: [number, number, number] = [24, 24, 32], from = 0, to = L.rows, cells?: CellColors): void {
+  // the colours as each shade draws them: not loaded a blue-grey of its own, so it differs from loaded bytes in any
+  // colours (a black background too); marked tinted
+  const rgb = C64.map(hexRgb), shaded = [rgb.map(([r, g, b]) => [r * 0.25 + 34, g * 0.25 + 34, b * 0.25 + 52]), rgb, rgb.map(c => markedRgb(c))];
+  const palsOf = (p: readonly number[]) => shaded.map(s => p.map(i => s[i & 15]));
+  const pals = palsOf([colors.bg, colors.mc1, colors.mc2, colors.fg]);
+  const palOf = (a: Addr, own = pals) => own[Number(shade(a))] ?? own[1];
   for (let i = 0; i < px.length; i += 4) { px[i] = gap[0]; px[i + 1] = gap[1]; px[i + 2] = gap[2]; px[i + 3] = 255; }
   const put = (x: number, y: number, c: number[]) => { const o = (y * L.width + x) * 4; px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; };
-  const bits = (b: number, p: number[][], x: number, y: number) => {
-    if (mc) for (let k = 0; k < 4; k++) { const c = p[(b >> (6 - k * 2)) & 3]; put(x + k * 2, y, c); put(x + k * 2 + 1, y, c); }
+  const bits = (b: number, p: number[][], x: number, y: number, m = mc) => {
+    if (m) for (let k = 0; k < 4; k++) { const c = p[(b >> (6 - k * 2)) & 3]; put(x + k * 2, y, c); put(x + k * 2 + 1, y, c); }
     else for (let k = 0; k < 8; k++) put(x + k, y, (b >> (7 - k)) & 1 ? p[3] : p[0]);
   };
   const byte = (a: Addr, x: number, y: number) => { if (a < mem.length) bits(mem[a], palOf(a), x, y); };
@@ -274,10 +281,13 @@ export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array,
     else if (L.kind === 'sprites') for (let y = 0; y < 21; y++) for (let k = 0; k < 3; k++) byte(base + y * 3 + k, ox + k * 8, oy + y);
     else if (L.kind === 'fontrows') for (let x = 0; x < 40; x++) for (let y = 0; y < 8; y++) byte(base + L.codes![x] * 8 + y, x * 8, oy + y);
     else if (f) for (let i = 0; i < SCREEN_BYTES && base + i < mem.length; i++) {
-      const p = palOf(base + i), g = mem[base + i] * 8, x = ox + (i % 40) * 8, y0 = oy + Math.floor(i / 40) * 8;
-      for (let y = 0; y < 8; y++) bits(f[g + y], p, x, y0 + y);
+      const own = cells?.('screens', base, i), p = palOf(base + i, own ? palsOf(own.pal) : pals), g = mem[base + i] * 8, x = ox + (i % 40) * 8, y0 = oy + Math.floor(i / 40) * 8;
+      for (let y = 0; y < 8; y++) bits(f[g + y], p, x, y0 + y, own ? own.mc : mc);
     }
-    else for (let cy = 0; cy < L.cellH >> 3; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);
+    else for (let cy = 0; cy < L.cellH >> 3; cy++) for (let cx = 0; cx < 40; cx++) {
+      const own = cells?.('bitmap', base, cy * 40 + cx), ps = own ? palsOf(own.pal) : pals;
+      for (let y = 0; y < 8; y++) { const a = base + (cy * 40 + cx) * 8 + y; if (a < mem.length) bits(mem[a], palOf(a, ps), ox + cx * 8, oy + cy * 8 + y, own ? own.mc : mc); }
+    }
   }
 }
 
@@ -286,10 +296,10 @@ export function drawMemory(px: Uint8ClampedArray, L: GfxLayout, mem: Uint8Array,
  * `per`), a
  * bitmap as 320 x 200 or its `bitmapRows` (one per 8 KB, under each other), a screen as 320 x 200 (multicolour pixels two
  * wide; screens drawn with `font`, one per 1 KB), the fonts of a font-per-row picture as its rows (each 320 x 8, with the
- * 40 `codes`). Cells past the end of the selection stay transparent.
+ * 40 `codes`). Cells past the end of the selection stay transparent; `cells` gives some colours of their own (CellColors).
  */
-export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[]; bitmapRows?: number; per?: number } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
-  const pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => hexRgb(C64[i & 15]));
+export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr, mc: boolean, colors: GfxColors, opts: { font?: Uint8Array; codes?: ArrayLike<number>; rows?: Addr[]; bitmapRows?: number; per?: number; cells?: CellColors } = {}): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
+  const rgb = C64.map(hexRgb), pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => rgb[i & 15]);
   const bmRows = bitmapRowsOf(opts.bitmapRows ?? BITMAP_ROWS);
   const g = kind === 'chars' ? { unit: 8, w: 8, h: 8, per: 16 } : kind === 'sprites' ? { unit: 64, w: 24, h: 21, per: 8 }
     : kind === 'screens' ? { unit: 0x400, w: 320, h: 200, per: 1 } : kind === 'fontrows' ? { unit: 0x800, w: 320, h: 8, per: 1 }
@@ -301,11 +311,13 @@ export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr,
   const n = bases ? Math.max(1, bases.length) : Math.max(1, Math.ceil((end - start) / g.unit)), cols = Math.min(per, n), rows = Math.ceil(n / cols);
   const width = cols * g.w, height = rows * g.h, rgba = new Uint8ClampedArray(width * height * 4);
   const put = (x: number, y: number, c: number[]) => { const o = (y * width + x) * 4; rgba[o] = c[0]; rgba[o + 1] = c[1]; rgba[o + 2] = c[2]; rgba[o + 3] = 255; };
-  const bits = (b: number, x: number, y: number) => {
-    if (mc) for (let k = 0; k < 4; k++) { const c = pal[(b >> (6 - k * 2)) & 3]; put(x + k * 2, y, c); put(x + k * 2 + 1, y, c); }
-    else for (let k = 0; k < 8; k++) put(x + k, y, (b >> (7 - k)) & 1 ? pal[3] : pal[0]);
+  const bits = (b: number, x: number, y: number, p: number[][] = pal, m = mc) => {
+    if (m) for (let k = 0; k < 4; k++) { const c = p[(b >> (6 - k * 2)) & 3]; put(x + k * 2, y, c); put(x + k * 2 + 1, y, c); }
+    else for (let k = 0; k < 8; k++) put(x + k, y, (b >> (7 - k)) & 1 ? p[3] : p[0]);
   };
-  const byte = (a: Addr, x: number, y: number) => { if (a < end && a < mem.length) bits(mem[a], x, y); };
+  const byte = (a: Addr, x: number, y: number, p?: number[][], m?: boolean) => { if (a < end && a < mem.length) bits(mem[a], x, y, p, m); };
+  /** a cell's own colours (CellColors), or the view's */
+  const own = (k: GfxKind, base: Addr, i: number) => { const o = opts.cells?.(k, base, i); return o ? { p: o.pal.map(c => rgb[c & 15]), m: o.mc } : { p: pal, m: mc }; };
   const f = kind === 'screens' ? opts.font ?? builtinFont() : null;
   for (let i = 0; i < n; i++) {
     const base = bases ? bases[i] ?? start : start + i * g.unit, ox = (i % cols) * g.w, oy = Math.floor(i / cols) * g.h;
@@ -313,10 +325,13 @@ export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr,
     else if (kind === 'sprites') for (let y = 0; y < 21; y++) for (let k = 0; k < 3; k++) byte(base + y * 3 + k, ox + k * 8, oy + y);
     else if (kind === 'fontrows') for (let x = 0; x < 40; x++) for (let y = 0; y < 8; y++) byte(base + (opts.codes?.[x] ?? x) * 8 + y, x * 8, oy + y);
     else if (f) for (let j = 0; j < SCREEN_BYTES && base + j < end && base + j < mem.length; j++) {
-      const code = mem[base + j];
-      for (let y = 0; y < 8; y++) bits(f[code * 8 + y], ox + (j % 40) * 8, oy + Math.floor(j / 40) * 8 + y);
+      const code = mem[base + j], o = own('screens', base, j);
+      for (let y = 0; y < 8; y++) bits(f[code * 8 + y], ox + (j % 40) * 8, oy + Math.floor(j / 40) * 8 + y, o.p, o.m);
     }
-    else for (let cy = 0; cy < bmRows; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);
+    else for (let cy = 0; cy < bmRows; cy++) for (let cx = 0; cx < 40; cx++) {
+      const o = own('bitmap', base, cy * 40 + cx);
+      for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y, o.p, o.m);
+    }
   }
   return { width, height, rgba };
 }

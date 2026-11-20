@@ -270,6 +270,16 @@ test('the overview of the analysis opens after a load, and its links go where th
     await expect(overview).toBeHidden();
     await expect(page.getByRole('tab', { name: 'Graphics', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(statusBar(page)).toContainText('sel $3000');
+    // Graphics draws in the snapshot's VIC colours: $d021 black, the colour RAM's light blue; a colour picked is yours
+    const vicBox = page.getByRole('checkbox', { name: "Snapshot's VIC" });
+    await expect(vicBox).toBeChecked();
+    await expect(page.getByLabel('Color bg')).toHaveValue('0');
+    await expect(page.getByLabel('Color fg')).toHaveValue('14');
+    await page.getByLabel('Color fg').selectOption('7');
+    await expect(vicBox).not.toBeChecked();
+    await expect(page.getByLabel('Color fg')).toHaveValue('7');
+    await vicBox.check();
+    await expect(page.getByLabel('Color fg')).toHaveValue('14');
     // a PRG has none
     await open('raster-demo.prg');
     await expect(overview).toBeVisible();

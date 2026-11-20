@@ -26,6 +26,8 @@ export interface GfxPrefs {
   animCols: number; animSpeed: number;
   charCols: number; spriteCols: number; screenCols: number; zoom: number; mc: boolean; offset: number;
   colors: { bg: number; fg: number; mc1: number; mc2: number };
+  /** a project opened from a VICE snapshot is drawn in the colours its VIC-II had (lib/vicgfx.ts) instead of `colors` */
+  vicColors: boolean;
   /** what screens are drawn with: VICE's character ROM ('rom', 'rom-lower'), the built-in letters ('builtin') or the
    *  2 KB of memory at an address ('$3000') */
   screenFont: string;
@@ -39,7 +41,7 @@ export interface GfxPrefs {
   /** the version of these settings (2: 40 characters a row is the default) */
   v?: number;
 }
-const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', animCols: 2, animSpeed: 4, charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25, marked: true };
+const GFX_DEFAULTS: GfxPrefs = { kind: 'chars', animCols: 2, animSpeed: 4, charCols: 40, spriteCols: 8, screenCols: 1, zoom: 2, mc: false, offset: 0, colors: { bg: 0, fg: 1, mc1: 15, mc2: 12 }, vicColors: true, screenFont: 'rom', rowCodes: 0x0400, rowFonts: 0x2000, rowCount: 25, rowSkip: true, bitmapRows: 25, marked: true };
 /** The saved Graphics settings over the defaults. 40 characters a row (a screen's width) became the default: the old
  *  default 32 moves to it once (`v` 2), a count picked before stays. A bitmap height that is not 1-25 rows is 25,
  *  sprites a row that are not 1-24 are 8. */
