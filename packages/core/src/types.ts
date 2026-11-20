@@ -629,6 +629,8 @@ export interface BasicInfo {
   sys: Addr | null;
   sysLine: BasicLine | null;
   upstart: boolean;
+  /** the line links in the bytes do not hold: the lines are read as BASIC relinks them on LOAD */
+  relinked?: boolean;
   file?: number;
 }
 

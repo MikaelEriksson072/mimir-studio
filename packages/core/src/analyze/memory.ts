@@ -127,7 +127,8 @@ export function findBasicStubs(ctx: Ctx): void {
     if (b && covers && (b.sys == null || owner[b.sys] !== i)) return;
     if (b) {
       b.file = i; basics.push(b);
-      L('ok', `BASIC stub: ${b.lines.map(l => l.text).join(' : ')}` + (b.sys != null ? ` → entry ${$4(b.sys)}` : ''), 0x0801, 'entry');
+      L('ok', `BASIC stub: ${b.lines.map(l => l.text).join(' : ')}` + (b.sys != null ? ` → entry ${$4(b.sys)}` : '') +
+        (b.relinked ? ' (its line links do not hold: read as BASIC relinks it on LOAD)' : ''), 0x0801, 'entry');
     }
   });
 }

@@ -30,6 +30,31 @@ describe('entry points', () => {
     expect(parseBasic(mem, owner, 0x0801)?.lines[0].text).toBe('10 SYS2061');
   });
 
+  it('reads a stub whose line link does not hold as BASIC relinks it on LOAD (The Last Ninja +6 TCS)', () => {
+    // 1988 SYS2072 TRIUMWYRAT, its link $080b pointing into its own line; the code at $0818
+    const stub = '$0b,$08,$c4,$07,$9e,$32,$30,$37,$32,$20,$54,$52,$49,$55,$4d,$57,$59,$52,$41,$54,$00,$00,$00';
+    const { A, src, V } = run(fromSource('n.prg', `.pc = $0801\n.byte ${stub}\n.pc = $0818\n inc $d020\n rts`));
+    expect(A.entry).toBe(0x0818);
+    expect(A.basics[0]).toMatchObject({ sys: 0x0818, end: 0x0818, upstart: false, relinked: true });
+    expect(A.basics[0].lines.map(l => l.text)).toEqual(['1988 SYS2072 TRIUMWYRAT']);
+    expect(src).toContain('// 1988 SYS2072 ($0818) TRIUMWYRAT');
+    expect(V.ok).toBe(true);
+    // read that way it counts only with a SYS into the same file
+    const { A: B } = run(fromSource('o.prg', `.pc = $0801\n.byte ${stub.replace('$32,$30,$37,$32', '$34,$30,$39,$36')}\n.pc = $0818\n inc $d020\n rts`));
+    expect(B.basics).toEqual([]);
+  });
+
+  it('ends a relinked stub where its SYS goes when the code starts in what BASIC reads as the end (Table Tennis RSI)', () => {
+    // 1990 SYS2059, the line number written as the link too; LDY #$00 at $080b is the program's end to BASIC
+    const { A, V } = run(fromSource('t.prg', '.pc = $0801\n.byte $c6,$07,$c6,$07,$9e,$32,$30,$35,$39,$00\n.pc = $080b\n ldy #$00\n sei\n rts'));
+    expect(A.entry).toBe(0x080b);
+    expect(A.basics[0]).toMatchObject({ sys: 0x080b, end: 0x080b, relinked: true });
+    expect(A.basics[0].lines.map(l => l.text)).toEqual(['1990 SYS2059']);
+    expect(findBlock(A.blocks, 0x080b)).toMatchObject({ start: 0x080b, type: 'code' });
+    expect(findBlock(A.blocks, 0x0801)).toMatchObject({ end: 0x080b, type: 'basic' });
+    expect(V.ok).toBe(true);
+  });
+
   it('gives each SYS address in hex too in the listing comment', () => {
     const hex = (v: number) => '$' + h4(v);
     const line = (num: number, s: string) => ({ addr: 0x0801, num, text: '', toks: [...s].map(c => c === '~' ? 0x9e : c.charCodeAt(0)) });
@@ -38,6 +63,36 @@ describe('entry points', () => {
     // no number after SYS, and a colour code ($9e) inside quotes
     expect(basicLineComment(line(20, '~A'), hex)).toBe('20 SYSA');
     expect(basicLineComment(line(30, '"~1"'), hex)).toBe('30 "SYS1"');
+  });
+
+  it('works out a SYS expression as BASIC does', () => {
+    const hex = (v: number) => '$' + h4(v);
+    const ops: Record<string, number> = { '~': 0x9e, '+': 0xaa, '-': 0xab, '*': 0xac, '/': 0xad, '^': 0xae };
+    const toks = (s: string) => [...s].map(c => ops[c] ?? c.charCodeAt(0));
+    const sysOfLine = (s: string) => {
+      const prog = [0, 0, 0xcf, 0x07, ...toks(s), 0, 0, 0];
+      prog[0] = (0x0801 + prog.length - 2) & 0xff; prog[1] = (0x0801 + prog.length - 2) >> 8;
+      const mem = new Uint8Array(0x10000), owner = new Int16Array(0x10000).fill(-1);
+      mem.set(prog, 0x0801); owner.fill(0, 0x0801, 0x0801 + prog.length);
+      return parseBasic(mem, owner, 0x0801)?.sys;
+    };
+    // the expression ends at the M: 2069-2 (Mayhem's 2 MHz crack line)
+    expect(sysOfLine('~2069-2MHZ!')).toBe(2067);
+    expect(sysOfLine('~9*4096')).toBe(0x9000);
+    expect(sysOfLine('~ 9*4096+12*256-60')).toBe(0x9bc4);
+    expect(sysOfLine('~2^13+2679')).toBe(10871);
+    // a decimal point, an E without digits and the spaces in a number change nothing
+    expect(sysOfLine('~2088 .SANDOR')).toBe(2088);
+    expect(sysOfLine('~2072 EAGLE')).toBe(2072);
+    expect(sysOfLine('~20 72')).toBe(2072);
+    expect(sysOfLine('~2E3')).toBe(2000);
+    // nothing BASIC knows before the program runs, or out of range: the next SYS
+    expect(sysOfLine('~A:~2061')).toBe(2061);
+    expect(sysOfLine('~SR+16:~2061')).toBe(2061);
+    expect(sysOfLine('"~1":~2061')).toBe(2061);
+    expect(sysOfLine('~70000')).toBeNull();
+    expect(basicLineComment({ addr: 0x0801, num: 6969, text: '', toks: toks('~2069-2MHZ!') }, hex)).toBe('6969 SYS2069-2 ($0813)MHZ!');
+    expect(basicLineComment({ addr: 0x0801, num: 1, text: '', toks: toks('~(2061)+1 X') }, hex)).toBe('1 SYS(2061)+1 ($080e) X');
   });
 
   it('uses the program start the user set, keeping the BASIC SYS target as code', () => {
