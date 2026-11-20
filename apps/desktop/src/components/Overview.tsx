@@ -7,16 +7,18 @@
  * Analysis overview button (and the command palette) opens it again at any time. While Sindri (or unp64 -i) is still
  * running a file to see whether it is packed, which can take half a minute, a card says it is looking, and what it
  * found once it is done. */
-import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project, type RoutineMatch } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { IconName } from '../lib/icon-paths';
 import { animDataText, type AnimData } from '../lib/storeanim';
-import { blockMap, count, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, startOf, typeRows, type SnapshotPc } from '../lib/overview';
+import { blockMap, count, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, snapshotVic, startOf, typeRows, vicBankText, vicModeText, vicParts, vicRasterText, type SnapshotPc } from '../lib/overview';
+import { C64, C64_NAMES } from '../lib/palette';
 import type { UiProblem } from '../lib/types';
 import { bankAdr, cx, fmtBytes, GROUP_LABEL, musicPlayTitle } from '../lib/util';
 import type { BottomTab, EditorTab } from '../store/ui';
 import { Modal } from './Modal';
+import { SnapshotScreen } from './SnapshotScreen';
 
 /** a check of whether a file is packed: Sindri running it (or unp64 -i naming its packer) */
 export interface PackCheck {
@@ -148,6 +150,8 @@ export function AnalysisOverview({ A, project, labels, snap, packing, animData =
   const pct = (n: number) => (loaded ? `${Math.round(n / loaded * 100)} %` : '');
   // the bytes the type map has as code (Stats.codeBytes is not counted)
   const codeBytes = A.stats.bytesByType[T.CODE] ?? 0;
+  // the VIC-II of the snapshot the project was opened from
+  const snapVic = useMemo(() => snapshotVic(project.files), [project.files]);
   return (
     <Modal title="Analysis overview" onClose={onClose} className="overview">
       <div className="modal-body ov-body">
@@ -217,6 +221,42 @@ export function AnalysisOverview({ A, project, labels, snap, packing, animData =
               </Card>;
           })}
 
+          {snapVic && (() => {
+            const { st, vic: v } = snapVic;
+            /** a part the VIC reads: Graphics at its block when it is graphics, else the listing; not loaded: no link */
+            const partLink = (a: Addr) => {
+              const b = A.blocks.find(x => x.start <= a && a < x.end);
+              return b && GFX_KIND[b.type] ? () => links.tab('gfx', b) : A.owner[a] >= 0 ? () => links.addr(a) : null;
+            };
+            const screen = partLink(st.screen);
+            const swatch = (what: string, c: number) => <span className="ov-vic-colour" key={what}><i style={{ background: C64[c] }} />{what} <span className="muted">{C64_NAMES[c]}</span></span>;
+            const colours = [swatch('Border', st.border), swatch('Background', st.bg[0])];
+            if (st.mode === 'mc-text') colours.push(swatch('Multicolour 1', st.bg[1]), swatch('Multicolour 2', st.bg[2]));
+            if (st.mode === 'ecm-text') colours.push(swatch('Background 1', st.bg[1]), swatch('Background 2', st.bg[2]), swatch('Background 3', st.bg[3]));
+            if (st.sprites.some(s => s.on && s.mc)) colours.push(swatch('Sprite multicolour 1', st.spriteMc[0]), swatch('Sprite multicolour 2', st.spriteMc[1]));
+            return (
+              <Card icon="image" title="Snapshot screen" wide className="ov-vic">
+                <div className="ov-vic-body">
+                  <SnapshotScreen st={st} ram={snapVic.ram} colorRam={v.colorRam} className="ov-vic-pic" label="The screen when VICE saved the snapshot"
+                    title={screen ? 'The screen when VICE saved the snapshot, drawn from its RAM and its VIC-II as VICE draws it\nClick to show the screen in Graphics' : 'The screen when VICE saved the snapshot, drawn from its RAM and its VIC-II as VICE draws it'}
+                    onClick={screen ? go(screen) : undefined} />
+                  <div className="ov-vic-facts">
+                    <p className="ov-vic-mode">{vicModeText(st)}</p>
+                    <p className="muted">{vicBankText(st)}{snapVic.model ? ` · VIC-II ${snapVic.model}` : ''}</p>
+                    <dl className="ov-vic-parts">
+                      {vicParts(st).map(p => {
+                        const to = p.addr != null ? partLink(p.addr) : null;
+                        return <Fragment key={p.what}><dt>{p.what}</dt><dd>{to ? <Link className="mono" title={`Go to $${h4(p.addr!)}`} onClick={go(to)}>{p.text}</Link> : <span className={p.addr != null ? 'mono' : undefined}>{p.text}</span>}</dd></Fragment>;
+                      })}
+                    </dl>
+                    <p className="ov-vic-colours">{colours}</p>
+                    <p className="muted">{vicRasterText(v, st)}</p>
+                  </div>
+                </div>
+                <p className="muted small">The VIC-II as it stood when the snapshot was saved: a program that changes its registers during the frame (a raster split, sprites used again lower down) showed more than this.</p>
+              </Card>);
+          })()}
+
           {snap && <Card icon="chip" title="Snapshot PC" className="ov-pc">
             {snap.loaded
               ? <Link className="ov-big" title="Go to the PC in the listing (the .asm is there too)" onClick={go(() => links.addr(snap.pc))}>
@@ -226,6 +266,7 @@ export function AnalysisOverview({ A, project, labels, snap, packing, animData =
               : `Where the CPU was when VICE saved the snapshot, in ${snap.where}: the listing is at the program start.`}</p>
             <p className="ov-basic mono" title="The registers when the snapshot was saved, as VICE's monitor shows them">{regsText(snap)}</p>
           </Card>}
+
 
           <Card icon="target" title="Program start">
             {start ? <>

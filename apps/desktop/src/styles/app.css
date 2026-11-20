@@ -1428,6 +1428,20 @@ button.tpl-ph:disabled { cursor: default; color: var(--fg-2); }
 .ov-packed { border-color: color-mix(in srgb, var(--warn) 55%, transparent); background: color-mix(in srgb, var(--warn) 7%, var(--panel-2)); }
 .ov-packed h3 { color: var(--warn); }
 .ov-pc { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* the snapshot's screen as its VIC-II showed it, and what the VIC read it from */
+.ov-vic { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.ov-vic-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; }
+.ov-vic-pic { flex: 0 1 384px; min-width: 200px; padding: 0; border: 0; border-radius: 4px; background: none; line-height: 0; cursor: pointer; }
+.ov-vic-pic:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ov-vic-pic canvas, canvas.ov-vic-pic { display: block; width: 100%; height: auto; border-radius: 4px; image-rendering: pixelated; }
+.ov-vic-facts { display: flex; flex: 1 1 260px; flex-direction: column; gap: 6px; min-width: 0; }
+.ov-vic-mode { font-size: 15px; font-weight: 600; }
+.ov-vic-parts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+.ov-vic-parts dt { color: var(--fg-2); }
+.ov-vic-parts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.ov-vic-colours { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.ov-vic-colour { display: inline-flex; align-items: center; gap: 5px; }
+.ov-vic-colour i { width: 12px; height: 12px; border: 1px solid var(--line); border-radius: 3px; }
 /* Sindri still running a file to see whether it is packed, and what it found */
 .ov-looking { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 6%, var(--panel-2)); }
 .ov-looking h3 { color: var(--accent-hi); }

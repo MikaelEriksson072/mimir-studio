@@ -37,7 +37,7 @@ export interface C64ScreenProps<F> {
 type FontState = { rom: Uint8Array | null; state: 'rom' | 'none' | null };
 
 /** the built-in letters as a lower case set: its capitals where the C64's lower case set has them, too */
-function builtinLower(): Uint8Array {
+export function builtinLower(): Uint8Array {
   const f = builtinFont();
   f.copyWithin(0x41 * 8, 0x01 * 8, 0x1b * 8);
   for (let i = 0; i < 0x400; i++) f[0x400 + i] = f[i] ^ 0xff;

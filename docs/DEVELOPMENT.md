@@ -338,6 +338,11 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
   it was taken: `patchSnapshot()` puts the built program in its RAM and VICE loads it with `-autostart <name>.vsf`, so the
   CPU, `$01`, VIC, SID, CIAs, colour RAM and drives are as they were and the program goes on from the PC. Checked
   against an x64sc 3.10 snapshot in `fixtures/vsf`; see spec 13.7.
+  The VIC-II module is read too (`Snapshot.vic`: registers, colour RAM, raster; x64sc's layout and x64's).
+  `c64/vicscreen.ts` works out what the VIC was showing (`vicState`: mode, bank, screen, charset or bitmap, sprites) and
+  draws it as VICE does (`vicScreen`, 384 x 272); the overview's *Snapshot screen* card shows it
+  (`components/SnapshotScreen.tsx`), and the analysis takes the screen, charset or bitmap and sprites as VIC evidence
+  (`analyze/vic.ts`). `vicscreen.test.ts` compares the drawing with VICE's own screenshots (`fixtures/vsf/vic-*.bmp`).
 - **Cartridges.** *Open PRG…*, drag and drop and the CLI also take `.crt` files (known by their header). `parseCrt()`
   (`packages/core/src/c64/crt.ts`) reads VICE's format; the chips of the boot bank open as `bank00_8000.prg` and so on,
   at the addresses the CPU sees them at (an EasyFlash's boot ROMH at `$e000`), each with its CHIP packet

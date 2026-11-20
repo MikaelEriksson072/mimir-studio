@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { analyze, openC64File, parsePrg, parseVsf, showcaseProject, type Block, type Project } from '@mimir/core';
-import { blockMap, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, snapshotPc, startOf, typeRows } from '../src/lib/overview';
+import { blockMap, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, snapshotPc, snapshotVic, startOf, typeRows, vicBankText, vicModeText, vicParts, vicRasterText } from '../src/lib/overview';
 
 // the showcase: a BASIC stub, code, four sprites, a font, a bitmap, music and tables
 const p = showcaseProject();
@@ -81,6 +81,28 @@ describe('the overview of the analysis', () => {
     expect(snapshotPc(stack.files, stack.owner)).toMatchObject({ pc: 0x0140, loaded: false, where: 'the zero page or the stack, which are not opened' });
     const zp = open(at(0x0140), true);
     expect(snapshotPc(zp.files, zp.owner)).toMatchObject({ pc: 0x0140, loaded: true });
+  });
+
+  it("says what a snapshot's VIC-II was showing", () => {
+    const vsf = (n: string) => new Uint8Array(readFileSync(join(__dirname, `../../../fixtures/vsf/${n}.vsf`)));
+    // raster-demo: text with its charset at $3000, sprite 0 at x 0 (in the border), its raster IRQ at line 98
+    const r = snapshotVic([{ vsf: vsf('raster-demo') }])!;
+    expect(r.model).toBe('8565 (PAL)');
+    expect(vicModeText(r.st)).toBe('Text, 40 × 25');
+    expect(vicBankText(r.st)).toBe('VIC bank 0 ($0000–$3fff)');
+    expect(vicParts(r.st)).toEqual([
+      { what: 'Screen', addr: 0x0400, text: '$0400' }, { what: 'Charset', addr: 0x3000, text: '$3000' },
+      { what: 'Sprite 0', addr: 0x2000, text: '$2000 at 0,144' }]);
+    expect(vicRasterText(r.vic, r.st)).toBe('Raster line 168, cycle 7 · raster interrupt at line 98');
+    // make-vic.asm scene 1: multicolour text 38 x 24, all sprites; scene 2: a bitmap in bank 1
+    const s = snapshotVic([{}, { vsf: vsf('vic-sprites') }])!;
+    expect(vicModeText(s.st)).toBe('Multicolour text, 38 × 24, scroll x 3 y 3');
+    expect(vicParts(s.st).map(p => `${p.what}: ${p.text}`)).toEqual(expect.arrayContaining([
+      'Sprite 3: $20c0 at 100,200, wide and tall', 'Sprite 4: $2100 at 150,120, multicolour', 'Sprite 5: $2140 at 200,60, multicolour, tall, behind']));
+    const b = snapshotVic([{ vsf: vsf('vic-bitmap') }])!;
+    expect([vicModeText(b.st), vicBankText(b.st)]).toEqual(['Multicolour bitmap, 40 × 25', 'VIC bank 1 ($4000–$7fff)']);
+    expect(vicParts(b.st).slice(0, 2)).toEqual([{ what: 'Screen (colours)', addr: 0x5c00, text: '$5c00' }, { what: 'Bitmap', addr: 0x6000, text: '$6000' }]);
+    expect(snapshotVic([{}])).toBeNull();
   });
 
   it('names an address by the label at it, or the nearest one before it', () => {

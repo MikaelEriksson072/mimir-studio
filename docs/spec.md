@@ -892,6 +892,13 @@ Konstanta skrivningar ger exakta adresser:
 | `$D016` bit 4 | multicolor |
 | skärm + `$3F8…$3FF` | spritepekare: data på bankbas + v × 64 |
 
+**En VICE-snapshot** (13.7) ger också det dess VIC-II visade när den sparades, när skärmen var på och läget giltigt:
+skärmen (också på `$0400`, som annars inte räknas), teckensetet (512 byte med ECM; inte teckens-ROM:en) eller bitmappen,
+och varje påslagen sprite, med skälet *the snapshot's VIC shows the screen at $0400 ($d018=$1c)* respektive *… shows
+sprite 7 from pointer $07ff = $87*. Banken, `$d018`, bitmappsläget, multicolor och spritarnas multicolor (`$d01c`) räknas
+in i VIC-evidensen, och spritarna blir spritepekare. Programmets egna skrivningar kommer först: ett fönster som båda ger
+får kodens skäl.
+
 Med bankspårning (8.7b) räknas en `$D018`-skrivning som bitmapp bara när den `$D011`-skrivning som ligger närmast i koden slår på bitmappsläget. En delad skärm (en bitmapslogga ovanför text) ger då både bitmappen och teckenuppsättningen. Utan bankspårning gör bitmappsläge någonstans varje `$D018`-värde till en bitmapp. Teckenuppsättningar på `$1000–$1FFF` i bank 0 och 2 är ROM-skuggor och ignoreras. Inget fönster läggs över nollsidan och stacken (`$0000–$01FF`), som CPU:n ändrar hela tiden: `$d018=$30` i bank 0 (teckensnitt på `$0000`) eller en bitmapp på `$0000` blir ingen grafik, och loggen säger det när fönstret täcker laddade byte (*$d018=$30 would put the charset at $0000, over the zero page and the stack, …*). Ett fönster (teckensnitt, skärm, bitmap eller sprite) får sin typ bara på byte som fortfarande är data, och bara om det mesta av det som är laddat i fönstret är data, inte kod eller musik. En bit mellan kod som är kortare än ett tecken eller en bitmappscell (8 byte) förblir data. En variabel mellan två rutiner i fönstret blir alltså inget Charset-block på en byte. Varje bit får fönstrets skäl (*$d018=$1c selects charset at $3000*). Utan registerevidens används storlek och justering, med lägre konfidens: 8000 byte på 8K-gräns → bitmap, 2048 byte på 2K-gräns med tecken-lika celler (≤ 6 olika bytevärden per 8-bytecell i > 80 % av cellerna) → teckensnitt. Inspektorns förhandsvisning (Sprite/Chars/Bitmap, hires/multicolor) låter användaren bekräfta eller hitta grafik som heuristiken missat.
 
 ### 8.7b Minneskonfiguration ($01) och VIC-bank
@@ -4982,10 +4989,31 @@ markör följer listningens markör överallt, utom när den redan står på en 
 när en snapshot läggs till ett projekt med Shift, och när ett projekt som öppnades från en snapshot öppnas igen.
 - **Explorer → Program start** har en rad till: *snapshot PC* med adressen och etiketten (eller den närmaste före,
   `irq_08b7+16`). Ett klick går dit, och tipset visar registren som VICE:s monitor visar dem efter `r`.
-- **Översikten (14.1b)** har kortet *Snapshot PC*.
+- **Översikten (14.1b)** har korten *Snapshot screen* (VIC-II:n, se nedan) och *Snapshot PC*.
 - **En PC utanför de byte som öppnades** stannar på programstarten. Det gäller en PC i KERNAL- eller BASIC-ROM, i I/O, i
   teckensets-ROM (med snapshotens `$01`) och i nollsidan eller stacken utan inställningen. Explorer och översikten
   säger var PC:n ligger.
+
+**VIC-II:n i snapshoten.** `parseVsf` läser också VIC-II-modulen (`Snapshot.vic`): de 64 registren som de senast
+skrevs (färgerna i 4 bitar, `$d011` bit 7 och `$d012` är rasteravbrottets rad), färg-RAM (1 KB), rasterraden och
+cykeln, avbrottsflaggorna och rasteravbrottets rad. Layouten är den VICE:s källa skriver (`viciisc/vicii-snapshot.c`):
+x64sc:s modul (`VIC-II` 1.3 i VICE 3.10, `VIC-IISC` 1.4 efter det) har modellen, registren på +1, rasterraden på +73,
+avbrottsflaggorna på +78, avbrottsraden på +79 och färg-RAM 753 byte in plus storleken på ljuspennans klocka (8 byte från
+snapshotformat 2, alltså +761; 4 byte före, +757). x64:s modul (maskinen `C64`, `vicii/vicii-snapshot.c`) har ingen
+modell, färg-RAM på +43, rastercykel och rad på +1116, registren på +1119 och avbrottsflaggorna på +1193 (läst ur källan,
+inte prövad mot en riktig x64-snapshot). En modul som är för kort ger ingen VIC.
+- **Vad VIC:en visade** (`vicState` / `snapshotVicState` i `c64/vicscreen.ts`): banken (CIA 2:s `$dd00`), läget (text,
+  multicolor-text, ECM, hires- och multicolor-bitmapp, ogiltigt), skärmen på eller av, 40/38 kolumner, 25/24 rader,
+  scroll, skärm-, teckenset- och bitmappsadress, om tecknen kommer ur teckens-ROM:en (`$1000–$1fff` i bank 0 och 2),
+  färgerna och de åtta spritarna med pekare, adress, position, färg, multicolor, expansion och prioritet.
+- **Skärmen** (`vicScreen`): bilden som VICE ritar den, 384 × 272 punkter (rasterrad 16–287, displayfönstret vid x
+  32–351 och rad 51–250 i 40 × 25). Teckenraderna börjar på rad `$30` + YSCROLL, rader i fönstret utanför dem visar
+  tomgångsbyten (`$3fff`, `$39ff` med ECM), XSCROLL fyller vänsterkanten med bakgrundsfärg 0, de ogiltiga lägena är
+  svarta, med skärmen av syns bara ramen (spritarna också dolda), ramen täcker spritarna, och mellan spritar vinner det
+  lägre numret innan dess prioritetsbit tittas på. Mimir har teckens-ROM:en från VICE (Settings → Toolchain), annars
+  Mimirs egna bokstäver. Bilden är av registren i ett ögonblick: en rastersplit eller spritar som används igen längre ner
+  syns inte.
+- **Analysen** tar det VIC:en visade som VIC-evidens (8.7), när skärmen var på och läget giltigt.
 
 **Packad data i snapshoten.** Sindri fortsätter från snapshotens maskin (RAM, CPU, VIC-II och CIA-kretsarna) och
 packar upp det som ännu var packat, till exempel ett spel bakom sin trainermeny; notisen säger var den packade datan
@@ -5019,6 +5047,18 @@ stacken med inställningen på också.
 `vice.integration.test.ts` startar riktiga x64sc med snapshoten, där programmet vid PC `$08c7` har bytts mot kod som
 gör ramen och bakgrunden röda. VICE:s skärmbild visar att det fortsätter där. Ett e2e-test kör Build & Run med ett
 program som ersätter VICE och kontrollerar att snapshoten VICE får är den som öppnades.
+
+VIC-II:n testas i `vicscreen.test.ts`: `fixtures/vsf/vic-sprites.vsf` (multicolor-text, eget teckenset, 38 × 24, scroll,
+alla åtta spritarna) och `vic-bitmap.vsf` (multicolor-bitmapp i bank 1) ritas och ska vara lika VICE:s egna skärmbilder
+från samma ögonblick (`vic-*.bmp`) punkt för punkt; modulens båda layouter, lägena och vad analysen tar testas också.
+Sju scener till ur `make-vic.asm` (ECM med ROM-tecken, hires-bitmapp i bank 3, skärmen av, ogiltigt läge, bank 2 med
+ROM-tecken, YSCROLL 7 och 0 med tomgångsbyten, en sprite vid x 500 och prioritetsfallet) stämde också på punkten när
+det byggdes. Mätt 2026-11-20 på 37 snapshots som x64sc 3.10 tog efter 12 s (warp) av CSDB:s enfilsdemos och spel
+(topp 200): 8 ritas exakt som VICE visade dem; i de andra ändrar programmet VIC:en under bilden (färgbyten per rad,
+multiplexade spritar, öppna ramar, ett annat teckenset för en scrolltext) eller skärmen mellan bilden och snapshoten,
+och det som skiljer är just det. Analysen fick fler grafikblock i 26 av 38 (152 → 197, 282 → 369 KB): skärmar på
+`$0400`, bitmappar som koden räknar ut `$d018` för, teckenset och spritar som bara VIC:en visste var de låg.
+`overview.test.ts` testar kortets texter och e2e-testet för översikten kortet med bilden och länken till teckensetet.
 
 ### 13.7b VICE:s quicksave-snapshot
 
@@ -5895,6 +5935,14 @@ Sedan kommer analysens delar, ett kort var:
   uppackare säger kortet att unp64 namnger packaren (`unp64 -i`). Svaret visas bara för en körning som översikten såg
   pågå: öppnad igen senare säger den inget om filer som inte är packade. (`checks` och `lookingFor` i `App.tsx`,
   `PackLook` i `Overview.tsx`.)
+- **Snapshot screen** (bara för en VICE-snapshot med en VIC-II-modul, över hela bredden, 13.7): skärmen som snapshotens
+  VIC-II visade när VICE sparade den, ritad som VICE ritar den (384 × 272, PAL, vanliga ramar), och bredvid den läget
+  (*Multicolour text, 38 × 24, scroll x 3 y 3*; *The screen is off: the border colour only*), VIC-banken och VIC-II-modellen,
+  var VIC:en läser skärmen, teckensetet (eller teckens-ROM:en, versaler eller gemener) eller bitmappen och varje påslagen
+  sprite (adress, position, multicolor, bred, hög, bakom), färgerna läget använder (ram, bakgrund, multicolor 1–2,
+  bakgrund 1–3 med ECM, spritarnas multicolor) och rasterraden med rasteravbrottets rad. Adresserna är länkar: till
+  Graphics vid blocket när det är grafik, annars till listningen. Ett klick på bilden visar skärmen i Graphics. Kortet
+  säger att det är registren i ett ögonblick: ett program som ändrar dem under bilden (en rastersplit) visade mer.
 - **Snapshot PC** (bara för en VICE-snapshot, 13.7): var CPU:n var när VICE sparade den. Kortet visar adressen och
   etiketten som en länk till listningen, som redan står där, och registren som VICE:s monitor visar dem
   (`A $41  X $00  Y $0a  SP $ed  $01 $37  NV-BDIZC 00100100`). En PC i ROM, I/O eller utanför RAM-et som öppnades

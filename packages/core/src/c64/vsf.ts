@@ -36,6 +36,26 @@ export interface Snapshot {
   /** the SID's registers $d400-$d418 as last written (the SID module of VICE 3.x: 4 bytes of settings, then the
    *  chip's 32 registers), when it could be read; a player that plays on from the snapshot needs its volume and filter */
   sid: Uint8Array | null;
+  /** the VIC-II as it was (its module: VIC-II from x64sc and x64; x64sc's is VIC-IISC after VICE 3.10), when it could be read */
+  vic: SnapshotVic | null;
+}
+
+/** A snapshot's VIC-II: its registers, the colour RAM and the raster */
+export interface SnapshotVic {
+  /** VICE's model number (0 6569 PAL, 1 8565 PAL, 2 6569R1, 3 6567 NTSC, 4 8562 NTSC, 5 6567R56A, 6 6572 PAL-N);
+   *  null from x64, whose module has none */
+  model: number | null;
+  /** $d000-$d03f as VICE keeps them: as last written (the colours in 4 bits, $d011 bit 7 and $d012 the raster
+   *  compare line); the interrupt flags of $d019 are `irqFlags` */
+  regs: Uint8Array;
+  /** the colour RAM ($d800-$dbff), one colour (0-15) a byte */
+  colorRam: Uint8Array;
+  /** the raster line and the cycle in it the VIC was at */
+  line: number;
+  cycle: number;
+  /** the raster interrupt's line (9 bits), and the interrupts that are waiting ($d019: bit 0 raster … bit 7 IRQ) */
+  irqLine: number;
+  irqFlags: number;
 }
 
 const text = (b: Uint8Array, at: number, n: number) => String.fromCharCode(...b.subarray(at, at + n));
@@ -73,7 +93,31 @@ export function parseVsf(b: Uint8Array, name = 'snapshot'): Snapshot {
   // (the model byte before the registers is there from module version 1.4)
   const sidAt = sidMod && sidMod.minor < 4 ? 3 : 4;
   const sid = sidMod && sidMod.major === 1 && sidMod.size >= sidAt + 0x19 ? b.slice(sidMod.offset + sidAt, sidMod.offset + sidAt + 0x19) : null;
-  return { machine, version, vice, modules, ram, port, cpu, cia2, sid };
+  return { machine, version, vice, modules, ram, port, cpu, cia2, sid, vic: readVic(b, modules, machine, clk) };
+}
+
+/**
+ * The VIC-II module, in the two layouts VICE's source writes (viciisc/ and vicii/vicii-snapshot.c):
+ *   x64sc  the model; the 64 registers; the raster cycle, cycle flags and raster line (dwords); start of frame; the
+ *          interrupt flags; the raster interrupt line (dword); …; the light pen's trigger cycle (a clock: 8 bytes from
+ *          snapshot format 2, 4 before); …; the colour RAM 753 + that clock's size in (761 from VICE 3.6)
+ *   x64    no model; three flags; 40 bytes of colour buffer; the colour RAM at 43; …; the raster cycle (byte) and
+ *          line (word) at 1116, the 64 registers at 1119, the interrupt flags at 1193; the interrupt line is $d011/$d012
+ * The x64sc module was renamed VIC-IISC in its version 1.4 (after VICE 3.10); x64's is VIC-II too, so the machine says which it is.
+ */
+function readVic(b: Uint8Array, modules: VsfModule[], machine: string, clk: number): SnapshotVic | null {
+  const m = modules.find(x => x.name === 'VIC-IISC') ?? modules.find(x => x.name === 'VIC-II');
+  if (!m || m.major !== 1) return null;
+  const o = m.offset, w = (at: number) => b[o + at] | (b[o + at + 1] << 8);
+  const nibbles = (at: number) => Uint8Array.from(b.subarray(o + at, o + at + 0x400), v => v & 15);
+  if (m.name === 'VIC-IISC' || machine !== 'C64') {
+    const color = 753 + clk;
+    if (m.size < color + 0x400) return null;
+    return { model: b[o], regs: b.slice(o + 1, o + 0x41), colorRam: nibbles(color), cycle: dword(b, o + 65), line: dword(b, o + 73), irqFlags: b[o + 78], irqLine: dword(b, o + 79) & 0x1ff };
+  }
+  if (m.size < 1194) return null;
+  const regs = b.slice(o + 1119, o + 1119 + 0x40);
+  return { model: null, regs, colorRam: nibbles(43), cycle: b[o + 1116], line: w(1117), irqFlags: b[o + 1193], irqLine: regs[0x12] | ((regs[0x11] & 0x80) << 1) };
 }
 
 /** The VIC bank (0-3, $0000/$4000/$8000/$c000) the snapshot was showing: $dd00 bits 0-1, inputs read as 1; null: unknown. */

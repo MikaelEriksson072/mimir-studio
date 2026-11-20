@@ -25,7 +25,8 @@ export {
   petsciiToScreen, textLabel, TEXT_LABEL_MAX, type FindAs, type MemoryMatch, type MonitorChar, type MonitorCommand, type MonitorLineOpts, type MonitorMode, type MonitorPerRow, type MonitorRange, type MonitorRow,
 } from './c64/monitor';
 export { snapshotForC64Debugger, type DebuggerSnapshot, type DebuggerSnapshotOptions } from './c64/vsf-c64d';
-export { isVsf, openC64File, parseVsf, patchSnapshot, snapshotConfig, snapshotVicBank, SNAPSHOT_LOAD, SNAPSHOT_ZP_LOAD, type OpenedFile, type OpenOptions, type Snapshot, type VsfModule } from './c64/vsf';
+export { isVsf, openC64File, parseVsf, patchSnapshot, snapshotConfig, snapshotVicBank, SNAPSHOT_LOAD, SNAPSHOT_ZP_LOAD, type OpenedFile, type OpenOptions, type Snapshot, type SnapshotVic, type VsfModule } from './c64/vsf';
+export { snapshotVicState, vicScreen, vicState, VIC_SCREEN, type VicMode, type VicScreen, type VicSprite, type VicState } from './c64/vicscreen';
 export {
   bankFiles, bootBank, cartMode, cartModeName, cartridgeSource, chipAddress, chipFromPrg, chipName, chipTypeName, compareCrt, crtBanks, crtBase, crtMode, crtOffsetText, crtOutputName, crtSourceName, crtTypeName, CRT_TYPES, projectCartMode,
   cartImageLines, cartLineText, describeCrt, isCrt, makeCrt, openCartridge, parseCrt, rebuildCrt, type CartLine, type CartSourceOptions, type ChipFile, type Crt, type CrtChip,

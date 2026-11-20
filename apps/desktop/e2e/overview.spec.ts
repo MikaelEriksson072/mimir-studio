@@ -234,7 +234,7 @@ test('the overview of the analysis opens after a load, and its links go where th
     await expect(overview).toBeHidden();
   });
 
-  await test.step('a VICE snapshot: the PC it was saved at, with the registers, and the listing is there', async () => {
+  await test.step('a VICE snapshot: the PC it was saved at, with the registers, the screen its VIC-II showed, and the listing is there', async () => {
     await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
     await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
     await expect(overview).toBeVisible({ timeout: 30_000 });
@@ -242,6 +242,17 @@ test('the overview of the analysis opens after a load, and its links go where th
     await expect(pc).toContainText('$08c7');
     await expect(pc).toContainText('Where the CPU was when VICE saved the snapshot: the listing and the .asm are there.');
     await expect(pc).toContainText(/A \$\w\w {2}X \$\w\w {2}Y \$\w\w {2}SP \$\w\w {2}\$01 \$37 {2}NV-BDIZC [01]{8}/);
+    // what its VIC-II was showing: the screen drawn as VICE draws it, the mode, the bank and where the VIC read from
+    const scr = overview.getByRole('region', { name: 'Snapshot screen' });
+    await expect(scr).toContainText('Text, 40 × 25');
+    await expect(scr).toContainText('VIC bank 0 ($0000–$3fff) · VIC-II 8565 (PAL)');
+    await expect(scr).toContainText('Raster line 168, cycle 7 · raster interrupt at line 98');
+    await expect(scr.getByRole('button', { name: '$3000' })).toBeVisible();
+    await expect.poll(() => scr.locator('canvas').evaluate((c: HTMLCanvasElement) => {
+      const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data, seen = new Set<number>();
+      for (let i = 0; i < d.length; i += 4) seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+      return `${c.width}x${c.height} ${seen.size > 2 ? 'drawn' : 'blank'}`;
+    })).toBe('384x272 drawn');
     // the program start is the BASIC SYS, as before
     await expect(overview.getByRole('region', { name: 'Program start' })).toContainText('$0810');
     await expect(statusBar(page)).toContainText('$08c7');
@@ -253,10 +264,17 @@ test('the overview of the analysis opens after a load, and its links go where th
     await pc.getByRole('button').click();
     await expect(overview).toBeHidden();
     await expect(statusBar(page)).toContainText('$08c7');
+    // the charset the VIC read is a link to it in Graphics
+    await palette();
+    await scr.getByRole('button', { name: '$3000' }).click();
+    await expect(overview).toBeHidden();
+    await expect(page.getByRole('tab', { name: 'Graphics', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(statusBar(page)).toContainText('sel $3000');
     // a PRG has none
     await open('raster-demo.prg');
     await expect(overview).toBeVisible();
     await expect(overview.getByRole('region', { name: 'Snapshot PC' })).toHaveCount(0);
+    await expect(overview.getByRole('region', { name: 'Snapshot screen' })).toHaveCount(0);
     await page.keyboard.press('Escape');
   });
 

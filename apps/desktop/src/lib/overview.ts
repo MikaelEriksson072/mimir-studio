@@ -1,7 +1,7 @@
 /* What the overview of the analysis says (spec 14.1b), part by part: worked out from the analysis and the project
  * alone, so the window (components/Overview.tsx) only lays it out and links each part to where it is. */
 // (no DOM here, nor the store: the unit tests type-check it for Node)
-import { areaAt, kindInfo, parseVsf, snapshotConfig, type Addr, type AnalysisResult, type Block, type Project, type TypeGroup } from '@mimir/core';
+import { areaAt, h4, kindInfo, parseVsf, snapshotConfig, snapshotVicState, type Addr, type AnalysisResult, type Block, type Project, type SnapshotVic, type TypeGroup, type VicState } from '@mimir/core';
 import { blockFolders, type BlockFolder } from './blockfolders';
 import type { UiProblem } from './types';
 
@@ -33,6 +33,62 @@ export function snapshotPc(files: readonly { vsf?: Uint8Array }[], owner: ArrayL
   const where = loaded ? null : area !== 'ram' ? AREA[area] ?? area : pc < 0x0200 ? 'the zero page or the stack, which are not opened' : 'bytes not opened';
   return { ...s.cpu, port: s.port.data, loaded, where };
 }
+
+/** the VIC-II of the snapshot the project was opened from: what it was showing when VICE saved it (spec 13.7) */
+export interface SnapshotVicInfo {
+  st: VicState;
+  vic: SnapshotVic;
+  /** the snapshot's 64 KB, which the VIC reads its screen from */
+  ram: Uint8Array;
+  /** "6569 (PAL)"; null when the snapshot does not say */
+  model: string | null;
+}
+
+const VIC_MODELS = ['6569 (PAL)', '8565 (PAL)', '6569R1 (PAL)', '6567 (NTSC)', '8562 (NTSC)', '6567R56A (NTSC)', '6572 (PAL-N)'];
+
+/** The VIC-II of the first snapshot among the files, or null when there is none or it has no VIC-II module. */
+export function snapshotVic(files: readonly { vsf?: Uint8Array }[]): SnapshotVicInfo | null {
+  const vsf = files.find(f => f.vsf)?.vsf;
+  if (!vsf) return null;
+  let s;
+  try { s = parseVsf(vsf); } catch { return null; }
+  const st = snapshotVicState(s);
+  if (!st || !s.vic) return null;
+  return { st, vic: s.vic, ram: s.ram, model: s.vic.model == null ? null : VIC_MODELS[s.vic.model] ?? `model ${s.vic.model}` };
+}
+
+const MODE_TEXT: Record<VicState['mode'], string> = {
+  text: 'Text', 'mc-text': 'Multicolour text', 'ecm-text': 'Extended background colour text', bitmap: 'Hires bitmap',
+  'mc-bitmap': 'Multicolour bitmap', invalid: 'An invalid mode: the VIC shows black',
+};
+
+/** the mode in a few words: "Multicolour text, 40 × 25"; with the screen off, that */
+export const vicModeText = (st: VicState): string =>
+  st.den ? `${MODE_TEXT[st.mode]}, ${st.cols} × ${st.rows}${st.xscroll || st.yscroll !== 3 ? `, scroll x ${st.xscroll} y ${st.yscroll}` : ''}` : 'The screen is off: the border colour only';
+
+/** the VIC bank and the addresses it takes in */
+export const vicBankText = (st: VicState): string => `VIC bank ${st.bank} ($${h4(st.base)}–$${h4(st.base + 0x3fff)})`;
+
+/** one thing the VIC fetches: the screen, the characters or bitmap, a sprite; `addr` null for the character ROM */
+export interface VicPart { what: string; addr: Addr | null; text: string }
+
+/** What the VIC reads its picture from, in the order a reader looks for it: the screen, the characters or the bitmap,
+ *  then the sprites that are on. */
+export function vicParts(st: VicState): VicPart[] {
+  const out: VicPart[] = [{ what: st.bmm ? 'Screen (colours)' : 'Screen', addr: st.screen, text: `$${h4(st.screen)}` }];
+  if (st.bmm) out.push({ what: 'Bitmap', addr: st.bitmap, text: `$${h4(st.bitmap)}` });
+  else if (st.charRom) out.push({ what: 'Charset', addr: null, text: `the character ROM (${(st.charset & 0x0800) ? 'lower case' : 'upper case'})` });
+  else out.push({ what: 'Charset', addr: st.charset, text: `$${h4(st.charset)}${st.ecm ? ' (64 characters)' : ''}` });
+  for (const s of st.sprites) if (s.on) out.push({
+    what: `Sprite ${s.n}`, addr: s.addr,
+    text: `$${h4(s.addr)} at ${s.x},${s.y}${s.mc ? ', multicolour' : ''}${s.wide || s.tall ? `, ${[s.wide && 'wide', s.tall && 'tall'].filter(Boolean).join(' and ')}` : ''}${s.behind ? ', behind' : ''}`,
+  });
+  return out;
+}
+
+/** where the raster was, and the raster interrupt */
+export const vicRasterText = (v: SnapshotVic, st: VicState): string =>
+  `Raster line ${v.line}, cycle ${v.cycle} · raster interrupt at line ${v.irqLine}${st.irqMask & 1 ? '' : ' (off)'}`;
 
 /** The label at `a`, else the nearest one before it in the 256 bytes below (`name+3`); null when there is none. */
 export function nameNear(labels: ReadonlyMap<Addr, { name: string }>, a: Addr): string | null {

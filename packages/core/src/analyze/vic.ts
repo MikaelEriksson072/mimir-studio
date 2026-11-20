@@ -3,7 +3,8 @@
  * comes from $dd00 and the $dd02 trick, and $d018 and sprite pointers count in the bank selected where
  * they are written, or by a $dd00/$dd02 store right after the $d018 one. Without it every $d018 value is tried
  * in every bank written to $dd00 (a snapshot's own bank when there is none). Nothing is graphics over the zero
- * page and the stack ($0000-$01ff), which the CPU changes all the time. */
+ * page and the stack ($0000-$01ff), which the CPU changes all the time. A VICE snapshot's VIC-II, with the screen on,
+ * adds what it was showing when the snapshot was saved: its screen, charset or bitmap and the sprites it had on. */
 import type { Ctx } from './context';
 import type { Addr, GfxCandidate, MemConfigInfo, VicEvidence } from '../types';
 import { T } from '../model';
@@ -13,6 +14,7 @@ import { $2, $4 } from '../util/hex';
 import { isIO } from '../c64/symbols';
 import { banksOf, ioVisible } from '../c64/memconfig';
 import { parseVsf, snapshotVicBank } from '../c64/vsf';
+import { snapshotVicState, type VicState } from '../c64/vicscreen';
 
 /** The zero page and the stack: the CPU changes them all the time, so the VIC never shows them. */
 const CPU_PAGES = 0x0200;
@@ -50,6 +52,19 @@ export function vicEvidence(ctx: Ctx, mcfg: MemConfigInfo | null = null): { vic:
     if (w.dest === 0xd01c) vic.spriteMc = (vic.spriteMc ?? 0) | w.v;
   }
   if (mcfg) for (const c of mcfg.changes.values()) if (c.vic != null) for (const b of banksOf(c.vic)) vic.banks.add(b);
+  // a snapshot's VIC-II with the screen on: what it was showing when VICE saved it (its own windows, after the code's)
+  let shown: VicState | null = null;
+  for (const f of ctx.files) if (f.vsf && !shown) try { const st = snapshotVicState(parseVsf(f.vsf)); if (st?.den && st.mode !== 'invalid') shown = st; } catch { /* not readable */ }
+  if (shown) {
+    vic.banks.add(shown.bank);
+    vic.d018.add(shown.d018);
+    if (shown.bmm) vic.bitmap = true;
+    if (shown.mcm) vic.multicolor = true;
+    for (const s of shown.sprites) if (s.on) {
+      vic.sprites.push({ n: s.n, ptr: s.ptr, addr: s.addr });
+      if (s.mc) vic.spriteMc = (vic.spriteMc ?? 0) | (1 << s.n);
+    }
+  }
   if (!vic.banks.size) {
     let bank = 0;
     for (const f of ctx.files) if (f.vsf) try { bank = snapshotVicBank(parseVsf(f.vsf)) ?? 0; } catch { /* not readable: bank 0 */ }
@@ -109,6 +124,13 @@ export function vicEvidence(ctx: Ctx, mcfg: MemConfigInfo | null = null): { vic:
         }
       }
     }
+  }
+  if (shown) {
+    const st = shown, d018 = `$d018=${$2(st.d018)}`;
+    if (st.bmm) push({ type: T.BITMAP, start: st.bitmap, size: 8000, why: `the snapshot's VIC shows a ${st.mcm ? 'multicolour ' : ''}bitmap at ${$4(st.bitmap)} (${d018})` });
+    else if (!st.charRom) push({ type: T.CHARSET, start: st.charset, size: st.ecm ? 512 : 2048, why: `the snapshot's VIC shows the charset at ${$4(st.charset)} (${d018})` });
+    push({ type: T.SCREEN, start: st.screen, size: 1000, why: `the snapshot's VIC shows the screen at ${$4(st.screen)} (${d018})` });
+    for (const s of st.sprites) if (s.on) push({ type: T.SPRITE, start: s.addr, size: 64, why: `the snapshot's VIC shows sprite ${s.n} from pointer ${$4(st.screen + 0x3f8 + s.n)} = ${$2(s.ptr)}` });
   }
   return { vic, gfx };
 }
