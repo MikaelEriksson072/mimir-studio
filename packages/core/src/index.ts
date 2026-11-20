@@ -30,7 +30,7 @@ export {
   bankFiles, bootBank, cartMode, cartModeName, cartridgeSource, chipAddress, chipFromPrg, chipName, chipTypeName, compareCrt, crtBanks, crtBase, crtMode, crtOffsetText, crtOutputName, crtSourceName, crtTypeName, CRT_TYPES, projectCartMode,
   cartImageLines, cartLineText, describeCrt, isCrt, makeCrt, openCartridge, parseCrt, rebuildCrt, type CartLine, type CartSourceOptions, type ChipFile, type Crt, type CrtChip,
 } from './c64/crt';
-export { d64FileName, diskSectors, isDiskImage, looseChains, makeD64, parseD64, petsciiName, readD64File, sectorsOnTrack, writeDiskFile, type D64File, type D64FileType, type D64Image, type LooseChain } from './c64/d64';
+export { d64FileName, diskSectors, isDiskImage, looseChains, makeD64, parseD64, pastEndText, petsciiName, readD64File, sectorsOnTrack, writeDiskFile, type D64File, type D64FileType, type D64Image, type LooseChain } from './c64/d64';
 export { nextSides } from './c64/sides';
 export { C64_BACKGROUND, C64_BORDER, C64_TEXT, directoryProgram, directoryScreen, screenRowText, type DirPart, type DirScreen, type DirScreenRow } from './c64/dirlist';
 export { tapeDirectory, tapeDirEntry, tapeScreen, type TapeDirEntry, type TapePart, type TapeScreen } from './c64/tapelist';

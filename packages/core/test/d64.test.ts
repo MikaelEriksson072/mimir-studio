@@ -72,6 +72,25 @@ describe('d64', () => {
     expect(() => readD64File(img, f)).toThrow(/track 99 sector .* is not on the disk/);
   });
 
+  it('says when a file goes on past the end of a cut-short image (a 40-track disk kept as 35 tracks)', () => {
+    // as The Last Ninja +6 (TCS, "LAST NINJA !40TR" as a 35-track D64): NINJA6A leaves at 36/0, NINJA6B starts at 36/8
+    const img = makeD64({ name: 'x', files: [{ name: 'a', data: bytes(600) }, { name: 'b', data: bytes(300) }, { name: 'c', data: bytes(10) }] });
+    const [a, b] = parseD64(img).files;
+    const at = sectorOffset(a.track, a.sector, 35);
+    img[at] = 36; img[at + 1] = 0; // a's second sector is on track 36
+    const dir = sectorOffset(18, 1, 35);
+    img[dir + 32 + 3] = 36; img[dir + 32 + 4] = 8; // b starts on track 36
+    const d = parseD64(img);
+    expect(d.files.map(f => f.pastEnd)).toEqual([{ track: 36, sector: 0, blocks: 1 }, { track: 36, sector: 8, blocks: 0 }, undefined]);
+    expect(() => readD64File(img, d.files[0])).toThrow('"A" goes on at track 36 sector 0, past the end of this 35-track image: the disk had more tracks than were copied into the image, so 1 of its 3 blocks is here and the rest is not');
+    expect(() => readD64File(img, d.files[1])).toThrow('"B" starts at track 36 sector 8, past the end of this 35-track image: the disk had more tracks than were copied into the image, so none of its 2 blocks are here');
+    expect(readD64File(img, d.files[2])).toEqual(bytes(10));
+    // a link to a track no 1541 disk has is a broken chain, not a cut image
+    img[at] = 43;
+    expect(parseD64(img).files[0].pastEnd).toBeUndefined();
+    expect(() => readD64File(img, d.files[0])).toThrow(/track 43 sector 0 is not on the disk/);
+  });
+
   it('finds the sector chains the directory does not list, and nothing else', () => {
     const img = makeD64({ name: 'x', files: [{ name: 'a', data: bytes(600) }] });
     const at = (t: number, s: number) => sectorOffset(t, s, 35);

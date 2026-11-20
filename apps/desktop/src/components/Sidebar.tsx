@@ -2,7 +2,7 @@
  * The Explorer's sections are cards that fold up (closed when the app starts, the user's choice kept for the run), each with what it holds in a few words
  * beside its title. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, dlocSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, kindInfo, krillPackerName, overwritesSystemArea, parseVsf, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeDirectory, tapeDirEntry, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
+import { bootBank, cartModeName, chipAddress, chipTypeName, covertSummary, dlocSummary, crtBanks, crtBase, crtSourceName, crtTypeName, h2, h4, hwSymbol, kindInfo, krillPackerName, overwritesSystemArea, parseVsf, pastEndText, startsFromMonitor, patchEnd, patchFileName, scriptEndText, scriptPatches, START_STUB, SYSTEM_AREA, type Addr, type AnalysisResult, type Block, type BlockKind, type Crt, type D64File, type LoaderPart, type MusicPlayer, type PackingInfo, type Patch, type Project, type RenderResult, type ScriptCheck, type SymbolRef, tapeDirectory, tapeDirEntry, tapeScreen, type TapeFile, type UserScript, type JunkArea, shiftText, viewOffsetProblem, type ViewOffset } from '@mimir/core';
 import { blockFolders, blockView, type BlockView } from '../lib/blockfolders';
 import { Icon } from '../lib/icons';
 import { parseGoto } from '../lib/goto';
@@ -630,7 +630,10 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
   const [lower, setLower] = useState<{ bytes: Uint8Array; lower: boolean } | null>(null);
   const lowerNow = lower?.bytes === disk.bytes ? lower.lower : null;
   const kindOf = (f: D64File) => `${f.closed ? '' : '*'}${f.type}${f.locked ? '<' : ''}`;
-  const titleOf = (f: D64File) => (f.type === 'PRG' ? `Open ${f.name} (${f.blocks} blocks)${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : 'Only PRG files can be opened');
+  const titleOf = (f: D64File) => (f.pastEnd ? pastEndText(f, f.pastEnd, img.tracks)
+    : f.type === 'PRG' ? `Open ${f.name} (${f.blocks} blocks)${open.has(f) ? ': it is in the project' : ''}. ↑ ↓ go from file to file, Alt+↓ / Alt+↑ open the next and the one before` : 'Only PRG files can be opened');
+  // files that go on past the image's last track: the disk had more tracks than the image holds
+  const cut = img.files.filter(f => f.pastEnd);
   const actions = <>
     {c64 && <button className={cx('icon-btn c64-case', lowerNow && 'on')} aria-pressed={!!lowerNow}
       title={lowerNow ? 'Upper case and graphics, as Commodore+Shift switches the C64 back' : 'Lower and upper case, as Commodore+Shift switches the C64'}
@@ -645,7 +648,7 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
         {img.files.map((f, i) => {
           const prg = f.type === 'PRG';
           return (
-            <div key={i} role="listitem" className={cx('disk-row', !prg && 'off', open.has(f) && 'on')} aria-current={open.has(f) || undefined}
+            <div key={i} role="listitem" className={cx('disk-row', !prg && 'off', open.has(f) && 'on', f.pastEnd && 'cut')} aria-current={open.has(f) || undefined}
               title={titleOf(f)}
               tabIndex={prg ? 0 : -1} onClick={() => { if (prg) onOpenFromDisk(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (prg && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromDisk(f, false); } }}>
               <span className="mono small disk-blocks">{f.blocks}</span>
@@ -658,6 +661,11 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
         {!img.files.length && <div className="muted small">No files on this disk.</div>}
       </div>
       </>}
+      {cut.length > 0 && (
+        <div className="disk-sides disk-cut small" role="note" title="The image ends at its last track, but these files' sector chains go on past it: the disk was made with more tracks (40 for most such disks) and copied into a smaller image. The missing blocks are not in the file; another copy of the release may have them">
+          Cut short: this image holds {img.tracks} tracks, and {cut.map(f => `"${f.name}"`).join(', ')} go{cut.length === 1 ? 'es' : ''} on past them
+        </div>
+      )}
       {disk.sides.length > 0 && (
         <div className="disk-sides muted small" title="The release's next disks or sides, from the disk's folder (or dropped with it): Sindri turns to them, in this order, when the program asks for another side and waits">
           Then {disk.sides.map(s => s.name).join(', ')}

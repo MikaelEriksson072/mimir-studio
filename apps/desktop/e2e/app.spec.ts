@@ -1483,6 +1483,38 @@ test('mount a .d64 and open its PRG files', async ({ app, page }) => {
   });
 });
 
+test('a disk cut short (a 40-track disk kept as 35 tracks): the files that go on past its end are marked and say why', async ({ workDir: work, app, page }) => {
+  // as The Last Ninja +6 (TCS) in a 35-track D64: one file leaves the image at track 36, the next starts there.
+  // fixtures/d64/mimir-demo.d64 made so: "RASTER DEMO" (49 blocks) goes on at 36/0 after its first block, "SPRITE"
+  // starts at 36/8, "NOTES" stays whole
+  const img = new Uint8Array(readFileSync(join(repoDir, 'fixtures/d64/mimir-demo.d64')));
+  const off = (t: number, s: number) => { let n = 0; for (let i = 1; i < t; i++) n += i <= 17 ? 21 : i <= 24 ? 19 : i <= 30 ? 18 : 17; return (n + s) * 256; };
+  const dir = off(18, 1), first = off(img[dir + 3], img[dir + 4]);
+  img[first] = 36; img[first + 1] = 0;
+  img[dir + 32 + 3] = 36; img[dir + 32 + 4] = 8;
+  const cutDisk = join(work, 'cut.d64');
+  writeFileSync(cutDisk, img);
+
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [cutDisk] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted cut.d64: "MIMIR DEMO", 3 files')).toBeVisible();
+  await openSection(page, 'Disk');
+  const rows = page.getByRole('list', { name: 'Files on cut.d64' }).getByRole('listitem');
+  await expect(rows).toHaveText([/49\s*"RASTER DEMO"\s*PRG/, /1\s*"SPRITE"\s*PRG/, /1\s*"NOTES"\s*SEQ/]);
+  await expect(rows.nth(0)).toHaveClass(/\bcut\b/);
+  await expect(rows.nth(1)).toHaveClass(/\bcut\b/);
+  await expect(rows.nth(2)).not.toHaveClass(/\bcut\b/);
+  await expect(rows.nth(1)).toHaveAttribute('title', /^"SPRITE" starts at track 36 sector 8, past the end of this 35-track image: .* none of its 1 block is here/);
+  await expect(page.locator('.disk-cut')).toHaveText('Cut short: this image holds 35 tracks, and "RASTER DEMO", "SPRITE" go on past them');
+
+  // a click says why it does not open, and opens nothing
+  await rows.nth(0).click();
+  await expect(toast(page, '"RASTER DEMO" goes on at track 36 sector 0, past the end of this 35-track image: the disk had more tracks than were copied into the image, so 1 of its 49 blocks is here and the rest is not. Another copy of the release may have it whole')).toBeVisible();
+  await expect(page.locator('.file-name').filter({ hasText: 'RASTER DEMO' })).toHaveCount(0);
+});
+
 test('the disk as a C64 lists it (Settings → General), and Mimir\'s list again', async ({ app, page }) => {
   // fixtures/d64/mimir-demo.d64: "RASTER DEMO" (49 blocks), "SPRITE", "NOTES" (SEQ); LIST of it on a C64 is checked
   // cell by cell against VICE in packages/core/test/dirlist.test.ts

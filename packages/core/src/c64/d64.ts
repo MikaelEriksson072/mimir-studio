@@ -19,6 +19,10 @@ export interface D64File {
   blocks: number;
   /** first sector of the file */
   track: number; sector: number;
+  /** the file's sector chain goes on to a track past the image's last one: the disk had more tracks than were copied
+   *  into the image (a 40-track disk kept as a 35-track D64). Where it goes on, and how many of its blocks come
+   *  before that, in the image (0: it starts past the end) */
+  pastEnd?: { track: number; sector: number; blocks: number };
 }
 
 export interface D64Image {
@@ -122,24 +126,56 @@ export function directoryFile(u8: Uint8Array, p: number): D64File | null {
   return { name: petsciiName(raw), raw, type, closed: !!(kind & 0x80), locked: !!(kind & 0x40), blocks: u8[p + 30] | (u8[p + 31] << 8), track: u8[p + 3], sector: u8[p + 4] };
 }
 
+/** The last track a 1541 disk can have data on: the drive's head reaches it, and the biggest D64 holds it. */
+const LAST_TRACK = 42;
+
+/** Where a sector chain from `t`/`s` leaves the image: its link to a sector on a track past the image's last one (a
+ *  track a 1541 disk can have), with the blocks before it. null when the chain stays in the image or breaks another way. */
+function pastImageEnd(u8: Uint8Array, tracks: number, t: number, s: number): D64File['pastEnd'] | null {
+  const seen = new Set<number>();
+  for (let blocks = 0; t !== 0; blocks++) {
+    if (t > tracks) return t <= LAST_TRACK && s < sectorsOnTrack(t) ? { track: t, sector: s, blocks } : null;
+    if (t < 1 || s >= sectorsOnTrack(t)) return null;
+    const off = sectorOffset(t, s, tracks);
+    if (seen.has(off)) return null;
+    seen.add(off);
+    [t, s] = [u8[off], u8[off + 1]];
+  }
+  return null;
+}
+
+/** Why a file that goes on past the image's end cannot be read: where it goes on and how much of it is there. */
+export function pastEndText(f: Pick<D64File, 'name' | 'track' | 'sector'> & { blocks?: number }, at: NonNullable<D64File['pastEnd']>, tracks: number): string {
+  const blocks = (n: number) => `${n} block${n === 1 ? '' : 's'}`;
+  const here = at.blocks ? `${f.blocks ? `${at.blocks} of its ${blocks(f.blocks)}` : blocks(at.blocks)} ${at.blocks === 1 ? 'is' : 'are'} here and the rest is not`
+    : f.blocks ? `none of its ${blocks(f.blocks)} ${f.blocks === 1 ? 'is' : 'are'} here` : 'none of it is here';
+  return `"${f.name}" ${at.blocks ? 'goes on' : 'starts'} at track ${at.track} sector ${at.sector}, past the end of this ${tracks}-track image: `
+    + `the disk had more tracks than were copied into the image, so ${here}. Another copy of the release may have it whole`;
+}
+
 /** Read the directory of a .d64 image (or a .g64's, through its decoded sectors). */
 export function parseD64(image: Uint8Array): D64Image {
   const u8 = diskSectors(image);
   const { tracks, errorInfo } = sizeInfo(u8);
   const { bam, freeBlocks } = diskBam(u8);
   const files = directoryEntries(u8).map(p => directoryFile(u8, p)).filter((f): f is D64File => f != null);
+  for (const f of files) {
+    const at = f.track ? pastImageEnd(u8, tracks, f.track, f.sector) : null;
+    if (at) f.pastEnd = at;
+  }
   const text = (a: number, n: number) => petsciiName(bam.subarray(a, a + n));
   return { name: text(0x90, 16), id: text(0xa2, 2), dosType: text(0xa5, 2), format: u8 === image ? 'D64' : 'G64', tracks, errorInfo, freeBlocks, files };
 }
 
 /** A file's sectors along its chain: where each is in the D64 and how many of its bytes are the file's. */
-function fileChain(u8: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'>): { track: number; sector: number; off: number; used: number }[] {
+function fileChain(u8: Uint8Array, f: Pick<D64File, 'name' | 'track' | 'sector'> & { blocks?: number }): { track: number; sector: number; off: number; used: number }[] {
   const { tracks } = sizeInfo(u8);
   const chain: { track: number; sector: number; off: number; used: number }[] = [];
   const seen = new Set<number>();
   let t = f.track, s = f.sector;
   if (t === 0) throw new Error(`"${f.name}" has no data on the disk`);
   while (t !== 0) {
+    if (t > tracks && t <= LAST_TRACK && s < sectorsOnTrack(t)) throw new Error(pastEndText(f, { track: t, sector: s, blocks: chain.length }, tracks));
     const off = sectorOffset(t, s, tracks);
     if (seen.has(off)) throw new Error(`"${f.name}": its sector chain loops back to track ${t} sector ${s}`);
     seen.add(off);
