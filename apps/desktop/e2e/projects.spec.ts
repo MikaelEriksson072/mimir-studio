@@ -233,11 +233,15 @@ test.describe('the start screen', () => {
       await expect(page.getByRole('button', { name: 'Expand panel' })).toBeVisible();
     });
 
-    await test.step('work without a project with only a file opened in it: Quick work takes its place without asking', async () => {
+    await test.step('work without a project with only a file opened in it: Quick work takes its place without asking, on the Listing tab', async () => {
       await openPrg(false);
+      // another tab shown last: Quick work starts on the Listing all the same
+      await page.getByRole('tab', { name: 'Memory', exact: true }).click();
+      await expect(page.getByRole('tab', { name: 'Memory', exact: true })).toHaveAttribute('aria-selected', 'true');
       await toStartScreen();
       await quick.click();
       await expect(ask).toHaveCount(0);
+      await expect(page.getByRole('tab', { name: 'Listing', exact: true })).toHaveAttribute('aria-selected', 'true');
       await isEmpty();
     });
 
