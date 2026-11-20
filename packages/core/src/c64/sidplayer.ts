@@ -1,5 +1,6 @@
 /* Playing a music block on a C64 (VICE): a PRG that RUN starts, with the block's bytes and a small driver. The
- * driver puts the bytes where the player runs, calls init with the song number in A and then play once a frame, from
+ * driver puts the bytes where the player runs, calls init with the song number in A (and in X and Y, where some
+ * players take it) and then play once a frame, from
  * a raster interrupt, with the time play takes shown as a bar in the border. Keys 1-9 and 0 start songs $00-$09, +
  * and - the next and the one before. It holds exactly the bytes the export's .sid file does, so what plays is what
  * the .sid holds. */
@@ -127,7 +128,7 @@ export function sidPlayer(o: SidPlayerOptions): SidPlayer {
     `$${h4(D)}-$${h4(end - 1)}  INIT $${h4(o.init)}  ${frames ? `PLAY $${h4(o.play)}` : 'NO PLAY'}`,
     frames ? `PLAY EACH FRAME (RASTER IRQ), $01 = $${h2(port)}` : `SAMPLES: ITS ${o.digi!.nmi ? 'NMI' : 'IRQ'}, ${o.digi!.hz} HZ, $01 = $${h2(port)}`,
     parts.length ? `+ $${h4(parts[0].load)}-$${h4(parts[parts.length - 1].load + parts[parts.length - 1].data.length - 1)}, ${parts.length} PART${parts.length === 1 ? '' : 'S'}` : '',
-    `SONG $${h2(song)} (A AT INIT)`,
+    `SONG $${h2(song)} (A, X AND Y AT INIT)`,
     '',
     'KEYS 1-9 AND 0: SONG $00-$09',
     '+ AND -: THE NEXT SONG, THE ONE BEFORE',
@@ -171,13 +172,15 @@ export function sidPlayer(o: SidPlayerOptions): SidPlayer {
     ' lda song', ' cpx #11', ' beq song_down', ' clc', ' adc #1', ' jmp new_song',
     'song_down: sec', ' sbc #1',
     'new_song: jsr start_song', ' jmp keys',
-    // start the song in A: the SID silenced, init called with the song in A
+    // start the song in A: the SID silenced, init called with the song in A, X and Y
     'start_song: sei', ' sta song',
     // a sample player started again: its timers stopped while init runs
     ...(o.digi ? [' lda #$7f', ' sta $dc0d', ' sta $dd0d', ' lda $dc0d', ' lda $dd0d', ' lda song'] : []),
     ...(screen ? [' lsr', ' lsr', ' lsr', ' lsr', ' jsr hex_digit', ` sta ${hex(SID_PLAYER_SONG_AT)}`, ' lda song', ' and #$0f', ' jsr hex_digit', ` sta ${hex(SID_PLAYER_SONG_AT + 1)}`] : []),
     ' lda #0', ' ldx #$18', 'silence: sta $d400,x', ' dex', ' bpl silence',
-    ' lda song', ` jsr ${hex(o.init)}`, ' cli', ' rts',
+    // the song in X and Y too: a player may take it there (Cybernoid II's init is `lda $aeed,x`, the game does
+    // `ldx #0 / jsr $a620`), and the silencing loop above leaves X at $ff
+    ' lda song', ' tax', ' tay', ` jsr ${hex(o.init)}`, ' cli', ' rts',
     ...(screen ? ['hex_digit: cmp #10', ' bcc decimal', ' sbc #9', ' rts', 'decimal: adc #$30', ' rts'] : []),
     // the interrupt: straight from the CPU's vector, or through the KERNAL's (which saved the registers)
     'irq: pha', ' txa', ' pha', ' tya', ' pha',

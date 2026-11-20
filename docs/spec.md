@@ -640,6 +640,13 @@ fils byte.
 minnet, som spelarens PRG har dem, i 150 bildrutor. Stannar körningen (kod utanför blocket, BRK, init som inte
 återvänder) säger appen varför i en varning när blocket spelas, i stället för att spelaren i VICE kraschar utan förklaring.
 
+**Låten i A, X och Y.** Spelarens PRG i VICE (`sidPlayer()`) anropar init med låtens nummer i A, X och Y. En del spelare
+tar numret i X: Cybernoid II:s (C64com, uppackad hela vägen: blocket `$a620–$d7ff`, init `$a620` → `$a6ca`) läser
+`lda $aeed,x`, och spelet anropar den med `ldx #$00 / jsr $a620`. Drivrutinen tystade SID:en med en loop som lämnar X på
+`$ff` precis före init, så spelaren fick en låt som inte finns och var tyst i VICE (RMS 0), medan körningen i analysen
+och DeepSID har X = 0 och spelade den. Nu spelar den i VICE (RMS runt 2 600 per sekund). Med låt 0 får init samma
+register som i analysens körning (`sidrun.ts`, A = X = Y = 0).
+
 **I DeepSID** (`electron/main/deepsid.ts`) går `.sid`-filen till sidans Load SID, och när den listats klickas dess rad. DeepSID
 hämtar sin mapplista med jQuery-anrop när sidan öppnas, och ett klick på en rad spelar `browser.songs[rad − subFolders]`.
 En mapplista som kommer fram efter att Load SID börjat sätter tillbaka mappens antal undermappar (160 i roten): klicket

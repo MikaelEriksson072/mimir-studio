@@ -2347,7 +2347,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** the debugger Build & Run in a debugger (Shift+F5) starts the program in */
   const debuggerName = toolchain.debugger === 'c64d' ? 'C64 Debugger' : 'Retro Debugger';
   /** The music block at `at` in VICE: a PRG of its bytes (those the export's .sid holds) with a driver that puts them
-   *  where they run, calls init with the song in A and play each frame from a raster interrupt (c64/sidplayer.ts); or
+   *  where they run, calls init with the song in A, X and Y and play each frame from a raster interrupt (c64/sidplayer.ts); or
    *  in DeepSID, the online player, as the .sid the export writes (electron/main/deepsid.ts). A snapshot's player that init
    *  no longer starts again plays on from the snapshot: init puts back the bytes outside the block it reads (musicPlayData) */
   /** What a music block plays with (in VICE, in DeepSID and as the library's .sid): its bytes, init and play

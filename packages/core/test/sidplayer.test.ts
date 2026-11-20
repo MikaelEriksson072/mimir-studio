@@ -1,5 +1,5 @@
 /* Playing a music block (c64/sidplayer.ts): the PRG moves the block's bytes to where the player runs, calls init with
- * the song in A and play once a frame from the raster interrupt, with the KERNAL in where it can be. Keys 1-9 and 0
+ * the song in A, X and Y and play once a frame from the raster interrupt, with the KERNAL in where it can be. Keys 1-9 and 0
  * start songs $00-$09, + and - the next and the one before. Run in Sindri's emulated C64 (stand-in ROMs), and in the
  * real VICE when it is found: the debug cartridge makes VICE exit with what the tune wrote to $d7ff. */
 import { describe, expect, it } from 'vitest';
@@ -12,8 +12,9 @@ import { assemble, h4 } from '../src';
 import { musicPlayData, sidPlayer, SID_PLAYER_DATA, SID_PLAYER_LINE, SID_PLAYER_SONG_AT } from '../src/c64/sidplayer';
 import { findVice, prepareVice } from '../src/node';
 
-/** what the test tune writes: the song init got, plays since init, $01 and the raster line in play, init's $01 */
-const OUT = 0x0340, SONG = OUT, COUNT = OUT + 1, PORT = OUT + 2, LINE = OUT + 3, INIT_PORT = OUT + 4, BAD_LINE = OUT + 5;
+/** what the test tune writes: the song init got (in A, X and Y), plays since init, $01 and the raster line in play,
+ *  init's $01 */
+const OUT = 0x0340, SONG = OUT, COUNT = OUT + 1, PORT = OUT + 2, LINE = OUT + 3, INIT_PORT = OUT + 4, BAD_LINE = OUT + 5, SONG_X = OUT + 6, SONG_Y = OUT + 7;
 
 /** A tune at `load`, `len` bytes: JMP init / JMP play, then a pattern the move must keep. With `exit`, the 50th play
  *  writes $40 | $01's low bits to the debug cartridge ($d7ff), $ee when play was called on another raster line. */
@@ -22,6 +23,8 @@ function tune(load: number, len: number, exit = false): Uint8Array {
  jmp init
  jmp play
 init: sta $${h4(SONG)}
+ stx $${h4(SONG_X)}
+ sty $${h4(SONG_Y)}
  lda #0
  sta $${h4(COUNT)}
  sta $${h4(BAD_LINE)}
@@ -103,6 +106,9 @@ describe('the music block player', () => {
     frames(12);
     expect(m.ram.subarray(0x1000, 0x1000 + data.length)).toEqual(data);
     expect(m.ram[SONG]).toBe(0);
+    // the song in X and Y too (Cybernoid II's player takes it in X)
+    expect(m.ram[SONG_X]).toBe(0);
+    expect(m.ram[SONG_Y]).toBe(0);
     // (moving the bytes takes some frames first)
     expect(m.ram[COUNT]).toBeGreaterThanOrEqual(5);
     expect(m.ram[COUNT]).toBeLessThanOrEqual(11);
@@ -126,6 +132,8 @@ describe('the music block player', () => {
     // 3: PA1, PB0
     press(1, 0x01);
     expect(m.ram[SONG]).toBe(2);
+    expect(m.ram[SONG_X]).toBe(2);
+    expect(m.ram[SONG_Y]).toBe(2);
     expect(m.ram[COUNT]).toBeLessThanOrEqual(6);
     expect(screenText(m, SID_PLAYER_SONG_AT, 2)).toBe('02');
     // 0: PA4, PB3
@@ -277,7 +285,9 @@ describe('the music block player with a sample player', () => {
     // (the NMI as the CPU takes it: on the line's edge)
     const { m, frames } = boot(p.prg, true);
     const seen = new Set<number>();
-    for (let k = 0; k < 40; k++) { frames(1); seen.add(m.sidRegs[0x18]); }
+    // (the volume read 7 times a frame: read once a frame, at the same point of the samples' cycle, which values it
+    // meets hangs on a few cycles where the driver calls init)
+    for (let k = 0; k < 40 * 7; k++) { frames(1 / 7); seen.add(m.sidRegs[0x18]); }
     for (const part of t.parts) expect(m.ram.subarray(part.load, part.load + 256)).toEqual(part.data);
     expect(m.ram[COUNT + 1]).toBeGreaterThan(8);
     expect(seen.size).toBeGreaterThan(8);

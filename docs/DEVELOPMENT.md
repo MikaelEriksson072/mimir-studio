@@ -1120,6 +1120,14 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     here). On the archive's 277 295 D64 (638 Spindle disks, at most 25 ms a disk) it finds the stream on the 6
     copies of Bliss Machine's disk 1 and nothing else. Tests: `test/store-anim.test.ts` (a player of the same shape and an own encoder, the fixture
     `fixtures/d64/store-anim.d64`), an e2e test.
+54. Music that takes its song in X (spec 8.6): Cybernoid II (C64com, unpacked all the way) played in DeepSID but not
+    in VICE. Its init (`$a620` → `$a6ca`) reads `lda $aeed,x`, and the game calls it with `ldx #$00 / jsr $a620`.
+    The VICE player's driver silenced the SID with a loop that leaves X at `$ff` just before `jsr init`, so the
+    player started a song that does not exist and was silent (RMS 0); the analysis's run and DeepSID have X = 0. The
+    driver now gives init the song in A, X and Y; VICE plays it (RMS about 2 600 a second). The sample-player test
+    read `$d418` once a frame and, with init 4 cycles later, met 7 values instead of 9 (the samples played the same):
+    it now reads the volume 7 times a frame. Tests: `test/sidplayer.test.ts` (the song in X and Y, at the start and
+    after a key).
 
 ## Roadmap
 
