@@ -66,8 +66,8 @@ export interface MemoryGfxProps {
   onShow: (a: Addr) => void;
   /** save a file through a save dialog (its suggested name and bytes) */
   onSave: (name: string, bytes: Uint8Array) => void;
-  /** the selection as characters or sprites to the library (spec 10.6), drawn as here */
-  onLibrary?: (range: { start: Addr; end: Addr }, kind: 'chars' | 'sprites', mc: boolean, colors: GfxColors) => void;
+  /** the selection as characters, sprites or a bitmap to the library (spec 10.6), drawn as here */
+  onLibrary?: (range: { start: Addr; end: Addr }, kind: 'chars' | 'sprites' | 'bitmap', mc: boolean, colors: GfxColors) => void;
   /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
   bank?: BankPickProps | null;
   /** where the editor was in memory (14.6b): the tab opens with it at the top (null: at the cursor) */
@@ -492,7 +492,8 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
           {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && bitmapRows < BITMAP_ROWS)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
           {marks.map(([id, label], i) => <button key={id} className={cx('btn small', i === 0 && 'primary')} onClick={() => onMark(id, range, kind === 'screens' ? undefined : mc)}>Mark as {label}</button>)}
           <button className="btn small" disabled={!gfxIn.length} title={unmarkTitle} onClick={() => onUnmark(range)}>Unmark</button>
-          {onLibrary && (kind === 'chars' || kind === 'sprites') && <button className="btn small" title={`Keep a copy of the selection as ${kind === 'chars' ? 'a charset' : 'sprites'} in the library (the Library view in the activity bar), in these colours, for every project`}
+          {onLibrary && (kind === 'chars' || kind === 'sprites' || kind === 'bitmap') && <button className="btn small" title={kind === 'bitmap' ? 'Keep a copy of the bitmap the selection starts as a picture in the library (the Library view in the activity bar), for every project: its screen and colour RAM from where they are found in memory, or in these colours'
+            : `Keep a copy of the selection as ${kind === 'chars' ? 'a charset' : 'sprites'} in the library (the Library view in the activity bar), in these colours, for every project`}
             onClick={() => onLibrary(range, kind, mc, colors)}><Icon name="library" size={13} />Add to library</button>}
           <span className="gfxv-save" ref={saveRef}>
             <button className="btn small" aria-haspopup="menu" aria-expanded={saveOpen} onClick={() => setSaveOpen(o => !o)} title="Save the selection as a file"><Icon name="download" size={13} />Save…</button>

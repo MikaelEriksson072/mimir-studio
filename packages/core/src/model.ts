@@ -91,6 +91,8 @@ export const DEFAULT_SETTINGS: Settings = {
   debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000,
   // the library's folder (empty: Mimir\Library in the documents folder)
   libraryDir: '',
+  // the library's bitmaps as Koala Painter pictures (multicolour) and Art Studio ones (hires)
+  bitmapFormatMc: 'koala', bitmapFormatHires: 'art',
 };
 
-export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'tassPath', 'tassArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer', 'debugger', 'retroDebuggerPath', 'retroDebuggerArgs', 'c64DebuggerPath', 'c64DebuggerArgs', 'debuggerWait', 'libraryDir'] as const;
+export const TOOLCHAIN_KEYS = ['javaPath', 'kickJar', 'vicePath', 'outDir', 'kickArgs', 'tassPath', 'tassArgs', 'viceArgs', 'unpackerPath', 'unpackerArgs', 'exomizerPath', 'viceQuicksave', 'editorPath', 'editorArgs', 'musicPlayer', 'debugger', 'retroDebuggerPath', 'retroDebuggerArgs', 'c64DebuggerPath', 'c64DebuggerArgs', 'debuggerWait', 'libraryDir', 'bitmapFormatMc', 'bitmapFormatHires'] as const;

@@ -223,7 +223,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
                   : <span className="muted small">as the VIC registers say</span>}
               </div> : <label className="check"><input type="checkbox" checked={mc} onChange={e => setMc(e.target.checked)} /> Multicolor</label>}
               {blockMcOn && blk && onAddToLibrary && libraryKindOf(blk.type) && <div className="merge-row"><button className="btn small" onClick={() => onAddToLibrary(blk.start)}
-                title={`Keep a copy of the ${blk.type === 'sprite' ? 'sprites' : 'charset'} in the library (the Library view in the activity bar), for every project, named after where it was found`}><Icon name="library" size={13} />Add to library</button></div>}
+                title={`Keep a copy of the ${blk.type === 'sprite' ? 'sprites' : blk.type === 'bitmap' ? 'bitmap as a picture' : 'charset'} in the library (the Library view in the activity bar), for every project, named after where it was found`}><Icon name="library" size={13} />Add to library</button></div>}
               {zoomKind && zoomed != null ? <GfxZoom kind={zoomKind} mem={B.A.mem} start={zStart} addr={zoomed} count={nZoom} mc={mcShown} focus={zoomClicks}
                 colors={zoomKind === 'sprite' ? spritePal : undefined} paint={zoomKind === 'sprite' && spriteBlock && onSpriteColors ? { colors: spriteColors, own: !!ownColors, onChange: paintSprites } : undefined}
                 where={zoomWhere} onPick={pickZoom} onClose={() => setZoom(null)} onGo={zoomGo} />

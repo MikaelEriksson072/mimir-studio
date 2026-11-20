@@ -2627,9 +2627,9 @@ igenkänning i ett som är länkat någon annanstans, en annan omaskad byte, fö
 `apps/desktop/e2e/overview.spec.ts` (namnge, nästa projekt får förslaget i översikten, paletten och menyn, glömma,
 inställningen).
 
-### 10.6 Biblioteket (SID-musik, sprites och teckenset)
+### 10.6 Biblioteket (SID-musik, sprites, teckenset och bitmappar)
 
-Det man hittar i ett program, en låt, en sprite-animation, ett teckenset, ska man kunna spara undan och titta på och
+Det man hittar i ett program, en låt, en sprite-animation, ett teckenset, en bild, ska man kunna spara undan och titta på och
 lyssna på igen, oavsett vilket projekt som är öppet. Biblioteket är därför en mapp på datorn, inte en del av projektet:
 en mapp för varje sort med filer som andra verktyg också läser, och namn som säger var de hittades. Det rena (namn,
 filformat, indexet) står i `packages/core/src/library.ts`; mappen läses och skrivs bara av huvudprocessen
@@ -2637,7 +2637,7 @@ filformat, indexet) står i `packages/core/src/library.ts`; mappen läses och sk
 `components/Library*.tsx`).
 
 - **Mappen.** Settings → General → *Library folder* (`libraryDir` bland verktygsinställningarna; tom: `Mimir\Library` i
-  dokumentmappen, bredvid projekten). I den finns `SIDs`, `Sprites` och `Chars`, och `library.json`. Mappen skapas först
+  dokumentmappen, bredvid projekten). I den finns `SIDs`, `Sprites`, `Chars` och `Bitmaps`, och `library.json`. Mappen skapas först
   när något läggs till. Testerna har biblioteket i sin egen profil (`e2e/fixtures.ts`), aldrig i dokumentmappen.
 - **Filerna.** En låt är en PSID (en samplingsspelare utan play en RSID), samma `.sid` som DeepSID får (`musicSidFile`,
   8.6): blockets byte med init och play, och för en snapshots spelare rutinen som lägger tillbaka det den läser utanför
@@ -2646,6 +2646,25 @@ filformat, indexet) står i `packages/core/src/library.ts`; mappen läses och sk
   som inte är hel fylls ut med nollor), ett teckenset `.64c`, laddadressen först. Filer som användaren lagt i mapparna
   själv läses också: `.sid`; `.spr`, `.bin`, `.raw`; `.64c`, `.chr`, `.bin`, `.raw` (en fil som är 2 byte längre än
   hela sprites eller tecken har en laddadress först; `readLibraryFile`).
+- **Bitmappar** (`packages/core/src/c64/pictures.ts`) blir en bild som ett ritprogram sparar den: bitmappen, skärmen
+  (*screen matrix*), färg-RAM och bakgrunden, med programmets laddadress först. Formatet väljs i Settings → General →
+  Library, ett för multicolor (*Koala Painter* `.kla`: $6000 bitmapp, $7f40 skärm, $8328 färg-RAM, $8710 bakgrund, 10003
+  byte; *Advanced Art Studio* `.ocp`: $2000 bitmapp, $3f40 skärm, $4328 ram och bakgrund, $4338 färg-RAM, 10018 byte) och
+  ett för hires (*Art Studio* `.art`: $2000 bitmapp, $3f40 skärm, ramen, 9009 byte; *Doodle!* `.dd`: $5c00 skärm, $6000
+  bitmapp, 9218 byte) (`bitmapFormatMc`, `bitmapFormatHires`; Koala och Art Studio från början). Mappen läser alla fyra
+  (`.kla`, `.koa`, `.ocp`, `.mpic`, `.art`, `.dd`, `.ddl`), också filer som lagts där för hand; en bild är multicolor
+  som dess format är. Posten har bildens byte i Koalas ordning utan laddadress (`pictureData`), så samma bild i två
+  format är samma byte och hittas som redan tillagd.
+- **En bitmapps färger.** Dialogen letar var skärmen och färg-RAM finns i minnet (`findPictureColors`): som ett
+  ritprograms fil som laddats hel lägger dem bredvid bitmappen (Koala: skärmen direkt efter, färg-RAM efter den och sist
+  bakgrunden; Advanced Art Studio: bara när dess 14 oanvända byte är nollor, annars läses den som Koalas, som är mycket
+  vanligare), annars skärmen som VIC visar med den ($d018 i samma VIC-bank; första raden räcker, en logga har bara sina
+  rader) och som färg-RAM tabellen som programmet kopierar dit (`lda tab,x / sta $d800,x`, analysens `vic.colorRam`:
+  var $d800 ligger i minnet, så `lda tab+256,x / sta $d900,x` säger också `tab`), den med flest färger i rad; för hires
+  sist Art Studios (skärmen efter) eller Doodles (skärmen före) ordning. Färg-RAM tas bara där minst 900 av 1000 byte
+  saknar övre nibble. Bara laddade byte som inte är kod räknas. Användaren ser bilden och kan ändra skärmens och
+  färg-RAM:s adresser, bakgrunden, multicolor och formatet för just den bilden; utan adress blir det en färg för alla
+  celler (Graphics-flikens färger).
 - **Namnen.** Varifrån, namnet och adresserna: `Comaland side 1 - file25_1000 - music_1000 ($1000-$1fff).sid`.
   Varifrån (`librarySourceText`) är disken eller bandet filen öppnades från (medan det sitter i), filen bytena låg i och
   projektet, vart och ett en gång: ett namn som ett annat redan innehåller utelämnas, jämfört med bara bokstäver och
@@ -2658,20 +2677,22 @@ filformat, indexet) står i `packages/core/src/library.ts`; mappen läses och sk
   disken, adresserna), hur sprites och tecken ritas (multicolor och färger) och för en samplingsspelare dess avbrott
   (som VICE-spelaren behöver). Varje post har bytenas hash, så en fil som döpts om utanför Mimir hittar sin post igen;
   poster vars fil är borta tas bort, och en fil utan post visas som *put in the folder by hand* (`libraryItems`).
-- **Lägga till.** Ett musik-, sprite- eller teckensetblock: högerklick → *Add to library (SIDs/Sprites/Chars)…*,
+- **Lägga till.** Ett musik-, sprite-, teckenset- eller bitmappsblock: högerklick → *Add to library (SIDs/Sprites/Chars/Bitmaps)…*,
   knappen *Add to library* i inspektorn (vid *Play in VICE*, under förhandsvisningen av grafik), kommandopaletten (*Add
-  the block at the cursor to the library*), och i Graphics-fliken ett urval som visas som tecken eller sprites (med
-  flikens färger). Dialogen fyller i blockets namn och varifrån, en låt får också *Author*, och den visar filens namn
+  the block at the cursor to the library*), och i Graphics-fliken ett urval som visas som tecken, sprites eller en
+  bitmapp (med flikens färger och multicolor). Dialogen fyller i blockets namn och varifrån, en låt får också *Author*, och den visar filens namn
   medan man skriver. Finns samma byte redan (en `.sid` oavsett dess texter, `sameInLibrary`) säger dialogen det och
   knappen blir *Add again*. Meddelandet säger var filen hamnade (*Added to the library: SIDs\…*).
 - **Titta och lyssna.** Knappen *Library* i aktivitetsfältet visar vyn i sidopanelen och fliken *Library* (som står i
   flikraden när den öppnats). Vyn listar allt, det nyaste först, med en bild (de första tecknen, de två första
-  spritesarna) och var det togs; *All / SIDs / Sprites / Chars* väljer sort och filtret letar i namn, källa och
+  spritesarna, bilden) och var det togs; *All / SIDs / Sprites / Chars / Bitmaps* väljer sort och filtret letar i namn, källa och
   kompositör. En låts uppspelningsknapp, eller dubbelklick, spelar den i VICE eller DeepSID som Settings → Toolchain
   säger. Fliken visar korten, och det valda stort bredvid dem: tecknen och spritesarna med multicolor, fyra färger,
   antal per rad och zoom (sparas för det, en halv sekund efter senaste ändringen), sprites också som en animation
   (bildruta för bildruta, 2–50 per sekund, från och till), ett klick på ett tecken eller en sprite visar dess byte; en
-  låts texter, adresser, init och play med *Play in VICE* och *Play in DeepSID* och, med flera låtar, vilken som startar.
+  låts texter, adresser, init och play med *Play in VICE* och *Play in DeepSID* och, med flera låtar, vilken som startar;
+  en bitmapp som bilden i de färger filen har (`pictureImage`: varje cell med sin skärmbyte och sitt färg-RAM), lika
+  bred som rutan (*Fit*) eller 1–3×, med formatet och bakgrunden.
   VICE spelar en `.sid` ur biblioteket med Mimirs spelare (`sidPlayer`, 8.6): init med låten, sedan play varje
   bildruta, en RSID med de avbrott init startar. Högerklick spelar, visar filen, flyttar den till papperskorgen.
 - **Ändra.** *Rename* döper om både posten och filen (`Comaland side 1 - Title tune ($1000-$1fff).sid`, en låts egen
@@ -2682,9 +2703,12 @@ filformat, indexet) står i `packages/core/src/library.ts`; mappen läses och sk
   det (`isLibraryFileName`).
 
 Test: `packages/core/test/library.test.ts` (namnen, filformaten, `.sid`-texterna, `library.json` med filer som döpts
-om, ändrats och lagts dit för hand), `apps/desktop/test/main.test.ts` (mappen: lägga till, döpa om, papperskorgen,
-IPC-scheman), `apps/desktop/test/library.test.ts` (vad som får läggas till, sökningen, samma byte, bilderna) och
-`apps/desktop/e2e/library.spec.ts`.
+om, ändrats och lagts dit för hand), `packages/core/test/pictures.test.ts` (de fyra bildformaten skrivna och lästa,
+var en bitmapps skärm och färg-RAM hittas, showcasens logga; Spindles tre Koala-bilder lästes och skrevs byte för byte
+lika och hittades som Koala när det byggdes), `apps/desktop/test/main.test.ts` (mappen: lägga till, en bitmapp i valt
+format, döpa om, papperskorgen, IPC-scheman), `apps/desktop/test/library.test.ts` (vad som får läggas till, sökningen,
+samma byte, bilderna, en bitmapps celler) och `apps/desktop/e2e/library.spec.ts` (också: formatet i Settings, loggan
+från listningen och Graphics-fliken med skärmen $6000 och färg-RAM från `logo_colors`).
 
 ## 11. Kick Assembler-generatorn
 
@@ -3321,7 +3345,7 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `git:diff` | renderer → main | `{ path, from?, staged?, range? }` → `{ text, truncated, binary }`: en fils ändringar, stagade eller inte, eller mellan `range`:s två punkter; en ospårad fil visas hel |
 | `git:compare` | renderer → main | `{ from, to }` → `{ range, files }`: filerna som inte är lika mellan två punkter, med ändring och rader (`from` en commits hash eller `null`: ingenting; `to` en commits hash eller `null`: mappen nu, med ospårade filer) |
 | `library:list` | renderer → main | → `{ dir, exists, items }`: bibliotekets mapp och dess filer med deras poster i `library.json` (10.6) |
-| `library:add` | renderer → main | `{ kind, stem, bytes, entry }` → `{ item, listing }`: filen skriven i sortens mapp under ett säkert, unikt namn |
+| `library:add` | renderer → main | `{ kind, stem, format?, bytes, entry }` → `{ item, listing }`: filen skriven i sortens mapp under ett säkert, unikt namn (en bitmapp med `format`s ändelse) |
 | `library:update` | renderer → main | `{ kind, file, name?, stem?, mc?, colors? }` → `{ item, listing }`: namnet (filen döps om till `stem`), hur den ritas |
 | `library:remove` | renderer → main | `{ kind, file }` → bibliotekets innehåll: filen till papperskorgen, posten ut ur `library.json` |
 | `library:reveal` | renderer → main | `{ kind?, file? }`: filhanteraren vid filen, eller vid sortens eller bibliotekets mapp |

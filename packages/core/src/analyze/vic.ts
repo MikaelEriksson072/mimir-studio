@@ -22,6 +22,7 @@ export function vicEvidence(ctx: Ctx, mcfg: MemConfigInfo | null = null): { vic:
   const { loaded, mem, insLen } = ctx;
   const writes = mcfg ? ctx.ev.writes.filter(w => !isIO(w.dest) || ioVisible(mcfg.port[w.pc]) !== 'none') : ctx.ev.writes;
   const vic: VicEvidence = { banks: new Set(), d018: new Set(), bitmap: false, multicolor: false, sprites: [] };
+  if (ctx.ev.colorRam.size) vic.colorRam = [...ctx.ev.colorRam].sort((a, b) => a - b);
   /** with tracking: the banks an instruction can run with */
   const banksAt = (pc: Addr) => banksOf(mcfg!.vic[pc] || 1);
   // a $d018 store counts in the bank that a $dd00/$dd02 store a few instructions after it selects

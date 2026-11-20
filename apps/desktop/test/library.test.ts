@@ -1,17 +1,18 @@
 /* The library in the app (spec 10.6): which blocks go in it, how an item is described, found and drawn. */
 import { describe, expect, it } from 'vitest';
-import { libraryHash, makePsid, sidWithTexts, type LibraryItem } from '@mimir/core';
+import { libraryHash, makePsid, picture, pictureData, sidWithTexts, type LibraryItem } from '@mimir/core';
 import { deepSidName, itemCount, itemFrom, itemImage, itemWhat, LIB_COLORS, libraryKindOf, libraryMatches, libraryOrder, sameInLibrary, sidInfo } from '../src/lib/library';
 
 const tune = makePsid(new Uint8Array([0x60, 0x60, 0x60]), 0x1000, 0x1000, 0x1001, 'Tune');
 const item = (o: Partial<LibraryItem>): LibraryItem => ({ kind: 'sid', file: 'tune.sid', name: 'Tune', added: 1, hash: libraryHash(tune), data: tune, ...o });
 
 describe('the library in the app', () => {
-  it('takes music, sprite and charset blocks', () => {
+  it('takes music, sprite, charset and bitmap blocks', () => {
     expect(libraryKindOf('music')).toBe('sid');
     expect(libraryKindOf('sprite')).toBe('sprites');
     expect(libraryKindOf('charset')).toBe('chars');
-    expect(libraryKindOf('bitmap')).toBeNull();
+    expect(libraryKindOf('bitmap')).toBe('bitmaps');
+    expect(libraryKindOf('screen')).toBeNull();
     expect(libraryKindOf('code')).toBeNull();
   });
 
@@ -25,6 +26,8 @@ describe('the library in the app', () => {
     expect(itemFrom(item({ own: true }))).toBe('put in the folder by hand');
     expect(itemFrom(item({}))).toBe('');
     expect(sidInfo({ kind: 'sid', data: new Uint8Array(10) })).toBeNull();
+    expect(itemWhat({ kind: 'bitmaps', data: new Uint8Array(10001), mc: true, file: 'logo.kla' })).toBe('multicolour bitmap, Koala Painter');
+    expect(itemWhat({ kind: 'bitmaps', data: new Uint8Array(10001), mc: false, file: 'logo.dd' })).toBe('hires bitmap, Doodle!');
   });
 
   it('finds items by every word, in their names, sources and authors', () => {
@@ -64,5 +67,20 @@ describe('the library in the app', () => {
     const img = itemImage({ kind: 'chars', data: new Uint8Array([0x80, 0, 0, 0, 0, 0, 0, 0]) }, 16, false, LIB_COLORS);
     expect([...img.rgba.subarray(0, 4)]).toEqual([255, 255, 255, 255]);
     expect([...img.rgba.subarray(4, 8)]).toEqual([0, 0, 0, 255]);
+  });
+
+  it('draws a bitmap as its picture, each cell in its own colours', () => {
+    // cell 0 all %01 (the screen's high nibble: white), cell 1 all %11 (colour RAM: red), the rest %00 (background: blue)
+    const bitmap = new Uint8Array(8000);
+    bitmap.fill(0x55, 0, 8); bitmap.fill(0xff, 8, 16);
+    const color = new Uint8Array(1000); color[1] = 2;
+    const data = pictureData(picture({ mc: true, bitmap, screen: new Uint8Array(1000).fill(0x10), color, bg: 6 }));
+    const img = itemImage({ kind: 'bitmaps', data }, 1, true, LIB_COLORS);
+    expect([img.width, img.height]).toEqual([320, 200]);
+    const at = (x: number, y: number) => [...img.rgba.subarray((y * 320 + x) * 4, (y * 320 + x) * 4 + 3)];
+    expect([at(0, 0), at(8, 7), at(16, 0)]).toEqual([[255, 255, 255], [0x68, 0x37, 0x2b], [0x35, 0x28, 0x79]]);
+    // hires: set bits the high nibble, clear bits the low one
+    const hi = itemImage({ kind: 'bitmaps', data: pictureData(picture({ mc: false, bitmap: new Uint8Array(8000).fill(0x80), screen: new Uint8Array(1000).fill(0x16), bg: 0 })) }, 1, false, LIB_COLORS);
+    expect([[...hi.rgba.subarray(0, 3)], [...hi.rgba.subarray(4, 7)]]).toEqual([[255, 255, 255], [0x35, 0x28, 0x79]]);
   });
 });

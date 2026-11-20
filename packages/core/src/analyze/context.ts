@@ -37,6 +37,9 @@ export interface Evidence {
   smc: Map<Addr, Addr>;
   /** interrupt handler -> the vector addresses it was installed through */
   vectors: Map<Addr, Set<Addr>>;
+  /** where colour RAM's first byte ($d800) is in memory, for each table a loop copies to colour RAM (the table less
+   *  how far into colour RAM it goes: `lda tab+256,x / sta $d900,x` says tab) */
+  colorRam: Set<Addr>;
 }
 
 /** Logs a line once: a warning, error or tip (what the Problems tab lists) with the code of its kind of problem. */
@@ -149,7 +152,7 @@ export const WEAK: ReadonlySet<EntryKind> = new Set<EntryKind>(['guess', 'ptr', 
 export const cutKey = (from: Addr, to: Addr): number => from * 0x10000 + (to & 0xffff);
 
 export const emptyEvidence = (): Evidence => ({
-  writes: [], hints: new Map(), ptrTargets: new Map(), lohi: [], dataEv: new Map(), wordPtrs: new Set(), textPtrs: new Map(), strings: new Map(), printers: new Map(), cases: [], smc: new Map(), vectors: new Map(),
+  writes: [], hints: new Map(), ptrTargets: new Map(), lohi: [], dataEv: new Map(), wordPtrs: new Set(), textPtrs: new Map(), strings: new Map(), printers: new Map(), cases: [], smc: new Map(), vectors: new Map(), colorRam: new Set(),
 });
 
 export function createContext(project: ProjectInput, deep: Deep | null = null): Ctx {

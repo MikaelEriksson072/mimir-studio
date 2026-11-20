@@ -1,4 +1,4 @@
-/* The Library view in the side panel (spec 10.6): the SID tunes, sprites and charsets added to the library, the newest
+/* The Library view in the side panel (spec 10.6): the SID tunes, sprites, charsets and bitmaps added to the library, the newest
  * first, each with a picture of it and where it was taken from. A click shows it in the Library tab; a SID's play
  * button plays it in VICE or DeepSID; the right-click menu plays, renames, shows its file and moves it to the Recycle
  * Bin. The kinds' buttons list one kind, the filter looks through names, sources and authors. */
@@ -67,7 +67,7 @@ export function LibraryView({ desktop, playerName, onShow, onPlay, onMenu, onRev
       {!desktop ? <p className="side-hint">The library is a folder on your computer: it needs the desktop app.</p>
         : listing && !items.length ? <div className="side-hint lib-empty">
           <p><b>Nothing in the library yet.</b></p>
-          <p>Right-click a music, sprite or charset block in the listing and choose <b>Add to library</b>, or use the button in the inspector or the Graphics tab. Each goes in a folder of its kind (SIDs, Sprites, Chars) as a file named after where it was found.</p>
+          <p>Right-click a music, sprite, charset or bitmap block in the listing and choose <b>Add to library</b>, or use the button in the inspector or the Graphics tab. Each goes in a folder of its kind (SIDs, Sprites, Chars, Bitmaps) as a file named after where it was found.</p>
         </div>
           : items.length > 0 && !shown.length ? <p className="side-hint">Nothing {kind === 'all' ? '' : `in ${LIB_KIND[kind].folder} `}matches the filter.</p> : null}
       {listing && <button type="button" className="linkish small lib-dir mono" title="Open the library's folder (Settings → General → Library folder moves it)" onClick={() => onReveal()}>{listing.dir}</button>}

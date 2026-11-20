@@ -1,9 +1,9 @@
 /* The Library tab (spec 10.6): everything in the library as cards, a kind or all of them, and the item picked shown
  * whole beside them: a charset or sprites large, in multicolour or not and in colours of their own (kept for the item),
- * sprites played one after the other as an animation; a SID's texts and addresses, played in VICE or DeepSID; where
- * each was taken from, its file, rename and the Recycle Bin. */
+ * sprites played one after the other as an animation; a bitmap as its picture; a SID's texts and addresses, played in
+ * VICE or DeepSID; where each was taken from, its file, rename and the Recycle Bin. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { h2, h4, LIBRARY_KINDS, libraryStem, safeFileName, type LibraryColors, type LibraryItem, type LibraryKind } from '@mimir/core';
+import { h2, h4, LIBRARY_KINDS, libraryStem, pictureFormatOf, pictureFormatName, safeFileName, type LibraryColors, type LibraryItem, type LibraryKind } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
 import { C64, C64_NAMES } from '../lib/palette';
@@ -57,10 +57,10 @@ export function LibraryTab({ desktop, player, onPlay, onReveal, onMenu, toast }:
             : listing && !items.length ? <div className="lib-hint">
               <Icon name="library" size={30} />
               <h2>The library is empty</h2>
-              <p>SID music, sprites and charsets you find go in it, for every project: right-click a music, sprite or charset block in the listing and choose <b>Add to library</b> (or the button in the inspector, or in the Graphics tab). Each becomes a file named after where it was found, in a folder of its kind.</p>
+              <p>SID music, sprites, charsets and bitmaps you find go in it, for every project: right-click a music, sprite, charset or bitmap block in the listing and choose <b>Add to library</b> (or the button in the inspector, or in the Graphics tab). Each becomes a file named after where it was found, in a folder of its kind; a bitmap a picture in the format Settings → General → Library picks.</p>
             </div>
               : items.length > 0 && !shown.length ? <p className="muted lib-hint">Nothing matches the filter.</p>
-                : !item && items.length > 0 ? <p className="muted lib-hint small">Click one to see it large beside them: a charset or sprites in colours of their own, sprites as an animation, a SID with its texts and play buttons.</p> : null}
+                : !item && items.length > 0 ? <p className="muted lib-hint small">Click one to see it large beside them: a charset or sprites in colours of their own, sprites as an animation, a bitmap as its picture, a SID with its texts and play buttons.</p> : null}
         </div>
       </div>
       {item && <div className="lib-detail">
@@ -78,7 +78,7 @@ function LibraryCard({ item, on, player, onPick, onPlay, onMenu }: { item: Libra
       onDoubleClick={() => { if (item.kind === 'sid') onPlay(); }} onContextMenu={e => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
       <div className="lib-card-pic">
         {item.kind === 'sid' ? <div className="lib-card-sid"><Icon name="music" size={26} />{s && <span className="small">{s.author && s.author !== '<?>' ? s.author : s.released || ''}</span>}</div>
-          : <LibraryThumb item={item} mc={!!item.mc} colors={item.colors ?? LIB_COLORS} per={item.kind === 'chars' ? 16 : 4} count={item.kind === 'chars' ? 64 : 8} scale={2} max={196} />}
+          : <LibraryThumb item={item} mc={!!item.mc} colors={item.colors ?? LIB_COLORS} per={item.kind === 'chars' ? 16 : 4} count={item.kind === 'chars' ? 64 : 8} scale={2} max={196} label={item.kind === 'bitmaps' ? `${item.name}: the picture` : undefined} />}
       </div>
       <div className="lib-card-name">{item.name}</div>
       <div className="muted small lib-card-from">{from || item.file}</div>
@@ -93,11 +93,12 @@ const FPS = [2, 4, 6, 8, 10, 12, 15, 20, 25, 50];
 /** the item picked, whole */
 function LibraryDetail({ item, player, onPlay, onReveal, onClose, toast }: { item: LibraryItem; player: 'vice' | 'deepsid'; onPlay: LibraryTabProps['onPlay']; onReveal: () => void; onClose: () => void; toast: LibraryTabProps['toast'] }) {
   const update = useLibrary(s => s.update), remove = useLibrary(s => s.remove);
-  const gfx = item.kind !== 'sid';
+  const gfx = item.kind === 'sprites' || item.kind === 'chars';
   const [mc, setMc] = useState(!!item.mc);
   const [colors, setColors] = useState<LibraryColors>(item.colors ?? LIB_COLORS);
   const [per, setPer] = useState(item.kind === 'chars' ? 16 : 8);
-  const [zoom, setZoom] = useState(item.kind === 'chars' ? 2 : 3);
+  // (a picture as wide as the pane, 0)
+  const [zoom, setZoom] = useState(item.kind === 'bitmaps' ? 0 : item.kind === 'chars' ? 2 : 3);
   const [pick, setPick] = useState<number | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [trash, setTrash] = useState(false);
@@ -170,6 +171,15 @@ function LibraryDetail({ item, player, onPlay, onReveal, onClose, toast }: { ite
           <dt>Play</dt><dd className={s.play ? 'mono' : ''}>{s.play ? `$${h4(s.play)}` : 'none: its interrupts play it'}</dd>
           {item.digi && <><dt>Samples</dt><dd>its {item.digi.nmi ? 'NMI' : 'IRQ'}, {item.digi.hz} a second</dd></>}
         </dl>
+      </> : item.kind === 'bitmaps' ? <>
+        <div className="lib-tools">
+          <span className="small muted">{item.mc ? 'Multicolour' : 'Hires'}, in the colours its file has</span>
+          <span className="grow" />
+          <label className="gfxv-field small">Zoom <select aria-label="Zoom" value={zoom} onChange={e => setZoom(+e.target.value)}>{[0, 1, 2, 3].map(v => <option key={v} value={v}>{v ? `${v}×` : 'Fit'}</option>)}</select></label>
+        </div>
+        <div className="lib-big">
+          <LibraryThumb item={item} per={1} mc={!!item.mc} colors={LIB_COLORS} scale={zoom} className="lib-thumb lib-big-pic lib-big-bitmap" label={`${item.name}: ${itemWhat(item)}`} />
+        </div>
       </> : gfx && <>
         <div className="lib-tools">
           <label className="check"><input type="checkbox" checked={mc} onChange={e => drawn(e.target.checked, colors)} /><span>Multicolor</span></label>
@@ -198,6 +208,7 @@ function LibraryDetail({ item, player, onPlay, onReveal, onClose, toast }: { ite
         {f?.project && <><dt>Project</dt><dd>{f.project}</dd></>}
         {f?.start != null && f.end != null && <><dt>Addresses</dt><dd className="mono">${h4(f.start)}–${h4(f.end - 1)}</dd></>}
         {gfx && <><dt>{item.kind === 'sprites' ? 'Sprites' : 'Characters'}</dt><dd>{n} <span className="muted">({item.data.length} bytes{item.load != null ? `, loads at $${h4(item.load)}` : ''})</span></dd></>}
+        {item.kind === 'bitmaps' && (fmt => <><dt>Picture</dt><dd>{fmt ? pictureFormatName(fmt) : '—'}, {item.mc ? 'multicolour' : 'hires'}{item.mc ? <span className="muted"> · background {C64_NAMES[item.data[10000] & 15]}</span> : null}</dd></>)(pictureFormatOf(item.file))}
         <dt>Added</dt><dd>{item.added ? new Date(item.added).toLocaleString() : '—'}</dd>
         <dt>Its file</dt><dd><button type="button" className="linkish mono lib-file" title="Show it in the file manager" onClick={onReveal}>{LIB_KIND[item.kind].folder}\{item.file}</button></dd>
       </dl>

@@ -159,3 +159,83 @@ test('blocks go into the library as files named after where they were found; the
     await expect(side.getByRole('listitem').filter({ hasText: 'my font' })).toContainText('put in the folder by hand');
   });
 });
+
+test('a bitmap goes into the library as a picture in the format Settings picks, with the screen found for it', async ({ page, userData }) => {
+  const lib = join(userData, 'library');
+  await waitForListing(page);
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, 'Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop')).toBeVisible();
+  await waitForListing(page);
+  const dialog = page.getByRole('dialog', { name: 'Add to library' });
+
+  await test.step('Settings → General → Library picks the format of multicolour bitmaps', async () => {
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await expect(settings.getByLabel('Multicolour bitmaps are saved as')).toHaveValue('koala');
+    await expect(settings.getByLabel('Hires bitmaps are saved as')).toHaveValue('art');
+    await settings.getByLabel('Multicolour bitmaps are saved as').selectOption('ocp');
+    await settings.getByRole('button', { name: 'Save settings' }).click();
+    await expect(settings).toBeHidden();
+  });
+
+  await test.step('the Graphics tab adds the bitmap it shows', async () => {
+    await page.getByRole('tab', { name: 'Graphics' }).click();
+    const view = page.getByLabel('Memory as graphics');
+    await view.getByRole('button', { name: 'Bitmaps' }).click();
+    await view.getByLabel('Go to address, label or range').fill('$4000');
+    await view.getByLabel('Go to address, label or range').press('Enter');
+    await expect(view.getByRole('status')).toContainText('$4000–$5f3f (8000 bytes)');
+    await view.getByRole('button', { name: 'Add to library' }).click();
+    await expect(dialog.getByLabel('Screen matrix at')).toHaveValue('$6000');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+  });
+
+  await test.step('the bitmap block\'s menu: its picture, with the screen the VIC shows with it and the colour RAM the program copies, in that format', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await listing(page).click();
+    await goTo(page, '4000');
+    await headerRow(page, '4000').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Add to library (Bitmaps)…' }).click();
+    await expect(dialog.getByLabel('Screen matrix at')).toHaveValue('$6000');
+    // logo_colors, which lda logo_colors,x / sta $d800,x copies to colour RAM
+    const colours = dialog.getByLabel('Colour RAM at');
+    await expect(colours).toHaveValue(/^\$[0-9a-f]{4}$/);
+    const at = await colours.inputValue();
+    await expect(dialog).toContainText(`The screen the VIC shows with the bitmap ($d018), at $6000; colour RAM from the table the program copies to $d800, at ${at}`);
+    await expect(dialog.getByRole('img', { name: 'The picture as it goes in the library' })).toBeVisible();
+    await expect(dialog.getByLabel('Picture format')).toHaveValue('ocp');
+    await expect(dialog.locator('.lib-add-file')).toHaveText('File: Bitmaps\\mimir-showcase - bitmap_4000 ($4000-$5f3f).ocp');
+    // an address that is none: nothing to add
+    await colours.fill('xyz');
+    await expect(dialog.getByRole('button', { name: 'Add to library' })).toBeDisabled();
+    await colours.fill(at);
+    // another format for this one picture
+    await dialog.getByLabel('Picture format').selectOption('koala');
+    await expect(dialog.locator('.lib-add-file')).toHaveText('File: Bitmaps\\mimir-showcase - bitmap_4000 ($4000-$5f3f).kla');
+    await dialog.getByLabel('Picture format').selectOption('ocp');
+    await dialog.getByRole('button', { name: 'Add to library' }).click();
+    await expect(toast(page, 'Added to the library: Bitmaps\\mimir-showcase - bitmap_4000 ($4000-$5f3f).ocp')).toBeVisible();
+    const [file] = readdirSync(join(lib, 'Bitmaps'));
+    const b = readFileSync(join(lib, 'Bitmaps', file));
+    // Advanced Art Studio: $2000, the bitmap, the screen ($61 a cell, from $6000) after it, colour RAM from $4338 (the
+    // logo's first cells light red, 10)
+    expect([b.length, b[0] | (b[1] << 8), b[2 + 8000], b[2 + 8319], b[2 + 9016]]).toEqual([10018, 0x2000, 0x61, 0x61, 10]);
+    expect(JSON.parse(readFileSync(join(lib, 'library.json'), 'utf8')).items[0]).toMatchObject({ kind: 'bitmaps', file, mc: true, from: { start: 0x4000 } });
+  });
+
+  await test.step('the Library tab shows it as its picture; one put in the folder by hand too', async () => {
+    writeFileSync(join(lib, 'Bitmaps', 'my picture.kla'), Buffer.concat([Buffer.from([0x00, 0x60]), Buffer.alloc(10001, 0x05)]));
+    await page.locator('nav.activity').getByRole('button', { name: 'Library' }).click();
+    await page.getByRole('button', { name: 'Read the library again' }).click();
+    const side = page.getByRole('list', { name: 'The library' });
+    await expect(side.getByRole('listitem')).toHaveCount(2);
+    await expect(side.getByRole('listitem').filter({ hasText: 'my picture' })).toContainText('multicolour bitmap, Koala Painter');
+    await expect(page.locator('.lib-tab .lib-group-head')).toHaveText(['Bitmaps 2']);
+    await page.locator('.lib-tab .lib-card').filter({ hasText: 'mimir-showcase' }).click();
+    const show = page.getByLabel(/in the library$/);
+    await expect(show).toContainText('Advanced Art Studio (.ocp), multicolour');
+    await expect(show.getByRole('img', { name: /multicolour bitmap, Advanced Art Studio$/ })).toBeVisible();
+  });
+});

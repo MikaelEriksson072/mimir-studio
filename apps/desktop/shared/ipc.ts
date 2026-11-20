@@ -3,7 +3,7 @@
  * process registers exactly these channels and the preload exposes
  * exactly these functions as `window.kr`.
  * ===================================================================== */
-import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LibraryColors, LibraryEntry, LibraryItem, LibraryKind, LoadedFile, PackCheck, PackPrefs, PackTried, Project, Roms, ToolchainSettings } from '@mimir/core';
+import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LibraryColors, LibraryEntry, LibraryItem, LibraryKind, LoadedFile, PackCheck, PackPrefs, PackTried, PictureFormat, Project, Roms, ToolchainSettings } from '@mimir/core';
 
 export const CHANNELS = {
   projectOpen: 'project:open',
@@ -417,8 +417,9 @@ export interface GitInitOutcome { ok: boolean; root: string; nested: string | nu
 /** the library's folder and what is in it; `exists`: the folder is there (nothing was added yet when it is not) */
 export interface LibraryListing { dir: string; exists: boolean; items: LibraryItem[] }
 /** a file for the library: its kind, the name its file gets without the extension (made unique in the folder), its
- *  bytes as the file has them (a .sid, raw sprites, a charset with its load address) and what library.json keeps */
-export interface LibraryAddRequest { kind: LibraryKind; stem: string; bytes: Uint8Array; entry: Pick<LibraryEntry, 'name' | 'from' | 'mc' | 'colors' | 'digi' | 'busy'> }
+ *  bytes as the file has them (a .sid, raw sprites, a charset with its load address, a picture in `format`) and what
+ *  library.json keeps */
+export interface LibraryAddRequest { kind: LibraryKind; stem: string; format?: PictureFormat; bytes: Uint8Array; entry: Pick<LibraryEntry, 'name' | 'from' | 'mc' | 'colors' | 'digi' | 'busy'> }
 /** a file of the library, by its kind and its name in that kind's folder */
 export interface LibraryFileRequest { kind: LibraryKind; file: string }
 /** a file of the library changed: `name` its name (a .sid's too), `stem` the file renamed to it (made unique in the

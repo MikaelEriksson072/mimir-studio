@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, createProject, DEFAULT_PACK, demoProject, packWithBrokkr as packWithBrokkrCore, deserializeProject, LEGACY_PROJECT_FORMAT, makeD64, makePsid, render, serializeProject, type SerializedProject, type ToolchainSettings } from '@mimir/core';
+import { analyze, createProject, DEFAULT_PACK, demoProject, packWithBrokkr as packWithBrokkrCore, deserializeProject, LEGACY_PROJECT_FORMAT, makeD64, makePsid, picture, render, serializeProject, writePicture, type SerializedProject, type ToolchainSettings } from '@mimir/core';
 import { findKickAssJar, writeVfs } from '@mimir/core/node';
 import { CHANNELS } from '../shared/ipc';
 import { assertEntryName, PathPolicy } from '../electron/main/paths';
@@ -24,7 +24,7 @@ import { projectNameOf, projectNameProblem } from '../shared/projects';
 import { smartKind, smartPlan } from '../shared/smart-attach';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mimir-desktop-test-'));
-const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', tassPath: '', tassArgs: '', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000, libraryDir: '', ...patch });
+const toolchain = (patch: Partial<ToolchainSettings> = {}): ToolchainSettings => ({ javaPath: 'java', kickJar: '', vicePath: '', outDir: 'out', kickArgs: '-vicesymbols -showmem', tassPath: '', tassArgs: '', viceArgs: '-autostartprgmode 1', unpackerPath: '', unpackerArgs: '{in}', exomizerPath: '', viceQuicksave: '', editorPath: '', editorArgs: '{dir} {file}', musicPlayer: 'vice', debugger: 'retro', retroDebuggerPath: '', retroDebuggerArgs: '', c64DebuggerPath: '', c64DebuggerArgs: '', debuggerWait: 3000, libraryDir: '', bitmapFormatMc: 'koala', bitmapFormatHires: 'art', ...patch });
 
 describe('IPC contract', () => {
   it('has exactly the channels of spec 13.4', () => {
@@ -1185,11 +1185,30 @@ describe('the library (spec 10.6)', () => {
     expect(JSON.parse(readFileSync(join(dir, 'library.json'), 'utf8')).items).toEqual([]);
   });
 
+  it('writes a bitmap as a picture in the format asked for, multicolour as that format is', async () => {
+    const dir = join(tmp(), 'Library'), lib = store(dir);
+    const p = picture({ mc: true, bitmap: new Uint8Array(8000).fill(0x1b), screen: new Uint8Array(1000).fill(0x5c), color: new Uint8Array(1000).fill(3), bg: 0 });
+    const k = await lib.add({ kind: 'bitmaps', stem: 'Game - logo', format: 'koala', bytes: writePicture('koala', p), entry: { name: 'logo', mc: false } });
+    expect(k.item).toMatchObject({ kind: 'bitmaps', file: 'Game - logo.kla', mc: true });
+    expect(readFileSync(join(dir, 'Bitmaps', 'Game - logo.kla')).length).toBe(10003);
+    const o = await lib.add({ kind: 'bitmaps', stem: 'Game - logo', format: 'ocp', bytes: writePicture('ocp', p), entry: { name: 'logo' } });
+    expect(o.item.file).toBe('Game - logo.ocp');
+    // the same picture in either format: the same bytes, found again
+    expect(o.item.hash).toBe(k.item.hash);
+    // bytes that are not the format's
+    await expect(lib.add({ kind: 'bitmaps', stem: 'x', format: 'ocp', bytes: writePicture('koala', p), entry: { name: 'x' } })).rejects.toThrow(/too short/);
+    // a file put there by hand
+    writeFileSync(join(dir, 'Bitmaps', 'mine.art'), writePicture('art', picture({ mc: false, bitmap: new Uint8Array(8000), screen: new Uint8Array(1000), bg: 0 })));
+    expect((await lib.list()).items.find(i => i.file === 'mine.art')).toMatchObject({ own: true, mc: false });
+  });
+
   it('takes only plain file names of the kind over IPC', () => {
     const tuneBytes = tune();
     expect(libraryAddSchema.safeParse({ kind: 'sid', stem: 'x', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(true);
     expect(libraryAddSchema.safeParse({ kind: 'sid', stem: '../x', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(false);
     expect(libraryAddSchema.safeParse({ kind: 'bitmap', stem: 'x', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(false);
+    expect(libraryAddSchema.safeParse({ kind: 'bitmaps', stem: 'x', format: 'ocp', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(true);
+    expect(libraryAddSchema.safeParse({ kind: 'bitmaps', stem: 'x', format: 'png', bytes: tuneBytes, entry: { name: 'x' } }).success).toBe(false);
     expect(libraryFileSchema.safeParse({ kind: 'sid', file: 'x.sid' }).success).toBe(true);
     expect(libraryFileSchema.safeParse({ kind: 'sid', file: '..\\x.sid' }).success).toBe(false);
     expect(libraryFileSchema.safeParse({ kind: 'chars', file: 'x.sid' }).success).toBe(false);

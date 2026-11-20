@@ -1,20 +1,25 @@
-/* The library (spec 10.6): the SID music, sprites and charsets the user found, kept by the app in a folder of their own
- * (a folder for each kind) for every project. Each is a file other tools read too (.sid, .spr, .64c) with a name that
+/* The library (spec 10.6): the SID music, sprites, charsets and bitmaps the user found, kept by the app in a folder of
+ * their own (a folder for each kind) for every project. Each is a file other tools read too (.sid, .spr, .64c, a paint
+ * program's picture: .kla, .ocp, .art, .dd) with a name that
  * says where it was found ("Comaland side 1 - file25 - music_1000 ($1000-$1fff).sid"); the folder's library.json
  * keeps what the file cannot say: where it was taken from, when, how it is drawn. Files put in the folders by hand are
  * in the library too. Pure: the main process reads and writes the files, the app shows them. */
 import type { Addr } from './types';
 import { h4 } from './util/hex';
 import { makePrg } from './c64/prg';
+import { PICTURE_INFO, PICTURE_READS, pictureData, pictureFormatOf, readPicture, type PictureFormat } from './c64/pictures';
 
-export type LibraryKind = 'sid' | 'sprites' | 'chars';
-export const LIBRARY_KINDS: readonly LibraryKind[] = ['sid', 'sprites', 'chars'];
+export type LibraryKind = 'sid' | 'sprites' | 'chars' | 'bitmaps';
+export const LIBRARY_KINDS: readonly LibraryKind[] = ['sid', 'sprites', 'chars', 'bitmaps'];
 /** each kind's folder in the library */
-export const LIBRARY_FOLDERS: Record<LibraryKind, string> = { sid: 'SIDs', sprites: 'Sprites', chars: 'Chars' };
-/** the extension a file is written with: a PSID/RSID, raw sprites (64 bytes each), a charset with its load address */
-export const LIBRARY_EXT: Record<LibraryKind, string> = { sid: 'sid', sprites: 'spr', chars: '64c' };
+export const LIBRARY_FOLDERS: Record<LibraryKind, string> = { sid: 'SIDs', sprites: 'Sprites', chars: 'Chars', bitmaps: 'Bitmaps' };
+/** the extension a file is written with: a PSID/RSID, raw sprites (64 bytes each), a charset with its load address, a
+ *  picture in the format chosen (Settings → General → Library; Koala Painter's here) */
+export const LIBRARY_EXT: Record<LibraryKind, string> = { sid: 'sid', sprites: 'spr', chars: '64c', bitmaps: 'kla' };
 /** the extensions read in each folder (also files put there by hand) */
-export const LIBRARY_READS: Record<LibraryKind, readonly string[]> = { sid: ['sid'], sprites: ['spr', 'bin', 'raw'], chars: ['64c', 'chr', 'bin', 'raw'] };
+export const LIBRARY_READS: Record<LibraryKind, readonly string[]> = { sid: ['sid'], sprites: ['spr', 'bin', 'raw'], chars: ['64c', 'chr', 'bin', 'raw'], bitmaps: PICTURE_READS };
+/** the extension a file of the kind is written with: a bitmap's is its format's */
+export const libraryExt = (kind: LibraryKind, format?: PictureFormat): string => (kind === 'bitmaps' && format ? PICTURE_INFO[format].ext : LIBRARY_EXT[kind]);
 /** the index in the library's folder */
 export const LIBRARY_INDEX = 'library.json';
 /** the largest file read: a .sid of all 64 KB with its header */
@@ -51,7 +56,7 @@ export interface LibraryEntry {
   added: number;
   hash: string;
   from?: LibrarySource;
-  /** sprites and charsets: multicolour, and the colours they are drawn in */
+  /** sprites and charsets: multicolour, and the colours they are drawn in (a bitmap: multicolour as its format is) */
   mc?: boolean;
   colors?: LibraryColors;
   /** SIDs: a sample player's interrupt (VICE's player starts its timers again) and what its init writes */
@@ -60,7 +65,8 @@ export interface LibraryEntry {
 }
 
 /** a file of the library as the app gets it: its entry (made up from the file for one put there by hand, `own`), its
- *  bytes (a .sid whole, sprites and a charset without a load address) and the load address a file had */
+ *  bytes (a .sid whole, sprites and a charset without a load address, a picture as pictureData has it whatever its
+ *  format) and the load address a file had */
 export interface LibraryItem extends LibraryEntry {
   data: Uint8Array;
   load?: Addr;
@@ -179,11 +185,18 @@ export function sidWithTexts(sid: Uint8Array, t: { name?: string; author?: strin
 const isSid = (u8: Uint8Array) => u8.length >= 0x7e && ((u8[0] === 0x50 || u8[0] === 0x52) && u8[1] === 0x53 && u8[2] === 0x49 && u8[3] === 0x44);
 
 /** What a file of the library holds: a .sid whole (a PSID or RSID), sprites and a charset without the load address a
- *  file has (a .64c always; another when its length is 2 more than whole sprites or characters); or why it is not one. */
-export function readLibraryFile(kind: LibraryKind, file: string, bytes: Uint8Array): { data: Uint8Array; load?: Addr } | { problem: string } {
+ *  file has (a .64c always; another when its length is 2 more than whole sprites or characters), a picture as
+ *  pictureData has it (`mc` as its format is, by its extension); or why it is not one. */
+export function readLibraryFile(kind: LibraryKind, file: string, bytes: Uint8Array): { data: Uint8Array; load?: Addr; mc?: boolean } | { problem: string } {
   if (!bytes.length) return { problem: 'empty' };
   if (bytes.length > LIBRARY_MAX_BYTES) return { problem: `${bytes.length} bytes, more than a C64 holds` };
   if (kind === 'sid') return isSid(bytes) ? { data: bytes } : { problem: 'not a PSID or RSID file' };
+  if (kind === 'bitmaps') {
+    const f = pictureFormatOf(file);
+    if (!f) return { problem: 'not a picture format Mimir reads' };
+    const p = readPicture(f, bytes);
+    return 'problem' in p ? p : { data: pictureData(p), mc: p.mc };
+  }
   const unit = kind === 'chars' ? 8 : 64;
   const withLoad = (kind === 'chars' && /\.64c$/i.test(file)) || (bytes.length > 2 && bytes.length % unit === 2);
   if (withLoad) {
@@ -262,10 +275,12 @@ export function libraryItems(index: readonly LibraryEntry[], files: readonly Lib
       if (i >= 0) { e = { ...lost[i], file: f.file }; lost.splice(i, 1); changed = true; }
     }
     if (e && e.hash !== hash) { e = { ...e, hash }; changed = true; }
+    // (a picture is multicolour as its format is)
+    const mc = r.mc != null ? { mc: r.mc } : {};
     if (e) {
       next.push(e);
-      items.push({ ...e, data: r.data, ...(r.load != null ? { load: r.load } : {}) });
-    } else items.push({ kind: f.kind, file: f.file, name: fileStem(f.file), added: f.mtime, hash, data: r.data, ...(r.load != null ? { load: r.load } : {}), own: true });
+      items.push({ ...e, data: r.data, ...(r.load != null ? { load: r.load } : {}), ...mc });
+    } else items.push({ kind: f.kind, file: f.file, name: fileStem(f.file), added: f.mtime, hash, data: r.data, ...(r.load != null ? { load: r.load } : {}), ...mc, own: true });
   }
   if (next.length !== index.length) changed = true;
   return { items, index: next, changed };

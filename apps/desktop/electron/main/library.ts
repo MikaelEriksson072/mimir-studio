@@ -1,11 +1,11 @@
-/* The library's folder (spec 10.6): a folder for each kind (SIDs, Sprites, Chars) with the files the user added and
+/* The library's folder (spec 10.6): a folder for each kind (SIDs, Sprites, Chars, Bitmaps) with the files the user added and
  * library.json, which keeps where each was taken from. Only this store touches the folder; the renderer names a file
  * by its kind and its plain name in that kind's folder. One change at a time (a queue), as the quicksaves' history. */
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  isLibraryFileName, LIBRARY_EXT, LIBRARY_FOLDERS, LIBRARY_INDEX, LIBRARY_KINDS, LIBRARY_MAX_BYTES, libraryHash, libraryIndexJson, libraryItems, readLibraryFile, readLibraryIndex,
+  isLibraryFileName, libraryExt, LIBRARY_FOLDERS, LIBRARY_INDEX, LIBRARY_KINDS, LIBRARY_MAX_BYTES, libraryHash, libraryIndexJson, libraryItems, readLibraryFile, readLibraryIndex,
   safeFileName, sidWithTexts, uniqueLibraryName, type LibraryEntry, type LibraryFile, type LibraryItem, type LibraryKind,
 } from '@mimir/core';
 import type { LibraryAddRequest, LibraryChangeResult, LibraryFileRequest, LibraryListing, LibraryUpdateRequest } from '../../shared/ipc';
@@ -71,12 +71,15 @@ export class LibraryStore {
     return this.run(async () => {
       const folder = this.folder(req.kind);
       await mkdir(folder, { recursive: true });
-      const r = readLibraryFile(req.kind, `x.${LIBRARY_EXT[req.kind]}`, req.bytes);
+      const ext = libraryExt(req.kind, req.format);
+      const r = readLibraryFile(req.kind, `x.${ext}`, req.bytes);
       if ('problem' in r) throw new Error(`Not a ${LIBRARY_FOLDERS[req.kind]} file: ${r.problem}`);
-      const file = uniqueLibraryName(safeFileName(req.stem), LIBRARY_EXT[req.kind], await readdir(folder));
+      const file = uniqueLibraryName(safeFileName(req.stem), ext, await readdir(folder));
       await writeFile(join(folder, file), req.bytes, { flag: 'wx' });
+      // (a picture is multicolour as its format is)
+      const mc = r.mc ?? req.entry.mc;
       const entry: LibraryEntry = { kind: req.kind, file, name: req.entry.name.trim() || file.replace(/\.[^.]+$/, ''), added: Date.now(), hash: libraryHash(r.data),
-        ...(req.entry.from ? { from: req.entry.from } : {}), ...(req.entry.mc != null ? { mc: req.entry.mc } : {}), ...(req.entry.colors ? { colors: req.entry.colors } : {}),
+        ...(req.entry.from ? { from: req.entry.from } : {}), ...(mc != null ? { mc } : {}), ...(req.entry.colors ? { colors: req.entry.colors } : {}),
         ...(req.entry.digi ? { digi: req.entry.digi } : {}), ...(req.entry.busy?.length ? { busy: req.entry.busy } : {}) };
       await this.writeIndex([...(await this.readIndex()).filter(e => !(e.kind === entry.kind && e.file.toLowerCase() === file.toLowerCase())), entry]);
       return this.changed(req.kind, file);

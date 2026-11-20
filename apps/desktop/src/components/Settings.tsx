@@ -3,7 +3,7 @@
  * process), split into Assemblers, VICE & music, Debuggers and Packers & editor. Each setting has a line saying what it
  * does and the rest of its explanation behind More; the search box looks through every page. */
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { DEFAULT_SETTINGS, type Settings } from '@mimir/core';
+import { DEFAULT_SETTINGS, PICTURE_FORMATS_HIRES, PICTURE_FORMATS_MC, pictureFormatName, type Settings } from '@mimir/core';
 import { cx } from '../lib/util';
 import type { DiskLook, InspectorMode } from '../store/ui';
 import type { EditorInfo, LocateKey } from '../../shared/ipc';
@@ -142,11 +142,16 @@ export function SettingsModal({ settings, prefs: prefs0, desktop, editors, onSav
           + 'Off: nothing new is learned. What is known is still suggested.'),
       ] },
       { title: 'Library', items: [
-        { id: 'libraryDir', label: 'Library folder', help: 'Where the SID tunes, sprites and charsets you add to the library are kept. Empty: Mimir\\Library in your documents folder.',
-          more: 'The library has a folder for each kind (SIDs, Sprites, Chars), each a file other tools read too (.sid, .spr, .64c) named after where it was found, and library.json, which keeps where each was taken from and how it is drawn. Files you put in those folders yourself are in the library too. A folder picked here is used from the next time the library is read; the files in the old one stay there.',
-          words: 'sid sprites chars charset library folder',
+        { id: 'libraryDir', label: 'Library folder', help: 'Where the SID tunes, sprites, charsets and bitmaps you add to the library are kept. Empty: Mimir\\Library in your documents folder.',
+          more: 'The library has a folder for each kind (SIDs, Sprites, Chars, Bitmaps), each a file other tools read too (.sid, .spr, .64c, a paint program\'s picture) named after where it was found, and library.json, which keeps where each was taken from and how it is drawn. Files you put in those folders yourself are in the library too. A folder picked here is used from the next time the library is read; the files in the old one stay there.',
+          words: 'sid sprites chars charset bitmaps library folder',
           control: <div className="field-row"><input id="set-libraryDir" className="mono" value={s.libraryDir} placeholder="Mimir\Library in the documents folder" aria-describedby="set-libraryDir-help" onChange={e => set('libraryDir', e.target.value)} spellCheck={false} />
             {desktop && kr && <button type="button" className="btn small" aria-label="Choose the library folder" onClick={() => { kr.libraryPick({ current: s.libraryDir }).then(r => { if (r) set('libraryDir', r.dir); }).catch(() => undefined); }}>Choose…</button>}</div> },
+        sel('bitmapFormatMc', 'Multicolour bitmaps are saved as', PICTURE_FORMATS_MC.map(f => [f, pictureFormatName(f)]), 'The picture format a multicolour bitmap added to the library gets, in its Bitmaps folder.',
+          'Koala Painter: load address $6000, the bitmap, the screen matrix ($7f40), colour RAM ($8328) and the background ($8710), 10003 bytes. Advanced Art Studio: load address $2000, the bitmap, the screen matrix ($3f40), the border and background ($4328), colour RAM ($4338), 10018 bytes. '
+          + 'Add to library can pick the other one for a picture; the Bitmaps folder reads both (.kla, .koa, .ocp, .mpic), also files you put there yourself.'),
+        sel('bitmapFormatHires', 'Hires bitmaps are saved as', PICTURE_FORMATS_HIRES.map(f => [f, pictureFormatName(f)]), 'The picture format a hires bitmap added to the library gets.',
+          'Art Studio: load address $2000, the bitmap, the screen matrix ($3f40) and the border, 9009 bytes. Doodle!: load address $5c00, the screen matrix, then the bitmap at $6000, 9218 bytes. The Bitmaps folder reads both (.art, .dd, .ddl).'),
       ] },
       { title: 'Panels', items: [
         psel('inspector', 'Inspector (the panel on the right)', [['open', 'Always open'], ['auto', 'Folded in: opens when you need it, folds in when you click outside it']],

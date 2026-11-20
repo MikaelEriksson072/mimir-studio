@@ -9,7 +9,7 @@ import {
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
-  charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
+  charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, findPictureColors, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
@@ -2605,7 +2605,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       for (const x of p.warnings) toast(x, 'warn');
     } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }
   };
-  /* ---- the library (spec 10.6): SID music, sprites and charsets kept for every project ---- */
+  /* ---- the library (spec 10.6): SID music, sprites, charsets and bitmaps kept for every project ---- */
   const libListing = useLibrary(s => s.listing);
   const libState = useLibrary.getState;
   // read when the app starts, so the Library button shows how much is in it
@@ -2622,16 +2622,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const proj = home?.name ?? project.name;
     return { ...(proj ? { project: proj } : {}), ...(f ? { file: f.name } : {}), ...(media ? { disk: media } : {}), start: spaceAddr(start), end: spaceAddr(end - 1) + 1 };
   };
-  /** The block at `at` (a music, sprite or charset block) in the Add to library dialog; `gfx`: a selection the Graphics
-   *  tab shows as characters or sprites, drawn as there */
-  const startLibraryAdd = (at: Addr | null | undefined, gfx?: { start: Addr; end: Addr; kind: 'chars' | 'sprites'; mc: boolean; colors: LibraryColors }) => {
+  /** The block at `at` (a music, sprite, charset or bitmap block) in the Add to library dialog; `gfx`: a selection the
+   *  Graphics tab shows as characters, sprites or a bitmap, drawn as there */
+  const startLibraryAdd = (at: Addr | null | undefined, gfx?: { start: Addr; end: Addr; kind: 'chars' | 'sprites' | 'bitmap'; mc: boolean; colors: LibraryColors }) => {
     if (!kr) return needDesktop();
     const b = gfx ? null : at != null ? findBlock(A.blocks, at) : null;
-    const kind: LibraryKind | null = gfx ? gfx.kind : b ? libraryKindOf(b.type) : null;
-    if (!kind || (!b && !gfx)) { toast('Put the cursor on a music, sprite or charset block to add it to the library', 'warn'); return; }
+    const kind: LibraryKind | null = gfx ? (gfx.kind === 'bitmap' ? 'bitmaps' : gfx.kind) : b ? libraryKindOf(b.type) : null;
+    if (!kind || (!b && !gfx)) { toast('Put the cursor on a music, sprite, charset or bitmap block to add it to the library', 'warn'); return; }
     const start = gfx ? gfx.start : b!.start, end = gfx ? gfx.end : b!.end;
     const from = librarySource(start, end);
-    if (kind === 'sid') {
+    if (kind === 'bitmaps') {
+      // the 64 KB the bitmap is in (a cartridge bank's own), its screen and colour RAM looked for there: bytes loaded
+      // that are no code
+      const base = start - spaceAddr(start), at64 = spaceAddr(start);
+      const mem = A.mem.subarray(base, base + 0x10000);
+      const ok = (s: Addr, e: Addr) => { for (let a = s; a < e; a++) { const w = base + a; if (A.owner[w] < 0 || findBlock(A.blocks, w)?.type === 'code') return false; } return true; };
+      const screens = A.blocks.filter(x => x.type === 'screen' && x.start >= base && x.start < base + 0x10000).map(x => x.start - base);
+      const bitmap = A.mem.slice(start, Math.min(end, start + 8000));
+      const label = R.labels.get(start)?.name ?? `bitmap_${h4(at64)}`;
+      const mc = gfx ? gfx.mc : blockMc(A, b!);
+      setLibDraft({ kind, bytes: bitmap, data: bitmap, name: label, from, mc, colors: gfx ? gfx.colors : { ...useUi.getState().gfx.colors },
+        pic: { bitmap, at: at64, mem, find: m => findPictureColors(mem, at64, m, ok, screens, (A.vic.colorRam ?? []).filter(c => c >= base && c < base + 0x10000).map(c => c - base)), formats: { mc: toolchain.bitmapFormatMc, hires: toolchain.bitmapFormatHires } } });
+    } else if (kind === 'sid') {
       const { d, name, dg } = musicData(b!);
       const sid = musicSidFile(d, name);
       setLibDraft({ kind, bytes: sid, data: sid, name, from, ...(dg && d.digi && d.play === 0 ? { digi: d.digi, ...(d.busy?.length ? { busy: d.busy.map(([s, e]): [number, number] => [s, e]) } : {}) } : {}) });
@@ -2652,13 +2664,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!dr) return;
     setModal(null); setLibDraft(null);
     const from: LibrarySource = { ...dr.from, ...(a.fromText ? { text: a.fromText } : {}) };
-    const bytes = dr.kind === 'sid' ? sidWithTexts(dr.bytes, { name: a.name, author: a.author || '<?>', released: a.fromText }) : dr.bytes;
+    const bytes = a.picture ? a.picture.bytes : dr.kind === 'sid' ? sidWithTexts(dr.bytes, { name: a.name, author: a.author || '<?>', released: a.fromText }) : dr.bytes;
+    // (a picture has its colours in its file, and is multicolour as its format is)
+    const look = a.picture ? { mc: a.picture.mc } : { ...(dr.mc != null ? { mc: dr.mc } : {}), ...(dr.colors ? { colors: dr.colors } : {}) };
     try {
-      const r = await libState().add({ kind: dr.kind, stem: libraryStem(a.name, { ...from, text: a.fromText }), bytes,
-        entry: { name: a.name, from, ...(dr.mc != null ? { mc: dr.mc } : {}), ...(dr.colors ? { colors: dr.colors } : {}), ...(dr.digi ? { digi: dr.digi } : {}), ...(dr.busy ? { busy: dr.busy } : {}) } });
+      const r = await libState().add({ kind: dr.kind, stem: libraryStem(a.name, { ...from, text: a.fromText }), bytes, ...(a.picture ? { format: a.picture.format } : {}),
+        entry: { name: a.name, from, ...look, ...(dr.digi ? { digi: dr.digi } : {}), ...(dr.busy ? { busy: dr.busy } : {}) } });
       toast(`Added to the library: ${LIB_KIND[dr.kind].folder}\\${r.item.file}`, 'ok');
     } catch (e) { toast(`Could not add it to the library: ${errorText(e)}`, 'err'); }
   };
+  /** the item of the library with the bytes the dialog would add (its kind's) */
+  const libSame = useCallback((data: Uint8Array) => (libDraft ? sameInLibrary(libListing?.items ?? [], libDraft.kind, data) : null), [libDraft, libListing]);
   /** the Library view and tab, with `ref` shown */
   const showLibrary = (ref?: LibraryRef) => {
     if (ref) libState().set({ selected: ref, ...(libState().kind !== 'all' && libState().kind !== ref.kind ? { kind: ref.kind } : {}) });
@@ -3541,8 +3557,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'build-debugger', label: `Build with ${asmTool} & run in ${debuggerName} (started as in VICE; Settings → Toolchain picks the debugger)`, key: 'Shift+F5', run: () => void runBuild(true) },
     { id: 'pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'} (build, verify, pack as the Pack view says)`, run: () => void runPack() },
     { id: 'pack-view', label: 'Show the Pack view (Exomizer)', run: () => setUi({ activity: 'pack', sidePanel: true }) },
-    { id: 'library-show', label: 'Show the library: the SIDs, sprites and charsets kept for every project', run: () => showLibrary() },
-    { id: 'library-add', label: 'Add the block at the cursor to the library (a music, sprite or charset block)…', run: () => startLibraryAdd(cursor) },
+    { id: 'library-show', label: 'Show the library: the SIDs, sprites, charsets and bitmaps kept for every project', run: () => showLibrary() },
+    { id: 'library-add', label: 'Add the block at the cursor to the library (a music, sprite, charset or bitmap block)…', run: () => startLibraryAdd(cursor) },
     ...(packRes?.ok && packRes.path ? [
       ...(packRes.argv[1] === 'sfx' ? [{ id: 'pack-run', label: `Run the packed ${packRes.name} in VICE`, run: () => void runPacked() }] : []),
       { id: 'pack-save', label: `Save the packed ${packRes.name} as…`, run: () => void savePacked() },
@@ -4369,7 +4385,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
-      {modal === 'library' && libDraft && <LibraryAddModal draft={libDraft} same={sameInLibrary(libListing?.items ?? [], libDraft.kind, libDraft.data)} onAdd={a => void addToLibrary(a)}
+      {modal === 'library' && libDraft && <LibraryAddModal draft={libDraft} findSame={libSame} onAdd={a => void addToLibrary(a)}
         onShow={i => { setModal(null); setLibDraft(null); showLibrary({ kind: i.kind, file: i.file }); }} onClose={() => { setModal(null); setLibDraft(null); }} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
       {modal === 'size' && sizeAt != null && <BlockSizeModal A={A} R={R} at={sizeAt} onResize={resizeInto} onClose={() => { setModal(null); setSizeAt(null); }} />}

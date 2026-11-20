@@ -1,17 +1,21 @@
 /* The library (spec 10.6) in the app: which blocks can go in it, what a file of it is called and holds, the search, and
  * its pictures. Pure, so the views and the tests share it. */
-import { libraryHash, parsePsid, type BlockKind, type LibraryColors, type LibraryItem, type LibraryKind, type PsidInfo } from '@mimir/core';
-import { gfxImage } from './gfxview';
+import { libraryHash, parsePsid, PICTURE_INFO, pictureFormatOf, pictureFromData, type BlockKind, type LibraryColors, type LibraryItem, type LibraryKind, type PsidInfo } from '@mimir/core';
+import { gfxImage, pictureImage } from './gfxview';
 
 /** each kind as the library names it: a folder, one of it, and many */
-export const LIB_KIND: Record<LibraryKind, { folder: string; one: string; many: string; icon: 'music' | 'sprite' | 'grid' }> = {
+export const LIB_KIND: Record<LibraryKind, { folder: string; one: string; many: string; icon: 'music' | 'sprite' | 'grid' | 'image' }> = {
   sid: { folder: 'SIDs', one: 'SID tune', many: 'SID tunes', icon: 'music' },
   sprites: { folder: 'Sprites', one: 'sprite set', many: 'sprite sets', icon: 'sprite' },
   chars: { folder: 'Chars', one: 'charset', many: 'charsets', icon: 'grid' },
+  bitmaps: { folder: 'Bitmaps', one: 'bitmap', many: 'bitmaps', icon: 'image' },
 };
 
-/** the library a block of this type goes in: music, sprite data and a charset (null: none) */
-export const libraryKindOf = (type: BlockKind): LibraryKind | null => (type === 'music' ? 'sid' : type === 'sprite' ? 'sprites' : type === 'charset' ? 'chars' : null);
+/** the library a block of this type goes in: music, sprite data, a charset and a bitmap (null: none) */
+export const libraryKindOf = (type: BlockKind): LibraryKind | null => (type === 'music' ? 'sid' : type === 'sprite' ? 'sprites' : type === 'charset' ? 'chars' : type === 'bitmap' ? 'bitmaps' : null);
+
+/** what is drawn of an item: its kind and bytes, and (a picture) whether it is multicolour and its file (the format) */
+export type LibraryShown = Pick<LibraryItem, 'kind' | 'data'> & { mc?: boolean; file?: string };
 
 /** the colours the library draws in when an item has none of its own: those of the Graphics tab */
 export const LIB_COLORS: LibraryColors = { bg: 0, fg: 1, mc1: 15, mc2: 12 };
@@ -22,13 +26,17 @@ export function sidInfo(item: Pick<LibraryItem, 'kind' | 'data'>): PsidInfo | nu
   try { return parsePsid(item.data); } catch { return null; }
 }
 
-/** how many sprites or characters an item has (a SID: 1) */
+/** how many sprites or characters an item has (a SID, a bitmap: 1) */
 export const itemCount = (item: Pick<LibraryItem, 'kind' | 'data'>): number => (item.kind === 'chars' ? Math.ceil(item.data.length / 8) : item.kind === 'sprites' ? Math.ceil(item.data.length / 64) : 1);
 
-/** what an item is, in a few words: "SID tune, 3 songs", "16 sprites", "256 characters" */
-export function itemWhat(item: Pick<LibraryItem, 'kind' | 'data'>): string {
+/** the paint program a picture's file is from: "Koala Painter" (null: not a picture, or no file yet) */
+export const itemFormat = (item: { kind: LibraryKind; file?: string }): string | null => { const f = item.kind === 'bitmaps' && item.file ? pictureFormatOf(item.file) : null; return f ? PICTURE_INFO[f].label : null; };
+
+/** what an item is, in a few words: "SID tune, 3 songs", "16 sprites", "256 characters", "multicolour, Koala Painter" */
+export function itemWhat(item: LibraryShown): string {
   const n = itemCount(item);
   if (item.kind === 'sid') { const s = sidInfo(item); return s ? `${s.rsid ? 'RSID' : 'PSID'}${s.songs > 1 ? `, ${s.songs} songs` : ''}` : 'SID'; }
+  if (item.kind === 'bitmaps') { const f = itemFormat(item); return `${item.mc ? 'multicolour' : 'hires'} bitmap${f ? `, ${f}` : ''}`; }
   return item.kind === 'sprites' ? `${n} sprite${n === 1 ? '' : 's'}` : `${n} character${n === 1 ? '' : 's'}`;
 }
 
@@ -69,8 +77,10 @@ export function deepSidName(name: string, sid: Uint8Array): string {
 }
 
 /** An item's sprites or characters as an image at 1x, `per` a row (all of them at most, one row when there are fewer),
- *  in its colours; `count` draws only the first so many (a thumbnail). */
+ *  in its colours; `count` draws only the first so many (a thumbnail). A bitmap is its picture, 320 x 200, in the colours
+ *  its file has (`mc` multicolour, `per`, `count` and `colors` are not used). */
 export function itemImage(item: Pick<LibraryItem, 'kind' | 'data'>, per: number, mc: boolean, colors: LibraryColors, count?: number): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
+  if (item.kind === 'bitmaps') return pictureImage(pictureFromData(item.data, mc));
   const unit = item.kind === 'sprites' ? 64 : 8;
   const end = count != null ? Math.min(item.data.length, count * unit) : item.data.length;
   return gfxImage(item.kind === 'sprites' ? 'sprites' : 'chars', item.data, 0, Math.max(end, 1), mc, colors, { per });

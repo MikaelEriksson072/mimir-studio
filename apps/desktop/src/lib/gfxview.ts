@@ -2,7 +2,7 @@
  * and pictures made of a font per character row. With every bank of a cartridge at once (13.9b) the rows are the
  * banks' loaded parts one after the other, at bank addresses. Pure geometry and drawing, so the view and the tests
  * share them. */
-import { DEMO_FONT, type Addr } from '@mimir/core';
+import { DEMO_FONT, type Addr, type C64Picture } from '@mimir/core';
 import { C64, hexRgb } from './palette';
 
 /** `fontrows`: a picture of up to 25 character rows, each drawn with its own font (2 KB, the one after the font of the row
@@ -317,6 +317,27 @@ export function gfxImage(kind: GfxKind, mem: Uint8Array, start: Addr, end: Addr,
       for (let y = 0; y < 8; y++) bits(f[code * 8 + y], ox + (j % 40) * 8, oy + Math.floor(j / 40) * 8 + y);
     }
     else for (let cy = 0; cy < bmRows; cy++) for (let cx = 0; cx < 40; cx++) for (let y = 0; y < 8; y++) byte(base + (cy * 40 + cx) * 8 + y, ox + cx * 8, oy + cy * 8 + y);
+  }
+  return { width, height, rgba };
+}
+
+/** A picture (a bitmap with its screen matrix and colour RAM) as an image of 320 x 200, each cell in its own colours:
+ *  multicolour %00 the background, %01 and %10 the screen code's high and low nibble, %11 colour RAM; hires set bits the
+ *  high nibble, clear bits the low one. */
+export function pictureImage(p: C64Picture): { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } {
+  const width = 320, height = 200, rgba = new Uint8ClampedArray(width * height * 4);
+  const rgb = C64.map(hexRgb);
+  for (let cell = 0; cell < 1000; cell++) {
+    const s = p.screen[cell], pal = p.mc ? [p.bg, s >> 4, s & 15, p.color[cell]] : [s & 15, 0, 0, s >> 4];
+    const x0 = (cell % 40) * 8, y0 = Math.floor(cell / 40) * 8;
+    for (let y = 0; y < 8; y++) {
+      const b = p.bitmap[cell * 8 + y];
+      for (let x = 0; x < 8; x++) {
+        const v = p.mc ? (b >> (6 - (x & 6))) & 3 : (b >> (7 - x)) & 1 ? 3 : 0;
+        const c = rgb[pal[v] & 15], o = ((y0 + y) * width + x0 + x) * 4;
+        rgba[o] = c[0]; rgba[o + 1] = c[1]; rgba[o + 2] = c[2]; rgba[o + 3] = 255;
+      }
+    }
   }
   return { width, height, rgba };
 }

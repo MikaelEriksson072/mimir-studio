@@ -102,6 +102,8 @@ export const toolchainSettingsSchema = z.object({
   c64DebuggerArgs: z.string().max(1024),
   debuggerWait: z.number().int().min(0).max(60000),
   libraryDir: z.string().max(1024),
+  bitmapFormatMc: z.enum(['koala', 'ocp']),
+  bitmapFormatHires: z.enum(['art', 'doodle']),
 });
 
 /** settings:locate: which tool's folder to ask for, and the path in the form (where the dialog opens) */
@@ -325,7 +327,7 @@ export const gitStatusSchema = z.undefined().or(z.object({ log: z.number().int()
 export const gitDiffSchema = z.object({ path: gitPath, from: gitPath.optional(), staged: z.boolean().optional(), range: gitRangeSchema.optional() }).strict();
 
 /* ---- the library (spec 10.6): a file by its kind and its plain name in that kind's folder, never a path ---- */
-const libraryKind = z.enum(['sid', 'sprites', 'chars']);
+const libraryKind = z.enum(['sid', 'sprites', 'chars', 'bitmaps']);
 const colorNo = z.number().int().min(0).max(15);
 const libraryColors = z.object({ bg: colorNo, fg: colorNo, mc1: colorNo, mc2: colorNo }).strict();
 /** a file's name in the library without its extension: no folder in it (main makes it safe and unique) */
@@ -333,6 +335,8 @@ const libraryStem = z.string().trim().min(1).max(200).refine(s => !/[\\/]/.test(
 export const libraryAddSchema = z.object({
   kind: libraryKind,
   stem: libraryStem,
+  /** a bitmap's: the paint program's format its file is in */
+  format: z.enum(['koala', 'ocp', 'art', 'doodle']).optional(),
   bytes: z.instanceof(Uint8Array).refine(b => b.length > 0 && b.length <= LIBRARY_MAX_BYTES, 'empty or more than a C64 holds'),
   entry: z.object({
     name: z.string().max(200),

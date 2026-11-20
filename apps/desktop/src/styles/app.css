@@ -1998,3 +1998,11 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .lib-add-what .lib-thumb { padding: 6px; background: #161434; border-radius: 6px; box-sizing: content-box; }
 .lib-add-sid { padding: 6px 8px; border-radius: 6px; background: var(--panel-2); color: var(--fg); }
 .lib-add-file { margin: 2px 0 6px; overflow-wrap: anywhere; }
+/* a bitmap's picture: where its screen and colour RAM are, its colours and the format its file gets */
+.lib-add-pic { display: flex; flex-direction: column; gap: 6px; margin: -4px 0 12px; font-size: 12px; color: var(--fg-2); }
+.lib-add-pic-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.lib-add-pic .check { margin: 0; }
+.lib-add .lib-add-pic .lib-add-addr { width: 64px; height: 24px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--editor); color: var(--fg); padding: 0 6px; font-size: 12px; }
+.lib-add .lib-add-pic .lib-add-addr.bad { border-color: var(--err, #e5484d); }
+.lib-add-found { margin: 0; }
+.lib-big-bitmap { cursor: default; }

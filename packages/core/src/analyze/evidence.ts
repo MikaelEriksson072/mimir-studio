@@ -166,7 +166,7 @@ export function evidence(ctx: Ctx): void {
           }
         } else if (R && R.idx && (mode === 'abx' || mode === 'aby')) {
           if (dest >= 0x0400 && dest < 0x0800 && !loaded(dest)) evTag(ctx, R.idx.t, 'screen');
-          else if (dest >= 0xd800 && dest < 0xdc00) evTag(ctx, R.idx.t, 'colorram');
+          else if (dest >= 0xd800 && dest < 0xdc00) { evTag(ctx, R.idx.t, 'colorram'); if (R.idx.t >= dest - 0xd800) ctx.ev.colorRam.add(R.idx.t - (dest - 0xd800)); }
         } else if (R && R.v != null && (mode === 'abx' || mode === 'aby')) {
           writes.push({ pc, dest, v: R.v, indexed: true });
         }

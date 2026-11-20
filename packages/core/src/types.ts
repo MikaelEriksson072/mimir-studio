@@ -153,6 +153,10 @@ export interface Settings {
   /** the library's folder (spec 10.6): the SID music, sprites and charsets added to it, a folder for each; empty: Mimir\Library
    *  in the user's documents folder */
   libraryDir: string;
+  /** the format a bitmap added to the library is saved in: a multicolour one (Koala Painter or Advanced Art Studio) and
+   *  a hires one (Art Studio or Doodle!) */
+  bitmapFormatMc: 'koala' | 'ocp';
+  bitmapFormatHires: 'art' | 'doodle';
 }
 
 export type MusicPlayer = 'vice' | 'deepsid';
@@ -161,7 +165,7 @@ export type AssemblerId = 'kick' | '64tass';
 /** Retro Debugger, or C64 Debugger (both Marcin Skoczylas', with VICE inside) */
 export type DebuggerKind = 'retro' | 'c64d';
 
-export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'tassPath' | 'tassArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer' | 'debugger' | 'retroDebuggerPath' | 'retroDebuggerArgs' | 'c64DebuggerPath' | 'c64DebuggerArgs' | 'debuggerWait' | 'libraryDir'>;
+export type ToolchainSettings = Pick<Settings, 'javaPath' | 'kickJar' | 'vicePath' | 'outDir' | 'kickArgs' | 'tassPath' | 'tassArgs' | 'viceArgs' | 'unpackerPath' | 'unpackerArgs' | 'exomizerPath' | 'viceQuicksave' | 'editorPath' | 'editorArgs' | 'musicPlayer' | 'debugger' | 'retroDebuggerPath' | 'retroDebuggerArgs' | 'c64DebuggerPath' | 'c64DebuggerArgs' | 'debuggerWait' | 'libraryDir' | 'bitmapFormatMc' | 'bitmapFormatHires'>;
 
 /** A comment on lines of its own above an address: one `//` line per text line, or (block) one multi-line block comment.
  *  `below`: empty lines between it and the line (the empty lines of Project.blanks go above it). */
@@ -864,6 +868,8 @@ export interface VicEvidence {
   /** the bits of every constant written to $d01c (sprite multicolour), by sprite number */
   spriteMc?: number;
   sprites: SpriteRef[];
+  /** where colour RAM ($d800) is in memory for the tables loops copy to it (a bitmap's colours), lowest first */
+  colorRam?: Addr[];
 }
 
 export interface GfxCandidate { type: TypeId; start: Addr; size: number; why: string }

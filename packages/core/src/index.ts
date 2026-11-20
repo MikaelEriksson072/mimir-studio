@@ -51,6 +51,10 @@ export { c1541Name, DLOC_BASE, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocFil
 export { BITFIRE_VERSION, bitfireFileName, d64writeScript, readBitfireDisk, unpackBitnax, unpackDali, type BitfireDisk, type BitfireFile, type BitfireFormat, type BitfireUnpacked } from './c64/bitfire-disk';
 export { makePsid, parsePsid } from './c64/psid';
 export { sidPlayer, musicPlayData, musicSidFile, type SidPlayer, type SidPlayerOptions, type MusicPlayData, type MusicPlayDigi } from './c64/sidplayer';
+export {
+  findPictureColors, flatColors, picture, pictureData, pictureFormatName, pictureFormatOf, pictureFromData, PICTURE_FORMATS, PICTURE_FORMATS_HIRES, PICTURE_FORMATS_MC, PICTURE_INFO, PICTURE_READS, readPicture, writePicture,
+  type C64Picture, type PictureColors, type PictureColorsAt, type PictureFormat, type PictureFormatInfo,
+} from './c64/pictures';
 export { artStudioPicture, ART_STUDIO_LOAD, BITMAP_SIZE, gfxSource, koalaPicture, KOALA_LOAD, SCREEN_SIZE, type GfxFileColors, type GfxFileKind } from './c64/gfxfiles';
 export { findPetsciiAnims, petsciiFrameAt, petsciiFramePixels, PETSCII_SCREEN, type PetsciiAnim, type PetsciiFrame, type PetsciiPlayer, type PetsciiSequence } from './c64/petscii-anim';
 export { findStorePlayers, readStoreStream, spindleStoreAnims, storePagesText, storePlayerAt, storeStreamStarts, type SpindleStoreAnim, type StoreAnim, type StorePlayer } from './c64/store-anim';
@@ -114,5 +118,5 @@ export {
 export { splitArgs } from './util/args';
 export { safeStem, sourceStem } from './util/names';
 export { fileOffsetBases, offsetText } from './offsets';
-export { charsetFile, fileStem, isLibraryFileName, LIBRARY_EXT, LIBRARY_FOLDERS, LIBRARY_INDEX, LIBRARY_KINDS, LIBRARY_MAX_BYTES, LIBRARY_READS, libraryHash, libraryIndexJson, libraryItems, libraryRange, librarySourceText, libraryStem, readLibraryFile, readLibraryIndex, safeFileName, sidWithTexts, spriteFile, uniqueLibraryName, type LibraryColors, type LibraryDigi, type LibraryEntry, type LibraryFile, type LibraryItem, type LibraryKind, type LibrarySource } from './library';
+export { charsetFile, fileStem, isLibraryFileName, LIBRARY_EXT, libraryExt, LIBRARY_FOLDERS, LIBRARY_INDEX, LIBRARY_KINDS, LIBRARY_MAX_BYTES, LIBRARY_READS, libraryHash, libraryIndexJson, libraryItems, libraryRange, librarySourceText, libraryStem, readLibraryFile, readLibraryIndex, safeFileName, sidWithTexts, spriteFile, uniqueLibraryName, type LibraryColors, type LibraryDigi, type LibraryEntry, type LibraryFile, type LibraryItem, type LibraryKind, type LibrarySource } from './library';
 export { knownRoutines, learnable, learnProject, learnRoutine, readRoutineLibrary, ROUTINE_MAX, ROUTINE_MIN, routineAt, routineSuggestions, sameRoutine, startsRoutine, type KnownRoutine, type Routine, type RoutineMatch } from './routines';
