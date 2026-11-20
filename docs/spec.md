@@ -3450,12 +3450,24 @@ laddar upp till `$f344`.
 **Loaderflikarnas filer (2026-11-20).** Varje flik i bottenpanelen som listar en disks eller ett bands filer (Spindle,
 Bitfire, Booze, Sparkle, Krill, Covert, DLoC, Pirate Slayer, Tape; IFFL med *parts*) har bredvid *Copy script* (eller
 *Copy list*) två knappar:
-- **Add files to project** kräver ett projekt. Utan projekt öppnar den formuläret för ett nytt projekt (*A project for
-  the files of <disk>*, namnet efter disken eller bandet): projektet görs med alla flikens filer i, i flikens ordning,
-  så de inte blandas in i arbetet utan projekt. Det arbetet ligger kvar som när ett projekt öppnas (startskärmen går
-  vidare med det); *Cancel* lämnar allt som det var. I ett projekt lägger knappen till alla filer som inte redan är med,
-  som om man tryckt **+** på varje rad. Laddar två på samma adresser vinner den senare (analysloggen varnar). Ett steg
-  att ångra (Ctrl+Z); är alla redan med säger en toast det.
+- **Export files to project** skriver flikens filer som egna källkoder i en mapp i projektets mapp, döpt efter
+  disken eller bandet (`<projekt>/spindle-demo/`), utan att röra projektets listning. Filerna som ett anrop av loadern
+  laddar tillsammans (ett Spindle-jobb, en Sparkle-bundle, en IFFL-dels bitar) blir en källkod (`job02.asm`), andra
+  filer en var (`file01_4000.asm`). Varje grupp analyseras för sig, i en worker av sin egen, med projektets
+  inställningar (`exportGroup`, `packages/core/src/group-export.ts`). En grupp med flera filer skrivs för Kick Assembler
+  som en källkod: överst en `.file` och en `.segmentdef` per fil, sedan en gång det filernas huvuden definierade
+  (`#import` av `include/c64-hardware.asm`, hårdvarunamnen, PETSCII-koderna, nollsidan, musiken) och sist varje fil i
+  sitt segment (`.segment Job02_4000`). Namnen en fil definierade för en annan ("labels defined in other files")
+  behövs inte. Assemblerad ensam skriver den varje fil som en egen PRG. 64tass har inga segment: där får varje fil sin
+  egen källkod. Binärfilerna en källkod importerar (`gfx/`, `music/`, `data/`) får gruppens namn först
+  (`bundle00_music_…`), så två grupper aldrig tar varandras, och `original/` har varje fil som den laddades.
+  Varje grupp kontrolleras med den inbyggda assemblern (källkoden utan segmentraderna; varje fils byte där den
+  laddas), och toasten säger om alla blir samma byte igen. Utan projekt frågar den först: arbetet blir ett projekt
+  (*Export files to project needs a project*, som Save gör det), sedan exporten. **+** på en rad lägger fortfarande
+  till en fil i projektet.
+  **Mätt (2026-11-20):** 8 Sparkle-diskar ur Year-top20 2020 (Memento Mori, Christmas Megademo, 5 Shades of Grey):
+  245 grupper, alla samma byte igen, 1–3 s per disk; Memento Moris tre Spindle-diskar: 85 jobb, alla. KickAss.jar 5.25
+  på Memento Mori disk 1:s 14 sammanslagna källkoder skrev alla 59 PRG:er byte för byte som filerna.
 - **Save files…** sparar alla filerna i en mapp man väljer, med skriptet eller listan som skriver disken igen (vad varje
   flik sparar står i dess avsnitt).
 

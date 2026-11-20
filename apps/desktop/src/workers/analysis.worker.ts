@@ -3,7 +3,7 @@
  * only re-render, which keeps renames instant. A cartridge's banks are spaces of their own (spec 13.9b): the cache keeps
  * each one's analysis, so an edit in one bank analyses that bank only, and the analyses of the single spaces stay here. */
 import * as Comlink from 'comlink';
-import { analyze, render, verify, type AnalysisResult, type Project, type RenderOptions, type RenderResult, type SpaceCache, type VerifyResult } from '@mimir/core';
+import { analyze, exportGroup, render, verify, type AnalysisResult, type GroupExport, type Project, type RenderOptions, type RenderResult, type SpaceCache, type VerifyResult } from '@mimir/core';
 
 let current: { aKey: number; A: AnalysisResult } | null = null;
 const spaces: SpaceCache = new Map();
@@ -41,6 +41,12 @@ const api = {
     const t0 = performance.now();
     const { A } = analysed(project, aKey);
     return { ...verify(A, render(A, project)), ms: performance.now() - t0 };
+  },
+
+  /** Export files to project (spec 13.5): a loader's group of files analysed alone, as one source with its round trip;
+   *  the window's analysis (`current`) is not touched */
+  exportGroup(project: Project, name: string, from: string): GroupExport {
+    return exportGroup(project, name, from);
   },
 };
 

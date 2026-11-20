@@ -16,7 +16,7 @@ import {
   checkScript, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
-  type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
+  type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
@@ -28,7 +28,8 @@ import { useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
 import { useBuildTemplates } from './store/buildTemplates';
 import { runScriptInWorker } from './lib/scriptrun';
-import { useAnalysis, verifyInWorker } from './lib/analysis';
+import { exportWorker, useAnalysis, verifyInWorker } from './lib/analysis';
+import { PROJECT_FOLDERS } from '../shared/projects';
 import { bankAdr, cx, errorText, filesKey, ROW, store, uid } from './lib/util';
 import { labelRefs } from './lib/labelrefs';
 
@@ -783,16 +784,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     }
     return files;
   };
-  /** every file of the tape that opens and is not in the project yet, added to it in tape order (as each row's + adds it) */
-  const addTapeFiles = () => {
+  /** every file of the tape that opens, a source each (with its header, when that holds code, in the same source) */
+  const exportTapeFiles = () => {
     if (!tape) return;
-    const all = tape.img.files.filter(tapeOpens), left = all.filter(f => !tapeOpen.has(f)), t = tape;
-    if (!all.length) { toast(`${tape.name} has no file that opens as a program`, 'info'); return; }
-    if (!home) { askProjectFor(tape.name, all.length, () => all.flatMap(f => tapeFiles(t, f))); return; }
-    if (!left.length) { toast(`Every file of ${tape.name} is in the project already`, 'info'); return; }
-    try {
-      addFiles(left.flatMap(f => tapeFiles(tape, f)), true, { undoLabel: `Add ${left.length} file${left.length === 1 ? '' : 's'} of ${tape.name}`, note: addedNote(left.length, all.length, tape.name) });
-    } catch (e) { toast(errorText(e), 'err'); }
+    exportLoaderFiles(tape.name, tape.img.files.filter(tapeOpens).map(f => {
+      const base = tapeFileName(f).replace(/\.\w+$/, '');
+      return { name: base, what: `"${f.name}" of ${tape.name}`, files: () => [parsePrg(`${base}.prg`, makePrg(f.load!, f.data)), ...(f.headerCode && f.header ? [parsePrg(`${base}-header.prg`, makePrg(0x033c, f.header))] : [])] };
+    }));
   };
   /** every file of the tape to a folder, as PRGs; a TapeTool tape's with boot.bin and build.bat, TapeTool's command
    *  lines that write the tape again */
@@ -882,44 +880,63 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const loaderOf = useRef(new Map<string, object>());
   const fromLoader = <T extends { id: string }>(item: object, files: T[]): T[] => { for (const f of files) loaderOf.current.set(f.id, item); return files; };
   const loaderOpen: ReadonlySet<object> = new Set(project.files.flatMap(f => { const x = loaderOf.current.get(f.id); return x ? [x] : []; }));
-  /** what Add files to project says: how many it added of `all`, and how many were in the project already */
-  const addedNote = (n: number, all: number, from: string, what = 'file') =>
-    `Added ${n} ${what}${n === 1 ? '' : 's'} of ${from} to the project${all > n ? ` (${all - n} ${all - n === 1 ? 'was' : 'were'} in it already)` : ''}`;
-  /** Add files to project in a loader tab: every file of the tab not in the project yet, added to it in the tab's order
-   *  as each row's + adds it (so where two load over each other, the later one wins); `rows`: the tab's files, each with
-   *  the files it opens as */
-  const addLoaderFiles = (rows: [item: object, files: () => OpenedPrg[]][], from: string, what = 'file') => {
-    if (!rows.length) { toast(`${from} has no ${what} that opens as a program`, 'info'); return; }
-    if (!home) { askProjectFor(from, rows.length, () => rows.flatMap(([item, files]) => fromLoader(item, files())), what); return; }
-    const left = rows.filter(([item]) => !loaderOpen.has(item));
-    if (!left.length) { toast(`Every ${what} of ${from} is in the project already`, 'info'); return; }
-    try {
-      addFiles(left.flatMap(([item, files]) => fromLoader(item, files())), true, { undoLabel: `Add ${left.length} ${what}${left.length === 1 ? '' : 's'} of ${from}`, note: addedNote(left.length, rows.length, from, what) });
-    } catch (e) { toast(errorText(e), 'err'); }
-  };
-  /* ---- Add files to project needs a project: without one, it makes one for the files, so they are not mixed into the
-     work without a project (which the window keeps, as when a project is opened) ---- */
-  type ProjectFor = { from: string; n: number; what: string; files: () => OpenedPrg[] };
-  const [projectFor, setProjectFor] = useState<ProjectFor | null>(null);
-  const askProjectFor = (from: string, n: number, files: () => OpenedPrg[], what = 'file') => {
+  /* ---- Export files to project (spec 13.5): a loader tab's files as sources of their own in a folder of the project,
+     named after the disk or tape; the files that one loader call loads together (a Spindle job, a Sparkle bundle, an
+     IFFL part's pieces) in one source. Each group is analysed alone, in a worker of its own, with the project's
+     settings; the project and its listing stay as they are. It needs a project: without one the work becomes one
+     first, as Save does ---- */
+  type LoaderGroup = { name: string; what: string; files: () => FileInput[] };
+  /** a file's name as a source's: without its extension, only letters, digits, _ and - */
+  const stemOf = (fileName: string) => projectNameFor(fileName);
+  const [exportAsk, setExportAsk] = useState<{ from: string; groups: LoaderGroup[] } | null>(null);
+  const exporting = useRef(false);
+  /** the folder in the project a disk's or tape's sources go in: its name, kept clear of the project's own folders */
+  const exportFolder = (from: string) => { const n = projectNameFor(from); return (Object.values(PROJECT_FOLDERS) as string[]).includes(n.toLowerCase()) ? `${n}-files` : n; };
+  const exportLoaderFiles = (from: string, groups: LoaderGroup[]) => {
     if (!kr) return needDesktop();
-    setProjectFor({ from, n, what, files });
+    if (!groups.length) { toast(`${from} has no file that opens as a program`, 'info'); return; }
+    if (!home) { setExportAsk({ from, groups }); return; }
+    void exportGroups(from, groups);
   };
-  /** the project for the files: made in its folder with them in it, and the work goes on in it */
-  const createProjectFor = async (name: string, parent: string, git: boolean) => {
-    const p = projectFor;
-    if (!kr || !p) return;
-    const files = p.files().map(({ id, name: n, load, bytes }) => ({ id, name: n, load, bytes }));
-    const made = createProject({ name, files, settings: newProjectSettings(project.settings) });
-    const r = await kr.createProject({ name, parent, project: made, git });
-    // the work without a project stays with the window, as when a project is opened
-    keepUnsavedWork();
-    enter(made, r.home);
-    resetView(); setExportDir(null);
-    setProjectFor(null);
-    afterLoad(files.map(f => f.id), false);
-    const g = gitNote(r);
-    toast(`Created the project ${r.home.name} in ${r.home.dir}${g.text}, with the ${p.n} ${p.what}${p.n === 1 ? '' : 's'} of ${p.from} in it`, g.bad ? 'warn' : 'ok');
+  const exportGroups = async (from: string, groups: LoaderGroup[]) => {
+    if (!kr) return;
+    if (exporting.current) { toast('Export files to project is still at work', 'info'); return; }
+    exporting.current = true;
+    const folder = exportFolder(from), settings = latest.current.project.settings;
+    const out: Record<string, string | Uint8Array> = {}, bad: string[] = [], taken = new Set<string>();
+    let sources = 0, joined = 0;
+    toast(`Exporting ${groups.length} source${groups.length === 1 ? '' : 's'} of ${from} to the project…`, 'info');
+    try {
+      for (const g of groups) {
+        // (two groups of one name, two files a loader unpacks to one address: the second gets a number)
+        const base = stemOf(g.name);
+        let name = base;
+        for (let k = 2; taken.has(name); k++) name = `${base}_${k}`;
+        taken.add(name);
+        const files = g.files().map(({ name: n, load, bytes }) => ({ name: n, load, bytes }));
+        // a single file's source is named after the group (its own name, or the one with a number)
+        if (files.length === 1) files[0].name = `${name}.prg`;
+        const r = await exportWorker().exportGroup(createProject({ name, files, settings }), name, g.what);
+        sources += r.sources.length;
+        if (files.length > 1 && r.sources.length === 1) joined++;
+        for (const [k, v] of Object.entries(r.files)) out[`${folder}/${k}`] = v;
+        if (!r.ok) bad.push(`${name}${r.problem ? ` (${r.problem})` : ''}`);
+      }
+      const w = await kr.writeExport({ target: 'home', files: out });
+      if (!w) return;
+      const dir = `${w.dir}${w.dir.includes('/') && !w.dir.includes('\\') ? '/' : '\\'}${folder}`;
+      toast(`Exported ${sources} source${sources === 1 ? '' : 's'} of ${from} to ${dir}${joined ? `, ${joined} of them with the files one load call loads, each in a segment written as its own PRG` : ''}: ${bad.length
+        ? `${bad.length} did not assemble to the same bytes again: ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? ', …' : ''}`
+        : `every one assembles to the same bytes again`}`, bad.length ? 'warn' : 'ok');
+    } catch (e) { toast(`Export files to project: ${errorText(e)}`, 'err'); } finally { exporting.current = false; }
+  };
+  /** Export files to project without a project: the work made a project (as Save makes it), then the export */
+  const exportIntoNewProject = async (name: string, parent: string, git: boolean) => {
+    const a = exportAsk;
+    if (!a) return;
+    await createFromWork(name, parent, git);
+    setExportAsk(null);
+    await exportGroups(a.from, a.groups);
   };
   /** the animation streams of the mounted Spindle disk (a player in one job stores them frame by frame, core
    *  store-anim): a chunk opened from the Spindle tab that holds one is animation data, not a packed file */
@@ -933,9 +950,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openChunk = (j: SpindleJob, c: SpindleChunk, add: boolean) => {
     try { addFiles(fromLoader(c, [spinChunkFile(j, c)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const addSpindleFiles = () => {
+  /** a source per job, its chunks in it */
+  const exportSpindleFiles = () => {
     const d = disk?.spindle;
-    if (disk && d) addLoaderFiles(d.jobs.flatMap(j => j.chunks.map(c => [c, () => [spinChunkFile(j, c)]] as [object, () => OpenedPrg[]])), disk.name);
+    if (disk && d) exportLoaderFiles(disk.name, d.jobs.map(j => ({ name: `job${j.n.toString(16).padStart(2, '0')}`, what: `job ${j.n} of ${disk.name}`, files: () => j.chunks.map(c => spinChunkFile(j, c)) })));
   };
   /** every chunk of a Spindle disk's jobs in a folder: as the load script names it (the bytes alone, the script gives
    *  the address) and as a PRG at its address, with the script */
@@ -976,9 +994,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openBitfireFile = (f: BitfireFile, add: boolean) => {
     try { addFiles(fromLoader(f, [bitfireFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const addBitfireFiles = () => {
+  const exportBitfireFiles = () => {
     const d = disk?.bitfire;
-    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [bitfireFile(f)]]), disk.name);
+    if (disk && d) exportLoaderFiles(disk.name, d.files.map(f => { const x = bitfireFile(f); return { name: stemOf(x.name), what: `file $${h2(f.n)} of ${disk.name}`, files: () => [x] }; }));
   };
   /** every file of a Bitfire disk in a folder: as it is on the disk (what d64write's -b takes, the .lz the command line
    *  names) and unpacked as a PRG when it is packed, with d64write's command line that writes the disk again */
@@ -1004,9 +1022,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openBoozeFile = (f: BoozeFile, add: boolean) => {
     try { addFiles(fromLoader(f, [boozeFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const addBoozeFiles = () => {
+  const exportBoozeFiles = () => {
     const d = disk?.booze;
-    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [boozeFile(f)]]), disk.name);
+    if (disk && d) exportLoaderFiles(disk.name, d.files.map(f => { const x = boozeFile(f); return { name: stemOf(x.name), what: `${f.n != null ? `file $${h2(f.n)}` : `the file at ${f.track}/${f.sector}`} of ${disk.name}`, files: () => [x] }; }));
   };
   /** every file of a BoozeLoader disk in a folder: as a PRG, unpacked when it is packed (else as much as memory holds),
    *  and as it is on the disk when that is not the same (packed: .b1 or .b2; longer than memory: .raw, all of it), with
@@ -1032,9 +1050,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openSparkleChunk = (b: SparkleBundle, c: SparkleChunk, add: boolean) => {
     try { addFiles(fromLoader(c, [sparkleFile(b, c)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const addSparkleFiles = () => {
+  /** a source per bundle, its files in it */
+  const exportSparkleFiles = () => {
     const d = disk?.sparkle;
-    if (disk && d) addLoaderFiles(d.bundles.flatMap(b => b.chunks.map(c => [c, () => [sparkleFile(b, c)]] as [object, () => OpenedPrg[]])), disk.name);
+    if (disk && d) exportLoaderFiles(disk.name, d.bundles.map(b => ({ name: `bundle${b.n.toString(16).padStart(2, '0')}`, what: `bundle $${h2(b.n)} of ${disk.name}`, files: () => b.chunks.map(c => sparkleFile(b, c)) })));
   };
   /** every chunk of a Sparkle disk's bundles as a PRG in a folder, with the loader script rebuilt to load them */
   const saveSparkleFiles = async () => {
@@ -1057,9 +1076,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try { addFiles(fromLoader(p, ifflPartFiles(f, p)), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** the parts that are packed (a part that is not has no address of its own: Save parts… saves it) */
-  const addIfflParts = () => {
+  /** a source per packed part, its pieces in it (a part that is not packed has no address: Save parts… saves it) */
+  const exportIfflParts = () => {
     const d = disk?.iffl;
-    if (disk && d) addLoaderFiles(d.files.flatMap(f => f.parts.filter(p => p.pieces).map(p => [p, () => ifflPartFiles(f, p)] as [object, () => OpenedPrg[]])), disk.name, 'part');
+    if (disk && d) exportLoaderFiles(disk.name, d.files.flatMap(f => f.parts.filter(p => p.pieces).map(p => ({ name: stemOf(ifflPartName(f, p)), what: `part ${p.n} of "${f.name}" on ${disk.name}`, files: () => ifflPartFiles(f, p) }))));
   };
   /** every part of the disk's IFFL files in a folder: as it is stored and, when it is packed, its pieces unpacked as
    *  PRGs */
@@ -1085,9 +1105,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openKrillFile = (f: KrillFile, add: boolean) => {
     try { addFiles(fromLoader(f, [krillFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const addKrillFiles = () => {
+  const exportKrillFiles = () => {
     const d = disk?.krill;
-    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [krillFile(f)]]), disk.name);
+    if (disk && d) exportLoaderFiles(disk.name, d.files.map(f => { const x = krillFile(f); return { name: stemOf(x.name), what: `${krillFileName(f)} of ${disk.name}`, files: () => [x] }; }));
   };
   /** every file of a disk for Krill's loader in a folder: as it is on the disk (what cc1541 writes), and unpacked as a
    *  PRG when it is packed, with cc1541's command line that writes the disk again */
@@ -1115,9 +1135,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openCovertFile = (f: CovertFile, add: boolean) => {
     try { addFiles(fromLoader(f, [covertFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const addCovertFiles = () => {
+  const exportCovertFiles = () => {
     const d = disk?.covert;
-    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [covertFile(f)]]), disk.name);
+    if (disk && d) exportLoaderFiles(disk.name, d.files.map(f => { const x = covertFile(f); return { name: stemOf(x.name), what: `"${d.entries[f.entry].name}" of ${disk.name}`, files: () => [x] }; }));
   };
   /** every file of a disk for the Covert Bitops loader in a folder: as it is on the disk (what makedisk or maked64
    *  takes), and unpacked as a PRG when it is packed, with the tool's command file and a note with its command line */
@@ -1147,11 +1167,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try { addFiles(fromLoader(f, [withId(parsePrg(dlocUnpackedName(f, d), dlocFilePrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
   /** in the order the tab lists them: the order they load in, then the files no load names */
-  const addDlocFiles = () => {
+  const exportDlocFiles = () => {
     const d = disk?.dloc;
     if (!disk || !d) return;
     const rows = [...d.order, ...d.files.map(f => f.entry).filter(e => !d.order.includes(e))].map(e => d.entries[e].file!);
-    addLoaderFiles(rows.map(f => [f, () => [withId(parsePrg(dlocUnpackedName(f, d), dlocFilePrg(f)))]]), disk.name);
+    exportLoaderFiles(disk.name, rows.map(f => { const x = parsePrg(dlocUnpackedName(f, d), dlocFilePrg(f)); return { name: stemOf(x.name), what: `"${d.entries[f.entry].name}" of ${disk.name}`, files: () => [x] }; }));
   };
   /** every file of a disk for DLoC's loader in a folder: as it is on the disk (what c1541 writes), and unpacked as a
    *  PRG when it is packed, with the script (the files in the order they load, and c1541's command line) */
@@ -1176,9 +1196,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const openPirateSlayerFile = (f: PirateSlayerFile, add: boolean) => {
     try { addFiles(fromLoader(f, [pirateSlayerFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const addPirateSlayerFiles = () => {
+  const exportPirateSlayerFiles = () => {
     const p = disk?.pirateslayer;
-    if (disk && p) addLoaderFiles(p.files.map(f => [f, () => [pirateSlayerFile(f)]]), disk.name);
+    if (disk && p) exportLoaderFiles(disk.name, p.files.map(f => { const x = pirateSlayerFile(f); return { name: stemOf(x.name), what: `the file at ${f.track}/${f.sector} of ${disk.name}`, files: () => [x] }; }));
   };
   /** every file outside the directory of a Pirate Slayer disk, decoded, as a PRG each in a folder, with files.txt that
    *  lists them */
@@ -4297,16 +4317,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {shownBottom === 'xrefs' && <XrefPanel A={A} R={R} cursor={cursor} onNavigate={nav} S={S} />}
             {shownBottom === 'irqs' && <RasterPanel A={A} R={R} onNavigate={nav} />}
             {shownBottom === 'relocs' && <RelocPanel A={A} R={R} relocs={project.relocs} onNavigate={nav} onRelocate={(r, copyAt) => startRelocate(r, copyAt)} onUnrelocate={unrelocate} />}
-            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} onOpenJob={openJob} onAddFiles={addSpindleFiles} onSaveFiles={() => void saveSpindleFiles()} />}
-            {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} onAddFiles={addBitfireFiles} onSaveFiles={() => void saveBitfireFiles()} />}
-            {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} onAddFiles={addBoozeFiles} onSaveFiles={() => void saveBoozeFiles()} />}
-            {shownBottom === 'sparkle' && disk?.sparkle && <SparklePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openSparkleChunk} onAddFiles={addSparkleFiles} onSaveFiles={() => void saveSparkleFiles()} />}
-            {shownBottom === 'iffl' && disk?.iffl && <IfflPanel disk={disk} open={loaderOpen} onOpenPart={openIfflPart} onAddParts={addIfflParts} onSaveParts={() => void saveIfflParts()} />}
-            {shownBottom === 'krill' && <KrillPanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openKrillFile} onAddFiles={addKrillFiles} onSaveFiles={() => void saveKrillFiles()} />}
-            {shownBottom === 'covert' && disk?.covert && <CovertPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openCovertFile} onAddFiles={addCovertFiles} onSaveFiles={() => void saveCovertFiles()} />}
-            {shownBottom === 'dloc' && disk?.dloc && <DlocPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openDlocFile} onAddFiles={addDlocFiles} onSaveFiles={() => void saveDlocFiles()} />}
-            {shownBottom === 'pirateslayer' && disk?.pirateslayer &&<PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onAddFiles={addPirateSlayerFiles} onSaveFiles={() => void savePirateSlayerFiles()} />}
-            {shownBottom === 'tape' && tape && <TapePanel tape={tape} open={tapeOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onAddFiles={addTapeFiles} onSaveFiles={() => void saveTapeFiles()} />}
+            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} onOpenJob={openJob} onExportFiles={exportSpindleFiles} onSaveFiles={() => void saveSpindleFiles()} />}
+            {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} onExportFiles={exportBitfireFiles} onSaveFiles={() => void saveBitfireFiles()} />}
+            {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} onExportFiles={exportBoozeFiles} onSaveFiles={() => void saveBoozeFiles()} />}
+            {shownBottom === 'sparkle' && disk?.sparkle && <SparklePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openSparkleChunk} onExportFiles={exportSparkleFiles} onSaveFiles={() => void saveSparkleFiles()} />}
+            {shownBottom === 'iffl' && disk?.iffl && <IfflPanel disk={disk} open={loaderOpen} onOpenPart={openIfflPart} onExportParts={exportIfflParts} onSaveParts={() => void saveIfflParts()} />}
+            {shownBottom === 'krill' && <KrillPanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openKrillFile} onExportFiles={exportKrillFiles} onSaveFiles={() => void saveKrillFiles()} />}
+            {shownBottom === 'covert' && disk?.covert && <CovertPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openCovertFile} onExportFiles={exportCovertFiles} onSaveFiles={() => void saveCovertFiles()} />}
+            {shownBottom === 'dloc' && disk?.dloc && <DlocPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openDlocFile} onExportFiles={exportDlocFiles} onSaveFiles={() => void saveDlocFiles()} />}
+            {shownBottom === 'pirateslayer' && disk?.pirateslayer &&<PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onExportFiles={exportPirateSlayerFiles} onSaveFiles={() => void savePirateSlayerFiles()} />}
+            {shownBottom === 'tape' && tape && <TapePanel tape={tape} open={tapeOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onExportFiles={exportTapeFiles} onSaveFiles={() => void saveTapeFiles()} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
             {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild({ ...project, settings: S })} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}
           </ErrorBoundary></div>
@@ -4361,8 +4381,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
-      {projectFor && <CreateProjectModal title={`A project for the ${projectFor.what}s of ${projectFor.from}`} name={projectNameFor(projectFor.from)} submit={`Create project and add the ${projectFor.what}s`} onCreate={createProjectFor} onClose={() => setProjectFor(null)}
-        lead={`Add ${projectFor.what}s to project needs a project: the ${projectFor.n} ${projectFor.what}${projectFor.n === 1 ? '' : 's'} of ${projectFor.from} go in a new one of their own, not into the work without a project. That work stays as it is, and the start screen goes on with it.`} />}
+      {exportAsk && <CreateProjectModal title="Export files to project needs a project" name={projectNameFor(exportAsk.from)} moving={movingText()} submit="Create project and export the files" onCreate={exportIntoNewProject} onClose={() => setExportAsk(null)}
+        lead={`Export files to project writes the ${exportAsk.groups.length} source${exportAsk.groups.length === 1 ? '' : 's'} of ${exportAsk.from} in a folder of the project, ${exportFolder(exportAsk.from)}. The work becomes the project first, as Save makes it one.`} />}
       {unsavedAsk && <UnsavedWorkModal name={(unsavedAsk.kept ?? project).name} what={unsavedAsk.what} left={unsavedAsk.kept && home ? home.name : null}
         onSave={() => { setSaveFirst(unsavedAsk); setUnsavedAsk(null); }} onDiscard={() => { setUnsavedAsk(null); unsavedAsk.go(); }} onClose={() => setUnsavedAsk(null)} />}
       {saveFirst && <CreateProjectModal title={saveFirst.kept ? 'Create a project from the work without a project' : undefined} name={(saveFirst.kept ?? project).name}

@@ -314,13 +314,13 @@ function mergeRenders(project: ProjectInput, parts: Split[], renders: RenderResu
 /* ---------- all banks in one source (13.9c) ---------- */
 
 /** the parts of a file's head that one source defines once at its top, or leaves out (the file's title) */
-const HOISTED: ReadonlySet<HeadPart> = new Set(['title', 'gap', 'import', 'hw', 'pet', 'zp', 'ext']);
+export const HOISTED: ReadonlySet<HeadPart> = new Set(['title', 'gap', 'import', 'hw', 'pet', 'zp', 'ext']);
 
 /** a PETSCII control code's definition by its byte (`@"\$93"`), to keep them in order */
-const petValue = (l: Line) => (l.k === 'dir' ? l.tok[l.tok.length - 1]?.s ?? '' : '');
+export const petValue = (l: Line) => (l.k === 'dir' ? l.tok[l.tok.length - 1]?.s ?? '' : '');
 
 /** an operand written as tokens: strings, numbers and the rest */
-const argTokens = (s: string): Token[] => s.split(/("[^"]*"|\$[0-9a-fA-F]+|\b\d+\b)/).filter(Boolean)
+export const argTokens = (s: string): Token[] => s.split(/("[^"]*"|\$[0-9a-fA-F]+|\b\d+\b)/).filter(Boolean)
   .map((x): Token => ({ t: x.startsWith('"') ? 'str' : /^(\$[0-9a-fA-F]+|\d+)$/.test(x) ? 'num' : 'p', s: x }));
 
 /**

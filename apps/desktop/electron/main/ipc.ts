@@ -246,6 +246,9 @@ export function registerIpc(deps: IpcDeps): void {
       const source = projects.folder('source');
       if (!source) throw new Error('No project is open: export to a folder instead');
       dir = source;
+    } else if (req.target === 'home') {
+      if (!projects.current) throw new Error('No project is open: create one first');
+      dir = projects.current.dir;
     } else if (req.target === 'pick') {
       const [picked] = await pick(e, 'export', { title: 'Export Kick Assembler project to folder', properties: ['openDirectory', 'createDirectory', 'promptToCreate'] });
       if (!picked) return null;
@@ -254,7 +257,8 @@ export function registerIpc(deps: IpcDeps): void {
     } else dir = policy.assert(req.dir!, 'Export folder');
     watcher.touched(dir);
     const written = await writeExportFolder(dir, req.files);
-    if (req.target !== 'temp' && req.target !== 'build') watcher.watch(dir);
+    // (the project's own folder is not watched: Mimir writes its project file there as the work changes)
+    if (req.target !== 'temp' && req.target !== 'build' && req.target !== 'home') watcher.watch(dir);
     return { dir, written };
   });
 

@@ -273,7 +273,7 @@ export const editorOpenSchema = z.object({ dir: z.string().min(1).max(4096).opti
 export const unpackSchema = z.object({ name: fileName, prg: z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG') });
 export const exportWriteSchema = z.object({
   dir: z.string().max(4096).optional(),
-  target: z.enum(['pick', 'temp', 'project', 'build']).optional(),
+  target: z.enum(['pick', 'temp', 'project', 'home', 'build']).optional(),
   name: z.string().max(64).regex(/^[A-Za-z0-9_-]*$/).optional(),
   files: z.record(z.string().min(1).max(512), z.union([z.string(), z.instanceof(Uint8Array)])),
 }).refine(r => !!r.dir !== !!r.target, 'give either dir or target');

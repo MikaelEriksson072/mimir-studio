@@ -154,7 +154,9 @@ export interface SmartAttachResult {
  */
 export interface ExportWriteRequest {
   dir?: string;
-  target?: 'pick' | 'temp' | 'project' | 'build';
+  /** `project`: the project's source folder; `home`: the project's own folder (Export files to project writes a disk's
+   *  sources in a folder there, `files` named with it) */
+  target?: 'pick' | 'temp' | 'project' | 'home' | 'build';
   /** used to name the folder for `target: 'temp'` */
   name?: string;
   files: Record<string, string | Uint8Array>;

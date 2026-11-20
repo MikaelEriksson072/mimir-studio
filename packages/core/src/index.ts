@@ -60,6 +60,7 @@ export type { PsidInfo } from './c64/psid';
 export { findBlock } from './analyze';
 export { goneCounts, isFault, isProblem } from './analyze/deep';
 // a cartridge's banks analysed, rendered and verified as spaces of their own (13.9b); one space goes to the engine as it is
+export { exportGroup, joinSources, type GroupExport } from './group-export';
 export { analyze, bankAddr, fileSpaces, type SpaceCache, render, SPACE, spaceAddr, spaceFiles, spaceLines, spaceOf, spaceRender, spaceView, splitProject, verify } from './spaces';
 export { spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript } from './analyze/spindle';
 export { boozeLine, boozeScript } from './analyze/booze';

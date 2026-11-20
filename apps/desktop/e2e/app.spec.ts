@@ -6637,33 +6637,36 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
     expect(text.split('\n').slice(2, 6)).toEqual(['# spin -e 0800', '', 'job01_0800.bin     0800    # $0800-$080a, 11 bytes', 'job01_1000.bin     1000    # $1000-$1257, 600 bytes']);
   });
 
-  await test.step('Add files to project needs a project: without one it makes one with all the chunks, in the script\'s order', async () => {
-    const table = page.getByRole('table', { name: 'Spindle load script' });
-    const dialog = page.getByRole('dialog', { name: 'A project for the files of spindle-demo.d64' });
-    await page.getByRole('button', { name: 'Add files to project' }).click();
-    await expect(dialog).toContainText('Add files to project needs a project: the 6 files of spindle-demo.d64 go in a new one of their own, not into the work without a project.');
+  await test.step('Export files to project needs a project: the work becomes one, then a source per job in a folder named after the disk', async () => {
+    const dialog = page.getByRole('dialog', { name: 'Export files to project needs a project' });
+    await page.getByRole('button', { name: 'Export files to project' }).click();
+    await expect(dialog).toContainText('Export files to project writes the 4 sources of spindle-demo.d64 in a folder of the project, spindle-demo. The work becomes the project first, as Save makes it one.');
+    await expect(dialog).toContainText('Moves there: the project (its files, labels, comments, bookmarks and patches)');
     // Cancel leaves the work as it was
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
-    await expectFiles(page, ['job01_0800.prg', 'job02_4000.prg']);
     await expect(page.getByRole('button', { name: /^No project/ })).toBeVisible();
     // the project is named after the disk, and goes where the user picks
-    await page.getByRole('button', { name: 'Add files to project' }).click();
+    await page.getByRole('button', { name: 'Export files to project' }).click();
     await expect(dialog.getByLabel('Name')).toHaveValue('spindle-demo');
-    const parent = join(workDir, 'projects'), dir = join(parent, 'spindle-demo');
+    const parent = join(workDir, 'projects'), dir = join(parent, 'spindle-demo'), out = join(dir, 'spindle-demo');
     mkdirSync(parent, { recursive: true });
     await stubDialogs(app, { open: [parent] });
     await dialog.getByRole('button', { name: 'Change…' }).click();
-    await dialog.getByRole('button', { name: 'Create project and add the files' }).click();
+    await dialog.getByRole('button', { name: 'Create project and export the files' }).click();
     await expect(dialog).toBeHidden();
-    await expect(toast(page, `Created the project spindle-demo in ${dir}, with the 6 files of spindle-demo.d64 in it`)).toBeVisible();
+    await expect(toast(page, `Created the project spindle-demo in ${dir}: the work is saved there`)).toBeVisible();
+    await expect(toast(page, `Exported 4 sources of spindle-demo.d64 to ${out}, 2 of them with the files one load call loads, each in a segment written as its own PRG: every one assembles to the same bytes again`)).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole('button', { name: 'Project spindle-demo' })).toBeVisible();
-    await expectFiles(page, ['job01_0800.prg', 'job01_1000.prg', 'job02_4000.prg', 'job02_6000.prg', 'job03_2000.prg', 'job04_cf00.prg']);
-    await expect(inProject(table, 4)).toHaveText(['job01_0800.bin', 'job01_1000.bin', 'job02_4000.bin', 'job02_6000.bin', 'job03_2000.bin', 'job04_cf00.bin']);
-    expect(readFileSync(join(dir, 'spindle-demo.mimir.json'), 'utf8')).toContain('job04_cf00.prg');
-    // in the project, once all are in, it says so
-    await page.getByRole('button', { name: 'Add files to project' }).click();
-    await expect(toast(page, 'Every file of spindle-demo.d64 is in the project already')).toBeVisible();
+    // the project's listing stays as it was
+    await expectFiles(page, ['job01_0800.prg', 'job02_4000.prg']);
+    expect(readdirSync(out).sort()).toEqual(['include', 'job01.asm', 'job02.asm', 'job03.asm', 'job04.asm', 'original']);
+    const job02 = readFileSync(join(out, 'job02.asm'), 'utf8').split('\n');
+    expect(job02[0]).toBe('// job02 — job 2 of spindle-demo.d64, re-assembled by Mimir Studio · Kick Assembler 5.x');
+    expect(job02.filter(l => l.startsWith('.file'))).toEqual(['.file [name="job02_4000.prg", segments="Job02_4000"]', '.file [name="job02_6000.prg", segments="Job02_6000"]']);
+    expect(job02.filter(l => l.startsWith('#import'))).toEqual(['#import "include/c64-hardware.asm"']);
+    expect(readdirSync(join(out, 'original')).sort()).toEqual(['job01_0800.prg', 'job01_1000.prg', 'job02_4000.prg', 'job02_6000.prg', 'job03.prg', 'job04.prg']);
+    expect(existsSync(join(out, 'include', 'c64-hardware.asm'))).toBe(true);
   });
 
   await test.step('Save files… saves every chunk as the script names it and as a PRG, with the script', async () => {
@@ -7410,14 +7413,14 @@ test('a T64 in the datasette: its directory in the Explorer and the Tape tab, Sa
     expect(readFileSync(join(out, 'MIMIR DEMO.prg'))).toEqual(demo);
   });
 
-  await test.step('Add files to project without a project asks for one for the tape\'s files; Cancel leaves the work as it was', async () => {
-    await page.getByRole('button', { name: 'Add files to project' }).click();
-    const dialog = page.getByRole('dialog', { name: 'A project for the files of mimir-demo.t64' });
-    await expect(dialog).toContainText('the 3 files of mimir-demo.t64 go in a new one of their own');
+  await test.step('Export files to project without a project asks for one for the tape\'s sources; Cancel leaves the work as it was', async () => {
+    await page.getByRole('button', { name: 'Export files to project' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Export files to project needs a project' });
+    await expect(dialog).toContainText('Export files to project writes the 3 sources of mimir-demo.t64 in a folder of the project, mimir-demo.');
     await expect(dialog.getByLabel('Name')).toHaveValue('mimir-demo');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
-    await expect(inProject(page.getByRole('table', { name: 'Tape files' }), 4)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^No project/ })).toBeVisible();
   });
 
   await test.step('Build & Run: VICE autostarts a T64 of the built boot file and the files after it', async () => {
@@ -7627,9 +7630,9 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
     expect(readFileSync(join(out, 'sparkle-demo.sls'), 'utf8').split('\r\n')).toContain('File:\t"bundle01_d000.prg*"');
   });
 
-  await test.step('in a project, Add files to project adds the one file not in it yet', async () => {
+  await test.step('in a project, Export files to project writes a source per bundle in a folder named after the disk', async () => {
     // the work made a project first, with the three files in it
-    const parent = join(workDir, 'projects');
+    const parent = join(workDir, 'projects'), out = join(parent, 'sparkle', 'sparkle-demo');
     mkdirSync(parent, { recursive: true });
     await page.getByRole('button', { name: /^No project/ }).click();
     await page.getByRole('menuitem', { name: /^Create a project from this work…/ }).click();
@@ -7639,10 +7642,17 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
     await dialog.getByRole('button', { name: 'Change…' }).click();
     await dialog.getByRole('button', { name: 'Create project and move the work' }).click();
     await expect(page.getByRole('button', { name: 'Project sparkle' })).toBeVisible();
-    await page.getByRole('button', { name: 'Add files to project' }).click();
-    await expect(toast(page, 'Added 1 file of sparkle-demo.d64 to the project (3 were in it already)')).toBeVisible();
-    await expectFiles(page, ['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle02_0400.prg', 'bundle01_d000.prg']);
-    await expect(inProject(bundles, 4)).toHaveText(['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle01_d000.prg', 'bundle02_0400.prg']);
+    await page.getByRole('button', { name: 'Export files to project' }).click();
+    await expect(toast(page, `Exported 3 sources of sparkle-demo.d64 to ${out}, 1 of them with the files one load call loads, each in a segment written as its own PRG: every one assembles to the same bytes again`)).toBeVisible({ timeout: 60_000 });
+    // the project's listing stays as it was
+    await expectFiles(page, ['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle02_0400.prg']);
+    expect(readdirSync(out).sort()).toEqual(['bundle00.asm', 'bundle01.asm', 'bundle02.asm', 'gfx', 'include', 'music', 'original']);
+    // the binary files a source imports are named after its group: two never take each other's
+    expect(readdirSync(join(out, 'music')).every(n => n.startsWith('bundle00_'))).toBe(true);
+    expect(readFileSync(join(out, 'bundle01.asm'), 'utf8').split('\n').filter(l => l.startsWith('.file'))).toEqual(['.file [name="bundle01_3000.prg", segments="Bundle01_3000"]', '.file [name="bundle01_d000.prg", segments="Bundle01_d000"]']);
+    // the raster demo as it is in the bundle, and its source as Mimir reads it
+    expect(readFileSync(join(out, 'original', 'bundle00.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+    expect(readFileSync(join(out, 'bundle00.asm'), 'utf8')).toContain('BasicUpstart2(start)');
   });
 
   await test.step('ejecting the disk takes the tab away', async () => {

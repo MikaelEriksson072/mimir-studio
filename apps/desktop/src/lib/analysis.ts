@@ -16,11 +16,19 @@ const startMain = () => slot(new Worker(new URL('../workers/analysis.worker.ts',
 const startDeep = () => slot(new Worker(new URL('../workers/analysis.worker.ts', import.meta.url), { type: 'module', name: 'mimir-deep-analysis' }));
 
 let main: Slot | null = null;
+let exporter: Slot | null = null;
 
 /** The worker of the normal analysis (and of every analysis without the deep one). */
 export function analysisWorker(): Comlink.Remote<AnalysisApi> {
   if (!main) main = startMain();
   return main.remote;
+}
+
+/** A worker of its own for Export files to project: a disk's groups are analysed there one by one, while the window's
+ *  analysis goes on in its own worker. */
+export function exportWorker(): Comlink.Remote<AnalysisApi> {
+  if (!exporter) exporter = slot(new Worker(new URL('../workers/analysis.worker.ts', import.meta.url), { type: 'module', name: 'mimir-export' }));
+  return exporter.remote;
 }
 
 /** The deep analysis's worker, the inputs (`aKey`) it is working on, and how to drop the calls waiting on it. */
