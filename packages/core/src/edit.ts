@@ -1,5 +1,5 @@
 /* Editing helpers the UI and the CLI share: they turn an intent into the override that does it. */
-import type { Addr, AnalysisResult, Block, BlockKind, ListingLine, NumberFormat, Override, OverrideProps, Project } from './types';
+import type { Addr, AnalysisResult, Block, BlockKind, ListingLine, NumberFormat, Override, OverrideProps, Project, SpriteColors } from './types';
 import { findBlock } from './analyze/classify';
 import { kindInfo, MARK_AS, MARK_TYPE } from './model';
 import { h4 } from './util/hex';
@@ -25,17 +25,19 @@ export const FORMATTABLE: readonly BlockKind[] = ['data', 'table', 'words'];
 
 /**
  * The override that gives block `b` a number format (`hex`, `dec` or `bin`; null: the default, which for words is
- * addresses) or a count of items a row (null: the default), keeping its type and its other settings. `overrides`
- * are the project's: the last one over exactly the block gives the settings, so a second change made before the
- * analysis has caught up with the first keeps the first.
+ * addresses) or a count of items a row (null: the default), graphics multicolour or hires (null: as the VIC registers
+ * say) or sprites their colours (null: the Graphics tab's), keeping its type and its other settings. `overrides` are
+ * the project's: the last one over exactly the block gives the settings, so a second change made before the analysis
+ * has caught up with the first keeps the first.
  */
-export function formatOverride(b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }, overrides: readonly Override[] = []): Override {
+export function formatOverride(b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null; colors?: SpriteColors | null }, overrides: readonly Override[] = []): Override {
   const o = overrideLike(b, b.start, b.end);
   const last = [...overrides].reverse().find(x => x.start === o.start && x.end === o.end);
   const props: OverrideProps = { ...(last && last.type === o.type ? last.props : o.props) };
   if (change.fmt !== undefined) { if (change.fmt && !(change.fmt === 'hex' && b.type !== 'words')) props.fmt = change.fmt; else delete props.fmt; }
   if (change.row !== undefined) { if (change.row) props.row = change.row; else delete props.row; }
   if (change.mc !== undefined) { if (change.mc != null) props.mc = change.mc; else delete props.mc; }
+  if (change.colors !== undefined) { if (change.colors) props.colors = { ...change.colors }; else delete props.colors; }
   return { start: o.start, end: o.end, type: o.type, ...(Object.keys(props).length ? { props } : {}) };
 }
 
@@ -47,6 +49,7 @@ function overrideLike(b: Block, start: Addr, end: Addr): Override {
   if (type === 'data' || type === 'table' || type === 'words') { if (p.fmt) props.fmt = p.fmt; if (p.row) props.row = p.row; }
   if (type === 'music') { if (p.init != null) props.init = p.init; if (p.play != null) props.play = p.play; }
   if ((type === 'sprite' || type === 'charset' || type === 'bitmap') && p.mc != null) props.mc = p.mc;
+  if (type === 'sprite' && p.colors) props.colors = { ...p.colors };
   if (type === 'code' && p.one) props.one = true;
   return { start, end, type, ...(Object.keys(props).length ? { props } : {}) };
 }

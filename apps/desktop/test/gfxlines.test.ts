@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, assemble, formatOverride, markOverride, parsePrg, render, resizeBlock, showcaseProject, type GfxLine, type ListingLine, type ProjectInput } from '@mimir/core';
-import { blockMc, drawGfxLine, gfxMcChanges, markMc, mcSetting, vicMc, gfxCells, gfxHead, gfxItemAt, gfxItemBox, gfxListing, gfxRects, gfxSize } from '../src/lib/gfxlines';
+import { blockMc, drawGfxLine, gfxMcChanges, markMc, mcSetting, sameSpriteColors, spriteColorsOf, spritePairColors, vicMc, gfxCells, gfxHead, gfxItemAt, gfxItemBox, gfxListing, gfxRects, gfxSize } from '../src/lib/gfxlines';
+import { C64, hexRgb } from '../src/lib/palette';
 import { cellAt, cellsOf } from '../src/lib/cells';
 import { foldLines } from '../src/lib/fold';
 import { findText } from '../src/lib/find';
@@ -168,6 +169,64 @@ describe('graphics as pictures in the listing', () => {
     const B = analyze(q);
     expect(pics(gfxListing(render(B, q).lines, B).lines).filter(l => l.kind === 'sprite').some(l => l.mc)).toBe(false);
     expect(gfxMcChanges(B, 'sprites', 0x2000, 0x2100, true).map(c => c.mc)).toEqual(sp.map(() => null));
+  });
+});
+
+describe("sprite colours (set in the inspector's enlarged sprite)", () => {
+  const sprites = A.blocks.find(x => x.type === 'sprite')!;
+  const RED_ON_BLUE = { bg: 6, sprite: 2, mc1: 7, mc2: 1 };
+
+  it("are the VIC's: the sprite's own colour a set pixel or 10, multicolour 1 01 and 2 11", () => {
+    expect(spritePairColors(RED_ON_BLUE, false)).toEqual({ bg: 6, fg: 2, mc1: 7, mc2: 1 });
+    expect(spritePairColors(RED_ON_BLUE, true)).toEqual({ bg: 6, mc1: 7, mc2: 2, fg: 1 });
+    // the Graphics tab's colours (bit pairs) as sprite colours draw the same, either way
+    const tab = { bg: 0, fg: 1, mc1: 15, mc2: 12 };
+    for (const mc of [false, true]) expect(spritePairColors(spriteColorsOf(tab, mc), mc)).toEqual(tab);
+    expect(spriteColorsOf(tab, true)).toEqual({ bg: 0, sprite: 12, mc1: 15, mc2: 1 });
+    expect(sameSpriteColors(RED_ON_BLUE, { ...RED_ON_BLUE })).toBe(true);
+    expect(sameSpriteColors(RED_ON_BLUE, { ...RED_ON_BLUE, mc2: 0 })).toBe(false);
+    expect(sameSpriteColors(null, undefined)).toBe(true);
+    expect(sameSpriteColors(null, RED_ON_BLUE)).toBe(false);
+  });
+
+  it('are saved with the block, kept with its multicolour, and taken away again', () => {
+    const o = formatOverride(sprites, { colors: RED_ON_BLUE });
+    expect(o).toMatchObject({ start: sprites.start, end: sprites.end, type: 'sprite', props: { colors: RED_ON_BLUE } });
+    const q: ProjectInput = { ...p, overrides: [...(p.overrides ?? []), o] };
+    const B = analyze(q), b = B.blocks.find(x => x.type === 'sprite')!;
+    expect(b.props.colors).toEqual(RED_ON_BLUE);
+    // hires set after them keeps them; null takes them away and keeps hires
+    const hires = formatOverride(b, { mc: false }, q.overrides);
+    expect(hires.props).toEqual({ mc: false, colors: RED_ON_BLUE });
+    expect(formatOverride(b, { colors: null }, [...q.overrides!, hires]).props).toEqual({ mc: false });
+  });
+
+  it("draw the block's sprites in the listing, and only its", () => {
+    const q: ProjectInput = { ...p, overrides: [...(p.overrides ?? []), formatOverride(sprites, { colors: RED_ON_BLUE })] };
+    const B = analyze(q), L = pics(gfxListing(render(B, q).lines, B).lines);
+    const s = L.find(l => l.kind === 'sprite')!;
+    // the showcase's sprites are multicolour ($d01c): the sprite's own colour is 10
+    expect(s.mc).toBe(true);
+    expect(s.colors).toEqual({ bg: 6, mc1: 7, mc2: 2, fg: 1 });
+    expect(L.filter(l => l.kind !== 'sprite').every(l => !l.colors)).toBe(true);
+    expect(pics(G.lines).every(l => !l.colors)).toBe(true);
+    const { width, height } = gfxSize(s), px = new Uint8ClampedArray(width * height * 4);
+    drawGfxLine(px, s, B.mem, { bg: 0, fg: 1, mc1: 15, mc2: 12 });
+    const seen = new Set<string>();
+    for (let i = 0; i < px.length; i += 4) if (px[i + 3]) seen.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
+    const allowed = new Set([6, 7, 2, 1].map(c => hexRgb(C64[c]).join(',')));
+    expect([...seen].every(c => allowed.has(c))).toBe(true);
+    expect(seen.has(hexRgb(C64[2]).join(','))).toBe(true);
+  });
+
+  it('go with the sprites when the block takes more of them', () => {
+    const q: ProjectInput = { ...p, overrides: [...(p.overrides ?? []), formatOverride(sprites, { colors: RED_ON_BLUE })] };
+    const B = analyze(q), b = B.blocks.find(x => x.type === 'sprite')!;
+    const r = resizeBlock(B, b.start, b.start, b.start + 6 * 64);
+    if ('error' in r) throw new Error(r.error);
+    const q2: ProjectInput = { ...q, overrides: [...q.overrides!, ...r.overrides] };
+    const C = analyze(q2);
+    expect(C.blocks.find(x => x.type === 'sprite' && x.start === b.start)!.props.colors).toEqual(RED_ON_BLUE);
   });
 });
 

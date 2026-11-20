@@ -1,7 +1,7 @@
 /* Inspector (right column): memory map, block evidence/type/label/comment (or the zero-page variable whose .label line
  * was clicked: its name and comments), graphics/music/text preview. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, refsShown, relocAt, relocLoadedAt, shiftText, viewOffsetAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode } from '@mimir/core';
+import { textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, refsShown, relocAt, relocLoadedAt, shiftText, viewOffsetAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode, type SpriteColors } from '@mimir/core';
 import type { MusicPlayer, TypeGroup } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -10,7 +10,7 @@ import { useUi } from '../store/ui';
 import { Heatmap, type CanvasColors, type HeatMode } from './Heatmap';
 import { GfxPreview, GfxZoom, type GfxMode } from './GfxPreview';
 import { charCount, charIndex, spriteCount, spriteIndex } from '../lib/charzoom';
-import { blockMc } from '../lib/gfxlines';
+import { blockMc, sameSpriteColors, spriteColorsOf, spritePairColors } from '../lib/gfxlines';
 import { libraryKindOf } from '../lib/library';
 import { CyclesSection } from './Cycles';
 import { asmWords, useAssembler } from '../lib/assembler';
@@ -48,6 +48,8 @@ interface InspectorProps {
   onFormat: (b: Block, change: { fmt?: NumberFormat | null; row?: number | null; mc?: boolean | null }) => void;
   /** a sprite block gets `n` sprites (its size in 64-byte steps from its start) */
   onSprites: (b: Block, n: number) => void;
+  /** a sprite block's colours, set in its enlarged sprite (null: the Graphics tab's): the listing draws it in them */
+  onSpriteColors?: (b: Block, colors: SpriteColors | null) => void;
   /** cycle counting on: the counted range and how to mark a branch as taken */
   cycles?: { path: CyclePath; onToggle: (pc: Addr) => void } | null;
   /** the zero-page variable whose `.label` line in the file head was clicked (it has no block of its own) */
@@ -66,7 +68,7 @@ type ZoomKind = 'chars' | 'sprite';
 
 const MARK_ID: Record<string, string> = { code: 'code', data: 'bytes', words: 'words', table: 'table', sprite: 'sprite', charset: 'charset', bitmap: 'bitmap', screen: 'screen', music: 'music', fill: 'fill' };
 
-export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice', onAddToLibrary }: InspectorProps) {
+export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHeatMode, onNavigate, onSelect, onMark, onRename, onBlockComment, onClearOverride, onBankZone, onMerge, onMergeRange, onBlockSize, onRelocate, onUnrelocate, onViewOffset, onRemoveOffset, onToggleExcluded, onToggleBinary, onJunk, onFormat, onSprites, onSpriteColors, cycles, zpVar, onZpNote, onZpComment, onZpPair, bank, onPlayMusic, musicPlayer = 'vice', onAddToLibrary }: InspectorProps) {
   const words = asmWords(useAssembler());
   const B = bank ?? { A, base: 0, cursor, sel, number: null };
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
@@ -87,6 +89,17 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
   // a graphics block shown as what it is: multicolour as set for it (the listing's pictures draw it so too)
   const blockMcOn = !!blk && view === 'auto' && autoMode != null && (sel == null || !sel.multi || (sel.start === blk.start && sel.end === blk.end));
   const mcShown = blockMcOn && blk ? blockMc(A, blk) : mc;
+  // sprites in the colours the listing draws them in: a sprite block's own (set in its enlarged sprite), else the
+  // Graphics tab's. One just picked is shown before the analysis has it (the palette is clicked through quickly)
+  const tabColors = useUi(s => s.gfx.colors);
+  const spriteBlock = blockMcOn && blk?.type === 'sprite' ? blk : null;
+  const [picked, setPicked] = useState<{ at: Addr; c: SpriteColors | null } | null>(null);
+  const saved = spriteBlock?.props.colors ?? null;
+  useEffect(() => { if (picked && (!spriteBlock || picked.at !== spriteBlock.start || sameSpriteColors(picked.c, saved))) setPicked(null); }, [spriteBlock?.start, saved]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ownColors = spriteBlock ? (picked && picked.at === spriteBlock.start ? picked.c : saved) : null;
+  const spriteColors = ownColors ?? spriteColorsOf(tabColors, mcShown);
+  const spritePal = spritePairColors(spriteColors, mcShown);
+  const paintSprites = (c: SpriteColors | null) => { if (!spriteBlock || !onSpriteColors) return; setPicked({ at: spriteBlock.start, c }); onSpriteColors(spriteBlock, c); };
   // the character or sprite shown enlarged (14.1): its address in the preview's memory (B.A.mem), what it is and the
   // start of the block or selection whose preview it was picked in, and a count of the clicks that picked one (they
   // focus it). Another block, selection or mode closes it, but for one carried there (it waits for the view to become
@@ -202,7 +215,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
           </div>
           {mode && range ? (
             <>
-              <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={gfxEnd - B.base} mode={mode} mc={mcShown}
+              <div className="gfx-box"><GfxPreview mem={B.A.mem} start={range.start - B.base} end={gfxEnd - B.base} mode={mode} mc={mcShown} colors={mode === 'sprite' ? spritePal : undefined}
                 pick={zoomPick} onPick={zoomKind ? i => { pickZoom(zStart + i * (zoomKind === 'sprite' ? 64 : 8)); setZoomClicks(c => c + 1); } : undefined} /></div>
               {blockMcOn && blk ? <div className="mc-row">
                 <label className="check" title="Saved with the block: the listing's pictures draw it so too"><input type="checkbox" checked={mcShown} onChange={e => onFormat(blk, { mc: e.target.checked })} /> Multicolor</label>
@@ -212,6 +225,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
               {blockMcOn && blk && onAddToLibrary && libraryKindOf(blk.type) && <div className="merge-row"><button className="btn small" onClick={() => onAddToLibrary(blk.start)}
                 title={`Keep a copy of the ${blk.type === 'sprite' ? 'sprites' : 'charset'} in the library (the Library view in the activity bar), for every project, named after where it was found`}><Icon name="library" size={13} />Add to library</button></div>}
               {zoomKind && zoomed != null ? <GfxZoom kind={zoomKind} mem={B.A.mem} start={zStart} addr={zoomed} count={nZoom} mc={mcShown} focus={zoomClicks}
+                colors={zoomKind === 'sprite' ? spritePal : undefined} paint={zoomKind === 'sprite' && spriteBlock && onSpriteColors ? { colors: spriteColors, own: !!ownColors, onChange: paintSprites } : undefined}
                 where={zoomWhere} onPick={pickZoom} onClose={() => setZoom(null)} onGo={zoomGo} />
                 : zoomKind && <p className="muted small">Click a {zoomKind === 'sprite' ? 'sprite' : 'character'} to see it enlarged.</p>}
             </>

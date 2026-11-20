@@ -905,6 +905,19 @@ main.main { container: editor / inline-size; }
 .sz-bytes > div.on { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .sz-bytes i + i { margin-left: 2px; }
 .sz-pad { margin-top: 2px; }
+/* a sprite block's colours over its enlarged sprite: a swatch each (background, the sprite's own, multicolour 1 and 2),
+ * the one open framed, and the 16 C64 colours under them, 8 a row, the one it has ringed */
+.sz-colors { margin: -2px 0 8px; }
+.sz-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sz-chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px 0 4px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel); color: var(--fg); font-size: 11px; cursor: pointer; }
+.sz-chip:hover { border-color: var(--fg-3); }
+.sz-chip.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.sz-chip i { width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.55); }
+.sz-tab { margin-left: auto; white-space: nowrap; }
+.sz-palette { display: grid; grid-template-columns: repeat(8, 22px); gap: 3px; margin-top: 6px; }
+.sz-palette button { width: 22px; height: 18px; padding: 0; border-radius: 3px; border: 0; box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.55); cursor: pointer; }
+.sz-palette button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sz-palette button.on { box-shadow: 0 0 0 2px var(--editor), 0 0 0 4px var(--accent); }
 @container sprite-zoom (max-width: 245px) { .sz-bytes .bits { display: none; } }
 @container sprite-zoom (max-width: 263px) { .sz-bytes.mc .bits { display: none; } }
 /* the inspector: multicolour as set for the block, or back to what the VIC registers say */

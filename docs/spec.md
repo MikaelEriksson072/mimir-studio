@@ -5766,6 +5766,22 @@ blocket visas då som Sprite med samma sprite förstorad (i samma färger), så 
 läge än Sprite stänger den. Under en förhandsvisning som Sprite utan förstorad sprite står *Click a sprite to see it
 enlarged.* (`spriteStep` i `charzoom.ts`; `carry` i `Inspector.tsx` för adressen, för tecken och sprites.)
 
+**En sprites färger:** sprites ritas i inspektorn (förhandsvisningen som Sprite och den förstorade spriten) i samma
+färger som listningens bilder: sprite-blockets egna, annars Graphics-flikens. I den förstorade spriten i ett
+sprite-block (visat som det är, *Auto*) står en rad med en ruta för varje färg som VIC ger sprites: **BG** (bakgrunden,
+`$d021`: pixlar 0, i multicolor 00), **Sprite** (spritens egen färg, `$d027`-`$d02e`: pixlar 1, i multicolor 10), och i
+multicolor **MC1** (`$d025`: 01) och **MC2** (`$d026`: 11), som i SpritePad. Ett klick på en ruta öppnar C64:ans 16
+färger under raden (8 i bredd, den valda inringad); ett klick på en färg ger blocket den, och paletten står kvar så att
+man kan pröva flera. Färgerna sparas med blocket (`OverrideProps.colors`, som *Multicolor*), så listningen ritar
+blockets sprites i dem; byte blocket växer eller slås ihop med (`overrideLike`) behåller dem, och de står kvar när
+blocket växlar mellan hires och multicolor (spritens egen färg är 10 i multicolor). Varje val är ett steg som `Ctrl+Z`
+tar tillbaka, och spriten visar valet direkt, innan analysen har det. **as the Graphics tab** tar bort blockets färger,
+så att det ritas i Graphics-flikens igen. I raden flyttar pilarna mellan rutorna och färgerna (inte till en annan
+sprite), och `Esc` stänger paletten först. Graphics-flikens färger är bitparens (00, 01, 10, 11), så ett block utan egna
+färger får dem omräknade till spritens (`spriteColorsOf`, `spritePairColors` i `apps/desktop/src/lib/gfxlines.ts`) och
+ser ut som förut. *Add to library* tar med blockets färger. Utanför ett sprite-block (andra byte som Sprite, en
+markering) visas ingen färgrad och Graphics-flikens färger används.
+
 Editorns flikrad anpassar sig efter editorns egen bredd (CSS container queries på `.main`), inte fönstrets, eftersom
 sidopanelen och inspektorn tar sin del:
 - **Under 1650 px:** verktygens tangenttips (`G`, `Ctrl+F`) försvinner; de står kvar i verktygstipsen.

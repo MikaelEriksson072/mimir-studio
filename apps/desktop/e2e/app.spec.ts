@@ -6410,6 +6410,102 @@ test('a click on a sprite in the inspector\'s Sprite preview shows it enlarged, 
   });
 });
 
+test('the enlarged sprite gives its block colours, which the listing draws it in; undo and the Graphics tab\'s take them back', async ({ page }) => {
+  await waitForListing(page);
+  const insp = page.locator('.inspector');
+  const canvas = insp.getByLabel('sprite preview');
+  const zoom = insp.locator('.sprite-zoom');
+  const row = zoom.getByRole('group', { name: 'Sprite colours' });
+  const chip = (name: string) => row.getByRole('button', { name: new RegExp(`^${name}: `) });
+  const palette = (name: string) => row.getByRole('group', { name: `Pick the ${name}` });
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  // the RGB of a C64 colour, as the canvases and the pixels draw it
+  const RGB: Record<string, string> = { black: '0,0,0', white: '255,255,255', red: '104,55,43', blue: '53,40,121' };
+  /** the colour of a C64 pixel of the listing's picture of the ball at $2000 (its middle is set, its corner not) */
+  const listingPixel = (x: number, y: number) => page.locator('.listing .gfx-strip.gfx-sprite canvas').first()
+    .evaluate((c: HTMLCanvasElement, [x, y]) => [...c.getContext('2d')!.getImageData(x, y, 1, 1).data.slice(0, 3)].join(','), [x, y]);
+  /** the colour of a pixel of the enlarged sprite (the ball's middle: row 10, column 12) */
+  const zoomPixel = (i: number) => zoom.locator('.sz-grid i').nth(i).evaluate(e => getComputedStyle(e).backgroundColor.replace(/[^\d,]/g, ''));
+  const MIDDLE = 10 * 24 + 12, CORNER = 0;
+
+  await test.step('the ball at $2000 enlarged: its colours are the Graphics tab\'s, as the listing draws it', async () => {
+    await goTo(page, '$2000');
+    await canvas.scrollIntoViewIfNeeded();
+    const b = (await canvas.boundingBox())!;
+    await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $80 enlarged');
+    // hires: the background and the sprite's own colour, no multicolours
+    await expect(row.locator('.sz-chip')).toHaveText(['BG', 'Sprite']);
+    await expect(chip('Background')).toHaveAttribute('aria-label', 'Background: black');
+    await expect(chip('Sprite colour')).toHaveAttribute('aria-label', 'Sprite colour: white');
+    await expect(row.locator('.sz-tab')).toHaveText('as the Graphics tab');
+    await expect(row.getByRole('button', { name: 'as the Graphics tab' })).toHaveCount(0);
+    expect(await zoomPixel(MIDDLE)).toBe(RGB.white);
+    await expect.poll(() => listingPixel(12, 10)).toBe(RGB.white);
+    await expect.poll(() => listingPixel(0, 0)).toBe(RGB.black);
+  });
+
+  await test.step('a click on the sprite\'s swatch opens the 16 colours; red is its colour here and in the listing', async () => {
+    await chip('Sprite colour').click();
+    await expect(chip('Sprite colour')).toHaveAttribute('aria-expanded', 'true');
+    await expect(palette('sprite colour').getByRole('button')).toHaveCount(16);
+    await expect(palette('sprite colour').getByRole('button', { name: 'white', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await palette('sprite colour').getByRole('button', { name: 'red', exact: true }).click();
+    await expect(chip('Sprite colour')).toHaveAttribute('aria-label', 'Sprite colour: red');
+    expect(await zoomPixel(MIDDLE)).toBe(RGB.red);
+    await expect.poll(() => listingPixel(12, 10)).toBe(RGB.red);
+    await expect(undo).toHaveAttribute('title', 'Undo: $2000-$203f: sprite colours red on black (Ctrl+Z)');
+    // saved with the block: the Graphics tab's colours are a click away
+    await expect(row.getByRole('button', { name: 'as the Graphics tab' })).toBeVisible();
+  });
+
+  await test.step('the arrows move between the colours, not to another sprite; Esc closes the palette, not the sprite', async () => {
+    const red = palette('sprite colour').getByRole('button', { name: 'red', exact: true });
+    await expect(red).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(palette('sprite colour').getByRole('button', { name: 'cyan', exact: true })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(palette('sprite colour').getByRole('button', { name: 'dark grey', exact: true })).toBeFocused();
+    await expect(zoom).toHaveAttribute('aria-label', 'Sprite $80 enlarged');
+    await page.keyboard.press('Escape');
+    await expect(row.locator('.sz-palette')).toHaveCount(0);
+    await expect(chip('Sprite colour')).toBeFocused();
+    await expect(zoom).toBeVisible();
+  });
+
+  await test.step('the background blue: the corner of the ball in the listing too', async () => {
+    await chip('Background').click();
+    await palette('background').getByRole('button', { name: 'blue', exact: true }).click();
+    await expect(chip('Background')).toHaveAttribute('aria-label', 'Background: blue');
+    expect(await zoomPixel(CORNER)).toBe(RGB.blue);
+    await expect.poll(() => listingPixel(0, 0)).toBe(RGB.blue);
+    await expect.poll(() => listingPixel(12, 10)).toBe(RGB.red);
+  });
+
+  await test.step('multicolour: the swatches of multicolour 1 and 2 come, and the colours stay', async () => {
+    await insp.locator('.mc-row').getByRole('checkbox', { name: 'Multicolor' }).click();
+    await expect(insp.locator('.mc-row').getByRole('checkbox', { name: 'Multicolor' })).toBeChecked();
+    await expect(row.locator('.sz-chip')).toHaveText(['BG', 'Sprite', 'MC1', 'MC2']);
+    await expect(chip('Sprite colour')).toHaveAttribute('aria-label', 'Sprite colour: red');
+    await expect(chip('Background')).toHaveAttribute('aria-label', 'Background: blue');
+    await undo.click();
+    await expect(row.locator('.sz-chip')).toHaveText(['BG', 'Sprite']);
+  });
+
+  await test.step('Undo takes the background back, the Graphics tab\'s colours the rest', async () => {
+    await undo.click();
+    await expect(chip('Background')).toHaveAttribute('aria-label', 'Background: black');
+    await expect(chip('Sprite colour')).toHaveAttribute('aria-label', 'Sprite colour: red');
+    await expect.poll(() => listingPixel(0, 0)).toBe(RGB.black);
+    await row.getByRole('button', { name: 'as the Graphics tab' }).click();
+    await expect(chip('Sprite colour')).toHaveAttribute('aria-label', 'Sprite colour: white');
+    await expect(row.getByRole('button', { name: 'as the Graphics tab' })).toHaveCount(0);
+    expect(await zoomPixel(MIDDLE)).toBe(RGB.white);
+    await expect.poll(() => listingPixel(12, 10)).toBe(RGB.white);
+    await expect(undo).toHaveAttribute('title', "Undo: $2000-$203f: the Graphics tab's colours (Ctrl+Z)");
+  });
+});
+
 test('loaders: the Explorer names the loader and lists its parts, which the listing and the source mark', async ({ app, page }) => {
   await waitForListing(page);
   await openSection(page, 'Files');

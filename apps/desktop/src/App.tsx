@@ -16,7 +16,7 @@ import {
   checkScript, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
-  type Addr, type AnalysisResult, type Block, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
+  type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
@@ -39,7 +39,8 @@ const SCRIPTS_FOLD_KEY = 'kr.scriptsFold';
 const MUSIC_FIELD_TEXT: Record<MusicField, string> = { location: 'music: where it is loaded (LoadSid)', init: 'music: its init routine', play: 'music: its play routine', size: 'music: its length in bytes, no address' };
 import { blockStep, foldLines } from './lib/fold';
 import { closeWindow, holdClose, whenClosing } from './lib/closing';
-import { blockMc, gfxColsFor, gfxListing, gfxMcChanges, markMc } from './lib/gfxlines';
+import { blockMc, gfxColsFor, gfxListing, gfxMcChanges, markMc, spritePairColors } from './lib/gfxlines';
+import { C64_NAMES } from './lib/palette';
 import { gfxLayout } from './lib/gfxview';
 import { blockView } from './lib/blockfolders';
 import { cellAt, cellsOf, type Cell } from './lib/cells';
@@ -1482,6 +1483,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     update(`$${h4(b.start)}-$${h4(b.end - 1)}: ${what}`, d => { d.overrides.push(formatOverride(b, change, d.overrides)); });
     showChanged(b.start, b.end, what[0].toUpperCase() + what.slice(1));
   };
+  /** a sprite block's colours, picked in the inspector's enlarged sprite (null: the Graphics tab's again): the listing
+   *  draws its sprites in them. The cursor stays where it is (the palette is clicked through) */
+  const setSpriteColors = (b: Block, colors: SpriteColors | null) => {
+    const what = colors ? `sprite colours ${C64_NAMES[colors.sprite]} on ${C64_NAMES[colors.bg]}` : "the Graphics tab's colours";
+    update(`$${h4(b.start)}-$${h4(b.end - 1)}: ${what}`, d => { d.overrides.push(formatOverride(b, { colors }, d.overrides)); });
+  };
   /** Multicolor switched in the Graphics tab with `r` selected: the sprites, charsets or bitmaps of the type its `view`
    *  draws that the selection is in are drawn so in the listing too (their setting, as the inspector's Multicolor) */
   const setGfxMc = (r: Range, view: string, mc: boolean) => {
@@ -2448,7 +2455,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const bytes = kind === 'chars' ? charsetFile(raw, spaceAddr(start)) : spriteFile(raw);
       const label = R.labels.get(start)?.name ?? `${kind === 'chars' ? 'charset' : 'sprites'}_${h4(spaceAddr(start))}`;
       const mc = gfx ? gfx.mc : blockMc(A, b!);
-      setLibDraft({ kind, bytes, data: kind === 'chars' ? raw : bytes, name: label, from, mc, colors: gfx ? gfx.colors : { ...useUi.getState().gfx.colors } });
+      // sprites in the colours given them in the inspector, else (and a charset) the Graphics tab's
+      const own = !gfx && b!.type === 'sprite' ? b!.props.colors : undefined;
+      setLibDraft({ kind, bytes, data: kind === 'chars' ? raw : bytes, name: label, from, mc, colors: gfx ? gfx.colors : own ? spritePairColors(own, mc) : { ...useUi.getState().gfx.colors } });
     }
     if (!libState().listing) void libState().load();
     setModal('library');
@@ -4143,7 +4152,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onAddToLibrary={a => startLibraryAdd(a)}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onSpriteColors={setSpriteColors} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onAddToLibrary={a => startLibraryAdd(a)}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpPair={pairZp} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>

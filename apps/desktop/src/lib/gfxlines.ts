@@ -4,7 +4,7 @@
  * picture taller than a row of the listing is followed by lines that only make its room (`pad`), so every line keeps
  * the listing's row height. Labels, comment lines and the .import of a binary file stay lines of their own, and
  * break the picture where they are. The export and the source view do not change. Pure, so the tests share it. */
-import { findBlock, h4, type Addr, type AnalysisResult, type Block, type GfxLine, type ListingLine, type Override } from '@mimir/core';
+import { findBlock, h4, type Addr, type AnalysisResult, type Block, type GfxLine, type ListingLine, type Override, type SpriteColors } from '@mimir/core';
 import { fileLineNumbers } from './lines';
 import { C64, hexRgb } from './palette';
 import type { GfxColors } from './gfxview';
@@ -60,6 +60,23 @@ export function markMc(A: AnalysisResult, o: Override, mc: boolean): Override {
   const props = v == null ? rest : { ...rest, mc: v };
   return Object.keys(props).length ? { ...base, props } : base;
 }
+
+/** Sprites' colours (as the VIC gives them) as the colours of the bit pairs that drawGfxLine and the Graphics tab take
+ *  (00, 01, 10, 11; hires 0 and 1 as 00 and 11): the sprite's own colour is a set pixel, in multicolour 10, and
+ *  multicolour 2 ($d026) is 11. */
+export function spritePairColors(c: SpriteColors, mc: boolean): GfxColors {
+  return mc ? { bg: c.bg, mc1: c.mc1, mc2: c.sprite, fg: c.mc2 } : { bg: c.bg, fg: c.sprite, mc1: c.mc1, mc2: c.mc2 };
+}
+
+/** The sprite colours that draw sprites as the bit pairs' colours `t` (the Graphics tab's) do, multicolour or not:
+ *  spritePairColors the other way round. */
+export function spriteColorsOf(t: GfxColors, mc: boolean): SpriteColors {
+  return mc ? { bg: t.bg, sprite: t.mc2, mc1: t.mc1, mc2: t.fg } : { bg: t.bg, sprite: t.fg, mc1: t.mc1, mc2: t.mc2 };
+}
+
+/** whether two sets of sprite colours (or none) are the same */
+export const sameSpriteColors = (a: SpriteColors | null | undefined, b: SpriteColors | null | undefined): boolean =>
+  !a || !b ? !a === !b : a.bg === b.bg && a.sprite === b.sprite && a.mc1 === b.mc1 && a.mc2 === b.mc2;
 
 /** the block type each Graphics tab view draws (lib/gfxview GfxKind): its multicolour is that block's */
 const GFX_VIEW_BLOCK: Record<string, Block['type'] | undefined> = { sprites: 'sprite', chars: 'charset', fontrows: 'charset', bitmap: 'bitmap' };
@@ -131,12 +148,13 @@ export function gfxItemText(A: AnalysisResult, l: GfxLine, k: number): string {
 }
 
 /**
- * Draw picture line `l` into RGBA `px` (gfxSize wide and high): each item in the colours of the Graphics tab, hires or
- * multicolour (pairs of bits: background, mc1, mc2, foreground); where no item is, transparent.
+ * Draw picture line `l` into RGBA `px` (gfxSize wide and high): each item in its block's colours (sprites given theirs
+ * in the inspector) or else `colors`, the Graphics tab's, hires or multicolour (pairs of bits: background, mc1, mc2,
+ * foreground); where no item is, transparent.
  */
 export function drawGfxLine(px: Uint8ClampedArray, l: GfxLine, mem: Uint8Array, colors: GfxColors): void {
-  const { width } = gfxSize(l), g = GFX_GEOMETRY[l.kind];
-  const pal = [colors.bg, colors.mc1, colors.mc2, colors.fg].map(i => hexRgb(C64[i & 15]));
+  const { width } = gfxSize(l), g = GFX_GEOMETRY[l.kind], c = l.colors ?? colors;
+  const pal = [c.bg, c.mc1, c.mc2, c.fg].map(i => hexRgb(C64[i & 15]));
   px.fill(0);
   const put = (x: number, y: number, c: number[]) => { const o = (y * width + x) * 4; px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = 255; };
   const byte = (v: number, x: number, y: number) => {
@@ -184,7 +202,8 @@ export function gfxListing(all: readonly ListingLine[], A: AnalysisResult, cols:
     const push = (s: Addr, e: Addr, col: number) => {
       const cs = r.cmts.filter(c => c.a < e && c.a + c.n > s), cmt = cs.map(c => c.cmt).join(' · ');
       const names = r.names.filter(x => x.a >= s && x.a < e);
-      const l: GfxLine = { k: 'gfx', a: s, n: e - s, kind: kind!, unit: g.unit, col, cols: g.cols, rows: 1, blk: b!.start, mc, ...(cmt ? { cmt, cmtAt: cs.map(c => c.a) } : {}), ...(names.length ? { names } : {}) };
+      const own = kind === 'sprite' ? b!.props.colors : undefined;
+      const l: GfxLine = { k: 'gfx', a: s, n: e - s, kind: kind!, unit: g.unit, col, cols: g.cols, rows: 1, blk: b!.start, mc, ...(own ? { colors: spritePairColors(own, mc) } : {}), ...(cmt ? { cmt, cmtAt: cs.map(c => c.a) } : {}), ...(names.length ? { names } : {}) };
       const h = gfxGridRows(l) * g.h * g.scale + (kind === 'sprite' ? SPRITE_CAPTION + 4 : kind === 'bitmap' ? 8 : 0);
       l.rows = Math.max(1, Math.ceil(h / ROW_PX));
       keep(l, numAt(s));

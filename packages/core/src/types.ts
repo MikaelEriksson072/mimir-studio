@@ -61,9 +61,16 @@ export interface OverrideProps {
   /** sprites, a charset or a bitmap: drawn multicolour (true) or hires (false) in the listing's pictures; missing:
    *  as the VIC evidence says ($d01c for sprites, $d016 for the others) */
   mc?: boolean;
+  /** sprites: the colours the listing's pictures and the inspector draw them in (set in the enlarged sprite); missing:
+   *  the Graphics tab's */
+  colors?: SpriteColors;
   /** code: one block over the whole range, not split per routine (code blocks merged when marking, Auto merge) */
   one?: boolean;
 }
+
+/** C64 colour numbers (0-15) of sprites as the VIC gives them: the background ($d021, seen where a pixel is 0 or 00),
+ *  the sprite's own colour ($d027-$d02e: a set pixel, multicolour 10), multicolour 1 ($d025: 01) and 2 ($d026: 11) */
+export interface SpriteColors { bg: number; sprite: number; mc1: number; mc2: number }
 
 export interface Override {
   start: Addr;
@@ -560,6 +567,8 @@ export interface BlockProps {
   to?: Addr;
   /** graphics drawn multicolour or hires (OverrideProps.mc) */
   mc?: boolean;
+  /** sprites: the colours they are drawn in (OverrideProps.colors) */
+  colors?: SpriteColors;
   /** code merged into one block, not split per routine (OverrideProps.one) */
   one?: boolean;
 }
@@ -1061,7 +1070,7 @@ export interface FileLine { k: 'file'; a: Addr; text: string; fi: number }
  * addresses `cmtAt` (Project.comments); `names`: the labels of its sprites, written under them instead of on lines of
  * their own.
  */
-export interface GfxLine { k: 'gfx'; a: Addr; n: number; kind: 'sprite' | 'chars' | 'bitmap'; unit: number; col: number; cols: number; rows: number; blk: Addr; mc: boolean; cmt?: string; cmtAt?: Addr[]; names?: { a: Addr; name: string }[]; pad?: boolean }
+export interface GfxLine { k: 'gfx'; a: Addr; n: number; kind: 'sprite' | 'chars' | 'bitmap'; unit: number; col: number; cols: number; rows: number; blk: Addr; mc: boolean; colors?: { bg: number; fg: number; mc1: number; mc2: number }; cmt?: string; cmtAt?: Addr[]; names?: { a: Addr; name: string }[]; pad?: boolean }
 export type ListingLine = Line | FileLine | GfxLine;
 
 export interface RenderLabel { name: string; kind: string; user: boolean }
