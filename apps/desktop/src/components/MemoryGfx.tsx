@@ -619,23 +619,25 @@ function SpanField({ label, what, first, last, max, title, onSet }: { label: str
 }
 
 /** a number from 0 to `max`, typed in (Enter or leaving the field takes it) or stepped with the arrow keys or the mouse
- *  wheel (a step at most every 60 ms, so a touchpad does not race) */
+ *  wheel (a step at most every 60 ms, so a touchpad does not race). Only text typed is taken: leaving the field right
+ *  after a step does not take the number it showed before the step came back (that undid the step) */
 function NumField({ aria, value, max, onSet }: { aria: string; value: number; max: number; onSet: (n: number) => void }) {
   const [text, setText] = useState(String(value));
   const [bad, setBad] = useState(false);
-  const lastWheel = useRef(0);
-  useEffect(() => { setText(String(value)); setBad(false); }, [value]);
+  const lastWheel = useRef(0), typed = useRef(false);
+  useEffect(() => { setText(String(value)); setBad(false); typed.current = false; }, [value]);
   const take = () => {
+    if (!typed.current) return;
     const t = text.trim(), n = Number(t);
     if (!t || !Number.isInteger(n) || n < 0 || n > max) { setBad(true); return; }
-    setBad(false);
+    typed.current = false; setBad(false);
     if (n !== value) onSet(n); else setText(String(n));
   };
-  const step = (d: number) => { const n = Math.min(max, Math.max(0, value + d)); setBad(false); if (n !== value) onSet(n); else setText(String(n)); };
+  const step = (d: number) => { const n = Math.min(max, Math.max(0, value + d)); typed.current = false; setBad(false); setText(String(n)); if (n !== value) onSet(n); };
   return (
     <input aria-label={aria} className={cx('mono gfxv-addr gfxv-num', bad && 'bad')} value={text} inputMode="numeric" spellCheck={false}
       title={bad ? `A whole number from 0 to ${max}` : `0 to ${max}: Enter takes it, the arrow keys or the mouse wheel step it`}
-      onChange={e => { setText(e.target.value); setBad(false); }} onBlur={take}
+      onChange={e => { setText(e.target.value); setBad(false); typed.current = true; }} onBlur={take}
       onKeyDown={e => {
         if (e.key === 'Enter') { e.preventDefault(); take(); }
         else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); step(e.key === 'ArrowUp' ? 1 : -1); }
