@@ -4,6 +4,32 @@ import { h2, word } from '../util/hex';
 
 export const BASIC_TOKENS = ('END FOR NEXT DATA INPUT# INPUT DIM READ LET GOTO RUN IF RESTORE GOSUB RETURN REM STOP ON WAIT LOAD SAVE VERIFY DEF POKE PRINT# PRINT CONT LIST CLR CMD SYS OPEN CLOSE GET NEW TAB( TO FN SPC( THEN NOT STEP + - * / ^ AND OR > = < SGN INT ABS USR FRE POS SQR RND LOG EXP COS SIN TAN ATN PEEK LEN STR$ VAL ASC CHR$ LEFT$ RIGHT$ MID$ GO').split(' ');
 
+const tokText = (t: number): string => t >= 0x80 && t <= 0xcb ? BASIC_TOKENS[t - 0x80] : t >= 0x20 && t < 0x60 ? String.fromCharCode(t) : `{${h2(t)}}`;
+
+/** The line as the listing's comment shows it: each SYS address also in hex, `1999 SYS2065 ($0811) ABC`
+ *  (`hex` writes the number as the listing writes its numbers). A $9e inside quotes is a colour code, not SYS. */
+export function basicLineComment(l: BasicLine, hex: (v: number) => string): string {
+  const t = l.toks;
+  let s = l.num + ' ', quoted = false;
+  for (let i = 0; i < t.length;) {
+    const c = t[i++];
+    s += tokText(c);
+    if (c === 0x22) quoted = !quoted;
+    if (c !== 0x9e || quoted) continue;
+    let j = i;
+    while (t[j] === 0x20 || t[j] === 0x28) j++;
+    let k = j;
+    while (t[k] >= 0x30 && t[k] <= 0x39) k++;
+    if (k === j) continue;
+    const v = parseInt(t.slice(j, k).map(x => String.fromCharCode(x)).join(''), 10) & 0xffff;
+    // SYS(2065): the hex after the closing bracket
+    if (t[k] === 0x29 && t.slice(i, j).includes(0x28)) k++;
+    s += t.slice(i, k).map(tokText).join('') + ` (${hex(v)})`;
+    i = k;
+  }
+  return s;
+}
+
 export function parseBasic(mem: Uint8Array, owner: Int16Array, start: Addr): BasicInfo | null {
   const lines: BasicLine[] = [];
   let a = start;
@@ -32,7 +58,7 @@ export function parseBasic(mem: Uint8Array, owner: Int16Array, start: Addr): Bas
     let p = a + 4;
     while (p < link - 1 && mem[p] !== 0) toks.push(mem[p++]);
     if (p !== link - 1 || mem[p] !== 0) return null;
-    lines.push({ addr: a, num, toks, text: num + ' ' + toks.map(t => t >= 0x80 && t <= 0xcb ? BASIC_TOKENS[t - 0x80] : t >= 0x20 && t < 0x60 ? String.fromCharCode(t) : `{${h2(t)}}`).join('') });
+    lines.push({ addr: a, num, toks, text: num + ' ' + toks.map(tokText).join('') });
     a = link;
   }
   return null;

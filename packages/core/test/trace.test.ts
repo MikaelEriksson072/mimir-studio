@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, createProject, deserializeProject, findBlock, h4, hwSymbol, parseBasic, render, serializeProject, verify, type FileInput } from '../src';
 import { fromSource } from './helpers/programs';
+import { basicLineComment } from '../src/c64/basic';
 
 const run = (file: FileInput, extra: object = {}) => {
   const p = { name: 't', files: [file], ...extra };
@@ -27,6 +28,16 @@ describe('entry points', () => {
     const prog = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00];
     mem.set(prog, 0x0801); owner.fill(0, 0x0801, 0x0801 + prog.length);
     expect(parseBasic(mem, owner, 0x0801)?.lines[0].text).toBe('10 SYS2061');
+  });
+
+  it('gives each SYS address in hex too in the listing comment', () => {
+    const hex = (v: number) => '$' + h4(v);
+    const line = (num: number, s: string) => ({ addr: 0x0801, num, text: '', toks: [...s].map(c => c === '~' ? 0x9e : c.charCodeAt(0)) });
+    expect(basicLineComment(line(1999, '~2065 ABC'), hex)).toBe('1999 SYS2065 ($0811) ABC');
+    expect(basicLineComment(line(10, '~(2061):~ 4096'), hex)).toBe('10 SYS(2061) ($080d):SYS 4096 ($1000)');
+    // no number after SYS, and a colour code ($9e) inside quotes
+    expect(basicLineComment(line(20, '~A'), hex)).toBe('20 SYSA');
+    expect(basicLineComment(line(30, '"~1"'), hex)).toBe('30 "SYS1"');
   });
 
   it('uses the program start the user set, keeping the BASIC SYS target as code', () => {

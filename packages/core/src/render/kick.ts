@@ -13,6 +13,7 @@ import { SYM, hwSymbol, isIO } from '../c64/symbols';
 import { petsciiControl, petsciiDefinitions, textEncoding, textTokens } from '../c64/text';
 import { ALL_BANKS, ALL_PORTS, areaAt, bankRange, banked, banksOf, describePorts, portsOf, reaches, reachesForName } from '../c64/memconfig';
 import { makePsid } from '../c64/psid';
+import { basicLineComment } from '../c64/basic';
 import { findBlock } from '../analyze/classify';
 import { spindleCondition, spindleName, spindleScript } from '../analyze/spindle';
 import { boozeScript } from '../analyze/booze';
@@ -571,7 +572,7 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
         const bs = A.basics.find(x => x.start === b.start);
         if (bs && bs.upstart && S.basicUpstart && b.end === bs.end && !hiddenLabel(b.start, b.end)) {
           const tk: Token[] = bs.sys != null ? addrTokens(bs.sys, ctx) : [{ t: 'num', s: '0' }];
-          const text = bs.lines.map(l => l.text).join(' : ');
+          const text = bs.lines.map(l => basicLineComment(l, n4)).join(' : ');
           if (tass) {
             // 64tass has no BasicUpstart2: the line it writes, as 64tass's manual writes it (the link to the end
             // marker `+`, line 10, SYS and the start's digits)
@@ -586,7 +587,7 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
         } else {
           seg('Basic');
           label(b.start);
-          dataRows(out, b.start, b.end, ctx, { cmt: p => { const l = bs && bs.lines.find(x => x.addr === p); return l ? l.text : ''; }, row: S.bytesPerRow });
+          dataRows(out, b.start, b.end, ctx, { cmt: p => { const l = bs && bs.lines.find(x => x.addr === p); return l ? basicLineComment(l, n4) : ''; }, row: S.bytesPerRow });
         }
         break;
       }

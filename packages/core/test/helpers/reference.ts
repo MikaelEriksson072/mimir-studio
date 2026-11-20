@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { detectMusic } from '../../src/analyze/music';
 import { CHAR_OUT, d018Case, handedText, inlineAfter, inlineString, popsReturn, printCase, printers, printLoop, sentCase, stringLen, stringSwitch } from '../../src/analyze/strings';
 import { petsciiControl, petsciiDefinitions, textTokens } from '../../src/c64/text';
+import { basicLineComment } from '../../src/c64/basic';
 
 export interface Edit { find: string; replace: string }
 export interface Deviation { why: string; edits: Edit[] }
@@ -313,6 +314,13 @@ export const DEVIATIONS: Deviation[] = [
       },
     ],
   },
+  {
+    why: 'A BASIC line\'s comment in the listing gave the SYS address in decimal only, as the line has it; it now gives it in hex too, in brackets, `1999 SYS2065 ($0811) ABC` (production code, `basicLineComment`)',
+    edits: [
+      { find: "cmt: bs.lines.map(l => l.text).join(' : ') });", replace: "cmt: bs.lines.map(l => strs.basicLineComment(l, n4)).join(' : ') });" },
+      { find: "return l ? l.text : ''; }, row: S.bytesPerRow });", replace: "return l ? strs.basicLineComment(l, n4) : ''; }, row: S.bytesPerRow });" },
+    ],
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -331,7 +339,7 @@ export function loadReference(): ReferenceKR {
   // The prototype is an IIFE that installs itself on `window` or `globalThis`: hand it a private root
   // (same realm, so typed arrays and Maps compare normally), the production music detection and print routines.
   const root: { KR?: ReferenceKR } = {};
-  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase, popsReturn, inlineString, inlineAfter, petsciiControl, petsciiDefinitions, textTokens });
+  new Function('window', 'globalThis', 'detectMusic', 'strs', src)(undefined, root, detectMusic, { printers, printLoop, handedText, CHAR_OUT, stringLen, sentCase, d018Case, stringSwitch, printCase, popsReturn, inlineString, inlineAfter, petsciiControl, petsciiDefinitions, textTokens, basicLineComment });
   cached = root.KR;
   return cached;
 }

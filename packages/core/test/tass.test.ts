@@ -26,7 +26,7 @@ describe('the 64tass source', () => {
     const { text } = source(demo());
     expect(text).toMatch(/^; raster-demo\.prg — re-assembled by Mimir Studio\n; load \$0801-\$37ff \(12287 bytes\) · entry start · 64tass 1\.57 \(-a -C\)\n/);
     expect(text).toContain('.include "include/c64-hardware.asm"');
-    expect(text).toContain('* = $0801                               ; Basic\n        .word (+), 10                   ; 10 SYS2064\n        .null $9e, format("%d", start)\n+\n        .word 0');
+    expect(text).toContain('* = $0801                               ; Basic\n        .word (+), 10                   ; 10 SYS2064 ($0810)\n        .null $9e, format("%d", start)\n+\n        .word 0');
     expect(text).toContain('* = $0810                               ; Code\nstart:');
     // the built-in 64tass assembler's memory map takes the names from there
     const p = as64(demo()), A = analyze(p), V = verify(A, render(A, p));
