@@ -7,7 +7,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
@@ -567,7 +567,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const entries = [...new Set(opened.flatMap(f => f.entries ?? []))];
     // a snapshot's BASIC SYS is the program start: its RAM from $0200 cannot be started with RUN
     const start = add ? undefined : opened.find(f => f.start != null)?.start;
-    if (add) update(`Add ${files.map(f => f.name).join(', ')}`, d => { d.files.push(...files); for (const e of entries) if (!d.entries.includes(e)) d.entries.push(e); });
+    if (add) update(opts.undoLabel ?? `Add ${files.map(f => f.name).join(', ')}`, d => { d.files.push(...files); for (const e of entries) if (!d.entries.includes(e)) d.entries.push(e); });
     // an empty project's nothing comes back with Ctrl+Z
     else { replace({ ...createProject({ name: projectNameFor(files[0].name), files, settings: newProjectSettings(project.settings) }), entries, entryPoint: start ?? null }, undoLabel); resetView(); }
     if (opts.gfx) setGfxGo({ id: files[0].id, n: Date.now() });
@@ -760,18 +760,33 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!tape || f.load == null) return;
     lastFrom.current = { kind: 'tape', f };
     try {
-      const base = tapeFileName(f).replace(/\.\w+$/, '');
-      const file = withId(parsePrg(`${base}.prg`, makePrg(f.load, f.data)));
-      tapeOf.current.set(file.id, { tap: tape.bytes, file: f, header: false, boot: tapeBoot(tape.img, f) });
-      const files = [file];
-      if (f.headerCode && f.header) {
-        const h = withId(parsePrg(`${base}-header.prg`, makePrg(0x033c, f.header)));
-        tapeOf.current.set(h.id, { tap: tape.bytes, file: f, header: true });
-        files.push(h);
-      }
+      const files = tapeFiles(tape, f);
       addFiles(files, add, { gfx: true });
       if (files.length > 1) toast(`${f.name}'s header holds code: it is in the project too, as ${files[1].name} at $033c-$03fb (the tape buffer)`, 'info');
     } catch (e) { toast(`"${f.name}": ${errorText(e)}`, 'err'); }
+  };
+  /** a file of the tape as the project takes it: a PRG, and its header (the tape buffer) when that holds code; each
+   *  kept with the tape it came from */
+  const tapeFiles = (t: MountedTape, f: TapeFile) => {
+    const base = tapeFileName(f).replace(/\.\w+$/, '');
+    const file = withId(parsePrg(`${base}.prg`, makePrg(f.load!, f.data)));
+    tapeOf.current.set(file.id, { tap: t.bytes, file: f, header: false, boot: tapeBoot(t.img, f) });
+    const files = [file];
+    if (f.headerCode && f.header) {
+      const h = withId(parsePrg(`${base}-header.prg`, makePrg(0x033c, f.header)));
+      tapeOf.current.set(h.id, { tap: t.bytes, file: f, header: true });
+      files.push(h);
+    }
+    return files;
+  };
+  /** every file of the tape that opens and is not in the project yet, added to it in tape order (as each row's + adds it) */
+  const addTapeFiles = () => {
+    if (!tape) return;
+    const all = tape.img.files.filter(tapeOpens), left = all.filter(f => !tapeOpen.has(f));
+    if (!left.length) { toast(all.length ? `Every file of ${tape.name} is in the project already` : `${tape.name} has no file that opens as a program`, 'info'); return; }
+    try {
+      addFiles(left.flatMap(f => tapeFiles(tape, f)), true, { undoLabel: `Add ${left.length} file${left.length === 1 ? '' : 's'} of ${tape.name}`, note: addedNote(left.length, all.length, tape.name) });
+    } catch (e) { toast(errorText(e), 'err'); }
   };
   /** every file of the tape to a folder, as PRGs; a TapeTool tape's with boot.bin and build.bat, TapeTool's command
    *  lines that write the tape again */
@@ -861,6 +876,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const loaderOf = useRef(new Map<string, object>());
   const fromLoader = <T extends { id: string }>(item: object, files: T[]): T[] => { for (const f of files) loaderOf.current.set(f.id, item); return files; };
   const loaderOpen: ReadonlySet<object> = new Set(project.files.flatMap(f => { const x = loaderOf.current.get(f.id); return x ? [x] : []; }));
+  /** what Add files to project says: how many it added of `all`, and how many were in the project already */
+  const addedNote = (n: number, all: number, from: string, what = 'file') =>
+    `Added ${n} ${what}${n === 1 ? '' : 's'} of ${from} to the project${all > n ? ` (${all - n} ${all - n === 1 ? 'was' : 'were'} in it already)` : ''}`;
+  /** Add files to project in a loader tab: every file of the tab not in the project yet, added to it in the tab's order
+   *  as each row's + adds it (so where two load over each other, the later one wins); `rows`: the tab's files, each with
+   *  the files it opens as */
+  const addLoaderFiles = (rows: [item: object, files: () => OpenedPrg[]][], from: string, what = 'file') => {
+    const left = rows.filter(([item]) => !loaderOpen.has(item));
+    if (!left.length) { toast(rows.length ? `Every ${what} of ${from} is in the project already` : `${from} has no ${what} that opens as a program`, 'info'); return; }
+    try {
+      addFiles(left.flatMap(([item, files]) => fromLoader(item, files())), true, { undoLabel: `Add ${left.length} ${what}${left.length === 1 ? '' : 's'} of ${from}`, note: addedNote(left.length, rows.length, from, what) });
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
   /** the animation streams of the mounted Spindle disk (a player in one job stores them frame by frame, core
    *  store-anim): a chunk opened from the Spindle tab that holds one is animation data, not a packed file */
   const storeAnims = useMemo(() => (disk?.spindle ? spinStoreAnims(disk.spindle) : []), [disk]);
@@ -869,14 +897,39 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return c ? chunkAnimData(storeAnims, c as SpindleChunk) : null;
   };
   /** a chunk of a Spindle disk's job, as a PRG at its address */
+  const spinChunkFile = (j: SpindleJob, c: SpindleChunk) => withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)));
   const openChunk = (j: SpindleJob, c: SpindleChunk, add: boolean) => {
-    try { addFiles(fromLoader(c, [withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(c, [spinChunkFile(j, c)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const addSpindleFiles = () => {
+    const d = disk?.spindle;
+    if (disk && d) addLoaderFiles(d.jobs.flatMap(j => j.chunks.map(c => [c, () => [spinChunkFile(j, c)]] as [object, () => OpenedPrg[]])), disk.name);
+  };
+  /** every chunk of a Spindle disk's jobs in a folder: as the load script names it (the bytes alone, the script gives
+   *  the address) and as a PRG at its address, with the script */
+  const saveSpindleFiles = async () => {
+    if (!kr) return needDesktop();
+    const d = disk?.spindle;
+    if (!disk || !d) return;
+    const files: Record<string, Uint8Array | string> = {};
+    let n = 0;
+    for (const j of d.jobs) for (const c of j.chunks) {
+      n++;
+      files[spinChunkName(j, c)] = c.bytes.slice();
+      files[spinChunkName(j, c).replace(/\.bin$/, '.prg')] = makePrg(c.start, c.bytes);
+    }
+    const script = `${disk.name.replace(/\.(d64|g64)$/i, '')}-spin.txt`;
+    files[script] = `${spinScript(d, disk.name).join('\n')}\n`;
+    try {
+      const w = await kr.writeExport({ target: 'pick', files });
+      if (w) toast(`Saved ${n} chunk${n === 1 ? '' : 's'} of ${disk.name}'s jobs to ${w.dir}, each as the script names it (.bin) and as a PRG, and ${script}, the load script Spin reads`, 'ok');
+    } catch (e) { toast(errorText(e), 'err'); }
   };
   /** all the chunks of a Spindle disk's job as a project, each a PRG at its address (a part's code, tables and data
    *  together); `anim`: the PETSCII animation its code plays (spec 14.5b), shown in Graphics → Animations then */
   const openJob = (j: SpindleJob, anim: PetsciiAnim | null) => {
     try {
-      const files = j.chunks.map(c => fromLoader(c, [withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))])[0]);
+      const files = j.chunks.map(c => fromLoader(c, [spinChunkFile(j, c)])[0]);
       const lo = Math.min(...j.chunks.map(c => c.start)), hi = Math.max(...j.chunks.map(c => c.end)) - 1;
       addFiles(files, false, {
         what: `job ${j.n} (${files.length} chunk${files.length === 1 ? '' : 's'})`, gfx: !anim,
@@ -886,18 +939,70 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a Bitfire disk as a PRG: unpacked, at where it unpacks to; else as it loads */
+  const bitfirePrg = (f: BitfireFile) => makePrg(f.unpacked?.start ?? f.load, f.unpacked?.bytes ?? f.bytes);
+  const bitfireFile = (f: BitfireFile) => withId(parsePrg(bitfireFileName(f).replace(/\.lz$/, '.prg'), bitfirePrg(f)));
   const openBitfireFile = (f: BitfireFile, add: boolean) => {
-    const u = f.unpacked;
-    try { addFiles(fromLoader(f, [withId(parsePrg(bitfireFileName(f).replace(/\.lz$/, '.prg'), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [bitfireFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const addBitfireFiles = () => {
+    const d = disk?.bitfire;
+    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [bitfireFile(f)]]), disk.name);
+  };
+  /** every file of a Bitfire disk in a folder: as it is on the disk (what d64write's -b takes, the .lz the command line
+   *  names) and unpacked as a PRG when it is packed, with d64write's command line that writes the disk again */
+  const saveBitfireFiles = async () => {
+    if (!kr) return needDesktop();
+    const d = disk?.bitfire;
+    if (!disk || !d) return;
+    const files: Record<string, Uint8Array | string> = {};
+    for (const f of d.files) {
+      files[bitfireFileName(f)] = makePrg(f.load, f.bytes);
+      if (f.unpacked) files[bitfireFileName(f).replace(/\.lz$/, '.prg')] = bitfirePrg(f);
+    }
+    const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, script = `${disk.name.replace(/\.(d64|g64)$/i, '')}-d64write.sh`;
+    files[script] = `${d64writeScript(d, disk.name).join('\n')}\n`;
+    try {
+      const w = await kr.writeExport({ target: 'pick', files });
+      if (w) toast(`Saved ${n} file${n === 1 ? '' : 's'} of ${disk.name} to ${w.dir} (${unpacked} of them unpacked as well), and ${script}, d64write's command line that writes the disk again`, 'ok');
+    } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a BoozeLoader disk as a PRG: unpacked, at where it unpacks to; else as it loads (as much as memory holds) */
+  const boozePrg = (f: BoozeFile) => makePrg(f.unpacked?.start ?? f.load, f.unpacked?.bytes ?? f.bytes.subarray(0, f.end - f.load));
+  const boozeFile = (f: BoozeFile) => withId(parsePrg(boozeFileName(f), boozePrg(f)));
   const openBoozeFile = (f: BoozeFile, add: boolean) => {
-    const u = f.unpacked;
-    try { addFiles(fromLoader(f, [withId(parsePrg(boozeFileName(f), makePrg(u?.start ?? f.load, u?.bytes ?? f.bytes.subarray(0, f.end - f.load))))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [boozeFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const addBoozeFiles = () => {
+    const d = disk?.booze;
+    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [boozeFile(f)]]), disk.name);
+  };
+  /** every file of a BoozeLoader disk in a folder: as a PRG, unpacked when it is packed (else as much as memory holds),
+   *  and as it is on the disk when that is not the same (packed: .b1 or .b2; longer than memory: .raw, all of it), with
+   *  the list of the files */
+  const saveBoozeFiles = async () => {
+    if (!kr) return needDesktop();
+    const d = disk?.booze;
+    if (!disk || !d) return;
+    const files: Record<string, Uint8Array | string> = {};
+    for (const f of d.files) {
+      files[boozeFileName(f)] = boozePrg(f);
+      if (f.unpacked || f.long) files[boozeFileName(f).replace(/\.prg$/, f.unpacked ? `.${d.cruncher ?? 'packed'}` : '.raw')] = makePrg(f.load, f.bytes);
+    }
+    const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, list = `${disk.name.replace(/\.(d64|g64)$/i, '')}-booze.txt`;
+    files[list] = `${boozeFileList(d, disk.name).join('\r\n')}\r\n`;
+    try {
+      const w = await kr.writeExport({ target: 'pick', files });
+      if (w) toast(`Saved ${n} file${n === 1 ? '' : 's'} of ${disk.name} to ${w.dir}${unpacked ? ` (${unpacked} unpacked, and as they are on the disk)` : ''}, and ${list}, the list of them`, 'ok');
+    } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a chunk of a Sparkle disk's bundle, as a PRG at its address */
+  const sparkleFile = (b: SparkleBundle, c: SparkleChunk) => withId(parsePrg(sparkleChunkName(b, c), sparkleChunkPrg(c)));
   const openSparkleChunk = (b: SparkleBundle, c: SparkleChunk, add: boolean) => {
-    try { addFiles(fromLoader(c, [withId(parsePrg(sparkleChunkName(b, c), sparkleChunkPrg(c)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(c, [sparkleFile(b, c)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const addSparkleFiles = () => {
+    const d = disk?.sparkle;
+    if (disk && d) addLoaderFiles(d.bundles.flatMap(b => b.chunks.map(c => [c, () => [sparkleFile(b, c)]] as [object, () => OpenedPrg[]])), disk.name);
   };
   /** every chunk of a Sparkle disk's bundles as a PRG in a folder, with the loader script rebuilt to load them */
   const saveSparkleFiles = async () => {
@@ -914,9 +1019,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a part of an IFFL file unpacked: its pieces, a PRG each at where it unpacks to */
+  const ifflPartFiles = (f: IfflFile, p: IfflPart) => (p.pieces ?? []).map(x => withId(parsePrg(ifflPieceName(f, p, x), ifflPiecePrg(x))));
   const openIfflPart = (f: IfflFile, p: IfflPart, add: boolean) => {
     if (!p.pieces) return;
-    try { addFiles(fromLoader(p, p.pieces.map(x => withId(parsePrg(ifflPieceName(f, p, x), ifflPiecePrg(x))))), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(p, ifflPartFiles(f, p)), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /** the parts that are packed (a part that is not has no address of its own: Save parts… saves it) */
+  const addIfflParts = () => {
+    const d = disk?.iffl;
+    if (disk && d) addLoaderFiles(d.files.flatMap(f => f.parts.filter(p => p.pieces).map(p => [p, () => ifflPartFiles(f, p)] as [object, () => OpenedPrg[]])), disk.name, 'part');
   };
   /** every part of the disk's IFFL files in a folder: as it is stored and, when it is packed, its pieces unpacked as
    *  PRGs */
@@ -938,8 +1049,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a disk for Krill's loader as a PRG: unpacked, at where it unpacks to; else as it loads */
+  const krillFile = (f: KrillFile) => withId(parsePrg(krillUnpackedName(f), krillFilePrg(f)));
   const openKrillFile = (f: KrillFile, add: boolean) => {
-    try { addFiles(fromLoader(f, [withId(parsePrg(krillUnpackedName(f), krillFilePrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [krillFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const addKrillFiles = () => {
+    const d = disk?.krill;
+    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [krillFile(f)]]), disk.name);
   };
   /** every file of a disk for Krill's loader in a folder: as it is on the disk (what cc1541 writes), and unpacked as a
    *  PRG when it is packed, with cc1541's command line that writes the disk again */
@@ -963,8 +1079,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a disk for the Covert Bitops loader as a PRG: unpacked, at where it unpacks to; else as it loads */
+  const covertFile = (f: CovertFile) => withId(parsePrg(covertUnpackedName(f), covertFilePrg(f)));
   const openCovertFile = (f: CovertFile, add: boolean) => {
-    try { addFiles(fromLoader(f, [withId(parsePrg(covertUnpackedName(f), covertFilePrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [covertFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const addCovertFiles = () => {
+    const d = disk?.covert;
+    if (disk && d) addLoaderFiles(d.files.map(f => [f, () => [covertFile(f)]]), disk.name);
   };
   /** every file of a disk for the Covert Bitops loader in a folder: as it is on the disk (what makedisk or maked64
    *  takes), and unpacked as a PRG when it is packed, with the tool's command file and a note with its command line */
@@ -993,6 +1114,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!d) return;
     try { addFiles(fromLoader(f, [withId(parsePrg(dlocUnpackedName(f, d), dlocFilePrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
   };
+  /** in the order the tab lists them: the order they load in, then the files no load names */
+  const addDlocFiles = () => {
+    const d = disk?.dloc;
+    if (!disk || !d) return;
+    const rows = [...d.order, ...d.files.map(f => f.entry).filter(e => !d.order.includes(e))].map(e => d.entries[e].file!);
+    addLoaderFiles(rows.map(f => [f, () => [withId(parsePrg(dlocUnpackedName(f, d), dlocFilePrg(f)))]]), disk.name);
+  };
   /** every file of a disk for DLoC's loader in a folder: as it is on the disk (what c1541 writes), and unpacked as a
    *  PRG when it is packed, with the script (the files in the order they load, and c1541's command line) */
   const saveDlocFiles = async () => {
@@ -1012,8 +1140,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file outside the directory of a Pirate Slayer disk as a PRG at its load address, decoded (as much as memory holds) */
+  const pirateSlayerFile = (f: PirateSlayerFile) => withId(parsePrg(pirateSlayerFileName(f), pirateSlayerPrg(f)));
   const openPirateSlayerFile = (f: PirateSlayerFile, add: boolean) => {
-    try { addFiles(fromLoader(f, [withId(parsePrg(pirateSlayerFileName(f), pirateSlayerPrg(f)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try { addFiles(fromLoader(f, [pirateSlayerFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const addPirateSlayerFiles = () => {
+    const p = disk?.pirateslayer;
+    if (disk && p) addLoaderFiles(p.files.map(f => [f, () => [pirateSlayerFile(f)]]), disk.name);
   };
   /** every file outside the directory of a Pirate Slayer disk, decoded, as a PRG each in a folder, with files.txt that
    *  lists them */
@@ -4125,16 +4258,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {shownBottom === 'xrefs' && <XrefPanel A={A} R={R} cursor={cursor} onNavigate={nav} S={S} />}
             {shownBottom === 'irqs' && <RasterPanel A={A} R={R} onNavigate={nav} />}
             {shownBottom === 'relocs' && <RelocPanel A={A} R={R} relocs={project.relocs} onNavigate={nav} onRelocate={(r, copyAt) => startRelocate(r, copyAt)} onUnrelocate={unrelocate} />}
-            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} onOpenJob={openJob} />}
-            {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} />}
-            {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} />}
-            {shownBottom === 'sparkle' && disk?.sparkle && <SparklePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openSparkleChunk} onSaveFiles={() => void saveSparkleFiles()} />}
-            {shownBottom === 'iffl' && disk?.iffl && <IfflPanel disk={disk} open={loaderOpen} onOpenPart={openIfflPart} onSaveParts={() => void saveIfflParts()} />}
-            {shownBottom === 'krill' && <KrillPanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openKrillFile} onSaveFiles={() => void saveKrillFiles()} />}
-            {shownBottom === 'covert' && disk?.covert && <CovertPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openCovertFile} onSaveFiles={() => void saveCovertFiles()} />}
-            {shownBottom === 'dloc' && disk?.dloc && <DlocPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openDlocFile} onSaveFiles={() => void saveDlocFiles()} />}
-            {shownBottom === 'pirateslayer' && disk?.pirateslayer &&<PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onSaveFiles={() => void savePirateSlayerFiles()} />}
-            {shownBottom === 'tape' && tape && <TapePanel tape={tape} open={tapeOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onSaveFiles={() => void saveTapeFiles()} />}
+            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} onOpenJob={openJob} onAddFiles={addSpindleFiles} onSaveFiles={() => void saveSpindleFiles()} />}
+            {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} onAddFiles={addBitfireFiles} onSaveFiles={() => void saveBitfireFiles()} />}
+            {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} onAddFiles={addBoozeFiles} onSaveFiles={() => void saveBoozeFiles()} />}
+            {shownBottom === 'sparkle' && disk?.sparkle && <SparklePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openSparkleChunk} onAddFiles={addSparkleFiles} onSaveFiles={() => void saveSparkleFiles()} />}
+            {shownBottom === 'iffl' && disk?.iffl && <IfflPanel disk={disk} open={loaderOpen} onOpenPart={openIfflPart} onAddParts={addIfflParts} onSaveParts={() => void saveIfflParts()} />}
+            {shownBottom === 'krill' && <KrillPanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openKrillFile} onAddFiles={addKrillFiles} onSaveFiles={() => void saveKrillFiles()} />}
+            {shownBottom === 'covert' && disk?.covert && <CovertPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openCovertFile} onAddFiles={addCovertFiles} onSaveFiles={() => void saveCovertFiles()} />}
+            {shownBottom === 'dloc' && disk?.dloc && <DlocPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openDlocFile} onAddFiles={addDlocFiles} onSaveFiles={() => void saveDlocFiles()} />}
+            {shownBottom === 'pirateslayer' && disk?.pirateslayer &&<PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onAddFiles={addPirateSlayerFiles} onSaveFiles={() => void savePirateSlayerFiles()} />}
+            {shownBottom === 'tape' && tape && <TapePanel tape={tape} open={tapeOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onAddFiles={addTapeFiles} onSaveFiles={() => void saveTapeFiles()} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
             {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild({ ...project, settings: S })} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}
           </ErrorBoundary></div>

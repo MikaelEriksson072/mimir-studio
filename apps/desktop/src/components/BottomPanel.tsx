@@ -16,12 +16,27 @@ import type { BuildState, Message, MountedDisk, MountedTape, UiProblem } from '.
 import type { TypeGroup } from '@mimir/core';
 import { asmWords, useAssembler } from '../lib/assembler';
 import { labelRefs, XREF_KIND, type LabelRef } from '../lib/labelrefs';
+import { tapeOpens } from './Sidebar';
 
 /** The files of a loader tab that are in the project (opened or added from it): their rows are marked as the Explorer
  *  marks a disk's files in the project (a line on the left, `aria-current`), so the tab shows which file is loaded. */
 type InProject = ReadonlySet<object>;
 /** a loader tab's row of a file in `open`: the class, `aria-current` and its tip */
 const mark = (on: boolean, title?: string) => ({ 'aria-current': on || undefined, title: title && on ? `${title}: it is in the project` : title });
+
+/** A loader tab's buttons beside Copy script: Add files to project adds every file of the tab that is not in the project
+ *  yet (`left` of them), as each row's + adds it; Save files… saves them all to a folder picked (`saveTitle` says
+ *  how). `what`: files, or an IFFL tab's parts. */
+function FileButtons({ left, onAdd, onSave, saveTitle, what = 'files' }: { left: number; onAdd: () => void; onSave: () => void; saveTitle: string; what?: 'files' | 'parts' }) {
+  return (
+    <>
+      <button className="btn small" onClick={onAdd} title={left ? `Add the ${left} ${left === 1 ? what.slice(0, -1) : what} not in the project yet to it, in this order, as each row's + adds them (where two load over each other, the later one wins)` : `Every one of these ${what} is in the project`}><Icon name="plus" size={14} />Add {what} to project</button>
+      <button className="btn small" onClick={onSave} title={saveTitle}><Icon name="download" size={14} />Save {what}…</button>
+    </>
+  );
+}
+/** how many of `items` are not in the project */
+const notIn = (open: InProject, items: readonly object[]) => items.filter(x => !open.has(x)).length;
 
 export function LogList({ items, onNavigate, empty }: { items: UiProblem[]; onNavigate: (a: Addr) => void; empty: string }) {
   if (!items.length) return <div className="empty">{empty}</div>;
@@ -220,14 +235,16 @@ interface SpindlePanelProps {
   onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void;
   /** open all of a job's chunks as a project (`anim`: then Graphics shows the PETSCII animation its code plays) */
   onOpenJob: (j: SpindleJob, anim: PetsciiAnim | null) => void;
+  /** Add files to project, Save files…: every chunk of the disk's jobs */
+  onAddFiles: () => void; onSaveFiles: () => void;
 }
 
 /** The Spindle script tab: a mounted Spindle 3 disk's load script (Spin's jobs), and the effect drivers in memory. */
-export function SpindlePanel({ A, R, disk, open, onNavigate, onCopy, onOpenChunk, onOpenJob }: SpindlePanelProps) {
+export function SpindlePanel({ A, R, disk, open, onNavigate, onCopy, onOpenChunk, onOpenJob, onAddFiles, onSaveFiles }: SpindlePanelProps) {
   if (!A.spindle.length && !disk?.spindle) return <div className="empty">No Spindle script: a Spindle 3 disk holds the jobs its load script lists, and a VICE snapshot of a trackmo linked with Pefchain holds its effect drivers.</div>;
   return (
     <>
-      {disk?.spindle && <SpinDiskSection disk={disk} open={open} onCopy={onCopy} onOpenChunk={onOpenChunk} onOpenJob={onOpenJob} />}
+      {disk?.spindle && <SpinDiskSection disk={disk} open={open} onCopy={onCopy} onOpenChunk={onOpenChunk} onOpenJob={onOpenJob} onAddFiles={onAddFiles} onSaveFiles={onSaveFiles} />}
       {A.spindle.length > 0 && <DriversSection A={A} R={R} onNavigate={onNavigate} onCopy={onCopy} />}
     </>
   );
@@ -243,7 +260,7 @@ export function jobAnim(j: SpindleJob): PetsciiAnim | null {
 /** A Spindle 3 disk's jobs (spec 13.5b), a row per chunk; a row opens the chunk as a PRG at its address, + adds it. A
  *  job's first row opens all its chunks at once, and says when its code plays a PETSCII animation (14.5b), or when the
  *  job is animation data another job's player stores frame by frame, or holds that player. */
-function SpinDiskSection({ disk, open, onCopy, onOpenChunk, onOpenJob }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void; onOpenJob: (j: SpindleJob, anim: PetsciiAnim | null) => void }) {
+function SpinDiskSection({ disk, open, onCopy, onOpenChunk, onOpenJob, onAddFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void; onOpenJob: (j: SpindleJob, anim: PetsciiAnim | null) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.spindle!;
   const chunks = d.jobs.reduce((n, j) => n + j.chunks.length, 0);
   const anims = useMemo(() => new Map(d.jobs.map(j => [j, jobAnim(j)])), [d]);
@@ -263,6 +280,7 @@ function SpinDiskSection({ disk, open, onCopy, onOpenChunk, onOpenJob }: { disk:
       <div className="xref-head spindle-head">
         <span>Load script of {disk.name} (Spin, Spindle 3): {d.jobs.length} job{d.jobs.length === 1 ? '' : 's'}, {chunks} chunk{chunks === 1 ? '' : 's'} <span className="muted">· a job is a loader call{d.start != null ? `; after job 1 the boot program goes to $${h4(d.start)}` : ''}{d.next != null ? '; then the next disk side' : ''}; the file names are not on the disk</span></span>
         <button className="btn small" onClick={() => onCopy(spinScript(d, disk.name).join('\n'), 'Copied the load script')}><Icon name="copy" size={14} />Copy script</button>
+        <FileButtons left={notIn(open, d.jobs.flatMap(j => j.chunks))} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle="Save every chunk of the jobs to a folder, as the load script names it (.bin) and as a PRG, with the load script Spin reads" />
       </div>
       <table className="tbl" aria-label="Spindle load script"><thead><tr><th>Job</th><th>Loads</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
         {d.jobs.flatMap(j => j.chunks.map((c, k) => {
@@ -293,7 +311,7 @@ function SpinDiskSection({ disk, open, onCopy, onOpenChunk, onOpenJob }: { disk:
 /** The Bitfire script tab (spec 13.5c): a Bitfire disk's own files, a row each, in the order d64write wrote them (and
  *  the loader loads them); a row opens the file as a PRG, unpacked when it is packed (bitnax for 0.x, else dali), +
  *  adds it. */
-export function BitfirePanel({ disk, open, onCopy, onOpenFile }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: BitfireFile, add: boolean) => void }) {
+export function BitfirePanel({ disk, open, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: BitfireFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.bitfire!;
   const unpacked = d.files.filter(f => f.unpacked).length, n = d.files.length, packer = d.format === '0.x' ? 'bitnax' : 'dali';
   // what the disk's own directory holds: the boot program and other files (and a dirart)
@@ -308,6 +326,7 @@ export function BitfirePanel({ disk, open, onCopy, onOpenFile }: { disk: Mounted
       <div className="xref-head spindle-head">
         <span>Files of {disk.name} ({BITFIRE_VERSION[d.format]}{d.oldBitnax ? ', packed as in 2014–2015' : ''}, side {d.side}): {n} file{n === 1 ? '' : 's'}{unpacked ? `, ${unpacked} unpacked` : ''} <span className="muted">· Bitfire has no load script: a part loads the next file or one by its number, so this is the order they load in; d64write's command line rebuilds the disk{dirText}; the file names are not on the disk</span></span>
         <button className="btn small" onClick={() => onCopy(d64writeScript(d, disk.name).join('\n'), 'Copied the d64write command line')}><Icon name="copy" size={14} />Copy script</button>
+        <FileButtons left={notIn(open, d.files)} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle="Save every file as it is on the disk and unpacked to a folder, with d64write's command line that writes the disk again" />
       </div>
       <table className="tbl" aria-label="Bitfire files"><thead><tr><th>File</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>Name</th><th>Notes</th><th /></tr></thead><tbody>
         {d.files.map(f => {
@@ -332,7 +351,7 @@ export function BitfirePanel({ disk, open, onCopy, onOpenFile }: { disk: Mounted
 /** The Sparkle script tab (spec 13.5i): a Sparkle disk's bundles, the files each loader call loads, a row per chunk
  *  in the order they load; a row opens the chunk as a PRG at its address, + adds it. Copy script gives the loader
  *  script rebuilt from the disk, Save files… every chunk as a PRG with that script. */
-export function SparklePanel({ disk, open, onCopy, onOpenChunk, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (b: SparkleBundle, c: SparkleChunk, add: boolean) => void; onSaveFiles: () => void }) {
+export function SparklePanel({ disk, open, onCopy, onOpenChunk, onAddFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (b: SparkleBundle, c: SparkleChunk, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.sparkle!;
   const chunks = d.bundles.reduce((n, b) => n + b.chunks.length, 0);
   const send = d.api?.send;
@@ -350,7 +369,7 @@ export function SparklePanel({ disk, open, onCopy, onOpenChunk, onSaveFiles }: {
       <div className="xref-head spindle-head">
         <span>Bundles of {disk.name} (Sparkle{d.side != null ? `, side ${d.side}` : ''}): {d.bundles.length} bundle{d.bundles.length === 1 ? '' : 's'}, {chunks} file{chunks === 1 ? '' : 's'} <span className="muted">· a bundle is a loader call: {how}; interleave {d.il.join(', ')}{d.next != null ? `; then side ${d.next}` : ''}{d.complete ? '' : '; the last bundle of the side did not unpack (its last block counts on one more, where the blocks are not Sparkle blocks)'}; the file names are not on the disk</span></span>
         <button className="btn small" onClick={() => onCopy(sparkleScript(d, disk.name).join('\n'), 'Copied the loader script')}><Icon name="copy" size={14} />Copy script</button>
-        <button className="btn small" onClick={onSaveFiles} title="Save every bundle's files as PRGs to a folder, with the loader script that loads them"><Icon name="download" size={14} />Save files…</button>
+        <FileButtons left={notIn(open, d.bundles.flatMap(b => b.chunks))} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle="Save every bundle's files as PRGs to a folder, with the loader script that loads them" />
       </div>
       <table className="tbl" aria-label="Sparkle bundles"><thead><tr><th>Bundle</th><th>Loads</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
         {d.bundles.flatMap(b => b.chunks.map((c, k) => {
@@ -376,7 +395,7 @@ export function SparklePanel({ disk, open, onCopy, onOpenChunk, onSaveFiles }: {
  *  is a chain of pieces packed with Exomizer, each with where it ends in memory: a row opens the part's pieces unpacked,
  *  a PRG each at where it unpacks to, + adds them; a part that is not packed so has no address and is only saved.
  *  Save parts… writes every part as it is stored and its pieces unpacked. */
-export function IfflPanel({ disk, open, onOpenPart, onSaveParts }: { disk: MountedDisk; open: InProject; onOpenPart: (f: IfflFile, p: IfflPart, add: boolean) => void; onSaveParts: () => void }) {
+export function IfflPanel({ disk, open, onOpenPart, onAddParts, onSaveParts }: { disk: MountedDisk; open: InProject; onOpenPart: (f: IfflFile, p: IfflPart, add: boolean) => void; onAddParts: () => void; onSaveParts: () => void }) {
   const d = disk.iffl!;
   const n = d.files.reduce((a, f) => a + f.parts.length, 0), unpacked = d.files.reduce((a, f) => a + f.parts.filter(p => p.pieces).length, 0);
   const packers = [...new Set(d.files.flatMap(f => (f.packer ? [IFFL_PACKER[f.packer].name] : [])))];
@@ -384,7 +403,7 @@ export function IfflPanel({ disk, open, onOpenPart, onSaveParts }: { disk: Mount
     <div className="xref spindle">
       <div className="xref-head spindle-head">
         <span>IFFL parts of {disk.name}: {d.files.map(f => `"${f.name}"`).join(', ')}, {n} part{n === 1 ? '' : 's'}, {unpacked} unpacked{packers.length ? ` (${packers.join(', ')})` : ''} <span className="muted">· an IFFL file is one file with all the parts a game loads: its first sector is the table of their lengths, and the game's loader asks for a part by its number. It is no program, so it does not run or unpack as one: open its parts here</span></span>
-        <button className="btn small" onClick={onSaveParts} title="Save every part to a folder: as it is stored in the file and, when it is packed, its pieces unpacked as PRGs"><Icon name="download" size={14} />Save parts…</button>
+        <FileButtons what="parts" left={notIn(open, d.files.flatMap(f => f.parts.filter(p => p.pieces)))} onAdd={onAddParts} onSave={onSaveParts} saveTitle="Save every part to a folder: as it is stored in the file and, when it is packed, its pieces unpacked as PRGs" />
       </div>
       <table className="tbl" aria-label="IFFL parts"><thead><tr><th>Part</th><th>In file</th><th>At</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
         {d.files.flatMap(f => f.parts.map(p => {
@@ -416,12 +435,12 @@ export function IfflPanel({ disk, open, onOpenPart, onSaveParts }: { disk: Mount
  *  a row goes to its code, and the file it loads on the mounted disk opens from its button. Copy script gives cc1541's
  *  command line that writes the disk again (the script's, the script with it), Save files… every file as it is on the
  *  disk and unpacked, with them. */
-export function KrillPanel({ A, disk, open, onNavigate, onCopy, onOpenFile, onSaveFiles }: { A: AnalysisResult; disk: MountedDisk | null; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function KrillPanel({ A, disk, open, onNavigate, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { A: AnalysisResult; disk: MountedDisk | null; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   if (!disk?.krill && !A.krill?.steps.length) return <div className="empty">No Krill script: a program with Krill's loader calls it with X and Y naming a file, and a disk for it keeps packed files.</div>;
   const loads = A.krill?.steps.length ? krillLoads(A.krill, disk?.krill ?? null) : [];
   return (
     <>
-      {disk?.krill && <KrillDiskSection disk={disk} loads={loads} open={open} onCopy={onCopy} onOpenFile={onOpenFile} onSaveFiles={onSaveFiles} />}
+      {disk?.krill && <KrillDiskSection disk={disk} loads={loads} open={open} onCopy={onCopy} onOpenFile={onOpenFile} onAddFiles={onAddFiles} onSaveFiles={onSaveFiles} />}
       {loads.length > 0 && <KrillScriptSection A={A} disk={disk} loads={loads} open={open} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
     </>
   );
@@ -461,7 +480,7 @@ function KrillScriptSection({ A, disk, loads, open, onNavigate, onCopy, onOpenFi
 }
 
 /** A mounted disk for Krill's loader: its files, a row each, and the loader's calls in their code. */
-function KrillDiskSection({ disk, loads, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; loads: KrillLoad[]; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onSaveFiles: () => void }) {
+function KrillDiskSection({ disk, loads, open, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { disk: MountedDisk; loads: KrillLoad[]; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: KrillFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.krill!;
   const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length, outside = d.files.filter(f => f.entry < 0).length;
   const packer = krillPackerName(d);
@@ -484,7 +503,7 @@ function KrillDiskSection({ disk, loads, open, onCopy, onOpenFile, onSaveFiles }
           : d.by == null ? 'Krill\'s loader has no load script: a part loads a file by its name (or the next in the directory), or in builds of version 146 and older by its track and sector; no call in the files\' code says which'
           : 'Krill\'s loader has no load script: a part loads a file by its name, or the next file in the directory with an empty name, so the directory is the order they load in'}; cc1541's command line rebuilds the disk{lines ? `; ${lines} more line${lines === 1 ? '' : 's'} of the directory without a file of ${lines === 1 ? 'its' : 'their'} own` : ''}</span></span>
         <button className="btn small" onClick={() => onCopy(cc1541Script(d, disk.name).join('\n'), 'Copied the cc1541 command line')}><Icon name="copy" size={14} />Copy script</button>
-        <button className="btn small" onClick={onSaveFiles} title="Save every file as it is on the disk and unpacked to a folder, with cc1541's command line that writes the disk again"><Icon name="download" size={14} />Save files…</button>
+        <FileButtons left={notIn(open, d.files)} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle="Save every file as it is on the disk and unpacked to a folder, with cc1541's command line that writes the disk again" />
       </div>
       <table className="tbl" aria-label="Krill files"><thead><tr><th>Entry</th><th>Name</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
         {d.files.map((f, i) => {
@@ -528,7 +547,7 @@ function KrillDiskSection({ disk, loads, open, onCopy, onOpenFile, onSaveFiles }
  *  COVERT_RAW_AT), + adds it. Below, the script: the calls of the loader read from the code on the disk, and the
  *  command file and command line of Cadaver's tool (makedisk or maked64) that writes the disk again. Copy script copies
  *  them; Save files… saves every file as it is on the disk and unpacked, with the command file. */
-export function CovertPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: CovertFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function CovertPanel({ disk, open, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: CovertFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.covert!;
   const script = covertScript(d, disk.name), text = covertScriptText(script);
   const n = d.files.length, unpacked = d.files.filter(f => f.unpacked).length, lines = d.entries.filter(e => !e.file).length;
@@ -549,7 +568,7 @@ export function CovertPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { d
       <div className="xref-head spindle-head">
         <span>Files of {disk.name} (Covert Bitops loader{d.version ? `, version ${d.version}` : ''}): {n} file{n === 1 ? '' : 's'}, {unpacked} unpacked <span className="muted">· the loader has no load script: the program asks for a file by its name{d.version === 3 ? ' (a number in A, the name\'s first two characters as hex digits)' : ' (two letters in X and Y, or a pointer to the name)'}, so the calls in its code and {script.tool}'s command file are the script; {d.found === 'code' ? "the loader's own code is on the disk" : 'found by its files, packed as the loader reads them'}{d.tool ? `; laid out by ${d.tool}` : '; laid out by neither makedisk nor maked64'}{lines ? `; ${lines} more line${lines === 1 ? '' : 's'} of the directory without a file of ${lines === 1 ? 'its' : 'their'} own` : ''}</span></span>
         <button className="btn small" onClick={() => onCopy(text.join('\n'), `Copied the ${script.tool} command file`)}><Icon name="copy" size={14} />Copy script</button>
-        <button className="btn small" onClick={onSaveFiles} title={`Save every file as it is on the disk and unpacked to a folder, with ${script.tool}'s command file that writes the disk again`}><Icon name="download" size={14} />Save files…</button>
+        <FileButtons left={notIn(open, d.files)} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle={`Save every file as it is on the disk and unpacked to a folder, with ${script.tool}'s command file that writes the disk again`} />
       </div>
       <table className="tbl" aria-label="Covert files"><thead><tr><th>Entry</th><th>Name</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
         {d.files.map(f => {
@@ -593,7 +612,7 @@ export function CovertPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { d
  *  unpacks it to), + adds it. Below, the calls of the loader read from the parts' code, and the script: each file in
  *  that order with its calls, and c1541's command line that writes the disk again. Copy script copies it; Save files…
  *  saves every file as it is on the disk and unpacked, with the script. */
-export function DlocPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: DlocFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function DlocPanel({ disk, open, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: DlocFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.dloc!;
   const text = dlocScriptText(dlocScript(d, disk.name));
   const n = d.files.length, unpacked = d.files.filter(f => f.unpacked || f.boot).length;
@@ -615,7 +634,7 @@ export function DlocPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { dis
       <div className="xref-head spindle-head">
         <span>Files of {disk.name} (DLoC's loader): {n} file{n === 1 ? '' : 's'}, {unpacked} unpacked <span className="muted">· the loader has no load script: a part loads the next by its name (lda #length / ldx #&lt;name / ldy #&gt;name / jmp ${h4(d.base)}), so the calls in the parts' code are the script; {d.found === 'code' ? "the loader's own code is on the disk" : 'found by its files, packed with ZX0 as the loader reads them'}</span></span>
         <button className="btn small" onClick={() => onCopy(text.join('\n'), 'Copied the DLoC script')}><Icon name="copy" size={14} />Copy script</button>
-        <button className="btn small" onClick={onSaveFiles} title="Save every file as it is on the disk and unpacked to a folder, with the script and c1541's command line that writes the disk again"><Icon name="download" size={14} />Save files…</button>
+        <FileButtons left={notIn(open, d.files)} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle="Save every file as it is on the disk and unpacked to a folder, with the script and c1541's command line that writes the disk again" />
       </div>
       <table className="tbl" aria-label="DLoC files"><thead><tr><th>Entry</th><th>Name</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
         {rows.map(f => {
@@ -659,7 +678,7 @@ export function DlocPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { dis
  *  where, how framed, each copy a turn), the boot and what it does, where the drive's check is, the boot's text, and
  *  the files outside the directory, a row each: a row opens the file as a PRG at its load address, decoded; + adds it.
  *  Save files… saves them all, decoded, with files.txt that lists them; Copy list copies that list. */
-export function PirateSlayerPanel({ disk, open, onCopy, onOpenFile, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: PirateSlayerFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function PirateSlayerPanel({ disk, open, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: PirateSlayerFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const p = disk.pirateslayer!;
   const hex = (v: number) => v.toString(16).toUpperCase().padStart(2, '0');
   const keys = [...new Set(p.files.filter(f => f.key).map(f => `$${hex(f.key)}`))];
@@ -691,7 +710,7 @@ export function PirateSlayerPanel({ disk, open, onCopy, onOpenFile, onSaveFiles 
         <div className="xref-head spindle-head">
           <span>Files outside the directory: {p.files.length} <span className="muted">· sector chains EA&apos;s loader reads by track and sector, the load address first{keys.length ? `; stored XOR ${keys.join(' and ')} on the disk, which the loader's transfer undoes: they open decoded` : ''}; the names are made up of the first sector and the load address</span></span>
           <button className="btn small" onClick={() => onCopy(pirateSlayerFileList(p, disk.name).join('\n'), 'Copied the file list')}><Icon name="copy" size={14} />Copy list</button>
-          <button className="btn small" onClick={onSaveFiles} title="Save every file outside the directory as a PRG to a folder, decoded, with files.txt that lists them"><Icon name="download" size={14} />Save files…</button>
+          <FileButtons left={notIn(open, p.files)} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle="Save every file outside the directory as a PRG to a folder, decoded, with files.txt that lists them" />
         </div>
         <table className="tbl ps-files" aria-label="Pirate Slayer files"><thead><tr><th>From</th><th>Blocks</th><th>Loads</th><th>Bytes</th><th>Name</th><th>Notes</th><th /></tr></thead><tbody>
           {p.files.map(f => {
@@ -718,7 +737,7 @@ export function PirateSlayerPanel({ disk, open, onCopy, onOpenFile, onSaveFiles 
  *  Tape) with where it starts, and the stretches of turbo data no format here reads. A row opens the file, + adds it.
  *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them.
  *  A T64 tape archive (13.5j): its directory, an entry a row. */
-export function TapePanel({ tape, open, onCopy, onOpenFile, onSaveFiles }: { tape: MountedTape; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onSaveFiles: () => void }) {
+export function TapePanel({ tape, open, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { tape: MountedTape; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: TapeFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const { img } = tape;
   const tt = tapeToolScript(img, tape.name);
   const FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetool: 'TapeTool', turbotape: 'Turbo Tape', freeload: 'Freeload', usgold: 'US Gold', megasave: 'Mega-Save', novaload: 'Novaload', wildload: 'Wildload', microload: 'Microload', cyberload: 'Cyberload', firebird: 'Firebird', t64: 'T64' };
@@ -738,7 +757,7 @@ export function TapePanel({ tape, open, onCopy, onOpenFile, onSaveFiles }: { tap
       <div className="xref-head spindle-head">
         <span>{tape.name} ({t64 ? `a T64${t64.name ? ` "${t64.name}"` : ''}, version $${t64.version.toString(16).padStart(4, '0')}, ${t64.signature}` : `TAP version ${img.version}, ${time(img.seconds)}`}): {img.files.length} file{img.files.length === 1 ? '' : 's'}{img.unknown.length ? `, ${img.unknown.length} stretch${img.unknown.length === 1 ? '' : 'es'} of turbo data no format here reads` : ''} <span className="muted">· {[tt ? 'TapeTool’s command lines write the tape again from its files (Save files… saves them with the lines as build.bat)' : '', img.unknown.length ? 'an unknown loader’s data is read by Sindri, running the boot file with the tape in its datasette' : 'a file opens with the tape in Sindri’s datasette, after the file'].filter(Boolean).join('; ')}</span></span>
         {tt && <button className="btn small" onClick={() => onCopy(tt.script.join('\n'), 'Copied the TapeTool command lines')}><Icon name="copy" size={14} />Copy script</button>}
-        <button className="btn small" onClick={onSaveFiles} title={tt ? 'Save every file of the tape, boot.bin and build.bat (TapeTool’s command lines) to a folder' : 'Save every file of the tape as a PRG to a folder'}><Icon name="download" size={14} />Save files…</button>
+        <FileButtons left={notIn(open, img.files.filter(tapeOpens))} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle={tt ? 'Save every file of the tape, boot.bin and build.bat (TapeTool’s command lines) to a folder' : 'Save every file of the tape as a PRG to a folder'} />
       </div>
       <table className="tbl tape-table" aria-label="Tape files"><thead><tr><th>{t64 ? 'Entry' : 'Time'}</th><th>Offset</th><th>Format</th><th>Name</th><th>Loads</th><th>Bytes</th><th>Notes</th><th /></tr></thead><tbody>
         {rows.map(({ f, u }, i) => {
@@ -771,18 +790,18 @@ export function TapePanel({ tape, open, onCopy, onOpenFile, onSaveFiles }: { tap
 /** The Booze script tab (spec 13.5d): a mounted BoozeLoader disk's own files, a row each by number (a row opens the file
  *  as a PRG, unpacked when it is packed, + adds it), and BoozeLoader's script in the program (5.15b): the loads, sides
  *  and calls of the code that calls the loader, each load with what its file unpacks to on the mounted disk. */
-export function BoozePanel({ A, disk, open, onNavigate, onCopy, onOpenFile }: { A: AnalysisResult; disk: MountedDisk | null; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+export function BoozePanel({ A, disk, open, onNavigate, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { A: AnalysisResult; disk: MountedDisk | null; open: InProject; onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   if (!disk?.booze && !A.booze?.steps.length) return <div className="empty">No BoozeLoader script: a BoozeLoader disk keeps its files in a table of its own, and a program with BoozeLoader calls it with each file's number.</div>;
   return (
     <>
-      {disk?.booze && <BoozeDiskSection disk={disk} open={open} onCopy={onCopy} onOpenFile={onOpenFile} />}
+      {disk?.booze && <BoozeDiskSection disk={disk} open={open} onCopy={onCopy} onOpenFile={onOpenFile} onAddFiles={onAddFiles} onSaveFiles={onSaveFiles} />}
       {!!A.booze?.steps.length && <BoozeScriptSection A={A} disk={disk} open={open} onNavigate={onNavigate} onCopy={onCopy} onOpenFile={onOpenFile} />}
     </>
   );
 }
 
 /** A BoozeLoader disk's files (spec 13.5d), a row each. */
-function BoozeDiskSection({ disk, open, onCopy, onOpenFile }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void }) {
+function BoozeDiskSection({ disk, open, onCopy, onOpenFile, onAddFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: BoozeFile, add: boolean) => void; onAddFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.booze!;
   const unpacked = d.files.filter(f => f.unpacked).length, n = d.files.length;
   const what = [d.side != null && `side ${d.side}`, d.cruncher && `packed with ${BOOZE_CRUNCHER[d.cruncher]}`, !d.driveCode && 'no drive code on this side'].filter(Boolean).join(', ');
@@ -795,6 +814,7 @@ function BoozeDiskSection({ disk, open, onCopy, onOpenFile }: { disk: MountedDis
       <div className="xref-head spindle-head">
         <span>Files of {disk.name} (BoozeLoader{what ? `, ${what}` : ''}): {n} file{n === 1 ? '' : 's'}{unpacked ? `, ${unpacked} unpacked` : ''} <span className="muted">· {d.table != null ? `the program loads a file by its number, which the table in 18/${d.table} gives the first sector of` : 'the program loads a file by its track and sector (the disk has no table)'}; the file names are not on the disk</span></span>
         <button className="btn small" onClick={() => onCopy(boozeFileList(d, disk.name).join('\n'), 'Copied the file list')}><Icon name="copy" size={14} />Copy list</button>
+        <FileButtons left={notIn(open, d.files)} onAdd={onAddFiles} onSave={onSaveFiles} saveTitle="Save every file to a folder as a PRG, unpacked when it is packed, and as it is on the disk, with the list of them" />
       </div>
       <table className="tbl" aria-label="BoozeLoader files"><thead><tr><th>File</th><th>Loads</th><th>Unpacks to</th><th>Bytes</th><th>Name</th><th>Notes</th><th /></tr></thead><tbody>
         {d.files.map(f => {

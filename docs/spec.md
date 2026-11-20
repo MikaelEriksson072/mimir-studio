@@ -3447,6 +3447,15 @@ skrivit; `test/vice.integration.test.ts` kör i riktiga VICE ett program som lad
 som läser diskens id ur driven (`M-R` av `$0012`): det finns där bara efter initieringen, också för ett program som
 laddar upp till `$f344`.
 
+**Loaderflikarnas filer (2026-11-20).** Varje flik i bottenpanelen som listar en disks eller ett bands filer (Spindle,
+Bitfire, Booze, Sparkle, Krill, Covert, DLoC, Pirate Slayer, Tape; IFFL med *parts*) har bredvid *Copy script* (eller
+*Copy list*) två knappar:
+- **Add files to project** lägger till alla filer som inte redan är i projektet, i flikens ordning, som om man tryckt
+  **+** på varje rad. Laddar två på samma adresser vinner den senare (analysloggen varnar). Ett steg att ångra (Ctrl+Z);
+  är alla redan med säger en toast det.
+- **Save files…** sparar alla filerna i en mapp man väljer, med skriptet eller listan som skriver disken igen (vad varje
+  flik sparar står i dess avsnitt).
+
 ### 13.5b Spindle 3-diskar (Spins laddskript)
 
 Spin, Spindles diskbyggare, läser ett laddskript med ett stycke per laddaranrop (ett **jobb**). Varje rad i ett stycke
@@ -3481,6 +3490,8 @@ början av Spindle 3:s residenta sida och hela kedjan går att följa till slute
   *loads under I/O*).
 - Ett klick på raden öppnar biten som en PRG på dess adress, och **+** lägger till den i projektet.
 - **Copy script** kopierar skriptet så som Spin läser det, med flaggorna för `spin` i en kommentar.
+- **Save files…** sparar varje bit som skriptet namnger den (`job02_1000.bin`, bara byten, skriptet ger adressen) och
+  som PRG (`job02_1000.prg`), med skriptet (`<disk>-spin.txt`). **Add files to project** lägger till alla bitar (13.5).
 - Knappen **Open job N** på ett jobbs första rad (för jobb med fler än en bit) öppnar alla dess bitar som ett projekt:
   en dels kod, tabeller och data tillsammans.
 - Spelar ett jobbs kod en PETSCII-animation står det i anmärkningarna (*PETSCII animation: 105 frames
@@ -3570,6 +3581,8 @@ den vanliga katalogen som pekar på spår 18. En dir-art är rader som pekar dit
   packad som de första demona säger *packed as in 2014–2015* i rubriken.
 - Ett klick på raden öppnar filen som en PRG: uppackad där den packas upp, annars som den laddas. **+** lägger till den.
 - **Copy script** kopierar d64writes kommandorad, med en kommentar per fil ovanför.
+- **Save files…** sparar varje fil som den är på disken (`.lz`, det `-b` tar, med laddadressen) och uppackad som PRG
+  när den är packad, med kommandoraden (`<disk>-d64write.sh`). **Add files to project** lägger till alla (13.5).
 
 **Mätt:** alla 276 419 diskar i referensarkivet lästes på 8 minuter. 1 476 är Bitfire-diskar: 916 av 0.x, 200 av 1.0
 och 1.1, 35 efter 1.1 och 325 av 1.2 och senare. Bland dem finns The Lab, 1337, Next Level, Comaland, Eyes och
@@ -3664,6 +3677,9 @@ hela disken.
   (`file07_2000.prg`, påhittat av numret och uppackningsadressen; `t3s0_1000.prg` på en disk utan tabell) och
   anmärkningar (*packed with ByteBoozer 2*, *not packed*, var filen börjar och hur många sektorer den har). Ett klick
   öppnar filen som en PRG, uppackad där den packas upp, och **+** lägger till den. **Copy list** kopierar listan.
+  **Save files…** sparar varje fil som PRG (uppackad, annars så mycket minnet rymmer) och, när det skiljer, som den är
+  på disken (`.b1`/`.b2` packad, `.raw` för en fil längre än minnet), med listan (`<disk>-booze.txt`). **Add files to
+  project** lägger till alla (13.5).
 - Skriptet har en rad per steg: var dess kod börjar, raden och filen på den monterade disken med vart den packas upp
   (när skriptet är på diskens sida). Ett klick går till koden, och knappen öppnar filen. **Copy script** kopierar
   skriptet, varje laddning med sin fil.
