@@ -102,13 +102,14 @@ export function NewProjectForm({ name: name0, parent: parent0, moving, submit, o
   );
 }
 
-/** "Create a project from this work": the New project form in a dialog */
-export function CreateProjectModal({ title = 'Create a project from this work', ...p }: Omit<NewProjectProps, 'parent' | 'onCancel'> & { title?: string; onClose: () => void }) {
+/** "Create a project from this work": the New project form in a dialog (`lead`: a line above it that says why it asks) */
+export function CreateProjectModal({ title = 'Create a project from this work', lead, ...p }: Omit<NewProjectProps, 'parent' | 'onCancel'> & { title?: string; lead?: string; onClose: () => void }) {
   const [parent, setParent] = useState<string | null>(null);
   useEffect(() => { kr?.projectStart().then(i => setParent(i.parent), () => setParent('')); }, []);
   return (
     <Modal title={title} onClose={p.onClose}>
       <div className="modal-body">
+        {lead && <p className="np-lead">{lead}</p>}
         {parent == null ? <div className="muted">…</div> : <NewProjectForm {...p} parent={parent} onCancel={p.onClose} />}
       </div>
     </Modal>

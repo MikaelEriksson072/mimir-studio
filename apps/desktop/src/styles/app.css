@@ -1368,6 +1368,7 @@ button.tpl-ph:disabled { cursor: default; color: var(--fg-2); }
 .np-where .mono { color: var(--fg-2); }
 .np-where .bad, .np-error { color: var(--err); }
 .np-moving { margin-top: 6px; color: var(--fg-2); }
+.np-lead { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: var(--fg-2); }
 .np-error { font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
 .np-foot { display: flex; gap: 8px; margin-top: 12px; }
 .proj-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; max-width: 200px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); cursor: pointer; flex: 0 1 auto; min-width: 96px; font-size: 12.5px; }

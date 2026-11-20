@@ -786,8 +786,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** every file of the tape that opens and is not in the project yet, added to it in tape order (as each row's + adds it) */
   const addTapeFiles = () => {
     if (!tape) return;
-    const all = tape.img.files.filter(tapeOpens), left = all.filter(f => !tapeOpen.has(f));
-    if (!left.length) { toast(all.length ? `Every file of ${tape.name} is in the project already` : `${tape.name} has no file that opens as a program`, 'info'); return; }
+    const all = tape.img.files.filter(tapeOpens), left = all.filter(f => !tapeOpen.has(f)), t = tape;
+    if (!all.length) { toast(`${tape.name} has no file that opens as a program`, 'info'); return; }
+    if (!home) { askProjectFor(tape.name, all.length, () => all.flatMap(f => tapeFiles(t, f))); return; }
+    if (!left.length) { toast(`Every file of ${tape.name} is in the project already`, 'info'); return; }
     try {
       addFiles(left.flatMap(f => tapeFiles(tape, f)), true, { undoLabel: `Add ${left.length} file${left.length === 1 ? '' : 's'} of ${tape.name}`, note: addedNote(left.length, all.length, tape.name) });
     } catch (e) { toast(errorText(e), 'err'); }
@@ -887,11 +889,37 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  as each row's + adds it (so where two load over each other, the later one wins); `rows`: the tab's files, each with
    *  the files it opens as */
   const addLoaderFiles = (rows: [item: object, files: () => OpenedPrg[]][], from: string, what = 'file') => {
+    if (!rows.length) { toast(`${from} has no ${what} that opens as a program`, 'info'); return; }
+    if (!home) { askProjectFor(from, rows.length, () => rows.flatMap(([item, files]) => fromLoader(item, files())), what); return; }
     const left = rows.filter(([item]) => !loaderOpen.has(item));
-    if (!left.length) { toast(rows.length ? `Every ${what} of ${from} is in the project already` : `${from} has no ${what} that opens as a program`, 'info'); return; }
+    if (!left.length) { toast(`Every ${what} of ${from} is in the project already`, 'info'); return; }
     try {
       addFiles(left.flatMap(([item, files]) => fromLoader(item, files())), true, { undoLabel: `Add ${left.length} ${what}${left.length === 1 ? '' : 's'} of ${from}`, note: addedNote(left.length, rows.length, from, what) });
     } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /* ---- Add files to project needs a project: without one, it makes one for the files, so they are not mixed into the
+     work without a project (which the window keeps, as when a project is opened) ---- */
+  type ProjectFor = { from: string; n: number; what: string; files: () => OpenedPrg[] };
+  const [projectFor, setProjectFor] = useState<ProjectFor | null>(null);
+  const askProjectFor = (from: string, n: number, files: () => OpenedPrg[], what = 'file') => {
+    if (!kr) return needDesktop();
+    setProjectFor({ from, n, what, files });
+  };
+  /** the project for the files: made in its folder with them in it, and the work goes on in it */
+  const createProjectFor = async (name: string, parent: string, git: boolean) => {
+    const p = projectFor;
+    if (!kr || !p) return;
+    const files = p.files().map(({ id, name: n, load, bytes }) => ({ id, name: n, load, bytes }));
+    const made = createProject({ name, files, settings: newProjectSettings(project.settings) });
+    const r = await kr.createProject({ name, parent, project: made, git });
+    // the work without a project stays with the window, as when a project is opened
+    keepUnsavedWork();
+    enter(made, r.home);
+    resetView(); setExportDir(null);
+    setProjectFor(null);
+    afterLoad(files.map(f => f.id), false);
+    const g = gitNote(r);
+    toast(`Created the project ${r.home.name} in ${r.home.dir}${g.text}, with the ${p.n} ${p.what}${p.n === 1 ? '' : 's'} of ${p.from} in it`, g.bad ? 'warn' : 'ok');
   };
   /** the animation streams of the mounted Spindle disk (a player in one job stores them frame by frame, core
    *  store-anim): a chunk opened from the Spindle tab that holds one is animation data, not a packed file */
@@ -4333,6 +4361,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
+      {projectFor && <CreateProjectModal title={`A project for the ${projectFor.what}s of ${projectFor.from}`} name={projectNameFor(projectFor.from)} submit={`Create project and add the ${projectFor.what}s`} onCreate={createProjectFor} onClose={() => setProjectFor(null)}
+        lead={`Add ${projectFor.what}s to project needs a project: the ${projectFor.n} ${projectFor.what}${projectFor.n === 1 ? '' : 's'} of ${projectFor.from} go in a new one of their own, not into the work without a project. That work stays as it is, and the start screen goes on with it.`} />}
       {unsavedAsk && <UnsavedWorkModal name={(unsavedAsk.kept ?? project).name} what={unsavedAsk.what} left={unsavedAsk.kept && home ? home.name : null}
         onSave={() => { setSaveFirst(unsavedAsk); setUnsavedAsk(null); }} onDiscard={() => { setUnsavedAsk(null); unsavedAsk.go(); }} onClose={() => setUnsavedAsk(null)} />}
       {saveFirst && <CreateProjectModal title={saveFirst.kept ? 'Create a project from the work without a project' : undefined} name={(saveFirst.kept ?? project).name}

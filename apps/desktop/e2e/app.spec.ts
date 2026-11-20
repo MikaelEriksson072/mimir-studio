@@ -6637,12 +6637,31 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
     expect(text.split('\n').slice(2, 6)).toEqual(['# spin -e 0800', '', 'job01_0800.bin     0800    # $0800-$080a, 11 bytes', 'job01_1000.bin     1000    # $1000-$1257, 600 bytes']);
   });
 
-  await test.step('Add files to project adds the chunks not in it yet, in the script\'s order; once all are in, it says so', async () => {
+  await test.step('Add files to project needs a project: without one it makes one with all the chunks, in the script\'s order', async () => {
     const table = page.getByRole('table', { name: 'Spindle load script' });
+    const dialog = page.getByRole('dialog', { name: 'A project for the files of spindle-demo.d64' });
     await page.getByRole('button', { name: 'Add files to project' }).click();
-    await expect(toast(page, 'Added 4 files of spindle-demo.d64 to the project (2 were in it already). Ctrl+Z goes back to the project before')).toBeVisible();
-    await expectFiles(page, ['job01_0800.prg', 'job02_4000.prg', 'job01_1000.prg', 'job02_6000.prg', 'job03_2000.prg', 'job04_cf00.prg']);
+    await expect(dialog).toContainText('Add files to project needs a project: the 6 files of spindle-demo.d64 go in a new one of their own, not into the work without a project.');
+    // Cancel leaves the work as it was
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expectFiles(page, ['job01_0800.prg', 'job02_4000.prg']);
+    await expect(page.getByRole('button', { name: /^No project/ })).toBeVisible();
+    // the project is named after the disk, and goes where the user picks
+    await page.getByRole('button', { name: 'Add files to project' }).click();
+    await expect(dialog.getByLabel('Name')).toHaveValue('spindle-demo');
+    const parent = join(workDir, 'projects'), dir = join(parent, 'spindle-demo');
+    mkdirSync(parent, { recursive: true });
+    await stubDialogs(app, { open: [parent] });
+    await dialog.getByRole('button', { name: 'Change…' }).click();
+    await dialog.getByRole('button', { name: 'Create project and add the files' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(toast(page, `Created the project spindle-demo in ${dir}, with the 6 files of spindle-demo.d64 in it`)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Project spindle-demo' })).toBeVisible();
+    await expectFiles(page, ['job01_0800.prg', 'job01_1000.prg', 'job02_4000.prg', 'job02_6000.prg', 'job03_2000.prg', 'job04_cf00.prg']);
     await expect(inProject(table, 4)).toHaveText(['job01_0800.bin', 'job01_1000.bin', 'job02_4000.bin', 'job02_6000.bin', 'job03_2000.bin', 'job04_cf00.bin']);
+    expect(readFileSync(join(dir, 'spindle-demo.mimir.json'), 'utf8')).toContain('job04_cf00.prg');
+    // in the project, once all are in, it says so
     await page.getByRole('button', { name: 'Add files to project' }).click();
     await expect(toast(page, 'Every file of spindle-demo.d64 is in the project already')).toBeVisible();
   });
@@ -6792,7 +6811,7 @@ test('Spindle jobs that are animation data another job\'s player stores frame by
   });
 });
 
-test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and d64write\'s command line; all added and saved', async ({ app, page, workDir }) => {
+test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and d64write\'s command line; all saved', async ({ app, page, workDir }) => {
   // fixtures/d64/bitfire-demo.d64 (packages/core/test/bitfire-disk.test.ts): the raster demo packed with an end, a table
   // that is not packed, and a file packed in place that unpacks to $2ed4-$2fff
   await waitForListing(page);
@@ -6836,13 +6855,6 @@ test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and
     expect(text).toContain('#   file01_4000.lz   loads at $4000-$40ff (256 bytes), not packed');
     expect(text.slice(text.indexOf(''))).toEqual(['', 'd64write -c bitfire-demo.d64 -h "bitfire demo" -i bf --side 1 \\', '  --boot boot.prg \\',
       '  -b file00_0801.lz \\', '  -b file01_4000.lz \\', '  -b file02_2ed4.lz \\', '  -s note.prg']);
-  });
-
-  await test.step('Add files to project adds the one not in it yet', async () => {
-    await page.getByRole('button', { name: 'Add files to project' }).click();
-    await expect(toast(page, 'Added 1 file of bitfire-demo.d64 to the project (2 were in it already)')).toBeVisible();
-    await expectFiles(page, ['file00_0801.prg', 'file01_4000.prg', 'file02_2ed4.prg']);
-    await expect(inProject(table, 5)).toHaveText(['file00_0801.lz', 'file01_4000.lz', 'file02_2ed4.lz']);
   });
 
   await test.step('Save files… saves every file as it is on the disk (the .lz d64write takes) and unpacked, with the command line', async () => {
@@ -7398,18 +7410,19 @@ test('a T64 in the datasette: its directory in the Explorer and the Tape tab, Sa
     expect(readFileSync(join(out, 'MIMIR DEMO.prg'))).toEqual(demo);
   });
 
-  await test.step('Add files to project adds every file of the tape, in tape order', async () => {
+  await test.step('Add files to project without a project asks for one for the tape\'s files; Cancel leaves the work as it was', async () => {
     await page.getByRole('button', { name: 'Add files to project' }).click();
-    await expect(toast(page, 'Added 3 files of mimir-demo.t64 to the project. Ctrl+Z goes back to the project before')).toBeVisible();
-    await expect(inProject(page.getByRole('table', { name: 'Tape files' }), 4)).toHaveText(['"MIMIR BOOT"', '"MIMIR DEMO"', '"MIMIR SINE"']);
-    await expectFiles(page, [/.*/, 'MIMIR BOOT.prg', 'MIMIR DEMO.prg', 'MIMIR SINE.prg']);
+    const dialog = page.getByRole('dialog', { name: 'A project for the files of mimir-demo.t64' });
+    await expect(dialog).toContainText('the 3 files of mimir-demo.t64 go in a new one of their own');
+    await expect(dialog.getByLabel('Name')).toHaveValue('mimir-demo');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(inProject(page.getByRole('table', { name: 'Tape files' }), 4)).toHaveCount(0);
   });
 
   await test.step('Build & Run: VICE autostarts a T64 of the built boot file and the files after it', async () => {
     await openSection(page, 'Tape');
     await files.getByRole('listitem').filter({ hasText: 'MIMIR BOOT' }).click();
-    // the files added are changes to the work: opening the boot file in its place asks first
-    await page.getByRole('dialog', { name: 'The work is not saved' }).getByRole('button', { name: 'Do not save' }).click();
     await expect(toast(page, 'Loaded MIMIR BOOT.prg at $0801')).toBeVisible();
     await expectFiles(page, ['MIMIR BOOT.prg']);
     test.skip(!existsSync(standIn), 'needs where.exe');
@@ -7446,7 +7459,7 @@ test('a T64 in the datasette: its directory in the Explorer and the Tape tab, Sa
   });
 });
 
-test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, all added and saved, and the script of the program that loads them', async ({ app, page, workDir }) => {
+test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, saved, and the script of the program that loads them', async ({ app, page, workDir }) => {
   // fixtures/d64/booze-demo.d64 (packages/core/test/booze-disk.test.ts): a boot program whose code loads files 0-2 by
   // number, the raster demo packed with ByteBoozer 2, a table that is not packed, and a file packed in place
   await waitForListing(page);
@@ -7478,11 +7491,7 @@ test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, a
     await expect(inProject(files, 5)).toHaveText(['file00_0801.prg']);
   });
 
-  await test.step('Add files to project adds the files not in it yet; Save files… saves them unpacked and as they are on the disk, with the list', async () => {
-    await page.getByRole('button', { name: 'Add files to project' }).click();
-    await expect(toast(page, 'Added 2 files of booze-demo.d64 to the project (1 was in it already)')).toBeVisible();
-    await expectFiles(page, ['file00_0801.prg', 'file01_4000.prg', 'file02_4c18.prg']);
-    await expect(inProject(files, 5)).toHaveText(['file00_0801.prg', 'file01_4000.prg', 'file02_4c18.prg']);
+  await test.step('Save files… saves them unpacked and as they are on the disk, with the list', async () => {
     const out = join(workDir, 'booze-files');
     mkdirSync(out, { recursive: true });
     await stubDialogs(app, { open: [out] });
@@ -7495,8 +7504,6 @@ test('a mounted BoozeLoader disk: its files in the Booze script tab, unpacked, a
 
   await test.step('the boot program\'s code is its script: its loads, with what each file unpacks to on the disk', async () => {
     await page.getByRole('list', { name: 'Files on booze-demo.d64' }).getByRole('listitem').filter({ hasText: 'BOOT' }).click();
-    // the files added are changes to the work: opening the boot program in its place asks first
-    await page.getByRole('dialog', { name: 'The work is not saved' }).getByRole('button', { name: 'Do not save' }).click();
     await expect(toast(page, 'Loaded BOOT.prg at $0801')).toBeVisible();
     await expect(page.getByRole('tab', { name: /Booze script/ })).toContainText('6');
     await expect(page.locator('.spindle-head').nth(1)).toContainText('BoozeLoader script: 3 loads from the code that calls the loader at $082a');
@@ -7620,7 +7627,18 @@ test('a mounted Sparkle disk: its bundles in the Sparkle script tab, their files
     expect(readFileSync(join(out, 'sparkle-demo.sls'), 'utf8').split('\r\n')).toContain('File:\t"bundle01_d000.prg*"');
   });
 
-  await test.step('Add files to project adds the one file not in it yet', async () => {
+  await test.step('in a project, Add files to project adds the one file not in it yet', async () => {
+    // the work made a project first, with the three files in it
+    const parent = join(workDir, 'projects');
+    mkdirSync(parent, { recursive: true });
+    await page.getByRole('button', { name: /^No project/ }).click();
+    await page.getByRole('menuitem', { name: /^Create a project from this work…/ }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create a project from this work' });
+    await dialog.getByLabel('Name').fill('sparkle');
+    await stubDialogs(app, { open: [parent] });
+    await dialog.getByRole('button', { name: 'Change…' }).click();
+    await dialog.getByRole('button', { name: 'Create project and move the work' }).click();
+    await expect(page.getByRole('button', { name: 'Project sparkle' })).toBeVisible();
     await page.getByRole('button', { name: 'Add files to project' }).click();
     await expect(toast(page, 'Added 1 file of sparkle-demo.d64 to the project (3 were in it already)')).toBeVisible();
     await expectFiles(page, ['bundle00_0801.prg', 'bundle01_3000.prg', 'bundle02_0400.prg', 'bundle01_d000.prg']);
