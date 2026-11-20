@@ -662,7 +662,7 @@ export function Listing({ lines, lineNo, folded, hidden, onToggleFold, excluded,
     // stripe goes on through them; an empty line the user inserted always is, so a right-click can remove it
     if (l.k === 'blank') {
       const s = stripe(i);
-      if (l.user) rows.push(<div key={i} className={cx('row k-blank user-blank', hit(l))} style={{ top: i * ROW }} title="An empty line you inserted (Shift+Enter): double-click to write a comment line on it; Shift+Backspace on the line under it, or a right-click here, removes it"
+      if (l.user) rows.push(<div key={i} className={cx('row k-blank user-blank', hit(l))} style={{ top: i * ROW }} title="An empty line you inserted (Shift+Enter): double-click to write a comment line above it; a right-click turns it into a comment line or block, or removes it (Shift+Backspace on the line under it does too)"
         onMouseDown={e => down(l, i, e)} onDoubleClick={e => onClickLine(l, i, e, true)} onContextMenu={e => onContext(e, l)}><span className="gut" />{s}{offCell(null)}<span className={cx('adr', byLine && 'lno')}>{byLine ? lineNo[i] : ''}</span></div>);
       else if (byLine || s) rows.push(<div key={i} className="row k-blank" style={{ top: i * ROW }}><span className="gut" />{s}{offCell(null)}{byLine && <span className="adr lno">{lineNo[i]}</span>}</div>);
       continue;
@@ -940,10 +940,12 @@ function EditPopover({ top, editing, onCommit, onCancel, error, setError }: { to
   useEffect(() => { const el = area.current || ref.current; el?.focus(); el?.select(); }, []);
   const at = editing.zp ? `$${h2(editing.addr)}` : `$${h4(editing.addr)}`;
   const title = editing.kind === 'label' ? (editing.zp ? `Zero-page variable at ${at}` : `Label at ${at}`) : editing.kind === 'comment' ? `Comment at ${at}` : `Comment ${editing.block ? 'block' : 'line'} above ${at}`;
+  // (one that takes an empty line's place says so: Esc leaves the empty line)
+  const instead = editing.replace ? ' in place of the empty line' : '';
   const help = editing.kind === 'label' && editing.zp ? `Every access to ${at} (and to ${at}+1 for a pointer) uses this name · Enter renames · empty restores the automatic name · Esc cancels`
     : editing.kind === 'label' ? 'Enter to rename everywhere · empty restores the automatic name · Esc cancels'
-    : editing.kind === 'note' && editing.block ? 'Written as /* … */ · Ctrl+Enter saves · empty removes the block · Esc cancels'
-      : editing.kind === 'note' ? 'Written as its own // line · Enter saves · empty removes it · Esc cancels'
+    : editing.kind === 'note' && editing.block ? `Written as /* … */${instead} · Ctrl+Enter saves · empty removes the block · Esc cancels`
+      : editing.kind === 'note' ? `Written as its own // line${instead} · Enter saves · empty removes it · Esc cancels`
         : 'Enter to save · empty removes the comment';
   return (
     <div className={cx('edit-pop', editing.zp && 'zp')} style={{ top }} onMouseDown={e => e.stopPropagation()}>

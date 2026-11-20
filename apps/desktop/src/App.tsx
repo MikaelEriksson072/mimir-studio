@@ -1792,14 +1792,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const blanksAt = (addr: Addr) => ({ above: project.blanks?.[addr] ?? 0, under: project.notes[addr]?.below ?? 0 });
   /** `at`: the comment goes onto the address's empty line number `at` (counted from the top, those above and under the
    *  comment as one row): the empty lines before it stay above it, that one and the rest come under it. Without `at`
-   *  it stays where it is; removed, its empty lines stay, above the line */
-  const setNote = (addr: Addr, text: string, block: boolean, at?: number) => {
-    const old = project.notes[addr], { above, under } = blanksAt(addr), total = above + under;
+   *  it stays where it is; removed, its empty lines stay, above the line. `replace`: the comment takes empty line `at`'s
+   *  place, one empty line fewer */
+  const setNote = (addr: Addr, text: string, block: boolean, at?: number, replace = false) => {
+    const old = project.notes[addr], { above, under } = blanksAt(addr);
+    const drop = !!text && replace && at != null && at >= 0 && at < above + under, total = above + under - (drop ? 1 : 0);
     const k = !text ? total : at == null ? above : Math.max(0, Math.min(total, at));
     const same = !!old && old.text === text && !!old.block === block;
-    if (old ? same && k === above : !text) return;
-    const what = block ? 'comment block' : 'comment line';
-    update(!text ? `Remove comment above $${h4(addr)}` : same ? `Move ${what} above $${h4(addr)}` : `${block ? 'Comment block' : 'Comment line'} above $${h4(addr)}`, d => {
+    if (old ? same && k === above && !drop : !text) return;
+    const what = block ? 'comment block' : 'comment line', place = drop ? ' in place of an empty line' : '';
+    update(!text ? `Remove comment above $${h4(addr)}` : same ? `Move ${what} above $${h4(addr)}${place}` : `${block ? 'Comment block' : 'Comment line'} above $${h4(addr)}${place}`, d => {
       if (text) d.notes[addr] = { text, ...(block ? { block } : {}), ...(total > k ? { below: Math.min(MAX_BLANKS, total - k) } : {}) };
       else delete d.notes[addr];
       putBlanks(d, addr, Math.min(MAX_BLANKS, k));
@@ -1885,10 +1887,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return n;
   };
   /** a comment line or block written on one of the user's empty lines (`i` in the listing) goes there, between the
-   *  empty lines before it and the rest; the comment the address has already moves there, to be edited */
-  const startNoteOn = (block: boolean, l: ListingLine, i: number) => {
+   *  empty lines before it and the rest; the comment the address has already moves there, to be edited. `replace`:
+   *  the empty line becomes the comment (one empty line fewer) */
+  const startNoteOn = (block: boolean, l: ListingLine, i: number, replace = false) => {
     const old = project.notes[l.a]?.text ?? '';
-    setEditing({ kind: 'note', addr: l.a, value: block ? old : old.replace(/\s*\n\s*/g, ' '), block, blank: blankIndex(l, i), line: i });
+    setEditing({ kind: 'note', addr: l.a, value: block ? old : old.replace(/\s*\n\s*/g, ' '), block, blank: blankIndex(l, i), line: i, ...(replace ? { replace } : {}) });
     setUi({ tab: 'listing' });
   };
   /** the program starts at `a`; null clears it: the analysis uses the detected start (BASIC SYS or the load
@@ -2634,7 +2637,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const what = editing.zp ? `Zero-page variable $${h2(editing.addr)}` : null;
       if (rename(editing.addr, v.trim())) { setEditing(null); toast(v.trim() ? `${what ? `${what} renamed` : 'Renamed'} to ${v.trim()}; all references updated${learned.current ? '. Mimir knows the routine now: other projects get the name suggested' : ''}` : `${what ?? 'Label'}: automatic name restored`, 'ok'); }
     }
-    else if (editing.kind === 'note') { setNote(editing.addr, editing.block ? v.replace(/^(\s*\n)+/, '').trimEnd() : v.trim(), !!editing.block, editing.blank); setEditing(null); }
+    else if (editing.kind === 'note') { setNote(editing.addr, editing.block ? v.replace(/^(\s*\n)+/, '').trimEnd() : v.trim(), !!editing.block, editing.blank, editing.replace); setEditing(null); }
     else { setComment(editing.addr, v.trim()); setEditing(null); }
     setTimeout(() => listRef.current?.focus(), 0);
   };
@@ -3539,23 +3542,29 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const onToken = (t: Token) => { if (t.to != null && A.owner[t.to] >= 0) navigate(t.to, { center: true }); else if (t.sym) toast(`${t.sym.name}: ${t.sym.desc}`, 'info'); };
   const onContext = (e: ReactMouseEvent, l: ListingLine, cell?: Cell | null) => {
     e.preventDefault();
-    // an empty line the user inserted: write a comment on it (or move the address's comment there), remove it, or put in
-    // another next to it (above the comment or under it, as this one is)
+    // an empty line the user inserted: turn it into a comment line or block, write one above it (or move the address's
+    // comment onto it or above it), remove it, or put in another next to it (above the comment or under it, as this one is)
     if (l.k === 'blank') {
       if (!l.user) return;
       navigate(l.a, { noHistory: true });
       const i = view.lines.indexOf(l), under = !!l.under, n = blanksAt(l.a)[under ? 'under' : 'above'], note = project.notes[l.a];
       // the comment goes between the empty lines before this one and the rest: it is there already when it is right above
+      // (in its place it would only take the empty line away, which Remove empty line does)
       const at = blankIndex(l, i), kind = note?.block ? 'block' : 'line', moves = !!note && at !== blanksAt(l.a).above;
       setMenu({ x: e.clientX, y: e.clientY, items: [
         ...(note
           ? [
-            ...(moves ? [{ label: `Move the comment ${kind} here`, icon: 'comment', run: () => setNote(l.a, note.text, !!note.block, at) }] satisfies MenuItem[] : []),
-            { label: moves ? `Move the comment ${kind} here and edit it…` : `Edit the comment ${kind}…`, ...(moves ? {} : { icon: 'comment' }), run: () => startNoteOn(!!note.block, l, i) },
+            ...(moves ? [
+              { label: `Move the comment ${kind} here, in place of the empty line`, icon: 'comment', run: () => setNote(l.a, note.text, !!note.block, at, true) },
+              { label: `Move the comment ${kind} above it`, run: () => setNote(l.a, note.text, !!note.block, at) },
+            ] satisfies MenuItem[] : []),
+            { label: moves ? `Move the comment ${kind} above it and edit it…` : `Edit the comment ${kind}…`, ...(moves ? {} : { icon: 'comment' }), run: () => startNoteOn(!!note.block, l, i) },
           ] satisfies MenuItem[]
           : [
-            { label: 'Comment line here…', icon: 'comment', run: () => startNoteOn(false, l, i) },
-            { label: 'Comment block here…', run: () => startNoteOn(true, l, i) },
+            { label: 'Turn into a comment line…', icon: 'comment', run: () => startNoteOn(false, l, i, true) },
+            { label: 'Turn into a comment block…', run: () => startNoteOn(true, l, i, true) },
+            { label: 'Comment line above it…', run: () => startNoteOn(false, l, i) },
+            { label: 'Comment block above it…', run: () => startNoteOn(true, l, i) },
           ] satisfies MenuItem[]),
         { sep: true },
         { label: 'Remove empty line', ...(under ? {} : { key: 'Shift+Backspace' }), run: () => setBlanks(l.a, n - 1, under) },
