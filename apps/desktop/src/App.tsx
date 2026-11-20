@@ -49,6 +49,7 @@ import { findLines, findRegExp, findText, nextHit, type FindOptions } from './li
 import { AssemblerContext, asmWords } from './lib/assembler';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
+import { animDataText, chunkAnimData, spinStoreAnims, type AnimData } from './lib/storeanim';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
 import type { BuildState, CartCheck, Changed, Command, ContextMenuState, DiskSide, Editing, KickBuild, MenuItem, Message, MountedDisk, MountedTape, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
@@ -857,6 +858,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const loaderOf = useRef(new Map<string, object>());
   const fromLoader = <T extends { id: string }>(item: object, files: T[]): T[] => { for (const f of files) loaderOf.current.set(f.id, item); return files; };
   const loaderOpen: ReadonlySet<object> = new Set(project.files.flatMap(f => { const x = loaderOf.current.get(f.id); return x ? [x] : []; }));
+  /** the animation streams of the mounted Spindle disk (a player in one job stores them frame by frame, core
+   *  store-anim): a chunk opened from the Spindle tab that holds one is animation data, not a packed file */
+  const storeAnims = useMemo(() => (disk?.spindle ? spinStoreAnims(disk.spindle) : []), [disk]);
+  const animDataOf = (f: LoadedFile | undefined): AnimData | null => {
+    const c = f && loaderOf.current.get(f.id);
+    return c ? chunkAnimData(storeAnims, c as SpindleChunk) : null;
+  };
   /** a chunk of a Spindle disk's job, as a PRG at its address */
   const openChunk = (j: SpindleJob, c: SpindleChunk, add: boolean) => {
     try { addFiles(fromLoader(c, [withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)))]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
@@ -1162,8 +1170,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   useEffect(() => {
     // a cartridge's chip is not a program Sindri can load and run, nor is a tape file's header (the tape buffer). A
     // snapshot's RAM is not loaded and started either: Sindri goes on from the snapshot's machine where it was taken
-    // (LOAD and RUN would start what its BASIC line says, not the program as it was)
-    if (!external) for (const f of project.files) if (f.chip == null && !tapeOf.current.get(f.id)?.header) runFor(f).catch(() => { /* the heuristics still report it */ });
+    // (LOAD and RUN would start what its BASIC line says, not the program as it was). Animation data a player stores
+    // frame by frame is no program either
+    if (!external) for (const f of project.files) if (f.chip == null && !tapeOf.current.get(f.id)?.header && !animDataOf(f)) runFor(f).catch(() => { /* the heuristics still report it */ });
   }, [project.files, project.entryPoint, project.entryPort, external]); // eslint-disable-line react-hooks/exhaustive-deps
   const [identified, setIdentified] = useState<Record<string, IdentifyResponse>>({});
   const asked = useRef(new Set<string>());
@@ -1189,6 +1198,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // a cartridge's chip is no packed program (and is in a bank of its own). A snapshot's RAM is judged by Sindri going
     // on from it alone: the signs of a file miss what it still holds packed (9 of 73 games' snapshots), and crunched
     // data it is done with is no reason to unpack it
+    // animation data a player stores frame by frame (Bliss Machine's lightning) looks packed to the signs, and is not
+    if (animDataOf(f)) return null;
     const h = f?.chip != null || f?.vsf ? null : detectPacking(A, i), at = { index: i, size: af.bytes.length, entry: A.entry };
     // a snapshot is packed when going on from it a decruncher or decoder read packed data, not when it only moved code
     const run0 = f ? runs[runKey(f)] : undefined;
@@ -1196,7 +1207,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
     if (!external && f && onlyRelocates(run, A)) return null;
     return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, run, at);
-  }), [A, identified, runs, project.files, project.entryPoint, project.entryPort, external, unpackerName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [A, identified, runs, project.files, project.entryPoint, project.entryPort, external, unpackerName, storeAnims]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** what each file is when it is animation data (the bar above the listing and the analysis overview say it) */
+  const animData = useMemo(() => project.files.map(f => animDataOf(f)), [project.files, storeAnims]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went.
    *  `port`: $01 as the program starts at `start` (Sindri's saved.port), kept with the start when it is not $37 */
   const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined, port: number | null = null): string => {
@@ -4011,6 +4024,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 <button className="btn small primary" disabled={!!buildBusy} onClick={() => void unpackFile(i)}>{unpackLabel}</button>
                 <button className="icon-btn" aria-label="Dismiss the packed notice" onClick={() => setPackHidden(s => new Set([...s, project.files[i]?.id ?? String(i)]))}><Icon name="x" size={14} /></button>
               </div>)}
+              {animData.map((d, i) => d && !packHidden.has(project.files[i]?.id ?? String(i)) && <div key={`anim-${i}`} className="welcome preview-bar anim-data-bar" role="status">
+                <div><b>{project.files[i]?.name} is animation data, not packed:</b> {animDataText(d)}. There is nothing to unpack.</div>
+                <button className="icon-btn" aria-label="Dismiss the animation data notice" onClick={() => setPackHidden(s => new Set([...s, project.files[i]?.id ?? String(i)]))}><Icon name="x" size={14} /></button>
+              </div>)}
               {unpacked && <div className={cx('welcome preview-bar unpack-bar', !unpacked.ok && 'bad')} role="status">
                 <div><b>{unpacked.title}</b><details><summary>{unpacked.label}</summary><pre className="unpack-log">{unpacked.output}</pre></details></div>
                 <button className="icon-btn" aria-label="Dismiss the unpacker result" onClick={() => setUnpacked(null)}><Icon name="x" size={14} /></button>
@@ -4134,7 +4151,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {packSource && <div className="pack-over" role="dialog" aria-label="Pack a file">
         <QuickPack source={packSource} onBack={() => setPackSource(null)} back={{ label: home ? `Back to ${home.name}` : 'Back to the work', title: 'Back to the work, as it was' }} />
       </div>}
-      {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} looking={lookingFor} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
+      {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} animData={animData} looking={lookingFor} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
         known={suggested} onNameKnown={() => nameKnown()} links={overviewLinks} onClose={() => setModal(null)} />}
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}

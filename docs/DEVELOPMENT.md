@@ -1105,6 +1105,21 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     161 120 demo and intro files in the archive only Breadbin's 12 copies have the player's loop. Tests:
     `test/petscii-anim.test.ts` (own encoder and a player of the same shape, the fixture `fixtures/d64/petscii-anim.d64`,
     a GIF reader in `test/helpers/gif.ts`), `apps/desktop/test/animview.test.ts`, an e2e test.
+53. Animation data stored frame by frame is recognised (spec 13.5b). Bliss Machine's `job06_8000.bin` and
+    `job07_a000.bin` (disk 1) "could not be unpacked", and the analysis called them packed (7.2 bits a byte, almost no
+    code): with `job08_c000.bin` they are one stream, `$8000–$cced`, 448 frames of lightning that the player at `$1f9d`
+    in job 5 stores into the screens `$4000–$47ff` and colour RAM, a frame per raster interrupt. `spindleStoreAnims`
+    (`packages/core/src/c64/store-anim.ts`) lays the jobs into memory in load order, finds the player in each job's
+    chunks by its code, reads the stream from the code that sets the pointer while the player's code is still there,
+    and keeps a reading only when it ends where a chunk ends (and has two frames or more). The Spindle tab says which
+    jobs are animation data and which job plays them (`lib/storeanim.ts`); a chunk of the stream opened from the tab
+    is not called packed (no Sindri run, no packing verdict): a bar above the listing and an *Animation data* card in
+    the overview say what it is. Nothing shows the frames (the user did not want that). Checked: the reader's stream
+    is byte for byte what the player reads in VICE (screens, bitmap and colour RAM at frames 1, 30, 100, 200, 300 and
+    447 matched a decoder of the same format; the bitmap comes from a second stream of 8-byte cells in job 9, not read
+    here). On the archive's 277 295 D64 (638 Spindle disks, at most 25 ms a disk) it finds the stream on the 6
+    copies of Bliss Machine's disk 1 and nothing else. Tests: `test/store-anim.test.ts` (a player of the same shape and an own encoder, the fixture
+    `fixtures/d64/store-anim.d64`), an e2e test.
 
 ## Roadmap
 

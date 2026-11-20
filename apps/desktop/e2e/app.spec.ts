@@ -6561,6 +6561,41 @@ test('a Spindle job whose code plays a PETSCII animation: the whole job opened, 
   });
 });
 
+test('Spindle jobs that are animation data another job\'s player stores frame by frame: said so, and not called packed', async ({ app, page }) => {
+  // fixtures/d64/store-anim.d64 (packages/core/test/store-anim.test.ts): job 1 holds the player at $2000 (the shape of
+  // Bliss Machine's), its tables and the code that points it at $5000; jobs 2 and 3 the stream, 60 frames
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/store-anim.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, /^Mounted store-anim\.d64: .*a Spindle 3 disk with 3 jobs/)).toBeVisible();
+  await openSection(page, 'Disk');
+  await page.locator('.disk-spindle').getByRole('button', { name: 'Load script' }).click();
+  const table = page.getByRole('table', { name: 'Spindle load script' });
+  const notes = (row: number) => table.locator('tbody tr').nth(row).locator('td').nth(4);
+
+  await test.step('the script says which jobs are animation data, and which job plays them', async () => {
+    await expect(notes(0)).toHaveText('its player at $2000 plays the animation data in jobs 2–3 (60 frames)');
+    await expect(notes(3)).toHaveText(/^animation data, not packed: frames 1–(\d+) of 60 for the player at \$2000 \(job 1\)$/);
+    await expect(notes(4)).toHaveText(/^animation data, not packed: frames \d+–60 of 60 for the player at \$2000 \(job 1\)$/);
+  });
+
+  await test.step('a chunk of the stream opened: the bar says what it is, and nothing calls it packed', async () => {
+    await table.locator('tbody tr').nth(3).click();
+    await expectFiles(page, ['job02_5000.prg']);
+    const bar = page.locator('.anim-data-bar');
+    await expect(bar).toContainText(/^job02_5000\.prg is animation data, not packed: it holds frames 1–\d+ of the 60 that the player at \$2000 \(job 1\) stores into \$0400–\$07ff, \$d800–\$dbff, a frame each time it is called\. The stream is \$5000–\$5[0-9a-f]{3} in jobs 2–3; nothing unpacks it, the player reads it frame by frame\. There is nothing to unpack\.$/);
+    await expect(page.locator('.pack-bar')).toHaveCount(0);
+    await page.locator('.titlebar').getByRole('button', { name: 'Analysis overview', exact: true }).click();
+    const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+    await expect(overview.getByRole('region', { name: 'Animation data' })).toContainText(/^Animation datajob02_5000\.prg is animation data, not packed: it holds frames 1–\d+ of the 60/);
+    await expect(overview.getByRole('region', { name: /packed|packing/i })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await bar.getByRole('button', { name: 'Dismiss the animation data notice' }).click();
+    await expect(bar).toHaveCount(0);
+  });
+});
+
 test('a mounted Bitfire disk: its files in the Bitfire script tab, unpacked, and d64write\'s command line', async ({ app, page }) => {
   // fixtures/d64/bitfire-demo.d64 (packages/core/test/bitfire-disk.test.ts): the raster demo packed with an end, a table
   // that is not packed, and a file packed in place that unpacks to $2ed4-$2fff

@@ -3478,6 +3478,15 @@ början av Spindle 3:s residenta sida och hela kedjan går att följa till slute
   en dels kod, tabeller och data tillsammans.
 - Spelar ett jobbs kod en PETSCII-animation står det i anmärkningarna (*PETSCII animation: 105 frames
   ($8000–$cc4d)*), och ett klick öppnar jobbet och visar rutorna i Graphics → Animations (14.5b).
+- Är ett jobb animationsdata som en spelare i ett annat jobb lagrar ruta för ruta (Bliss Machines blixtar, disk 1:
+  jobb 6–8, spelaren i jobb 5) står det i anmärkningarna: *animation data, not packed: frames 1–174 of 448 for the
+  player at $1f9d (job 5)*, och vid spelarens jobb *its player at $1f9d plays the animation data in jobs 6–8 (448
+  frames)*. En sådan bit som öppnas kallas inte packad: en rad över listningen och ett kort i analysöversikten säger
+  vad den är, och Sindri kör den inte. `spindleStoreAnims()` (`packages/core/src/c64/store-anim.ts`) lägger jobben i
+  minnet i laddordning, hittar spelaren på dess kod (`lda (p),y / iny / bne / inc p+1`, lagringen `sta lo / stx $hh00`
+  i sin egen operand, fyra tabeller), läser strömmen från koden som sätter pekaren och tar den bara när den slutar där
+  en bit slutar. Formatet: en ruta är N grupper; en grupp är ett index till antal och sida (0: sidan och antalet står
+  i strömmen), sedan för varje värde ett index till antal och värde (0: de står i strömmen) och lika många låga bytes.
 - Har snapshoten också Pefchain-drivers (8.11f) står de under laddskriptet.
 
 **Mätt:**

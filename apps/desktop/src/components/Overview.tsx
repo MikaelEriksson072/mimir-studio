@@ -11,6 +11,7 @@ import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project, type RoutineMatch } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { IconName } from '../lib/icon-paths';
+import { animDataText, type AnimData } from '../lib/storeanim';
 import { blockMap, count, GFX_KIND, nameNear, problemCounts, regsText, routinesOf, startOf, typeRows, type SnapshotPc } from '../lib/overview';
 import type { UiProblem } from '../lib/types';
 import { bankAdr, cx, fmtBytes, GROUP_LABEL, musicPlayTitle } from '../lib/util';
@@ -57,6 +58,8 @@ interface OverviewProps {
   /** the project was opened from a VICE snapshot: where its CPU was when it was saved */
   snap?: SnapshotPc | null;
   packing: readonly (PackingInfo | null)[]; problems: readonly UiProblem[];
+  /** the files that are animation data a player in another Spindle job stores frame by frame: what each holds */
+  animData?: readonly (AnimData | null)[];
   /** the checks of whether the files are packed (those still running show; those done show their end if they were
    *  running while the overview was open) */
   looking?: readonly PackLook[];
@@ -117,7 +120,7 @@ function useSeenRunning(looks: readonly PackLook[]) {
   return (l: PackLook) => seen.has(`${l.id}@${l.since}`);
 }
 
-export function AnalysisOverview({ A, project, labels, snap, packing, looking = [], problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, links, onClose }: OverviewProps) {
+export function AnalysisOverview({ A, project, labels, snap, packing, animData = [], looking = [], problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, links, onClose }: OverviewProps) {
   /** every link closes the window, then goes there */
   const go = (f: () => void) => () => { onClose(); f(); };
   const start = startOf(A, project);
@@ -179,6 +182,10 @@ export function AnalysisOverview({ A, project, labels, snap, packing, looking = 
         </div>
 
         <div className="ov-grid">
+          {animData.map((d, i) => d && (
+            <Card key={`anim-${i}`} icon="film" title="Animation data" wide className="ov-anim-data">
+              <p><b>{project.files[i]?.name}</b> is animation data, not packed: {animDataText(d)}. There is nothing to unpack.</p>
+            </Card>))}
           {packed.map(({ p, i }) => (
             <Card key={`pack-${i}`} icon="pack" title={p.verdict === 'packed' ? 'Packed' : 'Maybe packed'} wide className="ov-packed">
               <p><b>{A.files[i]?.name}</b> {p.verdict === 'packed' ? 'is packed' : 'may be packed'}{p.signature ? ` (${p.signature})` : ''}: {p.reasons.join('; ')}. What the analysis sees is the decruncher{p.decruncher != null ? ` at $${h4(p.decruncher)}` : ''} and the packed data, not the program.</p>
