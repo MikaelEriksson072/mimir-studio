@@ -6549,6 +6549,8 @@ test('the Spindle script: a tab when Pefchain drivers are in memory, a row per s
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/spindle-demo.prg')] });
   await fromFileMenu(page, 'Open PRG files…');
   await expect(toast(page, 'Loaded spindle-demo.prg at $0400')).toBeVisible();
+  // the drivers are in the program, not on a mounted disk: the tab is not marked as a disk's script
+  await expect(page.getByRole('tab', { name: /Spindle script/ })).not.toHaveClass(/disk-script/);
   await page.getByRole('tab', { name: /Spindle script/ }).click();
   await expect(page.getByRole('tab', { name: /Spindle script/ })).toContainText('6');
   const table = page.getByRole('table', { name: 'Spindle script' });
@@ -6594,6 +6596,17 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
   await expect(toast(page, 'Mounted spindle-demo.d64: "SPINDLE DEMO", 1 file, a Spindle 3 disk with 4 jobs')).toBeVisible();
   await openSection(page, 'Disk');
   await expect(page.locator('.disk-spindle')).toContainText('Spindle 3 disk: 4 jobs the loader reads, not files');
+
+  await test.step('the panel marks the tab of the disk\'s load script, so it is seen', async () => {
+    const tab = page.getByRole('tab', { name: /Spindle script/ });
+    await expect(tab).toHaveClass(/disk-script/);
+    await expect(tab).toHaveAttribute('title', 'Read from the mounted disk spindle-demo.d64');
+    await expect(tab).toHaveAttribute('aria-selected', 'false');
+    await expect(tab).toBeInViewport();
+    // in the accent while it is not open, unlike the other tabs not open
+    const color = (name: RegExp) => page.getByRole('tab', { name }).evaluate(e => getComputedStyle(e).color);
+    expect(await color(/Spindle script/)).not.toBe(await color(/^Messages/));
+  });
 
   await test.step('the Explorer opens the load script, a row per chunk', async () => {
     await page.locator('.disk-spindle').getByRole('button', { name: 'Load script' }).click();

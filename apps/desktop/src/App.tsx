@@ -133,6 +133,10 @@ function extendSel(s: Sel | null, from: Range | null, r: Range): Sel {
 
 /** the bottom panel's tabs of a loader's script or the tape, which the analysis overview links to */
 const SCRIPT_TABS: readonly BottomTab[] = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer', 'tape'];
+/** the script tabs a mounted disk's own load script (or files) fills, each named as the disk's field that holds it: the
+ *  tab row marks them, so a disk with a script is seen to have one */
+const DISK_SCRIPT_TABS = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer'] as const satisfies readonly (BottomTab & keyof MountedDisk)[];
+const isDiskScriptTab = (k: BottomTab): k is (typeof DISK_SCRIPT_TABS)[number] => (DISK_SCRIPT_TABS as readonly BottomTab[]).includes(k);
 
 /** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
 type Note = { text: string; n: number };
@@ -3944,6 +3948,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   // the Spindle script tab is there when the analysis found Spindle's drivers
   const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'sparkle' || !!disk?.sparkle) && (k !== 'krill' || !!disk?.krill || !!A.krill?.steps.length) && (k !== 'covert' || !!disk?.covert) && (k !== 'dloc' || !!disk?.dloc) && (k !== 'iffl' || !!disk?.iffl) && (k !== 'pirateslayer' || !!disk?.pirateslayer) && (k !== 'tape' || !!tape));
   const shownBottom = bottomTabs.some(([k]) => k === bottom) ? bottom : 'log';
+  /** a tab the mounted disk's own load script fills is marked, and comes in anew (it pulses) with each disk mounted:
+   *  the disk's number is in its key */
+  const diskScriptTab = (k: BottomTab) => !!disk && isDiskScriptTab(k) && !!disk[k];
+  const diskNos = useRef({ n: 0, of: new WeakMap<MountedDisk, number>() });
+  const diskNo = (d: MountedDisk) => { const m = diskNos.current; let n = m.of.get(d); if (n == null) m.of.set(d, n = ++m.n); return n; };
+  // the row scrolls when the panel is narrow: the disk's script tab is brought into view
+  useEffect(() => { if (disk) bottomRef.current?.querySelector<HTMLElement>('.tab.disk-script')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [disk]);
   /** the Relocated tab's count: the relocated blocks (placed or not) and the copy loops found */
   const relocCount = project.relocs.length + A.copies.length;
   const blk = cursor != null ? findBlock(A.blocks, cursor) : null;
@@ -4247,7 +4258,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         {tab !== 'spec' && <section ref={bottomRef} className={cx('bottom', !panelOpen && 'collapsed')} aria-label="Panels">
           <div className="tabs small" role="tablist">
             {bottomTabs.map(([k, l]) => { const n = k === 'log' ? A.log.length : k === 'messages' ? messages.length : k === 'problems' ? problems.length : k === 'irqs' ? A.raster.length : k === 'relocs' ? relocCount : k === 'spindle' ? A.spindle.length + (disk?.spindle?.jobs.length ?? 0) : k === 'bitfire' ? (disk?.bitfire?.files.length ?? 0) : k === 'booze' ? (A.booze?.steps.filter(s => s.kind === 'load').length ?? 0) + (disk?.booze?.files.length ?? 0) : k === 'sparkle' ? (disk?.sparkle?.bundles.length ?? 0) : k === 'krill' ? (A.krill?.steps.length ?? 0) + (disk?.krill?.files.length ?? 0) : k === 'covert' ? (disk?.covert?.files.length ?? 0) : k === 'dloc' ? (disk?.dloc?.files.length ?? 0) : k === 'iffl' ? (disk?.iffl?.files.reduce((a, f) => a + f.parts.length, 0) ?? 0) : k === 'tape' ? (tape?.img.files.length ?? 0) : null; return (
-              <button key={k} role="tab" aria-selected={shownBottom === k} className={cx('tab', shownBottom === k && 'on')} onClick={() => setUi({ bottom: k, panelOpen: true })}>{l}{n != null && <span className={cx('count', k === 'problems' && problems.some(p => p.lvl === 'err') && 'bad')}>{n}</span>}</button>); })}
+              <button key={disk && diskScriptTab(k) ? `${k}:${diskNo(disk)}` : k} role="tab" aria-selected={shownBottom === k} className={cx('tab', shownBottom === k && 'on', diskScriptTab(k) && 'disk-script')} title={disk && diskScriptTab(k) ? `Read from the mounted disk ${disk.name}` : undefined} onClick={() => setUi({ bottom: k, panelOpen: true })}>{l}{n != null && <span className={cx('count', k === 'problems' && problems.some(p => p.lvl === 'err') && 'bad')}>{n}</span>}</button>); })}
             <span className="grow" />
             <button className="icon-btn panel-toggle" onClick={() => setUi({ panelOpen: !panelOpen })} aria-label={panelOpen ? 'Collapse panel' : 'Expand panel'} title={panelOpen ? 'Collapse panel' : 'Expand panel'}><Icon name="down" size={14} className={panelOpen ? '' : 'flip'} /></button>
           </div>
