@@ -464,6 +464,71 @@ go:` }).prg);
       expect(r.stop.cycle).toBeLessThan(31_000_000);
     });
 
+    it('gives a layer that starts just before the run would settle the rest of its window to make progress in (Barry Boomer Trapped Again)', () => {
+      // the intro waits for space, then with nothing written until just before it would be settled (1.5 s after the
+      // key was let go) jumps into the routine it copied to $c000: that waits 0.1 s, then writes 4 KB. A new layer is
+      // progress when the window ends; the run took it for settled before that (Barry Boomer's second Exomizer, which
+      // starts just as the drive's patience is spent, builds its tables over the ones the first left)
+      const p = asm(`${SYS_LINE}
+       sei
+       lda #$0b
+       sta $d011
+       ldx #47
+copy:  lda next,x
+       sta $c000,x
+       dex
+       bpl copy
+       lda #$7f
+       sta $dc00
+down:  lda $dc01
+       and #$10
+       bne down
+up:    lda $dc01
+       and #$10
+       beq up
+       ldy #0
+       lda #4
+wa:    ldx #0
+wb:    dey
+       bne wb
+       dex
+       bne wb
+       sec
+       sbc #1
+       bne wa
+       ldx #142
+wc:    dey
+       bne wc
+       dex
+       bne wc
+       jmp $c000
+next:  ldx #78
+n1:    dey
+       bne n1
+       dex
+       bne n1
+       lda #$20
+       sta $fc
+       lda #0
+       sta $fb
+       ldx #16
+       lda #$55
+       ldy #0
+fill:  sta ($fb),y
+       iny
+       bne fill
+       inc $fc
+       dex
+       bne fill
+       clc
+stop:  bcc stop`);
+      const r = go(p.prg);
+      expect(r.stop.reason).toBe('settled');
+      expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+      expect(r.layers[0].presses[0]).toMatch(/^space \+ fire/);
+      expect(r.layers[1].writtenBytes).toBeGreaterThanOrEqual(0x1000);
+    });
+
     it('takes a crash that goes round a BRK through a vector in RAM for settled, not for a wait for time', () => {
       // a byte written each time round, as a count would (I.C.U.P.S's game ends so, in $ffff ISC $252f,X / $0002 BRK)
       const p = asm(`${SYS_LINE}

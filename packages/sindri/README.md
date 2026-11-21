@@ -198,6 +198,13 @@ The run stops when the newest layer settles (it stops streaming new data through
 disk), returns to BASIC, crashes or runs out of time. A program back at the READY prompt with its IRQ vector at `$0314`
 still leading into code of its own (and the interrupt on) has not ended: it goes on there. Uncensored (#1 of 2014)
 sets its own handler and returns to READY; a second later the handler takes over and loads the demo. The newest layer is then the unpacked program.
+A layer that starts is progress, though it counts as such only where the third of the settle time it started in ends:
+until then the run is not taken for settled. A decruncher that starts just as the waiting before it has used up its
+time (the drive's motor patience, or the 1.5 s after a key was let go) builds its tables over the ones an earlier run
+of it left, writing nothing new; Barry Boomer Trapped Again (TSJ's second Exomizer, after its intro) and La Alumbrada
+(Exomizer 3, after the story's RETURN) settled in it at `$015d` and `$016f`, and now get to their demos at `$9ca0` and
+`$c000`, byte for byte what unp64 saves. Of 870 archive programs (Onefile-top200, Onefile-year-top20, Top200 disks,
+CSDB intros) only these two changed.
 
 A program that waits for time is not settled for half a minute after it last made progress: its code outside the
 interrupt handlers reads the clock (the KERNAL's jiffy clock at `$a0-$a2`, a CIA's time of day), or BASIC goes round a

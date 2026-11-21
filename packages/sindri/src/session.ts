@@ -1235,7 +1235,9 @@ class Session {
         if (now - this.tapeEnded < TAPE_END_PATIENCE) this.progressAt = now;
       }
     } else if (t && !t.atEnd && this.tapeRan && now - this.tapeRan < TAPE_PAUSE_PATIENCE) this.progressAt = now;
-    if (!this.holdUntil && now - this.progressAt >= this.settleCycles && !this.waitsForTime(now)) this.settled();
+    // (a layer that started in this window is progress when it ends: a decruncher that starts as the patience before
+    // it runs out rebuilds the tables its earlier run left, nothing fresh, as Barry Boomer Trapped Again's second does)
+    if (!this.holdUntil && now - this.progressAt >= this.settleCycles && this.cur === this.progressLayer && !this.waitsForTime(now)) this.settled();
   }
 
   /**

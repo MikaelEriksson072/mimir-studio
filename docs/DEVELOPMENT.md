@@ -1214,6 +1214,20 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     Tests: `music.test.ts` (init given X and Y,
     `regsAtCall`), `sidplayer.test.ts` (the routine next to the block, the screen, the `.sid`'s start song),
     `reloc.test.ts` (a copy over the screen, KERNAL LOAD in it, relocated with the screen as junk).
+58. Barry Boomer Trapped Again (Onefile-top200 #8, TSJ, both D64s) did not unpack: Sindri peeled off the first Exomizer
+    and the intro at `$c000`, then stopped in the second Exomizer at `$015d` (settled) and would have saved it, the
+    decruncher's own start at `$013e` in a range without `$0100`. The intro waits 11 s (a countdown in its main loop
+    that waits for the raster), carried by the drive's motor patience (10 s); the decruncher started 1.3 s after that
+    patience ended, and its first 88 instructions rebuild tables the first run left with the same values, so nothing
+    was fresh. A new layer was progress only at the end of the window (a third of the settle time) it started in,
+    while the settle check runs at every check: it fired 0.17 s into the layer. Now the run is not settled while the
+    layer is not the one that made progress last (`cur !== progressLayer`), so the window ends first and the new layer
+    counts. Measured old against new on 870 archive programs (Onefile-top200, 250 of Onefile-year-top20, 120 Top200
+    disks, 300 CSDB intros): 868 the same, and two get further, Barry Boomer (`$0400-$ff3f` from `$9ca0`) and La
+    Alumbrada (Onefile-top200 #43, settled in Exomizer 3 at `$016f` 1.5 s after RETURN was let go; now `$0400-$cdb2`
+    from `$c000`); both are byte for byte unp64's in the range unp64 saves and run in VICE. Without its disk Barry
+    Boomer's PRG still stops in the intro: a countdown that reads `$d011` is not a wait for time. Test:
+    `unpack.test.ts` (a jump into copied code 1.5 s after a key was let go, the screen off so the delay is exact).
 
 ## Roadmap
 
