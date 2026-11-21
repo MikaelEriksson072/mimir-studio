@@ -5056,7 +5056,9 @@ sig självt från STOP-vektorn).
 **Kontrollen:**
 - Varje förfrågan Sindri gjorde på de sju skivor som laddar klart är byte för byte de sidor läsaren ger. Ett exempel:
   Bangkok Knights 3 584, 13 312 och 35 072 byte. Buggy Boys avbild har tre sektorer med fel kontrollsumma, och spelet
-  hänger i VICE också. Sindris drive tar emot `$C0` sidor där C64:an skickar `$CE`, vilket inte är utrett.
+  hänger i VICE också. I Sindri får driven `$C0` sidor där C64:an ber om `$CE`. Det är en kapplöpning i bootet, inte i
+  Sindri: tabellen för halvbytarna ligger delvis på KERNAL:s jiffy-klocka (`$A0`–`$A1`), och kommer avbrottet mellan
+  kopian och `SEI` nollas den. VICE gör likadant med starten flyttad (`-keybuf-delay 12`); se `docs/paraprotect.md`.
 - VICE: Bangkok Knights visar titelskärmen med `-drive8type 1541`, men inte med 1541-II, VICE:s standard. Drivkoden kör
   `$C029` ur DOS-ROM:en, och den byten skiljer mellan ROM:arna.
 - **Tester:** `packages/core/test/paraprotect.test.ts` bygger egna skivor (`test/helpers/paraprotect-disk.ts`): ett boot

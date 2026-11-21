@@ -1246,8 +1246,10 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     and the game's directory. The Para-Protect tab (open, add, Export, Save files…, Copy list), an Explorer line,
     `mimir disks`, and `paraprotect` in `loaders.ts`. The archive's eight Para-Protect disks: every request Sindri made
     on the seven that load is byte for byte what the reader gives. Buggy Boy's image has three bad sectors, and Sindri's
-    drive gets `$c0` pages for `$ce` there (not looked into). Tests: `paraprotect.test.ts` (own disks, no code of
-    Paranoid's), Sindri's `g64.test.ts`.
+    drive gets `$c0` pages for `$ce` there: a race in the boot, not in Sindri. The send table at `$0092-$00a1` ends on
+    the KERNAL's jiffy clock, and the boot copies it before its SEI; an IRQ in that window sees a clock past 24 hours
+    and clears `$a0-$a2`, so nibbles `$e` and `$f` go as 0. VICE does the same with its start moved
+    (`-keybuf-delay 12`). Tests: `paraprotect.test.ts` (own disks, no code of Paranoid's), Sindri's `g64.test.ts`.
 
 ## Roadmap
 

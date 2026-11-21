@@ -24,10 +24,9 @@ Arkivets 312 skivavbilder under `Games/Preservers` söktes efter bootets text. �
 
 *Till spelet* betyder att Sindri laddar klart: titelskärm, meny eller spel. Varje förfrågan som Sindri gjorde på de sju
 skivorna är byte för byte de sidor Mimir läser ur avbilden.
-Undantaget är Buggy Boys andra. Buggy Boys avbild har tre sektorer med fel kontrollsumma (två i den andra filen, en
-på 40/14). Spelet hänger i VICE också. I Sindri tar driven emot `$C0` sidor när C64:an skickar `$CE`: den låga
-halvbyten går förlorad i just den överföringen. Det är en tidsfråga i Sindris tvåbitarsöverföring från C64:an till
-driven som inte är utredd.
+Undantaget är Buggy Boys andra förfrågan. Buggy Boys avbild har tre sektorer med fel kontrollsumma (två i den andra
+filen, en på 40/14), och spelet hänger i VICE också. I Sindri tar driven emot `$C0` sidor när C64:an ber om `$CE`. Det
+är inget fel i Sindris överföring utan en kapplöpning i bootet, se *Kapplöpningen med jiffy-klockan* nedan.
 
 ## Katalogen
 
@@ -151,6 +150,29 @@ Två följder av det:
 **Bangkok Knights datablock** har sektorns nummer som första byte i stället för `$07`. Sektor 7:s är alltså `$07`, och
 sektor 8:s är `$08`, samma som ett sektorhuvud. En 1541:s DOS läser ingen av dem (22 READ ERROR), och en D64 av skivan
 saknar dem. De andra skivornas datablock har `$07`, så en D64 av dem har sektorerna, men inte det som kontrollen läser.
+
+## Kapplöpningen med jiffy-klockan
+
+C64:ans sändrutin tar varje halvbyte ur en tabell på 16 byte på `$0092`–`$00A1`: `00 80 20 A0 40 C0 60 E0 10 90 30 B0
+50 D0 70 F0`. Tabellens två sista byte, posterna för halvbytarna `$E` och `$F`, ligger på `$00A0`–`$00A1`. Där har
+KERNAL:n sin jiffy-klocka (`$A0`–`$A2`).
+
+Bootet kopierar laddaren till nollsidan (`LDA $0433,Y / STA $0002,Y`, Buggy Boy; `$03F5` på Bangkok Knights) och
+stubben till sida 2 *innan* det gör `SEI`. Under tiden går KERNAL:ns avbrott var 60:e sekund. Kommer ett avbrott efter att
+kopian har skrivit `$70` på `$00A0` men före `SEI`, ser klockrutinen (`$F69B`) att klockan visar mer än 24 timmar
+(`$70xxxx` ≥ `$4F1A01`) och nollar `$A0`–`$A2` (`$F6B6`). Halvbytarna `$E` och `$F` skickas då som 0. Fönstret är
+ungefär 2 300 cykler av avbrottets 16 421, så omkring en uppstart av sju borde drabbas på en riktig C64, där läget i
+avbrottets period beror på var skivan står när LOAD börjar.
+
+- *Buggy Boy* ber om `$CE` sidor och driven får `$C0`. Laddaren tar emot 206 sidor men driven skickar 192, så C64:an
+  väntar för evigt. Det hände i Sindris körning (avbrottet kom vid `$F6B6` strax efter att `$00A0` skrivits).
+- *VICE* är deterministisk här och vann kapplöpningen i tio körningar. Med starten flyttad (`-keybuf-delay` 1–12) var
+  `$00A0`–`$00A2` nollade vid `SEI` med fördröjning 12, och orörda med de andra elva.
+- *Bangkok Knights* första förfrågan är `$0E` sidor, så den skulle bli 0 om avbrottet slog till. De andra skivorna har
+  samma kod och samma risk där en förfrågan har `$E` eller `$F` i en halvbyte.
+
+Sindri gör alltså som en C64 gör: den förlorar kapplöpningen när avbrottet faller i fönstret. Sindris överföring är inte
+fel. Buggy Boy hade ändå inte startat, eftersom avbilden har trasiga sektorer.
 
 ## Spelens egna laddningar
 
