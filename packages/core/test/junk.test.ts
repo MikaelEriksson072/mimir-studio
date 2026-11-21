@@ -1,7 +1,7 @@
 /* Junk (spec 11.7): bytes the user leaves out of everything. The analysis takes them as not loaded, so the listing,
  * the source and the output do not have them, and the round trip compares only the rest. */
 import { describe, expect, it } from 'vitest';
-import { addJunk, analyze, assemble, comparePrg, deserializeProject, findBlock, junkAt, junkIn, makeDemo, parsePrg, removeJunk, render, serializeProject, verify, createProject, type ProjectInput } from '../src';
+import { addJunk, analyze, assemble, comparePrg, deserializeProject, findBlock, junkAt, junkIn, junkPlan, makeDemo, parsePrg, removeJunk, render, serializeProject, verify, createProject, type ProjectInput } from '../src';
 
 const demoInput = (): ProjectInput => {
   const d = makeDemo();
@@ -121,5 +121,58 @@ describe('junk in the project file', () => {
     const none = serializeProject(createProject({ files: demoInput().files }));
     expect('junk' in none).toBe(false);
     expect('junk' in deserializeProject(none)).toBe(false);
+  });
+});
+
+describe('a range marked as junk (Mark range as junk…)', () => {
+  const base = demoInput();
+  const A = analyze(base);
+
+  it('takes the blocks inside it whole and cuts those at its ends', () => {
+    const p = junkPlan(A, undefined, 0x0900, 0x09c0);
+    if ('error' in p) throw new Error(p.error);
+    expect([p.start, p.end, p.bytes]).toEqual([0x0900, 0x09c0, 0xc0]);
+    expect(p.whole.map(b => b.start)).toEqual([0x0916, 0x0919, 0x091a, 0x091e, 0x0927, 0x092d, 0x0931, 0x0935, 0x0939, 0x0949, 0x0960, 0x0985]);
+    // the code at $08b7 keeps $08b7-$08ff, the table at $09b5 $09c0-$0ab4
+    expect(p.cut.map(b => [b.start, b.end])).toEqual([[0x08b7, 0x0916], [0x09b5, 0x0ab5]]);
+    // marked, the rest still verifies: the code before it ends at $08ff, the table after it starts at $09c0
+    const out = roundTrip({ ...base, junk: addJunk(undefined, p.start, p.end) });
+    expect(out.V.ok, failure(out.V)).toBe(true);
+    expect(out.V.results[0].excluded).toBe(0xc0);
+    expect(findBlock(out.A.blocks, 0x09c0)?.start).toBe(0x09c0);
+    expect(findBlock(out.A.blocks, 0x0900)).toBeNull();
+    expect(p.joins).toEqual([]);
+  });
+
+  it('is trimmed to the loaded bytes', () => {
+    const p = junkPlan(A, undefined, 0x0700, 0x0900);
+    if ('error' in p) throw new Error(p.error);
+    expect([p.start, p.end, p.bytes]).toEqual([0x0801, 0x0900, 0x0900 - 0x0801]);
+    const q = junkPlan(A, undefined, 0x3700, 0x5000);
+    if ('error' in q) throw new Error(q.error);
+    expect([q.start, q.end]).toEqual([0x3700, 0x3800]);
+  });
+
+  it('joins the junk it overlaps, and counts only the bytes that are loaded', () => {
+    const junk = [{ start: 0x09b5, end: 0x0ab5 }];
+    const J = analyze({ ...base, junk });
+    const p = junkPlan(J, junk, 0x0a00, 0x0b00);
+    if ('error' in p) throw new Error(p.error);
+    expect([p.start, p.end, p.bytes]).toEqual([0x0a00, 0x0b00, 0x0b00 - 0x0ab5]);
+    expect(p.joins).toEqual(junk);
+    expect(addJunk(junk, p.start, p.end)).toEqual([{ start: 0x09b5, end: 0x0b00 }]);
+    expect(junkPlan(J, junk, 0x09c0, 0x0a00)).toEqual({ error: '$09c0–$09ff is junk already' });
+  });
+
+  it('is refused where nothing is loaded, and over a relocated block where it is loaded or runs', () => {
+    expect(junkPlan(A, undefined, 0x4000, 0x5000)).toEqual({ error: 'nothing is loaded at $4000–$4fff' });
+    expect(junkPlan(A, undefined, 0x0a00, 0x0a00)).toEqual({ error: 'the range is empty' });
+    const R = { ...A, relocs: [{ start: 0x2000, end: 0x2100, to: 0xc000, file: 0 }] };
+    for (const [s, e] of [[0x1f00, 0x2001], [0x20ff, 0x2200], [0xbf00, 0xc080]]) {
+      const p = junkPlan(R, undefined, s, e);
+      expect('error' in p && p.error).toBe('$2000–$20ff is a relocated block (it runs at $c000–$c0ff): stop relocating it before you call its bytes junk');
+    }
+    // a range around the copy, without touching where it is loaded
+    expect('error' in junkPlan(R, undefined, 0xbf00, 0xd000)).toBe(true);
   });
 });

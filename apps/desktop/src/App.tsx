@@ -11,7 +11,7 @@ import {
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, findPictureColors, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
-  addJunk, removeJunk, type JunkArea,
+  addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
   checkScript, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
@@ -66,6 +66,7 @@ import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, CovertPanel, DlocPan
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
+import { JunkRangeModal } from './components/JunkRange';
 import { BlockSizeModal } from './components/BlockSize';
 import { RelocateModal, type RelocDraft } from './components/Relocate';
 import { BuildTemplatesModal } from './components/BuildTemplates';
@@ -211,7 +212,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const [sel, setSel] = useState<Sel | null>(null);
   const [scrollReq, setScrollReq] = useState<ScrollReq | null>(null);
   const [heatMode, setHeatMode] = useState<HeatMode>('type');
-  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | 'templates' | 'library' | null>(null);
+  const [modal, setModal] = useState<'settings' | 'goto' | 'palette' | 'merge' | 'size' | 'patch' | 'project' | 'reloc' | 'voff' | 'overview' | 'templates' | 'library' | 'junk' | null>(null);
+  /** the range Mark range as junk… starts with (11.7) */
+  const [junkInit, setJunkInit] = useState<{ start: Addr; end: Addr } | null>(null);
   /** the block the Block size dialog changes (its start when the dialog opened) */
   const [sizeAt, setSizeAt] = useState<Addr | null>(null);
   /** the patch dialog's range and code */
@@ -1638,6 +1641,15 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setScrollReq({ addr: p.start, center: false, n: Date.now(), ...(p.y != null ? { y: p.y } : {}) });
     setChanged({ start: p.start, end: p.end, label: p.label, at: Date.now() });
   }, [rProject]);
+  /** where the listing goes once the analysis of an edit is in (the line after bytes that became junk): `y` is the
+   *  line's place on screen, null for a third down */
+  const pendingGo = useRef<{ addr: Addr; y: number | null } | null>(null);
+  useLayoutEffect(() => {
+    const p = pendingGo.current;
+    if (!p || rProject !== useProject.getState().present) return;
+    pendingGo.current = null;
+    setScrollReq({ addr: p.addr, center: false, n: Date.now(), ...(p.y != null ? { y: p.y } : {}) });
+  }, [rProject]);
   useEffect(() => { if (!changed) return; const t = setTimeout(() => setChanged(null), CHANGED_MS); return () => clearTimeout(t); }, [changed]);
   const targetRange = () => {
     if (sel && sel.multi && sel.end > sel.start) return sel;
@@ -1842,17 +1854,29 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** 11.7: `r` is junk: the analysis takes its bytes as not loaded, so the listing, the source and the output do not
    *  have them; the Explorer's Junk list puts them back */
-  const markJunk = (r: { start: Addr; end: Addr }) => {
-    const rl = A.relocs.find(x => x.start < r.end && r.start < x.end) ?? relocAt(A, r.start) ?? relocAt(A, r.end - 1);
-    if (rl) { toast(`$${h4(rl.start)}–$${h4(rl.end - 1)} is a relocated block: stop relocating it before you call its bytes junk`, 'warn'); return; }
-    let n = 0;
-    for (let a = r.start; a < r.end; a++) if (A.owner[a] >= 0) n++;
-    if (!n) { toast(`$${h4(r.start)}–$${h4(r.end - 1)} is not loaded`, 'warn'); return; }
-    const after = A.blocks.find(b => b.start >= r.end && A.owner[b.start] === A.owner[r.start]);
+  const markJunk = (want: { start: Addr; end: Addr }) => {
+    // trimmed to the bytes that are loaded (or junk already); a relocated block's bytes cannot be junk
+    const r = junkPlan(A, project.junk, want.start, want.end);
+    if ('error' in r) { toast(`${r.error[0].toUpperCase()}${r.error.slice(1)}`, 'warn'); return; }
+    // the cursor goes to the byte after it (a block starts there once it is junk), else to the file's next block
+    const n = r.bytes, file = A.owner[r.start] >= 0 ? A.owner[r.start] : A.owner[r.end - 1];
+    const after = file >= 0 && A.owner[r.end] === file ? r.end : A.blocks.find(b => b.start >= r.end && A.owner[b.start] === file)?.start;
+    // once its analysis is in, the listing shows that line where the junk began on screen (or a third down)
+    const el = listRef.current;
+    let i = lineOf[r.start] ?? -1;
+    for (let a = r.start - 1; i < 0 && a >= 0 && r.start - a < 64; a--) i = lineOf[a] ?? -1;
+    const y = el && i >= 0 ? i * ROW - el.scrollTop : -1;
+    pendingGo.current = after != null ? { addr: after, y: el && y >= 0 && y + ROW <= el.clientHeight ? y : null } : null;
     update(`Mark $${h4(r.start)}-$${h4(r.end - 1)} as junk`, d => { d.junk = addJunk(d.junk, r.start, r.end); });
     setSel(null);
-    if (after) setCursor(after.start);
+    if (after != null) setCursor(after);
     toast(`$${h4(r.start)}–$${h4(r.end - 1)} is junk (${n} byte${n === 1 ? '' : 's'}): it is not in the listing, the source or the output. The Junk list in the Explorer puts it back`, 'ok');
+  };
+  /** Mark range as junk…: a start and an end, from `r`, else the selection, else from the cursor to its block's end */
+  const openJunkRange = (r?: { start: Addr; end: Addr } | null) => {
+    const b = cursor != null ? findBlock(A.blocks, cursor) : null;
+    setJunkInit(r ?? (sel && sel.multi && sel.end > sel.start ? { start: sel.start, end: sel.end } : b && cursor != null ? { start: cursor, end: b.end } : null));
+    setModal('junk');
   };
   /** a junk area is loaded again: the listing shows it, the source and the output have it */
   const includeJunk = (j: JunkArea) => {
@@ -3574,6 +3598,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ...(project.breakpoints?.length || project.watches?.length ? [{ id: 'debug-clear', label: `Remove all breakpoints and watches (${project.breakpoints?.length ?? 0} and ${project.watches?.length ?? 0})`, run: clearDebugMarks }] : []),
     { id: 'exclude', label: 'Exclude / include the block at the cursor in the build', run: () => { if (cursor != null) toggleExcluded(cursor); } },
     { id: 'junk', label: 'Mark the selection or the block at the cursor as junk (left out of everything)', run: () => { const r = sel && sel.multi && sel.end > sel.start ? sel : cursor != null ? findBlock(A.blocks, cursor) : null; if (r) markJunk({ start: r.start, end: r.end }); } },
+    { id: 'junk-range', label: 'Mark range as junk… (start, end)', run: () => openJunkRange() },
     ...(project.junk?.length ? [{ id: 'junk-all', label: `Include all junk again (${project.junk.length} area${project.junk.length === 1 ? '' : 's'})`, run: includeAllJunk }] : []),
     { id: 'binary', label: `Save the block at the cursor as a binary file (${words.binary}) / write it in the source`, run: () => { if (cursor != null) toggleBinary(cursor); } },
     { id: 'merge-prev', label: 'Merge the block at the cursor with the previous block', run: () => mergeBlock('prev') },
@@ -3914,6 +3939,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       // junk (11.7): the selection's bytes or the block's, left out of the listing, the source and the output
       ...(inSel && cs ? [{ label: 'Mark selection as junk (left out of everything)', run: () => markJunk({ start: cs.start, end: cs.end }) }]
         : b ? [{ label: 'Mark block as junk (left out of everything)', run: () => markJunk({ start: b.start, end: b.end }) }] : []),
+      { label: 'Mark range as junk… (start, end)', run: () => openJunkRange(inSel && cs ? { start: cs.start, end: cs.end } : b ? { start: l.a, end: b.end } : null) },
     ];
     /** Program: where it starts and what the analysis traces, new code, code that runs elsewhere, and the pack */
     const programItems: MenuItem[] = [
@@ -4025,6 +4051,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         { label: oneByte && cs ? `Mark ${span(cs.start, cs.end)} as` : inSel ? 'Mark selection as' : 'Mark from here as', icon: 'tag', children: [
           ...MARK_AS.map(m => ({ label: m.label, key: m.key, run: () => { if (range) mark(m.id, range, { bytes: inSel && cs?.bytes ? cs : null }); } })),
           { sep: true },
+          // 11.7: the same bytes left out of everything
+          ...(range ? [{ label: 'Junk (left out of everything)', run: () => markJunk(range) }] : []),
           { label: 'Clear override (automatic)', key: 'U', run: () => { if (range) clearOverride(range); } },
         ] },
         { label: 'Block', children: blockItems },
@@ -4212,7 +4240,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             d.patches = d.patches.filter(p => d.files.some(f => p.start >= f.load && patchEnd(p) <= f.load + f.bytes.length));
           })} onSetStart={setStart}
           patches={{ list: project.patches, onGo: goPatch, onEdit: editPatch, onSwitch: switchOnePatch, onSave: p => void savePatchPrg(p), onRemove: removePatch }}
-          junk={{ list: project.junk ?? NO_JUNK, onGo: goJunk, onInclude: includeJunk, onIncludeAll: includeAllJunk }}
+          junk={{ list: project.junk ?? NO_JUNK, onGo: goJunk, onInclude: includeJunk, onIncludeAll: includeAllJunk, onAdd: () => openJunkRange() }}
           viewOffsets={{ list: viewOffsets, shown: R.viewOffsets ?? NO_OFFSETS, onGo: goViewOffset, onEdit: o => startViewOffset({ start: o.start, end: o.end }), onRemove: removeOffset, onRemoveAll: removeAllOffsets }}
           scripts={{ list: userScripts, checks: scriptChecks, patches: project.patches, onNew: () => newUserScript(), onOpen: id => { openUserScript(id); setDrawer(null); }, onRun: id => void runUserScript(id), onRemove: removeUserScript, onAdd: addLibraryScript }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
@@ -4414,7 +4442,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         <Inspector A={A} R={R} project={project} cursor={cursor} sel={sel} colors={colors} heatMode={heatMode} setHeatMode={setHeatMode}
           bank={{ A: As, base, cursor: vCursor, sel: vSel, number: bankAt(cursor) }}
           onNavigate={nav} onSelect={(s, e) => { setSel({ start: s, end: e, multi: true, anchor: s }); setCursor(s); }}
-          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={markJunk} onFormat={setFormat} onSprites={setSprites} onSpriteColors={setSpriteColors} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onAddToLibrary={a => startLibraryAdd(a)}
+          onMark={mark} onMerge={mergeBlock} onMergeRange={() => setModal('merge')} onBlockSize={openBlockSize} onRelocate={r => startRelocate(r)} onUnrelocate={unrelocate} onViewOffset={r => startViewOffset(r)} onRemoveOffset={removeOffset} onToggleExcluded={toggleExcluded} onToggleBinary={toggleBinary} onJunk={openJunkRange} onFormat={setFormat} onSprites={setSprites} onSpriteColors={setSpriteColors} onBankZone={setBankZone} onRename={(a, n) => rename(a, n)} onBlockComment={setBlockComment} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onAddToLibrary={a => startLibraryAdd(a)}
           zpVar={pickedDef?.zp && pickedDef.at === cursor ? pickedDef.addr : null} onZpNote={(a, t) => setNote(a, t, !!project.notes[a]?.block)} onZpPair={pairZp} onZpComment={(a, t) => { if ((project.comments[a] || '') !== t) setComment(a, t); }} onClearOverride={b => clearOverride({ start: b.start, end: b.end })}
           cycles={cycles && path ? { path, onToggle: toggleTaken } : null} />
       </ErrorBoundary></aside>
@@ -4441,6 +4469,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}
       {modal === 'library' && libDraft && <LibraryAddModal draft={libDraft} findSame={libSame} onAdd={a => void addToLibrary(a)}
         onShow={i => { setModal(null); setLibDraft(null); showLibrary({ kind: i.kind, file: i.file }); }} onClose={() => { setModal(null); setLibDraft(null); }} />}
+      {modal === 'junk' && <JunkRangeModal A={A} R={R} junk={project.junk} init={junkInit} onJunk={r => { setModal(null); markJunk(r); }} onClose={() => setModal(null)} />}
       {modal === 'merge' && <MergeRangeModal A={A} R={R} cursor={cursor} sel={sel} onMerge={mergeRangeInto} onClose={() => setModal(null)} />}
       {modal === 'size' && sizeAt != null && <BlockSizeModal A={A} R={R} at={sizeAt} onResize={resizeInto} onClose={() => { setModal(null); setSizeAt(null); }} />}
       {modal === 'reloc' && relocDraft && <RelocateModal A={A} R={R} project={project} draft={relocDraft} onRelocate={relocate} onMove={runRelocAt} onRemove={unrelocate} onClose={closeReloc} />}

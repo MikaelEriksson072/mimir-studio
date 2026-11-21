@@ -41,7 +41,7 @@ interface InspectorProps {
   onToggleExcluded: (at: Addr) => void;
   /** save the block as data/<label>.bin (loaded with .import binary), or write it in the source again */
   onToggleBinary: (at: Addr) => void;
-  /** the block's bytes are junk (spec 11.7): left out of the listing, the source and the output */
+  /** Mark range as junk… (spec 11.7) from the selection or the block: its bytes left out of the listing, the source and the output */
   onJunk: (range: { start: Addr; end: Addr }) => void;
   /** the number format of a data, table or word block (null: the default) and how many items a row (null: the default);
    *  graphics drawn multicolour or hires (null: as the VIC registers say) */
@@ -197,7 +197,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
             {blk.type !== 'basic' && !loadedRl && <button className="btn small merge-range-btn" onClick={() => onBlockSize(blk.start)} title="Set where this block starts and ends: the blocks next to it give or take the bytes (L)">Size…</button>}
             {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onRelocate({ start: blk.start, end: blk.end })} title="The program copies these bytes to another address and runs them there: read them where they run, written inside .pseudopc (R)">Relocate…</button>}
             {!loadedRl && !runRl && !voff && <button className="btn small merge-range-btn" onClick={() => onViewOffset({ start: blk.start, end: blk.end })} title="Show these bytes at another address in the listing, with the labels they have there; the .asm keeps them where they are loaded (O)">Show at…</button>}
-            {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onJunk({ start: blk.start, end: blk.end })} title="These bytes are junk: left out of the listing, the source and the output (unlike Include in the build, nothing of them stays). The Junk list in the Explorer puts them back">Junk</button>}
+            {!loadedRl && !runRl && <button className="btn small merge-range-btn" onClick={() => onJunk(range ?? { start: blk.start, end: blk.end })} title={`Mark a range as junk, from ${sel && sel.multi ? 'the selection' : 'this block'} to any end: left out of the listing, the source and the output (unlike Include in the build, nothing of it stays). The Junk list in the Explorer puts it back`}>Junk…</button>}
           </div>
           {blk.type === 'code' && A.mcfg && <MemoryFields A={A} blk={blk} cart={B.A.mcfg?.cart} onBankZone={onBankZone} />}
           <label className="field"><span>Label</span>

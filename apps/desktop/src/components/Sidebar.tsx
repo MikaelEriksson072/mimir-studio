@@ -118,6 +118,8 @@ interface JunkProps {
   /** the area is loaded again: in the listing, the source and the output */
   onInclude: (j: JunkArea) => void;
   onIncludeAll: () => void;
+  /** Mark range as junk…: a start and an end */
+  onAdd: () => void;
 }
 
 interface ViewOffsetsProps {
@@ -503,7 +505,7 @@ const JUNK_ROW_BYTES = 8, JUNK_TIP_BYTES = 64;
  * does not), a click goes to where it was, and Include again puts it back in the listing, the source and the output.
  * Only here, in the editor: the exported source has nothing of them.
  */
-function JunkSection({ list, onGo, onInclude, onIncludeAll, A, project, fileAddr }: JunkProps & { A: AnalysisResult; project: Project; fileAddr: (i: number) => Addr }) {
+function JunkSection({ list, onGo, onInclude, onIncludeAll, onAdd, A, project, fileAddr }: JunkProps & { A: AnalysisResult; project: Project; fileAddr: (i: number) => Addr }) {
   const total = list.reduce((n, j) => n + j.end - j.start, 0);
   /** the first `n` bytes of `j` as the files have them (a later file wins, as when they load) */
   const bytesOf = (j: JunkArea, n: number): number[] => {
@@ -519,7 +521,10 @@ function JunkSection({ list, onGo, onInclude, onIncludeAll, A, project, fileAddr
   const hex = (bs: number[]) => bs.map(h2).join(' ');
   return (
     <SideSection id="junk" title="Junk" summary={`${list.length} area${list.length === 1 ? '' : 's'} · ${fmtBytes(total)}`}
-      actions={list.length > 1 ? <button className="icon-btn" title="Include every junk area again" aria-label="Include all junk again" onClick={onIncludeAll}><Icon name="undo" size={14} /></button> : undefined}>
+      actions={<>
+        <button className="icon-btn" title="Mark a range as junk: a start and an end address" aria-label="Mark range as junk" onClick={onAdd}><Icon name="plus" size={14} /></button>
+        {list.length > 1 && <button className="icon-btn" title="Include every junk area again" aria-label="Include all junk again" onClick={onIncludeAll}><Icon name="undo" size={14} /></button>}
+      </>}>
       <div role="list" aria-label="Junk">
         {list.map(j => {
           const n = j.end - j.start, row = bytesOf(j, JUNK_ROW_BYTES), range = `${bankAdr(A, j.start)}–$${h4(j.end - 1)}`;

@@ -1109,6 +1109,82 @@ test('junk is left out of everything, and the Junk list puts it back (11.7)', as
   });
 });
 
+test('any range is junk, not only a block: Mark selection as → Junk, the Inspector\'s Junk… and Mark range as junk… (11.7)', async ({ page }) => {
+  await waitForListing(page);
+  const dialog = page.getByRole('dialog', { name: 'Mark range as junk' });
+  // the listing is virtualized: collapse the build panel so every header used below is on screen
+  await page.keyboard.press('Control+j');
+  await expect(page.locator('section.bottom')).toHaveClass(/collapsed/);
+  await goTo(page, '$0951');
+  const selectBlocks = async () => {
+    await headerRow(page, '0939').click();
+    await headerRow(page, '0960').click({ modifiers: ['Shift'] });
+    await expect(statusBar(page)).toContainText('sel $0939–$0984 (76 B)');
+  };
+
+  await test.step('three blocks selected: right-click → Mark selection as → Junk', async () => {
+    await selectBlocks();
+    await headerRow(page, '0949').click({ button: 'right' });
+    await fromSubmenu(page, 'Mark selection as', 'Junk (left out of everything)');
+    await expect(toast(page, '$0939–$0984 is junk (76 bytes)')).toBeVisible();
+    for (const adr of ['0939', '0949', '0960']) await expect(headerRow(page, adr)).toHaveCount(0);
+    await listing(page).focus();
+    await page.keyboard.press('Control+z');
+    await expect(headerRow(page, '0949')).toHaveCount(1);
+  });
+
+  await test.step('the Inspector\'s Junk… opens the range with the selection in it', async () => {
+    await selectBlocks();
+    await page.locator('.inspector').getByRole('button', { name: 'Junk…' }).click();
+    await expect(dialog.locator('#junk-start')).toHaveValue('$0939');
+    await expect(dialog.locator('#junk-end')).toHaveValue('$0984');
+    await expect(dialog).toContainText('$0939–$0984 becomes junk: 76 bytes left out of the listing, the source and the output.');
+    await expect(dialog).toContainText('3 blocks go with it:');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(headerRow(page, '0949')).toHaveCount(1);
+  });
+
+  await test.step('Block → Mark range as junk…: any start and end, what goes and what is cut, then Enter', async () => {
+    // a click on the header selects its block alone
+    await headerRow(page, '0939').click();
+    await headerRow(page, '0939').click({ button: 'right' });
+    await fromSubmenu(page, 'Block', 'Mark range as junk… (start, end)');
+    await expect(dialog.locator('#junk-start')).toHaveValue('$0939');
+    await expect(dialog.locator('#junk-end')).toHaveValue('$0948');
+    await dialog.locator('#junk-start').fill('$0900');
+    await dialog.locator('#junk-end').fill('$08ff');
+    await expect(dialog).toContainText('The end $08ff comes before the start $0900.');
+    await expect(dialog.getByRole('button', { name: 'Mark as junk' })).toBeDisabled();
+    await dialog.locator('#junk-end').fill('$09bf');
+    await expect(dialog).toContainText('$0900–$09bf becomes junk: 192 bytes left out of the listing, the source and the output.');
+    await expect(dialog).toContainText('12 blocks go with it:');
+    await expect(dialog).toContainText('$08b7–$0915 is cut: $08b7–$08ff stays');
+    await expect(dialog).toContainText('$09b5–$0ab4 is cut: $09c0–$0ab4 stays');
+    await dialog.locator('#junk-end').press('Enter');
+    await expect(toast(page, '$0900–$09bf is junk (192 bytes)')).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    for (const adr of ['0916', '0939', '0985', '09b5']) await expect(headerRow(page, adr)).toHaveCount(0);
+    await expect(headerRow(page, '09c0')).toHaveCount(1);
+  });
+
+  await test.step('the Junk list\'s + marks more: a range that touches the junk joins it', async () => {
+    await openSection(page, 'Junk');
+    const list = page.getByRole('list', { name: 'Junk' });
+    await expect(list.getByRole('listitem')).toHaveCount(1);
+    await expect(list.getByRole('listitem')).toContainText('$0900–$09bf');
+    await page.getByRole('button', { name: 'Mark range as junk' }).click();
+    // the cursor is on the block after the junk: from there to its end
+    await expect(dialog.locator('#junk-start')).toHaveValue('$09c0');
+    await expect(dialog.locator('#junk-end')).toHaveValue('$0ab4');
+    await expect(dialog).toContainText('It joins the junk at $0900–$09bf: one area in the Junk list.');
+    await dialog.getByRole('button', { name: 'Mark as junk' }).click();
+    await expect(toast(page, '$09c0–$0ab4 is junk (245 bytes)')).toBeVisible();
+    await expect(list.getByRole('listitem')).toHaveCount(1);
+    await expect(list.getByRole('listitem')).toContainText('$0900–$0ab4');
+  });
+});
+
 test('text in mixed case', async ({ page }) => {
   await waitForListing(page);
   await goTo(page, 'txt_0985'); // screen codes, upper case set

@@ -73,7 +73,7 @@ export { boozeLine, boozeScript } from './analyze/booze';
 export { krillLoads, krillScriptText, type KrillLoad } from './analyze/krill';
 export { validLabel, type RenderOptions } from './render/kick';
 export { applyZpPairs, zpPairable } from './zp-pairs';
-export { addJunk, junkAt, junkIn, removeJunk } from './junk';
+export { addJunk, junkAt, junkIn, junkPlan, removeJunk, type JunkPlan } from './junk';
 export { refsShown, removeViewOffset, setViewOffset, shiftText, shownAddress, shownLabelName, shownTarget, usableViewOffsets, viewOffsetAt, viewOffsetFit, viewOffsetProblem } from './viewoffsets';
 export { lineText, kickMnemonic, lineMnemonic, TOP_LEVEL_DIRECTIVES } from './render/lines';
 export type { LineTextSettings } from './render/lines';
