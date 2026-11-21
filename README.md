@@ -49,7 +49,20 @@ or [64tass](https://sourceforge.net/projects/tass64/) project that assembles bac
   </tr>
 </table>
 
-## Getting started
+## Download
+
+Get Mimir Studio from [Releases](https://github.com/MikaelEriksson072/mimir-studio/releases) (Windows 10 or 11,
+64-bit):
+
+- **`Mimir-Studio-<version>-portable.exe`** runs without installing: download it and double-click.
+- **`Mimir-Studio-<version>-setup.exe`** installs it, with shortcuts in the Start menu and on the desktop.
+
+Nothing else is needed to open, analyse, verify and export; Exomizer and 64tass come with it. Build & Run also needs
+[VICE](https://vice-emu.sourceforge.io/), and a Kick Assembler project needs Java with KickAss.jar. Mimir finds them in
+the usual folders, and **Settings → Toolchain** changes them. The files are not code-signed, so Windows may say "Windows protected your PC":
+click **More info → Run anyway**.
+
+## Building from source
 
 You need Windows 10 or 11, [Node.js](https://nodejs.org/) 22.12 or newer and [pnpm](https://pnpm.io/) 9
 (`corepack enable pnpm`). Java with Kick Assembler, VICE and [Git](https://git-scm.com/) are optional; Mimir finds them
