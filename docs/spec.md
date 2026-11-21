@@ -393,6 +393,21 @@ och körs på en annan, och koden i dem är skriven för den andra (`jmp $2000`,
   Problems med *Relocate…* och en rad i fliken *Relocated*. På 284 intros ur CSDB:s samling (uppackade med Sindri först) hittas 101 i 98 av dem, och varenda
   en assembleras byte för byte när den flyttas. En körning av Sindri vars enda lager flyttar kod dit ett flyttat (eller
   föreslaget) block körs ger ingen packningsnotis (8.11b).
+- **Över byte som filen har där** (`RelocCopy.over`). Ett program som Sindri sparat efter att det kört har kvar det som
+  låg där när det sparades: The Last Ninja +Triad, uppackad till fuskmenyn (`$0400-$fff7`, start `$c857`), har introts
+  skärm på `$0400`, och menyns start kopierar laddaren från `$ca00-$cbff` dit (`$c845`) innan spelet anropar den
+  (`jsr $0400` på `$cf6c`). Spårningen gick in i skärmens mellanslag (`jsr $2020` om och om igen) och laddaren hittades
+  inte. En kopia dit något är laddat räknas när byten där hoppet går in inte är kod (BRK, JAM, en odokumenterad opkod
+  eller samma instruktion tre gånger i rad bland de fem första) och den kopierade koden pekar in där den körs (`jsr`,
+  `jmp`, `lda`… dit) oftare än dit den är laddad, eller byten där är en fyllnad (16 lika) och koden inte pekar dit den är
+  laddad. Inget av det programmet självt kör där får finnas: ingen programstart, avbrottsrutin eller ingång som
+  användaren satt, och inget annat som hoppar, anropar eller grenar dit utifrån än hopp som kopian förklarar (Eldorado
+  kopierar till `$0800` över sin egen start på `$0812`, Vicious Sid 2 har sin start `jmp $9000` på `$0400`). Tipset
+  säger att byten där blir skräp, och *Relocate…* gör dem till junk (11.7) i samma steg som blocket flyttas
+  (`relocProblem(…, over)`, `fileBytesIn()`); Ctrl+Z tar tillbaka båda. På 428 uppackade program (Year-top20 rank 1–6 och
+  Onefile-top200) ger regeln 8 nya kopior i 8 program (laddare och flyttrutiner till `$0180`, `$0334`, `$0358`, `$0400`,
+  `$0801`, `$0cd4`, `$8000`); av de 31 som en regel utan bevisen ovan gav var bland annat en teckenuppsättning och
+  programmens egen kod.
 
 ### 8.2 Startpunkter
 
@@ -646,6 +661,28 @@ tar numret i X: Cybernoid II:s (C64com, uppackad hela vägen: blocket `$a620–$
 `$ff` precis före init, så spelaren fick en låt som inte finns och var tyst i VICE (RMS 0), medan körningen i analysen
 och DeepSID har X = 0 och spelade den. Nu spelar den i VICE (RMS runt 2 600 per sekund). Med låt 0 får init samma
 register som i analysens körning (`sidrun.ts`, A = X = Y = 0).
+
+**Registren som programmet ger init** (`regsAtCall()` i `music.ts`, `MusicInfo.initRegs`). En del spelare tar inte ett
+låtnummer utan låtens adress: The Last Ninja (C64com, Triads crack sida A, uppackad till fuskmenyn på `$c857` med hela
+spelet i minnet) anropar sin spelare med `ldx #$28 / ldy #$b7 / jsr $b000`, och init (`$b1dc`) läser låten genom
+`($fc),y` med X/Y som pekare. Med X = Y = 0 läste den från `$0000`, och körningen gav 25 register men 0 toner: blocket
+hittades (`$b000-$b93f`) men spelade inte, i VICE heller (RMS 0). Spelar en tabell inte med bara låtnumret läses varje
+anrop av init utifrån (spårat, eller en `JSR`/`JMP` som spårningen inte avkodat): de konstanter som koden direkt före
+laddar i A, X och Y, bakåt till där en annan väg kommer in (en gren, ett hopp eller anrop dit), ett anrop, ett hopp eller
+en retur före, högst 12 instruktioner. `lda/ldx/ldy #`, `tax`, `tay`, `txa`, `tya`, `inx`, `dex`, `iny` och `dey` följs;
+allt annat som skriver ett register gör det okänt. I kod som spårningen inte avkodat räknas bara laddningar med en
+konstant direkt före anropet. Bara uppsättningar som sätter X eller Y (inte båda till 0, som körningen redan gav) prövas:
+ett tal i A ensamt är en låt, eller argumentet till en ljudeffekt (`lda #3 / jsr sfx`), och varje spelare spelar sin
+första låt. På korpusen nedan gjorde de A-försöken bara analysen långsammare, i spelares och effektrutiners inre
+`JMP`-par (upp till 23 försök i ett program). Varje uppsättning prövas en gång i 3 s (högst fyra, de som sätter flest
+register först, ingen minut för en lugn början), och den första som spelar ger körningen, blocket och `initRegs`;
+skälen säger var anropet är. The Last Ninjas block blir
+`$b000-$bc49` (låtdatan som körningen läste), med 2 467 toner på tre minuter. Uppspelningen (`musicPlayData()`) ger init
+dem: A blir första låten (`MusicPlayData.song`, `.sid`-filens startlåt), och X och Y laddas av en rutin direkt efter
+blocket (eller före det), `ldx #$28 / ldy #$b7 / jmp $b000`, som blir init (`MusicPlayData.regs`) i VICE och DeepSID.
+Spelarens skärm säger `SONG $00 (A AT INIT), X $28 AND Y $B7`; i VICE ger blocket nu RMS 500–1 900 per sekund, i vsid
+1 000–2 600. Exportens `.sid` är fortfarande blockets egna byte (programmet anropar init själv). På 428 uppackade program
+(Year-top20 rank 1–6 och Onefile-top200) ändras ingen musik: alla som spelar gör det redan med låtnumret.
 
 **I DeepSID** (`electron/main/deepsid.ts`) går `.sid`-filen till sidans Load SID, och när den listats klickas dess rad. DeepSID
 hämtar sin mapplista med jQuery-anrop när sidan öppnas, och ett klick på en rad spelar `browser.songs[rad − subFolders]`.
@@ -1576,7 +1613,11 @@ byte-mottagare och filkopierarens drivkod blev Super Snapshots turbo. Det som al
 
 **Band:** spårad kod som väntar på CIA1:s FLAG-linje (`lda $dc0d / and #$10`, `lda #$10 / bit $dc0d` eller `lda #$90 /
 sta $dc0d`) och läser eller startar en timer i CIA1 eller CIA2 högst 256 byte därifrån, utom där en känd bandladdare
-redan hittats. **KERNAL LOAD:** varje `jsr $ffd5` i spårad kod.
+redan hittats. **KERNAL LOAD:** varje `jsr $ffd5` i spårad kod, och i kod som en kopieringsloop flyttar innan den
+körs (8.1b, inte flyttad än): avkodad där den är laddad, från där hoppet in i kopian går, längs grenar och hopp och
+anrop in i den (`copiedCode()` i `copies.ts`). Delen ligger där byten är laddade och säger var den körs. The Last Ninja
++Triads uppackade fuskmeny kopierar laddaren från `$ca00` till `$0400`, där spelet anropar den med namnet satt direkt i
+nollsidan (`$bb/$bc`, `$b7`, `$ba`, `$b9`): KERNAL LOAD på `$ca0a`, som körs på `$040a` (flyttad dit: `$040a`).
 
 **Packade program:** loadern ligger packad tillsammans med resten, så den hittas inte förrän programmet är uppackat
 (8.11b). Explorer säger det. Testerna med riktiga demos (lokalt) gav, uppackade med unp64, Bitfire i Fairlights *1337* och

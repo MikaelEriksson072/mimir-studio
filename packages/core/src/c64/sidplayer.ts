@@ -4,7 +4,7 @@
  * a raster interrupt, with the time play takes shown as a bar in the border. Keys 1-9 and 0 start songs $00-$09, +
  * and - the next and the one before. It holds exactly the bytes the export's .sid file does, so what plays is what
  * the .sid holds. */
-import type { Addr, DigiInfo } from '../types';
+import type { Addr, DigiInfo, InitRegs } from '../types';
 import { assemble } from '../verify/kick-subset-assembler';
 import { makePrg } from './prg';
 import { makePsid } from './psid';
@@ -28,6 +28,9 @@ export interface SidPlayerOptions {
   digi?: { nmi: boolean; hz: number; irq?: { handler: Addr; kernal: boolean } };
   /** what init writes outside the bytes (a sample player's): the driver is not put there */
   busy?: [Addr, Addr][];
+  /** X and Y as the program gives them, which `init` (a routine next to the block, MusicPlayData.regs) loads: shown on
+   *  the screen in place of the song in them */
+  fixed?: { x?: number; y?: number };
 }
 
 export interface SidPlayer {
@@ -71,6 +74,15 @@ function screenLine(s: string): number[] {
   }
   while (out.length < 40) out.push(0x20);
   return out;
+}
+
+/** The screen's song line: the registers init gets the song in, and X and Y where the program gives them
+ *  (`SONG $00 (A AT INIT), X $28 AND Y $B7`) */
+function songLine(song: number, fixed?: { x?: number; y?: number }): string {
+  const set = (['x', 'y'] as const).filter(r => fixed?.[r] != null);
+  const free = ['A', ...(['x', 'y'] as const).filter(r => fixed?.[r] == null).map(r => r.toUpperCase())];
+  const regs = free.length === 3 ? 'A, X AND Y' : free.join(' AND ');
+  return `SONG $${h2(song)} (${regs} AT INIT)${set.length ? `, ${set.map(r => `${r.toUpperCase()} $${h2(fixed![r]!)}`).join(' AND ')}` : ''}`;
 }
 
 /** Moving `len` bytes from `from` to `to` (6510 lines): forward when they go down, from the top when they go up.
@@ -128,7 +140,7 @@ export function sidPlayer(o: SidPlayerOptions): SidPlayer {
     `$${h4(D)}-$${h4(end - 1)}  INIT $${h4(o.init)}  ${frames ? `PLAY $${h4(o.play)}` : 'NO PLAY'}`,
     frames ? `PLAY EACH FRAME (RASTER IRQ), $01 = $${h2(port)}` : `SAMPLES: ITS ${o.digi!.nmi ? 'NMI' : 'IRQ'}, ${o.digi!.hz} HZ, $01 = $${h2(port)}`,
     parts.length ? `+ $${h4(parts[0].load)}-$${h4(parts[parts.length - 1].load + parts[parts.length - 1].data.length - 1)}, ${parts.length} PART${parts.length === 1 ? '' : 'S'}` : '',
-    `SONG $${h2(song)} (A, X AND Y AT INIT)`,
+    songLine(song, o.fixed),
     '',
     'KEYS 1-9 AND 0: SONG $00-$09',
     '+ AND -: THE NEXT SONG, THE ONE BEFORE',
@@ -291,6 +303,11 @@ export interface MusicPlayData {
    *  the player's init and switches off the interrupts it leaves that are not the samples' (a demo's raster
    *  interrupt, CIA 1's beside an NMI) */
   wrapped?: { at: Addr; bytes: number; init: Addr };
+  /** the song init gets in A first: the one the program starts (MusicInfo.initRegs.a); 0 when not given */
+  song?: number;
+  /** a player the program gives X and Y (MusicInfo.initRegs: The Last Ninja's song address): init is a routine put
+   *  next to the block that loads them as the program does and jumps to the player's init, with the song in A */
+  regs?: { at: Addr; bytes: number; init: Addr; x?: number; y?: number };
 }
 
 /** what a sample player gives musicPlayData: its run's findings and the bytes of its parts */
@@ -303,12 +320,29 @@ export interface MusicPlayDigi extends Pick<DigiInfo, 'nmi' | 'hz' | 'wrote'>, P
  * no longer starts again (`MusicInfo.resume`), init is a routine put right after the block (or before it) that writes
  * back the bytes outside the block the player reads, as the snapshot has them, and returns: play goes on from where
  * the demo was. A sample player (`MusicInfo.digi`) plays with its parts, and with play 0 init is wrapped (`wrapped`);
- * one whose init does not return plays from what init left (`resume`, then its timer started again).
+ * one whose init does not return plays from what init left (`resume`, then its timer started again). A player the
+ * program gives registers (`MusicInfo.initRegs`) gets them: the first song in A, and X and Y through a routine put
+ * next to the block as init (`regs`).
  * The export's .sid file is the block's bytes alone (render/kick.ts).
  */
-export function musicPlayData(block: Uint8Array, load: Addr, init: Addr, play: Addr, resume?: [Addr, number][], digi?: MusicPlayDigi): MusicPlayData {
-  const d = resumed(block, load, init, play, resume, digi ? [...digi.parts.map((p): [Addr, Addr] => [p.load, p.load + p.data.length]), ...digi.wrote] : []);
-  return withAlone(digi ? sampled(d, digi) : d);
+export function musicPlayData(block: Uint8Array, load: Addr, init: Addr, play: Addr, resume?: [Addr, number][], digi?: MusicPlayDigi, regs?: InitRegs): MusicPlayData {
+  const avoid: [Addr, Addr][] = digi ? [...digi.parts.map((p): [Addr, Addr] => [p.load, p.load + p.data.length]), ...digi.wrote] : [];
+  const d = resumed(block, load, init, play, resume, avoid);
+  // (a player that plays on without init, or a sample player whose init is wrapped, is given nothing)
+  const g = regs && !d.resume && !(digi && play === 0) ? given(d, regs, avoid) : d;
+  return withAlone(digi ? sampled(g, digi) : g);
+}
+
+/** The registers the program gives init: A is the first song; X and Y are loaded by a routine next to the block that
+ *  then jumps to init (`ldx #x / ldy #y / jmp init`), out of `avoid` */
+function given(d: MusicPlayData, regs: InitRegs, avoid: [Addr, Addr][]): MusicPlayData {
+  const song = regs.a != null ? { song: regs.a & 0xff } : {};
+  if (regs.x == null && regs.y == null) return { ...d, ...song };
+  const code = [...(regs.x != null ? [0xa2, regs.x & 0xff] : []), ...(regs.y != null ? [0xa0, regs.y & 0xff] : []), 0x4c, d.init & 0xff, d.init >> 8];
+  const at = nextTo(d, code, avoid);
+  if (!at) return { ...d, ...song, problem: `no room next to the block for the ${code.length} bytes that give init ${regs.x != null && regs.y != null ? 'X and Y' : regs.x != null ? 'X' : 'Y'} as the program does` };
+  return { ...d, ...song, data: at.data, load: at.load, init: at.at,
+    regs: { at: at.at, bytes: code.length, init: d.init, ...(regs.x != null ? { x: regs.x & 0xff } : {}), ...(regs.y != null ? { y: regs.y & 0xff } : {}) } };
 }
 
 /** $01 while the music plays (sidPlayer's): $35 with bytes under the KERNAL or over its IRQ vector, $36 under BASIC */
@@ -359,7 +393,7 @@ function sampled(d: MusicPlayData, s: MusicPlayDigi): MusicPlayData {
  * between them.
  */
 export function musicSidFile(d: MusicPlayData, name?: string): Uint8Array {
-  if (!d.digi || d.play !== 0) return makePsid(d.data, d.load, d.init, d.play, name);
+  if (!d.digi || d.play !== 0) return makePsid(d.data, d.load, d.init, d.play, name, false, d.song ?? 0);
   const segs = [{ load: d.load, data: d.data }, ...(d.parts ?? [])];
   const lo = Math.min(...segs.map(g => g.load)), hi = Math.max(...segs.map(g => g.load + g.data.length));
   const all = new Uint8Array(hi - lo);
@@ -404,6 +438,6 @@ function withAlone(d: MusicPlayData): MusicPlayData {
     const r = runDigi(mem, { init: d.init, frames: 150, port: playPort(segs), loaded, ...(d.digi.irq ? { irq: d.digi.irq } : {}) });
     return digiPlays(r) ? d : { ...d, alone: r.stop ?? (r.unloaded > DIGI_UNLOADED ? `its interrupt reads ${r.unloaded} bytes outside what plays` : 'its interrupt writes no samples to the SID') };
   }
-  const r = runPlayer(mem, { init: d.init, play: d.play, frames: 150, loaded });
+  const r = runPlayer(mem, { init: d.init, play: d.play, frames: 150, loaded, ...(d.song != null ? { song: d.song } : {}) });
   return r.stop ? { ...d, alone: r.stop } : d;
 }

@@ -130,7 +130,7 @@ function analyzeOnce(project: ProjectInput, deepIn: Deep | null, text: ReadonlyS
   diagnostics(ctx, cls.blocks); // 5.13
   ioLabelNotice(ctx, labels); // 5.13: I/O named as RAM because bank tracking is off
   const copies = findCopies(ctx); // 8.1b
-  const loaders = findLoaders(ctx, cls.blocks); // 5.15
+  const loaders = findLoaders(ctx, cls.blocks, copies); // 5.15
   const booze = findBoozeScript(ctx, loaders); // 5.15b
   const krill = findKrillScript(ctx, loaders); // 5.15c
   const raster = rasterIrqs(ctx); // 5.16

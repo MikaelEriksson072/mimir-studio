@@ -4,12 +4,18 @@
  * again from where another one runs, and patches in one are written where the file has the bytes. */
 import { describe, expect, it } from 'vitest';
 import {
-  addReloc, analyze, codeWhereLoaded, createProject, deserializeProject, findBlock, loadAddress, loadRange, moveReloc, planPatch, relocAt, relocProblem, removeReloc, render, serializeProject,
+  addReloc, analyze, codeWhereLoaded, createProject, deserializeProject, fileBytesIn, findBlock, loadAddress, loadRange, moveReloc, planPatch, relocAt, relocProblem, removeReloc, render, serializeProject,
   verify, withPatch, type Project, type ProjectInput, type Reloc,
 } from '../src';
 import { fromSource, relocProgram, RELOC_SRC } from './helpers/programs';
 
 const RELOC: Reloc = { start: 0x1000, end: 0x1011, to: 0x2000 };
+/** a program saved after it ran (as Sindri saves The Last Ninja +Triad's trainer): the screen it showed at $0400, a BASIC
+ *  line at $0801 (10 SYS2304), and at $0900 a loop that copies the loader at $0a00-$0bff over the screen before the
+ *  game calls it there; the loader loads with the KERNAL and jumps where it runs */
+const LOADER_OVER_SRC = `.pc = $0400\n.fill 1000, $20\n.pc = $0801\n.byte $0b,$08,$0a,$00,$9e,$32,$33,$30,$34,$00,$00,$00
+.pc = $0900\n ldx #0\nl: lda $0a00,x\n sta $0400,x\n lda $0b00,x\n sta $0500,x\n inx\n bne l\n jmp game\ngame: jsr $0400\n jmp game
+.pc = $0a00\n lda $01\n sta $02\n lda #$37\n sta $01\n lda #0\n jsr $ffd5\n bcc ok\n jmp $0420\nok: lda $02\n sta $01\n rts\n.fill 512 - 23, 0\n`;
 const file = relocProgram;
 const project = (relocs: Reloc[] = [RELOC]): Project => ({ ...createProject({ files: [file()] }), relocs });
 const roundTrip = (p: ProjectInput) => { const A = analyze(p), R = render(A, p), V = verify(A, R); return { A, R, V, src: R.files['moved.asm'] as string }; };
@@ -75,6 +81,42 @@ describe('relocated blocks', () => {
     // of two copies to the same place, the one the jump follows
     const two = fromSource('two.prg', `.pc = $c000\n ldx #$0f\nt: lda $c180,x\n sta $0400,x\n dex\n bpl t\n ldx #$0f\nl: lda $c100,x\n sta $0400,x\n dex\n bpl l\n jmp $0400\n.pc = $c100\n inc $d020\n jmp $0400\n.fill 10, 0\n.pc = $c180\n lda #$01\n sta $d021\n jmp $0400\n.fill 8, 0`);
     expect(analyze({ files: [two] }).copies.map(c => c.start)).toEqual([0xc100]);
+  });
+
+  it('are found over bytes the file has where they go, when those are no code the program runs there (The Last Ninja +Triad)', () => {
+    // a program saved after it ran: the screen it showed at $0400, its start at $c000 copies the loader there and the
+    // game calls it (jsr $0400); the loader loads with the KERNAL and jumps within where it runs
+    const loader = ' lda $01\n sta $02\n lda #$37\n sta $01\n lda #0\n jsr $ffd5\n bcc ok\n jmp $0420\nok: lda $02\n sta $01\n rts\n';
+    const prog = (screen: string, start = 0xc000) => ({ files: [fromSource('ln.prg', `.pc = $0400\n${screen}\n.pc = $c000\n ldx #0\nl: lda $c100,x\n sta $0400,x\n lda $c200,x\n sta $0500,x\n inx\n bne l\n jmp game\ngame: jsr $0400\n jmp game\n.pc = $c100\n${loader}.fill 512 - 23, 0`)], entryPoint: start });
+    const A = analyze(prog('.fill 1000, $20'));
+    expect(A.copies).toEqual([{ start: 0xc100, end: 0xc300, to: 0x0400, loop: 0xc002, at: 0xc005, jump: 0xc014, over: true }]);
+    expect(A.log.find(l => l.code === 'copy-loop')?.msg).toMatch(/that code runs at \$0400, over bytes the file has there \(\$0400-\$05ff\), which start no routine where the jsr goes in.*those bytes become junk/);
+    // its KERNAL LOAD is a loader, where it runs too
+    expect(A.loaders.find(l => l.id === 'kernal')?.parts).toEqual([expect.objectContaining({ start: 0xc10a, role: 'kernal', what: expect.stringMatching(/in the bytes the loop at \$c002 copies to \$0400: it runs at \$040a/) })]);
+    // relocated there with those bytes as junk, it is read there
+    expect(relocProblem(A, 0xc100, 0xc300, 0x0400)).toMatch(/\$0400 is loaded from ln\.prg/);
+    expect(relocProblem(A, 0xc100, 0xc300, 0x0400, null, [], { start: 0x0400, end: 0x0600 })).toBeNull();
+    expect(fileBytesIn(A, 0x0400, 0x0600)).toEqual({ start: 0x0400, end: 0x0600 });
+    const B = analyze({ ...prog('.fill 1000, $20'), junk: [{ start: 0x0400, end: 0x0600 }], relocs: [{ start: 0xc100, end: 0xc300, to: 0x0400 }] });
+    expect(B.insLen[0x040a]).toBe(3);
+    expect(B.loaders.find(l => l.id === 'kernal')?.parts.map(p => p.start)).toEqual([0x040a]);
+    expect(B.copies).toEqual([]);
+    // not over code the program runs there itself: its start, or a routine where the jump goes in
+    expect(analyze(prog('.fill 1000, $20', 0x0400)).copies).toEqual([]);
+    expect(analyze(prog(' jmp $c000\n.fill 997, $20')).copies).toEqual([]);
+  });
+
+  it('the fixture is fixtures/prg/loader-over-screen.prg, which the e2e tests open: a copy over the screen, started from 10 SYS2304', async () => {
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { makePrg } = await import('../src');
+    const f = fromSource('loader-over-screen.prg', LOADER_OVER_SRC), prg = makePrg(f.load, f.bytes);
+    const A = analyze({ files: [f] });
+    expect([A.entry, A.copies.map(c => [c.start, c.end, c.to, !!c.over])]).toEqual([0x0900, [[0x0a00, 0x0c00, 0x0400, true]]]);
+    expect(A.loaders.find(l => l.id === 'kernal')?.parts.map(p => p.start)).toEqual([0x0a0a]);
+    const path = join(__dirname, '../../../fixtures/prg/loader-over-screen.prg');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, prg);
+    expect(new Uint8Array(readFileSync(path))).toEqual(prg);
   });
 
   it('take a bookmark\'s area along with its first byte, cut where the block ends; one that runs into it ends there', () => {

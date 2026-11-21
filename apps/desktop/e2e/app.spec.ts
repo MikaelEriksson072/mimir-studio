@@ -3234,6 +3234,51 @@ test('relocate code the program copies elsewhere: Problems finds the copy, the l
   });
 });
 
+test('relocate a copy over bytes the file has where it runs: they become junk with it, and its KERNAL LOAD is read there (8.1b)', async ({ app, page }) => {
+  // fixtures/prg/loader-over-screen.prg (packages/core/test/reloc.test.ts): a program saved after it ran, as The Last
+  // Ninja +Triad's unpacked trainer: the screen it showed at $0400, 10 SYS2304, and a loop at $0902 that copies the
+  // loader at $0a00-$0bff to $0400 before the game calls it there (jsr $0400)
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/loader-over-screen.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded loader-over-screen.prg at $0400')).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: /^Relocate/ });
+  await page.getByRole('tab', { name: /Problems/ }).click();
+  const row = page.locator('.loglist .logrow', { hasText: 'The loop at $0902 copies $0a00-$0bff to $0400-$05ff' });
+
+  await test.step('Problems says the code runs over the bytes there; Relocate… says they become junk', async () => {
+    await expect(row).toContainText('over bytes the file has there ($0400-$05ff)');
+    await row.getByRole('button', { name: 'Relocate…' }).click();
+    await expect(dialog.getByLabel('Start (loaded at)')).toHaveValue('$0a00');
+    await expect(dialog.getByLabel('End (included)')).toHaveValue('$0bff');
+    await expect(dialog.getByLabel('Runs at')).toHaveValue('$0400');
+    await expect(dialog).toContainText('$0400–$05ff holds bytes of the file that are not what runs there');
+    // somewhere else the file's bytes are still in the way
+    await dialog.getByLabel('Runs at').fill('$0600');
+    await expect(dialog).toContainText('$0600 is loaded from loader-over-screen.prg: a relocated block runs where nothing is loaded.');
+    await dialog.getByLabel('Runs at').fill('$0400');
+    await dialog.getByRole('button', { name: 'Relocate', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(toast(page, '$0a00–$0bff runs at $0400–$05ff: traced and named there')).toContainText('$0400–$05ff, which the file had there, is junk');
+    await expect(row).toHaveCount(0);
+  });
+
+  await test.step('the loader is traced where it runs, and the Junk list has the screen it covers', async () => {
+    await expect.poll(async () => rowAt(await listingRows(page), '040a')?.text).toMatch(/^jsr /);
+    expect(rowAt(await listingRows(page), '040a')?.text).toMatch(/ffd5|load/i);
+    await openSection(page, 'Junk');
+    await expect(page.getByRole('list', { name: 'Junk' }).getByRole('listitem')).toHaveText([/^\$0400–\$05ff\s*512 B/]);
+  });
+
+  await test.step('Ctrl+Z takes back both: the copy is suggested again', async () => {
+    await listing(page).focus();
+    await page.keyboard.press('Control+z');
+    await page.getByRole('tab', { name: /Problems/ }).click();
+    await expect(row).toHaveCount(1);
+    await expect(page.getByRole('list', { name: 'Junk' })).toHaveCount(0);
+  });
+});
+
 test('Problems warns when bank tracking is off and I/O is written as labels, and turns it on', async ({ workDir: work, app, page }) => {
   // a memory dump from $0801 over $d000-$d02f: 10 SYS2061, then lda #$00 / sta $d020 / sta $d021 / rts
   const prg = new Uint8Array(2 + 0xd030 - 0x0801);

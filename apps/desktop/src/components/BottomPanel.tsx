@@ -212,7 +212,8 @@ export function RelocPanel({ A, R, relocs, onNavigate, onRelocate, onUnrelocate 
               <tr key={c.at} onClick={() => onNavigate(c.loop)}>
                 <td className="mono">{link(c.loop)}</td>
                 <td className="mono">{link(c.start, span(c.start, c.end))}</td>
-                <td className="mono">{span(c.to, c.to + c.end - c.start)}{other && <span className="muted"> · relocated to run at ${h4(other.to)}</span>}</td>
+                <td className="mono">{span(c.to, c.to + c.end - c.start)}{other && <span className="muted"> · relocated to run at ${h4(other.to)}</span>}
+                  {c.over && !other && <span className="muted" title="The file has bytes there that are not what runs there (what was there when the program was saved, its screen, say): relocated, they become junk"> · over the file's bytes</span>}</td>
                 <td className="mono">{OPC[A.mem[c.jump]].mn.toLowerCase()} at {link(c.jump, `$${h4(c.jump)}`)}</td>
                 <td className="row-actions" onClick={stop}><button className="btn small" onClick={() => onRelocate(null, c.at)} title={`Relocate ${span(c.start, c.end)} to run at $${h4(c.to)}`}>{other ? 'Run it there…' : 'Relocate…'}</button></td>
               </tr>);

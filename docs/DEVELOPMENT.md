@@ -1189,6 +1189,31 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     Report's own init banks `$01 = $34` with interrupts on for ~70 cycles; Lovecats, Arcadia's intro 3), Great
     Gurianos and Agent X 2 a level shorter (their crack intro reads joystick 2 every 6th frame, longer than Sindri
     holds a key: `HOLD`). Test: `test/unpack.test.ts` (`$c5` = 1, RETURN, when the program starts).
+57. The Last Ninja (C64com, Triad's crack, side A) unpacked twice to its trainer menu (`$0400-$fff7`, start `$c857`, the
+    whole game in memory) showed no loader, and its music did not play. Music (spec 8.6): the game calls its player
+    with the song's address in X and Y (`ldx #$28 / ldy #$b7 / jsr $b000`); the run gave init X = Y = 0, so it read its
+    song from `$0000` (25 SID registers, 0 notes), and VICE was silent too (RMS 0). Now a table that does not play with
+    the song number alone is run (3 s) with what each call of init loads into A, X and Y right before it, where X or Y
+    is set (`regsAtCall`, `MusicInfo.initRegs`; A alone, a song or a sound effect's argument, only made the analysis
+    slower: up to 23 tries in one program's inner `JMP` pairs), and playing it gives init the same: the first song in
+    A, X and Y through a routine next to the block (`ldx #$28 / ldy #$b7 / jmp $b000`, `MusicPlayData.regs`) in VICE
+    and DeepSID. The block is
+    `$b000-$bc49`, 2 467 notes in three minutes; VICE RMS 500-1 900 a second, vsid 1 000-2 600. Loader (spec 8.1b,
+    5.15): the trainer's start copies the loader (`jsr $ffd5`, its own error channel read and level decruncher) from
+    `$ca00` to `$0400` (`$c845`), where the game calls it (`jsr $0400` at `$cf6c`, the name set in `$bb/$bc`, `$b7`,
+    `$ba`, `$b9`). `$0400` holds the intro's screen in the saved image, so the copy was not found (nothing may be loaded
+    there) and the trace ran into the spaces. A copy over the file's bytes now counts where those bytes are no code,
+    the copied code points into where it runs (or they are a fill), and nothing the program runs itself is there
+    (`RelocCopy.over`); its hint and *Relocate…* make those bytes junk in the same step. KERNAL LOAD is also found in
+    copied code not yet relocated (`copiedCode`): at `$ca0a`, running at `$040a`. Measured on 428 unpacked programs
+    (Year-top20 ranks 1-6 and Onefile-top200): no music changed; the first rule for copies over loaded bytes gave 31,
+    some wrong (Micro Sleep's charset, Mathematica's and Vicious Sid 2's own code, Eldorado's start at `$0812`), the
+    final one 8, all loaders and movers with code pointing where it runs. Time over the corpus, run after run with
+    nothing else going: 159 s before, 168 s after, and per program within the noise of cold runs (0332: 1 270-1 390 ms
+    with the new parts on or off); with A-alone tries and their minute runs it was 30-70 % more for some programs.
+    Tests: `music.test.ts` (init given X and Y,
+    `regsAtCall`), `sidplayer.test.ts` (the routine next to the block, the screen, the `.sid`'s start song),
+    `reloc.test.ts` (a copy over the screen, KERNAL LOAD in it, relocated with the screen as junk).
 
 ## Roadmap
 

@@ -37,9 +37,11 @@ export function loadRange(A: Pick<AnalysisResult, 'relocs'>, start: Addr, end: A
  * Why `start`..`end` (end excluded) cannot run at `to`; null when it can. The bytes must be one piece of one file (or
  * of a relocated block's copy, to relocate them again), not in a relocated block where it is loaded, and where they
  * run nothing may be loaded, and a patch (`patches`) may not cross its edges. `except`: the relocated block being moved,
- * whose copy is not in the way. In a cartridge (spec 13.9b) `to` is in the bank of `start`.
+ * whose copy is not in the way. In a cartridge (spec 13.9b) `to` is in the bank of `start`. `over`: where a file's
+ * bytes may be after all, as they become junk with it (a copy loop's over bytes that are not what runs there,
+ * RelocCopy.over).
  */
-export function relocProblem(A: Pick<AnalysisResult, 'owner' | 'tm' | 'relocs' | 'files'>, start: Addr, end: Addr, to: Addr, except?: Reloc | null, patches: readonly { start: Addr; bytes: Uint8Array }[] = []): string | null {
+export function relocProblem(A: Pick<AnalysisResult, 'owner' | 'tm' | 'relocs' | 'files'>, start: Addr, end: Addr, to: Addr, except?: Reloc | null, patches: readonly { start: Addr; bytes: Uint8Array }[] = [], over?: { start: Addr; end: Addr } | null): string | null {
   if (!(start < end)) return 'The end must come after the start.';
   const base = Math.floor(start / SPACE) * SPACE, n = end - start;
   if (end > base + SPACE) return `${span(start, end)} runs past $ffff.`;
@@ -58,11 +60,22 @@ export function relocProblem(A: Pick<AnalysisResult, 'owner' | 'tm' | 'relocs' |
   for (let a = to; a < to + n; a++) {
     if (A.owner[a] < 0 || (old && a >= old.to && a < old.to + size(old))) continue;
     const r = relocAt(A, a);
+    if (!r && over && a >= over.start && a < over.end) continue;
     return r ? `$${h4(a)} is where the relocated block ${span(r.start, r.end)} runs.` : `$${h4(a)} is loaded from ${A.files[A.owner[a]]?.name ?? 'a file'}: a relocated block runs where nothing is loaded.`;
   }
   const cut = patches.find(p => (p.start < start && p.start + p.bytes.length > start) || (p.start < end && p.start + p.bytes.length > end));
   if (cut) return `A patch (${span(cut.start, cut.start + cut.bytes.length)}) crosses the edge of the block: it can only move with it whole.`;
   return null;
+}
+
+/** The files' bytes in `start`..`end` (end excluded), from the first to the last (a relocated block's copy is none of
+ *  them): what becomes junk when a block relocated over them runs there. Null when none is loaded there. */
+export function fileBytesIn(A: Pick<AnalysisResult, 'owner' | 'relocs'>, start: Addr, end: Addr): { start: Addr; end: Addr } | null {
+  const file = (a: Addr) => A.owner[a] >= 0 && !relocAt(A, a);
+  let s = start, e = end;
+  while (s < e && !file(s)) s++;
+  while (e > s && !file(e - 1)) e--;
+  return s < e ? { start: s, end: e } : null;
 }
 
 /**

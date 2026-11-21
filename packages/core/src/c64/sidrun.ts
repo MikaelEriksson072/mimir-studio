@@ -1,11 +1,12 @@
-/* A music player run on the 6510 (Sindri's CPU): init with the song in A, then play once a frame, the way a demo's
+/* A music player run on the 6510 (Sindri's CPU): init with the song in A (or what the program gives it in A, X and Y:
+ * `regs`), then play once a frame, the way a demo's
  * interrupt calls it. Memory is a copy of the program's; the VIC, the CIAs and the SID answer as far as players ask
  * them (the raster line moves on with each read, oscillator 3 gives noise), and nothing interrupts. What the run gives:
  * whether init and every play call returned, the SID registers written and the notes started (a voice's gate bit
  * switched on), and the bytes it ran or read before writing them: the player's code and data, and where they end.
  * The analysis (analyze/music.ts) tells players from other jump tables by it, and the block's range comes from it. */
 import { Cpu, type Bus } from '@mimir/sindri';
-import type { Addr } from '../types';
+import type { Addr, InitRegs } from '../types';
 import { h4 } from '../util/hex';
 
 export interface PlayerRunOptions {
@@ -13,6 +14,9 @@ export interface PlayerRunOptions {
   play: Addr;
   /** the song init gets in A (0: the first) */
   song?: number;
+  /** what init gets in A, X and Y as the program calls it (MusicInfo.initRegs); a register left out: the song in A,
+   *  0 in X and Y */
+  regs?: InitRegs;
   /** play calls (frames) at most */
   frames: number;
   /** play only, no init: a snapshot's player goes on from where it was */
@@ -98,8 +102,8 @@ export function runPlayer(mem0: Uint8Array, o: PlayerRunOptions): PlayerRun {
     },
   };
   const cpu = new Cpu(bus);
-  const call = (at: Addr, a: number, budget: number): { ok: boolean; cycles: number; why: string } => {
-    cpu.s = 0xfd; cpu.pc = at; cpu.a = a; cpu.x = 0; cpu.y = 0; cpu.i = 1; cpu.d = 0;
+  const call = (at: Addr, a: number, budget: number, x = 0, y = 0): { ok: boolean; cycles: number; why: string } => {
+    cpu.s = 0xfd; cpu.pc = at; cpu.a = a; cpu.x = x; cpu.y = y; cpu.i = 1; cpu.d = 0;
     mem[0x1fe] = (TRAP - 1) & 0xff; mem[0x1ff] = (TRAP - 1) >> 8;
     let c = 0;
     while (cpu.pc !== TRAP) {
@@ -121,7 +125,8 @@ export function runPlayer(mem0: Uint8Array, o: PlayerRunOptions): PlayerRun {
   };
   let initCycles = 0;
   if (!o.noInit) {
-    const r = call(o.init, (o.song ?? 0) & 0xff, INIT_CYCLES);
+    const g = o.regs;
+    const r = call(o.init, (g?.a ?? o.song ?? 0) & 0xff, INIT_CYCLES, (g?.x ?? 0) & 0xff, (g?.y ?? 0) & 0xff);
     initCycles = r.cycles;
     if (!r.ok) return out(false, 0, `init ${r.why}`, initCycles, 0);
   }

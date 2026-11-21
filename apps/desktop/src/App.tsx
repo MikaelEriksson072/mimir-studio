@@ -117,6 +117,9 @@ function runDetail(r: RunResult): string {
   return lines.map(l => `\n${l}`).join('');
 }
 /** `n` empty lines above `addr` (Project.blanks) in a draft of the project: 0 removes them, and the record once empty */
+/** X and Y as a music block's init routine loads them (MusicPlayData.regs): "X = $28 and Y = $b7" */
+const regsGiven = (g: { x?: number; y?: number }): string => (['x', 'y'] as const).filter(r => g[r] != null).map(r => `${r.toUpperCase()} = $${h2(g[r]!)}`).join(' and ');
+
 function putBlanks(d: Project, addr: Addr, n: number): void {
   if (!n && !d.blanks?.[addr]) return;
   const b = d.blanks ?? (d.blanks = {});
@@ -1860,11 +1863,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setModal('reloc');
   };
   const closeReloc = () => { setModal(null); setRelocDraft(null); setTimeout(() => listRef.current?.focus(), 0); };
-  const relocate = (r: Reloc) => {
+  /** `junk`: the file's bytes where it runs, which become junk with it (a copy loop over them, RelocCopy.over) */
+  const relocate = (r: Reloc, junk?: { start: Addr; end: Addr }) => {
     const n = r.end - r.start;
-    update(`Relocate $${h4(r.start)}-$${h4(r.end - 1)} to run at $${h4(r.to)}`, d => addReloc(d, r));
+    update(`Relocate $${h4(r.start)}-$${h4(r.end - 1)} to run at $${h4(r.to)}`, d => { if (junk) d.junk = addJunk(d.junk, junk.start, junk.end); addReloc(d, r); });
     closeReloc(); setSel(null);
-    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(r.to)}–$${h4(r.to + n - 1)}: traced and named there, and written inside ${words.pseudopc} (Ctrl+Z takes it back)`, 'ok');
+    toast(`$${h4(r.start)}–$${h4(r.end - 1)} runs at $${h4(r.to)}–$${h4(r.to + n - 1)}: traced and named there, and written inside ${words.pseudopc}${junk ? `; $${h4(junk.start)}–$${h4(junk.end - 1)}, which the file had there, is junk` : ''} (Ctrl+Z takes it back)`, 'ok');
     showChanged(r.to, r.to + n, `Relocated: runs at $${h4(r.to)}`);
   };
   /** the relocated block loaded at `start` runs at `to` instead */
@@ -2571,11 +2575,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const name = R.labels.get(b.start)?.name ?? `music_${h4(load)}`, span = `$${h4(load)}-$${h4(load + b.end - b.start - 1)}`;
     // a sample player (5.8b) plays with the bytes outside its block its run read: its samples and song
     const dg = m?.digi;
+    // (a player the program gives its song's address in X and Y, The Last Ninja's, gets them: MusicInfo.initRegs)
     const d = musicPlayData(A.mem.slice(b.start, b.end), load, init, play, m?.resume, dg && {
       ...dg, wrote: dg.wrote.map(([s, e]): [Addr, Addr] => [spaceAddr(s), spaceAddr(e - 1) + 1]),
       parts: dg.parts.map(([s, e]) => ({ load: spaceAddr(s), data: A.mem.slice(s, e) })),
       ...(dg.irq ? { irq: { ...dg.irq, handler: spaceAddr(dg.irq.handler) } } : {}),
-    });
+    }, m?.initRegs);
     return { m, load, init, play, name, span, dg, d };
   };
   const playMusic = async (at: Addr | null | undefined) => {
@@ -2589,8 +2594,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const how = dg?.loop && d.resume ? `its init $${h4(init)} does not return, so $${h4(d.resume.at)} puts back the ${kept.length} bytes, registers and vector it left, and CIA ${dg.timer?.cia ?? 2}'s timer starts again: its ${it} plays ${dg.hz} samples a second${partsText}; nothing is called each frame`
       : d.resume ? `plays on from the snapshot (init no longer starts it again): $${h4(d.resume.at)} puts back the ${kept.length} bytes it reads outside the block${sidToo ? ' and the SID as the snapshot had it' : ''}, then play $${h4(play)} each frame`
       : dg && play === 0 ? `init $${h4(init)} starts its ${it}, which plays ${dg.hz} samples a second${partsText}${dg.irq ? `, and the program's IRQ at $${h4(spaceAddr(dg.irq.handler))} starts them` : ''}; nothing is called each frame${d.wrapped ? ` ($${h4(d.wrapped.at)} calls init and ${dg.irq ? 'installs that IRQ' : 'switches off the demo\'s other interrupts'})` : ''}`
-        : dg ? `init $${h4(init)} with song $00 (it starts its ${it} samples too${partsText}), then play $${h4(play)} each frame` : null;
-    if (d.problem) toast(`${name} cannot play on from the snapshot: ${d.problem}. It plays with its init $${h4(init)}, which may not start it again`, 'warn');
+        : dg ? `init $${h4(init)} with song $00 (it starts its ${it} samples too${partsText}), then play $${h4(play)} each frame`
+          // X and Y as the program gives them, loaded by a routine next to the block
+          : d.regs ? `init $${h4(init)} with song $${h2(d.song ?? 0)} in A and ${regsGiven(d.regs)} as the program gives them ($${h4(d.regs.at)} loads them), then play $${h4(play)} each frame`
+            : d.song ? `init $${h4(init)} with song $${h2(d.song)} (the one the program starts), then play $${h4(play)} each frame` : null;
+    if (d.problem) toast(m?.resume ? `${name} cannot play on from the snapshot: ${d.problem}. It plays with its init $${h4(init)}, which may not start it again`
+      : `${name} may not play: ${d.problem}. It plays with its init $${h4(init)} and the song in A, X and Y`, 'warn');
     // the player's PRG holds the block alone: a run of it on its own tells whether that is enough
     if (d.alone) toast(`${name} may not play: with only its block (${span}) in memory, ${d.alone}. The player may need bytes outside the block, or other entries`, 'warn');
     if (toolchain.musicPlayer === 'deepsid') {
@@ -2610,7 +2619,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     }
     try {
       const file0 = project.files[A.owner[b.start]]?.name;
-      const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, parts: d.parts, digi: d.digi, busy: d.busy, title: file0 ? `${name} IN ${file0}` : name });
+      const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, parts: d.parts, digi: d.digi, busy: d.busy, title: file0 ? `${name} IN ${file0}` : name,
+        ...(d.song != null ? { song: d.song } : {}), ...(d.regs ? { fixed: { x: d.regs.x, y: d.regs.y } } : {}) });
       const file = `${name}.prg`;
       const w = await kr.writeExport({ target: 'temp', name: 'play', files: { [file]: p.prg } });
       if (!w) return;

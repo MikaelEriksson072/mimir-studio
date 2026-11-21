@@ -828,7 +828,15 @@ export interface MusicInfo {
   /** a sample player (digi, 5.8b): init starts a CIA timer whose interrupt writes samples to the SID; `play` is 0
    *  (nothing is called once a frame), or a frame player's play when its init also starts samples */
   digi?: DigiInfo;
+  /** the registers the program gives init, as constants loaded right before it calls init (The Last Ninja's
+   *  `ldx #$28 / ldy #$b7 / jsr $b000`: the song's address in X and Y): set only when the player plays with them and
+   *  not with the song number alone. They are given init wherever the block plays (in VICE, in DeepSID) */
+  initRegs?: InitRegs;
 }
+
+/** what A, X and Y hold when init is called (a register left out: the song number in A, 0 in X and Y; in the player
+ *  the song number in all three); `at`: the call */
+export interface InitRegs { a?: number; x?: number; y?: number; at?: Addr }
 
 /** What the run of a sample player found (5.8b). */
 export interface DigiInfo {
@@ -967,8 +975,10 @@ export interface AnalysisResult {
 export interface RelocInfo extends Reloc { file: number }
 
 /** A loop that copies code to where nothing is loaded, which the code then jumps or calls into (8.1b): the relocation
- *  that reads it there. `loop`: where the loop starts; `at`: the store of the copy; `jump`: the jump or call into it. */
-export interface RelocCopy extends Reloc { loop: Addr; at: Addr; jump: Addr }
+ *  that reads it there. `loop`: where the loop starts; `at`: the store of the copy; `jump`: the jump or call into it.
+ *  `over`: the file has bytes of its own where it goes, which are not what runs there (they start no routine where the
+ *  jump goes in: a program saved after it ran keeps the screen it showed there); relocated, they become junk. */
+export interface RelocCopy extends Reloc { loop: Addr; at: Addr; jump: Addr; over?: boolean }
 
 /** A space of a merged analysis (spec 13.9b): a bank of the cartridge and the project files in it */
 export interface SpaceInfo {

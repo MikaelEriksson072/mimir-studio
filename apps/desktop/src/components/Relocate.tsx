@@ -4,7 +4,7 @@
  * relocated already can run somewhere else instead, or stop being relocated. A copy loop the analysis found fills in
  * the range and the address. */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { codeWhereLoaded, h4, OPC, relocProblem, type Addr, type AnalysisResult, type Project, type Reloc, type RenderResult } from '@mimir/core';
+import { codeWhereLoaded, fileBytesIn, h4, OPC, relocProblem, type Addr, type AnalysisResult, type Project, type Reloc, type RenderResult } from '@mimir/core';
 import { parseGoto } from '../lib/goto';
 import { Modal } from './Modal';
 
@@ -21,7 +21,8 @@ export interface RelocDraft {
 interface RelocateProps {
   A: AnalysisResult; R: RenderResult; project: Pick<Project, 'labels' | 'comments' | 'notes' | 'blockComments' | 'bookmarks' | 'patches'>;
   draft: RelocDraft;
-  onRelocate: (r: Reloc) => void;
+  /** `junk`: the file's bytes where it runs, which become junk with it (a copy loop's over bytes, RelocCopy.over) */
+  onRelocate: (r: Reloc, junk?: { start: Addr; end: Addr }) => void;
   /** the relocated block loaded at `start` runs at `to` instead */
   onMove: (start: Addr, to: Addr) => void;
   /** the relocated block loaded at `start` is no longer relocated */
@@ -42,7 +43,11 @@ export function RelocateModal({ A, R, project, draft, onRelocate, onMove, onRemo
   const labelAt = (name: string) => { for (const [a, l] of R.labels) if (l.name === name) return a; return undefined; };
   // a name or an address in the bank of the block
   const one = (v: string): Addr | null => { const t = parseGoto(v, labelAt, a => base + a); return 'addr' in t ? t.addr : null; };
-  const plan = useMemo((): { error: string } | Reloc => {
+  const copy = draft.copyAt != null ? A.copies.find(c => c.at === draft.copyAt) : undefined;
+  // a copy loop over bytes the file has where the code runs, which are not what runs there (RelocCopy.over): those
+  // bytes become junk with it
+  const over = !editing && copy?.over ? { start: copy.to, end: copy.to + copy.end - copy.start } : null;
+  const plan = useMemo((): { error: string } | (Reloc & { junk?: { start: Addr; end: Addr } }) => {
     const s = editing ? editing.start : one(startV);
     if (s == null) return { error: 'Start: enter one hex address like $1000, or a label.' };
     const e = editing ? editing.end - 1 : one(endV);
@@ -53,8 +58,10 @@ export function RelocateModal({ A, R, project, draft, onRelocate, onMove, onRemo
     if (!m) return { error: 'Runs at: enter one hex address like $c000.' };
     const to = base + parseInt(m[1], 16);
     if (editing && to === editing.to) return { error: `It runs at ${x4(to)} already.` };
-    const why = relocProblem(A, s, e + 1, to, editing, project.patches);
-    return why ? { error: why } : { start: s, end: e + 1, to };
+    const why = relocProblem(A, s, e + 1, to, editing, project.patches, over);
+    if (why) return { error: why };
+    const n = e + 1 - s, j = over ? fileBytesIn(A, Math.max(to, over.start), Math.min(to + n, over.end)) : null;
+    return { start: s, end: e + 1, to, ...(j ? { junk: j } : {}) };
   }, [startV, endV, toV, A, R]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ok = !('error' in plan);
@@ -68,14 +75,14 @@ export function RelocateModal({ A, R, project, draft, onRelocate, onMove, onRemo
       [project.patches.filter(p => p.start >= from && p.start < to).length, 'patch']] as const).filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}${k === 1 ? '' : w === 'patch' ? 'es' : 's'}`);
     return parts.join(', ');
   }, [plan, project]); // eslint-disable-line react-hooks/exhaustive-deps
-  const copy = draft.copyAt != null ? A.copies.find(c => c.at === draft.copyAt) : undefined;
   // code the analysis traces where it is loaded: relocated, it is read where it runs only
   const lost = ok && !editing ? codeWhereLoaded(A, plan.start, plan.end) : [];
 
   const go = () => {
     if (!ok) return;
-    if (editing) onMove(editing.start, plan.to); else onRelocate(plan);
+    if (editing) onMove(editing.start, plan.to); else { const { junk, ...r } = plan; onRelocate(r, junk); }
   };
+  const junk = ok && !editing ? plan.junk : undefined;
   const enter = (e: KeyboardEvent) => { if (e.key === 'Enter') go(); };
   const title = editing ? 'Relocated block' : 'Relocate';
   return (
@@ -92,6 +99,7 @@ export function RelocateModal({ A, R, project, draft, onRelocate, onMove, onRemo
         {copy && !editing && <p className="muted small">The loop at <span className="mono">{x4(copy.loop)}</span> copies these bytes to <span className="mono">{x4(copy.to)}</span>, and the <span className="mono">{OPC[A.mem[copy.jump]].mn.toLowerCase()} at {x4(copy.jump)}</span> goes there.</p>}
         {ok ? <div className="merge-sum">
           <p className="small"><b>{x4(plan.start)}–{x4(plan.end - 1)}</b> ({n} byte{n === 1 ? '' : 's'}) {editing ? 'will run' : 'runs'} at <b>{x4(plan.to)}–{x4(plan.to + n - 1)}</b>: traced, named and shown there, and written as <span className="mono">.pseudopc {x4(plan.to)} {'{ … }'}</span>.</p>
+          {junk && <p className="warn-text small">{x4(junk.start)}–{x4(junk.end - 1)} holds bytes of the file that are not what runs there (they start no routine where the <span className="mono">{OPC[A.mem[copy!.jump]].mn.toLowerCase()} at {x4(copy!.jump)}</span> goes in: what was there when the program was saved, its screen, say). They become junk, left out of everything: the Explorer's Junk list puts them back.</p>}
           {lost.length > 0 && <p className="warn-text small">{lost.map(r => `${x4(r.start)}${r.end - r.start > 1 ? `–${x4(r.end - 1)}` : ''}`).join(', ')} {lost.length === 1 && lost[0].end - lost[0].start === 1 ? 'is' : 'are'} code that runs where it is loaded too: relocated, {lost.length === 1 ? 'it is' : 'they are'} read where {lost.length === 1 ? 'it runs' : 'they run'} only. End the block before it if the program uses it there.</p>}
           {moving && <p className="muted small">Going along to {x4(plan.to)}: {moving}.</p>}
           <p className="muted small">You can undo it with Ctrl+Z.</p>

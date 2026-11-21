@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { C64, standInRoms } from '@mimir/sindri';
 import { assemble, h4 } from '../src';
-import { musicPlayData, sidPlayer, SID_PLAYER_DATA, SID_PLAYER_LINE, SID_PLAYER_SONG_AT } from '../src/c64/sidplayer';
+import { musicPlayData, musicSidFile, sidPlayer, SID_PLAYER_DATA, SID_PLAYER_LINE, SID_PLAYER_SONG_AT } from '../src/c64/sidplayer';
 import { findVice, prepareVice } from '../src/node';
 
 /** what the test tune writes: the song init got (in A, X and Y), plays since init, $01 and the raster line in play,
@@ -161,6 +161,28 @@ describe('the music block player', () => {
     frames(3);
     expect(m.ram[SONG]).toBe(4);
     expect(screenText(m, SID_PLAYER_SONG_AT, 2)).toBe('04');
+  });
+
+  it('gives init X and Y as the program does through a routine next to the block, the song in A (The Last Ninja)', () => {
+    const data = tune(0x1000, 0x100);
+    const d = musicPlayData(data, 0x1000, 0x1000, 0x1003, undefined, undefined, { x: 0x28, y: 0xb7, at: 0x5612 });
+    // ldx #$28 / ldy #$b7 / jmp $1000 right after the block, as init
+    expect(d.regs).toEqual({ at: 0x1100, bytes: 7, init: 0x1000, x: 0x28, y: 0xb7 });
+    expect([d.load, d.init, d.play, d.song]).toEqual([0x1000, 0x1100, 0x1003, undefined]);
+    expect([...d.data.subarray(0x100)]).toEqual([0xa2, 0x28, 0xa0, 0xb7, 0x4c, 0x00, 0x10]);
+    expect(d.alone).toBeUndefined();
+    const p = sidPlayer({ data: d.data, load: d.load, init: d.init, play: d.play, fixed: { x: 0x28, y: 0xb7 } });
+    const { m, frames } = boot(p.prg);
+    frames(12);
+    expect([m.ram[SONG], m.ram[SONG_X], m.ram[SONG_Y]]).toEqual([0, 0x28, 0xb7]);
+    expect(m.ram[COUNT]).toBeGreaterThanOrEqual(5);
+    expect(screenText(m, SID_PLAYER_SONG_AT - 6, 37)).toBe('SONG $00 (A AT INIT), X $28 AND Y $B7');
+    // A alone is the first song: in the player and the .sid (DeepSID starts it)
+    const a = musicPlayData(data, 0x1000, 0x1000, 0x1003, undefined, undefined, { a: 2 });
+    expect([a.init, a.song, a.regs]).toEqual([0x1000, 2, undefined]);
+    const sid = musicSidFile(a);
+    expect([(sid[0x0e] << 8) | sid[0x0f], (sid[0x10] << 8) | sid[0x11]]).toEqual([3, 3]);
+    expect(((musicSidFile(d)[0x0a] << 8) | musicSidFile(d)[0x0b])).toBe(0x1100);
   });
 
   it('plays a block under BASIC with BASIC out, and one under the KERNAL from the CPU\'s own vector', () => {

@@ -16,9 +16,11 @@
  * $1800 and $1c00, and waits for GCR bytes with bvc *), drive commands that upload and start it (M-W, M-E, M-R) and a
  * receive loop that reads the serial bus at $dd00 again and again. A tape turbo loader reads CIA1's FLAG line and times
  * the pulses with a CIA timer; the KERNAL's own LOAD is a call to $ffd5. */
-import type { Addr, Block, LoaderFinding, LoaderId, LoaderPart } from '../types';
+import type { Addr, Block, LoaderFinding, LoaderId, LoaderPart, RelocCopy } from '../types';
 import type { Ctx } from './context';
 import { $4 } from '../util/hex';
+import { decode } from '../cpu/decode';
+import { copiedCode } from './copies';
 import { parseVsf } from '../c64/vsf';
 
 type Pattern = (Set<number> | null)[];
@@ -386,7 +388,7 @@ export function loaderCodeIn(id: LoaderId, bytes: Uint8Array): boolean {
   return k.signs.some(s => !s.weak && has(s.pat)) || (!!k.text && encodings(k.text).some(has));
 }
 
-export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
+export function findLoaders(ctx: Ctx, blocks: Block[], copies: readonly RelocCopy[] = []): LoaderFinding[] {
   const { mem, owner, insLen, codeOwner, L } = ctx;
   const inCode = (a: Addr) => insLen[a] > 0 || codeOwner[a] >= 0;
   const find = (p: Pattern, from = 0, to = 0x10000): Addr[] => {
@@ -581,6 +583,16 @@ export function findLoaders(ctx: Ctx, blocks: Block[]): LoaderFinding[] {
   // ---- the KERNAL's LOAD ----
   const loads: LoaderPart[] = [];
   for (let a = 0; a + 2 < 0x10000; a++) if (insLen[a] === 3 && mem[a] === 0x20 && mem[a + 1] === 0xd5 && mem[a + 2] === 0xff) loads.push({ start: a, end: a + 3, role: 'kernal', what: 'loads a file with the KERNAL (jsr LOAD, $ffd5)' });
+  // and in code a loop copies elsewhere before it runs there, not relocated yet (the trace reads it where it runs only
+  // then): decoded from where the jump into it goes. The Last Ninja +Triad's trainer copies its loader from $ca00 to
+  // $0400, where the game calls it
+  for (const c of copies) {
+    const at = copiedCode(mem, c, decode(mem, c.jump).target!, 1024, a => insLen[a] > 0);
+    for (const a of at) if (mem[a] === 0x20 && mem[a + 1] === 0xd5 && mem[a + 2] === 0xff && !loads.some(p => p.start === a)) {
+      loads.push({ start: a, end: a + 3, role: 'kernal', what: `loads a file with the KERNAL (jsr LOAD, $ffd5), in the bytes the loop at ${$4(c.loop)} copies to ${$4(c.to)}: it runs at ${$4(c.to + a - c.start)} (relocate ${$4(c.start)}-${$4(c.end - 1)} to read it there)` });
+    }
+  }
+  loads.sort((x, y) => x.start - y.start);
   if (loads.length) findings.push({ id: 'kernal', name: 'KERNAL LOAD', sure: 'match', how: 'the standard load through $ffd5 (slow, or as fast as a cartridge or JiffyDOS makes it)', parts: loads });
 
   for (const f of findings) {

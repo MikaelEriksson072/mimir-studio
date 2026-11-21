@@ -17,7 +17,7 @@
  * longer restarts (it changed its own code, say) plays on from where it was without init, with the bytes outside the
  * block it reads as they were (`MusicInfo.resume`). */
 import type { Ctx } from './context';
-import type { Addr, DigiInfo, MusicInfo } from '../types';
+import type { Addr, DigiInfo, InitRegs, MusicInfo } from '../types';
 import { OPC } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
 import { $4, word } from '../util/hex';
@@ -60,7 +60,7 @@ interface Slot { at: Addr; to: Addr; jmp: boolean }
 /** A jump table that passed the tests: its entries, the code they reach and where that code ends; `irq` when the
  *  IRQ calls play, `judged` when its code passed the tests (not only its run); `run`: the run that played (init and
  *  `play`), `resume` when it played without init, `empty` when its init does nothing (an rts where JMP init would be) */
-interface Cand { start: Addr; api: Addr[]; play: Addr; sub: Reach; regs: Set<Addr>; sidAt: Addr[]; score: number; why: string[]; hi: Addr; irq: boolean; judged: boolean; run?: PlayerRun; resume?: boolean; empty?: boolean }
+interface Cand { start: Addr; api: Addr[]; play: Addr; sub: Reach; regs: Set<Addr>; sidAt: Addr[]; score: number; why: string[]; hi: Addr; irq: boolean; judged: boolean; run?: PlayerRun; resume?: boolean; empty?: boolean; initRegs?: InitRegs }
 
 /**
  * Where note frequency tables start (their high bytes): a run of at least 24 rising bytes, one apart (the low and
@@ -151,6 +151,60 @@ export function writtenJmps(ctx: Pick<MusicCtx, 'mem' | 'xrefs' | 'loaded' | 'ev
   }
   return out;
 }
+
+/** registers an instruction sets to something not known here (a call sets all three) */
+const SETS_A = new Set(['ADC', 'SBC', 'AND', 'ORA', 'EOR', 'PLA', 'SLO', 'RLA', 'SRE', 'RRA', 'ISC', 'ANC', 'ALR', 'ARR', 'XAA', 'LAS', 'LAX', 'LDA']);
+const SETS_X = new Set(['LDX', 'TSX', 'LAX', 'LAS', 'AXS']);
+const SETS_Y = new Set(['LDY']);
+/** the instructions looked back over from a call */
+const BACK_INS = 12;
+
+/**
+ * What A, X and Y hold at the call at `call` (a JSR or JMP into a player's init), where the code right before it sets
+ * them with constants: `ldx #$28 / ldy #$b7 / jsr $b000` (The Last Ninja), also through tax/tay/txa/tya and inx/dex.
+ * The trace's instructions back to one another path comes into, or to a call, a jump or a return before it; code the
+ * trace did not decode only by the loads with a constant right before the call. Null when it sets none of them.
+ */
+export function regsAtCall(ctx: Pick<MusicCtx, 'mem' | 'insLen' | 'xrefs' | 'loaded' | 'owner'>, call: Addr): InitRegs | null {
+  const { mem, insLen, xrefs, loaded, owner } = ctx;
+  const ins: Addr[] = [];
+  // another path comes in at p: what the registers hold on it is not known here
+  const joins = (p: Addr) => (xrefs.get(p) || []).some(x => x.kind === 'branch' || x.kind === 'jump' || x.kind === 'call');
+  if (insLen[call]) {
+    for (let p = call; ins.length < BACK_INS && !joins(p);) {
+      let q = -1;
+      for (let k = 1; k <= 3 && p - k >= 0; k++) if (insLen[p - k] === k) { q = p - k; break; }
+      if (q < 0) break;
+      const f = OPC[mem[q]].flow;
+      if (f !== 'seq' && f !== 'br') break;
+      ins.unshift(q); p = q;
+    }
+  } else {
+    for (let p = call; ins.length < 3 && p >= 2 && loaded(p - 2) && owner[p - 2] === owner[call] && !insLen[p - 2] && !insLen[p - 1] && (mem[p - 2] === 0xa9 || mem[p - 2] === 0xa2 || mem[p - 2] === 0xa0); p -= 2) ins.unshift(p - 2);
+  }
+  let a: number | null = null, x: number | null = null, y: number | null = null;
+  for (const p of ins) {
+    const o = OPC[mem[p]], v = mem[p + 1];
+    if (o.mode === 'imm' && o.mn === 'LDA') a = v;
+    else if (o.mode === 'imm' && o.mn === 'LDX') x = v;
+    else if (o.mode === 'imm' && o.mn === 'LDY') y = v;
+    else if (o.mn === 'TAX') x = a;
+    else if (o.mn === 'TAY') y = a;
+    else if (o.mn === 'TXA') a = x;
+    else if (o.mn === 'TYA') a = y;
+    else if (o.mn === 'INX' || o.mn === 'DEX') x = x == null ? null : (x + (o.mn === 'INX' ? 1 : -1)) & 0xff;
+    else if (o.mn === 'INY' || o.mn === 'DEY') y = y == null ? null : (y + (o.mn === 'INY' ? 1 : -1)) & 0xff;
+    else {
+      if (SETS_A.has(o.mn) || (o.mode === 'acc')) a = null;
+      if (SETS_X.has(o.mn)) x = null;
+      if (SETS_Y.has(o.mn)) y = null;
+    }
+  }
+  if (a == null && x == null && y == null) return null;
+  return { ...(a != null ? { a } : {}), ...(x != null ? { x } : {}), ...(y != null ? { y } : {}), at: call };
+}
+
+const regsText = (g: InitRegs) => (['a', 'x', 'y'] as const).filter(r => g[r] != null).map(r => `${r.toUpperCase()} = $${g[r]!.toString(16).padStart(2, '0')}`).join(', ');
 
 export function detectMusic(ctx: MusicCtx): MusicInfo[] {
   const { S, insLen, codeOwner, skip, inlineCalls, xrefs, owner, ovList, loaded, forcedData, L, entryKind } = ctx;
@@ -274,11 +328,13 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     resume: { frames: TRY_FRAMES, quiet: QUIET, loaded, noInit: true },
     resumeLong: { frames: LONG_FRAMES, settle: SETTLE, loaded, noInit: true },
   };
-  const runOf = (init: Addr, play: Addr, kind: Kind): PlayerRun => {
-    const m = memory(), k = `${key}:${init}:${play}:${kind}`;
+  const runOf = (init: Addr, play: Addr, kind: Kind, regs?: InitRegs): PlayerRun => {
+    // (a run without init gives init nothing)
+    const g = KIND[kind].noInit ? undefined : regs;
+    const m = memory(), k = `${key}:${init}:${play}:${kind}${g ? `:${g.a ?? '-'},${g.x ?? '-'},${g.y ?? '-'}` : ''}`;
     let r = RUNS.get(k) ?? VERDICTS.get(k);
     if (r) { const c = RUNS.has(k) ? RUNS : VERDICTS; c.delete(k); c.set(k, r); return r; }
-    r = runPlayer(m, { init, play, ...KIND[kind] });
+    r = runPlayer(m, { init, play, ...KIND[kind], ...(g ? { regs: g } : {}) });
     // a run that played nothing keeps only its verdict, and so does a minute's (only how much it played is asked)
     if (plays(r) && kind !== 'minute' && kind !== 'resumeMinute') keep(RUNS, k, r, RUNS_KEPT); else keep(VERDICTS, k, { ...r, used: EMPTY }, VERDICTS_KEPT);
     return r;
@@ -337,17 +393,51 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     // the IRQ calls play: the entry, or the code its JMP goes to (a program can call a player's play routine directly)
     const irqPlays = (s: Slot) => calls(s.at).some(x => fromIrq(x.from)) || (s.jmp && calls(s.to).some(x => fromIrq(x.from)));
 
+    // what the program gives init where it calls it (constants loaded right before the call), each set once, the ones
+    // that set more registers first
+    let callRegs: InitRegs[] | null = null;
+    const regsOfCalls = (): InitRegs[] => {
+      if (callRegs) return callRegs;
+      const at = new Set<Addr>();
+      for (const e of slots[0].jmp ? [a, slots[0].to] : [a]) {
+        for (const x of calls(e)) at.add(x.from);
+        for (const p of rawRefs(e)) if (outside(p)) at.add(p);
+      }
+      const sets = new Map<string, InitRegs>();
+      for (const p of [...at].sort((u, v) => u - v)) {
+        const g = regsAtCall({ mem, insLen, xrefs, loaded, owner }, p);
+        // X or Y set, not to 0 both (what the run without them gave init): a number in A alone is a song, or a sound
+        // effect's argument (lda #3 / jsr sfx), and every player plays its first song
+        if (!g || (!g.x && !g.y)) continue;
+        const k = `${g.a ?? '-'},${g.x ?? '-'},${g.y ?? '-'}`;
+        if (!sets.has(k)) sets.set(k, g);
+      }
+      const n = (g: InitRegs) => (g.a != null ? 1 : 0) + (g.x != null ? 1 : 0) + (g.y != null ? 1 : 0);
+      return (callRegs = [...sets.values()].sort((u, v) => n(v) - n(u)).slice(0, 4));
+    };
+
     // run it when its code writes the SID: each entry after init as play, the one that plays best
-    let ran: { slot: Slot; run: PlayerRun } | null = null;
+    let ran: { slot: Slot; run: PlayerRun; regs?: InitRegs } | null = null;
     if (slots.length > 1 && reaches.some(reachWritesSid)) {
       for (const s of slots.slice(1)) {
-        let r = runOf(a, s.at, 'try');
         // a tune can start quietly: one whose init and play return and write the SID as music does (8 registers) but
         // that do not play yet are heard for a minute
-        if (!plays(r) && r.init && !r.stop && r.regs >= 8) r = runOf(a, s.at, 'quiet');
-        if (plays(r) && (!ran || better(r, ran.run))) ran = { slot: s, run: r };
+        const tryWith = (g?: InitRegs) => {
+          const r = runOf(a, s.at, 'try', g);
+          return !plays(r) && r.init && !r.stop && r.regs >= 8 ? runOf(a, s.at, 'quiet', g) : r;
+        };
+        let r = tryWith(), regs: InitRegs | undefined, returns = r.init;
+        // it does not play with the song number alone: with what the program gives init (The Last Ninja's player takes
+        // its song's address in X and Y), for 3 s each (a routine called with an argument, a sound effect's, plays
+        // nothing either way)
+        if (!plays(r) && !empty) for (const g of regsOfCalls()) {
+          const q = runOf(a, s.at, 'try', g);
+          returns ||= q.init;
+          if (plays(q)) { r = q; regs = g; break; }
+        }
+        if (plays(r) && (!ran || better(r, ran.run))) ran = { slot: s, run: r, ...(regs ? { regs } : {}) };
         // init did not return: no entry after it plays
-        if (!r.init) break;
+        if (!returns) break;
       }
     }
 
@@ -425,8 +515,8 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
 
     // the entry the IRQ calls is play when it plays too: the run's best can be a part of the play routine
     if (ran && judged?.irq && ran.slot.at !== judged.play) {
-      const r = runOf(a, judged.play, 'try');
-      ran = plays(r) ? { slot: slots.find(s => s.at === judged.play)!, run: r } : null;
+      const g = ran.regs, r = runOf(a, judged.play, 'try', g);
+      ran = plays(r) ? { slot: slots.find(s => s.at === judged.play)!, run: r, ...(g ? { regs: g } : {}) } : null;
     }
     let c: Cand | null = judged;
     if (ran) {
@@ -454,6 +544,10 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
       }
       c.score += 4;
       c.run = r;
+      if (ran.regs) {
+        c.initRegs = ran.regs;
+        c.why.push(`init plays with what the program gives it at ${$4(ran.regs.at!)}: ${regsText(ran.regs)} (with the song number alone it plays nothing)`);
+      }
     }
     if (c) cands.push(c);
   }
@@ -462,9 +556,9 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
    *  again (init no longer does, say, as a player whose code changed itself), it plays on without init. */
   const settle = (c: Cand) => {
     const a = c.start;
-    const withInit = c.run ?? runOf(a, c.play, 'try');
+    const withInit = c.run ?? runOf(a, c.play, 'try', c.initRegs);
     const goesOn = memory() && snapshot && plays(runOf(a, c.play, 'resume')) ? runOf(a, c.play, 'resumeMinute') : null;
-    const minute = goesOn ? runOf(a, c.play, 'minute') : null;
+    const minute = goesOn ? runOf(a, c.play, 'minute', c.initRegs) : null;
     if (goesOn && minute && plays(goesOn) && (!plays(minute) || (minute.notes < STUCK && minute.notes * 4 < goesOn.notes))) {
       c.run = goesOn; c.resume = true;
       c.why.push(`init does not start it again (${minute.stop ?? ranText(minute)}), play goes on from the snapshot: ${ranText(goesOn)}`);
@@ -478,7 +572,7 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
   const opens = (b: Cand) => { for (const pc of b.sub.ins.keys()) if (pc < b.start) return false; return true; };
   // players that play are compared over a minute: a part of one can start a few notes and stop, a tune start quietly
   const heard = new Map<Cand, number>();
-  const minute = (c: Cand) => { let v = heard.get(c); if (v == null) heard.set(c, v = musical(runOf(c.start, c.play, c.resume ? 'resumeMinute' : 'minute'))); return v; };
+  const minute = (c: Cand) => { let v = heard.get(c); if (v == null) heard.set(c, v = musical(runOf(c.start, c.play, c.resume ? 'resumeMinute' : 'minute', c.initRegs))); return v; };
   /** the run of a table that starts its player's code runs nothing in the bytes before it (where code can be: BEFORE) */
   const runOpens = (c: Cand) => {
     if (!c.run) return true;
@@ -543,7 +637,7 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     // table and after the code, up to other code the run did not run, another player or other files' bytes
     let s = a, resume: [Addr, number][] | undefined, run: PlayerRun | undefined;
     if (c.run) {
-      run = runOf(a, c.play, c.resume ? 'resumeLong' : 'long');
+      run = runOf(a, c.play, c.resume ? 'resumeLong' : 'long', c.initRegs);
       if (!plays(run)) run = c.run;
       const u = run.used;
       const other = (p: Addr) => !loaded(p) || owner[p] !== owner[a] || (p >= 0xd000 && p < 0xe000 && !u[p])
@@ -581,6 +675,8 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     music.push({
       start: s, end: e, init: entryOf(a), play: entryOf(c.play), sidRegs: run ? run.regs : c.regs.size, score: c.score, why: c.why, file: owner[a],
       ...(run ? { run: { regs: run.regs, notes: run.notes, seconds: Math.round(run.played / 50) } } : {}), ...(resume ? { resume } : {}),
+      // (a player that plays on without init is given nothing)
+      ...(c.initRegs && !c.resume ? { initRegs: c.initRegs } : {}),
     });
   }
   if (S.detectMusic) samplePlayers();

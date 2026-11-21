@@ -4,7 +4,7 @@
  * or a JMP pair in code that clears the SID. The player below plays three voices from a PAL note frequency table. */
 import { describe, expect, it } from 'vitest';
 import { analyze, findBlock, musicPlayData, openC64File, parseVsf, render, verify, type MusicInfo, type ProjectInput } from '../src';
-import { noteTables } from '../src/analyze/music';
+import { noteTables, regsAtCall } from '../src/analyze/music';
 import { runPlayer } from '../src/c64/sidrun';
 import { fromSource, snapshotOf } from './helpers/programs';
 
@@ -597,6 +597,52 @@ freqhi: .byte ${hex(FREQ.map(f => f >> 8))}
     // a byte the program writes two values into is no JMP it puts in place (a JMP switched on and off)
     const both = project(program(' lda #$4c\n sta $1000\n lda #0\n jsr $1000\n lda #$2c\n sta $1000\n', 'jsr $1003') + player(' .byte 0, <init, >init\n jmp play\n'));
     expect(music(both).some(([, init]) => init === 0x1006)).toBe(false);
+  });
+
+  it('gives init what the program loads into X and Y before it calls it, when it plays with them only (The Last Ninja)', () => {
+    // init takes its song's address in X and Y (`ldx #<song / ldy #>song / jsr $1000`): with X = Y = 0 it reads its
+    // song from $0000, which ends it at once
+    const head = ' jmp init\n jmp play\ninit: stx $fb\n sty $fc\n lda #1\n sta $fd\n';
+    const p = project(program(' ldx #<song\n ldy #>song\n jsr $1000\n', 'jsr $1003') + songPlayer([24, 28, 31, 36, 31, 28, 24, 19, 24, 28], head));
+    const A = analyze(p);
+    expect(A.music.map(m => [m.start, m.init, m.play])).toEqual([[0x1000, 0x1000, 0x1003]]);
+    const m = A.music[0], g = m.initRegs!;
+    // (the jsr at $0811, X and Y the song's address: its first notes there)
+    expect(g).toMatchObject({ x: expect.any(Number), y: expect.any(Number), at: 0x0811 });
+    expect(g.a).toBeUndefined();
+    expect([...A.mem.subarray(g.x! | (g.y! << 8), (g.x! | (g.y! << 8)) + 3)]).toEqual([24, 28, 31]);
+    expect(m.run?.notes).toBeGreaterThan(2);
+    const h = (v: number) => `$${v.toString(16).padStart(2, '0')}`;
+    expect(m.why).toEqual(expect.arrayContaining([`init plays with what the program gives it at $0811: X = ${h(g.x!)}, Y = ${h(g.y!)} (with the song number alone it plays nothing)`]));
+    // it plays with them where it plays: a routine next to the block loads them and jumps to init
+    const block = A.mem.slice(m.start, m.end);
+    const d = musicPlayData(block, m.start, m.init, m.play, undefined, undefined, m.initRegs);
+    expect(d.regs).toMatchObject({ at: m.end, bytes: 7, init: 0x1000, x: g.x, y: g.y });
+    expect([d.load, d.init, d.data.length]).toEqual([m.start, m.end, block.length + 7]);
+    expect(d.alone).toBeUndefined();
+    const alone = (x: { data: Uint8Array; load: number; init: number; play: number }) => {
+      const mem = new Uint8Array(0x10000); mem.set(x.data, x.load);
+      return runPlayer(mem, { init: x.init, play: x.play, frames: 100 }).notes;
+    };
+    expect(alone(d)).toBeGreaterThan(2);
+    expect(alone(musicPlayData(block, m.start, m.init, m.play))).toBe(0);
+    // a player that plays with the song number alone is given nothing, whatever the program loads first
+    const plain = analyze(project(program(' ldx #5\n ldy #9\n lda #0\n jsr $1000\n', 'jsr $1003') + player()));
+    expect(plain.music.map(x => [x.start, x.initRegs])).toEqual([[0x1000, undefined]]);
+  });
+
+  it('reads what the code right before a call loads into A, X and Y, back to where another path comes in', () => {
+    const regsOf = (src: string, call: number) => {
+      const p = project(`${BASIC}${src}`);
+      const A = analyze(p);
+      return regsAtCall({ mem: A.mem, insLen: A.insLen, xrefs: A.xrefs, loaded: a => A.owner[a] >= 0, owner: A.owner }, call);
+    };
+    // lda #3 / tax / ldy #$10 / inx / jsr: A = 3, X = 4, Y = $10
+    expect(regsOf(' lda #3\n tax\n ldy #$10\n inx\n jsr $1000\n rts\n.pc = $1000\n rts\n', 0x0813)).toEqual({ a: 3, x: 4, y: 0x10, at: 0x0813 });
+    // a load after the branch that skips it is not known on the other path: only what follows the join
+    expect(regsOf(' lda $02\n beq skip\n ldx #7\nskip: ldy #1\n jsr $1000\n rts\n.pc = $1000\n rts\n', 0x0815)).toEqual({ y: 1, at: 0x0815 });
+    // lda from memory is not known; a call before ends it
+    expect(regsOf(' ldx #1\n jsr $1000\n lda $02\n jsr $1000\n rts\n.pc = $1000\n rts\n', 0x0814)).toBeNull();
   });
 
   it('finds a sample player by running the routine that starts its timer and then its NMI, as the timer calls it (Voodoo People)', () => {
