@@ -1134,6 +1134,39 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     read `$d418` once a frame and, with init 4 cycles later, met 7 values instead of 9 (the samples played the same):
     it now reads the volume 7 times a frame. Tests: `test/sidplayer.test.ts` (the song in X and Y, at the start and
     after a key).
+55. The Last Ninja 3 +6 Censor (C64com, side A) unpacked as far as it went crashed in Build & Run, and no loader was
+    found. Three things in Sindri (`session.ts`), found on its way through the boot, the intro, the trainer and the
+    loader to the game:
+    - Its decruncher at `$0100` ends `jsr $a659 / jmp $0f00` (CLR, then the trainer menu). CLR takes its return
+      address off the stack, sets the stack to `$01fa` and pushes it again, so Sindri lost the call and kept the
+      "BASIC RUN" layer: the trainer was saved as a program to start with RUN (`$0801` holds its text), which the next
+      Unpack ran from `$0347` into a BRK and VICE could not start. `clrMoves`/`clrMoved` (traps at `$a67e` and `$a687`)
+      move the call with it when CLR returns into RAM, so the layer joins its caller again as with the stand-ins;
+      into the ROM (BASIC's own `RUN`) nothing changes.
+    - The trainer's stub at `$0338` loads `01.L3*` (Censor's loader: KERNAL serial reads with a decruncher between)
+      at `$0400`, calls it, copies the game's `$0400-$07ff` back from `$c400` and returns into the game at `$0400`.
+      Sindri had run `$0400` in that layer already, so the return was no layer, and the run ended in the game's
+      wait-for-frames routine at `$0d19`, saved as the start (an RTS into nothing in VICE). A JMP, RTS or RTI into code
+      the layer ran before and wrote anew now starts a layer (`rewritten`: 12 of the 16 bytes written since, and at
+      least half of the bytes where instructions began now other). Not a JSR or an interrupt: That Thing I Hate About
+      Myself and Planet Golf copy a routine before each call and were saved inside it; not the same code copied again
+      (Sentinel's intro at `$2550`).
+    - A start with a `$01` that banks the KERNAL out (`$35`, the game at `$0400`) put `$01` at SYS's `JMP ($0014)` on
+      `$e144`, so the CPU ran the RAM there. The trap now makes the jump itself.
+    Unpack now goes intro `$0804` → trainer `$0f00` → game `$0400` (`$02a1-$ff40`, `$01 = $35`); in x64sc, started as
+    Build & Run starts it, the trainer asks its questions and the game plays its title. The analysis of the game finds
+    its loader: KERNAL LOAD at `$0358`. Measured old against new on 1 112 releases (CSDB Games Top200 187, C64com
+    games 341, CSDB Demos Top200 190, Onefile-top200 200, CSDB intros 194), each unpacked up to three times in a row
+    from its own saved start as the app does: 970 save the same programs at every step (94 without the false BASIC
+    layer), 47 the same with other layers. Of 122 runs from a saved start with `$01` banking the KERNAL out, 55 never
+    started and 22 ran into a JAM; 92 now run. The CLR change gives 10 games their start instead of RUN, whose next
+    run now plays (Max Torque's title in x64sc where it ended at READY; 500cc Grand Prix, Implosion, Judge Dredd,
+    Snap Dragon, Times of Lore, Sanxion, Murder off Miami, Pub Games, Win Lose or Draw); it loses Subway Arts, whose
+    Exomizer stub enables interrupts before CLR: in Sindri CIA 1's timer underflows while CLR is deep in the stack,
+    and the interrupt's `jsr $ea87` writes `$ea7d` over the stub's `jmp $a7ae` (a timing matter VICE does not meet;
+    the false BASIC layer had hidden it). The rewrite rule changes 7 saved starts in trackmos and games (Remission's
+    next part at `$7600`). Tests: Sindri's `test/unpack.test.ts` (a game over its loader, an opcode changed, the same
+    code again, `jsr $a659` then a jump, `$01 = $35`), `test/drive.test.ts` (a split freeze's second file is a layer).
 
 ## Roadmap
 

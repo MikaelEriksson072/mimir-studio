@@ -3,7 +3,8 @@
  *
  * A layer begins when the CPU jumps (JMP, JSR, RTS, RTI, BRK or an interrupt) into code that the running layer
  * wrote and has not run yet: a depacker that copied itself to $0100, the program it decrunched, the code a decoder
- * decrypted. Jumping into BASIC's RUN counts too, but not a BASIC program going on with itself (an extension's command
+ * decrypted; or with JMP, RTS or RTI into other code it wrote where it ran before (a game loaded over its loader).
+ * Jumping into BASIC's RUN counts too, but not a BASIC program going on with itself (an extension's command
  * ending in NEWSTT, RUN again). Memory is copied at each layer's start, with the bytes that belong to the program it
  * starts; when it ends, the parts of earlier programs that it still ran join them (a trackmo's music and loader).
  * Layers begun inside a subroutine call or an interrupt that then returns to where it was called from were
@@ -253,6 +254,9 @@ class Layer {
 const BASIC_ENTRIES = [0xa7ae, 0xa871, 0xa659, 0xa660, 0xa68e, 0xa533, 0xa474, 0xa480, 0xa483, 0xe37b, 0xe386];
 /** those that go on with the program in memory (NEWSTT, RUN, CLR, LINKPRG) rather than to the READY prompt */
 const RUN_ENTRIES = new Set([0xa7ae, 0xa871, 0xa659, 0xa660, 0xa68e, 0xa533]);
+/** BASIC's CLR moves its return address to the top of a fresh stack from CLR_MOVE (the first PLA) up to CLR_MOVED
+ *  (Session.clrMoved) */
+const CLR_MOVE = 0xa67e, CLR_MOVED = 0xa687;
 /** BASIC's NEXT: a program that goes round a FOR loop with nothing else to do waits for time (TIME_PATIENCE) */
 const NEXT = 0xad1e;
 const TRANSFER = new Uint8Array(0x102);
@@ -321,6 +325,16 @@ const TAPE_END_PATIENCE = 5_000_000;
  *  the archive), but a loader that starts itself over again and again makes two each time, and each layer costs more
  *  than the one before (Ping Pong's, whose code the KERNAL's READY. wrote over on the screen: 35 000 in six minutes) */
 const MAX_LAYERS = 500;
+/** a jump goes into code the running layer rewrote since it last ran there when the layer wrote REWRITE_MIN of the
+ *  REWRITE_SPAN bytes from where it goes after the instruction there last ran, and other code than ran there
+ *  (Session.rewritten): a loader that ran at $0400 and then put the game it loaded there (The Last Ninja 3 +6 Censor),
+ *  not code that changes an opcode or an operand of its own.
+ *  Only a JMP, an RTS or an RTI goes on so: a JSR (or an interrupt) into a routine the program writes anew before each
+ *  call is a call, and a run that ends inside one (waiting for the drive) would save the routine as the program
+ *  (Fairlight's That Thing I Hate About Myself, Planet Golf +3) */
+const REWRITE_SPAN = 16, REWRITE_MIN = 12;
+const REJUMP = new Uint8Array(0x102);
+for (const op of [0x4c, 0x6c, 0x60, 0x40]) REJUMP[op] = 1;
 /** a program that stopped the tape with more on it is not settled for this long (5 s) after: a tape loader can pause
  *  between its loads and the program (Cyberload fades the sound out for 2.5 s before it jumps into Tusker) */
 const TAPE_PAUSE_PATIENCE = 5_000_000;
@@ -406,6 +420,8 @@ class Session {
   /** the open calls that are interrupts, and how many there are */
   private readonly callIrq = new Uint8Array(CALLS);
   private irqOpen = 0;
+  /** where BASIC's CLR returns into RAM while it moves its return address to a fresh stack (clrMoves), else -1 */
+  private clrRet = -1;
   /** the program waits for time (TIME_PATIENCE): the progress it waits from, and whether it waited its time out */
   private timeWait = 0;
   private timeSpent = false;
@@ -857,7 +873,7 @@ class Session {
   // --- the run ------------------------------------------------------------------------------------------------------
 
   private loop(): void {
-    const m = this.m, cpu = m.cpu, map = m.map, ram = m.ram, etime = m.etime, eop = m.eop, wid = m.wid, eid = this.eid, special = this.special;
+    const m = this.m, cpu = m.cpu, map = m.map, ram = m.ram, etime = m.etime, wtime = m.wtime, eop = m.eop, wid = m.wid, eid = this.eid, special = this.special;
     const firstOp = m.firstOp, firstArg = m.firstArg;
     let next = m.icount + CHECK;
     while (!this.stopped) {
@@ -873,6 +889,10 @@ class Session {
         if (!this.started) this.start(pc);
         if (eid[pc] !== this.curId) {
           if (wid[pc] === this.curId && TRANSFER[cpu.lastOp] && this.isTransfer(pc)) this.enter(pc, false);
+          eid[pc] = this.curId;
+        } else if (wtime[pc] > etime[pc] && wid[pc] === this.curId && REJUMP[cpu.lastOp] && this.rejump(pc) && this.rewritten(pc) && this.isTransfer(pc)) {
+          // (code this layer ran before and then wrote anew, such as a game loaded over its loader)
+          this.enter(pc, false);
           eid[pc] = this.curId;
         }
         const ic = m.icount, op = ram[pc];
@@ -928,6 +948,8 @@ class Session {
    */
   private unwind(): void {
     const cpu = this.m.cpu;
+    // (BASIC's CLR is moving its return address into RAM to a fresh stack: the call goes on there, clrMoved)
+    if (this.clrRet >= 0 && cpu.pc > CLR_MOVE && cpu.pc <= CLR_MOVED && this.m.map[cpu.pc >> 8] === BASIC) return;
     while (this.calls && cpu.s > this.callSp[this.calls - 1]) {
       const k = --this.calls;
       if (this.callIrq[k] && --this.irqOpen === 0) this.m.inIrq = false;
@@ -937,6 +959,37 @@ class Session {
       if (returned && this.layers.length > this.callLayers[k]) this.merge(this.layers[this.callLayers[k]]);
     }
     this.frameSp = this.calls ? this.callSp[this.calls - 1] : 0x1ff;
+  }
+
+  /**
+   * BASIC's CLR ($a659 and $a660, which RUN calls) takes its return address off the stack, sets the stack to $01fa and
+   * pushes the address again ($a67e-$a686) before it returns. When it returns into RAM, the call it was made by goes
+   * on at the new place (the calls above it are gone with the old stack), so that a depacker that clears BASIC's
+   * variables with JSR $A659 and then jumps into the program it unpacked gets back from BASIC: the layer that JSR began
+   * joins its own again when CLR returns, as with the stand-ins (The Last Ninja 3 +6 Censor: `jsr $a659 / jmp $0f00`
+   * into the trainer menu was saved as a BASIC program started with RUN, which it is not). Into the ROM it returns to
+   * BASIC running the program anew (RUN): the stack it had is gone, and the BASIC layer stays. clrMoves runs before
+   * the first PLA, clrMoved after the last PHA.
+   */
+  private clrMoves(): false {
+    const m = this.m, ret = (m.peekWord(0x100 | ((m.cpu.s + 1) & 0xff)) + 1) & 0xffff;
+    this.clrRet = m.map[ret >> 8] <= ZP ? ret : -1;
+    return false;
+  }
+
+  private clrMoved(): false {
+    const m = this.m, s = m.cpu.s, ret = this.clrRet;
+    this.clrRet = -1;
+    if (ret < 0 || ((m.peekWord(0x100 | ((s + 1) & 0xff)) + 1) & 0xffff) !== ret) return false;
+    for (let k = this.calls - 1; k >= 0; k--) {
+      if (this.callIrq[k] || this.callRet[k] !== ret) continue;
+      for (let j = this.calls - 1; j > k; j--) if (this.callIrq[j] && --this.irqOpen === 0) m.inIrq = false;
+      this.calls = k + 1;
+      this.callSp[k] = s;
+      this.frameSp = s;
+      break;
+    }
+    return false;
   }
 
   /** An interrupt is taken after the instruction at `pc`: remember where it returns to, and how the CPU got there. */
@@ -961,6 +1014,28 @@ class Session {
     }
     if (op === 0x40 && pc === this.irqRet) return this.irqOp >= 0;
     return true;
+  }
+
+  /** An RTI back to where the interrupt came in counts as the jump the CPU made just before it (isTransfer): not
+   *  when that was a JSR or no jump at all. */
+  private rejump(pc: number): boolean {
+    return this.m.cpu.lastOp !== 0x40 || pc !== this.irqRet || (this.irqOp >= 0 && REJUMP[this.irqOp] === 1);
+  }
+
+  /** The running layer wrote the code at `pc` anew since it last ran there: most of the bytes from there, not one
+   *  opcode or operand it changes as it goes. */
+  private rewritten(pc: number): boolean {
+    const { wid, wtime, etime, eop, firstOp, ram } = this.m, ran = etime[pc], id = this.curId;
+    let n = 0, ops = 0, changed = 0;
+    for (let k = 0; k < REWRITE_SPAN; k++) {
+      const a = (pc + k) & 0xffff;
+      if (wid[a] === id && wtime[a] > ran) n++;
+      if (firstOp[a]) { ops++; if (ram[a] !== eop[a]) changed++; }
+    }
+    // (and other code than ran there: where instructions began, at least half the bytes now differ. Code made again
+    // as it was, or speedcode made again with other operands, is the same program going on: Sentinel's intro copies
+    // its routine at $2550 there again and jumps into it)
+    return n >= REWRITE_MIN && changed > 0 && changed * 2 >= ops;
   }
 
   /** a trap or a BASIC entry at `pc`; true when a trap did the work (the instruction there is not run) */
@@ -1408,6 +1483,9 @@ class Session {
         const link = (m.ram[0x2b] | (m.ram[0x2c] << 8)) + 1;
         return link >= this.loadAt && link < this.loadAt + this.data.length ? this.rts() : false;
       });
+      // BASIC's CLR moving its return address to a fresh stack (clrMoves, clrMoved)
+      this.trap(CLR_MOVE, BASIC, () => this.clrMoves());
+      this.trap(CLR_MOVED, BASIC, () => this.clrMoved());
       // SYS jumps to the program with JMP ($0014). Started at an address, the file is in memory as it has it, as Build &
       // Run puts it: VICE loads a program over the screen from the monitor at the READY prompt and types nothing after
       // it. Here LOAD and SYS were typed at the prompt, and READY. and the SYS line went onto the screen: over a program
@@ -1415,13 +1493,21 @@ class Session {
       // READY. on row 8 and SYS6000 on row 9 were 13 bytes of it: the game ran into a BRK at its first sound). So
       // right before the jump the file's bytes the KERNAL and BASIC wrote over since the load are put back (putBack).
       // A start with its own $01 gets it then too (as Build & Run's stub sets it), so a program under the BASIC ROM
-      // is what runs, not the ROM
+      // is what runs, not the ROM. A $01 that banks the KERNAL out too ($35: a game at $0400 with RAM all through,
+      // The Last Ninja 3 +6 Censor) would leave the CPU in the RAM at $e144, not at the ROM's JMP ($0014): then the jump
+      // is made here
       const port = this.o.port, entry = this.o.entry;
       if (entry != null) this.trap(0xe144, KERNAL, () => {
         if (this.started || (m.ram[0x14] | (m.ram[0x15] << 8)) !== entry) return false;
         this.putBack();
-        if (port != null) m.write(1, port & 0xff);
-        return false;
+        if (port == null) return false;
+        m.write(1, port & 0xff);
+        if (m.map[0xe1] === KERNAL) return false;
+        cpu.pc = entry;
+        cpu.lastOp = 0x6c;
+        m.advance(5);
+        m.icount++;
+        return true;
       });
       return;
     }

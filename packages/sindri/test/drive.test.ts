@@ -471,7 +471,8 @@ describe.skipIf(!withDrive)('programs that load from the disk', () => {
     const disk = makeD64([{ name: 'SPLIT', prg: SPLIT_FIRST.prg }, { name: '1SPLIT', prg: SPLIT_SECOND.prg }]);
     const r = unpack(SPLIT_FIRST.prg, { roms, disk });
     expect(r.stop.reason).toBe('settled');
-    expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+    // (the second file, loaded over the first and gone on with at $080d where the first ran, is a layer of its own)
+    expect(r.layers.map(l => [l.entry, l.via])).toEqual([[0x080d, 'start'], [0x080d, 'rts'], [0xc000, 'jmp']]);
     expect(r.saved).toMatchObject({ entry: 0xc000 });
   });
 

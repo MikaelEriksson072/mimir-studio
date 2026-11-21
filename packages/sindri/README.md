@@ -140,7 +140,10 @@ address, which in VICE it does not.
 For every byte of RAM it records which layer wrote it last and when, when it was last read as data and when it was
 last run. **A new layer begins when the CPU jumps into code that the running layer wrote and has not run yet**: the
 depacker a stub copied to `$0100`, the program a decruncher wrote, the code a decoder decrypted. Jumping into BASIC's
-`RUN` counts too. Memory is copied at the start of every layer, together with the bytes that belong to the program
+`RUN` counts too. So does a `JMP`, `RTS` or `RTI` into code the layer ran before and then wrote anew (12 of the 16
+bytes from there written since that code last ran): The Last Ninja 3 +6 Censor calls its loader at `$0400`, copies
+the game it loaded over it and returns into the game there. A `JSR` into such code stays a call, as many loaders
+copy a routine into place before each call. Memory is copied at the start of every layer, together with the bytes that belong to the program
 that layer starts:
 
 - what the layer before it wrote and did not run itself;
@@ -164,6 +167,11 @@ that layer starts:
 
 Layers begun inside a subroutine call or an interrupt that returns to where it was called from were temporary and join
 the caller again: a decruncher called with `JSR`, speedcode a program generates, an interrupt handler it writes.
+BASIC's CLR (`$a659`, `$a660`) moves its own return address to a fresh stack at `$01fa` before it returns; a
+depacker that calls it with `JSR $A659` to clear BASIC's variables gets back all the same, so the code it jumps to
+next is the layer, not a BASIC program (until November 2026 that call stayed a "BASIC RUN" layer, and The Last Ninja
+3's trainer menu at `$0f00` was saved as a program to start with `RUN`). When CLR returns into the ROM, BASIC is
+running a program anew (`RUN`) and the BASIC layer stays.
 
 A BASIC program that jumps back into BASIC goes on with itself: the commands of a BASIC extension end in a jump to
 NEWSTT, and a program may `RUN` itself again and again. That starts a layer only when BASIC goes on with text written
@@ -430,7 +438,7 @@ address, unp64 unpacks.
 | `--next FILE` | the disk to turn to when the program asks for it and waits (a demo's next side); once for each, in order |
 | `--tape FILE` | put this TAP or T64 in the datasette for a PRG given on its own |
 | `-e ADDR` | start with `SYS ADDR` instead of `RUN`, with the file in memory as it has it (nothing typed over it) |
-| `--port VALUE` | with `-e`: `$01` as the program starts there, set right before the jump (a saved program's start hint, `$36` say: a game that starts under the BASIC ROM) |
+| `--port VALUE` | with `-e`: `$01` as the program starts there, set right before the jump (a saved program's start hint, `$36` say: a game that starts under the BASIC ROM; with `$35` or `$34`, under the KERNAL too, Sindri makes SYS's jump itself) |
 | `-l ADDR` | load the file at `ADDR` instead of its own load address |
 | `--layer N` | save layer N instead of the newest (the report lists them) |
 | `--all` | save every layer |

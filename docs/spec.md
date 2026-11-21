@@ -1064,7 +1064,15 @@ Web Worker. Med C64-ROM:arna från användarens VICE (mappen `C64` bredvid x64sc
 hittar; huvudprocessen läser dem, kanalen `toolchain:roms`) startar den maskinen, laddar filen och skriver `RUN` eller
 `SYS` (se *Hur Sindri startar filen* nedan); utan
 dem kör den med små ersättare för KERNAL och BASIC. Ett nytt lager börjar när processorn hoppar in i kod som det
-körande lagret skrev och inte har kört. Varje lager får en sort (*mover*, *decoder*, *decruncher*, *jump*, sist
+körande lagret skrev och inte har kört, eller med `JMP`, `RTS` eller `RTI` in i kod som det körde förut och sedan
+skrev om till annan kod (12 av de 16 byten därifrån skrivna sedan dess, och minst hälften av byten där instruktioner
+började är nu andra): The Last Ninja 3 +6 Censor anropar sin laddare på `$0400`, kopierar spelet den laddade över den
+och återvänder in i spelet där. Ett `JSR` in i sådan kod är ett anrop som förut (många laddare kopierar en rutin på
+plats före varje anrop), och samma kod kopierad dit igen är samma program. En uppackare som rensar BASIC:s variabler
+med `JSR $A659` (CLR) och sedan hoppar till programmet den packade upp får tillbaka sitt anrop fast CLR flyttar sin
+returadress till en ny stack på `$01fa`: lagret är koden den hoppar till, inte ett BASIC-program (förut sparades The
+Last Ninja 3:s trainermeny, Max Torque och andra som program att starta med `RUN`, och nästa körning misslyckades).
+Varje lager får en sort (*mover*, *decoder*, *decruncher*, *jump*, sist
 *program*) och ett fingeravtryck av opkoderna det körde, som de var när det körde dem (så behåller en uppackare i
 nollsidan sitt fingeravtryck fast programmets egen nollsida skrivs över den innan nästa lager börjar); `data/signatures.json`
 har 332 kända fingeravtryck från 138 packare, och ett lager som liknar ett av dem till minst 80 % får dess namn. Båda
@@ -1213,6 +1221,10 @@ krasch: Great Gurianos (två kopior) når nu spelet, Way of the Exploding Fist s
 efter RETURN som Sindri trycker; i 4 har nästa lagers sparade program inte längre `READY.` och `SYS`-raden i sig
 (Driller, Out Run två gånger, Octapolis); 5 går vidare annorlunda i sin egen kod (Bionic Commandos stod förut still på
 `$0370` och spelar nu vidare). Inte packade 322 → 330, uppackade 74 → 71, misslyckade 105 → 100.
+Ett `$01` som också slår bort KERNAL (`$35`: The Last Ninja 3:s spel på `$0400` med RAM överallt) satt förut på
+`$e144` innan SYS:s `JMP ($0014)` kördes, så processorn körde RAM:et där; nu gör Sindri hoppet själv. Av 122 körningar
+från en sparad start med ett sådant `$01` i 1 112 utgåvor ur arkivet startade 55 aldrig och 22 stannade på en JAM; nu
+kör 92.
 Får BASIC text efter `RUN` från skärmraden det skrivs på skriver Sindri `RUN:`, som VICE:s autostart gör med
 `-autostartwithcolon`: RETURN ger BASIC hela den logiska raden, och en fil som laddas in i skärmen kan ha sin text där.
 Channel 42 Intro (FBI Crew) laddas på `$0450` med sin text över rad 2-24 och har `6000 SYS2061` på `$0801`; `RUN`

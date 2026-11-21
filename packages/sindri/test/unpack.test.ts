@@ -568,6 +568,115 @@ ${byteLines(code)}
       expect(run().layers[0]?.entry).not.toBe(0xa000);
     });
 
+    it('starts a program under the KERNAL with the $01 it is given', () => {
+      // a game Sindri saved can start with $01 = $35, RAM all through (The Last Ninja 3 +6 Censor at $0400): the
+      // KERNAL's own JMP ($0014) at $e144 is then gone
+      const code = asm(`
+* = $1000
+loop:  inc $d020
+       jmp loop`).prg.subarray(2);
+      const file = asm(`
+* = $e100
+       ldx #${code.length - 1}
+cp:    lda payload,x
+       sta $1000,x
+       dex
+       bpl cp
+       jmp $1000
+payload:
+${byteLines(code)}
+`);
+      const r = unpack(file.prg, { roms: mode === 'ROMs' ? roms : null, entry: 0xe100, port: 0x35 });
+      expect(r.layers.map(l => l.entry)).toEqual([0xe100, 0x1000]);
+      expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000, port: 0x35 });
+    });
+
+    it('starts a layer where the program goes on in code it ran before and then wrote anew: a game loaded over its loader', () => {
+      // as The Last Ninja 3 +6 Censor: the loader at $0400 is called, the game it loaded is copied over it, and an RTS
+      // goes into the game there
+      const loader = asm(`
+* = $c000
+       inc $d021
+       rts
+${byteLines(noise(28, 7))}`).prg.subarray(2);
+      const game = asm(`
+* = $c000
+       sei
+loop:  inc $d020
+       jmp loop
+${byteLines(noise(25, 8))}`).prg.subarray(2);
+      const r = go(asm(`${SYS_LINE}
+       ldx #31
+c1:    lda loader,x
+       sta $c000,x
+       dex
+       bpl c1
+       jsr $c000
+       ldx #31
+c2:    lda game,x
+       sta $c000,x
+       dex
+       bpl c2
+       lda #$bf
+       pha
+       lda #$ff
+       pha
+       rts
+loader:
+${byteLines(loader)}
+game:
+${byteLines(game)}
+`).prg);
+      expect(r.layers.map(l => [l.entry, l.via])).toEqual([[0x080d, 'start'], [0xc000, 'rts']]);
+      const s = r.saved!;
+      expect(s).toMatchObject({ entry: 0xc000, start: 0xc000 });
+      expect([...s.prg.subarray(2, 2 + game.length)]).toEqual([...game]);
+    });
+
+    it('starts no layer where the program changes an opcode of its own and jumps there', () => {
+      const r = go(asm(`${SYS_LINE}
+       ldx #4
+next:  jmp at
+at:    nop
+       lda #$ea
+       sta at
+       dex
+       bne next
+loop:  inc $d020
+       jmp loop
+`).prg);
+      expect(r.layers.map(l => l.entry)).toEqual([0x080d]);
+      expect(notPacked(r)).toBe(true);
+    });
+
+    it('starts no layer where the program copies the same code there again and jumps into it', () => {
+      // as Sentinel's intro at $2550: the routine it ran is written again as it was, and the program goes on in it
+      const part = asm(`
+* = $c000
+       inc $d021
+       lda $fb
+       bne out
+       inc $fb
+       jmp $0811
+out:   inc $d020
+       jmp out
+${byteLines(noise(16, 9))}`).prg.subarray(2);
+      const r = go(asm(`${SYS_LINE}
+       lda #$00
+       sta $fb
+again: ldx #${part.length - 1}
+cp:    lda part,x
+       sta $c000,x
+       dex
+       bpl cp
+       jmp $c000
+part:
+${byteLines(part)}
+`).prg);
+      expect(r.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
+      expect(r.saved).toMatchObject({ entry: 0xc000 });
+    });
+
     it('starts a file that loads in the screen with RUN when it has a SYS line at $0801 into it', () => {
       // as Cybernoid II +17HDF at $05b8: SYS to where it loads runs into the screen's bytes (here a JAM); RUN goes on
       // from the 0 at $0800
@@ -819,10 +928,33 @@ bang:  inc $d020
   it('starts a layer at the BASIC program a depacker wrote, and none when it goes on with itself', () => {
     const program = asm(`${LOOP}\n${WEDGE}`);
     const r = go(pack(program, { exit: 'basic' }).prg);
-    expect(r.layers.map(l => [l.entry, l.basic])).toEqual([[0x080d, false], [0x0100, false], [0xa659, true], [0xa7ae, true]]);
-    expect(r.saved).toMatchObject({ layer: 3, basic: true, start: 0x0801, entry: 0x0900 });
+    // (its JSR $A659 clears BASIC's variables and returns to it, as with the stand-ins; its JMP $A7AE starts BASIC)
+    expect(r.layers.map(l => [l.entry, l.basic])).toEqual([[0x080d, false], [0x0100, false], [0xa7ae, true]]);
+    expect(r.saved).toMatchObject({ layer: 2, basic: true, start: 0x0801, entry: 0x0900 });
     expect([...r.saved!.prg.subarray(2, program.prg.length)]).toEqual([...program.prg.subarray(2)]);
     expect(r.stop.reason).toBe('settled');
+  });
+
+  it('takes a depacker\'s JSR $A659 for a call that returns, and the code it then jumps to for the layer', () => {
+    // as The Last Ninja 3 +6 Censor's decruncher: CLR moves its return address to a fresh stack, then returns; the
+    // trainer menu it jumps to next is machine code, not a BASIC program to start with RUN
+    const part = asm(`
+* = $c000
+loop:  inc $d020
+       jmp loop`).prg.subarray(2);
+    const r = go(asm(`${SYS_LINE}
+       ldx #${part.length - 1}
+cp:    lda part,x
+       sta $c000,x
+       dex
+       bpl cp
+       jsr $a659
+       jmp $c000
+part:
+${byteLines(part)}
+`).prg);
+    expect(r.layers.map(l => [l.entry, l.via, l.basic])).toEqual([[0x080d, 'start', false], [0xc000, 'jmp', false]]);
+    expect(r.saved).toMatchObject({ entry: 0xc000, basic: false });
   });
 
   it('starts a layer at a BASIC program RUN for the first time', () => {
