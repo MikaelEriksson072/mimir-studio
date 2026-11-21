@@ -22,7 +22,7 @@ import {
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
 } from '@mimir/core';
-import { forgetUnsavedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
+import { forgetUnsavedWork, keepDeclinedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
 import { useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
@@ -417,8 +417,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   }, [saveNow]);
   // asked again while a question is open: it stays open
   useEffect(() => whenClosing(() => { if (closeAskNow.current) holdClose(); else void tryClose(); }), [tryClose]);
-  /** closed without saving: work without a project is kept for the next start as before, a project's last change goes */
-  const closeUnsaved = () => { pending.current = {}; keepUnsavedWork(); setCloseAsk(null); closeWindow(); };
+  /** closed without saving: work without a project is kept for the next start as before, a project's last change goes.
+   *  `declined`: the work without a project's changes were asked about ("Close without saving"), so the next start
+   *  does not ask about them again */
+  const closeUnsaved = (declined = false) => { pending.current = {}; if (declined) keepDeclinedWork(); else keepUnsavedWork(); setCloseAsk(null); closeWindow(); };
   /** "Save as a project…" before closing: the work made a project, then the window closes */
   const saveThenClose = async (name: string, parent: string, git: boolean) => { await createFromWork(name, parent, git); setCloseAsk(null); closeWindow(); };
 
@@ -4418,9 +4420,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onSave={() => { setSaveFirst(unsavedAsk); setUnsavedAsk(null); }} onDiscard={() => { setUnsavedAsk(null); unsavedAsk.go(); }} onClose={() => setUnsavedAsk(null)} />}
       {saveFirst && <CreateProjectModal title={saveFirst.kept ? 'Create a project from the work without a project' : undefined} name={(saveFirst.kept ?? project).name}
         moving={saveFirst.kept ? ['the work without a project (its files, labels, comments, bookmarks and patches)'] : movingText()} submit={`Create project, then open ${saveFirst.what}`} onCreate={saveFirstAs} onClose={() => setSaveFirst(null)} />}
-      {closeAsk?.kind === 'unsaved' && <CloseUnsavedModal name={project.name} onSave={() => setCloseAsk({ kind: 'save' })} onClose={closeUnsaved} onCancel={() => setCloseAsk(null)} />}
+      {closeAsk?.kind === 'unsaved' && <CloseUnsavedModal name={project.name} onSave={() => setCloseAsk({ kind: 'save' })} onClose={() => closeUnsaved(true)} onCancel={() => setCloseAsk(null)} />}
       {closeAsk?.kind === 'save' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project, then close Mimir" onCreate={saveThenClose} onClose={() => setCloseAsk(null)} />}
-      {closeAsk?.kind === 'failed' && <CloseNotSavedModal name={closeAsk.home.name} file={closeAsk.home.file} error={closeAsk.error} onRetry={() => { setCloseAsk(null); void tryClose(); }} onClose={closeUnsaved} onCancel={() => setCloseAsk(null)} />}
+      {closeAsk?.kind === 'failed' && <CloseNotSavedModal name={closeAsk.home.name} file={closeAsk.home.file} error={closeAsk.error} onRetry={() => { setCloseAsk(null); void tryClose(); }} onClose={() => closeUnsaved()} onCancel={() => setCloseAsk(null)} />}
       {modal === 'patch' && patchDraft && <PatchModal A={A} R={R} project={project} draft={patchDraft} onApply={savePatchPlan} onClose={closePatch} />}
       <div className="toasts" aria-live="polite">{toasts.map(t => <div key={t.id} className={cx('toast', `t-${t.kind}`)}><Icon name={LVL_ICON[t.kind] || 'info'} size={15} /><span className="toast-msg">{t.msg}</span>
         {t.kind === 'err' && <button className="icon-btn toast-x" aria-label="Dismiss the message" title="Dismiss (the Messages tab keeps it)" onClick={() => dismissToast(t.id)}><Icon name="x" size={13} /></button>}</div>)}</div>

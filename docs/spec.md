@@ -5653,7 +5653,10 @@ tiden före projekten, och frågan gällde då något du inte arbetar med). Hist
 sparningen, och stänger sedan. Ett arbete utan projekt med ändringar som inte finns i något projekt frågar först, i
 **Save the work before Mimir closes?**: **Save as a project…** gör ett projekt av arbetet (samma dialog som Save, med
 *Create project, then close Mimir*) och stänger sedan; **Close without saving** stänger, och Mimir håller arbetet till
-nästa start som förut (men inte i någon mapp som är användarens); **Cancel** (Esc) lämnar Mimir öppet. Ett projekt
+nästa start som förut (men inte i någon mapp som är användarens), utan ändringar att fråga om: frågan är besvarad, så
+nästa start frågar inte om dem igen (Quick work, en fil som öppnas i arbetets ställe, att stänga igen; ingen prick i
+titelraden), medan en ändring gjord efter starten frågas om som förut (`keepDeclinedWork`); **Cancel** (Esc) lämnar
+Mimir öppet. Ett projekt
 som inte gick att spara (projektfilen skrivskyddad, disken full …) frågar i **The project is not saved**: **Try again**
 sparar igen och stänger, **Close without saving** stänger och ändringarna sedan den senaste sparningen går förlorade.
 En ändring som inte gick att spara väntar på att sparas igen, med nästa ändring eller när fönstret stängs. Frågan
@@ -5674,7 +5677,8 @@ sparade i projektfilen, Ctrl+E till `source`), nästa start (Continue med Enter,
 till startskärmen), arbete utan projekt bredvid ett projekt, ett projekt skapat av arbetet med exporten flyttad
 dit, frågan innan arbete med ändringar ersätts (Cancel, Save as a project…, Do not save, pricken efter en
 omladdning), och frågan när Mimir stängs (Cancel, frågan väntar längre än huvudprocessen väntar på en sida som inte
-svarar, Save as a project…, Close without saving med arbetet kvar till nästa start, projektets sista ändring sparad
+svarar, Save as a project…, Close without saving med arbetet kvar till nästa start, där Quick work inte frågar igen men
+en ny ändring gör det, projektets sista ändring sparad
 när fönstret stängs, och ett skrivskyddat projekt: Cancel, Try again). `test/main.test.ts` (*closing a window*):
 sidan tillfrågas, väntar så länge den frågar, fönstret stängs ändå när sidan inte svarar och direkt när den kraschat.
 `test/history.test.ts`: vilka steg som är ändringar, efter Ctrl+Z, med inställningar och när historiken

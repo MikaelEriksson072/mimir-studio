@@ -170,6 +170,8 @@ test.describe('the start screen', () => {
       await go.click();
       await waitForListing(page2);
       expect(occurrences(await listingRows(page2), NEW)).toBeGreaterThanOrEqual(4);
+      // asked about as Mimir closed: the changes are not marked, nor asked about, again
+      await expect(page2.getByRole('button', { name: 'No project', exact: true })).toBeVisible();
 
       // a project opened from its file: the next start continues it, and offers the work without one beside it
       await page2.getByRole('button', { name: 'No project' }).click();
@@ -187,6 +189,41 @@ test.describe('the start screen', () => {
       await waitForListing(page2);
       expect(occurrences(await listingRows(page2), NEW)).toBeGreaterThanOrEqual(4);
       await expect(page2.getByRole('button', { name: 'No project' })).toBeVisible();
+    } finally {
+      await closeApp(again);
+    }
+  });
+
+  test('closed without saving: the next start does not ask about those changes again, a change made after it does', async ({ userData, app, page }) => {
+    await page.getByRole('button', { name: 'Without a project' }).click();
+    await waitForListing(page);
+    await rename(page, OLD, NEW);
+    await pressClose(app);
+    const closed = app.waitForEvent('close');
+    await page.getByRole('dialog', { name: 'Save the work before Mimir closes?' }).getByRole('button', { name: 'Close without saving' }).click();
+    await closed;
+
+    const again = await launchApp(userData);
+    try {
+      const page2 = await again.firstWindow();
+      const ask = page2.getByRole('dialog', { name: 'The work is not saved' });
+      await test.step('the start screen offers the work, and Quick work takes its place without asking', async () => {
+        await expect(page2.getByRole('button', { name: 'Continue with the work without a project' })).toContainText('raster-demo');
+        await page2.getByRole('button', { name: 'Quick work' }).click();
+        await expect(page2.locator('.empty-project')).toContainText('No files yet');
+        await expect(ask).toHaveCount(0);
+      });
+      await test.step('a change made after the start is asked about as before', async () => {
+        await stubDialogs(again, { open: [prg] });
+        await page2.locator('.empty-project').getByRole('button', { name: 'Open PRG…' }).click();
+        await waitForListing(page2);
+        await rename(page2, OLD, NEW);
+        await expect(page2.getByRole('button', { name: 'No project, changes not saved' })).toBeVisible();
+        await page2.getByRole('button', { name: /^No project/ }).click();
+        await page2.getByRole('menuitem', { name: 'Start screen' }).click();
+        await page2.getByRole('button', { name: 'Quick work' }).click();
+        await expect(ask).toBeVisible();
+      });
     } finally {
       await closeApp(again);
     }

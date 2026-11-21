@@ -89,6 +89,14 @@ export function keepUnsavedWork(): void {
 }
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', keepUnsavedWork);
 
+/** Mimir closes and its changes were not to be saved as a project ("Close without saving"): the window keeps the work as
+ *  it is, with no changes to ask about. The question was answered as Mimir closed, so the next start (Quick work, a
+ *  file opened in its place, closing again) does not ask it again; a change made after that is asked about as before */
+export function keepDeclinedWork(): void {
+  keepUnsavedWork();
+  store.set(CHANGED_KEY, false);
+}
+
 /** the work without a project is in a project now: the window keeps none (not even an edit about to be saved) */
 export function forgetUnsavedWork(): void {
   clearTimeout(saveTimer);

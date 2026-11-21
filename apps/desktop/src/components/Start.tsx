@@ -159,7 +159,7 @@ export function CloseUnsavedModal({ name, onSave, onClose, onCancel }: CloseUnsa
     <Modal title="Save the work before Mimir closes?" onClose={onCancel}>
       <div className="modal-body unsaved-work">
         <p><b>{name}</b> is work without a project, and its changes are in no project. Save as a project puts it in a folder of its own before Mimir closes.</p>
-        <p className="muted">Close without saving: Mimir still keeps the work for the next start, but not in a folder of yours.</p>
+        <p className="muted">Close without saving: Mimir still keeps the work for the next start, but not in a folder of yours, and does not ask about these changes again.</p>
       </div>
       <div className="modal-foot"><span className="grow" /><button className="btn" onClick={onCancel}>Cancel</button><button className="btn" onClick={onClose}>Close without saving</button><button className="btn primary" autoFocus onClick={onSave}>Save as a project…</button></div>
     </Modal>
