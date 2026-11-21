@@ -1243,6 +1243,15 @@ sparar ett annat program är 84 byte för byte vad unp64 sparar (81 det lager un
 unp64 inte anger någon återhoppsadress, 2 känner unp64 inte igen, och i 2 slutar Sindris lager vid ECA-uppackaren eller
 skiljer 87 byte (We Hate Cats, Rawhead; Intro 1988, Depredators). Picture Demo (The Discmonsters, `0 SYS2061`) är den
 enda där `RUN` med texten efter också startade (`RUN` till rad 0): den sparas med ett kolon i stället för ett E.
+Raden skrivs i tangentbuffern, och sedan hålls RETURN nere i tangentbordsmatrisen tills KERNAL:s avbrott läser av
+tangentbordet och hittar den, som när någon skriver `RUN`: programmet startar där i timer A:s period som på en C64.
+En packare kan tävla med det avbrottet. Subway Arts Exomizer-stubb på `$01be-$01ec` i stacksidan gör `CLI` med
+avbrottet väntande och anropar CLR; tar timern slut igen medan CLR ligger djupt i stacken skriver avbrottets push
+`$ea33` över stubbens `JMP $A7AE`, och demot slutar i en BRK (med 236-410 cykler kvar av timer A vid `CLI`). Förut
+lade Sindri RETURN i bufferten med raden där prompten råkade vänta efter laddningen, och 355 var kvar; hittad av
+avläsningen lämnar RETURN 14 730-15 526, vilken rasterrad programmet än startar på (168 provade). Sindris tidtagning
+var inte felet: startad från VICE:s tillstånd på `$080d` (timer A, rasterrad och cykel) är Sindri vid `CLI` cykel för
+cykel som VICE. Kommer ingen avläsning (inget KERNAL-avbrott) läggs RETURN i bufferten efter två bildrutor.
 En VICE-snapshot laddas och startas inte: Sindri fortsätter från dess maskin (se *Snapshots* nedan). `RUN` skulle starta
 programmet från början, för från `$0200` har snapshoten programmets `SYS`-rad på `$0801`.
 

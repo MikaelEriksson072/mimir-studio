@@ -40,6 +40,19 @@ it): LOAD's relinking of BASIC's lines at `$0801` is left out, and right before 
 put back. Delta's game, which Sindri saves as `$02a1-$ffff` from `$1770`, has its sound routine on the screen's
 `$0403-$059a`; with 13 of its bytes typed over it ran into a BRK at its first sound.
 
+The line goes into the keyboard buffer, and then RETURN goes down in the keyboard matrix until the KERNAL's interrupt
+scans the keyboard and finds it, as when a person types `RUN`: so the program starts where it does on a C64 in timer
+A's period, the KERNAL's interrupt. A packer can race that interrupt. Subway Arts (Exomizer 3) ends its decrunching in
+a stub at `$01be-$01ec` in the stack page: `CLI` with the interrupt pending, `JSR $A659` (CLR), `JMP $A7AE`. Should
+timer A run out again while CLR is deep in the stack, the interrupt's pushes write `$ea33` over the `JMP`, and the demo
+ends in a BRK: it does with 236-410 cycles of timer A left at the `CLI`. Until November 2026 Sindri put RETURN into the
+buffer with the line, where the prompt happened to wait after the load, and 355 were left. With RETURN found by the
+scan 14 730-15 526 are, whatever the raster line the program starts on (168 tried). The emulation's timing was not it:
+started from VICE's state at `$080d` (timer A, raster line and cycle), Sindri is at the `CLI` 8 066 044 cycles later
+on the same raster cycle with the same timer A as VICE. VICE's autostart puts `RUN` and RETURN into the buffer at
+moments of its own, not the same from one run to the next. A line typed when no keyboard scan comes (no KERNAL
+interrupt) gets its RETURN in the buffer after two frames.
+
 The RAM powers on as VICE (x64sc 3.10) fills it by default (`POWER_ON`): four bytes of `$00` and four of `$ff` from
 `$0002` on, inverted in every other 16 KB; the start-up then clears `$0002-$0101` and `$0200-$03ff` and leaves the rest
 (its RAM test puts back every byte it tries). A real C64 has stripes of its own, never one byte everywhere, and

@@ -993,6 +993,21 @@ part_end:`;
     expect(r.stop.cycle).toBeLessThan(3_000_000);
   });
 
+  it('types RUN and presses RETURN for the KERNAL\'s keyboard scan to find, as a person does', () => {
+    // the program starts where in timer A's period it starts on a C64 when RUN is typed (Subway Arts' Exomizer stub
+    // races the KERNAL's interrupt and crashed from where the prompt happened to wait, with RETURN put in the buffer)
+    let seen: { lastKey: number; held: number; buffer: number } | null = null;
+    const r = unpack(asm(`${SYS_LINE}
+loop:  inc $d020
+       jmp loop`).prg, { roms, keys: false, maxCycles: 5_000_000, onStep: (_pc, m) => {
+      seen ??= { lastKey: m.ram[0xc5], held: m.input.keys[0], buffer: m.ram[0xc6] };
+    } });
+    expect(r.layers.map(l => l.entry)).toEqual([0x080d]);
+    // at its first instruction: the scan found RETURN (SCNKEY keeps the last key's matrix code in $c5: RETURN 1, none
+    // 64) and took it into the buffer, BASIC took it from there, and RETURN was let go
+    expect(seen).toEqual({ lastKey: 1, held: 0, buffer: 0 });
+  });
+
   it('goes on at the READY prompt while the program\'s own interrupt handler runs, until it takes over', () => {
     // SYS: $0314 to its own handler, back to READY; 30 interrupts later the handler writes the part at $c000 and
     // jumps there (Uncensored by Booze Design starts so)

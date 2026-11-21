@@ -290,6 +290,12 @@ const CALLS = 1024;
 const SYS_RETURN = 0xe146;
 /** where the KERNAL's screen editor waits for a key at the READY prompt (with none in the buffer) */
 const READY_WAITS = 0xe5cd;
+/** where the KERNAL's interrupt has scanned the keyboard (JSR $EA87 at $ea7b returned): a key found is in the buffer */
+const KEYS_SCANNED = 0xea7e;
+/** RETURN in the keyboard matrix: column 0 (PA0), row 1 (PB1) */
+const RETURN_KEY = [0, 1] as const;
+/** RETURN held down that no keyboard scan finds in this many cycles (two frames) goes into the buffer instead */
+const SCAN_WAIT = 40_000;
 /** the KERNAL's STOP routine (the vector at $0328 leads there), and where its tape routines come back from calling it
  *  while they wait for the next byte (JSR $FFE1 at $f8be) */
 const KERNAL_STOP = 0xf6ed;
@@ -404,6 +410,9 @@ class Session {
   private phase: Phase = 'load';
   private phaseAt = 0;
   private triedSys = false;
+  /** a line was typed at the READY prompt and RETURN is to follow (typeThenReturn); the cycle RETURN went down, else 0 */
+  private returnDue = false;
+  private returnDown = 0;
   private stopped = false;
   private stopInfo: UnpackResult['stop'] = { reason: 'settled', pc: 0, detail: '', cycle: 0 };
 
@@ -831,6 +840,35 @@ class Session {
   }
 
   /**
+   * Type a line at the READY prompt as a person does: the text into the buffer now, then, once the screen editor has
+   * echoed it, RETURN held down in the keyboard matrix until the KERNAL's interrupt scans the keyboard and finds it
+   * (KEYS_SCANNED). So the program starts where in timer A's period it starts on a C64 when RUN is typed, not where
+   * the prompt happened to wait after the instant LOAD (a RETURN put in the buffer went in there).
+   * A packer can race the KERNAL's interrupt. Subway Arts' Exomizer stub at $01be-$01ec in the stack page does CLI
+   * with the interrupt pending and calls CLR, and timer A must not run out again while CLR is deep in the stack: the
+   * interrupt's pushes write $ea33 over the stub's JMP $A7AE, and the run ends in a BRK. It crashes with 236-410 cycles
+   * of timer A left at the CLI; RETURN in the buffer where the prompt waited left 355. Found by the scan, RETURN leaves
+   * 14 730-15 526 whatever the raster position at the start (168 tried; put into the buffer after the scan, without
+   * SCNKEY's walk through the matrix, 19 of them crash). Sindri's timing was not it: started from VICE's state at
+   * $080d (timer A, raster line and cycle) it is at the CLI cycle for cycle as VICE. VICE's autostart puts RUN and
+   * RETURN into the buffer at moments of its own, not the same from run to run.
+   */
+  private typeThenReturn(text: string): void {
+    const m = this.m, bytes = [...text].map(c => c.charCodeAt(0)).slice(0, 9);
+    m.ram.set(bytes, 0x0277);
+    m.ram[0xc6] = bytes.length;
+    this.returnDue = true;
+    this.returnDown = 0;
+  }
+
+  /** RETURN let go: a keyboard scan found it, or it went into the buffer */
+  private returnUp(): void {
+    this.m.input.keys[RETURN_KEY[0]] &= ~(1 << RETURN_KEY[1]);
+    this.returnDue = false;
+    this.returnDown = 0;
+  }
+
+  /**
    * Type RUN, with a colon after it when BASIC would get text after it from the screen line, as VICE's autostart types
    * it with -autostartwithcolon. RETURN hands BASIC the whole logical line, and a file that loads into the screen can
    * have its text on the row RUN is typed on: RUN followed by text is RUN to a line number, ?UNDEF'D STATEMENT ERROR
@@ -850,7 +888,7 @@ class Session {
       const c = (sc & 0x3f) | (sc & 0x40 ? 0x80 : 0) | (sc & 0x20 ? 0 : 0x40);
       text = c !== 0x20 && (c < 0x80 || c === 0xde);
     }
-    this.typeLine(text ? 'RUN:' : 'RUN');
+    this.typeThenReturn(text ? 'RUN:' : 'RUN');
   }
 
   /** the program's first instruction in RAM: the first layer begins */
@@ -1447,23 +1485,40 @@ class Session {
       // returned to BASIC
       this.trap(READY_WAITS, KERNAL, () => {
         if (m.ram[0xc6]) return false;
+        // the line typed is on the screen: RETURN goes down for the keyboard scan to find (typeThenReturn); with no
+        // scan (no KERNAL interrupt) it goes into the buffer
+        if (this.returnDue) {
+          if (!this.returnDown) {
+            m.input.keys[RETURN_KEY[0]] |= 1 << RETURN_KEY[1];
+            this.returnDown = m.cycles;
+          } else if (m.cycles - this.returnDown >= SCAN_WAIT) {
+            this.returnUp();
+            m.ram[0x0277] = 0x0d;
+            m.ram[0xc6] = 1;
+          }
+          return false;
+        }
         // a program back at the prompt with its own interrupt still running goes on there: Uncensored (Booze Design)
         // sets $0314 to its own handler and returns to READY, and the handler takes over a second later
         if (this.started && this.ownIrq()) return false;
         if (this.phase === 'loaded') {
           if (this.started) { this.stop('ready', 'returned to the READY prompt'); return true; }
           const basicStart = m.ram[0x2b] | (m.ram[0x2c] << 8);
-          if (this.o.entry != null) this.typeLine(`SYS${this.o.entry}`);
+          if (this.o.entry != null) this.typeThenReturn(`SYS${this.o.entry}`);
           else if (this.hasBasic(basicStart)) this.typeRun();
-          else this.typeLine(`SYS${this.loadAt}`);
+          else this.typeThenReturn(`SYS${this.loadAt}`);
           this.setPhase('run');
         } else if (this.phase === 'run') {
           if (!this.started && !this.triedSys && this.loadAt !== (m.ram[0x2b] | (m.ram[0x2c] << 8))) {
             this.triedSys = true;
-            this.typeLine(`SYS${this.loadAt}`);
+            this.typeThenReturn(`SYS${this.loadAt}`);
           } else this.stop('ready', this.started ? 'returned to the READY prompt' : 'the BASIC program ran no machine code');
           return this.stopped;
         }
+        return false;
+      });
+      this.trap(KEYS_SCANNED, KERNAL, () => {
+        if (this.returnDown && m.ram[0xc6]) this.returnUp();
         return false;
       });
       this.trap(0xfe66, KERNAL, () => {

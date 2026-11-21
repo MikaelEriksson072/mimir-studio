@@ -1163,10 +1163,32 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     run now plays (Max Torque's title in x64sc where it ended at READY; 500cc Grand Prix, Implosion, Judge Dredd,
     Snap Dragon, Times of Lore, Sanxion, Murder off Miami, Pub Games, Win Lose or Draw); it loses Subway Arts, whose
     Exomizer stub enables interrupts before CLR: in Sindri CIA 1's timer underflows while CLR is deep in the stack,
-    and the interrupt's `jsr $ea87` writes `$ea7d` over the stub's `jmp $a7ae` (a timing matter VICE does not meet;
-    the false BASIC layer had hidden it). The rewrite rule changes 7 saved starts in trackmos and games (Remission's
-    next part at `$7600`). Tests: Sindri's `test/unpack.test.ts` (a game over its loader, an opcode changed, the same
-    code again, `jsr $a659` then a jump, `$01 = $35`), `test/drive.test.ts` (a split freeze's second file is a layer).
+    and the interrupt's `jsr $ea87` writes `$ea7d` over the stub's `jmp $a7ae` (the moment Sindri typed `RUN`, not
+    its timing: item 56; the false BASIC layer had hidden it). The rewrite rule changes 7 saved starts in trackmos and
+    games (Remission's next part at `$7600`). Tests: Sindri's `test/unpack.test.ts` (a game over its loader, an opcode
+    changed, the same code again, `jsr $a659` then a jump, `$01 = $35`), `test/drive.test.ts` (a split freeze's second
+    file is a layer).
+56. Subway Arts (Onefile-top200 #1, Exomizer 3) unpacked into a BRK after item 55. Its stub at `$01be-$01ec` in the
+    stack page ends `cli / jsr $a659 / jsr $a533 / jmp $a7ae` with timer A's interrupt pending; should the timer run
+    out again while CLR is deep in the stack, the KERNAL interrupt's pushes write `$ea33` over the `jmp`. It does
+    with 236-410 cycles of timer A left at the `cli` (swept in Sindri); Sindri had 355. Sindri's emulation was not it:
+    x64sc's monitor (`trace exec` with `command N "io dc00"`, `-monlog`) gave timer A `$0854`, raster line 112 cycle 27
+    at `$080d`, and Sindri started from that state reaches the `cli` 8 066 044 cycles later on VICE's raster cycle
+    with VICE's timer A (`$3d60`). The difference was where Sindri typed `RUN`: the line and RETURN went into the
+    keyboard buffer at the first poll of the READY prompt after its instant LOAD. VICE's autostart is no fixed
+    reference either (two runs started the demo on lines 112 and 146; it puts `RUN` and RETURN in separately). A
+    person's RETURN is found by the KERNAL's keyboard scan, so now (`typeThenReturn`) the line goes into the buffer
+    and RETURN down in the keyboard matrix until the scan (`$ea7e`) has taken it; with no scan in 40 000 cycles it
+    goes into the buffer. With the real key press 14 730-15 526 cycles are left at the `cli` over all 168 raster
+    start positions tried; RETURN put into the buffer after the scan (without SCNKEY's ~1 500-cycle walk of the
+    matrix) crashes on 19 of them. Measured on item 55's 1 112 releases, up to three Unpacks each: 985 save the same
+    bytes at every step, 112 the same layers, starts and stops with other saved bytes (memory saved at another
+    moment), 15 end otherwise. Subway Arts is the only first Unpack among them (now `$06f0-$ff68`, BASIC `RUN`,
+    entry `$080d`, as unp64); the rest are saved programs started again with `SYS`, or paths after key presses, where
+    a start a moment later flips races both ways: 3 better (Cosmodrome, Locators Synd), 3 worse (Official X2018
+    Report's own init banks `$01 = $34` with interrupts on for ~70 cycles; Lovecats, Arcadia's intro 3), Great
+    Gurianos and Agent X 2 a level shorter (their crack intro reads joystick 2 every 6th frame, longer than Sindri
+    holds a key: `HOLD`). Test: `test/unpack.test.ts` (`$c5` = 1, RETURN, when the program starts).
 
 ## Roadmap
 
