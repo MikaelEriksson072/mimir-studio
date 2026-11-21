@@ -300,10 +300,13 @@ const SCAN_WAIT = 40_000;
  *  while they wait for the next byte (JSR $FFE1 at $f8be) */
 const KERNAL_STOP = 0xf6ed;
 const STOP_RETURN = 0xf8c1;
+/** where the KERNAL's serial LOAD comes back from calling STOP before it takes a byte (JSR $FFE1 at $f4f9) */
+const DISK_STOP_RETURN = 0xf4fc;
 
-/** a tape LOAD stored a byte at a time (Session.tapeLoadOn): `put` stores the next of its `n` bytes; `sp` the stack as
- *  LOAD has it; `first` runs before the STOP vector is first called, `done` ends the LOAD */
-interface TapeLoad { n: number; i: number; put: () => void; sp: number; called: boolean; first?: () => void; done: () => boolean }
+/** a tape or disk LOAD stored a byte at a time (Session.tapeLoadOn, diskLoadOn): `put` stores the next of its `n`
+ *  bytes; `sp` the stack as LOAD has it; `first` runs before the STOP vector is first called, `done` ends the LOAD;
+ *  `stopped`: STOP was called for the next byte (a disk LOAD calls it before each byte) */
+interface TapeLoad { n: number; i: number; put: () => void; sp: number; called: boolean; first?: () => void; done: () => boolean; stopped?: boolean }
 
 const hex4 = (v: number) => '$' + v.toString(16).padStart(4, '0');
 
@@ -470,6 +473,8 @@ class Session {
   private tapeFile: TapeFile | null = null;
   /** a tape LOAD in the middle of its bytes, while the STOP vector it loaded over runs (tapeLoadOn) */
   private tapeLoad: TapeLoad | null = null;
+  /** a disk LOAD in the middle of its bytes, while the STOP vector it loaded over runs (diskLoadOn) */
+  private diskLoad: TapeLoad | null = null;
   private tapeStart = 0;
   /** since when the tape has been at its end with the motor on */
   private tapeEnded = 0;
@@ -694,6 +699,43 @@ class Session {
     return t.done();
   }
 
+  /**
+   * A disk LOAD going on with its bytes. The KERNAL's serial LOAD calls STOP (JSR $FFE1 at $f4f9, through the vector at
+   * $0328) before it takes each byte after the first, so a file that loads over that vector with an address in RAM has
+   * its code called from there on, with the pointer at $ae/$af just past the byte stored last: Para-Protect's boot
+   * (Bangkok Knights, System 3) decodes each byte as it comes in this way and rewrites the vector as it goes. Such a
+   * load stores a byte at a time, the call's RTS coming back to $f4fc, where the load goes on (the trap there); no call
+   * follows the last byte. Without such a vector the bytes all go in at once and LOAD ends.
+   */
+  private diskLoadOn(t: TapeLoad): boolean {
+    const m = this.m, cpu = m.cpu;
+    this.diskLoad = null;
+    while (t.i < t.n) {
+      const v = m.ram[0x0328] | (m.ram[0x0329] << 8);
+      if (t.i > 0 && !t.stopped && v !== KERNAL_STOP && m.map[v >> 8] <= ZP) {
+        if (!t.called) {
+          t.called = true;
+          t.first?.();
+          this.trace(`the file loads over the STOP vector: LOAD calls ${hex4(v)} before each byte it takes`);
+        }
+        t.stopped = true;
+        this.diskLoad = t;
+        m.write(0x100 | cpu.s, (DISK_STOP_RETURN - 1) >> 8); cpu.s = (cpu.s - 1) & 0xff;
+        m.write(0x100 | cpu.s, (DISK_STOP_RETURN - 1) & 0xff); cpu.s = (cpu.s - 1) & 0xff;
+        this.call(DISK_STOP_RETURN);
+        cpu.pc = v;
+        cpu.lastOp = 0x6c;
+        m.advance(20);
+        m.icount++;
+        return true;
+      }
+      t.stopped = false;
+      t.put();
+      t.i++;
+    }
+    return t.done();
+  }
+
   private bootStandIn(): void {
     const m = this.m;
     initStandIn(m);
@@ -781,13 +823,19 @@ class Session {
     return f.end();
   }
 
-  /** The file's bytes for loadFile, a byte at a time (`put` stores the next one); `end` what LOAD leaves in $ae/$af. */
-  private fileBytes(): { n: number; put: () => void; end: () => number } {
+  /**
+   * The file's bytes for loadFile, a byte at a time (`put` stores the next one); `end` what LOAD leaves in $ae/$af.
+   * `live`: the pointer is in $ae/$af all along, as the KERNAL's serial LOAD keeps it there, for code the load calls
+   * between its bytes to read and move (diskLoadOn).
+   */
+  private fileBytes(live = false): { n: number; put: () => void; end: () => number } {
     const m = this.m;
     let lo = this.loadAt & 0xff, hi = this.loadAt >> 8, i = 0;
+    if (live) { m.ram[0xae] = lo; m.ram[0xaf] = hi; }
     return {
       n: this.data.length,
       put: () => {
+        if (live) { lo = m.ram[0xae]; hi = m.ram[0xaf]; }
         const a = lo | (hi << 8), v = this.data[i++];
         if (a >= 2) {
           m.ram[a] = v;
@@ -798,6 +846,7 @@ class Session {
         if (a === 0xae) lo = v; else if (a === 0xaf) hi = v;
         lo = (lo + 1) & 0xff;
         if (!lo) hi = (hi + 1) & 0xff;
+        if (live) { m.ram[0xae] = lo; m.ram[0xaf] = hi; }
       },
       end: () => {
         m.ram[0xae] = lo; m.ram[0xaf] = hi;
@@ -1453,7 +1502,12 @@ class Session {
           this.setPhase('loaded');
           return this.rts(200);
         };
-        if (!fromTape) return loaded(this.loadFile());
+        if (!fromTape) {
+          // a byte at a time, as the KERNAL's serial LOAD takes them: the STOP vector may lead into the file
+          const f = this.fileBytes(true);
+          const t: TapeLoad = { n: f.n, i: 0, put: f.put, sp: cpu.s, called: false, first: () => this.runFromHere(), done: () => { if (!t.called) this.runFromHere(); return loaded(f.end()); } };
+          return this.diskLoadOn(t);
+        }
         m.ram[0xba] = 1; m.ram[0xb9] = 0; this.tapeBuffer(this.tapeFile); this.tapeIrqSave();
         // a byte at a time, as the KERNAL's interrupt stores them: the STOP vector may lead into the file
         const f = this.fileBytes();
@@ -1480,6 +1534,8 @@ class Session {
     this.trap(0xfce2, KERNAL, () => { if (!this.started) return false; this.stop('reset', 'resets the C64'); return true; });
     // the STOP vector a tape LOAD called (tapeLoadOn) came back: the load goes on
     this.trap(STOP_RETURN, KERNAL, () => (this.tapeLoad && cpu.s === this.tapeLoad.sp ? this.tapeLoadOn(this.tapeLoad) : false));
+    // and the one a disk LOAD called (diskLoadOn)
+    this.trap(DISK_STOP_RETURN, KERNAL, () => (this.diskLoad && cpu.s === this.diskLoad.sp ? this.diskLoadOn(this.diskLoad) : false));
     this.trap(0xf1ca, KERNAL, () => { this.print(cpu.a); return this.real ? false : (cpu.c = 0, this.rts()); });
 
     if (this.real) {

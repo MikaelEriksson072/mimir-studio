@@ -129,6 +129,22 @@ const KNOWN: Known[] = [
     text: 'PIRATESLAYER',
   },
   {
+    // Para-Protect V2 (Paranoid, 1987-88) on System 3's, Elite's, Electra's, Digital Integration's, Screen 7's and
+    // DataByte's disks: read from Bangkok Knights, Thundercats, Better Dead than Alien and the others run from their
+    // G64s (spec 13.5o)
+    id: 'paraprotect', name: 'Para-Protect (Paranoid)',
+    how: "a copy protection and loader: the boot loads over LOAD's pointer at $AE/$AF and the STOP vector, so its own code decodes it a byte at a time as it loads, and has the drive read its code from track 18. A load is a request: a number of pages, a track and a sector (bit 7: the drive goes back to its DOS after it), sent with lda pages / ldx track / ldy sector / jmp $00b2 and $8e/$8f where the pages go, or by the stub in page 2 from a table (X the request). The drive takes the data block after each sector's header whatever its first byte and goes 8 sectors on (F-16 Combat Pilot: 1), to the next track's sector 0 when it comes round to 0; the C64 gets two bits at a time, waiting for a line that is not just before a badline, and stores the pages under the I/O",
+    signs: [
+      { pat: pat('78 BD .. 02 85 8F BD .. 02 48 BD .. 02 48 BC .. 02'), role: 'resident', what: 'its loader stub: the request X from a table (where the pages go, how many, the track, the sector), then the loader in the zero page at $00B2' },
+      { pat: pat('2C 00 DD 10 FB 38 AD 12 D0 E9 31 90 06 29 07 C9 02 90 F2 A5 90'), role: 'resident', what: 'receives a byte: waits for the drive, then for a line that is not just before a badline, lets DATA go and reads the bus four times' },
+      { pat: pat('85 1F 2C 00 DD 10 FB 4A 4A 4A 4A AA 38 AD 12 D0 E9 31'), role: 'resident', what: 'sends a byte of a request to the drive, a nibble at a time from a table, on a line that is not just before a badline' },
+      { pat: pat('20 4B F2 BD .. .. 85 C2 18 A5 .. 69 .. C5 C2'), role: 'drivecode', what: 'code for the 1541: after each sector it goes on by a step, with a table of its own of the sectors a track has by speed zone' },
+      { pat: pat('A5 0A 20 4B F2 85 C2 18 A5 0B 69 08 C5 C2'), role: 'drivecode', what: "code for the 1541: after each sector it goes 8 on, with the DOS's sectors a track" },
+      { pat: pat('A5 AF C9 03 D0 0D A5 AE C9 3B D0 07'), role: 'resident', what: "the boot's STOP-vector code, which LOAD calls before every byte: when the pointer reaches $033B it moves the vector to the code that decodes the bytes as they come in" },
+      { pat: pat('D0 41 52 41 2D D0 52 4F 54 45 43 54'), role: 'text', what: 'its name, "Para-Protect"', weak: true },
+    ],
+  },
+  {
     id: 'covert', name: 'Covert Bitops loader (Cadaver)', how: '2-bit, the C64 reads $dd00 four times per byte (lsr / lsr / eor $dd00), or 1-bit (version 2); files by a name of two letters (version 3: two hex digits), loaded as they are or unpacked with Exomizer or Pucrunch while they load',
     signs: [
       // waits out badlines, then pulls CLK and reads with the classic loop (which older loaders use too)

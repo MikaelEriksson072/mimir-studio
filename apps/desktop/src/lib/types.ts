@@ -1,4 +1,4 @@
-import type { Addr, BitfireDisk, BoozeDisk, CovertDisk, D64Image, DlocDisk, IfflDisk, KickProblem, KrillDisk, ListingLine, LogLevel, PirateSlayerDisk, ProblemCode, SparkleDisk, SpindleDisk, TapeImage, VerifyResult } from '@mimir/core';
+import type { Addr, BitfireDisk, BoozeDisk, CovertDisk, D64Image, DlocDisk, IfflDisk, KickProblem, KrillDisk, ListingLine, LogLevel, ParaProtectDisk, PirateSlayerDisk, ProblemCode, SparkleDisk, SpindleDisk, TapeImage, VerifyResult } from '@mimir/core';
 import type { IconName } from './icon-paths';
 
 /** The mounted .d64 or .g64: its directory is listed in the Explorer, and a copy goes into VICE's drive 8 on Build &
@@ -6,10 +6,10 @@ import type { IconName } from './icon-paths';
  *  disk (the Spindle script tab lists them); `bitfire`: its files, when it is a Bitfire disk (the Bitfire script tab
  *  lists them); `krill`: its directory's files, when they are packed with the ZX0 of Krill's loader, (version 146)
  *  Doynax LZ or (revision 166) TinyCrunch (the Krill script tab lists them); `covert`: its directory's files, when the Covert Bitops loader's code is
- *  on it or they are packed as that loader reads them (the Covert script tab lists them); `dloc`: its directory's files, when DLoC's loader's code is on it or they are packed with ZX0 as that loader reads them (the DLoC script tab lists them); `iffl`: its IFFL files, each one file holding a game's parts (the IFFL tab lists them); `pirateslayer`: Electronic Arts' copy protection on it (the Pirate Slayer tab); `sides`: the
+ *  on it or they are packed as that loader reads them (the Covert script tab lists them); `dloc`: its directory's files, when DLoC's loader's code is on it or they are packed with ZX0 as that loader reads them (the DLoC script tab lists them); `iffl`: its IFFL files, each one file holding a game's parts (the IFFL tab lists them); `pirateslayer`: Electronic Arts' copy protection on it (the Pirate Slayer tab); `paraprotect`: Para-Protect's boot on it, the files its loader and the game read (the Para-Protect tab); `sides`: the
  *  release's next disks or sides from its folder (or dropped with it), in order: Sindri turns to them when the program
  *  asks */
-export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null; sparkle: SparkleDisk | null; krill: KrillDisk | null; covert: CovertDisk | null; dloc: DlocDisk | null; iffl: IfflDisk | null; pirateslayer: PirateSlayerDisk | null; sides: DiskSide[] }
+export interface MountedDisk { name: string; path: string | null; bytes: Uint8Array; img: D64Image; spindle: SpindleDisk | null; bitfire: BitfireDisk | null; booze: BoozeDisk | null; sparkle: SparkleDisk | null; krill: KrillDisk | null; covert: CovertDisk | null; dloc: DlocDisk | null; iffl: IfflDisk | null; pirateslayer: PirateSlayerDisk | null; paraprotect: ParaProtectDisk | null; sides: DiskSide[] }
 /** one of a mounted disk's next sides: its file name and bytes */
 export interface DiskSide { name: string; bytes: Uint8Array }
 

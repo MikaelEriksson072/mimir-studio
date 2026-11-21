@@ -169,4 +169,24 @@ describe.skipIf(!roms)('LOAD', () => {
     const r = unpack(file, { roms, maxCycles: 3_000_000 });
     expect(r.layers[0]?.entry).toBe(0x02b0);
   });
+
+  it('calls the STOP vector a file loads over before each byte after it, its pointer past the byte stored last', () => {
+    // loads at $0300 over the vectors (the KERNAL's own, but STOP → $0300, code it has loaded before), which decodes
+    // each byte LOAD stored in page 8 (XOR $5a); the KERNAL calls STOP before a byte and not after the last, so $08ff
+    // stays as the file has it (Para-Protect's boot decodes itself so, Bangkok Knights)
+    const file = new Uint8Array(2 + 0x600);
+    file[0] = 0x00; file[1] = 0x03;
+    const at = (a: number, ...b: number[]) => file.set(b, 2 + a - 0x0300);
+    // lda $af / cmp #8 / bne out / ldy $ae / beq out / dey / lda $0800,y / eor #$5a / sta $0800,y / out: rts
+    at(0x0300, 0xa5, 0xaf, 0xc9, 0x08, 0xd0, 0x0d, 0xa4, 0xae, 0xf0, 0x09, 0x88, 0xb9, 0x00, 0x08, 0x49, 0x5a, 0x99, 0x00, 0x08, 0x60);
+    const vectors = [0xea31, 0xfe66, 0xfe47, 0xf34a, 0xf291, 0xf20e, 0xf250, 0xf333, 0xf157, 0xf1ca, 0x0300, 0xf13e, 0xf32f, 0xfe66, 0xf4a5, 0xf5ed];
+    vectors.forEach((v, k) => at(0x0314 + 2 * k, v & 0xff, v >> 8));
+    for (let i = 0; i < 0x100; i++) at(0x0800 + i, i ^ 0x5a);
+    const lines: string[] = [];
+    let page: number[] = [];
+    // (as LOAD has stored the last byte: its pointer is past the file)
+    unpack(file, { roms, maxCycles: 3_000_000, trace: l => lines.push(l), onStep: (_pc, m) => { if (!page.length && m.ram[0xaf] === 9) page = [...m.ram.subarray(0x0800, 0x0900)]; } });
+    expect(lines[0]).toBe('the file loads over the STOP vector: LOAD calls $0300 before each byte it takes');
+    expect(page).toEqual([...Array.from({ length: 0xff }, (_, i) => i), 0xff ^ 0x5a]);
+  });
 });

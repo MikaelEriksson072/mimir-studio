@@ -1531,6 +1531,7 @@ beror på var koden ligger finns med, och `..` står för valfri byte:
 | Sparkle (Sparta/OMG) | `lda $dd00 / sty $dd00 / lsr / lsr / dex / nop / ldy #$c0 / ora $dd00 / sty $dd00` och `and $dd00 / sta $dd00 / ora #0 / sta buffer,x / bvc` (sl.asm), i en senare version `inx` och `ora #1`, i Memento Mori `inx` och `ldy #$00`; blockuppackaren på `$0200` (`lda $0300,x / beq / cmp #$f8 / bcs / lsr / alr #$fe / tay / eor #$ff / adc`, och i All Hallows Eve och senare `lda $0300,x / bpl / sty / alr #$7c / lsr / cmp #2`), som en del sparad från `$0200` har utan mottagarloopen; texten "sparkle". En Sparkle-disks bundlar läses som 13.5i säger |
 | BoozeLoader (HCL/Booze Design) | mottagarloopen `dey / ldx #8 / lda $dd00 / stx $dd00 / lsr / lsr / iny / nop / ldx #0 / eor $dd00 / stx $dd00 / lsr / lsr`, där ATN skrivs till `$dd00` som klocka, och dess fjärde läsning `lda #$c0 / and $dd00 / sta $dd00 / ora #0 / sta buffer,y`; hur den skickar en bit av filnumret (`ldy #0 / bcc / ldy #$10 / lda #8 / sta $dd00 / bit $dd00 / bpl / sty $dd00 / rts`); ByteBoozer 1:s och 2:s offsettabeller, som bara räknas med loaderns egen kod; drivkommandot `"M-E" $020b` med sina egna byte, som låter DOS:en läsa drivkoden från 18/18, 18/15 och 18/12. Mönstren kommer ur Booze Designs demos 2008–2025 (källkoden är inte offentlig). Drivkoden finns aldrig i C64:ans minne, och skriptet i koden läses som 13.5d säger |
 | Pirate Slayer (Electronic Arts) | drivkodens nyckelkontroll `bvc * / clv / lda $1c01 / cmp #$d7 / bne / bvc * / clv / lda $1c01 / cmp #$d7 / beq / cmp #$eb / bne` (`50 FE B8 AD 01 1C C9 D7 D0 .. 50 FE B8 AD 01 1C C9 D7 F0 .. C9 EB D0`) och nyckelns 12 sista byte `55 AE 9B 55 AD 55 CB AE 6B AB AD AF`; drivens sändrutin `lda #1 / sta $1800 / bit $1800 / bne / stx $1800 / txa / asl / and #$0f / sta $1800`; C64:ans mottagarloop `sec / ldx $02 / lda $d012 / sbc #$32 / bcc / and #$07 / beq / stx $dd00` och stack-bootens handskakning `lda $dd00 / and #$07 / ora #$08 / sta $dd00 / lda $dd00 / bmi / dey / beq / bit $dd00 / bvs …`; texten `PIRATESLAYER`. Mönstren kommer ur drivkoden och laddarna som bootarna på fyra EA-skivor laddade upp och körde (Sindri med deras G64:or, 13.5h). Super Snapshot-kopierarens tecken `lda $1c00 / ora #$0c / sta $1c00 / lda #$ee / sta $1c0c` (motor och lampa på) räknas nu bara med kopierarens egen kod: Pirate Slayers drivkod börjar likadant |
+| Para-Protect (Paranoid) | laddarstubben `sei / lda dest,x / sta $8f / lda sidor,x / pha / lda spår,x / pha / ldy sektor,x` (`78 BD .. 02 85 8F BD .. 02 48 BD .. 02 48 BC .. 02`); C64:ans mottagning `bit $dd00 / bpl / sec / lda $d012 / sbc #$31 / bcc / and #7 / cmp #2 / bcc / lda $90` och sändning av en halvbyte i taget; drivens steg `jsr $f24b / lda tabell,x / sta $c2 / clc / lda sektor / adc #steg / cmp $c2` (eller med DOS:ens antal, `A5 0A 20 4B F2 85 C2 18 A5 0B 69 08 C5 C2`); bootets STOP-kod `lda $af / cmp #3 / bne / lda $ae / cmp #$3b / bne`; svagt namnet `D0 41 52 41 2D D0 52 4F 54 45 43 54` ("Para-Protect" i PETSCII). Mönstren kommer ur Bangkok Knights, Thundercats och Better Dead than Alien körda från sina G64:or i Sindri (13.5o) |
 | Covert Bitops loader (Cadaver) | badline-väntan `lda $d011 / clc / sbc $d012 / and #$07 / beq` följd av `lda #$10 / ora $dd00 / sta $dd00` (3.0–3.01) eller `lda $dd00 / ora #$10 / sta $dd00` (version 2 och 3.02–3.06), `M-W` lagrat baklänges (`"W-M"`), version 2:s `20 00 00 "W-M" 05 00 "E-M"` och dess 1-bitsloop `lda #$10 / eor $dd00 / sta $dd00 / asl / ror` (räknas bara med koden); läst ur loader.s i alla releaser 2.05–3.06 och prövat på deras testprogram (13.5l) |
 | Action Replay fastload (Datel) | byten tas emot på en rad utan badline: `bit $dd00 / bvc / sec / lda $d012 / sbc $aa / bcc / and #$07 / beq` (MK4: `cmp #$31 / bcc / and #$06 / cmp #$02 / beq`); ett block till `$0200` (`… ora $dd00 / sta $0200,y`); stackkoden som kopierar blocken med cartridgen avbankad (`lda #$23 / sta $de00`, 128 byte till `$013f`); drivkoden: starten vid `$0150` (`sei / jsr $01xx / lda #$7a / sta $1802`), 1541-koden vid `$0300`, 1581-koden vid `$0500` (`sta $4001`); installationen som skickar `M-`, `-` och `W`/`E`/`R` var för sig |
 | Action Replay Warp*25 (Datel) | mottagarloopen som lägger tre byte per varv på stacken (`… eor $dd00 / pha / lda $dd00 …`); avkodningen `inc $01 / pla / eor #$f9 / dey / sta ($ae),y` (MK4 `dec $01`); stackkoden (`ldx #$20 / stx $de00`); 1541-koden vid `$0400` (768 byte); `B-E 2 0 18 5/6` i loaderfilen, som bara räknas med koden (andra loaders har samma B-E) |
@@ -3541,7 +3542,7 @@ som läser diskens id ur driven (`M-R` av `$0012`): det finns där bara efter in
 laddar upp till `$f344`.
 
 **Loaderflikarnas filer (2026-11-20).** Varje flik i bottenpanelen som listar en disks eller ett bands filer (Spindle,
-Bitfire, Booze, Sparkle, Krill, Covert, DLoC, Pirate Slayer, Tape; IFFL med *parts*) har bredvid *Copy script* (eller
+Bitfire, Booze, Sparkle, Krill, Covert, DLoC, Pirate Slayer, Para-Protect, Tape; IFFL med *parts*) har bredvid *Copy script* (eller
 *Copy list*) två knappar:
 - **Export files to project** skriver flikens filer som egna källkoder i en mapp i projektets mapp, döpt efter
   disken eller bandet (`<projekt>/spindle-demo/`), utan att röra projektets listning. Filerna som ett anrop av loadern
@@ -5006,6 +5007,66 @@ och *(depacker)* (`packages/sindri/data/signatures.json`; närmast någon annan 
 Inte gjort: drivkodens felvägar (`$ff` för en fil som inte finns, återförsök med DOS:ens jobb) och PAL/NTSC-mätningen
 är bara lästa, inte prövade. Six skriver på CSDb att loadern "kvävs" av fler enheter på bussen.
 
+### 13.5o Para-Protect (Paranoids kopieringsskydd och laddare) – Bangkok Knights
+
+`readParaProtectDisk` (`packages/core/src/c64/paraprotect.ts`) läser Para-Protect V2 på en monterad disk. Analysen av
+bootet, drivkoden, laddaren och Bangkok Knights eget format finns i `docs/paraprotect.md`. Arkivet har åtta sådana
+skivor (System 3, Elite, Electra, Digital Integration, Screen 7, DataByte), alla G64.
+
+- **Bootet** känns igen på sin text (`PARA-PROTECT V2 1987` i katalogens första fil). Det laddas som KERNAL:ns seriella
+  LOAD laddar det: en byte i taget genom pekaren på `$AE/$AF`. STOP-vektorn, som filen laddar över, anropas före varje
+  byte efter den första, och koden den pekar på körs på Sindris 6510 (`Cpu`) tills den lämnar RAM. Bilden blir exakt den
+  Sindri har vid `$0203`, alla åtta skivorna.
+- **Tabellen:** laddarstubben (`SEI / LDA dest,X / STA $8F / LDA sidor,X / PHA / LDA spår,X / PHA / LDY sektor,X / … /
+  JMP $00B2`) och slingan som kopierar den till sida 2 ger var tabellerna ligger. Deras avstånd ger antalet förfrågningar.
+  Varje förfrågan har vart sidorna går, hur många, spår, sektor och om driven går tillbaka till DOS:en (bit 7). Drivkommandot
+  (`M-E $0205`) läses också.
+- **Laddarens filer:** sidorna läses som drivkoden läser dem. Huvudet hittas efter ett SYNC och datablocket efter nästa
+  SYNC, vilken första byte det än har. Läsaren går *steg* sektorer vidare och tar nästa spår, sektor 0, när det slår runt
+  till 0. Antal sektorer på ett spår tas ur laddarens egen tabell när dess kod ligger okrypterad på spår 18 (`JSR $F24B /
+  LDA tabell,X / STA $C2 / CLC / LDA sektor / ADC #steg / CMP $C2`, alltså 17, 17, 19, 19 och 8, F-16 1), annars ur
+  DOS:en med steg 8 (Bangkok Knights, vars steg är krypterade). En G64 läses spår för spår. En D64 läses i sina sektorer,
+  och dess felbyte säger vilka DOS:en inte kunde läsa: Bangkok Knights datablock har sektorns nummer som första byte, och
+  en D64 av den saknar dem. Namnet är påhittat av första sektorn och laddadressen (`t21s0_ba00.prg`).
+- **Sidor efter spår 35** som ingen förfrågan nämner (40/14 på Bangkok Knights, som spelet själv ber om) listas med en
+  laddadress tagen ur sidans egen kod: den höga byten som de flesta av dess `JSR`/`JMP` har, om minst tre har den.
+  Annars laddas sidan på `$0000`.
+- **Ett spels egen katalog** (Bangkok Knights: 11/0): sektorer vars datablock ligger direkt efter huvudet, utan SYNC,
+  läses på varje spår. Huvudet hittas på varje byte från föregående SYNC, eftersom 11/0 inte har något eget SYNC. En
+  katalogsektor som ingen annan länkar till är början. Dess poster läses som DOS:ens kedjor och behåller sina namn
+  (`S.CHU.prg`).
+
+Vid montering säger toasten och Explorer (*Disk*) vad som hittats, och fliken **Para-Protect** i bottenpanelen visar
+bootet: hur det laddar, antalet STOP-anrop, drivkommandot och stubben. Den visar också hur driven stegar och de
+filer katalogen inte listar, en rad per fil med sort, första sektorn, antal sektorer, var den laddar, storlek, namn och
+anteckningar (förfrågan, fel kontrollsumma, sektorer som saknas). En rad öppnar filen som en PRG på laddadressen, och +
+lägger till den. **Export files to project**, **Save files…** (med `files.txt`, `paraProtectFileList`) och **Copy
+list** finns som i de andra laddarflikarna. `mimir disks` räknar disken som `paraprotect`. **Analysen** känner igen
+laddaren (`paraprotect` i `analyze/loaders.ts`): stubben, mottagnings- och sändslingorna (en rad som inte ligger precis
+före en badline), drivens steg med egen tabell eller med DOS:ens, bootets STOP-kod och, svagt, namnet `Para-Protect` i
+PETSCII.
+
+**Sindri** (13.5f, 8.11b) lagrar nu en diskfil som KERNAL:ns seriella LOAD gör: en byte i taget, med STOP-vektorn
+anropad före varje byte efter den första när filen har laddat över den med en adress i RAM. Pekaren `$AE/$AF` står i RAM
+efter varje byte, anropet kommer tillbaka till `$F4FC` (en fälla där) och ingen anropas efter sista byten
+(`diskLoadOn`, som `tapeLoadOn` för band). Bangkok Knights laddar då till spelet i stället för att stanna på en `JAM`.
+Gammal mot ny på 200 slumpvisa skivor ur arkivet: 199 lika, och Planet Golf Extras (Triad) kommer längre (bootet startar
+sig självt från STOP-vektorn).
+
+**Kontrollen:**
+- Varje förfrågan Sindri gjorde på de sju skivor som laddar klart är byte för byte de sidor läsaren ger. Ett exempel:
+  Bangkok Knights 3 584, 13 312 och 35 072 byte. Buggy Boys avbild har tre sektorer med fel kontrollsumma, och spelet
+  hänger i VICE också. Sindris drive tar emot `$C0` sidor där C64:an skickar `$CE`, vilket inte är utrett.
+- VICE: Bangkok Knights visar titelskärmen med `-drive8type 1541`, men inte med 1541-II, VICE:s standard. Drivkoden kör
+  `$C029` ur DOS-ROM:en, och den byten skiljer mellan ROM:arna.
+- **Tester:** `packages/core/test/paraprotect.test.ts` bygger egna skivor (`test/helpers/paraprotect-disk.ts`): ett boot
+  med bara stubbens och tabellens bytemönster, spår med datablock märkta med sektorns nummer, spår i Bangkok Knights
+  format med ett huvud utan SYNC, D64 med felbyte. Testet prövar också laddaren i ett program. Sindris
+  `test/g64.test.ts` prövar STOP-vektorn under LOAD.
+
+Inte gjort: kontrollen som läser 18/22 efter 40/14 är inte utredd, och inte heller vad Bangkok Knights 1/0 (`CBM` och
+kod) är.
+
 ### 13.6 Terminal
 
 **Terminal** i titelraden (och kommandopaletten) öppnar ett terminalfönster i mappen du arbetar i: den senast
@@ -5825,7 +5886,7 @@ with* jämför med mappen; utan projekt säger fliken att det behövs ett och vi
 | Sidopanel | **Explorer**: filer, monterad disk (13.5) direkt under dem, VICE-quicksave, patchar (10.2, när det finns några), skräp (11.7, när det finns), loaders, programstart och minneskarta (64 KB-remsa och segmentlista), var och en ett kort vars rubrik öppnar och fäller ihop det (alla kort är stängda när appen startar; det användaren öppnar står öppet resten av körningen men sparas inte, `sideOpen`) med vad det rymmer bredvid rubriken (*1 file*, *none found*, quicksavens tid, startadressen, antal block). *Demo* och *+* (lägg till PRG-filer) står i Files rubrik och **Add PRG file…** under filerna: båda lägger PRG-filer till projektet (ett tomt projekt öppnar dem), medan File-menyn öppnar ett nytt program eller monterar en D64; hjälptexterna är en rad, resten står i knapparnas tips. Pack-vyns sektioner är likadana kort. **Blocks**: filtrerbar lista, en mapp per blocktyp. Ett klick på ett block går till det i listningen; Shift+klick visar det markerat i typens egen vy (`blockView`): sprites, charset, bitmapp och skärmmatris i Graphics ritade som sin typ (multicolor som blocket, en bitmapp så hög som den är, rutnätet flyttat så att en cell börjar vid blocket), text i Memory som `i` (PETSCII) eller `ii` (skärmkoder) med raderna från dess första byte, övriga data (bytes, ord, tabeller, musik, fill) i Memory som `m`, och kod, BASIC och flyttad kod markerad i listningen. Varje rads tips säger vart Shift+klick går. **Symbols**: etiketter (med antal referenser) och använda hårdvaruregister. **Bookmarks**: anteckningarna efter adress (10). **Scripts**: projektets skript, att köra, öppna och ta bort (10.3). **Pack**: packning med Brokkr eller Exomizer (13.8). Vyns rubrik står kvar överst när vyn rullas, och knappen längst till höger på den fäller ihop panelen (se nedan) |
 | Editor | Flikar: **Listing** (interaktiv, virtualiserad; vänsterkolumnen visar adress eller radnummer, och längst till vänster, som i SourceGen, var byten står i filen den öppnades från: `+000050`. En PRG:s byte står efter dess laddadress (`$0801` är `+000002`), ett cartridge-chips i dess CHIP-paket i `.crt`-filen (bank 0:s `$8000` i en vanlig cartridge är `+000050`, efter huvudet och paketets huvud) och en snapshots RAM i dess C64MEM-modul i `.vsf`-filen; tipset säger offseten decimalt och filen. Knappen *Offset* i verktygsraden (och menyn) slår av och på kolumnen, som är på från början och sparas med de andra valen; `fileOffsetBases`, `packages/core/src/offsets.ts`), **Graphics** (allt minne som tecken, sprites eller bitmappar, 14.5), **Memory** (minnet som VICE-monitorns `m`, `i` och `ii`, 14.6), **main.asm** (Monaco), **SPEC.md** |
 | Inspektor | **Memory map** (256 × 256 heatmap, lägen Type/Bytes/Refs, zoom till laddade sidor, zoom med mushjulet, se nedan), **Block** (intervall, evidens, konfidens, typ, etikett, kommentar), **Preview** (sprite/chars/bitmap, multicolor, text, musik- och rutininfo). Rubriken *Inspector* står kvar överst när den rullas, med knappen som fäller in den eller håller den öppen (se nedan) |
-| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Krill script (filerna på en disk för Krills loader, anropen i filerna, cc1541:s kommandorad och skriptet i programmets kod, 13.5k, när de finns), IFFL parts (delarna i en disks IFFL-fil, 13.5m), Covert script (filerna på en disk för Covert Bitops-loadern, anropen i koden och makedisks eller maked64:s kommandofil, 13.5l), Pirate Slayer (13.5h), Tape (13.5e), Statistics, Build output. I flikarna med en loaders filer (Spindle, Bitfire, Booze, Sparkle, Krill, IFFL, Covert, Pirate Slayer och Tape) är raderna för filerna som öppnats eller lagts till därifrån och finns i projektet markerade som Explorerns diskfiler (en linje till vänster, `aria-current`, *it is in the project* i tipset), så det syns vilken fil som är laddad; i skripten och anropen raderna som laddar dem. En flik som den monterade diskens eget laddskript eller egna filer fyller (Spindle, Bitfire, Booze, Sparkle, Krill, IFFL, Covert, DLoC och Pirate Slayer, inte en som bara analysens fynd i programmet fyller) står i accentfärgen med sin siffra i accenten, så användaren ser att disken har ett skript utan att öppna fliken: den pulserar några gånger när disken monteras (inte med *reducerad rörelse*), rullas fram i flikraden om den står utanför, och tipset säger *Read from the mounted disk …* |
+| Bottenpanel | Analysis log, Messages (det toasterna sagt under körningen, se nedan), Problems (med kryssrutan *Deep analysis*, 8.11e), Cross-references, Raster IRQs (8.11d), Spindle script (Pefchain-drivers, 8.11f, och en Spindle 3-disks laddskript, 13.5b, när de finns), Bitfire script (en Bitfire-disks filer och d64writes kommandorad, 13.5c, när en sådan disk är monterad), Booze script (en BoozeLoader-disks filer och skriptet i programmets kod, 13.5d, när de finns), Sparkle script (en Sparkle-disks bundlar och laddskriptet, 13.5i, när en sådan disk är monterad), Krill script (filerna på en disk för Krills loader, anropen i filerna, cc1541:s kommandorad och skriptet i programmets kod, 13.5k, när de finns), IFFL parts (delarna i en disks IFFL-fil, 13.5m), Covert script (filerna på en disk för Covert Bitops-loadern, anropen i koden och makedisks eller maked64:s kommandofil, 13.5l), Pirate Slayer (13.5h), Para-Protect (13.5o), Tape (13.5e), Statistics, Build output. I flikarna med en loaders filer (Spindle, Bitfire, Booze, Sparkle, Krill, IFFL, Covert, Pirate Slayer, Para-Protect och Tape) är raderna för filerna som öppnats eller lagts till därifrån och finns i projektet markerade som Explorerns diskfiler (en linje till vänster, `aria-current`, *it is in the project* i tipset), så det syns vilken fil som är laddad; i skripten och anropen raderna som laddar dem. En flik som den monterade diskens eget laddskript eller egna filer fyller (Spindle, Bitfire, Booze, Sparkle, Krill, IFFL, Covert, DLoC, Pirate Slayer och Para-Protect, inte en som bara analysens fynd i programmet fyller) står i accentfärgen med sin siffra i accenten, så användaren ser att disken har ett skript utan att öppna fliken: den pulserar några gånger när disken monteras (inte med *reducerad rörelse*), rullas fram i flikraden om den står utanför, och tipset säger *Read from the mounted disk …* |
 | Statusrad | CPU, filer, markörens adress/etikett/blocktyp, markering, antal meddelanden, analystid, verifieringsstatus. Det som går att göra något med är knappar (se nedan) |
 
 Paneler storleksändras med drag och mins per användare. Under 900 px bredd blir sidopanel och inspektor utdragbara lådor.

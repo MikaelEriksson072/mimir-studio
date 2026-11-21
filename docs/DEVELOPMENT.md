@@ -1228,6 +1228,26 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     from `$c000`); both are byte for byte unp64's in the range unp64 saves and run in VICE. Without its disk Barry
     Boomer's PRG still stops in the intro: a countdown that reads `$d011` is not a wait for time. Test:
     `unpack.test.ts` (a jump into copied code 1.5 s after a key was let go, the screen off so the delay is exact).
+59. Para-Protect (spec 13.5o; the analysis is `docs/paraprotect.md`) is new. Bangkok Knights (System 3, G64) stopped
+    in Sindri on a JAM at `$033c` after 45 instructions. Its boot loads at `$00ae`, over LOAD's pointer and the STOP
+    vector, and the KERNAL's serial LOAD calls STOP before every byte after the first: from `$033b` on the boot's code
+    decodes each byte as it comes in. Sindri stored a disk's first file all at once. Now it stores it a byte at a time
+    with the STOP vector called as the KERNAL calls it (`diskLoadOn`, as `tapeLoadOn` does for a tape; `$ae/$af` kept
+    in RAM, the call coming back to `$f4fc`, none after the last byte). Bangkok Knights then loads to its game. Old
+    against new on 200 random archive disks: 199 the same, and Planet Golf Extras (Triad), whose boot starts itself
+    from the STOP vector, gets further. The disk: the drive code is read in stages from track 18 (an M-E command whose
+    bytes are a DOS job). One stage wipes itself with DOS ROM bytes and runs `$c029` (`TAX` + `BRK` on a 1541, `JMP
+    $c000` on a 1541-II: VICE's default drive resets and the game crashes). Its loader takes requests (pages, track,
+    sector) and reads the data block after each header whatever its first byte; Bangkok Knights marks them with the
+    sector's number, which the DOS cannot read. It goes 8 sectors on, with the DOS's counts or a table of its own, and
+    the boot's table names the requests. The game reads a page from 40/14 itself, and a directory of its own on 11/0
+    (18 files) whose data blocks follow their headers with no SYNC. `readParaProtectDisk` reads all of it: the boot
+    decoded on Sindri's `Cpu`, the table, the files, pages past track 35 (their load address from their own calls),
+    and the game's directory. The Para-Protect tab (open, add, Export, Save files…, Copy list), an Explorer line,
+    `mimir disks`, and `paraprotect` in `loaders.ts`. The archive's eight Para-Protect disks: every request Sindri made
+    on the seven that load is byte for byte what the reader gives. Buggy Boy's image has three bad sectors, and Sindri's
+    drive gets `$c0` pages for `$ce` there (not looked into). Tests: `paraprotect.test.ts` (own disks, no code of
+    Paranoid's), Sindri's `g64.test.ts`.
 
 ## Roadmap
 

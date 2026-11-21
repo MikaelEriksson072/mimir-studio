@@ -1,11 +1,11 @@
 /* Bottom panel: analysis log, problems, cross-references, raster IRQs, relocated blocks, the Spindle script, a Bitfire
  * disk's files, the BoozeLoader script, a Sparkle disk's bundles, the files of disks for Krill's loader, the Covert
- * Bitops loader and DLoC's loader, Pirate Slayer
+ * Bitops loader and DLoC's loader, Pirate Slayer and Para-Protect
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocScript, dlocScriptText, dlocUnpackedName, type DlocFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocScript, dlocScriptText, dlocUnpackedName, type DlocFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, paraProtectFileList, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   ASSEMBLERS, assemblerOf, findPetsciiAnims, shownAddress, shownTarget, storePagesText, viewOffsetAt, type PetsciiAnim,
-  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
+  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type ParaProtectFile, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { useMemo } from 'react';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -733,6 +733,53 @@ export function PirateSlayerPanel({ disk, open, onCopy, onOpenFile, onExportFile
   );
 }
 
+/** The Para-Protect tab (spec 13.5o): Para-Protect's boot on the mounted disk (how it loads, its STOP-vector code, the
+ *  drive command, how the drive's loader steps from sector to sector) and the files the directory does not list, a row
+ *  each: the boot's requests (pages by track and sector), pages past track 35 a game asks for itself, and a game's own
+ *  directory's files (Bangkok Knights). A row opens the file as a PRG at its load address; + adds it. Save files… saves
+ *  them all with files.txt that lists them; Copy list copies that list. */
+export function ParaProtectPanel({ disk, open, onCopy, onOpenFile, onExportFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: ParaProtectFile, add: boolean) => void; onExportFiles: () => void; onSaveFiles: () => void }) {
+  const p = disk.paraprotect!, b = p.boot, st = p.stepping;
+  const KIND: Record<ParaProtectFile['kind'], string> = { loader: 'Loader', page: 'Page', own: "Game's" };
+  const steps = `${st.step} sector${st.step === 1 ? '' : 's'} on, ${st.counts ? `tracks of ${st.counts[3]}, ${st.counts[2]}, ${st.counts[1]} and ${st.counts[0]} sectors by zone (its own table, read from its code on ${st.from})` : "the DOS's sectors a track"}, the next track's sector 0 when it comes round to 0`;
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>{p.summary} <span className="muted">· Sindri runs the boot with {disk.name} in its drive{p.format === 'G64' ? ', every track as it is' : ''}; a 1541-II's ROM breaks some of the drive code (it runs bytes of the DOS ROM), so VICE needs drive type 1541 for these disks</span></span>
+      </div>
+      <div className="ps-notes">
+        {b && <p><b>Boot ({b.label}, {b.blocks} blocks at ${h4(b.load)}):</b> it loads over LOAD's pointer at $AE/$AF and over the STOP vector at $0328, which the KERNAL calls before every byte it takes ({b.calls} calls here), so its own code decodes the rest as it comes in; LOAD ends at ${h4(b.end)} and returns into the stack page it filled. {b.command ? <>It has the drive run <span className="mono">{b.command}</span>, whose bytes read the drive code from track 18. </> : 'It has the drive read its code from track 18. '}{b.stub >= 0 ? <>Its loader stub (at ${h4(b.stub)}, copied to ${h4(b.stubAt)}) takes the request X from a table: {b.requests.length} request{b.requests.length === 1 ? '' : 's'}.</> : 'No loader table was found in it.'}</p>}
+        <p><b>The drive's loader</b> takes a number of pages, a track and a sector (bit 7: back to the DOS after it), finds each sector's header as the DOS does and takes the data block after it whatever its first byte{p.ids === 'sector' ? ' (here the sector\'s number, not the $07 the DOS wants: a 1541\'s DOS reads none of them)' : p.ids === 'mixed' ? ' (here $07 and the sector\'s number)' : ''}, going {steps}. The C64 gets two bits at a time.</p>
+        {p.ownDirectory && <p><b>The game's own directory</b> is at {p.ownDirectory.sectors.join(' → ')}: sector chains as the DOS's, each data block right after its header with no SYNC between (the DOS cannot read them){p.ownDirectory.track === 11 && p.ownDirectory.sector === 0 ? '; 11/0 has no SYNC before its header either' : ''}.</p>}
+      </div>
+      {p.files.length > 0 && <>
+        <div className="xref-head spindle-head">
+          <span>Files the directory does not list: {p.files.length} <span className="muted">· loader files are named after their first sector and load address, the game's own files keep their names</span></span>
+          <button className="btn small" onClick={() => onCopy(paraProtectFileList(p, disk.name).join('\n'), 'Copied the file list')}><Icon name="copy" size={14} />Copy list</button>
+          <FileButtons n={p.files.length} onExport={onExportFiles} onSave={onSaveFiles} saveTitle="Save every file as a PRG to a folder, with files.txt that lists them" />
+        </div>
+        <table className="tbl ps-files" aria-label="Para-Protect files"><thead><tr><th>Kind</th><th>From</th><th>Sectors</th><th>Loads</th><th>Bytes</th><th>Name</th><th>Notes</th><th /></tr></thead><tbody>
+          {p.files.map(f => {
+            const past = f.load + f.bytes.length - f.end;
+            return (
+              <tr key={`${f.kind}:${f.track}/${f.sector}:${f.name}`} className={cx(open.has(f) && 'on')} {...mark(open.has(f), `Open ${f.name} as a PRG at ${h4(f.load)}`)} onClick={() => onOpenFile(f, false)}>
+                <td>{KIND[f.kind]}</td>
+                <td className="mono">{f.track}/{f.sector}</td>
+                <td className="mono" title={f.sectors.join(' ')}>{f.sectors.length}</td>
+                <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
+                <td className="mono">{f.bytes.length}</td>
+                <td className="mono">{f.name}</td>
+                <td className="muted">{[f.note, f.bad ? `${f.bad} sector${f.bad === 1 ? '' : 's'} with a wrong checksum` : '', f.missing ? `${f.missing} sector${f.missing === 1 ? '' : 's'} not on the image` : '', past > 0 ? `the ${past} bytes past $FFFF are left out` : ''].filter(Boolean).join(' · ')}</td>
+                <td><button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(f, true); }}><Icon name="plus" size={13} /></button></td>
+              </tr>
+            );
+          })}
+        </tbody></table>
+      </>}
+    </div>
+  );
+}
+
 /** The Tape tab (spec 13.5e): what is on the tape in the datasette, in tape order: each file (KERNAL, TapeTool, Turbo
  *  Tape) with where it starts, and the stretches of turbo data no format here reads. A row opens the file, + adds it.
  *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them.
@@ -996,4 +1043,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['iffl', 'IFFL parts'], ['covert', 'Covert script'], ['dloc', 'DLoC script'], ['pirateslayer', 'Pirate Slayer'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['iffl', 'IFFL parts'], ['covert', 'Covert script'], ['dloc', 'DLoC script'], ['pirateslayer', 'Pirate Slayer'], ['paraprotect', 'Para-Protect'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

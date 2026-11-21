@@ -65,6 +65,7 @@ interface SidebarProps {
   /** open the IFFL parts tab (a disk with an IFFL file: the parts a game loads from it) */
   onShowIffl: () => void;
   onShowPirateSlayer: () => void;
+  onShowParaProtect: () => void;
   /** per file: packed (or maybe packed), else null */
   packing: (PackingInfo | null)[];
   /** open a file from the mounted disk (`add`: add it to the project) */
@@ -152,7 +153,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -185,7 +186,7 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLab
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowDloc={onShowDloc} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} />}
+        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowDloc={onShowDloc} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} onShowParaProtect={onShowParaProtect} />}
         {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
@@ -622,7 +623,7 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
  *  screen after LOAD"$",8 and LIST, where Aa switches the character set. A PRG opens with a click or Enter; + adds it
  *  to the project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
  *  ("The work is not saved" → Save as a project…) */
-function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowDloc: () => void; onShowIffl: () => void; onShowPirateSlayer: () => void }) {
+function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowDloc: () => void; onShowIffl: () => void; onShowPirateSlayer: () => void; onShowParaProtect: () => void }) {
   const { img } = disk;
   // Settings → General: the directory as a C64 lists it, and its character set switched as Commodore+Shift does (for
   // this disk; null: as the listing leaves it)
@@ -727,6 +728,15 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
           <button className="btn small" onClick={onShowPirateSlayer}>Pirate Slayer</button>
         </div>
       )}
+      {disk.paraprotect && (() => {
+        const p = disk.paraprotect, n = (k: string) => p.files.filter(f => f.kind === k).length, s = (k: number) => (k === 1 ? '' : 's');
+        return (
+          <div className="disk-spindle">
+            <span><b>Para-Protect:</b> the boot's loader reads {n('loader')} file{s(n('loader'))} by track and sector{n('page') ? `, the game ${n('page')} page${s(n('page'))} past track 35` : ''}{p.ownDirectory ? `; ${n('own')} file${s(n('own'))} in the game's own directory at ${p.ownDirectory.track}/${p.ownDirectory.sector}` : ''}</span>
+            <button className="btn small" onClick={onShowParaProtect}>Para-Protect</button>
+          </div>
+        );
+      })()}
       <div className="side-hint">{c64 ? '' : `${img.freeBlocks} blocks free · `}{img.tracks !== 35 ? `${img.tracks} tracks · ` : ''}{img.format === 'G64' ? 'G64 (GCR tracks) · ' : ''}in drive 8 on Build &amp; Run</div>
     </SideSection>
   );

@@ -7045,6 +7045,69 @@ test('a mounted Pirate Slayer disk: the files outside its directory in the Pirat
   });
 });
 
+test('a mounted Para-Protect disk: its loader\'s files, a page past track 35 and a game\'s own files in the Para-Protect tab, opened, re-assembled and saved', async ({ app, page, workDir }) => {
+  // fixtures/d64/paraprotect-demo.g64 (packages/core/test/paraprotect.test.ts): a boot with Para-Protect's loader stub
+  // and a table of one request, the raster demo from $0800 on 21/0 on (data blocks marked with their sector's number),
+  // a page on 40/14 that calls itself at $45xx, and SINE in a directory of the game's own on 11/0 (no SYNC before data)
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/paraprotect-demo.g64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted paraprotect-demo.g64: "PARA" (G64), 1 file; Para-Protect V2 1987 (Paranoid): boot "PARA" at $0400; 1 loader file (data blocks marked with their sector number); 1 page past track 35; 1 file in the game\'s own directory (11/0) (the Para-Protect tab)')).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText("Para-Protect: the boot's loader reads 1 file by track and sector, the game 1 page past track 35; 1 file in the game's own directory at 11/0");
+  const table = page.getByRole('table', { name: 'Para-Protect files' });
+
+  await test.step('the Explorer opens the tab: the boot, the drive\'s loader and a row per file', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Para-Protect' }).click();
+    await expect(page.getByRole('tab', { name: /Para-Protect/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.ps-notes')).toContainText('Its loader stub (at $0440, copied to $02ae) takes the request X from a table: 1 request.');
+    await expect(page.locator('.ps-notes')).toContainText("here the sector's number, not the $07 the DOS wants");
+    await expect(page.locator('.ps-notes')).toContainText("The game's own directory is at 11/0");
+    await expect(table.locator('tbody tr td:nth-child(1)')).toHaveText(['Loader', 'Page', "Game's"]);
+    await expect(table.locator('tbody tr td:nth-child(2)')).toHaveText(['21/0', '40/14', '11/1']);
+    await expect(table.locator('tbody tr td:nth-child(4)')).toHaveText(['$0800–$37ff', '$4500–$45ff', '$4000–$40ff']);
+    await expect(table.locator('tbody tr td:nth-child(6)')).toHaveText(['t21s0_0800.prg', 't40s14_4500.prg', 'SINE.prg']);
+  });
+
+  await test.step('a row opens its file as a PRG at its load address; + adds one; the source builds the same bytes', async () => {
+    await table.getByRole('row', { name: /SINE\.prg/ }).click();
+    await expect(toast(page, 'Loaded SINE.prg at $4000')).toBeVisible();
+    await expect(inProject(table, 6)).toHaveText(['SINE.prg']);
+    await table.getByRole('button', { name: 'Add t21s0_0800.prg to this project' }).click();
+    await expectFiles(page, ['SINE.prg', 't21s0_0800.prg']);
+    await expect(inProject(table, 6)).toHaveText(['t21s0_0800.prg', 'SINE.prg']);
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  });
+
+  await test.step('Save files… saves every file with files.txt; Copy list copies that list', async () => {
+    await page.getByRole('tab', { name: /Para-Protect/ }).click();
+    const out = join(workDir, 'paraprotect-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 3 files of paraprotect-demo\.g64 to .*, and files\.txt that lists them$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['SINE.prg', 'files.txt', 't21s0_0800.prg', 't40s14_4500.prg']);
+    const demo = readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg'));
+    const loader = readFileSync(join(out, 't21s0_0800.prg'));
+    expect(loader.subarray(0, 3)).toEqual(Buffer.from([0x00, 0x08, 0x00]));
+    expect(loader.subarray(3, 3 + demo.length - 2)).toEqual(demo.subarray(2));
+    expect(readFileSync(join(out, 'SINE.prg')).subarray(0, 2)).toEqual(Buffer.from([0x00, 0x40]));
+    const list = readFileSync(join(out, 'files.txt'), 'utf8').split('\r\n');
+    expect(list[0]).toBe('; Para-Protect files of paraprotect-demo.g64, read by Mimir Studio: 3 files the directory does not list.');
+    expect(list[3]).toMatch(/^t21s0_0800\.prg +; 21\/0, 48 sectors, loads at \$0800-\$37ff \(12288 bytes\): the boot's request 0/);
+    await page.getByRole('button', { name: 'Copy list' }).click();
+    await expect(toast(page, 'Copied the file list')).toBeVisible();
+    expect((await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n')).toEqual(list.slice(0, -1));
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /Para-Protect/ })).toHaveCount(0);
+  });
+});
+
 test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeTool\'s command lines, the boot file with its header, Build & Run and Sindri reading the tape', async ({ app, page, workDir }) => {
   // fixtures/tap/mimir-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file whose loader, in the tape buffer,
   // reads the raster demo (TapeTool's TinyHeader format) from the tape and starts it; a sine table in two blocks in
