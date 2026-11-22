@@ -20,7 +20,7 @@ import { tidyInit } from './script';
 /** A script as the library keeps it: a UserScript without its id, its links and what its scratchpads held. `needs`:
  *  the names of the program its code uses that the user gave (a routine's): where a program has them all, the script
  *  fits it. */
-export interface StoredScript extends Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table'> {
+export interface StoredScript extends Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table' | 'when'> {
   pads: Omit<ScriptPad, 'bytes'>[];
   needs?: string[];
 }
@@ -47,7 +47,7 @@ export function scriptFileText(s: StoredScript): string {
     lang: s.lang,
     ...(s.pads.length ? { pads: s.pads.map(({ data, ...p }) => ({ ...p, ...(data?.length ? { data: b64enc(data) } : {}) })) } : {}),
     ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: s.init } : {}), ...(s.machine ? { machine: s.machine } : {}), ...(s.stopAt ? { stopAt: s.stopAt } : {}),
-    ...(s.watch?.length ? { watch: s.watch } : {}), ...(s.unwatch?.length ? { unwatch: s.unwatch } : {}), ...(s.table ? { table: s.table } : {}), ...(s.needs?.length ? { needs: s.needs } : {}),
+    ...(s.watch?.length ? { watch: s.watch } : {}), ...(s.unwatch?.length ? { unwatch: s.unwatch } : {}), ...(s.table ? { table: s.table } : {}), ...(s.needs?.length ? { needs: s.needs } : {}), ...(s.when ? { when: s.when } : {}),
   };
   const c = s.code !== 'js' && s.lang === '64tass' ? ';' : '//';
   return `${c} mimir-script ${JSON.stringify(meta)}\n${s.source.replace(/\r\n/g, '\n')}`;
@@ -97,7 +97,7 @@ export function readScriptFile(file: string, text: string): StoredScript | null 
     ...(o.safe === true ? { safe: true } : {}), ...(init ? { init } : {}), ...(o.machine === 'c64' && !js ? { machine: 'c64' as const } : {}),
     ...(typeof o.stopAt === 'string' && o.stopAt.trim() && o.stopAt.length <= 200 ? { stopAt: o.stopAt } : {}),
     ...(watch.length ? { watch } : {}), ...(unwatch.length ? { unwatch } : {}), ...(typeof o.table === 'string' && o.table.length <= 65536 && o.table ? { table: o.table } : {}),
-    ...(needs.length ? { needs } : {}),
+    ...(needs.length ? { needs } : {}), ...(o.when === 'load' ? { when: 'load' as const } : o.when === 'build' ? { when: 'build' as const } : {}),
   };
 }
 

@@ -25,6 +25,8 @@ export interface ScriptRunKept { run: ScriptRun; source: string; at: number; fai
 export interface LibraryScript { name: string; lang: ScriptLang; code?: 'js'; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit; machine?: 'c64'; stopAt?: string; watch?: ScriptWatchEntry[]; unwatch?: string[];
   /** its table of values (Run with values…), and the names of the program its code needs (a routine the user named): where a program has them, the script fits it */
   table?: string; needs?: string[];
+  /** when it runs by itself: `load`, it is added to every program opened and run there; `build`, before Build & Run */
+  when?: 'build' | 'load';
   /** its file in the library's folder Scripts (missing: kept by the app, where there is no folder) */
   file?: string }
 
@@ -117,7 +119,7 @@ interface ScriptsState {
   setBps: (id: string, lines: number[]) => void;
   set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'libraryDir' | 'loadLibrary' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
-  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table'> & { needs?: string[] }) => boolean;
+  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table' | 'when'> & { needs?: string[] }) => boolean;
   removeFromLibrary: (name: string) => void;
 }
 
@@ -149,7 +151,7 @@ export const useScripts = create<ScriptsState>((set, get) => ({
   saveToLibrary: s => {
     const lib = get().library, had = lib.some(x => x.name.toLowerCase() === s.name.toLowerCase());
     const entry: LibraryScript = { name: s.name, lang: s.lang, ...(s.code ? { code: s.code } : {}), source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}), ...(s.machine ? { machine: s.machine } : {}), ...(s.stopAt ? { stopAt: s.stopAt } : {}), ...(s.watch?.length ? { watch: structuredClone(s.watch) } : {}), ...(s.unwatch?.length ? { unwatch: [...s.unwatch] } : {}),
-      ...(s.table ? { table: s.table } : {}), ...(s.needs?.length ? { needs: [...s.needs] } : {}) };
+      ...(s.table ? { table: s.table } : {}), ...(s.needs?.length ? { needs: [...s.needs] } : {}), ...(s.when ? { when: s.when } : {}) };
     const was = lib.find(x => x.name.toLowerCase() === s.name.toLowerCase());
     const kr = window.kr;
     if (kr) entry.file = scriptFileName(entry);

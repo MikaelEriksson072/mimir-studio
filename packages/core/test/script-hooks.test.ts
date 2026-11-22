@@ -1,6 +1,6 @@
 /* A script run before Build & Run (spec 10.3): what its run changed goes into the built files, and nowhere else. */
 import { describe, expect, it } from 'vitest';
-import { runChangeText, runScript, SCRIPT_KEYS, withRunChanges, type ScriptEnv } from '../src';
+import { loadScripts, readScriptFile, runChangeText, runScript, SCRIPT_KEYS, scriptFileText, withRunChanges, type ScriptEnv } from '../src';
 
 const KEY = 0x5a, TEXT = [...'HELLO'].map(c => c.charCodeAt(0));
 /** the program as built: its text decrypted at $2000, and a second file over part of it */
@@ -33,5 +33,26 @@ describe('a script before Build & Run', () => {
     expect(SCRIPT_KEYS).toHaveLength(9);
     expect(SCRIPT_KEYS[0]).toBe('Alt+1');
     expect(SCRIPT_KEYS.every(k => /^Alt\+[1-9]$/.test(k))).toBe(true);
+  });
+});
+
+describe('the scripts that run after a load', () => {
+  const library = [
+    { name: 'marks', when: 'load' },
+    { name: 'needs_it', when: 'load', needs: ['unscramble'] },
+    { name: 'needs_more', when: 'load', needs: ['unscramble', 'other'] },
+    { name: 'by_hand' },
+    { name: 'before_build', when: 'build' },
+    { name: 'there', when: 'load' },
+  ];
+  it('are the library\'s with it that need nothing or whose names the program has, and that the project does not have', () => {
+    expect(loadScripts(library, n => n === 'unscramble', [{ name: 'there' }]).map(s => s.name)).toEqual(['marks', 'needs_it']);
+    expect(loadScripts(library, () => false, []).map(s => s.name)).toEqual(['marks', 'there']);
+  });
+  it('are kept in the script\'s file', () => {
+    const text = scriptFileText({ name: 'marks', lang: 'kickass', source: '        rts', pads: [], when: 'load' });
+    expect(text.split('\n')[0]).toBe('// mimir-script {"lang":"kickass","when":"load"}');
+    expect(readScriptFile('marks.asm', text)?.when).toBe('load');
+    expect(readScriptFile('x.asm', '// mimir-script {"when":"always"}\n        rts')?.when).toBeUndefined();
   });
 });

@@ -9,6 +9,15 @@
  * ===================================================================== */
 import type { ScriptRun } from './script';
 
+/**
+ * The scripts of the library that run after a load in a program (UserScript.when 'load'): those that need no name of
+ * the program, or whose every needed name the program has (`has`), and that the project does not have already (by
+ * name). The others are left for the user to add.
+ */
+export function loadScripts<S extends { name: string; when?: string; needs?: string[] }>(library: readonly S[], has: (name: string) => boolean, inProject: readonly { name: string }[]): S[] {
+  return library.filter(l => l.when === 'load' && (l.needs ?? []).every(has) && !inProject.some(s => s.name === l.name));
+}
+
 /** the keys a script can have for running it: Alt and a digit (not Ctrl+Alt: that is AltGr on many keyboards) */
 export const SCRIPT_KEYS: readonly string[] = ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9'];
 

@@ -2821,9 +2821,15 @@ $06, $08` i `.asm`-filen efter en körning.
     uppmärkning (`.mark` …) sparas inte från de körningarna. Inte för en cartridge (dess chip är banker, inte ett
     minne), och inte för den exporterade källkoden: den som bygger den själv med `build.bat` får de byte projektet
     har.
-  - Inte byggt: en körning av sig själv när en fil laddas. Ett skripts resultat ligger redan kvar i projektet, så
-    en omkörning vid laddning ändrar inget; att låta bibliotekets skript köra av sig själva på varje fil som öppnas
-    kräver ett eget beslut.
+  - **Efter att en fil laddats** (`UserScript.when` = `'load'`, kryssrutan *After a file is loaded*; en av de två,
+    inte båda): skriptet körs av sig självt, en gång, när analysen av det som just laddats är klar och uppackningen
+    den väntar på är gjord (som översikten väntar, `scriptsFor`). **Bibliotekets skript** med det (`when` står i
+    skriptets fil) som passar programmet läggs till i projektet som kopior och körs där (`loadScripts`): de som inte
+    behöver något namn i programmet, eller vars alla namn programmet har, och som projektet inte redan har; ett som
+    inte går att kontrollera i programmet hoppas över. **Projektets egna** med det körs igen när en fil läggs till.
+    De körs ett i taget, vart och ett när analysen av det förra gjorde är klar, och ett meddelande säger vilka; det
+    de gör (byte, uppmärkning) är vanliga körningar som Ctrl+Z tar tillbaka. Ett projekt som öppnas kör inga: dess
+    skripts resultat ligger redan i det.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

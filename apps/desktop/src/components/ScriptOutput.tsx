@@ -457,6 +457,11 @@ function StartsGroup({ script, keysTaken, onEdit }: { script: UserScript; keysTa
         <input type="checkbox" checked={script.when === 'build'} onChange={e => onEdit(script.id, { when: e.target.checked ? 'build' : undefined }, e.target.checked ? `"${script.name}" runs before Build & Run` : `"${script.name}" runs only when it is run`)} />
         Before Build &amp; Run, on the built program
       </label>
+      <label className="init-when" title="The script runs by itself, once, after a file is loaded, when its analysis is in (and the file is unpacked, when Mimir unpacks it). Saved to the library, it is added to every program you open (a copy) and run there, when the program has the names it needs; in this project it runs again when a file is added. What it does is a step Ctrl+Z takes back">
+        <input type="checkbox" checked={script.when === 'load'} onChange={e => onEdit(script.id, { when: e.target.checked ? 'load' : undefined }, e.target.checked ? `"${script.name}" runs after a load` : `"${script.name}" runs only when it is run`)} />
+        After a file is loaded
+      </label>
+      {script.when === 'load' && <p className="scr-note">Save it to the library, and it runs on every program you open: a copy is added to the project and run once, when the program has the names it needs. Here it runs again when a file is added.</p>}
       {script.when === 'build' && <p className="scr-note">What it changes then is in the program the emulator gets, not in the project or the exported source. Its scratchpads and what it marks up are not kept from those runs.</p>}
     </div>
   );

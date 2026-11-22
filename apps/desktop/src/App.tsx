@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -607,6 +607,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** files loaded while *Unpack packed files when they are opened* is on (Settings → General): each is unpacked once
    *  its unpacker says it is packed (see `unpackFile`), or left as it is */
   const toUnpack = useRef(new Set<string>());
+  /** the files the scripts that run after a load wait for, whether they were added to a project, and when they were loaded */
+  const scriptsFor = useRef<{ ids: string[]; add: boolean; n: number } | null>(null);
   /** the files the overview of the analysis waits for (Settings → General), and when they were loaded */
   const overviewFor = useRef<{ ids: string[]; n: number } | null>(null);
   /** after a load (14.1): the Explorer's Files section folds up at once; once the analysis is of the files loaded,
@@ -620,6 +622,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!unpacked && useUi.getState().autoUnpack) for (const id of ids) toUnpack.current.add(id);
     // the overview of the analysis opens once it is in (14.1b); an unpack's result takes the place of the packed file's
     overviewFor.current = useUi.getState().overview ? { ids, n: Date.now() } : null;
+    // the scripts that run after a load (10.3) run once its analysis is in, and the unpack it waits for is done
+    scriptsFor.current = { ids, add, n: Date.now() };
   };
   useEffect(() => {
     const l = loaded.current;
@@ -2483,7 +2487,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // the routines it needs that are known from another project and have no name here yet get their names first
     const naming = suggested.filter(m => scriptFitsHere.get(l.name)?.naming.includes(m.name));
     if (naming.length) update(naming.length === 1 ? `Name $${h4(naming[0].addr)} ${naming[0].name} (a known routine)` : `Name ${naming.length} known routines`, d => { for (const m of naming) d.labels[m.addr] = m.name; });
-    addUserScript({ id: newId(), name, lang: l.lang, ...(l.table ? { table: l.table } : {}), ...(l.code ? { code: l.code } : {}), source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
+    addUserScript({ id: newId(), name, lang: l.lang, ...(l.table ? { table: l.table } : {}), ...(l.when ? { when: l.when } : {}), ...(l.code ? { code: l.code } : {}), source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
     toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}${naming.length ? `. ${naming.map(m => `$${h4(m.addr)} is ${m.name} now`).join(', ')}, as the script needs` : ''}`, 'ok');
   };
   /** the library's scripts, read from its folder when the app starts and when the Scripts tab is shown */
@@ -4029,6 +4033,39 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (dialog || overWork || !useUi.getState().overview || !project.files.some(f => o.ids.includes(f.id))) return;
     setModal('overview');
   }, [A, rProject, project, final, overviewTick, dialog, overWork]);
+  /* ---- the scripts that run after a load (UserScript.when 'load', 10.3): once the analysis of the files just loaded is
+     in and the unpack they wait for is done, as the overview waits. The library's scripts with it that fit the program
+     (they need no name of it, or it has them all) are added to the project as copies and run; the project's own with it
+     run again when a file is added. One after the other, each once the analysis of what the one before did is in ---- */
+  const [scriptsTick, setScriptsTick] = useState(0);
+  useEffect(() => {
+    const o = scriptsFor.current;
+    if (!o || rProject !== project || !final) return;
+    if (Date.now() - o.n < 30000 && (unpacking.current || o.ids.some(id => toUnpack.current.has(id)))) {
+      const t = setTimeout(() => setScriptsTick(n => n + 1), 250);
+      return () => clearTimeout(t);
+    }
+    scriptsFor.current = null;
+    if (!project.files.some(f => o.ids.includes(f.id))) return;
+    void runLoadScripts(o.add);
+  }, [A, rProject, project, final, scriptsTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const runLoadScripts = async (added: boolean) => {
+    const { project: p, R: r } = latest.current;
+    const names = new Set([...r.labels.values()].map(l => l.name));
+    // the project's own (a file was added to it), then the library's that fit and check out here
+    const own = added ? (p.userScripts ?? []).filter(s => s.when === 'load') : [];
+    const copies: UserScript[] = [];
+    for (const l of loadScripts(useScripts.getState().library, n => names.has(n), p.userScripts ?? [])) {
+      const s: UserScript = { id: newId(), name: l.name, lang: l.lang, ...(l.code ? { code: l.code } : {}), source: l.source, pads: l.pads.map(x => ({ ...x })), when: 'load', ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}),
+        ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.table ? { table: l.table } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) };
+      if (checkScript(scriptsEnv, s).ok) copies.push(s);
+    }
+    if (!own.length && !copies.length) return;
+    if (copies.length) update(copies.length === 1 ? `Add "${copies[0].name}" from the library (it runs after a load)` : `Add ${copies.length} scripts from the library (they run after a load)`, d => { d.userScripts = [...(d.userScripts ?? []), ...copies]; });
+    const all = [...own, ...copies];
+    toast(`After the load: ${all.map(s => `"${s.name}"`).join(', ')} ${all.length === 1 ? 'runs' : 'run'}${copies.length ? ` (${copies.length === 1 ? 'a copy' : 'copies'} from the library, added to the project)` : ''}. Ctrl+Z takes back what ${all.length === 1 ? 'it does' : 'they do'}`, 'info');
+    for (const s of all) { await analysisSettled(); await runUserScript(s.id); }
+  };
   /** ← / →: the byte before or after the cursor's, on to the line before or after; from a line picked whole, its first
    *  (→) or last (←) byte. A line without bytes of its own as cells (an instruction) is picked whole. */
   const stepCell = (dirn: 1 | -1, extend: boolean) => {

@@ -10802,3 +10802,57 @@ test('more ways to start a script: a command of the palette, a key of its own, a
     await expect(page.locator('.scr-dump')).toContainText('48 45 4c 4c 4f');
   });
 });
+
+test('scripts that run after a load: one of the library with it is added to a program that is opened and run there once its analysis is in; one that needs a name the program does not have is left', async ({ workDir, userData, app, page }) => {
+  // the program of the suggestions test, and two scripts of the library, written as files
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...[...TEXT].map(c => c.charCodeAt(0) ^ 0x5a)];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  const folder = join(userData, 'library', 'Scripts');
+  mkdirSync(folder, { recursive: true });
+  // it decrypts the block and says what it is
+  writeFileSync(join(folder, 'unscramble.asm'), ['// mimir-script {"lang":"kickass","when":"load"}', '        ldx #31', 'loop:   lda $0840,x', '        eor #$5a', '        sta $0840,x', '        dex', '        bpl loop', '        rts',
+    '        .mark $0840, $0860, "text"', '        .name $0840, "secret"', ''].join('\n'));
+  // it needs a routine by a name this program does not have
+  writeFileSync(join(folder, 'needs more.asm'), ['// mimir-script {"lang":"kickass","when":"load","needs":["a_routine_elsewhere"]}', '        jsr a_routine_elsewhere', '        rts', ''].join('\n'));
+  await waitForListing(page);
+  const library = page.getByRole('list', { name: 'Library' });
+  const init = page.getByRole('region', { name: 'Init' });
+
+  await test.step('the library has both, read from its folder', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(library.getByRole('listitem')).toHaveText([/^needs more/, /^unscramble/]);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+  });
+
+  await test.step('opening a program adds the one that fits and runs it: the block is decrypted, text and named', async () => {
+    await stubDialogs(app, { open: [file] });
+    await page.keyboard.press('Control+o');
+    await expect(toast(page, 'Loaded crypt-demo.prg at $0801')).toBeVisible();
+    await expect(toast(page, 'After the load: "unscramble" runs (a copy from the library, added to the project). Ctrl+Z takes back what it does')).toBeVisible({ timeout: 30_000 });
+    await expect(toast(page, /^unscramble: Returned .* It changed 32 bytes of the program in 1 place: the listing and the source have them\. It marked up 2 things/)).toBeVisible({ timeout: 30_000 });
+    const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+    if (await overview.isVisible()) await page.keyboard.press('Escape');
+  });
+
+  await test.step('the project has the copy, with After a file is loaded ticked; the one that needs more is not there', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(page.getByRole('listbox', { name: 'Scripts' }).getByRole('option')).toHaveText([/unscramble/]);
+    await outTab(page, 'Init');
+    await expect(init.getByRole('checkbox', { name: 'After a file is loaded' })).toBeChecked();
+    await expect(init).toContainText('Save it to the library, and it runs on every program you open');
+    // one or the other: before Build & Run takes its place
+    await init.getByRole('checkbox', { name: 'Before Build & Run, on the built program' }).check();
+    await expect(init.getByRole('checkbox', { name: 'After a file is loaded' })).not.toBeChecked();
+    // (the listing has what the run did, once the analysis of it is in)
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await expect(listing(page)).toContainText('lda secret,x', { timeout: 30_000 });
+    await goTo(page, 'secret');
+    await expect(listing(page)).toContainText(TEXT.slice(0, 16));
+  });
+});
