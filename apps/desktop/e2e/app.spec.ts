@@ -10532,7 +10532,7 @@ test('scripts in JavaScript: mem, the program\'s own code called, what is printe
 
   await test.step('it calls the program\'s own loop, reads the result in mem, prints it and says what the bytes are', async () => {
     await run(['const d = 0x0840;', 'cpu.call(0x0818);', 'let s = "";', 'for (let i = 0; i < 32; i++) s += String.fromCharCode(mem[d + i]);', 'print(s);', 'print(typeof fetch, typeof self);', 'mark(d, d + 32, "text");', 'name(d, "secret");']);
-    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end');
     await expect(toast(page, /It changed 32 bytes of the program in 1 place: the listing and the source have them\. It marked up 2 things/)).toBeVisible();
     await outTab(page, 'Last run');
     await expect(printed).toHaveText(`${TEXT}\nundefined undefined`);
@@ -10555,9 +10555,11 @@ test('scripts in JavaScript: mem, the program\'s own code called, what is printe
     await fromFileMenu(page, 'Mount disk image (D64, G64)…');
     await expect(toast(page, 'Mounted mimir-demo.d64: "MIMIR DEMO", 3 files')).toBeVisible();
     await run(['print(disk.name + ": " + disk.files.map(f => f.name).join(","));', 'print(disk.read("SPRITE").length);']);
-    await expect(page.locator('.scr-end')).toContainText('Returned');
-    await outTab(page, 'Last run');
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end');
+    // what it printed is shown without a click: Last run is the tab, and the message says so
+    await expect(page.getByRole('tablist', { name: 'Output of the script' }).getByRole('tab', { name: /^Last run/ })).toHaveAttribute('aria-selected', 'true');
     await expect(printed).toHaveText(/^MIMIR DEMO: RASTER DEMO,SPRITE,NOTES\n\d+$/);
+    await expect(toast(page, /^script: Ran to its end\. It printed 2 lines \(Scripts → Last run\): MIMIR DEMO: RASTER DEMO,SPRITE,NOTES …/).last()).toBeVisible();
   });
 });
 
@@ -10879,7 +10881,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
   const printed = page.getByLabel('What the run printed');
   const editor = page.locator('.scr-editor');
   const set = async (name: string, value: string) => { const f = settings.getByLabel(`Setting ${name}`, { exact: true }); await f.fill(value); await f.press('Enter'); };
-  const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); await expect(page.locator('.scr-end')).toContainText('Returned'); };
+  const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); await expect(page.locator('.scr-end')).toContainText('Ran to its end'); };
 
   await test.step('the templates have a tab for assembler and one for JavaScript', async () => {
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');

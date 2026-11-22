@@ -493,6 +493,8 @@ export interface ScriptRun {
    *  what it said to do to the program beyond its bytes (mark, name, note, junk) */
   error?: { msg: string; line?: number };
   prints?: string[];
+  /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
+  js?: boolean;
   actions?: ScriptAction[];
   /** the program's memory the run wrote, from $0200 (also where it wrote the bytes that were there, and where no
    *  file has bytes) */
@@ -804,10 +806,11 @@ export function scriptStopAt(expr: string | undefined, names: ReadonlyMap<string
 }
 
 /** How a run ended, in a sentence. */
-export function scriptEndText(r: Pick<ScriptRun, 'end' | 'at' | 'instructions' | 'cycles'> & Partial<Pick<ScriptRun, 'error'>>): string {
+export function scriptEndText(r: Pick<ScriptRun, 'end' | 'at' | 'instructions' | 'cycles'> & Partial<Pick<ScriptRun, 'error' | 'js'>>): string {
   const n = `${r.instructions.toLocaleString('en-US')} instruction${r.instructions === 1 ? '' : 's'}, ${r.cycles.toLocaleString('en-US')} cycles`;
   switch (r.end) {
-    case 'rts': return `Returned (RTS at $${h4(r.at)}) after ${n}.`;
+    // (a JavaScript script ends at its last line; what it ran of the program's code is said when it ran some)
+    case 'rts': if (r.js) return r.instructions ? `Ran to its end, with ${n} of the program's code.` : 'Ran to its end.'; return `Returned (RTS at $${h4(r.at)}) after ${n}.`;
     case 'brk': return `Stopped at the BRK at $${h4(r.at)} after ${n}.`;
     case 'jam': return `The CPU jammed at $${h4(r.at)} (a JAM opcode) after ${n}: did the code run into data?`;
     case 'stop': return `Stopped at $${h4(r.at)}, the address it stops at, after ${n}.`;
