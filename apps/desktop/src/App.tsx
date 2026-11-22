@@ -7,8 +7,8 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, diskSpeedFileList, diskSpeedPrg, readDiskSpeedDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
-  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
+  formatOverride, openC64File, overwritesSystemArea, coversReadyScreen, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, diskSpeedFileList, diskSpeedPrg, readDiskSpeedDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
+  patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, ioSummary, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, findPictureColors, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
@@ -17,7 +17,7 @@ import {
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
-  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
+  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type StartIo, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
@@ -1408,8 +1408,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** $01 as Sindri starts `f` at runStart: what Sindri saw there when Unpack set the start (null: as at READY) */
   const runPort = (f: LoadedFile): number | null => (runStart(f) != null ? project.entryPort ?? null : null);
-  /** a run of `f` from where it starts now (another program start, or $01 there, is another run) */
-  const runKey = (f: LoadedFile): string => { const e = runStart(f), p = runPort(f); return e == null ? f.id : `${f.id}@${e}${p != null ? `:${p}` : ''}`; };
+  /** the I/O Sindri starts `f` in at runStart: what it saw there when Unpack set the start (null: as at READY) */
+  const runIo = (f: LoadedFile): StartIo | null => (runStart(f) != null ? project.entryIo ?? null : null);
+  /** a run of `f` from where it starts now (another program start, or $01 or the I/O there, is another run) */
+  const runKey = (f: LoadedFile): string => { const e = runStart(f), p = runPort(f); return e == null ? f.id : `${f.id}@${e}${p != null ? `:${p}` : ''}${runIo(f) ? ':io' : ''}`; };
   const runFor = (f: LoadedFile): Promise<UnpackRun> => {
     const key = runKey(f);
     let p = running.current.get(key);
@@ -1419,7 +1421,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const boot = b?.load != null ? { name: tapeFileName(b).replace(/\.\w+$/, ''), prg: makePrg(b.load, b.data), at: b.to } : null;
       // (so does a file a disk's loader loads, with the disk's boot file)
       const db = diskBootOf.current.get(f.id);
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? db?.disk ?? null, t ? { tap: t.tap, at: t.file.to, boot } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? db?.sides ?? [], db?.boot ?? null);
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? db?.disk ?? null, t ? { tap: t.tap, at: t.file.to, boot } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? db?.sides ?? [], db?.boot ?? null, runIo(f));
       running.current.set(key, p);
       checkBegins(key);
       p.then(r => { setRuns(m => ({ ...m, [key]: r })); checkEnds(key); }, () => { running.current.delete(key); checkEnds(key, true); });
@@ -1470,8 +1472,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** what each file is when it is animation data (the bar above the listing and the analysis overview say it) */
   const animData = useMemo(() => project.files.map(f => animDataOf(f)), [project.files, storeAnims]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went.
-   *  `port`: $01 as the program starts at `start` (Sindri's saved.port), kept with the start when it is not $37 */
-  const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined, port: number | null = null): string => {
+   *  `port`: $01 as the program starts at `start` (Sindri's saved.port), kept with the start when it is not $37; `io`:
+   *  the I/O it starts in there (saved.io: the VIC bank, the raster interrupt, the colour RAM …), kept with the start */
+  const takeUnpacked = (i: number, f: LoadedFile, prg: Uint8Array, start: number | null | undefined, port: number | null = null, io: StartIo | null = null): string => {
     const out = withId(parsePrg(unpackedName(f.name), prg));
     // a tape's boot file opened with its header, the tape buffer (13.5f), is one KERNAL file in two: Sindri ran them
     // together, so the unpacked program takes the place of both. Kept, the header would lie under the program where
@@ -1482,7 +1485,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const alone = project.files.length === (head ? 2 : 1);
     const entry = start != null && start >= out.load && start < out.load + out.bytes.length ? start : null;
     const entryPort = entry != null && port != null && port !== 0x37 && alone ? port : null;
-    if (alone) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry, ...(entryPort != null ? { entryPort } : {}) }, home ? `Unpack ${f.name}` : undefined); resetView(); }
+    const entryIo = entry != null && io && alone ? io : null;
+    if (alone) { replace({ ...createProject({ name: projectNameFor(out.name), files: [out], settings: project.settings }), entryPoint: entry, ...(entryPort != null ? { entryPort } : {}), ...(entryIo ? { entryIo } : {}) }, home ? `Unpack ${f.name}` : undefined); resetView(); }
     else update(`Unpack ${f.name}`, d => {
       // a patch written over the packed file (or its header) has nothing to stand on in the unpacked one
       const gone = [d.files[i], ...(head ? [head] : [])].map(x => ({ start: x.load, end: x.load + x.bytes.length }));
@@ -1494,7 +1498,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     afterLoad([out.id], !alone, true);
     const at = `$${h4(out.load)}-$${h4(out.load + out.bytes.length - 1)}`;
     toast(`Unpacked ${f.name}${head ? ` with its header ${head.name}` : ''}: ${out.bytes.length} bytes at ${at}`, 'ok');
-    return `${out.name}, ${at}${head ? ` (in place of ${f.name} and ${head.name})` : ''}${entry != null ? `, starting at $${h4(entry)}${entryPort != null ? ` with $01 = $${h2(entryPort)}` : ''}${alone ? ' (set as the program start)' : ''}` : ''}`;
+    return `${out.name}, ${at}${head ? ` (in place of ${f.name} and ${head.name})` : ''}${entry != null ? `, starting at $${h4(entry)}${entryPort != null ? ` with $01 = $${h2(entryPort)}` : ''}${entryIo ? ` and the I/O it started in (${ioSummary(entryIo)}${entryIo.color ? ', the colour RAM' : ''})` : ''}${alone ? ' (set as the program start)' : ''}` : ''}`;
   };
   /** `auto`: the file was just opened, with *Unpack packed files when they are opened* on */
   const unpackFile = async (i: number, auto = false) => {
@@ -1524,7 +1528,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         }
         const names = packerNames(run);
         // a BASIC program starts with RUN: the analysis finds its SYS line itself
-        const where = takeUnpacked(i, f, run.saved.prg, run.saved.basic ? null : run.saved.entry, run.saved.basic ? null : run.saved.port);
+        const where = takeUnpacked(i, f, run.saved.prg, run.saved.basic ? null : run.saved.entry, run.saved.basic ? null : run.saved.port, run.saved.basic ? null : run.saved.io);
         setUnpacked({ ok: true, title: `Unpacked ${f.name}${names ? ` (${names})` : ''}${when}: ${where}.${loads}`, output, label: 'Layer report' });
       } catch (e) { toast(errorText(e), 'err'); } finally { setBuildBusy(null); }
       return;
@@ -2201,7 +2205,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const setStart = (a: Addr | null) => {
     if (project.entryPoint === a) return;
     // ($01 there was what Sindri saw at the start Unpack set)
-    update(a == null ? 'Clear program start' : `Program start $${h4(a)}`, d => { d.entryPoint = a; d.entryPort = null; });
+    update(a == null ? 'Clear program start' : `Program start $${h4(a)}`, d => { d.entryPoint = a; d.entryPort = null; d.entryIo = null; });
     toast(a == null ? 'Program start cleared: Build & Run starts the program with RUN, and the analysis uses the detected start again' : `The program starts at $${h4(a)}; tracing from there`, 'ok');
     if (a != null) navigate(a, { center: true, listing: true });
   };
@@ -3294,6 +3298,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const start = ep != null && A.owner[ep] === 0 ? ep : undefined;
       // $01 as the program starts, when Unpack set the start and Sindri saw another value there (a game under the BASIC ROM)
       const port = start != null && project.entryPort != null && project.entryPort !== 0x37 ? project.entryPort : undefined;
+      // the I/O it started in, when Unpack set the start (the VIC bank, the raster interrupt, the colour RAM): a routine sets it
+      const io = start != null && project.entryIo ? project.entryIo : undefined;
       if (ep != null && start == null && A.owner[ep] >= 0) toast(`The program start $${h4(ep)} is in another file than the one ${emu} runs; it starts with RUN`, 'warn');
       const f0 = A.files[0];
       const overSystem = !!f0 && overwritesSystemArea(f0.load, f0.bytes.length);
@@ -3303,12 +3309,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       // a debugger shows the source by the code it runs, stops at the breakpoints and lists the watches: the debug
       // info is made from the render that was just verified (the first file's: the one that is run)
       const debug = inDebugger ? { sources: debugSources(R), breakpoints: (project.breakpoints ?? []).filter(a => A.owner[a] === 0), watches: (project.watches ?? []).map(addr => ({ addr })) } : undefined;
-      const r = await run({ prgPath, labelsPath, start, port, disk: diskPath, tape: tapePath, ...(debug ? { debug } : {}) }), via = r.via;
-      const p01 = port != null ? ` with $01 = $${h2(port)}` : '';
+      const r = await run({ prgPath, labelsPath, start, port, ...(io ? { io } : {}), disk: diskPath, tape: tapePath, ...(debug ? { debug } : {}) }), via = r.via;
+      const p01 = `${port != null ? ` with $01 = $${h2(port)}` : ''}${io ? ` and the I/O it started in (${ioSummary(io)}${io.color ? `, the colour RAM${inDebugger ? ', which the debugger does not get' : ''}` : ''})` : ''}`;
       // (a debugger that cannot take the disk or the tape leaves it out, and its notes say so)
       const left = (what: string) => !!r.notes?.some(n => n.startsWith(`The ${what} is not`));
       const inDrive = left('disk') ? '' : drive, inDatasette = left('tape') ? '' : datasette;
-      const why = overSystem ? `the program overwrites BASIC's work area $${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}`
+      const why = io && !overSystem && !(f0 && coversReadyScreen(f0.load, f0.bytes.length)) ? `a routine sets the I/O it started in before the jump${inDebugger ? '' : ', and typing sys has no room for it'}` : overSystem ? `the program overwrites BASIC's work area $${h4(SYSTEM_AREA.start)}-$${h4(SYSTEM_AREA.end - 1)}`
         : `the program covers the screen at READY, $${h4(READY_SCREEN.start)}-$${h4(READY_SCREEN.end - 1)}, which typing sys would write on`;
       const how = start == null ? '' : inDebugger
         ? `, starting at $${h4(start)}${p01} (${via === 'monitor' ? `as from VICE's monitor${inDrive ? ', after the drive read the disk' : ''}: ${why}` : port != null ? 'sys to a routine that sets $01 and jumps there: BASIC cannot set $01 itself' : `sys ${start} typed`})`

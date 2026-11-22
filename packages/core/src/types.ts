@@ -4,6 +4,7 @@
  * ===================================================================== */
 
 import type { CartMode } from './c64/memconfig';
+import type { StartIo } from '@mimir/sindri';
 
 export type Addr = number; // 0x0000–0xffff
 
@@ -407,6 +408,10 @@ export interface Project {
    *  (a game it saved that starts under the BASIC ROM, $36): Build & Run, Sindri's next run and the analysis start with
    *  it. Missing: $37, as at READY */
   entryPort?: number | null;
+  /** the I/O the program starts in at entryPoint, when Unpack set the start and Sindri saw it differ from READY's (Saved.io:
+   *  the VIC bank, the raster interrupt, the CIAs' interrupts, the colour RAM): Build & Run and Sindri's next run set it
+   *  before the jump. Missing: as at READY */
+  entryIo?: StartIo | null;
   labels: Record<Addr, string>; // user names (empty string = restore)
   comments: Record<Addr, string>; // line comments
   blockComments: Record<Addr, string>; // comments above blocks
@@ -458,6 +463,8 @@ export interface ProjectInput {
   entryPoint?: Addr | null;
   /** $01 as the program starts at entryPoint (Project.entryPort) */
   entryPort?: number | null;
+  /** the I/O the program starts in at entryPoint (Project.entryIo) */
+  entryIo?: StartIo | null;
   labels?: Record<Addr, string>;
   comments?: Record<Addr, string>;
   blockComments?: Record<Addr, string>;
@@ -513,6 +520,8 @@ export interface SerializedProject {
   entryPoint?: Addr | null;
   /** $01 at the program start; missing: $37 */
   entryPort?: number | null;
+  /** the I/O at the program start (Project.entryIo); missing: as at READY */
+  entryIo?: StartIo | null;
   labels: Record<string, string>;
   comments: Record<string, string>;
   blockComments: Record<string, string>;

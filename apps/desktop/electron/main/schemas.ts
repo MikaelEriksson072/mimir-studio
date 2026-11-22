@@ -153,6 +153,8 @@ const scriptFields = { name: z.string().min(1).max(64), lang: z.enum(['kickass',
 const serializedScript = z.object({ ...scriptFields, id: z.string().max(64).optional(), pads: z.array(z.object({ ...padFields, bytes: b64.optional(), data: b64.optional() }).refine(padFits, 'a scratchpad past $ffff')).max(64) });
 const userScript = z.object({ ...scriptFields, id: z.string().max(64), pads: z.array(z.object({ ...padFields, bytes: z.instanceof(Uint8Array).optional(), data: z.instanceof(Uint8Array).refine(d => d.length <= 0x10000).optional() }).refine(p => padFits(p) && (!p.bytes || p.bytes.length === p.size), 'a scratchpad past $ffff, or its bytes not as many as it holds')).max(64) });
 /** memory configuration / VIC bank the code in a range runs with (null: back to detection) */
+// the I/O a program starts in (Sindri's Saved.io: register steps, the I flag, the colour RAM as 1000 hex digits)
+const startIo = z.object({ steps: z.array(z.object({ at: z.number().int().min(0).max(0xffff), value: z.number().int().min(0).max(0xff).nullable() })).max(4096), interrupts: z.boolean(), color: z.string().regex(/^[0-9a-f]{1000}$/).optional() });
 const bankZone = z.object({ start: at, end: at, port: z.number().int().min(0).max(255).nullable().optional(), vicBank: z.number().int().min(0).max(3).nullable().optional() });
 /** bytes the program copies elsewhere to run there (spec 8.1b): loaded at start-end (end excluded), run at `to` */
 const reloc = z.object({ start: at, end: at, to: at }).refine(r => r.start < r.end && r.end - r.start <= 0x10000, 'a relocated block needs at least one byte');
@@ -175,6 +177,8 @@ export const serializedProjectSchema = z.object({
   entryPoint: at.nullable().default(null),
   // $01 at the program start, when Sindri saw another than $37 there; project files from before it, and others, have none
   entryPort: z.number().int().min(0).max(0xff).nullable().optional(),
+  // the I/O at the program start, when Sindri saw it differ from READY's
+  entryIo: startIo.nullable().optional(),
   labels: record.default({}),
   comments: record.default({}),
   blockComments: record.default({}),
@@ -225,6 +229,7 @@ export const projectSchema = z.object({
   entries: z.array(at).max(65536),
   entryPoint: at.nullable(),
   entryPort: z.number().int().min(0).max(0xff).nullable().optional(),
+  entryIo: startIo.nullable().optional(),
   labels: record,
   comments: record,
   blockComments: record,
@@ -289,7 +294,7 @@ const debugInfo = z.object({
   watches: z.array(z.object({ addr, count: z.number().int().min(1).max(256).optional(), format: z.enum(['hex8', 'hex16', 'hex32', 'signed8', 'signed16', 'signed32', 'unsigned8', 'unsigned16', 'unsigned32', 'text']).optional() })).max(4096).optional(),
 });
 /** `cart`: prgPath is a cartridge image VICE attaches (-cartcrt) */
-export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), port: z.number().int().min(0).max(0xff).optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional(), debugger: z.boolean().optional(), debug: debugInfo.optional() });
+export const runSchema = z.object({ prgPath: z.string().min(1).max(4096), labelsPath: z.string().max(4096).optional(), start: z.number().int().min(0).max(0xffff).optional(), port: z.number().int().min(0).max(0xff).optional(), io: startIo.optional(), disk: z.string().min(1).max(4096).optional(), tape: z.string().min(1).max(4096).optional(), cart: z.boolean().optional(), debugger: z.boolean().optional(), debug: debugInfo.optional() });
 const prg = z.instanceof(Uint8Array).refine(b => b.length >= 3 && b.length <= 0x10002, 'not a PRG');
 /** the built PRGs (one per project file, in order) and how to pack them */
 export const packSchema = z.object({ files: z.array(z.object({ name: fileName, prg })).min(1).max(64), prefs: packPrefsSchema });

@@ -3,7 +3,7 @@
  * process registers exactly these channels and the preload exposes
  * exactly these functions as `window.kr`.
  * ===================================================================== */
-import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LibraryColors, LibraryEntry, LibraryItem, LibraryKind, LoadedFile, PackCheck, PackPrefs, PackTried, PictureFormat, Project, Roms, ToolchainSettings } from '@mimir/core';
+import type { AssemblerId, Cartridge, DebugInfo, ExomizerReport, KickProblem, LibraryColors, LibraryEntry, LibraryItem, LibraryKind, LoadedFile, PackCheck, PackPrefs, PackTried, PictureFormat, Project, Roms, StartIo, ToolchainSettings } from '@mimir/core';
 
 export const CHANNELS = {
   projectOpen: 'project:open',
@@ -203,7 +203,7 @@ export interface BuildResult {
 /** `port`: with a start, $01 as the program starts there (Sindri saw another than $37 there) */
 /** `debugger`: in the debugger Settings → Toolchain names (Build & Run in a debugger, Shift+F5), instead of VICE */
 /** `debug`: for a debugger, the sources with the bytes their lines made, the breakpoints and the watches (a PRG only) */
-export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; port?: number; disk?: string; tape?: string; cart?: boolean; debugger?: boolean; debug?: DebugInfo }
+export interface RunRequest { prgPath: string; labelsPath?: string; start?: number; port?: number; /** the I/O the program starts in (Project.entryIo) */ io?: StartIo; disk?: string; tape?: string; cart?: boolean; debugger?: boolean; debug?: DebugInfo }
 /** `via`: RUN, `sys <start>`, (a program over BASIC's work area $0002-$03ff) loaded and started from the monitor, or a
  *  cartridge attached; in a debugger also `load` (LOAD from the disk or the tape, then RUN). A debugger's run also
  *  says which one (`debugger`), its command line, what its start code types, where that code is, and `notes`: what is

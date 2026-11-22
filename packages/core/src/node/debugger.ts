@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { DebuggerKind } from '../types';
+import type { StartIo } from '@mimir/sindri';
 import { debuggerStart, type DebuggerStart, type DebuggerVia } from '../c64/debugger-start';
 import { snapshotForC64Debugger } from '../c64/vsf-c64d';
 import { debugInfoFile, viceLabels, type DebugInfo } from '../c64/debugger-dbg';
@@ -59,6 +60,8 @@ export interface DebuggerLaunch {
   labelsPath?: string | null;
   start?: number | null;
   port?: number | null;
+  /** the I/O the program starts in (Saved.io): its registers set by the start code before the jump */
+  io?: StartIo | null;
   disk?: string | null;
   tape?: string | null;
   cart?: boolean;
@@ -203,7 +206,7 @@ export async function prepareDebugger(o: DebuggerLaunch): Promise<DebuggerPrepar
   if (o.tape && !d.tape) left('tape', o.tape);
   if (tape) notes.push(`Press PLAY in ${d.name} (Settings → Tape) when the program asks`);
   const prg = await readFile(o.prgPath);
-  const plan = debuggerStart(prg, { start: o.start, port: o.port, disk: !!disk });
+  const plan = debuggerStart(prg, { start: o.start, port: o.port, io: o.io, disk: !!disk });
   if (plan.warning) notes.push(plan.warning);
   const startPrg = o.prgPath.replace(/(\.prg)?$/i, '.debugger.prg');
   await writeFile(startPrg, plan.prg);

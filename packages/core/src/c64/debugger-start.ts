@@ -6,6 +6,7 @@
  * monitor commands. So the start is code at the load address of a copy of the PRG, next to the program: it does what
  * VICE types at READY (`run`, `sys <start>`, the drive's initialise before them), or, for a program VICE starts from
  * its monitor, what the monitor does (the drive reads the disk first, $ba, $01, go). */
+import type { IoStep, StartIo } from '@mimir/sindri';
 import type { Addr } from '../types';
 import { makePrg, startsFromMonitor } from './prg';
 
@@ -85,8 +86,47 @@ class Code {
 const SEI = 0x78, CLI = 0x58, TSX = 0xba, TXS = 0x9a, INX = 0xe8, INY = 0xc8, DEX = 0xca, DEY = 0x88;
 const LDA_IMM = 0xa9, LDA_ZP = 0xa5, LDA_ABS = 0xad, LDA_ABSX = 0xbd, LDA_ABSY = 0xb9, LDA_ZPX = 0xb5;
 const STA_ZP = 0x85, STA_ABS = 0x8d, STA_ABSX = 0x9d, STA_ABSY = 0x99, STA_ZPX = 0x95, INC_ABS = 0xee;
-const LDX_IMM = 0xa2, LDX_ABS = 0xae, STX_ABS = 0x8e, LDY_IMM = 0xa0, STY_ZP = 0x84;
+const LDX_IMM = 0xa2, LDX_ABS = 0xae, STX_ABS = 0x8e, LDY_IMM = 0xa0, LDY_ABSX = 0xbc, STY_ZP = 0x84;
 const JSR = 0x20, JMP = 0x4c, BEQ = 0xf0, BNE = 0xd0, BPL = 0x10;
+
+/** a VIC register the I/O steps write that goes in the table (not $d019 and $d01a, which acknowledge and enable) */
+const vicTabled = (s: IoStep): boolean => s.value != null && s.at >= 0xd000 && s.at < 0xd02f && s.at !== 0xd019 && s.at !== 0xd01a;
+
+/**
+ * The I/O steps a program starts with (StartIo, as Sindri saw them), with interrupts off: a read for an acknowledgement,
+ * `lda #v / sta reg` for a write, but six or more VIC registers from a table in a loop at the first of them. Returns
+ * what puts the table in, after the code's last instruction.
+ */
+function ioCode(c: Code, io: StartIo): () => void {
+  const vic = io.steps.filter(vicTabled), loop = vic.length >= 6;
+  let placed = false;
+  for (const s of io.steps) {
+    if (loop && vicTabled(s)) {
+      if (!placed) c.op(LDX_IMM, vic.length - 1).label('io').abs(LDY_ABSX, 'ioregs').abs(LDA_ABSX, 'iovalues').abs(STA_ABSY, 0xd000).op(DEX).branch(BPL, 'io');
+      placed = true;
+      continue;
+    }
+    if (s.value == null) c.abs(LDA_ABS, s.at); else c.op(LDA_IMM, s.value).abs(STA_ABS, s.at);
+  }
+  return () => { if (loop) c.label('ioregs').bytes(vic.map(s => s.at & 0xff)).label('iovalues').bytes(vic.map(s => s.value!)); };
+}
+
+/**
+ * The routine that starts a program with the I/O it started in (`io`), with VICE's monitor at the READY prompt or the
+ * drive's SYS: interrupts off, the steps, $01 (`port`), interrupts on as the program had them, and the jump to `start`.
+ * It uses no stack. Without `io`: `lda #port / sta $01 / jmp start`, which BASIC cannot do itself.
+ */
+export function startCode(org: Addr, o: { start: Addr; port?: number | null; io?: StartIo | null }): Uint8Array {
+  const c = new Code(org), port = o.port != null && (o.port & 0xff) !== 0x37 ? o.port & 0xff : null;
+  if (!o.io) return c.op(LDA_IMM, port ?? 0x37, STA_ZP, 0x01).abs(JMP, o.start).done();
+  c.op(SEI);
+  const tables = ioCode(c, o.io);
+  if (port != null) c.op(LDA_IMM, port, STA_ZP, 0x01);
+  if (o.io.interrupts) c.op(CLI);
+  c.abs(JMP, o.start);
+  tables();
+  return c.done();
+}
 
 /** typed text as the screen editor puts it in BASIC's input buffer: lower case typed is PETSCII's unshifted letters */
 const petscii = (s: string): number[] => [...s].map(c => (c >= 'a' && c <= 'z' ? c.toUpperCase() : c).charCodeAt(0));
@@ -144,7 +184,7 @@ function typing(org: Addr, line: (port: Addr) => string, o: { end?: Addr; queue?
  * were) and $ba is 8 (unless the program loaded over it); $01 as the program starts; the stack pointer as at READY.
  * Code at the bottom of the stack page moves the stack below itself while it runs.
  */
-function monitorStart(org: Addr, o: { start: Addr; port: number | null; disk: boolean; setDevice: boolean; carry?: Carry }): Uint8Array {
+function monitorStart(org: Addr, o: { start: Addr; port: number | null; disk: boolean; setDevice: boolean; carry?: Carry; io?: StartIo | null }): Uint8Array {
   const c = new Code(org);
   if (o.carry) copier(c, o.carry);
   c.op(SEI, TSX).abs(STX_ABS, 'sp');
@@ -164,10 +204,15 @@ function monitorStart(org: Addr, o: { start: Addr; port: number | null; disk: bo
     c.abs(LDA_ABS, 0xdc0d).op(LDA_IMM, 0x81).abs(STA_ABS, 0xdc0d);
   }
   if (o.setDevice) c.op(LDA_IMM, 8, STA_ZP, 0xba);
+  // the I/O the program started in (Saved.io), interrupts on only when it had them on
+  const tables = o.io ? ioCode(c, o.io) : () => {};
   if (o.port != null) c.op(LDA_IMM, o.port, STA_ZP, 0x01);
-  c.abs(LDX_ABS, 'sp').op(TXS, CLI).abs(JMP, o.start);
+  c.abs(LDX_ABS, 'sp').op(TXS);
+  if (!o.io || o.io.interrupts) c.op(CLI);
+  c.abs(JMP, o.start);
   c.label('sp').op(0);
   if (o.disk) c.label('zp').fill(0x2d).label('files').fill(0x1e);
+  tables();
   return c.done();
 }
 
@@ -221,7 +266,7 @@ const concat = (...parts: Uint8Array[]): Uint8Array => {
  * 8 the drive reads it first. Without `prg` (VICE autostarts a disk or a tape), `load` is what is typed: LOAD"*",8,1 or
  * LOAD, then RUN; the code goes at $02a7.
  */
-export function debuggerStart(prg: Uint8Array | null, o: { start?: Addr | null; port?: number | null; disk?: boolean; load?: 'disk' | 'tape' } = {}): DebuggerStart {
+export function debuggerStart(prg: Uint8Array | null, o: { start?: Addr | null; port?: number | null; disk?: boolean; load?: 'disk' | 'tape'; io?: StartIo | null } = {}): DebuggerStart {
   const port = o.port != null && (o.port & 0xff) !== 0x37 ? o.port & 0xff : null;
   if (!prg) {
     const { code, line } = typing(0x02a7, () => (o.load === 'tape' ? 'load' : 'load"*",8,1'), { queue: 'run\r' });
@@ -229,12 +274,13 @@ export function debuggerStart(prg: Uint8Array | null, o: { start?: Addr | null; 
   }
   if (prg.length < 3) throw new Error('the program is too short to be a PRG');
   const load = prg[0] | (prg[1] << 8), bytes = prg.subarray(2), end = load + bytes.length;
-  const start = o.start ?? null, disk = !!o.disk;
-  if (start != null && startsFromMonitor(load, bytes.length)) {
+  const start = o.start ?? null, disk = !!o.disk, io = start != null && o.io?.steps.length ? o.io : null;
+  // (a program that starts with I/O of its own starts as from the monitor, as Build & Run starts it in VICE)
+  if (start != null && (startsFromMonitor(load, bytes.length) || io)) {
     // nothing to do before the jump, and the program starts where it loads: the debugger jumps to it
-    if (!disk && port == null && start === load) return { prg, jmp: start, via: 'monitor', code: null };
+    if (!disk && port == null && !io && start === load) return { prg, jmp: start, via: 'monitor', code: null };
     const setDevice = disk && !(load <= 0xba && end > 0xba);
-    const make = (at: Addr, carry?: Carry) => monitorStart(at, { start, port, disk, setDevice, carry });
+    const make = (at: Addr, carry?: Carry) => monitorStart(at, { start, port, disk, setDevice, carry, io });
     // (measured in the stack page, where it is longest: it moves the stack there)
     const r = arrange(load, bytes, make(0x0130).length, FREE_MONITOR, make);
     if (!r) return { prg, jmp: null, via: 'monitor', code: null, warning: `no room for the start code next to the program: it is loaded, start it at $${hex(start)}${port != null ? ` with $01 = $${hex(port, 2)}` : ''} in the debugger` };

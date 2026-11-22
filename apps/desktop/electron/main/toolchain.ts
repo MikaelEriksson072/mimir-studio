@@ -161,7 +161,7 @@ export async function runInVice(req: RunRequest, settings: ToolchainSettings, po
   if (!settings.vicePath || !existsSync(settings.vicePath)) throw new Error(`VICE (x64sc) not found at "${settings.vicePath}". Set the path in Settings → Toolchain.`);
   const disk = req.disk ? policy.assert(req.disk, 'Disk image') : null;
   const tape = req.tape ? policy.assert(req.tape, 'Tape image') : null;
-  return launchVice({ vice: settings.vicePath, args: splitArgs(settings.viceArgs), prgPath, labelsPath: labelsPath && existsSync(labelsPath) ? labelsPath : null, start: req.start, port: req.port, disk, tape, cart: req.cart });
+  return launchVice({ vice: settings.vicePath, args: splitArgs(settings.viceArgs), prgPath, labelsPath: labelsPath && existsSync(labelsPath) ? labelsPath : null, start: req.start, port: req.port, io: req.io, disk, tape, cart: req.cart });
 }
 
 /** Build & Run in a debugger (spec 13.2b): the program in the debugger Settings → Toolchain names, started as in VICE */
@@ -176,7 +176,7 @@ export async function runInDebugger(req: RunRequest, settings: ToolchainSettings
   const tape = req.tape ? policy.assert(req.tape, 'Tape image') : null;
   const r = await launchDebugger({
     kind, exe, args: splitArgs(kind === 'retro' ? settings.retroDebuggerArgs : settings.c64DebuggerArgs), wait: settings.debuggerWait,
-    prgPath, labelsPath: labelsPath && existsSync(labelsPath) ? labelsPath : null, start: req.start, port: req.port, disk, tape, cart: req.cart, debug: req.debug,
+    prgPath, labelsPath: labelsPath && existsSync(labelsPath) ? labelsPath : null, start: req.start, port: req.port, io: req.io, disk, tape, cart: req.cart, debug: req.debug,
   });
   return { pid: r.pid, via: r.via, debugger: name, argv: [exe, ...r.argv], typed: r.plan?.typed, code: r.plan?.code ?? null, carried: !!r.plan?.carried, notes: r.notes, ...(r.snapshot ? { snapshot: r.snapshot } : {}), ...(r.debugInfo ? { debugInfo: r.debugInfo } : {}), ...(r.reused ? { reused: true } : {}) };
 }

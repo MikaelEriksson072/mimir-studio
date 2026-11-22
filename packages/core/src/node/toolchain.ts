@@ -10,7 +10,8 @@ import { parseKickOutput } from '../verify/kick-output';
 import { parseTassOutput } from '../verify/tass-output';
 import { TASS_FIXED_ARGS } from '../render/dialect';
 import { splitArgs } from '../util/args';
-import { DRIVE_INIT } from '../c64/debugger-start';
+import { DRIVE_INIT, startCode } from '../c64/debugger-start';
+import type { StartIo } from '@mimir/sindri';
 
 export { splitArgs };
 
@@ -161,6 +162,8 @@ export interface ViceLaunch {
   start?: number | null;
   /** with a start: $01 as the program starts there (null or $37: as BASIC leaves it) */
   port?: number | null;
+  /** with a start: the I/O the program starts in (Sindri's Saved.io): started from the monitor through startCode */
+  io?: StartIo | null;
   /** with a start: 'monitor' for a program that overwrites BASIC's work area (launchVice picks it from the PRG) */
   via?: Exclude<ViceStart, 'run'>;
   /** with via 'monitor': the monitor command file (viceMonitorScript) */
@@ -251,12 +254,43 @@ export function viceArgv(o: Omit<ViceLaunch, 'vice'>): string[] {
  * takes it from there (Cybernoid II +17HDF's high scores, `lda $ba / tax / tay / jsr SETLFS`). A dump that holds
  * $ba itself loads over it.
  */
-export function viceMonitorScript(o: { prgPath: string; start: number; port?: number | null; labels?: string; disk?: boolean }): string {
+export function viceMonitorScript(o: { prgPath: string; start: number; port?: number | null; labels?: string; disk?: boolean; io?: StartIo | null; load?: number; end?: number }): string {
   const labels = o.labels ? o.labels.replace(/\r\n?/g, '\n').replace(/\n*$/, '\n') : '';
   const device = o.disk ? '> C:00ba 08\n' : '';
+  const h = (v: number, n = 4) => (v & (n === 2 ? 0xff : 0xffff)).toString(16).padStart(n, '0');
   // (in the CPU's view $01 is the processor port: the program starts with its memory configuration)
-  const port = o.port != null && (o.port & 0xff) !== 0x37 ? `> C:0001 ${(o.port & 0xff).toString(16).padStart(2, '0')}\n` : '';
-  return `${labels}${device}bank ram\nl "${o.prgPath}" 0\nbank cpu\n${port}g ${(o.start & 0xffff).toString(16).padStart(4, '0')}\n`;
+  const port = o.port != null && (o.port & 0xff) !== 0x37 ? `> C:0001 ${h(o.port, 2)}\n` : '';
+  const load = `${labels}${device}bank ram\nl "${o.prgPath}" 0\n`;
+  if (!o.io) return `${load}bank cpu\n${port}g ${h(o.start)}\n`;
+  // the colour RAM the program started with, written in the I/O's view (a colour each, from $d800)
+  let colour = '';
+  if (o.io.color) for (let i = 0; i < 1000; i += 32) colour += `> ${h(0xd800 + i)} ${[...o.io.color.slice(i, i + 32)].map(c => `0${c}`).join(' ')}\n`;
+  if (colour) colour = `bank io\n${colour}`;
+  if (!o.io.steps.length) return `${load}${colour}bank cpu\n${port}g ${h(o.start)}\n`;
+  // the I/O the program started in: a routine that sets it, $01 and the interrupts, written into RAM beside the program
+  // and run (startCode); with no room for it, the monitor writes the registers itself (it cannot acknowledge)
+  const len = startCode(0x0100, { start: o.start, port: o.port, io: o.io }).length;
+  const at = startCodeAt(len, o.load ?? 0, o.end ?? 0);
+  if (at == null) {
+    const io = o.io.steps.filter(s => s.value != null).map(s => `> ${h(s.at)} ${h(s.value!, 2)}\n`).join('');
+    return `${load}${colour || 'bank io\n'}${io}bank cpu\n${port}g ${h(o.start)}\n`;
+  }
+  const code = startCode(at, { start: o.start, port: o.port, io: o.io });
+  let put = '';
+  for (let i = 0; i < code.length; i += 32) put += `> ${h(at + i)} ${[...code.subarray(i, i + 32)].map(b => h(b, 2)).join(' ')}\n`;
+  return `${load}${put}${colour}bank cpu\ng ${h(at)}\n`;
+}
+
+/**
+ * Where the start routine with the I/O goes (len bytes) beside a program at load-end (exclusive): $02a7-$02ff, which
+ * nothing uses at READY, when it fits and the program leaves it free; else the bottom of the stack page, below what
+ * READY and SYS use (a program Sindri saved holds nothing below $0200). Null: neither.
+ */
+export function startCodeAt(len: number, load: number, end: number): number | null {
+  const free = (a: number) => end <= a || load >= a + len;
+  if (len <= 0x0300 - START_STUB && free(START_STUB)) return START_STUB;
+  if (len <= 0xc0 && free(0x0100)) return 0x0100;
+  return null;
 }
 
 /**
@@ -266,11 +300,12 @@ export function viceMonitorScript(o: { prgPath: string; start: number; port?: nu
 export async function prepareVice(o: Omit<ViceLaunch, 'vice'>): Promise<{ argv: string[]; via: ViceStart }> {
   if (o.cart) return { argv: viceArgv(o), via: 'cart' };
   if (o.start == null) return { argv: viceArgv(o), via: 'run' };
-  const prg = await readFile(o.prgPath);
-  if (!(prg.length > 2 && startsFromMonitor(prg[0] | (prg[1] << 8), prg.length - 2))) return { argv: viceArgv({ ...o, via: 'sys' }), via: 'sys' };
+  const prg = await readFile(o.prgPath), load = prg[0] | (prg[1] << 8), io = o.io && (o.io.steps.length || o.io.color) ? o.io : null;
+  // (a program that starts with I/O of its own starts from the monitor: a typed sys has no room for that routine)
+  if (!(prg.length > 2 && (startsFromMonitor(load, prg.length - 2) || io))) return { argv: viceArgv({ ...o, via: 'sys' }), via: 'sys' };
   const scriptPath = o.prgPath.replace(/(\.prg)?$/i, '.start.mon');
   const labels = o.labelsPath && existsSync(o.labelsPath) ? await readFile(o.labelsPath, 'utf8') : '';
-  await writeFile(scriptPath, viceMonitorScript({ prgPath: o.prgPath, start: o.start, port: o.port, labels, disk: !!o.disk }));
+  await writeFile(scriptPath, viceMonitorScript({ prgPath: o.prgPath, start: o.start, port: o.port, labels, disk: !!o.disk, io, load, end: load + prg.length - 2 }));
   return { argv: viceArgv({ ...o, via: 'monitor', scriptPath }), via: 'monitor' };
 }
 

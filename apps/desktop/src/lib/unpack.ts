@@ -1,7 +1,7 @@
 /* Sindri, in a worker of its own. The C64 ROMs (and the 1541's DOS ROM) come from the user's VICE
  * through the main process; outside the desktop app, or without VICE, Sindri runs with its stand-ins. */
 import * as Comlink from 'comlink';
-import type { UnpackDiskBoot, UnpackRun, UnpackTape } from '@mimir/core';
+import type { StartIo, UnpackDiskBoot, UnpackRun, UnpackTape } from '@mimir/core';
 import type { UnpackApi } from '../workers/unpack.worker';
 
 let remote: Comlink.Remote<UnpackApi> | null = null;
@@ -10,9 +10,10 @@ let remote: Comlink.Remote<UnpackApi> | null = null;
  *  when the program asks), or the tape it came from in the datasette,
  *  started with SYS `entry` when there is one (with `port` in $01 when it is given); a VICE snapshot's RAM (`vsf`: the snapshot) goes on from where it was
  *  taken instead. `diskBoot`: a file a loader on the disk loads (one of a Disk-Speed table), run from the disk's boot
- *  file when it does not run alone. Runs queue up in the worker, one at a time. */
-export async function unpackBuiltIn(prg: Uint8Array, disk: Uint8Array | null = null, tape: UnpackTape | null = null, entry: number | null = null, vsf: Uint8Array | null = null, port: number | null = null, disks: Uint8Array[] = [], diskBoot: UnpackDiskBoot | null = null): Promise<UnpackRun> {
+ *  file when it does not run alone; `io`, with `entry`: the I/O the program starts in (Project.entryIo). Runs queue up in
+ *  the worker, one at a time. */
+export async function unpackBuiltIn(prg: Uint8Array, disk: Uint8Array | null = null, tape: UnpackTape | null = null, entry: number | null = null, vsf: Uint8Array | null = null, port: number | null = null, disks: Uint8Array[] = [], diskBoot: UnpackDiskBoot | null = null, io: StartIo | null = null): Promise<UnpackRun> {
   if (!remote) remote = Comlink.wrap<UnpackApi>(new Worker(new URL('../workers/unpack.worker.ts', import.meta.url), { type: 'module', name: 'mimir-unpack' }));
   const roms = await (window.kr?.c64Roms() ?? Promise.resolve(null)).catch(() => null);
-  return remote.unpack(prg, roms, disk, tape, entry, vsf, port, disks, diskBoot);
+  return remote.unpack(prg, roms, disk, tape, entry, vsf, port, disks, diskBoot, io);
 }

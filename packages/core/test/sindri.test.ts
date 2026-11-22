@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { conclusive, DEFAULT_PACK, depackers, makeD64, makeDemo, makePrg, notPacked, openC64File, packedData, packerNames, parsePrg, unpackedName, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
+import { conclusive, DEFAULT_PACK, depackers, ioSummary, makeD64, makeDemo, makePrg, notPacked, openC64File, packedData, packerNames, parsePrg, unpackedName, unpackLog, unpackPrg, unpackSummary, type Roms } from '../src';
 import { findC64Roms, findExomizer, runExomizer, viceRomFolders } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
 import { fromSource } from './helpers/programs';
@@ -102,6 +102,60 @@ describe('the C64 ROMs for Sindri', () => {
     const found = findC64Roms(join(vice, 'bin', 'x64sc.exe'));
     expect(found?.source).toBe(join(vice, 'bin', '..', 'C64'));
     expect([found?.kernal.length, found?.basic.length, found?.chargen.length]).toEqual([0x2000, 0x2000, 0x1000]);
+  });
+});
+
+describe('the fixture fixtures/prg/start-io.prg', () => {
+  it('starts its program in I/O of its own, which Unpack keeps with the start: VIC bank 1, the raster interrupt, the colours', () => {
+    // as Elite's chain leaves the game: CIA 1's interrupts off, VIC bank 1, black border, the raster interrupt on at line
+    // $28, the volume, light green colours; then the program it copied to $1000 starts with interrupts off
+    const f = fromSource('start-io.prg', `*=$0801
+.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00
+*=$080d
+       sei
+       lda #$7f
+       sta $dc0d
+       lda $dc0d
+       lda #$c6
+       sta $dd00
+       lda #$00
+       sta $d020
+       lda #$28
+       sta $d012
+       lda #$01
+       sta $d01a
+       lda #$0f
+       sta $d418
+       ldx #0
+       lda #$0d
+col:   sta $d800,x
+       sta $d900,x
+       sta $da00,x
+       sta $db00,x
+       inx
+       bne col
+       ldx #6
+cp:    lda prog,x
+       sta $1000,x
+       dex
+       bpl cp
+       jmp $1000
+prog:  .byte $ee,$21,$d0,$4c,$00,$10,$00
+`);
+    const prg = makePrg(f.load, f.bytes);
+    const path = join(__dirname, '../../../fixtures/prg/start-io.prg');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, prg);
+    expect(new Uint8Array(readFileSync(path))).toEqual(prg);
+    for (const r of roms ? [null, roms] : [null]) {
+      const run = unpackPrg(prg, r);
+      expect(run.saved).toMatchObject({ entry: 0x1000, start: 0x1000, interrupts: false });
+      const io = run.saved!.io!;
+      expect(io.steps[0]).toEqual({ at: 0xdc0d, value: 0x7f });
+      expect(io.steps.slice(-3)).toEqual([{ at: 0xdc0d, value: null }, { at: 0xd019, value: 0x0f }, { at: 0xd01a, value: 0x01 }]);
+      expect(io.color).toBe('d'.repeat(1000));
+      expect(ioSummary(io)).toMatch(/^\d+ steps: VIC bank 1, \d+ VIC registers?, the raster interrupt on, CIA 1's interrupts off, the SID's volume 15, interrupts off$/);
+      expect(unpackLog(run, 'start-io.prg', 0x0801, prg.length - 2).split('\n').at(-1)).toMatch(/^saved layer 1: \$1000-\$1006 \(7 bytes\), start with SYS 4096 = \$1000, interrupts off, and the I\/O it started in \(\d+ steps: VIC bank 1, /);
+    }
   });
 });
 

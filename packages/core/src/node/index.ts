@@ -1,4 +1,4 @@
-export { splitArgs, safeJoin, writeVfs, runKickAssembler, run64tass, launchVice, prepareVice, viceArgv, viceMonitorScript, startStatements, typedLines, DRIVE_INIT } from './toolchain';
+export { splitArgs, safeJoin, writeVfs, runKickAssembler, run64tass, launchVice, prepareVice, viceArgv, viceMonitorScript, startCodeAt, startStatements, typedLines, DRIVE_INIT } from './toolchain';
 export type { KickRunOptions, KickRunResult, TassRunOptions, ViceLaunch, ViceStart } from './toolchain';
 export { DEBUGGERS, debugInfoBeside, debuggerArgv, labelsBeside, launchDebugger, prepareDebugger, retroBorderMode, retroDiskRefusal, retroSettingsPath } from './debugger';
 export type { DebuggerLaunch, DebuggerPrepared } from './debugger';

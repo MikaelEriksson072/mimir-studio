@@ -161,10 +161,17 @@ byte för byte läsarens vid `$0346`, 2NDBIT och 3RDBIT vid `$CE27`, och spelet 
 Spåren 37-40 på G64:orna är brus (långa SYNC, inga sektorer). Varken drivkoden eller C64:an läser dem. Om spelet
 senare kontrollerar skivan igen är inte utrett.
 
-Det uppackade spelet startar inte för sig. I VICE, laddat med monitorn och startat på `$886F` med `$01 = $3C`, kör det
-sin avbrottsrutin men skärmen är skräp. Det beror på I/O-läget, som inte finns i en PRG. OVER stänger av CIA:ornas
-avbrott (`$DC0D`/`$DD0D = $03`) och väljer VIC-bank 1 (`$DD02 = $3F`, `$DD00 = $C6`) och svart ram och bakgrund.
-Spelets init på `$AAB2`, som avkodaren anropar, sätter bitmappsläge (`$D011 = $3B`), rasteravbrottet (`$D01A = $01`,
-`$D012 = $28`) och volymen (`$D418 = $0F`). Startat från `$886F` i en nystartad C64 ligger CIA 1:s timeravbrott kvar och
-VIC tittar i bank 0. För att läsa och analysera spelet räcker filen. För att köra det skulle Sindri behöva spara I/O-läget
-med starten.
+## Det uppackade spelet startar för sig
+
+Först startade det uppackade spelet inte för sig. I VICE, laddat med monitorn och startat på `$886F` med `$01 = $3C`,
+körde det sin avbrottsrutin men skärmen var skräp. Det berodde på I/O-läget, som inte finns i en PRG. OVER stänger av
+CIA:ornas avbrott (`$DC0D`/`$DD0D = $03`), väljer VIC-bank 1 (`$DD02 = $3F`, `$DD00 = $C6`) och sätter svart ram och
+bakgrund. Spelets init på `$AAB2`, som avkodaren anropar, sätter bitmappsläge (`$D011 = $3B`), rasteravbrottet
+(`$D01A = $01`, `$D012 = $28`), volymen (`$D418 = $0F`) och färg-RAM:et. Startat från `$886F` i en nystartad C64 låg
+CIA 1:s timeravbrott kvar, och VIC tittade i bank 0.
+
+Nu sparar Sindri I/O-läget med starten (spec 8.11b): 43 steg och färg-RAM:et. Unpack behåller det med programstarten,
+och Build & Run startar spelet från monitorn genom en rutin på 134 byte i stacksidan som sätter det (spec 13.2).
+Spelet visar då sin titelbild i VICE med den roterande Cobran och *Load New Commander (Y/N)?*, som när det laddas från
+disken. Utan färg-RAM:et blev ramens översta rad ljusblå, READY:s färg, eftersom den raden visas i instrumentpanelens
+läge. Sindris färg-RAM är VICE:s på alla 1000 platser när spelet startar.

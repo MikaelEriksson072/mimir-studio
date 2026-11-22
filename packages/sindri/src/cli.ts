@@ -78,7 +78,9 @@ function describe(l: LayerReport): string {
 
 function startHint(s: Saved): string {
   const port = s.port !== 0x37 ? `, $01=$${s.port.toString(16).padStart(2, '0')}` : '';
-  return s.basic ? `RUN (SYS ${s.entry} = ${hex4(s.entry)}${port})` : `SYS ${s.entry} = ${hex4(s.entry)}${port}${s.interrupts ? '' : ', interrupts off'}`;
+  // (the I/O it started in, which a PRG cannot hold: Saved.io)
+  const io = s.io ? `, and I/O of its own (${s.io.steps.length} register step${s.io.steps.length === 1 ? '' : 's'}${s.io.color ? ', the colour RAM' : ''})` : '';
+  return s.basic ? `RUN (SYS ${s.entry} = ${hex4(s.entry)}${port})` : `SYS ${s.entry} = ${hex4(s.entry)}${port}${s.interrupts ? '' : ', interrupts off'}${io}`;
 }
 
 /**

@@ -855,7 +855,8 @@ describe('the tape in Build & Run and in Sindri', () => {
       const log = unpackLog(run, 'tinyheader.prg', 0x0800, file.data.length).split('\n');
       expect(log).toContain('Alone, started at $0800, it stopped: jam, the CPU stopped on the JAM opcode at $0800');
       expect(log).toContain('A loader on the tape loads it: run from the tape\'s boot file "LOADER DEMO"; layer 1 on started after its loader had loaded the file');
-      expect(log.at(-1)).toBe('saved layer 3: $0800-$37ff (12.0 KB), start with SYS 2064 = $0810');
+      // (the tape's loader turned CIA 1's interrupts off and set its timer A: the program starts so, Saved.io)
+      expect(log.at(-1)).toBe("saved layer 3: $0800-$37ff (12.0 KB), start with SYS 2064 = $0810, and the I/O it started in (5 steps: CIA 1's interrupts off, CIA 1's timer A)");
 
       // a file the boot's loader never gets to (a level the game loads later): the file's own run, and why
       const never = unpackPrg(makePrg(jams.load!, jams.data), roms, null, null, withBoot(jams));

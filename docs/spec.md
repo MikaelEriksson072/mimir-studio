@@ -1392,6 +1392,25 @@ sparas med KERNAL:n bortkopplad, 4 sparas annorlunda, och i alla fyra pekar vekt
 sparade (Christmas Megademos The Santas, två skivor, IRQ `$02E5`; Kannanotto, `$01 = $15`, IRQ `$9C00`; Double Image,
 RTI på `$1702`). Sindris `test/unpack.test.ts` prövar båda fallen.
 
+**I/O-läget vid starten** (`Saved.io`, `packages/sindri/src/io.ts`). En PRG har minnet, inte det VIC-II, CIA:orna,
+SID och färg-RAM:et ställts in på innan programmet startade. Elites laddare stänger av CIA:ornas avbrott och väljer
+VIC-bank 1, och spelets init, som avkodaren anropar, sätter bitmappsläge och rasteravbrottet innan spelet startar på
+`$886F`. Startat från READY med bara minnet tittade VIC i bank 0, KERNAL:ns timeravbrott gick in i spelets
+rasterrutin, och skärmen blev skräp. Sindri jämför därför I/O-läget när det sparade lagret startade med läget vid READY
+(maskinen Sindri startar från) och sparar skillnaden som steg från READY: CIA-avbrott som ska bort stängs av först
+(`$7F` till ICR), sedan skrivs registren (VIC:s `$D000-$D02E` utom avbrottsflaggor och kollisioner, `$D011`:s
+nionde bit och `$D012` som rasterjämförelsen, CIA:ornas tidslatchar och kontrollregister med force load, CIA 2:s
+portar och båda CIA:ornas riktningsregister, SID:s filter och volym `$D415-$D418`), sedan kvitteras det som väntar
+(läsning av ICR, `$0F` till `$D019`) och sist slås programmets avbrott på (CIA 2:s är NMI, som SEI inte håller
+undan). Med det följer om avbrotten var på (I-flaggan) och färg-RAM:et när det inte är som vid READY (1000 hexsiffror).
+Inte med: TOD-klockorna, timrarnas räknare, CIA 1:s portbitar (tangentbordets kolumn sätter programmet självt) och SID:s
+röster. Ett BASIC-program som startas med RUN får inget. Elites spel: 43 steg och färg-RAM:et; utan färg-RAM:et blev
+ramens översta rad, som visas i instrumentpanelens läge, ljusblå (READY:s färg). Lagerrapporten säger det
+(*…, and the I/O it started in (43 steps: VIC bank 1, 34 VIC registers, the raster interrupt on, CIA 1's interrupts off,
+CIA 1's timer B, the SID's volume 15)*, `ioSummary`). *Unpack* behåller det med starten (`Project.entryIo`, i
+projektfilen) som `$01`, Sindris nästa körning från starten sätter det före hoppet (`UnpackOptions.io`), och en egen
+start glömmer det. Mätt 2026-11-22 på 696 program (297 slumpvisa skivor, 400 enfilsdemor och intron): av 562 sparade program (inte BASIC) startar 267 i ett eget I/O-läge, median ett steg (oftast ramfärgen som packarens blinkande lämnade), högst 48; 132 med eget färg-RAM, 32 i en annan VIC-bank, 14 med rasteravbrottet på och 14 med CIA 1:s avbrott av. Körda igen från starten i Sindri hamnar 227 där program hamnar både med och utan I/O-läget och 39 i inget av fallen. Ett slutar annorlunda: Happy Fathers Day tar, med skärmen av som packaren lämnade den, emot mellanslaget Sindri trycker och nollställer C64:an, som demon gör på mellanslag.
+
 I No Bounds laddar programmets eget lager (ramverket vid `$ff40`) delarna och musiken efter att det startat och anropar
 dem med `JSR`; de återvänder till ramverket och blir inga egna lager, och musiken spelar i delarnas avbrott. Minnet när
 lagret startade har inget av det, och det sparade programmet kan inte göra det igen, för det kommer från disken. Därför
@@ -3295,6 +3314,16 @@ fönster under 720 px har sidorna på en rad över sidan. Meddelanden som säger
    slår bort, så VICE skriver POKE:ar som lägger `lda #$36 / sta $01 / jmp $a2ab` på `$02a7-$02ad` (en del av
    systemområdet som varken BASIC eller KERNAL använder) och `sys679`, på rader om högst 79 tecken. Sätter användaren
    en egen start glöms `$01`. Kortet *Program start* och Build-loggen säger hur programmet startas, med `$01`.
+   **I/O-läget vid start.** Satte *Unpack* starten och sparade Sindri ett I/O-läge med den (`Project.entryIo`, 8.11b),
+   startas programmet från monitorn genom en rutin (`startCode`, `core/src/c64/debugger-start.ts`): SEI, stegen
+   (`lda #v / sta reg`, en läsning som kvittens, sex VIC-register eller fler ur en tabell i en slinga), `$01`, CLI bara
+   om avbrotten var på, `jmp` till starten; den använder ingen stack. Monitorn skriver rutinen i RAM på `$02a7` när den
+   ryms där och programmet lämnar det fritt, annars längst ned i stacksidan (`startCodeAt`; Sindri sparar inget under
+   `$0200`), färg-RAM:et med `bank io` och `>`, och kör `g` till rutinen. Får rutinen inte plats skriver monitorn
+   registren själv (utan kvittenser). Med `sys` finns ingen plats för rutinen, så ett sådant program startas alltid från
+   monitorn. Elite (`$0308-$ffff`): rutinen på 134 byte på `$0100`, och spelet visar sin titelbild i VICE som när det
+   laddas från disken, med disken i station 8. Kortet *Program start* och Build-loggen säger det (*… after a routine sets
+   the I/O it started in (43 steps: VIC bank 1, …, the colour RAM)*). `vice.integration.test.ts` kör det i riktiga VICE.
    `test/vice.integration.test.ts` kör detta i riktiga VICE (`-console`, egen konfigurationsfil, debug-cartridgens `$d7ff` som avslutningskod).
 
 ### 13.2b Bygg och kör i en debugger (Shift+F5)
@@ -3324,6 +3353,8 @@ kopians laddadress, och hoppar dit. Startkoden gör det VICE gör:
   förbi programmets vektorer, utan avbrott, och nollsidan `$90-$bc` och filtabellerna `$0259-$0276` som de använder
   sätts tillbaka till programmets) och `$ba` blir 8 (om programmet inte laddats över den); `$01` som programmet startar
   med; stackpekaren som vid READY. Utan disk och med `$01 = $37` och starten på laddadressen hoppar debuggern direkt.
+  Ett program med ett I/O-läge från Sindri (`Project.entryIo`) startas också så, och startkoden sätter registren som
+  VICE:s rutin gör (avbrotten på bara om de var det); färg-RAM:et ryms inte i startkoden och sätts inte i debuggern.
 - **En disk eller ett band som VICE autostartar** (projektets första fil är diskens första program, eller bandets):
   startkoden ensam på `$02a7` skriver `load"*",8,1` eller `load` med `run` väntande i tangentbordsbufferten.
 
@@ -5207,7 +5238,8 @@ ger samma lager och samma sparade byte som förut.
 Filerna är som C64:an tar emot dem. Elite krypterar 2NDBIT och 3RDBIT själv (avkodaren på `$1D22`, som OVER hoppar
 till), och FILE1 flyttar sig själv (`$7596`, som PATCH anropar: `$4000-$55FF` till `$0700`, `$5600-$75FF` till
 `$D000`). **Unpack** på en fil ur fliken kör därför disken från `GAME` (13.5f, *En fil som en laddare på disken laddar*)
-och ger det färdiga spelet, `$0308-$FFFF` med start `$886F` och `$01 = $3C`, som Unpack på `GAME` gör. Inte gjort: spåren 37-40 på G64:orna (brus) är inte
+och ger det färdiga spelet, `$0308-$FFFF` med start `$886F` och `$01 = $3C`, som Unpack på `GAME` gör, med I/O-läget
+spelet startade i (8.11b): Build & Run visar då titelbilden som när spelet laddas från disken. Inte gjort: spåren 37-40 på G64:orna (brus) är inte
 utredda, och inte heller om spelet kontrollerar skivan igen senare.
 
 ### 13.6 Terminal

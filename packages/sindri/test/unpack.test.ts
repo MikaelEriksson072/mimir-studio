@@ -656,6 +656,70 @@ ${byteLines(code)}
       expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000, port: 0x35 });
     });
 
+    it('saves the I/O a program started in, and starts it in that I/O again: Elite\'s VIC bank, raster interrupt, colour RAM', () => {
+      // the stub turns CIA 1's interrupts off, picks VIC bank 1, sets bitmap mode, the raster interrupt, the volume and
+      // the first 256 colours, and jumps to the program it copied to $1000 with interrupts off. The program JAMs unless
+      // it finds bank 1 and the raster interrupt on
+      const code = asm(`
+* = $1000
+       lda $dd00
+       and #3
+       cmp #2
+       bne bad
+       lda $d01a
+       and #1
+       beq bad
+loop:  jmp loop
+bad:   .byte $02`).prg.subarray(2);
+      const file = asm(`${SYS_LINE}
+       sei
+       lda #$7f
+       sta $dc0d
+       lda $dc0d
+       lda #$c6
+       sta $dd00
+       lda #$00
+       sta $d020
+       lda #$0b
+       sta $d021
+       lda #$3b
+       sta $d011
+       lda #$28
+       sta $d012
+       lda #$01
+       sta $d01a
+       lda #$0f
+       sta $d418
+       ldx #0
+       lda #5
+col:   sta $d800,x
+       inx
+       bne col
+       ldx #${code.length - 1}
+cp:    lda payload,x
+       sta $1000,x
+       dex
+       bpl cp
+       jmp $1000
+payload:
+${byteLines(code)}
+`).prg;
+      const r = unpack(file, { roms: mode === 'ROMs' ? roms : null });
+      const io = r.saved!.io!;
+      expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000, interrupts: false });
+      expect(io.interrupts).toBe(false);
+      // CIA 1's interrupts off first, the registers, then what is waiting acknowledged, and the raster interrupt last
+      expect(io.steps[0]).toEqual({ at: 0xdc0d, value: 0x7f });
+      expect(io.steps).toEqual(expect.arrayContaining([{ at: 0xdd00, value: 0xc6 }, { at: 0xd020, value: 0x00 }, { at: 0xd021, value: 0x0b }, { at: 0xd011, value: 0x3b }, { at: 0xd012, value: 0x28 }, { at: 0xd418, value: 0x0f }]));
+      expect(io.steps.slice(-3)).toEqual([{ at: 0xdc0d, value: null }, { at: 0xd019, value: 0x0f }, { at: 0xd01a, value: 0x01 }]);
+      expect(io.color!.length).toBe(1000);
+      expect(io.color!.slice(0, 256)).toBe('5'.repeat(256));
+      // started at $1000 from the saved PRG: with that I/O it runs on, without it it JAMs
+      const go = (o: object) => unpack(r.saved!.prg, { roms: mode === 'ROMs' ? roms : null, entry: 0x1000, ...o });
+      expect(go({ io }).stop.reason).toBe('settled');
+      expect(go({}).stop).toMatchObject({ reason: 'jam' });
+    });
+
     it('keeps the vectors a program has at $fffa when it starts with the KERNAL out, however far from the rest (Elite)', () => {
       // Elite's decoder sets IRQ and NMI in the RAM at $fffe and $fffa, then jumps to the game with $01 = $3c: without
       // those six bytes the first interrupt goes into whatever the RAM holds there

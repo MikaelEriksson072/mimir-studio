@@ -18,7 +18,8 @@ export * from './c64/memconfig';
 export { PETSCII_CONTROLS, petsciiControl, TEXT_ENCODINGS, textEncoding, type PetsciiControl, type TextEncodingInfo } from './c64/text';
 export { parseBasic, BASIC_TOKENS } from './c64/basic';
 export { parsePrg, makePrg, overwritesSystemArea, coversReadyScreen, startsFromMonitor, SYSTEM_AREA, READY_SCREEN, START_STUB } from './c64/prg';
-export { debuggerStart, DRIVE_INIT, type DebuggerStart, type DebuggerVia } from './c64/debugger-start';
+export { debuggerStart, DRIVE_INIT, startCode, type DebuggerStart, type DebuggerVia } from './c64/debugger-start';
+export type { IoStep, StartIo } from '@mimir/sindri';
 export { debugInfoFile, debugSources, viceLabels, type DebugInfo, type DebugSource, type DebugWatch, type DebugWatchFormat } from './c64/debugger-dbg';
 export {
   clipRanges, findInMemory, loadedRanges, MAX_MATCHES, monitorChar, monitorHexOf, monitorLine, monitorPrefix, monitorRows, monitorText, monitorTextOf, MONITOR_PER_ROW, MONITOR_ROW, nextZero, parseMonitorCommand,
@@ -110,7 +111,7 @@ export { BLOCK_PAD_FORM, blockEndNames, blockPad, type BlockPad, byteLines, chec
 export { applyPatch, assemblePatch, programNames, patchAt, patchLang, patchEnd, patchesOn, patchFileName, patchPrg, patchSource, planPatch, projectUnpatched, revertPatch, straightCycles, switchPatch, unpatchedFiles, withPatch, withoutPatch, type PatchCode, type PatchError, type PatchLine, type PatchPlan, type PatchRequest, type PatchTime } from './patch';
 export { NOTES_FILE, NOTES_TEXT_FILE, notesDocument, notesExport, notesFile, notesFor, notesText, lineHtml } from './notes-doc';
 export { detectPacking, packerSignature, type PackingInfo } from './packing';
-export { conclusive, depackers, depackerText, notPacked, packedData, packerNames, unpackedName, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackDiskBoot, type UnpackRun, type UnpackTape } from './sindri';
+export { conclusive, depackers, depackerText, ioSummary, notPacked, packedData, packerNames, unpackedName, unpackLog, unpackPrg, unpackSummary, type LayerReport, type Roms, type UnpackDiskBoot, type UnpackRun, type UnpackTape } from './sindri';
 export { driveCode, driveSymbol, runAddress, type DriveCode, type DriveCheck, type DriveSegment } from './drivecode';
 export { addDecisionChecks, addRunChecks, checkDecisions, checkRun, type DecisionCheck, type RunCheck } from './runcheck';
 export { brokkrArgs, brokkrCommands, brokkrCommandText, brokkrPlan, crunchHere, NO_ROOM, packDecruncher, packNeeds, packWithBrokkr, type BrokkrCrunch, type BrokkrPack, type BrokkrPlan, type PackedFile, type PackTried } from './brokkr';

@@ -1295,6 +1295,25 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     `$886f` but does not start alone: OVER and the game's init set the VIC bank, bitmap mode, the raster IRQ and turn
     the CIA IRQs off, and a PRG has no I/O state (`docs/diskspeed.md`). Tests: core `sindri.test.ts` (an own disk whose
     boot loads an encrypted file and decodes it), Sindri `unpack.test.ts` (the vectors with `$35` and `$37`).
+63. A program Sindri saves starts in the I/O it started in (spec 8.11b, 13.2, 13.2b). Elite's unpacked game, started
+    at `$886f` from a C64 at READY, ran its raster handler on a screen of garbage: OVER had turned the CIAs' interrupts
+    off and picked VIC bank 1, the game's init had set bitmap mode, the raster interrupt and the colour RAM, and a PRG
+    holds none of that. Sindri (`io.ts`) now takes the VIC's registers, the CIAs' masks, timer latches, control and
+    ports, the SID's filter and volume and the colour RAM when each layer starts, against READY's, and saves the
+    difference as steps from READY (`Saved.io`: masks off first, the registers, the acknowledgements, the interrupts
+    the program has last; the I flag; the colour RAM as 1000 hex digits). Unpack keeps it with the start
+    (`Project.entryIo`), Sindri's next run from the start sets it (`UnpackOptions.io`), and Build & Run starts such a
+    program from the monitor through a routine that sets it (`startCode`: SEI, the steps, VIC registers from a table
+    when six or more, `$01`, CLI only if interrupts were on, the jump; at `$02a7` or in the stack page,
+    `startCodeAt`), the colour RAM written by the monitor in `bank io`. The debuggers' start code sets the registers
+    too, not the colour RAM. Elite now shows its title screen in VICE from Build & Run (the re-assembled game, the
+    disk in drive 8) as when loaded from the disk; without the colour RAM the frame's top line was light blue.
+    696 programs: 267 of 562 saved start in I/O of their own (median one step: the border a decruncher flashed; 132
+    with their own colour RAM, 32 in another VIC bank); run again from their start, 227 settle with and without it,
+    39 neither, one (Happy Fathers Day) takes Sindri's SPACE with the screen off and resets, as it does on SPACE.
+    Tests: Sindri `unpack.test.ts` (saved and restarted, both ROM modes), core `vice.integration.test.ts` (the
+    routine's bytes, the monitor script, and real VICE: four starts exit $42, without the I/O it does not),
+    `sindri.test.ts` (`fixtures/prg/start-io.prg`), e2e (Unpack, the Program start card, Build & Run's monitor file).
 
 ## Roadmap
 

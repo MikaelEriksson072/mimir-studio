@@ -28,6 +28,7 @@ import { g64ToD64, g64ToDisk, isG64 } from './g64.ts';
 import { d64NameOf } from './d64.ts';
 import { Datasette, isT64, t64Files, tapeFiles, tapeNameMatches, tapPulses, type TapeFile } from './tape.ts';
 import { basicLines, evaluate, findSys, listLine, statements, T } from './basic.ts';
+import { applyIo, ioState, startIo, type IoState, type StartIo } from './io.ts';
 
 export interface UnpackOptions {
   /** the C64 ROMs; without them the stand-ins run (fine for most packers, but not for BASIC programs) */
@@ -67,6 +68,8 @@ export interface UnpackOptions {
    * the BASIC ROM with $01 = $36); by default as at READY, $37
    */
   port?: number;
+  /** with `entry`: the I/O the program starts in (Saved.io), set right before the jump, before `port` */
+  io?: StartIo | null;
   /** load the file here instead of at its own load address */
   load?: number;
   /** give up after this many cycles of the program (default 400 million, about 7 minutes of C64 time) */
@@ -153,6 +156,8 @@ export interface Saved {
   port: number;
   /** interrupts were on (the I flag clear) */
   interrupts: boolean;
+  /** the I/O it started in, as steps from the READY prompt (io.ts) with `interrupts`; null when it is as at READY */
+  io: StartIo | null;
 }
 
 export interface UnpackResult {
@@ -212,7 +217,7 @@ function fileUse(m: C64): Uint8Array {
   return out;
 }
 
-interface Snapshot { ram: Uint8Array; port: number; a: number; x: number; y: number; s: number; p: number }
+interface Snapshot { ram: Uint8Array; port: number; a: number; x: number; y: number; s: number; p: number; io: IoState }
 interface Trap { rom: number; run: () => boolean }
 /** LOAD typed at the READY prompt, file loaded, RUN typed (the stand-ins start in 'run') */
 type Phase = 'load' | 'loaded' | 'run';
@@ -467,6 +472,8 @@ class Session {
   private loadName: { at: number; bytes: Uint8Array; before: Uint8Array; icount: number; used: boolean } | null = null;
   /** the bytes the start-up left as the C64 powered them on (POWER_ON), not $00 (null: going on from a snapshot) */
   private leftover: Uint8Array | null = null;
+  /** the I/O at the READY prompt, which a saved program's I/O (Saved.io) is told against */
+  private readyIo: IoState | null = null;
   /** the datasette, the tape's KERNAL files, the one the file came from, and where the tape stood at the start */
   private tape: Datasette | null = null;
   private tapeKernal: TapeFile[] = [];
@@ -516,6 +523,11 @@ class Session {
   private resumeFrom(s: MachineState): void {
     const m = this.m;
     if (!this.real) { this.stop('needs-rom', 'going on from a snapshot needs the ROM files'); return; }
+    // (the I/O at READY, from the C64 booted as for a file: the snapshot's own is not READY's)
+    const roms = this.o.roms!, key = `${roms.source}:${checksum(m.kernal)}:${checksum(m.basic)}`;
+    if (!bootCache.has(key)) bootCache.set(key, bootC64(roms));
+    const booted = bootCache.get(key);
+    if (booted) { m.restore(booted.state); this.readyIo = ioState(m); }
     m.restore(s);
     for (let a = 2; a < 0x10000; a++) { m.wid[a] = LOADED; m.wtime[a] = m.icount; }
     for (const t of [m.firstOp, m.firstArg, m.firstRead, m.firstWrite]) t.fill(0);
@@ -532,6 +544,7 @@ class Session {
     if (!booted) { this.stop('not-started', 'the C64 did not get through boot'); return; }
     m.restore(booted.state);
     this.leftover = booted.leftover;
+    this.readyIo = ioState(m);
     this.typeLine('LOAD');
     this.setPhase('load');
   }
@@ -740,6 +753,7 @@ class Session {
     const m = this.m;
     initStandIn(m);
     this.leftover = standInLeftover();
+    this.readyIo = ioState(m);
     // from a tape: its header in the tape buffer, and the IRQ vector as LOAD from the tape leaves it
     if (this.tapeFile) { this.tapeBuffer(this.tapeFile); this.tapeIrqSave(); }
     const end = this.loadFile();
@@ -751,6 +765,7 @@ class Session {
     this.setPhase('run');
     if (this.o.entry != null) {
       this.sys(this.o.entry);
+      this.applyStartIo();
       if (this.o.port != null) m.write(1, this.o.port & 0xff);
       return;
     }
@@ -859,6 +874,15 @@ class Session {
   /** from here on: what the run does with the loaded bytes */
   private runFromHere(): void {
     for (const t of [this.m.firstOp, this.m.firstArg, this.m.firstRead, this.m.firstWrite]) t.fill(0);
+  }
+
+  /** A program started at an address with the I/O it started in (`io`, Saved.io): the steps from READY, and the
+   *  interrupts on or off, as Build & Run's start code sets them before it jumps there. */
+  private applyStartIo(): void {
+    const io = this.o.io;
+    if (!io) return;
+    applyIo(this.m, io);
+    this.m.cpu.p = io.interrupts ? this.m.cpu.p & ~4 : this.m.cpu.p | 4;
   }
 
   /**
@@ -1431,7 +1455,7 @@ class Session {
   private snapshot(): Snapshot {
     const m = this.m, c = m.cpu;
     // (PLAY held down on the datasette reads as a 0 on bit 4, an input: the program's port is without it)
-    return { ram: m.ram.slice(), port: this.tape && !(m.ddr & 0x10) ? m.cpuPort | 0x10 : m.cpuPort, a: c.a, x: c.x, y: c.y, s: c.s, p: c.p };
+    return { ram: m.ram.slice(), port: this.tape && !(m.ddr & 0x10) ? m.cpuPort | 0x10 : m.cpuPort, a: c.a, x: c.x, y: c.y, s: c.s, p: c.p, io: ioState(m) };
   }
 
   /** how often the drive has changed its DATA or CLK line, and how many pulses the tape has played, up to now (0 with
@@ -1613,6 +1637,7 @@ class Session {
       if (entry != null) this.trap(0xe144, KERNAL, () => {
         if (this.started || (m.ram[0x14] | (m.ram[0x15] << 8)) !== entry) return false;
         this.putBack();
+        this.applyStartIo();
         if (port == null) return false;
         m.write(1, port & 0xff);
         if (m.map[0xe1] === KERNAL) return false;
@@ -1887,7 +1912,7 @@ class Session {
     if (!l) return null;
     const s = l.snapshot;
     if (index === 0) {
-      return { layer: 0, prg: this.file.slice(), start: this.loadAt, end: this.loadAt + this.data.length - 1, entry: l.entry, basic: false, port: s.port, interrupts: !(s.p & 4) };
+      return { layer: 0, prg: this.file.slice(), start: this.loadAt, end: this.loadAt + this.data.length - 1, entry: l.entry, basic: false, port: s.port, interrupts: !(s.p & 4), io: null };
     }
     const range = this.rangeOf(l);
     if (!range) return null;
@@ -1910,7 +1935,9 @@ class Session {
     }
     const basicStart = s.ram[0x2b] | (s.ram[0x2c] << 8);
     const entry = l.basic ? findSys(a => s.ram[a], basicStart) ?? basicStart : l.entry;
-    return { layer: index, prg, start: range.start, end: range.end, entry, basic: l.basic, port: s.port, interrupts: !(s.p & 4) };
+    // the I/O it started in, unless it starts with RUN (BASIC sets nothing of it before RUN)
+    const io = this.readyIo && !l.basic ? startIo(s.io, this.readyIo, !(s.p & 4)) : null;
+    return { layer: index, prg, start: range.start, end: range.end, entry, basic: l.basic, port: s.port, interrupts: !(s.p & 4), io };
   }
 }
 

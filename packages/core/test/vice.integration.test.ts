@@ -9,8 +9,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { analyze, builtCartridge, coversReadyScreen, makeD64, makePrg, makeT64, makeTap, openCartridge, overwritesSystemArea, parseVsf, startsFromMonitor, patchSnapshot, readTape, render, replaceTapeFile, verify, writeT64 } from '../src';
-import { DRIVE_INIT, findVice, prepareVice, startStatements, typedLines, viceArgv, viceMonitorScript } from '../src/node';
+import { analyze, builtCartridge, coversReadyScreen, debuggerStart, makeD64, makePrg, makeT64, makeTap, openCartridge, overwritesSystemArea, parseVsf, startsFromMonitor, patchSnapshot, readTape, render, replaceTapeFile, startCode, verify, writeT64 } from '../src';
+import { DRIVE_INIT, findVice, prepareVice, startCodeAt, startStatements, typedLines, viceArgv, viceMonitorScript } from '../src/node';
 import { fromSource } from './helpers/programs';
 import { readPng } from './helpers/png';
 import { bootLoader, tinyFile, TurboWriter, withTurbo } from './helpers/tapetool-tape';
@@ -51,6 +51,32 @@ describe('VICE command line', () => {
     expect(typedLines(['a'.repeat(70), 'b'.repeat(8), 'c'])).toBe(`${'a'.repeat(70)}:${'b'.repeat(8)}\\nc\\n`);
     expect(viceMonitorScript({ prgPath: 'p.prg', start: 0xa2ab, port: 0x36, disk: true })).toBe('> C:00ba 08\nbank ram\nl "p.prg" 0\nbank cpu\n> C:0001 36\ng a2ab\n');
     expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x1400, port: 0x37 })).toBe('bank ram\nl "p.prg" 0\nbank cpu\ng 1400\n');
+  });
+
+  it('starts a program in the I/O Sindri saw at its start: a routine the monitor writes beside it, the colour RAM from the monitor', () => {
+    const io = { steps: [{ at: 0xdc0d, value: 0x7f }, { at: 0xdd00, value: 0xc6 }, { at: 0xd020, value: 0x00 }, { at: 0xdc0d, value: null }, { at: 0xd019, value: 0x0f }, { at: 0xd01a, value: 0x01 }], interrupts: true };
+    // sei, the steps (a read acknowledges), $01, cli, jmp: Elite's game at $886f with $01 = $3c
+    const elite = [0x78, 0xa9, 0x7f, 0x8d, 0x0d, 0xdc, 0xa9, 0xc6, 0x8d, 0x00, 0xdd, 0xa9, 0x00, 0x8d, 0x20, 0xd0, 0xad, 0x0d, 0xdc, 0xa9, 0x0f, 0x8d, 0x19, 0xd0, 0xa9, 0x01, 0x8d, 0x1a, 0xd0, 0xa9, 0x3c, 0x85, 0x01, 0x58, 0x4c, 0x6f, 0x88];
+    expect([...startCode(0x02a7, { start: 0x886f, port: 0x3c, io })]).toEqual(elite);
+    // six VIC registers or more from a table after the jump; interrupts off: no cli. Without I/O, as before
+    const vic = { steps: [0x20, 0x21, 0x22, 0x23, 0x24, 0x25].map((r, i) => ({ at: 0xd000 + r, value: i })), interrupts: false };
+    expect([...startCode(0x0100, { start: 0x1000, io: vic })]).toEqual([0x78, 0xa2, 5, 0xbc, 0x12, 0x01, 0xbd, 0x18, 0x01, 0x99, 0x00, 0xd0, 0xca, 0x10, 0xf4, 0x4c, 0x00, 0x10, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0, 1, 2, 3, 4, 5]);
+    expect([...startCode(0x02a7, { start: 0xa2ab, port: 0x36 })]).toEqual([0xa9, 0x36, 0x85, 0x01, 0x4c, 0xab, 0xa2]);
+    // the monitor writes the routine at $02a7 when the program leaves it free, else in the stack page, and goes there
+    const hex = (b: number[]) => b.map(x => x.toString(16).padStart(2, '0')).join(' ');
+    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x886f, port: 0x3c, io, load: 0x0308, end: 0x10000 }))
+      .toBe(`bank ram\nl "p.prg" 0\n> 02a7 ${hex(elite.slice(0, 32))}\n> 02c7 ${hex(elite.slice(32))}\nbank cpu\ng 02a7\n`);
+    expect(startCodeAt(elite.length, 0x0200, 0x10000)).toBe(0x0100);
+    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x886f, port: 0x3c, io, load: 0x0200, end: 0x10000 })).toMatch(/^bank ram\nl "p\.prg" 0\n> 0100 78 a9 7f 8d 0d dc a9 c6 8d 00 dd .*\nbank cpu\ng 0100\n$/s);
+    // the colour RAM, a colour each from $d800, in the I/O's view
+    const coloured = viceMonitorScript({ prgPath: 'p.prg', start: 0x0900, io: { ...io, color: '5'.repeat(1000) }, load: 0x0900, end: 0x0a00 }).split('\n');
+    expect(coloured.slice(4, 6)).toEqual(['bank io', `> d800 ${'05 '.repeat(31)}05`]);
+    expect(coloured.filter(l => l.startsWith('> d') || l.startsWith('> da') || l.startsWith('> db'))).toHaveLength(32);
+    expect(coloured.slice(-3)).toEqual(['bank cpu', 'g 02a7', '']);
+    // no room for the routine: the monitor writes the registers itself
+    const many = { steps: Array.from({ length: 60 }, (_, i) => ({ at: 0xd400 + (i % 25), value: i })), interrupts: true };
+    expect(startCodeAt(startCode(0x0100, { start: 0x0900, io: many }).length, 0x0200, 0x10000)).toBeNull();
+    expect(viceMonitorScript({ prgPath: 'p.prg', start: 0x0900, io: many, load: 0x0200, end: 0x10000 })).toMatch(/^bank ram\nl "p\.prg" 0\nbank io\n> d400 00\n.*> d409 3b\nbank cpu\ng 0900\n$/s);
   });
 
   it('puts a disk in drive 8, with the inject PRG mode (the disk image mode would replace it), and has the drive read it first', () => {
@@ -325,6 +351,71 @@ describe.skipIf(!vice)(`real VICE (${vice ?? 'not found'})`, () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 240_000);
+
+  it('starts a program in the I/O Sindri saw at its start: VIC bank 1, the raster interrupt, interrupts off, the colours, with a disk too', async () => {
+    // Elite's game starts after its loader picked VIC bank 1 and its init set the raster interrupt and the colour RAM.
+    // The program exits with $42 when it finds them, else with the number of the first check that failed
+    const code = `ldx #1
+ php
+ pla
+ and #$04
+ beq bad
+ ldx #2
+ lda $dd00
+ and #3
+ cmp #2
+ bne bad
+ ldx #3
+ lda $d01a
+ and #1
+ beq bad
+ ldx #4
+ lda $d800
+ and #$0f
+ cmp #5
+ bne bad
+ ldx #5
+ lda $d025
+ and #$0f
+ cmp #$0a
+ bne bad
+ ldx #$42
+bad:
+ stx $d7ff
+ jmp *`;
+    const io = {
+      steps: [{ at: 0xdc0d, value: 0x7f }, { at: 0xdd00, value: 0xc6 }, ...[0x20, 0x21, 0x22, 0x23, 0x24].map(r => ({ at: 0xd000 + r, value: 0 })), { at: 0xd025, value: 0x0a }, { at: 0xdc0d, value: null }, { at: 0xd019, value: 0x0f }, { at: 0xd01a, value: 0x01 }],
+      interrupts: false, color: '5'.repeat(1000),
+    };
+    const files: [string, ReturnType<typeof fromSource>, number][] = [
+      ['game', fromSource('game.prg', `.pc = $0900\n${code}`), 0x0900],
+      // (over $02a7: the routine goes in the stack page)
+      ['dump', fromSource('dump.prg', `.pc = $0200\n${code}`), 0x0200],
+    ];
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-vice-'));
+    try {
+      const disk = join(dir, 'disk.d64');
+      await writeFile(disk, makeD64({ name: 'parts', files: [{ name: 'top10', data: Uint8Array.from([0x00, 0xc0, 0x60]) }] }));
+      for (const [name, f, start] of files) for (const d of [null, disk]) {
+        const prgPath = join(dir, `${name}.prg`);
+        await writeFile(prgPath, prgOf(f));
+        const { argv, via } = await prepareVice({ args: headless(dir), prgPath, start, io, disk: d });
+        expect(via).toBe('monitor');
+        expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status, `${name}${d ? ' with the disk' : ''}`).toBe(0x42);
+      }
+      // without the I/O: VIC bank 0
+      const prgPath = join(dir, 'game.prg');
+      await writeFile(prgPath, prgOf(files[0][1]));
+      const { argv } = await prepareVice({ args: headless(dir), prgPath, start: 0x0900 });
+      expect(spawnSync(vice!, argv, { timeout: 90_000, windowsHide: true }).status).toBe(1);
+      // the debuggers' start code sets it too (not the colour RAM): as from VICE's monitor
+      const plan = debuggerStart(prgOf(files[0][1]), { start: 0x0900, io });
+      expect(plan.via).toBe('monitor');
+      expect(Buffer.from(plan.prg).includes(Buffer.from([0xa9, 0x01, 0x8d, 0x1a, 0xd0]))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
 
   it('starts a program over the screen at READY from the monitor, with its bytes there, after the drive read the disk', async () => {
     // typing at READY writes on the screen: $0400's $42 would be gone. With the disk, the drive reads it first (M-R of

@@ -4,7 +4,7 @@
  * from, a 1541 is on the serial bus and the program goes on loading. Here: a run whose result can be posted from a
  * worker, the packers the layers' fingerprints name, and the layer report the app and the CLI show.
  * ===================================================================== */
-import { notPacked as ranAsItIs, NOT_PACKED, unpack, vsfMachine, type LayerReport, type Roms, type UnpackResult } from '@mimir/sindri';
+import { notPacked as ranAsItIs, NOT_PACKED, unpack, vsfMachine, type LayerReport, type Roms, type StartIo, type UnpackResult } from '@mimir/sindri';
 import { readTape } from './c64/tap';
 import { h4 } from './util/hex';
 
@@ -62,11 +62,13 @@ export function notPacked(run: Pick<UnpackRun, 'unpacked' | 'layers' | 'stop' | 
  * and Sindri goes on from the snapshot's machine where it was taken instead (it needs the ROMs; throws when the
  * snapshot is not one Sindri reads): a game stopped in its intro or trainer menu still holds the game packed.
  * `diskBoot`: the file is one a loader on `disk` loads, and when it does not run alone Sindri runs the disk's boot file.
+ * `io`: with `entry`, the I/O the program starts in (Saved.io of the run that saved it), set before the jump as Build &
+ * Run's start routine sets it.
  */
-export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null, tape: UnpackTape | null = null, vsf: Uint8Array | null = null, port: number | null = null, disks: readonly Uint8Array[] = [], diskBoot: UnpackDiskBoot | null = null): UnpackRun {
+export function unpackPrg(prg: Uint8Array, roms: Roms | null = null, disk: Uint8Array | null = null, entry: number | null = null, tape: UnpackTape | null = null, vsf: Uint8Array | null = null, port: number | null = null, disks: readonly Uint8Array[] = [], diskBoot: UnpackDiskBoot | null = null, io: StartIo | null = null): UnpackRun {
   const resume = vsf ? vsfMachine(vsf) : null;
   const { save: _save, ...run } = unpack(prg, {
-    roms, disk, ...(disk && disks.length ? { disks: [...disks] } : {}), ...(resume ? { resume } : entry != null ? { entry, ...(port != null ? { port } : {}) } : {}),
+    roms, disk, ...(disk && disks.length ? { disks: [...disks] } : {}), ...(resume ? { resume } : entry != null ? { entry, ...(port != null ? { port } : {}), ...(io ? { io } : {}) } : {}),
     ...(tape ? { tape: tape.tap, ...(tape.at != null ? { tapeAt: tape.at } : {}) } : {}),
   });
   if (resume) return { ...run, snapshot: resume.cpu.pc };
@@ -255,7 +257,32 @@ export function unpackLog(run: UnpackRun, name: string, load: number, size: numb
     const s = run.saved;
     const port = s.port !== 0x37 ? `, $01=$${s.port.toString(16).padStart(2, '0')}` : '';
     const start = s.basic ? `RUN (SYS ${s.entry} = ${hex(s.entry)}${port})` : `SYS ${s.entry} = ${hex(s.entry)}${port}${s.interrupts ? '' : ', interrupts off'}`;
-    out.push(`saved layer ${s.layer}: ${rangeText(s)} (${kb(s.prg.length - 2)}), start with ${start}`);
+    out.push(`saved layer ${s.layer}: ${rangeText(s)} (${kb(s.prg.length - 2)}), start with ${start}${s.io ? `, and the I/O it started in (${ioSummary(s.io)})` : ''}`);
   }
   return out.join('\n');
+}
+
+/**
+ * The I/O a program starts in (Saved.io) in a few words: "43 steps: VIC bank 1, 36 VIC registers, the raster interrupt
+ * on, CIA 1's interrupts off, CIA 1's timer B, the SID's volume 15".
+ */
+export function ioSummary(io: StartIo): string {
+  const w = io.steps.filter(s => s.value != null), parts: string[] = [];
+  const at = (a: number) => w.filter(s => s.at === a);
+  const bank = at(0xdd00).at(-1);
+  if (bank) parts.push(`VIC bank ${3 - (bank.value! & 3)}`);
+  const vic = w.filter(s => s.at >= 0xd000 && s.at < 0xd02f && s.at !== 0xd019 && s.at !== 0xd01a).length;
+  if (vic) parts.push(`${vic} VIC register${vic === 1 ? '' : 's'}`);
+  const raster = at(0xd01a).at(-1);
+  if (raster) parts.push(`the raster interrupt ${raster.value! & 1 ? 'on' : 'off'}`);
+  for (const [n, base] of [[1, 0xdc00], [2, 0xdd00]] as const) {
+    const icr = at(base + 0x0d), set = icr.find(s => s.value! & 0x80);
+    if (icr.length) parts.push(`CIA ${n}'s interrupts ${set ? `$${(set.value! & 0x1f).toString(16).padStart(2, '0')}` : 'off'}`);
+    const timers = [['A', 4], ['B', 6]].filter(([, r]) => at(base + (r as number)).length).map(([t]) => t);
+    if (timers.length) parts.push(`CIA ${n}'s timer${timers.length > 1 ? 's' : ''} ${timers.join(' and ')}`);
+  }
+  const volume = at(0xd418).at(-1);
+  if (volume) parts.push(`the SID's volume ${volume.value! & 15}`);
+  if (!io.interrupts) parts.push('interrupts off');
+  return `${io.steps.length} step${io.steps.length === 1 ? '' : 's'}${parts.length ? `: ${parts.join(', ')}` : ''}`;
 }

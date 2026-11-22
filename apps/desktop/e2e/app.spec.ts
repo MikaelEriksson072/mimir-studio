@@ -2361,6 +2361,43 @@ test('a program Unpack saved under the BASIC ROM keeps its $01 with the start: B
   await expect(page.locator('.start-vice')).toContainText('Build & Run: VICE loads it and types sys 40963');
 });
 
+test('a program Unpack saved in I/O of its own keeps it with the start: Build & Run starts it from the monitor through a routine that sets it', async ({ app, page }) => {
+  // fixtures/prg/start-io.prg (packages/core/test/sindri.test.ts), as Elite's chain leaves the game: CIA 1's interrupts
+  // off, VIC bank 1, the raster interrupt on, the volume, light green colours, and the program at $1000 started with
+  // interrupts off. VICE itself is not started: a Windows program stands in for it (the real VICE runs such a start in
+  // packages/core/test/vice.integration.test.ts)
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  test.skip(!existsSync(standIn), 'needs where.exe');
+  await waitForListing(page);
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  await openSection(page, 'Files');
+  const bar = page.locator('.pack-bar');
+  const done = page.locator('.unpack-bar');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/start-io.prg')] });
+  await page.keyboard.press('Control+o');
+  await expect(bar).toContainText(/the program starts at \$1000/, { timeout: 30_000 });
+  await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
+  await expect(done).toContainText(/Unpacked start-io\.prg.*: start-io-unpacked\.prg, \$1000-\$1006, starting at \$1000 and the I\/O it started in \(\d+ steps: VIC bank 1, .*the raster interrupt on, CIA 1's interrupts off, the SID's volume 15, interrupts off, the colour RAM\) \(set as the program start\)\./, { timeout: 30_000 });
+  await openSection(page, 'Program start');
+  await expect(page.locator('.start-vice')).toContainText(/Build & Run: VICE loads it from the monitor and jumps to \$1000, after a routine sets the I\/O it started in \(\d+ steps: VIC bank 1, /);
+  await page.keyboard.press('F5');
+  await expect(toast(page, /^VICE started at \$1000 and the I\/O it started in \(/)).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('tab', { name: 'Build output' }).click();
+  const log = page.locator('.build-log');
+  await expect(log).toContainText('(loaded and started from the VICE monitor: a routine sets the I/O it started in before the jump, and typing sys has no room for it)');
+  // the monitor's commands, next to the program: load it, write the routine at $02a7, the colour RAM, go there
+  const prg = /[A-Za-z]:\\[^\n]*?start-io-unpacked\.prg/.exec(await log.innerText())![0];
+  const mon = readFileSync(prg.replace(/\.prg$/i, '.start.mon'), 'utf8');
+  expect(mon).toContain(`bank ram\nl "${prg}" 0\n`);
+  expect(mon).toMatch(/\n> 02a7 78 a9 7f 8d 0d dc /);
+  expect(mon).toContain(`bank io\n> d800 ${'0d '.repeat(31)}0d\n`);
+  expect(mon.endsWith('bank cpu\ng 02a7\n')).toBe(true);
+  // a start of the user's own: Sindri's I/O was for the one Unpack set
+  await page.locator('.start-row input').fill('$1003');
+  await page.locator('.start-row').getByRole('button', { name: 'Set' }).click();
+  await expect(page.locator('.start-vice')).toContainText('Build & Run: VICE loads it and types sys 4099');
+});
+
 test('a VICE snapshot that still holds packed data: Sindri goes on from it, and Unpack gives the program', async ({ app, page }) => {
   // fixtures/vsf/packed-menu.vsf (make-packed-menu.mon): fixtures/prg/packed-menu.prg in x64sc 3.10, stopped where it
   // waits for a key at $07f8, in front of the demo packed by fakePack. Going on from there needs VICE's ROMs
