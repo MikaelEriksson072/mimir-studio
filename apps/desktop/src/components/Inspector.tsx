@@ -233,6 +233,8 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
             <>
               <dl className="kv">
                 <dt>Init</dt><dd className="mono">${h4(music.init)}</dd>
+                {music.songs && <><dt>Songs</dt><dd>{music.songs.length}, each started by a routine of the program's: <span className="mono">{music.songs.map(s => `$${h4(s.at)}`).join(' ')}</span>;
+                  Mimir plays them with what those routines leave for play</dd></>}
                 {music.initRegs && <><dt>Init gets</dt><dd><span className="mono">{(['a', 'x', 'y'] as const).filter(r => music.initRegs![r] != null).map(r => `${r.toUpperCase()} = $${h2(music.initRegs![r]!)}`).join(', ')}</span>
                   {' '}as the program gives it{music.initRegs.at != null && <> at <span className="mono">${h4(music.initRegs.at)}</span></>}; it plays with them</dd></>}
                 <dt>Play</dt><dd className={music.digi && !music.play ? '' : 'mono'}>{music.digi && !music.play ? 'none: init starts the samples' : `$${h4(music.play)}`}</dd>
@@ -250,6 +252,7 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
                   ? 'DeepSID, the online SID player, plays the .sid the export writes, in a window of its own: its Load SID sends the file to DeepSID\'s server. Settings → Toolchain picks VICE or DeepSID'
                   : music.digi && !music.play ? 'VICE plays the block\'s bytes with its samples and song: init with song $00 starts the interrupt that plays them, and nothing is called each frame. Settings → Toolchain picks VICE or DeepSID'
                   : music.initRegs && (music.initRegs.x != null || music.initRegs.y != null) ? 'VICE plays the block\'s bytes with a routine next to them that gives init X and Y as the program does, the song in A, then play each frame from a raster interrupt. Settings → Toolchain picks VICE or DeepSID'
+                  : music.songs ? `VICE plays the block's bytes with a routine next to them that puts in place what the program's routine for song A leaves for play, then play each frame from a raster interrupt. ${music.songs.length > 1 ? `Keys 1-${Math.min(9, music.songs.length)} start the songs` : 'Key 1 starts it again'}. Settings → Toolchain picks VICE or DeepSID`
                   : 'VICE plays the block\'s bytes (those the .sid holds): init with song $00, then play each frame from a raster interrupt. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before. Settings → Toolchain picks VICE or DeepSID'}>
                 Play in {musicPlayer === 'deepsid' ? 'DeepSID' : 'VICE'}</button>
                 {onAddToLibrary && <button className="btn small" onClick={() => onAddToLibrary(blk.start)} title="Keep the tune as a .sid in the library (the Library view in the activity bar), for every project, named after where it was found"><Icon name="library" size={13} />Add to library</button>}</div>}

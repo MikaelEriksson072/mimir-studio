@@ -1250,6 +1250,19 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     the KERNAL's jiffy clock, and the boot copies it before its SEI; an IRQ in that window sees a clock past 24 hours
     and clears `$a0-$a2`, so nibbles `$e` and `$f` go as 0. VICE does the same with its start moved
     (`-keybuf-delay 12`). Tests: `paraprotect.test.ts` (own disks, no code of Paranoid's), Sindri's `g64.test.ts`.
+60. Music with no jump table (spec 8.6, 5.8c): Bomb Jack (Elite, Preservers' D64, unpacked with Sindri) gave two music
+    blocks and neither played its music. Its IRQ calls play at `$7448`, and the game starts each of its five songs
+    with a routine of its own (`$08f1`, `$08ff`, `$090e`, `$092c`, `$093b`: the song's set-up at `$8400`… and a copy of
+    its pointers to `$7e2f`). The analysis knew players by their JMP tables only and took a `JMP` inside play
+    (`$7735`, silent: its variables were outside the block) and one in the sound effects (`$7ec3`). Now a routine the
+    IRQ calls that writes 8 SID registers or more, and is no table's, is play; the program's routines that write what
+    it reads are run as init, and those that play notes that can be heard are its songs (`MusicInfo.songs`: the
+    routine, and the bytes it leaves for play). Where the block plays, a routine next to it writes song A's bytes
+    (`musicPlayData(…, songs)`; with bytes under a ROM, play is called with `$01 = $35`), so the block plays alone in
+    VICE and DeepSID: `$73a0-$96e5`, five songs, keys 1-5. `runPlayer()` gives what init left (`state`) and the notes
+    that can be heard (`heard`). Old against new on 444 programs unpacked with Sindri: 431 the same, 13 changed, all
+    played in VICE; none plays worse, 12 play where they did not (spec 8.6 has the list), time within noise. Tests:
+    `test/music.test.ts` (a player with no table and two songs; a routine that starts a sound effect only).
 
 ## Roadmap
 

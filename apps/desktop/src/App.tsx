@@ -2625,12 +2625,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const name = R.labels.get(b.start)?.name ?? `music_${h4(load)}`, span = `$${h4(load)}-$${h4(load + b.end - b.start - 1)}`;
     // a sample player (5.8b) plays with the bytes outside its block its run read: its samples and song
     const dg = m?.digi;
-    // (a player the program gives its song's address in X and Y, The Last Ninja's, gets them: MusicInfo.initRegs)
+    // (a player the program gives its song's address in X and Y, The Last Ninja's, gets them: MusicInfo.initRegs; one
+    // whose songs the program's routines start, Bomb Jack's, gets what they leave: MusicInfo.songs)
     const d = musicPlayData(A.mem.slice(b.start, b.end), load, init, play, m?.resume, dg && {
       ...dg, wrote: dg.wrote.map(([s, e]): [Addr, Addr] => [spaceAddr(s), spaceAddr(e - 1) + 1]),
       parts: dg.parts.map(([s, e]) => ({ load: spaceAddr(s), data: A.mem.slice(s, e) })),
       ...(dg.irq ? { irq: { ...dg.irq, handler: spaceAddr(dg.irq.handler) } } : {}),
-    }, m?.initRegs);
+    }, m?.initRegs, m?.songs?.map(s => ({ at: spaceAddr(s.at), state: s.state.map(([a, v]): [Addr, number] => [spaceAddr(a), v]) })));
     return { m, load, init, play, name, span, dg, d };
   };
   const playMusic = async (at: Addr | null | undefined) => {
@@ -2647,6 +2648,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         : dg ? `init $${h4(init)} with song $00 (it starts its ${it} samples too${partsText}), then play $${h4(play)} each frame`
           // X and Y as the program gives them, loaded by a routine next to the block
           : d.regs ? `init $${h4(init)} with song $${h2(d.song ?? 0)} in A and ${regsGiven(d.regs)} as the program gives them ($${h4(d.regs.at)} loads them), then play $${h4(play)} each frame`
+            // the songs the program's own routines start: what they leave, written by a routine next to the block
+            : d.songs ? `$${h4(d.songs.at)} puts in place what the program's routine $${h4(d.songs.from[0])} leaves for play (song $00 of ${d.songs.count}: ${d.songs.from.map(a => `$${h4(a)}`).join(', ')}), then play $${h4(play)} each frame`
             : d.song ? `init $${h4(init)} with song $${h2(d.song)} (the one the program starts), then play $${h4(play)} each frame` : null;
     if (d.problem) toast(m?.resume ? `${name} cannot play on from the snapshot: ${d.problem}. It plays with its init $${h4(init)}, which may not start it again`
       : `${name} may not play: ${d.problem}. It plays with its init $${h4(init)} and the song in A, X and Y`, 'warn');
@@ -2676,7 +2679,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (!w) return;
       await kr.run({ prgPath: `${w.dir}/${file}` });
       toast(d.resume ? `VICE plays ${name} (${span}): it ${how}. Any key starts it again from the snapshot`
-        : how ? `VICE plays ${name} (${span}): ${how}. Keys 1-9 and 0 start it again with songs $00-$09`
+        : how ? `VICE plays ${name} (${span}): ${how}. ${d.songs && d.songs.count < 10 ? (d.songs.count === 1 ? 'Key 1 starts it again' : `Keys 1-${d.songs.count} start songs $00-$${h2(d.songs.count - 1)}`) : 'Keys 1-9 and 0 start it again with songs $00-$09'}`
           : `VICE plays ${name} (${span}): init $${h4(init)} with song $00, then play $${h4(play)} each frame. Keys 1-9 and 0 start songs $00-$09, + and - the next and the one before`, 'ok');
       for (const x of p.warnings) toast(x, 'warn');
     } catch (e) { toast(`Could not play ${name}: ${errorText(e)}`, 'err'); }

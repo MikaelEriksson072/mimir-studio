@@ -684,6 +684,46 @@ Spelarens skärm säger `SONG $00 (A AT INIT), X $28 AND Y $B7`; i VICE ger bloc
 1 000–2 600. Exportens `.sid` är fortfarande blockets egna byte (programmet anropar init själv). På 428 uppackade program
 (Year-top20 rank 1–6 och Onefile-top200) ändras ingen musik: alla som spelar gör det redan med låtnumret.
 
+**Spelare utan hopptabell** (5.8c, `calledPlayers()` i `music.ts`, `MusicInfo.songs`). Bomb Jack (Elite, 1986;
+Preservers `Bomb Jack - Elite.D64`, uppackad med Sindri) har ingen hopptabell. Spelets IRQ anropar play på `$7448`
+(`jsr $7448` på `$1664`), och varje låt startas av en egen rutin i spelets kod, långt från spelaren: `$08f1`, `$08ff`,
+`$090e`, `$092c` och `$093b` gör `sei`, slår av BASIC, anropar låtens uppsättning (`$8400`, `$8c4f`, …), kopierar
+låtens pekare dit play läser dem (`$0e7b`, till `$7e2f`–`$7e32`) och slår på BASIC igen. Analysen tog i stället två
+`JMP` inne i spelarens och ljudeffekternas kod (`$7735` och `$7ec3`): den första var tyst i VICE (spelarens variabler
+på `$73a0`–`$7447` låg utanför blocket), den andra spelade en ljudeffekt. Nu:
+- **Play** är en rutin som IRQ:ns spårade kod anropar med `JSR`, som skriver minst 8 SID-register och håller ihop sin
+  kod som en tabells (högst 16 instruktioner utanför `−$800`…`+$2000`). Den anropar ingen tabells ingång (den tabellen
+  är spelaren) och är ingen tabells ingång, mål eller kod: The Last Ninjas IRQ anropar play-koden som tabellen på
+  `$1000` kör in i. Av en rutin inne i en annan tas den som skriver fler SID-register, den inre när de skriver lika många.
+- **Låtarnas rutiner** är rutiner som programmet anropar (spårat, `JSR`), utanför play, vars spårade kod skriver minst
+  två av de byte som play läser (absolut och nollsida, och pekarna den läser genom). De 24 som skriver flest körs som
+  init med play efter i 3 s. De som spelar toner som hörs (rösten har en frekvens och volymen är inte 0 när anropet
+  återvänt, `PlayerRun.heard`) är låtar. Onscreen 5k bygger sina frekvenstabeller medan det kör, och Black Gold sätter
+  volymen i en annan rutin: i filen är de 0, och utan kravet blev de tysta block.
+- **En rutin och en som den anropar:** den som anropar är låtens när den skriver byte som play läser och som den
+  anropade inte skriver (Bomb Jacks `$08f1` kopierar pekarna efter `$8400`), annars den anropade. Rutiner som lämnar
+  samma byte med samma värden till play startar samma låt. Minst en låt ska spela 30 toner som hörs på en minut: en
+  ljudeffekt slutar.
+- **Blocket** är det som play körde och läste i alla låtarnas körningar (tre minuter var), också variabler som rutinen
+  skrev först. Inom `−$800`…`+$2000` tas det med vad som än ligger emellan (Bomb Jacks låtdata ligger efter
+  ljudeffekternas kod), därefter som för en tabell: `$73a0-$96e5`. Rutinerna själva är programmets kod och ingår inte.
+  Varje låts `state` är det rutinen lämnar till play: byte som den skrev och play läste, SID-register som den skrev, och
+  byte utanför blocket som play läste, med programmets värden (högst 256; inte stacken, I/O eller `$fffa`–`$ffff`).
+  Bomb Jacks fem låtar lämnar 27 byte var. Init (`MusicInfo.init`) är första låtens rutin.
+- **Uppspelningen** (`musicPlayData(…, songs)`, `MusicPlayData.songs`): en rutin direkt efter blocket (eller före det)
+  skriver låt A:s byte och blir init i VICE och i DeepSID (`cmp #k / beq / jmp` förbi varje låt efter den första, låt 0
+  sist, också för ett nummer efter den sista). `.sid`-filen har lika många låtar. Ligger en låts byte utanför blocket
+  under BASIC eller KERNAL anropas play genom en rutin efter den som sätter `$01` till `$35` under anropet: Untouchables
+  (Ocean) har sina variabler på `$feea`–`$ffc4`. Bomb Jacks fem låtar spelar i VICE (RMS 1 200–3 400 per sekund; låt 3
+  är en kort slinga som tystnar efter 11 s). Spelets ena skärm anropar play två gånger per bildruta (IRQ:n `$0958`, en av
+  tre i rad, som spårningen inte når): där går låten dubbelt så fort som Mimir spelar den.
+- **Mätt (2026-11-22)** på 444 program uppackade med Sindri (CSDB:s Top200-spel, 70 Preservers-spel och Onefile-top200),
+  gammal kärna mot ny: 431 lika och 13 ändrade, alla spelade i VICE med båda. Nya block som spelar: Robocop, Creatures 2,
+  Muddy Racers, Mars Saga, Magnum Force, Caveman Ughlympics, Desert Fox (ett andra block, 12 s) och Untouchables (en 4 s
+  lång slinga, som i Sindri). Tysta förut, spelar nu: Bomb Jack, Pirates (blocket `$18a5-$18fe` var 90 byte), Return of
+  the Jedi (`$5df3`, en annan tabell) och LSR 64 Ketto (tystnade efter 2 s). Tenebra 2 byter tabell och är tyst med
+  båda. Tiden är inom bruset utom där en sådan spelare hittas (Bomb Jack +150 ms första gången).
+
 **I DeepSID** (`electron/main/deepsid.ts`) går `.sid`-filen till sidans Load SID, och när den listats klickas dess rad. DeepSID
 hämtar sin mapplista med jQuery-anrop när sidan öppnas, och ett klick på en rad spelar `browser.songs[rad − subFolders]`.
 En mapplista som kommer fram efter att Load SID börjat sätter tillbaka mappens antal undermappar (160 i roten): klicket
@@ -850,7 +890,11 @@ Referenser in i musiken som inte är init/play blir `music.location+$xx`. Använ
   `resume` har `$01`, vektorn och pekaren i nollsidan, och rutinen bredvid blocket startar CIA 2:s timer igen; en
   sekvenserare i programmets IRQ som startar ett sampel var 25:e bildruta, med en NMI i två halvor som pekar vektorn på
   varandra (rutinen sätter `$0314` och slår på rasteravbrottet); en NMI som spelar genom en tabell som inget laddat
-  (ingen spelare); och att en NMI som skriver samma värde varje gång, eller en timer en bildruta lång, inte är någon.
+  (ingen spelare); och att en NMI som skriver samma värde varje gång, eller en timer en bildruta lång, inte är någon;
+- en spelare utan hopptabell (som Bomb Jacks): IRQ:n anropar play på `$1000`, och programmets rutiner på `$0900` och
+  `$0920` startar två låtar (pekaren, flaggan som play läser, volymen). Blocket är play och låtarna, inte rutinerna;
+  rutinen efter blocket spelar låt 0 och 1 ensam (låt 7 ger låt 0), `.sid`-filen har två låtar, och en byte under
+  KERNAL ger play genom `$01 = $35`. En rutin som bara startar fyra toner (en ljudeffekt) ger ingen spelare.
 
 `test/sidplayer.test.ts` spelar en samplingsspelare vars init också startar ett rasteravbrott (en JAM utanför blocket):
 delarna på `$e000` och `$4000` hamnar rätt, NMI:n spelar, rasteravbrottet körs aldrig och skärmen säger *NO PLAY*, i
@@ -914,8 +958,6 @@ räkna bildrutor. Förut valdes en `JMP` inne i play-koden, som bara kör en del
 **Tid.** Utan körningar tar detekteringen 10–20 ms för en hel snapshot. Körningarna lägger till 30–300 ms första gången
 ett minne analyseras (mest de tre minuterna av låten som ger blockets omfång, och för en snapshot två minuter för att
 pröva init), och knappt något i analysens följande varv, som får körningarna ur sparade resultat.
-
-**Planerat:** spelare utan hopptabell, som bara känns igen på sina anrop (klassiska spelrutiner).
 
 ### 8.7 VIC-II-evidens och grafik
 

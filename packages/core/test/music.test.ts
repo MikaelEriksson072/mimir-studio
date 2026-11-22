@@ -3,7 +3,7 @@
  * two or four JMPs or right after JMP init, and never in the program's own start-up table, code that calls the player
  * or a JMP pair in code that clears the SID. The player below plays three voices from a PAL note frequency table. */
 import { describe, expect, it } from 'vitest';
-import { analyze, findBlock, musicPlayData, openC64File, parseVsf, render, verify, type MusicInfo, type ProjectInput } from '../src';
+import { analyze, findBlock, musicPlayData, musicSidFile, openC64File, parseVsf, render, verify, type MusicInfo, type ProjectInput } from '../src';
 import { noteTables, regsAtCall } from '../src/analyze/music';
 import { runPlayer } from '../src/c64/sidrun';
 import { fromSource, snapshotOf } from './helpers/programs';
@@ -629,6 +629,99 @@ freqhi: .byte ${hex(FREQ.map(f => f >> 8))}
     // a player that plays with the song number alone is given nothing, whatever the program loads first
     const plain = analyze(project(program(' ldx #5\n ldy #9\n lda #0\n jsr $1000\n', 'jsr $1003') + player()));
     expect(plain.music.map(x => [x.start, x.initRegs])).toEqual([[0x1000, undefined]]);
+  });
+
+  it('finds a player with no jump table whose play the IRQ calls and whose songs the program\'s own routines start (Bomb Jack)', () => {
+    // play at $1000 with nothing before it; the program's routines at $0900 and $0920 set the song's pointer, the flag
+    // play reads and the volume, the first at the start and the second when fire is pressed
+    const tune = (n: number, base: number) => Array.from({ length: n }, (_, i) => base + (i % 12));
+    const src = `${BASIC} jsr start1
+ sei
+ lda #<irqh
+ sta $0314
+ lda #>irqh
+ sta $0315
+ cli
+loop: lda $dc00
+ and #$10
+ bne loop
+ jsr start2
+ jmp loop
+irqh: jsr play
+ jmp $ea31
+.pc = $0900
+start1: lda #<tune1
+ sta $fb
+ lda #>tune1
+ sta $fc
+ jmp on
+.pc = $0920
+start2: lda #<tune2
+ sta $fb
+ lda #>tune2
+ sta $fc
+on: lda #1
+ sta $fd
+ lda #$0f
+ sta $d418
+ rts
+${songPlayer([], '').replace(/^\.pc = \$1000\n lda #\$0f\n sta \$d418\n rts\n/, '.pc = $1000\n').replace(/song: \.byte .*\n/, `tune1: .byte ${hex(tune(48, 24))},0\ntune2: .byte ${hex(tune(16, 40))},0\n`)}`;
+    expect(src).toContain('.pc = $1000\nplay: lda $fd');
+    const A = analyze(project(src));
+    expect(A.music.map(m => [m.init, m.play])).toEqual([[0x0900, 0x1000]]);
+    const m = A.music[0];
+    expect(m.start).toBe(0x1000);
+    expect(m.songs?.map(s => s.at)).toEqual([0x0900, 0x0920]);
+    expect(m.why).toEqual(expect.arrayContaining(['no jump table: the IRQ calls play $1000 (at $0829)',
+      'the program starts its 2 songs with routines of its own ($0900, $0920), which set the bytes play reads']));
+    // each song: the pointer to its notes and the flag it sets, the volume
+    const at = (k: number) => { const s = new Map(m.songs![k].state); return s.get(0xfb)! | (s.get(0xfc)! << 8); };
+    expect(m.songs!.map(s => new Map(s.state).get(0xfd))).toEqual([1, 1]);
+    expect(m.songs!.map(s => new Map(s.state).get(0xd418))).toEqual([0x0f, 0x0f]);
+    expect([...A.mem.subarray(at(0), at(0) + 3), ...A.mem.subarray(at(1), at(1) + 3)]).toEqual([24, 25, 26, 40, 41, 42]);
+    // the block is the player and its songs: not the program's routines that start them
+    expect(m.end).toBe(at(1) + 17);
+    // it plays with the block alone: an init next to it writes song A's bytes
+    const block = A.mem.slice(m.start, m.end);
+    const d = musicPlayData(block, m.start, m.init, m.play, undefined, undefined, undefined, m.songs);
+    expect(d.songs).toMatchObject({ at: m.end, count: 2, from: [0x0900, 0x0920] });
+    expect([d.load, d.init]).toEqual([m.start, m.end]);
+    expect(d.alone).toBeUndefined();
+    const notes = (song: number) => {
+      const mem = new Uint8Array(0x10000); mem.set(d.data, d.load);
+      return runPlayer(mem, { init: d.init, play: d.play, frames: 100, song }).notes;
+    };
+    expect([notes(0), notes(1), notes(7)]).toEqual([49, 17, 49]);
+    expect([...musicSidFile(d).subarray(0x0e, 0x12)]).toEqual([0, 2, 0, 1]);
+    // a song's bytes under the KERNAL (Untouchables' variables at $feea-$ffc4): play is called with $01 = $35
+    const rom = musicPlayData(block, m.start, m.init, m.play, undefined, undefined, undefined, [{ ...m.songs![0], state: [...m.songs![0].state, [0xfee0, 7]] }]);
+    expect(rom.songs?.play).toBe(0x1000);
+    expect([...rom.data.subarray(rom.play - rom.load, rom.play - rom.load + 14)]).toEqual([0xa5, 0x01, 0x48, 0xa9, 0x35, 0x85, 0x01, 0x20, 0x00, 0x10, 0x68, 0x85, 0x01, 0x60]);
+    expect(d.songs?.play).toBeUndefined();
+  });
+
+  it('takes no player with no jump table when the routines that set what play reads start only a sound effect', () => {
+    // the same play, called from the IRQ, but the only routine starts four notes
+    const src = `${BASIC} jsr start1
+ sei
+ lda #<irqh
+ sta $0314
+ lda #>irqh
+ sta $0315
+ cli
+loop: jmp loop
+irqh: jsr play
+ jmp $ea31
+.pc = $0900
+start1: lda #<tune1
+ sta $fb
+ lda #>tune1
+ sta $fc
+ lda #1
+ sta $fd
+ rts
+${songPlayer([], '').replace(/^\.pc = \$1000\n lda #\$0f\n sta \$d418\n rts\n/, '.pc = $1000\n').replace(/song: \.byte .*\n/, 'tune1: .byte 30,34,37,42,0\n')}`;
+    expect(analyze(project(src)).music).toEqual([]);
   });
 
   it('reads what the code right before a call loads into A, X and Y, back to where another path comes in', () => {

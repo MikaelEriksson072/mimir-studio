@@ -4,7 +4,7 @@
  * a raster interrupt, with the time play takes shown as a bar in the border. Keys 1-9 and 0 start songs $00-$09, +
  * and - the next and the one before. It holds exactly the bytes the export's .sid file does, so what plays is what
  * the .sid holds. */
-import type { Addr, DigiInfo, InitRegs } from '../types';
+import type { Addr, DigiInfo, InitRegs, MusicSong } from '../types';
 import { assemble } from '../verify/kick-subset-assembler';
 import { makePrg } from './prg';
 import { makePsid } from './psid';
@@ -308,6 +308,11 @@ export interface MusicPlayData {
   /** a player the program gives X and Y (MusicInfo.initRegs: The Last Ninja's song address): init is a routine put
    *  next to the block that loads them as the program does and jumps to the player's init, with the song in A */
   regs?: { at: Addr; bytes: number; init: Addr; x?: number; y?: number };
+  /** a player whose songs routines of the program start (MusicInfo.songs, Bomb Jack's): init is a routine put next to
+   *  the block that writes what song A's routine leaves for play (song 0 for a number past the last); `from`: those
+   *  routines, in the program. `play`: the player's play, when what it reads outside the block is under a ROM: `play`
+   *  above is then a routine after init that calls it with $01 = $35 */
+  songs?: { at: Addr; bytes: number; count: number; from: Addr[]; play?: Addr };
 }
 
 /** what a sample player gives musicPlayData: its run's findings and the bytes of its parts */
@@ -322,15 +327,62 @@ export interface MusicPlayDigi extends Pick<DigiInfo, 'nmi' | 'hz' | 'wrote'>, P
  * the demo was. A sample player (`MusicInfo.digi`) plays with its parts, and with play 0 init is wrapped (`wrapped`);
  * one whose init does not return plays from what init left (`resume`, then its timer started again). A player the
  * program gives registers (`MusicInfo.initRegs`) gets them: the first song in A, and X and Y through a routine put
- * next to the block as init (`regs`).
+ * next to the block as init (`regs`). A player whose songs the program's own routines start (`MusicInfo.songs`) has
+ * a routine next to the block as init that writes what song A's routine leaves for play (`songs`).
  * The export's .sid file is the block's bytes alone (render/kick.ts).
  */
-export function musicPlayData(block: Uint8Array, load: Addr, init: Addr, play: Addr, resume?: [Addr, number][], digi?: MusicPlayDigi, regs?: InitRegs): MusicPlayData {
+export function musicPlayData(block: Uint8Array, load: Addr, init: Addr, play: Addr, resume?: [Addr, number][], digi?: MusicPlayDigi, regs?: InitRegs, songs?: MusicSong[]): MusicPlayData {
   const avoid: [Addr, Addr][] = digi ? [...digi.parts.map((p): [Addr, Addr] => [p.load, p.load + p.data.length]), ...digi.wrote] : [];
+  if (songs?.length && !resume && !regs) {
+    const s = songsInit({ data: block, load, init, play }, songs, avoid);
+    return withAlone(digi ? sampled(s, digi) : s);
+  }
   const d = resumed(block, load, init, play, resume, avoid);
   // (a player that plays on without init, or a sample player whose init is wrapped, is given nothing)
   const g = regs && !d.resume && !(digi && play === 0) ? given(d, regs, avoid) : d;
   return withAlone(digi ? sampled(g, digi) : g);
+}
+
+/** lda #v once for each value, then a sta (zero page or absolute) for each byte that has it; $01 last (the SID
+ *  registers are written while the I/O area shows) */
+function stores(bytes: [Addr, number][]): number[] {
+  const byValue = new Map<number, Addr[]>();
+  for (const [a, v] of bytes) { if (a === 1) continue; let l = byValue.get(v); if (!l) byValue.set(v, l = []); l.push(a); }
+  const code: number[] = [];
+  for (const [v, as] of byValue) {
+    code.push(0xa9, v);
+    for (const a of as) code.push(...(a < 0x100 ? [0x85, a] : [0x8d, a & 0xff, a >> 8]));
+  }
+  for (const [a, v] of bytes) if (a === 1) code.push(0xa9, v, 0x85, 0x01);
+  return code;
+}
+
+/** The init of a player whose songs the program's routines start: song A's bytes written, then rts; for each song
+ *  after the first `cmp #k / beq / jmp` past it, and song 0 last (also for a number past the last). A player whose
+ *  bytes outside the block are under BASIC or the KERNAL (Untouchables keeps its variables at $feea-$ffc4, the game
+ *  runs with $01 = $35) is called through a routine after it that switches them out for the call and back */
+function songsInit(d: MusicPlayData, songs: MusicSong[], avoid: [Addr, Addr][]): MusicPlayData {
+  const end = d.load + d.data.length;
+  const underRom = songs.some(s => s.state.some(([a]) => (a < d.load || a >= end) && ((a >= 0xa000 && a < 0xc000) || a >= 0xe000)));
+  const build = (at: Addr): number[] => {
+    const code: number[] = [];
+    for (let k = 1; k < songs.length; k++) {
+      const body = [...stores(songs[k].state), 0x60];
+      const next = at + code.length + 7 + body.length;
+      code.push(0xc9, k, 0xf0, 0x03, 0x4c, next & 0xff, next >> 8, ...body);
+    }
+    code.push(...stores(songs[0].state), 0x60);
+    // lda $01 / pha / lda #$35 / sta $01 / jsr play / pla / sta $01 / rts
+    if (underRom) code.push(0xa5, 0x01, 0x48, 0xa9, 0x35, 0x85, 0x01, 0x20, d.play & 0xff, d.play >> 8, 0x68, 0x85, 0x01, 0x60);
+    return code;
+  };
+  const n = build(0).length;
+  const busy: [Addr, Addr][] = [...avoid, ...songs.flatMap(s => s.state.map(([a]): [Addr, Addr] => [a, a + 1]))];
+  const where = nextTo(d, Array<number>(n).fill(0), busy);
+  if (!where) return { ...d, problem: `no room next to the block for the ${n} bytes that put each song's bytes in place as the program's routines leave them` };
+  where.data.set(build(where.at), where.at - where.load);
+  return { ...d, data: where.data, load: where.load, init: where.at, ...(underRom ? { play: where.at + n - 14 } : {}),
+    songs: { at: where.at, bytes: n, count: songs.length, from: songs.map(s => s.at), ...(underRom ? { play: d.play } : {}) } };
 }
 
 /** The registers the program gives init: A is the first song; X and Y are loaded by a routine next to the block that
@@ -393,7 +445,7 @@ function sampled(d: MusicPlayData, s: MusicPlayDigi): MusicPlayData {
  * between them.
  */
 export function musicSidFile(d: MusicPlayData, name?: string): Uint8Array {
-  if (!d.digi || d.play !== 0) return makePsid(d.data, d.load, d.init, d.play, name, false, d.song ?? 0);
+  if (!d.digi || d.play !== 0) return makePsid(d.data, d.load, d.init, d.play, name, false, d.song ?? 0, d.songs?.count);
   const segs = [{ load: d.load, data: d.data }, ...(d.parts ?? [])];
   const lo = Math.min(...segs.map(g => g.load)), hi = Math.max(...segs.map(g => g.load + g.data.length));
   const all = new Uint8Array(hi - lo);
@@ -403,17 +455,7 @@ export function musicSidFile(d: MusicPlayData, name?: string): Uint8Array {
 
 function resumed(block: Uint8Array, load: Addr, init: Addr, play: Addr, resume?: [Addr, number][], avoid: [Addr, Addr][] = []): MusicPlayData {
   if (!resume) return { data: block, load, init, play };
-  // lda #v once for each value, then a sta (zero page or absolute) for each byte that has it; $01 last (the SID
-  // registers are written while the I/O area shows); rts
-  const byValue = new Map<number, Addr[]>();
-  for (const [a, v] of resume) { if (a === 1) continue; let l = byValue.get(v); if (!l) byValue.set(v, l = []); l.push(a); }
-  const code: number[] = [];
-  for (const [v, as] of byValue) {
-    code.push(0xa9, v);
-    for (const a of as) code.push(...(a < 0x100 ? [0x85, a] : [0x8d, a & 0xff, a >> 8]));
-  }
-  for (const [a, v] of resume) if (a === 1) code.push(0xa9, v, 0x85, 0x01);
-  code.push(0x60);
+  const code = [...stores(resume), 0x60];
   const end = load + block.length, n = code.length;
   const free = (s: number) => s >= 0x0200 && s + n <= 0xfffa && !overlaps(s, s + n, 0xd000, 0xe000) && !resume.some(([a]) => a >= s && a < s + n)
     && !avoid.some(([a, b]) => overlaps(s, s + n, a, b));

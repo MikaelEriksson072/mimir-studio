@@ -832,7 +832,16 @@ export interface MusicInfo {
    *  `ldx #$28 / ldy #$b7 / jsr $b000`: the song's address in X and Y): set only when the player plays with them and
    *  not with the song number alone. They are given init wherever the block plays (in VICE, in DeepSID) */
   initRegs?: InitRegs;
+  /** a player with no init of its own (5.8c): the IRQ calls play, and the program starts each song with a routine of
+   *  its own somewhere else (Bomb Jack's five, far from the player). `init` is the first song's routine; each song's
+   *  `state` is what its routine leaves for play (the bytes it writes that play reads, the SID registers it sets) and
+   *  the bytes outside the block play reads, as the program has them. Wherever the block plays, an init put next to it
+   *  writes song A's state */
+  songs?: MusicSong[];
 }
+
+/** a song of a player whose songs the program's routines start (MusicInfo.songs): the routine, and what it leaves */
+export interface MusicSong { at: Addr; state: [Addr, number][] }
 
 /** what A, X and Y hold when init is called (a register left out: the song number in A, 0 in X and Y; in the player
  *  the song number in all three); `at`: the call */

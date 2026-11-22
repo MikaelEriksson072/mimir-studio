@@ -27,7 +27,13 @@ export interface PlayerRunOptions {
   settle?: number;
   /** what is loaded: running into other bytes ends the run (the stack and the zero page excepted) */
   loaded?: (a: Addr) => boolean;
+  /** also give what init left for play (`PlayerRun.state`): a player whose songs routines of the program start */
+  state?: boolean;
 }
+
+/** What init left for play (PlayerRunOptions.state): the bytes init wrote, memory as init left it, the SID registers
+ *  it wrote last (-1: not written), the bytes play read or ran, whoever wrote them before, and those it ran */
+export interface PlayerState { wrote: Uint8Array; after: Uint8Array; sid: number[]; read: Uint8Array; ran: Uint8Array }
 
 export interface PlayerRun {
   /** init returned (true with `noInit`) */
@@ -40,12 +46,18 @@ export interface PlayerRun {
   /** the SID registers written ($d400-$d418, mirrors folded), and the notes started */
   regs: number;
   notes: number;
+  /** the notes started that can be heard: the voice's frequency and the volume not 0 once the call (play, or init)
+   *  that started it returned (Black Gold's player writes the volume as 0, Onscreen 5k's frequencies are 0 in the
+   *  file: the program builds their tables as it runs) */
+  heard: number;
   /** per address: USED_RUN when the CPU fetched it, USED_READ when it was read as data before the run wrote it */
   used: Uint8Array;
   /** the frame the last address was used for the first time (0: during init) */
   lastNew: number;
   initCycles: number;
   maxPlay: number;
+  /** with `state`, once init returned */
+  state?: PlayerState;
 }
 
 export const USED_RUN = 1, USED_READ = 2;
@@ -61,13 +73,17 @@ const TRAP = 0xfff0;
 export function runPlayer(mem0: Uint8Array, o: PlayerRunOptions): PlayerRun {
   const mem = mem0.slice();
   const written = new Uint8Array(0x10000), used = new Uint8Array(0x10000);
-  const ctl = [0, 0, 0];
-  let regMask = 0, notes = 0, sidWrites = 0, raster = 0, noise = 0x7ffff8, frame = 0, lastNew = 0;
+  const ctl = [0, 0, 0], sid = new Uint8Array(0x19);
+  let regMask = 0, notes = 0, heard = 0, gated = 0, sidWrites = 0, raster = 0, noise = 0x7ffff8, frame = 0, lastNew = 0;
   const io = (a: Addr) => a >= 0xd000 && a < 0xe000;
   const use = (a: Addr, k: number) => { if (!(used[a] & k)) { if (!used[a]) lastNew = frame; used[a] |= k; } };
   let ranOff: Addr | null = null;
+  // (with `state`: what init wrote, and what play read or ran once init returned)
+  const st = o.state ? { wrote: new Uint8Array(0x10000), sid: Array<number>(0x19).fill(-1), read: new Uint8Array(0x10000), ran: new Uint8Array(0x10000) } : null;
+  let after: Uint8Array | null = null;
   const bus: Bus = {
     read(a) {
+      if (st && after) st.read[a] = 1;
       if (io(a)) {
         if (a === 0xd012) return (raster = (raster + 1) % 312) & 0xff;
         if (a === 0xd011) return (raster >> 1) & 0x80 | 0x1b;
@@ -86,16 +102,20 @@ export function runPlayer(mem0: Uint8Array, o: PlayerRunOptions): PlayerRun {
         if (a >= 0xd400 && a < 0xd800) {
           const r = a & 0x1f;
           if (r > 0x18) return;
+          if (st && !after) st.sid[r] = v;
           sidWrites++;
           regMask |= 1 << r;
-          if (r === 4 || r === 11 || r === 18) { const k = (r - 4) / 7; if ((v & 1) && !(ctl[k] & 1)) notes++; ctl[k] = v; }
+          sid[r] = v;
+          if (r === 4 || r === 11 || r === 18) { const k = (r - 4) / 7; if ((v & 1) && !(ctl[k] & 1)) { notes++; gated |= 1 << k; } ctl[k] = v; }
         }
         return;
       }
+      if (st && !after) st.wrote[a] = 1;
       written[a] = 1;
       mem[a] = v;
     },
     fetch(a) {
+      if (st && after) { st.read[a] = 1; st.ran[a] = 1; }
       if (o.loaded && a >= 0x200 && !o.loaded(a) && ranOff == null) ranOff = a;
       if (!written[a]) use(a, USED_RUN);
       return mem[a];
@@ -116,12 +136,15 @@ export function runPlayer(mem0: Uint8Array, o: PlayerRunOptions): PlayerRun {
       if (op === 0x00) return { ok: false, cycles: c, why: `runs into a BRK at $${h4(pc)}` };
       if (op === 0x40) return { ok: false, cycles: c, why: 'returns with RTI' };
     }
+    // (the notes the call started that can be heard)
+    for (let k = 0; k < 3; k++) if ((gated & (1 << k)) && (sid[0x18] & 0x0f) && (sid[k * 7] || sid[k * 7 + 1])) heard++;
+    gated = 0;
     return { ok: true, cycles: c, why: '' };
   };
   const out = (init: boolean, played: number, stop: string | null, initCycles: number, maxPlay: number): PlayerRun => {
     let regs = 0;
     for (let r = 0; r <= 0x18; r++) if (regMask & (1 << r)) regs++;
-    return { init, played, frames: o.frames, stop, regs, notes, used, lastNew, initCycles, maxPlay };
+    return { init, played, frames: o.frames, stop, regs, notes, heard, used, lastNew, initCycles, maxPlay, ...(st && after ? { state: { ...st, after } } : {}) };
   };
   let initCycles = 0;
   if (!o.noInit) {
@@ -130,6 +153,7 @@ export function runPlayer(mem0: Uint8Array, o: PlayerRunOptions): PlayerRun {
     initCycles = r.cycles;
     if (!r.ok) return out(false, 0, `init ${r.why}`, initCycles, 0);
   }
+  if (st) after = mem.slice();
   let maxPlay = 0, played = 0;
   for (frame = 1; frame <= o.frames; frame++) {
     const r = call(o.play, 0, PLAY_CYCLES);

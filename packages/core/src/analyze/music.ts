@@ -15,13 +15,14 @@
  * that plays has the bytes its run used in its block: its data before the table and the song data after the code that
  * the player reads through pointers. In a snapshot, a player that init no
  * longer restarts (it changed its own code, say) plays on from where it was without init, with the bytes outside the
- * block it reads as they were (`MusicInfo.resume`). */
+ * block it reads as they were (`MusicInfo.resume`). A player with no table (5.8c, `calledPlayers()`) is a routine the
+ * IRQ calls, with the program's own routines that start its songs (`MusicInfo.songs`). */
 import type { Ctx } from './context';
-import type { Addr, DigiInfo, InitRegs, MusicInfo } from '../types';
+import type { Addr, DigiInfo, InitRegs, MusicInfo, MusicSong } from '../types';
 import { OPC } from '../cpu/opcodes';
 import { decode } from '../cpu/decode';
 import { $4, word } from '../util/hex';
-import { digiPlays, plays, runDigi, runPlayer, USED_READ, USED_RUN, type DigiRun, type PlayerRun, type PlayerRunOptions } from '../c64/sidrun';
+import { digiPlays, plays, runDigi, runPlayer, USED_READ, USED_RUN, type DigiRun, type PlayerRun, type PlayerRunOptions, type PlayerState } from '../c64/sidrun';
 import { parseVsf } from '../c64/vsf';
 
 export type MusicCtx = Pick<Ctx, 'S' | 'mem' | 'insLen' | 'codeOwner' | 'skip' | 'inlineCalls' | 'xrefs' | 'owner' | 'ovList' | 'loaded' | 'forcedData' | 'L' | 'entryKind'> & Partial<Pick<Ctx, 'files' | 'ev' | 'project'>>;
@@ -42,8 +43,11 @@ const STUCK = 30;
 /** the bytes a run used are the block's when the unused ones between them are fewer than this (and no other code is
  *  in between) */
 const GAP = 0x800;
-/** a snapshot's player plays on without init with at most this many bytes outside its block as they were */
+/** a snapshot's player plays on without init with at most this many bytes outside its block as they were (and a
+ *  player with no table, 5.8c, from what a song's routine leaves) */
 const MAX_RESUME = 256;
+/** a player with no table: the program's routines run as its songs' init, those that write the most of what play reads */
+const SONG_TRIES = 24;
 
 /** The code reachable from some addresses: the trace's instructions where it decoded them, the rest decoded here. */
 interface Reach {
@@ -59,8 +63,12 @@ interface Slot { at: Addr; to: Addr; jmp: boolean }
 
 /** A jump table that passed the tests: its entries, the code they reach and where that code ends; `irq` when the
  *  IRQ calls play, `judged` when its code passed the tests (not only its run); `run`: the run that played (init and
- *  `play`), `resume` when it played without init, `empty` when its init does nothing (an rts where JMP init would be) */
-interface Cand { start: Addr; api: Addr[]; play: Addr; sub: Reach; regs: Set<Addr>; sidAt: Addr[]; score: number; why: string[]; hi: Addr; irq: boolean; judged: boolean; run?: PlayerRun; resume?: boolean; empty?: boolean; initRegs?: InitRegs }
+ *  `play`), `resume` when it played without init, `empty` when its init does nothing (an rts where JMP init would be).
+ *  A player with no table (5.8c) starts at its play routine, and `songs` are the program's routines that start its
+ *  songs (`init` the first) */
+interface Cand { start: Addr; api: Addr[]; play: Addr; sub: Reach; regs: Set<Addr>; sidAt: Addr[]; score: number; why: string[]; hi: Addr; irq: boolean; judged: boolean; run?: PlayerRun; resume?: boolean; empty?: boolean; initRegs?: InitRegs; init?: Addr; songs?: Addr[] }
+/** what init is run as: the table's first entry, or a player with no table's first song routine */
+const initOf = (c: Cand): Addr => c.init ?? c.start;
 
 /**
  * Where note frequency tables start (their high bytes): a run of at least 24 rising bytes, one apart (the low and
@@ -318,7 +326,7 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
   };
   // 'quiet': a minute of a tune that starts quietly, kept with its bytes as a try's are; 'minute', 'resumeMinute': how
   // much a minute plays, kept without them
-  type Kind = 'try' | 'quiet' | 'long' | 'minute' | 'resume' | 'resumeMinute' | 'resumeLong';
+  type Kind = 'try' | 'quiet' | 'long' | 'minute' | 'resume' | 'resumeMinute' | 'resumeLong' | 'songTry' | 'songLong';
   const KIND: Record<Kind, Omit<PlayerRunOptions, 'init' | 'play'>> = {
     try: { frames: TRY_FRAMES, loaded },
     long: { frames: LONG_FRAMES, settle: SETTLE, loaded },
@@ -327,6 +335,9 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     resumeMinute: { frames: MINUTE, quiet: QUIET, loaded, noInit: true },
     resume: { frames: TRY_FRAMES, quiet: QUIET, loaded, noInit: true },
     resumeLong: { frames: LONG_FRAMES, settle: SETTLE, loaded, noInit: true },
+    // (a song routine of a player with no table, 5.8c: with what it leaves for play)
+    songTry: { frames: TRY_FRAMES, loaded, state: true },
+    songLong: { frames: LONG_FRAMES, settle: SETTLE, loaded, state: true },
   };
   const runOf = (init: Addr, play: Addr, kind: Kind, regs?: InitRegs): PlayerRun => {
     // (a run without init gives init nothing)
@@ -336,7 +347,7 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     if (r) { const c = RUNS.has(k) ? RUNS : VERDICTS; c.delete(k); c.set(k, r); return r; }
     r = runPlayer(m, { init, play, ...KIND[kind], ...(g ? { regs: g } : {}) });
     // a run that played nothing keeps only its verdict, and so does a minute's (only how much it played is asked)
-    if (plays(r) && kind !== 'minute' && kind !== 'resumeMinute') keep(RUNS, k, r, RUNS_KEPT); else keep(VERDICTS, k, { ...r, used: EMPTY }, VERDICTS_KEPT);
+    if (plays(r) && kind !== 'minute' && kind !== 'resumeMinute') keep(RUNS, k, r, RUNS_KEPT); else keep(VERDICTS, k, { ...r, used: EMPTY, state: undefined }, VERDICTS_KEPT);
     return r;
   };
   const ranText = (r: PlayerRun) => `${r.regs} SID registers and ${r.notes} note${r.notes === 1 ? '' : 's'} in ${Math.round(r.played / 50)} s`;
@@ -551,13 +562,16 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     }
     if (c) cands.push(c);
   }
+  // players with no jump table (5.8c): the IRQ calls play, the program's own routines start the songs
+  if (S.detectMusic) cands.push(...calledPlayers());
   /** What the run says about a player found (the tables that become blocks only: a snapshot's costs two minutes of
    *  play). In a snapshot the player ran before: when it plays far more on from where it was than init starts it
-   *  again (init no longer does, say, as a player whose code changed itself), it plays on without init. */
+   *  again (init no longer does, say, as a player whose code changed itself), it plays on without init. A player
+   *  whose songs the program's routines start plays from what they leave. */
   const settle = (c: Cand) => {
-    const a = c.start;
-    const withInit = c.run ?? runOf(a, c.play, 'try', c.initRegs);
-    const goesOn = memory() && snapshot && plays(runOf(a, c.play, 'resume')) ? runOf(a, c.play, 'resumeMinute') : null;
+    const a = c.start, init = initOf(c);
+    const withInit = c.run ?? runOf(init, c.play, 'try', c.initRegs);
+    const goesOn = !c.songs && memory() && snapshot && plays(runOf(a, c.play, 'resume')) ? runOf(a, c.play, 'resumeMinute') : null;
     const minute = goesOn ? runOf(a, c.play, 'minute', c.initRegs) : null;
     if (goesOn && minute && plays(goesOn) && (!plays(minute) || (minute.notes < STUCK && minute.notes * 4 < goesOn.notes))) {
       c.run = goesOn; c.resume = true;
@@ -572,7 +586,7 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
   const opens = (b: Cand) => { for (const pc of b.sub.ins.keys()) if (pc < b.start) return false; return true; };
   // players that play are compared over a minute: a part of one can start a few notes and stop, a tune start quietly
   const heard = new Map<Cand, number>();
-  const minute = (c: Cand) => { let v = heard.get(c); if (v == null) heard.set(c, v = musical(runOf(c.start, c.play, c.resume ? 'resumeMinute' : 'minute', c.initRegs))); return v; };
+  const minute = (c: Cand) => { let v = heard.get(c); if (v == null) heard.set(c, v = musical(runOf(initOf(c), c.play, c.resume ? 'resumeMinute' : 'minute', c.initRegs))); return v; };
   /** the run of a table that starts its player's code runs nothing in the bytes before it (where code can be: BEFORE) */
   const runOpens = (c: Cand) => {
     if (!c.run) return true;
@@ -581,8 +595,8 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
   };
   const clientOf = (a: Cand, b: Cand) => {
     // (a caller starts the player it calls, which an init that does nothing does not: a table it runs through is a JMP
-    // in its own play code, followed by more of it)
-    if (a.empty || (b.start >= a.start && b.start < a.start + 3 * a.api.length)) return false;
+    // in its own play code, followed by more of it; nor does a player with no table, which the IRQ calls itself)
+    if (a.empty || a.songs || (b.start >= a.start && b.start < a.start + 3 * a.api.length)) return false;
     // runs: a plays through b when its run ran b's entries, b plays as much on its own (over a minute) and never runs
     // a's table, and b's table starts its code (a part of a player, which the player's own flow runs through, has code
     // before it). A player that plays more than the inner routine it calls is no caller of it
@@ -636,17 +650,25 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
     // a player that plays: the bytes its run used (over three minutes of the song) are the block's too, before the
     // table and after the code, up to other code the run did not run, another player or other files' bytes
     let s = a, resume: [Addr, number][] | undefined, run: PlayerRun | undefined;
+    // (a player with no table: each song's run, and what play ran and read in them together, its variables the song's
+    // routine wrote too; not what the routines ran, the program's code, whose bytes the songs' init puts in place)
+    const songRuns = c.songs?.map(x => { const r = runOf(x, c.play, 'songLong'); return plays(r) && r.state ? r : runOf(x, c.play, 'songTry'); });
     if (c.run) {
-      run = runOf(a, c.play, c.resume ? 'resumeLong' : 'long', c.initRegs);
+      run = songRuns ? songRuns[0] : runOf(a, c.play, c.resume ? 'resumeLong' : 'long', c.initRegs);
       if (!plays(run)) run = c.run;
-      const u = run.used;
+      let u = run.used;
+      if (songRuns) {
+        u = new Uint8Array(0x10000);
+        for (const { state: st } of songRuns) if (st) for (let p = 0; p < 0x10000; p++) u[p] |= (st.ran[p] ? USED_RUN : 0) | (st.read[p] ? USED_READ : 0);
+      }
       const other = (p: Addr) => !loaded(p) || owner[p] !== owner[a] || (p >= 0xd000 && p < 0xe000 && !u[p])
         || music.some(m => p >= m.start && p < m.end) || (starts.has(p) && p !== a)
         || (!!insLen[p] && !(u[p] & USED_RUN) && !c.sub.ins.has(p));
       // the code the run ran near the table is the player's whatever lies between: without it, it runs out of its block
+      // (and with no table what play read too: Bomb Jack's song data lie past its sound effects' code)
       let top = e, bottom = a;
       for (let p = Math.max(0x0200, a - BEFORE); p < Math.min(0x10000, a + SPAN); p++) {
-        if (!(u[p] & USED_RUN) || !loaded(p) || owner[p] !== owner[a] || music.some(m => p >= m.start && p < m.end)) continue;
+        if (!(songRuns ? u[p] : u[p] & USED_RUN) || !loaded(p) || owner[p] !== owner[a] || music.some(m => p >= m.start && p < m.end)) continue;
         if (p < bottom) bottom = p;
         if (p >= top) top = p + 1;
       }
@@ -668,15 +690,36 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
         } else c.why.push(`it reads ${st.length} bytes outside the block, too many to play it on from the snapshot`);
       }
     }
+    // a player with no table: what each song's routine leaves for play (the bytes it wrote that play read, the SID
+    // registers it set) and the bytes outside the block play read, as the program has them, which an init next to
+    // the block puts in place (the routines are the program's, out of the block)
+    let songs: MusicSong[] | undefined;
+    if (c.songs && songRuns) {
+      const out: MusicSong[] = [];
+      for (const [k, r] of songRuns.entries()) {
+        const st = r.state;
+        if (!st) { out.length = 0; break; }
+        const state: [Addr, number][] = [];
+        for (let p = 2; p < 0x10000; p++) {
+          if (!st.read[p] || (p >= 0x0100 && p < 0x0200) || (p >= 0xd000 && p < 0xe000) || p >= 0xfffa) continue;
+          if (st.wrote[p] || p < s || p >= e) state.push([p, st.after[p]]);
+        }
+        st.sid.forEach((v, q) => { if (v >= 0) state.push([0xd400 + q, v]); });
+        if (state.length > MAX_RESUME) { c.why.push(`the routine at ${$4(c.songs[k])} that starts song ${k} leaves ${state.length} bytes for play, too many to put in place: the block plays only in the program`); out.length = 0; break; }
+        out.push({ at: c.songs[k], state });
+      }
+      if (out.length) songs = out;
+    }
     for (const x of new Set([a, c.play])) {
       const t = put.get(x);
       if (t != null) c.why.push(`the program writes JMP ${$4(t)} at ${$4(x)} before it calls it: ${x === a ? 'init' : 'play'} is ${$4(t)}`);
     }
     music.push({
-      start: s, end: e, init: entryOf(a), play: entryOf(c.play), sidRegs: run ? run.regs : c.regs.size, score: c.score, why: c.why, file: owner[a],
+      start: s, end: e, init: entryOf(initOf(c)), play: entryOf(c.play), sidRegs: run ? run.regs : c.regs.size, score: c.score, why: c.why, file: owner[a],
       ...(run ? { run: { regs: run.regs, notes: run.notes, seconds: Math.round(run.played / 50) } } : {}), ...(resume ? { resume } : {}),
       // (a player that plays on without init is given nothing)
       ...(c.initRegs && !c.resume ? { initRegs: c.initRegs } : {}),
+      ...(songs ? { songs } : {}),
     });
   }
   if (S.detectMusic) samplePlayers();
@@ -685,6 +728,108 @@ export function detectMusic(ctx: MusicCtx): MusicInfo[] {
   for (const o of ovList) if (o.type === 'music' && !music.some(m => m.start === o.start))
     music.push({ start: o.start, end: o.end, init: o.props?.init ?? o.start, play: o.props?.play ?? o.start + 3, sidRegs: 0, score: 0, why: ['marked by user'], file: owner[o.start], user: true });
   return music;
+
+  /* 5.8c Players with no jump table. The IRQ calls play (a JSR in its code to a routine that writes the SID), and the
+   * program starts each song with a routine of its own, which writes bytes play reads (its pointers, its tempo) and can
+   * lie far from the player: Bomb Jack (Elite, 1986) calls play $7448 from its IRQs, and each of six routines at
+   * $08f1-$093b sets a song up ($8400, $8c4f, ...) and copies its pointers to where play reads them ($0e7b). The
+   * program's routines that write what play reads are run as init, play once a frame after; of a routine and one it
+   * calls, the one that leaves play more is the song's (the one called when they leave the same), and routines that
+   * leave play the same bytes are one song. One song must play on for a minute: a sound effect stops. */
+  function calledPlayers(): Cand[] {
+    fromIrq(-1);
+    const irq = irqCode!;
+    if (!irq.size) return [];
+    // the tables found (their entries, where their JMPs go, the code they reach) are players already
+    const taken = new Set<Addr>(), entries = new Set<Addr>();
+    for (const c of cands) for (const e of c.api) { taken.add(e); entries.add(e); if (mem[e] === 0x4c) taken.add(word(mem, e + 1)); }
+    // play: a routine the IRQ's code calls that writes 8 SID registers or more, keeps its code together and calls no
+    // table's entry (that table is the player); not a routine of a table's code (The Last Ninja's IRQ calls the play
+    // code its table at $1000 runs into)
+    const found: { t: Addr; from: Addr; regs: Set<Addr> }[] = [];
+    for (const pc of irq) {
+      if (mem[pc] !== 0x20) continue;
+      const t = word(mem, pc + 1);
+      if (taken.has(t) || found.some(x => x.t === t) || !loaded(t) || !insLen[t] || cands.some(c => c.sub.ins.has(t))) continue;
+      const r = reachOf(t);
+      if (r.bad > 2 || r.illegal * 8 > r.ins.size) continue;
+      const regs = sidRegs(r);
+      if (regs.size < 8) continue;
+      let away = 0, calls = false;
+      for (const p of r.ins.keys()) {
+        if (p < t - BEFORE || p >= t + SPAN) away++;
+        if (OPC[mem[p]].flow === 'jsr' && entries.has(word(mem, p + 1))) calls = true;
+      }
+      if (away > 16 || calls) continue;
+      found.push({ t, from: pc, regs });
+    }
+    // one routine inside another (play's own subroutine, or a routine that only calls play): the one that writes more
+    // SID registers, the inner one when they write the same
+    const within = (x: { t: Addr }, y: { t: Addr }) => x.t !== y.t && reachOf(y.t).ins.has(x.t);
+    const same = (p: Set<Addr>, q: Set<Addr>) => p.size === q.size && [...p].every(r => q.has(r));
+    const kept = found.filter(x => !found.some(y => (within(x, y) && !same(x.regs, y.regs)) || (within(y, x) && same(x.regs, y.regs))));
+    const traced = new Map<Addr, Reach>();
+    const tracedReach = (e: Addr) => { let r = traced.get(e); if (!r) traced.set(e, r = reach([e], true)); return r; };
+    const out: Cand[] = [];
+    for (const { t, from, regs } of kept) {
+      const sub = reachOf(t);
+      // what play reads: its variables (absolute and zero page) and the pointers it reads through
+      const reads = new Set<Addr>();
+      for (const p of sub.ins.keys()) {
+        const o = OPC[mem[p]], d = decode(mem, p);
+        if (o.mode === 'izx' || o.mode === 'izy') { reads.add(d.v!); reads.add((d.v! + 1) & 0xff); }
+        else if ((o.access === 'read' || o.access === 'rmw') && (o.mode === 'abs' || o.mode === 'zp') && (d.target! < 0xd000 || d.target! >= 0xe000)) reads.add(d.target!);
+      }
+      // the routines the program calls whose code writes two of them or more, those that write the most first
+      const tried: { e: Addr; hits: number; size: number }[] = [];
+      for (const [e, xs] of xrefs) {
+        if (e === t || sub.ins.has(e) || !insLen[e] || !xs.some(x => x.kind === 'call')) continue;
+        const r = tracedReach(e), hit = new Set<Addr>();
+        for (const p of r.ins.keys()) {
+          const o = OPC[mem[p]];
+          if ((o.access === 'write' || o.access === 'rmw') && (o.mode === 'abs' || o.mode === 'zp')) { const d = decode(mem, p).target!; if (reads.has(d)) hit.add(d); }
+        }
+        if (hit.size >= 2) tried.push({ e, hits: hit.size, size: r.ins.size });
+      }
+      tried.sort((x, y) => y.hits - x.hits || x.size - y.size || x.e - y.e);
+      // each run as init: those that play notes that can be heard (frequencies the program builds as it runs, or a
+      // volume another routine sets, are 0 in the file)
+      const ok: { e: Addr; r: PlayerRun; st: PlayerState }[] = [];
+      for (const { e } of tried.slice(0, SONG_TRIES)) {
+        const r = runOf(e, t, 'songTry');
+        if (plays(r) && r.heard >= 2 && r.state) ok.push({ e, r, st: r.state });
+      }
+      if (!ok.length) continue;
+      // what play read in any of the runs (which bytes it reads depends on the song's path)
+      const any = new Uint8Array(0x10000);
+      for (const { st } of ok) for (let p = 2; p < 0x10000; p++) any[p] |= st.read[p];
+      const read: Addr[] = [];
+      for (let p = 2; p < 0x10000; p++) if (any[p] && (p < 0x0100 || p >= 0x0200) && (p < 0xd000 || p >= 0xe000)) read.push(p);
+      const left = (x: { st: PlayerState }) => read.filter(p => x.st.wrote[p]);
+      // a routine that calls another is the song's when it writes bytes play reads that the one it calls does not (Bomb
+      // Jack's $08f1 copies the song's pointers to where play reads them after $8400 set it up); else the one called
+      const calls = (x: { e: Addr }, y: { e: Addr }) => x.e !== y.e && tracedReach(x.e).ins.has(y.e);
+      const more = (x: { st: PlayerState }, y: { st: PlayerState }) => read.some(p => x.st.wrote[p] && !y.st.wrote[p]);
+      const starts = ok.filter(y => !ok.some(x => (calls(x, y) && more(x, y)) || (calls(y, x) && !more(y, x))));
+      // (routines that leave play the same bytes start the same song)
+      const seen = new Set<string>();
+      const songs = starts.sort((x, y) => x.e - y.e).filter(x => {
+        const k = left(x).map(p => `${p}:${x.st.after[p]}`).join(',');
+        if (!k || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      if (!songs.length || !songs.some(x => runOf(x.e, t, 'minute').heard >= STUCK)) continue;
+      let hi = t + 1;
+      for (const [p, len] of sub.ins) if (p >= t - BEFORE && p < t + SPAN) hi = Math.max(hi, p + len);
+      const first = songs[0];
+      const why = [`no jump table: the IRQ calls play ${$4(t)} (at ${$4(from)})`,
+        songs.length === 1 ? `the program starts its song with the routine at ${$4(first.e)}, which sets ${left(first).length} bytes play reads`
+          : `the program starts its ${songs.length} songs with routines of its own (${songs.map(x => $4(x.e)).join(', ')}), which set the bytes play reads`];
+      out.push({ start: t, init: first.e, api: [t], play: t, sub, regs, sidAt: [...sub.ins.keys()].filter(isSidWrite), score: 9, why, hi, irq: true, judged: true, run: first.r, songs: songs.map(x => x.e) });
+    }
+    return out;
+  }
 
   /* 5.8b Sample players (digis). A routine whose code turns on a CIA timer's interrupt (a constant with bit 7 and a
    * timer's bit stored into $dc0d or $dd0d), in a program that sets a timer this fast (a latch's high byte below 8),
