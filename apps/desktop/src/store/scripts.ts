@@ -22,7 +22,7 @@ export interface ScriptRunKept { run: ScriptRun; source: string; at: number; fai
 
 /** a script in the library: its code and its scratchpads (without what they held), whether it runs in safe mode,
  *  what its runs start with and its watch list (what the user added and took off) */
-export interface LibraryScript { name: string; lang: ScriptLang; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit; machine?: 'c64'; stopAt?: string; watch?: ScriptWatchEntry[]; unwatch?: string[] }
+export interface LibraryScript { name: string; lang: ScriptLang; code?: 'js'; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit; machine?: 'c64'; stopAt?: string; watch?: ScriptWatchEntry[]; unwatch?: string[] }
 
 const LIBRARY_KEY = 'kr.scriptLibrary';
 const LIST_FOLDED_KEY = 'kr.scriptListFolded';
@@ -54,7 +54,7 @@ const readLibrary = (): LibraryScript[] => {
     .map(s => {
       const init = readInit(s.init), watch = readWatch(s.watch), unwatch = Array.isArray(s.unwatch) ? s.unwatch.filter((k): k is string => typeof k === 'string') : [];
       return {
-        name: s.name, lang: s.lang === '64tass' ? '64tass' : 'kickass', source: s.source, saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}), ...(init ? { init } : {}), ...(s.machine === 'c64' ? { machine: 'c64' as const } : {}), ...(typeof s.stopAt === 'string' && s.stopAt.trim() ? { stopAt: s.stopAt.slice(0, 200) } : {}),
+        name: s.name, lang: s.lang === '64tass' ? '64tass' : 'kickass', ...(s.code === 'js' ? { code: 'js' as const } : {}), source: s.source, saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}), ...(init ? { init } : {}), ...(s.machine === 'c64' ? { machine: 'c64' as const } : {}), ...(typeof s.stopAt === 'string' && s.stopAt.trim() ? { stopAt: s.stopAt.slice(0, 200) } : {}),
         ...(watch.length ? { watch } : {}), ...(unwatch.length ? { unwatch } : {}),
         pads: s.pads.map(({ name, start, size, fill, data, src, role, load }) => {
           const d = readData(data), w = readSrc(src);
@@ -102,7 +102,7 @@ interface ScriptsState {
   setBps: (id: string, lines: number[]) => void;
   set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
-  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt'>) => boolean;
+  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt'>) => boolean;
   removeFromLibrary: (name: string) => void;
 }
 
@@ -118,7 +118,7 @@ export const useScripts = create<ScriptsState>((set, get) => ({
   setTemplatesFolded: v => { store.set(TEMPLATES_FOLDED_KEY, v); set({ templatesFolded: v }); },
   saveToLibrary: s => {
     const lib = get().library, had = lib.some(x => x.name.toLowerCase() === s.name.toLowerCase());
-    const entry: LibraryScript = { name: s.name, lang: s.lang, source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}), ...(s.machine ? { machine: s.machine } : {}), ...(s.stopAt ? { stopAt: s.stopAt } : {}), ...(s.watch?.length ? { watch: structuredClone(s.watch) } : {}), ...(s.unwatch?.length ? { unwatch: [...s.unwatch] } : {}) };
+    const entry: LibraryScript = { name: s.name, lang: s.lang, ...(s.code ? { code: s.code } : {}), source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}), ...(s.machine ? { machine: s.machine } : {}), ...(s.stopAt ? { stopAt: s.stopAt } : {}), ...(s.watch?.length ? { watch: structuredClone(s.watch) } : {}), ...(s.unwatch?.length ? { unwatch: [...s.unwatch] } : {}) };
     const library = [...lib.filter(x => x.name.toLowerCase() !== s.name.toLowerCase()), entry].sort((a, b) => a.name.localeCompare(b.name));
     storeLibrary(library); set({ library });
     return had;

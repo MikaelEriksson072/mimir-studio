@@ -280,7 +280,7 @@ function PadsPane(p: ScriptOutputProps) {
 
 /** Last run: how it ended, the registers it ended with, how long it took; what could not be written, and whether it
  *  wrote over its own code. */
-function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, placePad, toast }: ScriptOutputProps) {
+function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onGoLine, placePad, toast }: ScriptOutputProps) {
   const run = kept?.run;
   // the memory the run wrote, the longest stretches first (the zero page and the stack are not among them)
   const wrote = useMemo(() => [...(run?.wrote ?? [])].filter(r => r.end - r.start >= 2).sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start), [run]);
@@ -307,6 +307,11 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, placePad, t
         {kept.failed.map((f, i) => <p key={i} className="small scr-failed"><Icon name="warn" size={13} />{kept.safe ? 'Could not be written' : 'Not written'} into the program, {rangeText(f)}: {f.error}</p>)}
         {run.overCode?.length ? <p className="small scr-failed" title="A run that writes over its code no longer runs the code it was written as (a loop stops early). Code that changes itself on purpose (an operand) is said here too"><Icon name="warn" size={13} />It wrote over its own code: {run.overCode.slice(0, 4).map(o => `line ${o.line} ($${h4(o.at)}${o.times > 1 ? `, ${o.times} times` : ''})`).join(', ')}{run.overCode.length > 4 ? ', …' : ''}. If that was not meant, an address the code writes lies where the code is.</p> : null}
         {run.other > 0 && <p className="small muted">{plural(run.other, 'byte')} changed outside the program and the scratchpads (the zero page, the stack, …): not kept.</p>}
+      </div> : null}
+      {run.error?.line ? <p className="small scr-failed"><Icon name="err" size={13} /><button className="linkish" onClick={() => onGoLine(run.error!.line!)}>Line {run.error.line}</button>{run.error.msg}</p> : null}
+      {run.prints?.length ? <div className="scr-wrote">
+        <h5 className="scr-group-h" title="What the script's print(...) wrote, a line each">print</h5>
+        <pre className="scr-prints scr-prints-run" aria-label="What the run printed">{run.prints.join('\n')}</pre>
       </div> : null}
       {kept.acted && <div className="scr-wrote scr-acted">
         <h5 className="scr-group-h" title="What the script's directives (.mark, .name, .note, .junk) say about the program beyond its bytes: done with the run, in its undo step">{kept.safe ? 'Would mark up' : 'Marked up'}</h5>
@@ -407,7 +412,8 @@ function InitSection({ script, names, labels, problems, onEdit }: { script: User
         <span className="grow" />
         {!initEmpty(script.init) && <button className="btn ghost small" onClick={() => save({}, `Reset the init of "${script.name}"`)} title="A, X and Y back to 0, only I set, and no zero-page bytes"><Icon name="undo" size={13} />Reset</button>}
       </div>
-      <div className="scr-pane-body init-groups">
+      {script.code === 'js' ? <div className="scr-pane-body"><p className="scr-note">A JavaScript script sets what it needs itself: the registers of a call in <span className="mono">cpu.call("routine", {'{'} a: 1, x: 2 {'}'})</span>, the zero page in <span className="mono">mem</span>. It runs in memory only, with the mounted disk as <span className="mono">disk</span>.</p></div>
+      : <div className="scr-pane-body init-groups">
         <div className="init-group">
           <h5 className="scr-group-h">Registers</h5>
           <div className="init-regs">
@@ -456,7 +462,7 @@ function InitSection({ script, names, labels, problems, onEdit }: { script: User
             ))}
           </div> : <p className="scr-note">None: a run finds what the program has there. Add sets a byte, or a word (a pointer) when its value is a label.</p>}
         </div>
-      </div>
+      </div>}
     </section>
   );
 }

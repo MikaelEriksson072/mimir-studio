@@ -10491,3 +10491,71 @@ test('scripts say more than bytes: .mark, .name and .note in the code are done w
     await expect(listing(page)).not.toContainText('secret:');
   });
 });
+
+test('scripts in JavaScript: mem, the program\'s own code called, what is printed and marked up; an error with its line; the mounted disk; nothing of the worker to reach out with', async ({ workDir, app, page }) => {
+  // the program of the suggestions test: xorit at $0818 EORs the 32 bytes at $0840 with $5a
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...[...TEXT].map(c => c.charCodeAt(0) ^ 0x5a)];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  await waitForListing(page);
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded crypt-demo.prg at $0801')).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  if (await overview.isVisible()) await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const run = async (lines: string[]) => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(lines.join('\n'));
+    await page.keyboard.press('Control+Enter');
+  };
+
+  await test.step('a new JavaScript script says what it is, checks out and has no debugger', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await expect(toast(page, /^Script "script" made, in JavaScript\. mem is the program's memory/)).toBeVisible();
+    await expect(page.getByRole('option', { name: 'script', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByLabel('Language')).toHaveText('JavaScript');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await expect(page.getByRole('button', { name: /^Debug/ })).toBeDisabled();
+    await expect(editor.locator('.view-lines')).toContainText('JavaScript that runs in Mimir');
+  });
+
+  await test.step('it calls the program\'s own loop, reads the result in mem, prints it and says what the bytes are', async () => {
+    await run(['const d = 0x0840;', 'cpu.call(0x0818);', 'let s = "";', 'for (let i = 0; i < 32; i++) s += String.fromCharCode(mem[d + i]);', 'print(s);', 'print(typeof fetch, typeof self);', 'mark(d, d + 32, "text");', 'name(d, "secret");']);
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await expect(toast(page, /It changed 32 bytes of the program in 1 place: the listing and the source have them\. It marked up 2 things/)).toBeVisible();
+    await outTab(page, 'Last run');
+    await expect(printed).toHaveText(`${TEXT}\nundefined undefined`);
+    await expect(page.getByRole('list', { name: 'What the run marked up' }).getByRole('listitem')).toHaveText(['$0840-$085f marked as Text (PETSCII)', '$0840 named secret']);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'secret');
+    await expect(listing(page)).toContainText('secret:');
+    await expect(listing(page)).toContainText(TEXT.slice(0, 16));
+  });
+
+  await test.step('what it throws ends the run and is said with its line', async () => {
+    await run(['const d = 0x0840;', 'mem[addr("nowhere")] = 1;']);
+    await expect(page.locator('.scr-end')).toContainText('Stopped with an error on line 2: ReferenceError: "nowhere" is not a name of the program or a scratchpad');
+    await outTab(page, 'Last run');
+    await expect(page.getByRole('button', { name: 'Line 2', exact: true })).toBeVisible();
+  });
+
+  await test.step('the mounted disk is there as disk', async () => {
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64')] });
+    await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+    await expect(toast(page, 'Mounted mimir-demo.d64: "MIMIR DEMO", 3 files')).toBeVisible();
+    await run(['print(disk.name + ": " + disk.files.map(f => f.name).join(","));', 'print(disk.read("SPRITE").length);']);
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await outTab(page, 'Last run');
+    await expect(printed).toHaveText(/^MIMIR DEMO: RASTER DEMO,SPRITE,NOTES\n\d+$/);
+  });
+});

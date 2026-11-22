@@ -2358,8 +2358,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setUi({ tab: 'scripts' });
   };
   /** a new script; `lines`: code of the listing it starts with (the selection); `links`: addresses linked to it */
-  const newUserScript = (lines: string[] = [], links: Addr[] = []) => {
-    const s: UserScript = { ...newScript(userScripts, lines, newId(), codeLang), ...(links.length ? { links } : {}) };
+  const newUserScript = (lines: string[] = [], links: Addr[] = [], code?: UserScript['code']) => {
+    const s: UserScript = { ...newScript(userScripts, lines, newId(), codeLang, code), ...(links.length ? { links } : {}) };
+    if (code === 'js') {
+      addUserScript(s, 'New JavaScript script');
+      toast(`Script "${s.name}" made, in JavaScript. mem is the program's memory: what it changes there goes into the program and its .asm. Ctrl+Enter runs it`, 'ok');
+      return;
+    }
     addUserScript(s, 'New script');
     toast(`Script "${s.name}" made. Write its code and press Ctrl+Enter: what it changes in the program goes into the program and its .asm`, 'ok');
   };
@@ -2475,7 +2480,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a copy of a library script, under a name of its own in the project */
   const addLibraryScript = (l: LibraryScript) => {
     const name = userScripts.some(s => s.name.toLowerCase() === l.name.toLowerCase()) ? scriptName(userScripts, l.name) : l.name;
-    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
+    addUserScript({ id: newId(), name, lang: l.lang, ...(l.code ? { code: l.code } : {}), source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
     toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}`, 'ok');
   };
   /** a copy of a template in the project (script-templates.ts): its code checked with its scratchpads out of the way,
@@ -2556,7 +2561,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const base = { ...p, ...withoutScriptPatches(p, id), settings: st };
     const w = writeScriptRun(a, r, base, s, run, scriptPatches(p.patches, id));
     // what its directives say beyond the bytes (.mark, .name, .note, .junk), in the same step
-    const acts = scriptActsOf(id, text);
+    const acts = scriptActsOf(id, text, run);
     update(`Run script "${s.name}"`, d => {
       d.files = w.files; d.patches = w.patches;
       if (acts) {
@@ -2571,11 +2576,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return { written: w.written, failed: w.failed, acted: acts ? { done: acts.done, failed: acts.failed } : undefined };
   };
   /** what a script's directives (.mark, .name, .note, .junk) come to in the project as it is now (null: it has none) */
-  const scriptActsOf = (id: string, text: string) => {
+  const scriptActsOf = (id: string, text: string, run: ScriptRun) => {
     const { A: a, R: r, project: p } = latest.current;
     const s = p.userScripts?.find(x => x.id === id); if (!s) return null;
-    const c = checkScript(scriptEnvFor(id), { source: text, lang: s.lang, pads: s.pads, init: s.init });
-    return c.actions.length ? planScriptActions(a, r, p, c.actions) : null;
+    const c = checkScript(scriptEnvFor(id), { source: text, lang: s.lang, code: s.code, pads: s.pads, init: s.init });
+    // (a JavaScript script says them as it runs)
+    const actions = [...c.actions, ...(run.actions ?? [])];
+    return actions.length ? planScriptActions(a, r, p, actions) : null;
   };
   /** a run in safe mode ended: what it would change in the program worked out as Run would write it, but nothing goes
    *  into the program; only its scratchpads (the script's own memory, not the program's) are kept in the project */
@@ -2588,7 +2595,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       for (const pad of t.pads) { const b = run.pads.find(x => x.name === pad.name); if (b && b.bytes.length === pad.size) pad.bytes = b.bytes; }
     });
     // (its directives are only worked out, as its changes are)
-    const acts = scriptActsOf(id, text);
+    const acts = scriptActsOf(id, text, run);
     return { written: w.written, failed: w.failed, acted: acts ? { done: acts.done, failed: acts.failed } : undefined };
   };
   /** a run has ended (Run in the Scripts tab or the Scripts view, or debugging to its end): its changes into the program
@@ -2614,6 +2621,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  said */
   const scriptRunOpts = async (s: UserScript, env: ScriptEnv, pads: readonly ScriptPad[], c: ScriptCheck): Promise<ScriptRunOpts | null> => {
     const stop = scriptStopAt(s.stopAt, scriptNames(env, pads), c);
+    // JavaScript runs in its own way: no stop address, no C64; it gets the mounted disk
+    if (s.code === 'js') return { disk: disk?.bytes ?? null };
     if (stop != null && typeof stop === 'object') { toast(`"${s.name}": its Stop at is no address: ${stop.error} (Scripts → Init)`, 'warn'); return null; }
     if (s.machine !== 'c64') return { stopAt: stop };
     scriptRoms.current ??= await (kr?.c64Roms() ?? Promise.resolve(null)).catch(() => null);
@@ -2629,13 +2638,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
     if (useScripts.getState().running) { toast('A script is running: wait for it, or stop it in the Scripts tab', 'info'); return; }
     const source = text ?? s.source, env = scriptEnvFor(id);
-    const c = checkScript(env, { source, lang: s.lang, pads: s.pads, init: s.init });
+    const c = checkScript(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init });
     if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); toast(`"${s.name}" does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}`, 'warn'); return; }
     const opts = await scriptRunOpts(s, env, s.pads, c);
     if (!opts) return;
     useScripts.getState().set({ running: id });
     try {
-      const r = await runScriptInWorker(env, { source, lang: s.lang, pads: s.pads, init: s.init }, opts);
+      const r = await runScriptInWorker(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init }, opts);
       useScripts.getState().set({ running: null });
       finishScriptRun(id, r, source, write);
     } catch (e) {
@@ -2787,7 +2796,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         try {
           const opts = await scriptRunOpts(s, env, plan.script.pads, plan.check);
           if (!opts) { failed.push({ name: f.name, why: 'it could not start' }); break; }
-          const run = await runScriptInWorker(env, { source: s.source, lang: s.lang, pads: plan.script.pads, init: s.init }, opts);
+          const run = await runScriptInWorker(env, { source: s.source, lang: s.lang, code: s.code, pads: plan.script.pads, init: s.init }, opts);
           if (!endedWell(run.end)) { failed.push({ name: f.name, why: scriptEndText(run) }); continue; }
           const r = fileRunResults(plan, file, run, s.name);
           if (r.length) outs.push(...r); else failed.push({ name: f.name, why: 'the run wrote nothing: no result scratchpad, not the file\'s scratchpad, no memory' });
@@ -4614,7 +4623,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
               {tab === 'spec' && <SpecView />}
               {tab === 'git' && <GitView home={home} saveNow={saveNow} onCreateProject={() => setModal('project')} onTerminal={() => void openTerminal()} toast={toast} />}
               {tab === 'library' && <LibraryTab desktop={!!kr} player={toolchain.musicPlayer} onPlay={(i, o) => void playLibrary(i, o)} onReveal={ref => revealLibrary(ref)} onMenu={libraryMenu} toast={toast} />}
-              {tab === 'scripts' && <ScriptsView scripts={userScripts} lang={codeLang} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
+              {tab === 'scripts' && <ScriptsView scripts={userScripts} lang={codeLang} env={scriptsEnv} envFor={scriptEnvFor} patches={project.patches} theme={theme} linkOf={scriptLinkOf} kinds={scriptKinds} onNew={() => newUserScript()} onNewJs={() => newUserScript([], [], 'js')} onAdd={addLibraryScript} onAddTemplate={addTemplateScript}
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}

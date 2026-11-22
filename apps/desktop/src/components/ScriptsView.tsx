@@ -46,6 +46,8 @@ export interface ScriptsViewProps {
   /** what kind of block each of the program's labels is on (the suggestions say it) */
   kinds: ReadonlyMap<string, string>;
   onNew: () => void;
+  /** a new script written in JavaScript */
+  onNewJs: () => void;
   /** a copy of a library script in the project */
   onAdd: (s: LibraryScript) => void;
   /** a copy of a template in the project (its scratchpads placed where there is room) */
@@ -90,7 +92,7 @@ export interface ScriptsViewProps {
 const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, loops, onAddLoop, files, onRunOnFiles, onToProject }: ScriptsViewProps) {
+export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, loops, onAddLoop, files, onRunOnFiles, onToProject }: ScriptsViewProps) {
   const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -249,7 +251,7 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
     if (pending.current && pending.current.id !== cur.id) flush();
     let m = models.current[cur.id];
     // (the highlighting, the hover and the suggestions of the script's language)
-    const language = cur.lang === '64tass' ? 'tass64' : 'kickass';
+    const language = cur.code === 'js' ? 'javascript' : cur.lang === '64tass' ? 'tass64' : 'kickass';
     if (!m) {
       m = monaco.editor.createModel(cur.source, language, monaco.Uri.parse(`script:///${cur.id}.asm`)); models.current[cur.id] = m;
       // the breakpoints it had when the tab was last open
@@ -261,10 +263,10 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
     }
     if (m.getLanguageId() !== language) monaco.editor.setModelLanguage(m, language);
     if (e.getModel() !== m) e.setModel(m);
-  }, [state, cur?.id, cur?.source, cur?.lang, scripts]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state, cur?.id, cur?.source, cur?.lang, cur?.code, scripts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const source = cur ? live[cur.id] ?? cur.source : '';
-  const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, lang: cur.lang, pads: cur.pads, init: cur.init }) : null, [env, source, cur?.lang, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
+  const check: ScriptCheck | null = useMemo(() => cur ? checkScript(env, { source, lang: cur.lang, code: cur.code, pads: cur.pads, init: cur.init }) : null, [env, source, cur?.lang, cur?.pads, cur?.init]); // eslint-disable-line react-hooks/exhaustive-deps
   const names = useMemo(() => cur ? scriptNames(env, cur.pads) : new Map<string, number>(), [env, cur?.pads]); // eslint-disable-line react-hooks/exhaustive-deps
   /** a name for an address (the first of the names the script may use that has it; not a number such as music.size) */
   const byAddr = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (!m.has(a) && !env.values?.has(n)) m.set(a, n); return m; }, [names, env]);
@@ -531,7 +533,7 @@ ${cryptWhereText(l)}`}>
         <Icon name="prompt" size={30} />
         <h2>No scripts yet</h2>
         <p>A script is {LANG_TITLE[lang]} code (the project's assembler's) that runs here in Mimir on the program's bytes. Use the program's labels, variables and tables in it, call its routines or paste its code (a decryption loop, say): what it changes in the program's bytes goes into the program and the source, while the script's own code stays out of the export and Build &amp; Run.</p>
-        <div className="empty-actions"><button className="btn primary" onClick={onNew}><Icon name="plus" size={14} />New script</button></div>
+        <div className="empty-actions"><button className="btn primary" onClick={onNew}><Icon name="plus" size={14} />New script</button><button className="btn" onClick={onNewJs} aria-label="New JavaScript script" title="A script written in JavaScript: loops, arrays and strings over the program's memory, and the program's own 6510 routines called with cpu.call"><Icon name="plus" size={14} />JavaScript</button></div>
         <p className="muted small">Or select lines in the listing, right-click and pick <b>Program → New script from selection</b>, or add one from the library, or start from a template (a decryption: XOR with a key, a chain, add, several steps).</p>
       </div>
     </div>
@@ -602,6 +604,7 @@ ${cryptWhereText(l)}`}>
       {listFolded ? <div className="scr-list folded" role="navigation" aria-label="Scripts in the project, folded in">
         <button className="icon-btn" onClick={() => setListFolded(false)} aria-label="Unfold the script list" title="Unfold the list of the project's scripts and the library"><Icon name="side-show" size={16} /></button>
         <button className="icon-btn" onClick={onNew} aria-label="New script" title={`New script: ${LANG_TITLE[lang]} code that runs in Mimir`}><Icon name="plus" size={15} /></button>
+          <button className="icon-btn scr-new-js" onClick={onNewJs} aria-label="New JavaScript script" title="New script in JavaScript: loops, arrays and strings over the program's memory, and the program's own 6510 routines called with cpu.call">JS</button>
         <span className="scr-rail-sep" />
         {scripts.map(s => (
           <button key={s.id} className={cx('icon-btn scr-rail-item', s.id === cur?.id && 'on')} aria-label={s.name} aria-pressed={s.id === cur?.id} onClick={() => { flush(); set({ selected: s.id, pad: 0, change: null }); }}
@@ -610,6 +613,7 @@ ${cryptWhereText(l)}`}>
       </div> : <div className="scr-list">
         <div className="scr-list-head"><span>Project</span><span className="grow" />
           <button className="icon-btn" onClick={onNew} aria-label="New script" title={`New script: ${LANG_TITLE[lang]} code that runs in Mimir`}><Icon name="plus" size={15} /></button>
+          <button className="icon-btn scr-new-js" onClick={onNewJs} aria-label="New JavaScript script" title="New script in JavaScript: loops, arrays and strings over the program's memory, and the program's own 6510 routines called with cpu.call">JS</button>
           <button className="icon-btn" onClick={() => setListFolded(true)} aria-label="Fold the script list" title="Fold the list in to a strip: the editor gets its room (the strip still switches scripts)"><Icon name="side-hide" size={15} /></button></div>
         <div role="listbox" aria-label="Scripts">
           {scripts.map(s => (
@@ -629,9 +633,11 @@ ${cryptWhereText(l)}`}>
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}
           </span>
           {/* the script's language; one in Kick Assembler in a 64tass project can be moved there */}
-          <span className={cx('pill scr-lang', cur.lang !== lang && 'other')} aria-label="Language"
-            title={cur.lang === lang ? `Written in ${LANG_TITLE[cur.lang]}, as the project's source is` : `Written in ${LANG_TITLE[cur.lang]}: it is assembled as ${LANG_TITLE[cur.lang]}, though the project's source is ${LANG_TITLE[lang]}`}>{LANG_TITLE[cur.lang]}</span>
-          {cur.lang === 'kickass' && lang === '64tass' && !dbg && <button className="btn small scr-move" onClick={moveTo64tass}
+          {cur.code === 'js' ? <span className="pill scr-lang other" aria-label="Language"
+            title="Written in JavaScript: mem is the program's memory with the scratchpads in it, addr(&quot;name&quot;) a name's address, pad(&quot;pad1&quot;) a scratchpad's bytes, cpu.call(&quot;name&quot;, { a, x, y }) runs the program's own code, print(...) writes a line under Last run, and mark, name, note and junk say what the bytes are">JavaScript</span>
+          : <span className={cx('pill scr-lang', cur.lang !== lang && 'other')} aria-label="Language"
+            title={cur.lang === lang ? `Written in ${LANG_TITLE[cur.lang]}, as the project's source is` : `Written in ${LANG_TITLE[cur.lang]}: it is assembled as ${LANG_TITLE[cur.lang]}, though the project's source is ${LANG_TITLE[lang]}`}>{LANG_TITLE[cur.lang]}</span>}
+          {cur.code !== 'js' && cur.lang === 'kickass' && lang === '64tass' && !dbg && <button className="btn small scr-move" onClick={moveTo64tass}
             title="Write the script in 64tass, as the project's source is: its code and its scratchpads' start content converted, and only when they give the same bytes as now (Ctrl+Z takes it back)">Write in 64tass</button>}
           <span className="grow" />
           <label className={cx('scr-safe', cur.safe && 'on')} title={cur.safe
@@ -656,7 +662,7 @@ ${cryptWhereText(l)}`}>
                 : cur.safe ? 'Run the script in safe mode (Ctrl+Enter in the editor): nothing goes into the program or its .asm; what it would change is listed under Would change'
                 : 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program'}>
                 <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
-            <button className="btn scr-debug-btn" disabled={!check.ok || !!running || cur.machine === 'c64'} onClick={startDebug} title={cur.machine === 'c64' ? 'Debug goes through a run in memory only: this script runs in the whole C64 (Init → Runs in)' : check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
+            <button className="btn scr-debug-btn" disabled={!check.ok || !!running || cur.machine === 'c64' || cur.code === 'js'} onClick={startDebug} title={cur.code === 'js' ? 'Debug goes through assembler code an instruction at a time: this script is JavaScript (print(...) shows values under Last run)' : cur.machine === 'c64' ? 'Debug goes through a run in memory only: this script runs in the whole C64 (Init → Runs in)' : check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
             <span className="tb-sep" />
             <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
               title={inLibrary ? 'Save the script in the library again, in place of the one of the same name there' : 'Save a copy of the script in the library, so that other projects can add it'}><Icon name="bookmark" /><span className="lbl">{inLibrary ? 'Update library' : 'Save to library'}</span></button>

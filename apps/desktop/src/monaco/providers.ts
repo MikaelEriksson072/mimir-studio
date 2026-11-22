@@ -81,6 +81,39 @@ export function scriptSuggestions(before: string, typed: string, names: Readonly
   return out;
 }
 
+/** what a JavaScript script is given (script-js.ts), as its editor suggests them: the text put in, and what it is */
+export const JS_API: readonly { label: string; insert: string; detail: string }[] = [
+  { label: 'mem', insert: 'mem', detail: 'the program\'s memory, with the scratchpads in it: a Uint8Array of 65536 bytes' },
+  { label: 'addr', insert: 'addr("', detail: 'addr("name"): the address of a label, a variable or a scratchpad' },
+  { label: 'pad', insert: 'pad("', detail: 'pad("pad1"): a scratchpad\'s bytes, a view of mem' },
+  { label: 'cpu.call', insert: 'cpu.call("', detail: 'cpu.call("name", { a, x, y, c }): run the program\'s 6510 code until it returns; gives { a, x, y, p, c, z, n }' },
+  { label: 'print', insert: 'print(', detail: 'print(...): a line under Last run' },
+  { label: 'hex', insert: 'hex(', detail: 'hex(value, digits): "$1a2b"' },
+  { label: 'word', insert: 'word(', detail: 'word(address): the 16-bit value there, low byte first' },
+  { label: 'setWord', insert: 'setWord(', detail: 'setWord(address, value): a 16-bit value, low byte first' },
+  { label: 'mark', insert: 'mark(', detail: 'mark(start, end, "text"): the bytes are of this type, as Mark as makes them' },
+  { label: 'name', insert: 'name(', detail: 'name(address, "label"): the address gets this label' },
+  { label: 'note', insert: 'note(', detail: 'note(address, "text"): the line at the address gets this comment' },
+  { label: 'junk', insert: 'junk(', detail: 'junk(start, end): the bytes are junk, left out of everything' },
+  { label: 'disk', insert: 'disk', detail: 'the mounted disk, or null: disk.files, disk.read("NAME"), disk.sector(track, sector)' },
+];
+
+/**
+ * What a JavaScript script's code may write where the cursor is: inside the quotes of addr("…"), cpu.call("…") and the
+ * others that take an address, the program's names that start with what is typed (a scratchpad's inside pad("…"));
+ * elsewhere what the script is given (JS_API) that starts with it.
+ */
+export function jsSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[]): { label: string; insert: string; detail: string; kind: 'name' | 'pad' | 'api' }[] {
+  const starts = (s: string) => s.toLowerCase().startsWith(typed.toLowerCase()) && s.length > typed.length;
+  if (/\bpad\(\s*["'][^"']*$/.test(before)) return pads.filter(p => starts(p.name)).map(p => ({ label: p.name, insert: p.name, detail: 'scratchpad', kind: 'pad' as const }));
+  if (/\b(?:addr|call|word|setWord|mark|name|note|junk)\((?:[^()"']*,)?\s*["'][^"']*$/.test(before))
+    return [...names].filter(([n]) => starts(n)).slice(0, 200).map(([n, a]) => ({ label: n, insert: n, detail: `$${h4(a)}`, kind: 'name' as const }));
+  if (!typed || /["'][^"']*$/.test(before.replace(/"[^"]*"|'[^']*'/g, ''))) return [];
+  const head = /\bcpu\.$/.test(before) ? 'cpu.' : '';
+  return JS_API.filter(x => (head ? x.label.startsWith(head) && starts(x.label.slice(head.length)) : !x.label.includes('.') ? starts(x.label) : starts(x.label.split('.')[0]) && typed.toLowerCase() !== 'cpu'))
+    .map(x => (head ? { label: x.label.slice(head.length), insert: x.insert.slice(head.length), detail: x.detail, kind: 'api' as const } : x.label.includes('.') ? { label: 'cpu', insert: 'cpu', detail: x.detail, kind: 'api' as const } : { ...x, kind: 'api' as const }));
+}
+
 /** the name with a dot in it (`music.location`) that the character at `at` of a line is in, or null */
 export function dottedNameAt(line: string, at: number): string | null {
   for (const m of line.matchAll(/(?<![\w$%!])[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+/g)) if (at >= m.index! && at < m.index! + m[0].length) return m[0];
@@ -100,6 +133,17 @@ export function registerProviders(monaco: typeof Monaco): void {
       const kind = { link: K.Reference, pad: K.Struct, name: K.Variable, hardware: K.Constant, mnemonic: K.Keyword, word: K.Function } as const;
       const order = { link: '0', pad: '1', name: '2', hardware: '3', mnemonic: '4', word: '5' } as const;
       return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads, { ...scriptContext, lang: lang === TASS64 ? '64tass' : 'kickass' }).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
+    },
+  });
+  // a script in JavaScript: what it is given, and the program's names inside addr("…")
+  monaco.languages.registerCompletionItemProvider('javascript', {
+    triggerCharacters: ['.', '"'],
+    provideCompletionItems(model, pos) {
+      if (model.uri.scheme !== 'script') return { suggestions: [] };
+      const w = model.getWordUntilPosition(pos), before = model.getLineContent(pos.lineNumber).slice(0, w.startColumn - 1);
+      const range = new monaco.Range(pos.lineNumber, w.startColumn, pos.lineNumber, w.endColumn);
+      const K = monaco.languages.CompletionItemKind, kind = { name: K.Variable, pad: K.Struct, api: K.Function } as const;
+      return { suggestions: jsSuggestions(before, w.word, scriptContext.names, scriptContext.pads).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.insert, detail: s.detail, range })) };
     },
   });
   // (the hover and go-to-definition serve both assemblers' sources: Kick Assembler's and 64tass's, spec 11.8)

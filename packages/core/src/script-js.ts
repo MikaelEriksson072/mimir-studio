@@ -1,0 +1,186 @@
+/* =====================================================================
+ * User scripts in JavaScript (spec 10.3, UserScript.code 'js'): the same job as a script in assembler (work on the
+ * program's bytes, with what it changes written into the program as its patches), written in a language that has loops,
+ * arrays and strings, and that borrows the program's own 6510 routines when it needs them.
+ *
+ * The script is the body of a function, run once. It has one memory, `mem`: 64 KB with the program's files at their
+ * load addresses, as LOAD leaves them, and the script's scratchpads at their addresses (a scratchpad is a stretch of
+ * `mem`, so the program's code sees it). What the script gets, and nothing else:
+ *
+ *   mem                      Uint8Array(65536): read and write it; what changes in the program's bytes is the result
+ *   addr("name")             the address of a name: a label or variable of the program, a hardware name, a scratchpad
+ *                            (pad1, pad1_end, pad1_load); a number is given back as it is
+ *   pad("pad1")              a scratchpad's bytes: a Uint8Array that is a view of mem
+ *   word(a), setWord(a, v)   a 16-bit value, low byte first
+ *   cpu.call(where, regs)    run the program's 6510 code at an address or a name until it returns (RTS, or a BRK), with
+ *                            { a, x, y, c } as its registers and carry; gives { a, x, y, p, c, z, n, brk } as it left
+ *                            them. It throws when the code jams or does not return (cpu.limit instructions, 50 million)
+ *   print(...)               a line of output (Last run)
+ *   hex(v, digits)           "$1a2b"
+ *   mark(start, end, "type"), name(a, "name"), note(a, "text"), junk(start, end)
+ *                            what script-actions.ts's directives do, done when the run ends
+ *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
+ *                            sector }], sector(track, sector) → its 256 bytes, read(file or name) → the file's bytes }
+ *
+ * It runs in the scripts' worker, which has no network and no file system to give; the names that would reach out of
+ * it (fetch, importScripts, self, …) are not there for the script. An error it throws ends the run and is said with
+ * its line. Nothing is checked before it runs but its scratchpads: a syntax error is said by the run.
+ * ===================================================================== */
+import { Cpu, type Bus } from '@mimir/sindri';
+import type { Addr, UserScript } from './types';
+import { diskSectors, parseD64, readD64File, sectorOffset, type D64File } from './c64/d64';
+import { MARK_NAMES, type ScriptAction } from './script-actions';
+import { maskRanges, padStart, runChanges, SCRIPT_P, scriptNames, type ScriptCheck, type ScriptEnv, type ScriptProblem, type ScriptRun } from './script';
+import { h2, h4 } from './util/hex';
+
+/** what a JavaScript script may be given besides the program: the mounted disk's image (a D64 or a G64) */
+export interface JsExtras { disk?: Uint8Array | null }
+
+/** the instructions one cpu.call may take, and all of a run's together */
+export const JS_CALL_LIMIT = 50_000_000;
+export const JS_RUN_LIMIT = 400_000_000;
+
+/** names of the worker (and of a window) a script is not to reach: they are undefined in its code */
+const HIDDEN = ['self', 'globalThis', 'window', 'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'importScripts', 'postMessage', 'indexedDB', 'caches', 'navigator',
+  'Worker', 'SharedWorker', 'BroadcastChannel', 'setTimeout', 'setInterval', 'queueMicrotask', 'require', 'process', 'Function'];
+
+const NOTHING = new Uint8Array(0x10000), NO_LINES = new Int32Array(0x10000);
+
+/** A JavaScript script checked: its scratchpads looked at (`padProblems`: script.ts's check of them). Its code is not
+ *  read before it runs, so it has no code addresses, labels or uses. */
+export function checkJs(problems: ScriptProblem[]): ScriptCheck {
+  return {
+    ok: !problems.some(p => p.level === 'error'), problems, entry: null, code: [], bytes: 0, place: 'own', prints: [],
+    mem: NOTHING, written: NOTHING, lines: NO_LINES, starts: NOTHING, ops: NOTHING, labels: new Map(), uses: [], access: [], actions: [],
+  };
+}
+
+/** the line of the script an error came from, from its stack (the function's body starts on its third line) */
+function errorLine(e: unknown): number | undefined {
+  const m = /<anonymous>:(\d+):\d+/.exec(String((e as { stack?: unknown })?.stack ?? ''));
+  const n = m ? +m[1] - 2 : 0;
+  return n >= 1 ? n : undefined;
+}
+
+/**
+ * Run a JavaScript script to its end: the function its code is the body of, with the things above as its arguments. A
+ * run that throws ends with 'error' and what was thrown; what it changed until then is still its result.
+ */
+export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'>, extras: JsExtras = {}): ScriptRun {
+  const t0 = Date.now();
+  const mem = new Uint8Array(0x10000), own = new Uint8Array(0x10000);
+  for (const f of env.files) mem.set(f.bytes.subarray(0, Math.max(0, 0x10000 - f.load)), f.load);
+  const pads = script.pads.filter(p => p.start >= 0 && p.size >= 1 && p.start + p.size <= 0x10000);
+  for (const p of pads) { mem.set(padStart(p), p.start); own.fill(1, p.start, p.start + p.size); }
+  for (const z of script.init?.zp ?? []) { mem[z.at & 0xff] = z.value & 0xff; if (z.word) mem[(z.at + 1) & 0xff] = (z.value >> 8) & 0xff; }
+  const before = mem.slice();
+  const names = scriptNames(env, script.pads);
+  const prints: string[] = [], actions: ScriptAction[] = [];
+  let instructions = 0, cycles = 0;
+  let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
+
+  const addr = (n: unknown): Addr => {
+    if (typeof n === 'number') { if (!Number.isInteger(n) || n < 0 || n > 0xffff) throw new RangeError(`${n} is not an address ($0000-$ffff)`); return n; }
+    const v = names.get(String(n));
+    if (v == null) throw new ReferenceError(`"${String(n)}" is not a name of the program or a scratchpad`);
+    return v;
+  };
+  const pad = (name: unknown): Uint8Array => {
+    const p = pads.find(x => x.name === name);
+    if (!p) throw new ReferenceError(`"${String(name)}" is not a scratchpad of the script (it has ${pads.length ? pads.map(x => x.name).join(', ') : 'none'})`);
+    return mem.subarray(p.start, p.start + p.size);
+  };
+  const bus: Bus = { read: a => mem[a], write: (a, v) => { mem[a] = v; }, fetch: a => mem[a] };
+  const cpu = {
+    limit: JS_CALL_LIMIT,
+    call(where: unknown, r: { a?: number; x?: number; y?: number; c?: boolean | number; p?: number } = {}) {
+      const start = addr(where), c = new Cpu(bus);
+      c.a = (r.a ?? 0) & 0xff; c.x = (r.x ?? 0) & 0xff; c.y = (r.y ?? 0) & 0xff;
+      c.p = r.p != null ? r.p & 0xff : SCRIPT_P | (r.c ? 1 : 0);
+      // called like SYS: the return address $ffff on the stack, so its RTS lands at $0000 with the stack empty
+      c.s = 0xfd; mem[0x1ff] = 0xff; mem[0x1fe] = 0xff; c.pc = start;
+      const budget = Math.max(1, Math.min(Number(cpu.limit) || JS_CALL_LIMIT, JS_RUN_LIMIT - instructions)), top = instructions + budget;
+      let brk = false;
+      for (;;) {
+        if (instructions >= top) throw new Error(`the code called at $${h4(start)} did not return after ${budget.toLocaleString('en-US')} instructions (it was at $${h4(c.pc)}): does it loop for ever?`);
+        const pc = c.pc;
+        cycles += c.step(); instructions++;
+        if (c.jammed) throw new Error(`the code called at $${h4(start)} jammed at $${h4(pc)} (a JAM opcode): did it run into data?`);
+        if (c.lastOp === 0x00) { brk = true; break; }
+        if (c.lastOp === 0x60 && c.s === 0xff && c.pc === 0) break;
+      }
+      regs = { a: c.a, x: c.x, y: c.y, s: c.s, p: c.p, pc: c.pc };
+      return { a: c.a, x: c.x, y: c.y, p: c.p, c: (c.p & 1) !== 0, z: (c.p & 2) !== 0, n: (c.p & 0x80) !== 0, brk };
+    },
+  };
+  const show = (v: unknown): string => (v instanceof Uint8Array ? Array.from(v.subarray(0, 64), b => h2(b)).join(' ') + (v.length > 64 ? ' …' : '') : typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v));
+  const print = (...a: unknown[]) => { if (prints.length < 2000) prints.push(a.map(show).join(' ')); };
+  const hex = (v: unknown, digits = 4) => `$${(Number(v) >>> 0).toString(16).padStart(Number(digits) || 4, '0')}`;
+  const word = (a: unknown) => { const x = addr(a); return mem[x] | (mem[(x + 1) & 0xffff] << 8); };
+  const setWord = (a: unknown, v: unknown) => { const x = addr(a), n = Number(v) & 0xffff; mem[x] = n & 0xff; mem[(x + 1) & 0xffff] = n >> 8; };
+  const span = (s: unknown, e: unknown): [Addr, Addr] => {
+    const start = addr(s), end = typeof e === 'number' && e === 0x10000 ? 0x10000 : addr(e);
+    if (end <= start) throw new RangeError(`the end (${hex(end)}) is not after the start (${hex(start)}): the end is the address after the last byte`);
+    return [start, end];
+  };
+  const api = {
+    mark(s: unknown, e: unknown, type: unknown) {
+      const [start, end] = span(s, e), as = String(type).toLowerCase();
+      if (!MARK_NAMES.includes(as)) throw new TypeError(`mark: "${as}" is no type: ${MARK_NAMES.join(', ')}`);
+      actions.push({ kind: 'mark', line: 0, start, end, as: as === 'data' ? 'bytes' : as });
+    },
+    name(a: unknown, n: unknown) {
+      if (typeof n !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*$/.test(n)) throw new TypeError(`name: "${String(n)}" is no label: letters, digits and _, starting with a letter`);
+      actions.push({ kind: 'name', line: 0, at: addr(a), name: n });
+    },
+    note(a: unknown, t: unknown) {
+      const text = String(t ?? '').trim();
+      if (!text) throw new TypeError('note: the text is empty');
+      actions.push({ kind: 'note', line: 0, at: addr(a), text: text.slice(0, 200) });
+    },
+    junk(s: unknown, e: unknown) { const [start, end] = span(s, e); actions.push({ kind: 'junk', line: 0, start, end }); },
+  };
+  const disk = (() => {
+    if (!extras.disk) return null;
+    const image = diskSectors(extras.disk), img = parseD64(extras.disk);
+    const fileOf = (f: unknown): D64File => {
+      const x = typeof f === 'string' ? img.files.find(y => y.name === f) : img.files.find(y => y === f || (!!f && y.track === (f as D64File).track && y.sector === (f as D64File).sector));
+      if (!x) throw new ReferenceError(`disk.read: ${typeof f === 'string' ? `no file "${f}" on the disk` : 'not a file of the disk'}`);
+      return x;
+    };
+    return {
+      name: img.name, id: img.id, tracks: img.tracks,
+      files: img.files.map(f => ({ name: f.name, type: f.type, blocks: f.blocks, track: f.track, sector: f.sector })),
+      sector(t: unknown, s: unknown): Uint8Array {
+        const o = sectorOffset(Number(t), Number(s), img.tracks);
+        if (!(o >= 0) || o + 256 > image.length) throw new RangeError(`disk.sector: there is no track ${String(t)} sector ${String(s)} on the disk`);
+        return image.slice(o, o + 256);
+      },
+      read: (f: unknown): Uint8Array => readD64File(extras.disk!, fileOf(f)),
+    };
+  })();
+
+  let error: ScriptRun['error'];
+  try {
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, disk };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const fn = new Function(...Object.keys(given), ...HIDDEN, `"use strict";${script.source}\n`) as (...a: unknown[]) => unknown;
+    fn(...Object.values(given));
+  } catch (e) {
+    const line = errorLine(e);
+    error = { msg: e instanceof Error ? `${e.name}: ${e.message}` : String(e), ...(line ? { line } : {}) };
+  }
+  // what changed, taken as what the run wrote: of the program's memory (not the scratchpads), and of each scratchpad
+  const changed = new Uint8Array(0x10000);
+  for (let a = 0x200; a < 0x10000; a++) if (mem[a] !== before[a]) changed[a] = 1;
+  const padRuns = script.pads.map(p => {
+    const w = changed.subarray(p.start, p.start + p.size), first = w.indexOf(1);
+    return { name: p.name, bytes: mem.slice(p.start, p.start + p.size), ...(first >= 0 ? { wrote: [first, w.lastIndexOf(1) + 1] as [number, number] } : {}) };
+  });
+  const { changes, other } = runChanges(mem, before, env.files, own);
+  for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
+  return {
+    end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}),
+  };
+}

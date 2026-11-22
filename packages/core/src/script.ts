@@ -17,6 +17,7 @@ import { monitorChar } from './c64/monitor';
 import { assembleIn, codeLabels, codeOfLine, langIs, langOf, lineComment, needsTassCpu, setsItsPlace, splitLabel, type ScriptLang } from './code-lang';
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
 import { scriptActions, scriptDirectives, type ScriptAction } from './script-actions';
+import { checkJs, runJs } from './script-js';
 import { fileSpaces } from './spaces';
 import { OPC } from './cpu/opcodes';
 import { lineText, type LineTextSettings } from './render/lines';
@@ -180,8 +181,17 @@ export const padName = (pads: readonly ScriptPad[]): string => { for (let i = 1;
  * for data kept outside the program. A line of the body that starts at the left edge is indented, unless it is a
  * label (or, in 64tass, a definition or a directive that stays there).
  */
-export function newScript(taken: readonly { name: string }[], body: readonly string[] = [], id = Math.random().toString(36).slice(2, 10), lang: ScriptLang = 'kickass'): UserScript {
+export function newScript(taken: readonly { name: string }[], body: readonly string[] = [], id = Math.random().toString(36).slice(2, 10), lang: ScriptLang = 'kickass', code?: UserScript['code']): UserScript {
   const name = scriptName(taken);
+  if (code === 'js') return { id, name, lang: langIs(lang), code, pads: [], source: [
+    `// ${name}: JavaScript that runs in Mimir. mem is the program's memory (a copy): what`,
+    '// it changes in the program\'s bytes goes into the program and its .asm; this code never does.',
+    '//   addr("label")              a label\'s address        pad("pad1")   a scratchpad\'s bytes',
+    '//   cpu.call("label", {a: 1})  run the program\'s code   print(...)    a line under Last run',
+    '//   mark(start, end, "text"), name(a, "label"), note(a, "text"), junk(start, end)',
+    ...(body.length ? body : ['']),
+    '',
+  ].join('\n') };
   const indent = '        ', c = lineComment(lang), tass = langIs(lang) === '64tass';
   // (64tass: a word at the start of a line that is not an instruction is a label there, `loop`, `_l`, `+`)
   const keep = (l: string) => (tass ? !!splitLabel(l, lang).label || /^[.*;]/.test(l) : /^[!A-Za-z_]\w*:/.test(l));
@@ -361,7 +371,7 @@ const namesPad = (text: string, pad: ScriptPad) => new RegExp(`(^|[^\\w.])(${pad
  * memory of its own, so the only trouble an address can make is a name of the program that the script uses where
  * its own bytes are (it would read itself there): that is an error on the line that uses the name.
  */
-export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>): ScriptCheck {
+export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang' | 'code'>>): ScriptCheck {
   const lang = langIs(script.lang);
   // Mimir's own directives (.mark, .name, .note, .junk) are taken out: the assembler gets the rest, line for line
   const dir = scriptDirectives(script.source, lang), text = dir.source;
@@ -380,6 +390,8 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
     if (p.data && p.data.length > p.size) problems.push({ level: 'warning', pad: i, msg: `Scratchpad "${p.name}" starts with ${p.data.length} bytes but holds ${p.size}: a run starts it with the first ${p.size}.` });
     good.push(p);
   });
+  // JavaScript: its scratchpads are all there is to check before it runs
+  if (script.code === 'js') return checkJs(problems);
   const pads = good.map(p => ({ start: p.start, end: p.start + p.size }));
   const names = withAddressNames(scriptNames(env, script.pads), text);
   const at = (pc: number) => assembleIn(lang, { 'script.asm': text }, 'script.asm', { names, pc });
@@ -459,7 +471,7 @@ export function linkName(R: Pick<RenderResult, 'labels' | 'zp'>, A: Pick<Analysi
 
 /** how a run ended: the RTS that returns from the script, a BRK, a JAM opcode, the instruction limit, or the address
  *  the script says to stop at (UserScript.stopAt) */
-export type ScriptEnd = 'rts' | 'brk' | 'jam' | 'limit' | 'stop';
+export type ScriptEnd = 'rts' | 'brk' | 'jam' | 'limit' | 'stop' | 'error';
 
 /** whether a run ended as a run should: it returned, came to a BRK, or reached the address it stops at */
 export const endedWell = (end: ScriptEnd): boolean => end === 'rts' || end === 'brk' || end === 'stop';
@@ -477,6 +489,11 @@ export interface ScriptRun {
   /** what each scratchpad holds after the run, by name; `wrote`: the bytes of it the run wrote, from the first to
    *  after the last (missing: it wrote none) */
   pads: { name: string; bytes: Uint8Array; wrote?: [number, number] }[];
+  /** a JavaScript script's run (script-js.ts): what it threw, with its line (`end` is 'error'), what it printed, and
+   *  what it said to do to the program beyond its bytes (mark, name, note, junk) */
+  error?: { msg: string; line?: number };
+  prints?: string[];
+  actions?: ScriptAction[];
   /** the program's memory the run wrote, from $0200 (also where it wrote the bytes that were there, and where no
    *  file has bytes) */
   wrote?: ScriptRange[];
@@ -759,7 +776,8 @@ export function runChanges(mem: Uint8Array, before: Uint8Array, files: ScriptEnv
 
 /** Run a script that checked ok to its end (ScriptMachine), in one go; `stopAt`: the run ends when it gets to this
  *  address (before the instruction there runs). */
-export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT, stopAt: Addr | null = null): ScriptRun {
+export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang' | 'code'>>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT, stopAt: Addr | null = null): ScriptRun {
+  if (script.code === 'js') return runJs(env, script);
   const m = new ScriptMachine(env, script, check, limit);
   if (stopAt == null) m.runUntil(null);
   else if (m.runUntil(x => x.cpu.pc === stopAt) === 'stopped') { m.end = 'stop'; m.at = m.cpu.pc; }
@@ -786,13 +804,14 @@ export function scriptStopAt(expr: string | undefined, names: ReadonlyMap<string
 }
 
 /** How a run ended, in a sentence. */
-export function scriptEndText(r: Pick<ScriptRun, 'end' | 'at' | 'instructions' | 'cycles'>): string {
+export function scriptEndText(r: Pick<ScriptRun, 'end' | 'at' | 'instructions' | 'cycles'> & Partial<Pick<ScriptRun, 'error'>>): string {
   const n = `${r.instructions.toLocaleString('en-US')} instruction${r.instructions === 1 ? '' : 's'}, ${r.cycles.toLocaleString('en-US')} cycles`;
   switch (r.end) {
     case 'rts': return `Returned (RTS at $${h4(r.at)}) after ${n}.`;
     case 'brk': return `Stopped at the BRK at $${h4(r.at)} after ${n}.`;
     case 'jam': return `The CPU jammed at $${h4(r.at)} (a JAM opcode) after ${n}: did the code run into data?`;
     case 'stop': return `Stopped at $${h4(r.at)}, the address it stops at, after ${n}.`;
+    case 'error': return `Stopped with an error${r.error?.line ? ` on line ${r.error.line}` : ''}: ${r.error?.msg ?? 'unknown'}`;
     case 'limit': return `Stopped after ${n} at $${h4(r.at)}, the most a run may take: does it loop for ever?`;
   }
 }

@@ -381,6 +381,9 @@ export interface UserScript {
   /** unique in the project */
   name: string;
   lang: ScriptLang;
+  /** what its code is written in when that is not the assembler `lang` says: `js`, JavaScript (script-js.ts). `lang`
+   *  is then only what its scratchpads' start content is written in */
+  code?: 'js';
   source: string;
   pads: ScriptPad[];
   /** addresses of the program linked to the script from the listing or the source (a right-click): the editor shows

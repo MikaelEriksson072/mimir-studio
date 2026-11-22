@@ -1,7 +1,7 @@
 /* What the script editor suggests where the cursor is (spec 10.3): words that start with what is typed, the right
  * kind for the place, and nothing for an index register. */
 import { describe, expect, it } from 'vitest';
-import { dottedNameAt, scriptSuggestions } from '../src/monaco/providers';
+import { dottedNameAt, jsSuggestions, scriptSuggestions } from '../src/monaco/providers';
 
 const names = new Map([['tabell', 0x0939], ['SID_POT_X', 0xd419], ['VIC_SPR0_X', 0xd000], ['loop_0870', 0x0870], ['text_out', 0x2000], ['pad1', 0xc800], ['pad1_end', 0xc900]]);
 const pads = [{ name: 'pad1' }];
@@ -95,5 +95,25 @@ describe('script suggestions', () => {
     expect(t('        nop ; ', 'ta')).toEqual([]);
     // Kick Assembler's comment is no comment in 64tass, nor 64tass's in Kick Assembler
     expect(labels('        nop ; ', 'ta')).toEqual(['tabell', 'tan']);
+  });
+});
+
+describe('suggestions in a JavaScript script', () => {
+  const js = (before: string, typed: string) => jsSuggestions(before, typed, names, pads).map(s => s.label).sort();
+  it('give what the script is given where code is written, and nothing with nothing typed', () => {
+    expect(js('', 'pr')).toEqual(['print']);
+    expect(js('const d = ', 'ad')).toEqual(['addr']);
+    expect(js('', 'cp')).toEqual(['cpu']);
+    expect(js('cpu.', 'ca')).toEqual(['call']);
+    expect(js('', '')).toEqual([]);
+    expect(jsSuggestions('', 'ad', names, pads)[0].insert).toBe('addr("');
+  });
+  it('give the program\'s names inside the quotes of what takes an address, and scratchpads inside pad', () => {
+    expect(js('const d = addr("', 'ta')).toEqual(['tabell']);
+    expect(js('cpu.call("', 'loop')).toEqual(['loop_0870']);
+    expect(js('mark(d, "', 'te')).toEqual(['text_out']);
+    expect(js('const p = pad("', 'pa')).toEqual(['pad1']);
+    // not inside another string
+    expect(js('print("', 'pr')).toEqual([]);
   });
 });

@@ -178,6 +178,7 @@ mimir-studio/
 │  ├─ src/script-suggest.ts        skript som analysen föreslår: dekrypteringsloopar och rutinanrop (10.3)
 │  ├─ src/script-machine.ts        ett skript kört i hela C64:an: ROM, I/O, avbrott och 1541 med disken (10.3)
 │  ├─ src/script-actions.ts        skriptens egna direktiv: .mark, .name, .note och .junk (10.3)
+│  ├─ src/script-js.ts             skript i JavaScript: mem, addr, pad, cpu.call, disk (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -217,6 +218,7 @@ interface Project {
 interface UserScript {                    // se 10.3
   id: string; name: string;               // namnet är unikt i projektet
   lang: 'kickass';                        // Kick Assembler; fler språk (Python) kan komma
+  code?: 'js';                            // koden är JavaScript (script-js.ts); lang är då bara scratchpadsens språk
   source: string;
   pads: ScriptPad[];                      // skriptets egna scratchpads (data utanför programmet, t.ex. en logg)
   links?: Addr[];                         // adresser i programmet länkade till skriptet (högerklick i .asm); visas med namnet (linkName)
@@ -2746,6 +2748,34 @@ $06, $08` i `.asm`-filen efter en körning.
     *Marked up* vad som gjordes; meddelandet efter körningen säger hur många. **I safe mode görs ingenting**: listan
     heter *Would mark up*, och *Write into the program* gör dem. De hör inte till skriptets patchar: *Take out* och en
     ny körning tar inte bort dem (Ctrl+Z gör det). *Run on files…* gör dem inte.
+- **Skript i JavaScript** (`script-js.ts`, `UserScript.code` = `'js'`, 2026-11-22; Python kan komma senare på samma
+  sätt): samma uppgift som ett skript i assembler (arbeta på programmets byte, och det som ändras blir skriptets
+  patchar), skrivet i ett språk med loopar, arrayer och strängar, som lånar programmets egna 6510-rutiner när det
+  behövs. *JS*-knappen bredvid `+` i skriptlistan (och *JavaScript* i den tomma vyn) gör ett; `lang` är då bara
+  språket scratchpadsens startinnehåll skrivs i.
+  - Skriptet är kroppen i en funktion som körs en gång. Det har **ett minne**, `mem`: 64 KB med programmets filer på
+    sina laddadresser och skriptets scratchpads på sina adresser (en scratchpad är en sträcka av `mem`, så programmets
+    kod ser den). Det får, och inget annat: `mem`; `addr("namn")` (en etikett, en variabel, ett hårdvarunamn, en
+    scratchpad: `pad1`, `pad1_end`, `pad1_load`); `pad("pad1")` (en vy av `mem`); `word(a)` och `setWord(a, v)`;
+    `cpu.call(var, { a, x, y, c })`, som kör programmets 6510-kod tills den återvänder (RTS eller BRK) och ger
+    `{ a, x, y, p, c, z, n, brk }` (den kastar ett fel om koden jammar eller inte återvänder inom `cpu.limit`
+    instruktioner, 50 miljoner); `print(...)`; `hex(v, siffror)`; `mark`, `name`, `note` och `junk` (som direktiven,
+    gjorda när körningen slutar); och `disk`, den monterade disken eller `null`: `disk.name`, `disk.files`,
+    `disk.read("NAMN")`, `disk.sector(spår, sektor)`.
+  - Det körs i skriptens worker (`runJs`, med `new Function`; appens CSP gäller inte där, och fönstret kör aldrig
+    koden). Namnen som når ut ur workern (`fetch`, `importScripts`, `self`, `globalThis`, `setTimeout`, `Function` …)
+    är `undefined` i skriptets kod, och workern tar bort nätverks- och lagringsfunktionerna ur sig själv innan det
+    första JavaScript-skriptet körs (`closeWorker`). Det är ett skydd mot misstag, inte en säkerhetsgräns mot illvillig
+    kod: kör inte skript du inte litar på.
+  - Innan det körs kontrolleras bara scratchpadsen (`checkJs`); ett syntaxfel sägs av körningen. Ett fel det kastar
+    avslutar körningen (`ScriptEnd` `'error'`, `ScriptRun.error` med raden ur stacken): *Stopped with an error on line
+    2: …*, och det som ändrats dittills är ändå resultatet. *Last run* visar det som skrevs med `print` och en länk
+    till felets rad.
+  - Det som inte finns för JavaScript: *Debug* (knappen är av), Init:s register och flaggor (`cpu.call` tar dem),
+    *Runs in* och *Stop at* (det kör alltid i minnet), watch-listans egna fynd, och editorns glödlampa för scratchpads.
+    Editorn färgar koden som JavaScript och föreslår det skriptet får (`JS_API`) och programmets namn inom citattecknen
+    i `addr("…")`, `cpu.call("…")` med flera (`jsSuggestions`). *Run on files…*, safe mode, biblioteket och *Memory it
+    wrote* fungerar som för andra skript. En evig loop i JavaScript stoppas med *Stop* (workern avslutas).
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett
