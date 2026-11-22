@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, LANG_TITLE, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
@@ -76,6 +76,8 @@ export interface ScriptOutputProps {
   /** Run on files…: the dialog that runs the script on files of the disk or the tape */
   onRunOnFiles: () => void;
   onToProject: ScriptsViewProps['onToProject'];
+  /** the keys the project's other scripts have, each with its script's name */
+  keysTaken: Readonly<Record<string, string>>;
   /** the script's code set (a setting's value changed): the editor takes it */
   onSource: (source: string, label: string) => void;
   /** Run with values…: the dialog that runs the script once for each row of a table of its settings' values */
@@ -129,7 +131,7 @@ export function ScriptOutput(props: ScriptOutputProps) {
       </div>
       {!folded && <div className={cx('scr-out', `scr-out-${outTab}`)} id="scr-out" role="tabpanel" aria-labelledby={`scr-tab-${outTab}`} aria-label={label} style={{ height, maxHeight: height }}>
         {outTab === 'settings' && <SettingsPane script={script} params={params} canRun={check.ok} onSource={props.onSource} onRunValues={props.onRunValues} onGoLine={props.onGoLine} toast={props.toast} />}
-        {outTab === 'init' && <InitSection script={script} names={props.names} labels={check.labels} problems={check.problems} onEdit={props.onEdit} />}
+        {outTab === 'init' && <InitSection script={script} names={props.names} labels={check.labels} problems={check.problems} keysTaken={props.keysTaken} onEdit={props.onEdit} />}
         {outTab === 'watch' && watch}
         {outTab === 'program' && <ProgramPane {...props} would={would} />}
         {outTab === 'pads' && <PadsPane {...props} />}
@@ -438,7 +440,29 @@ function BlockToPad({ blocks, pads, lang, first, into, onCopy, onCancel }: { blo
  * zero page, or $fb) and its value (a number, or a name: a label's address). What differs from a run without an init
  * is kept with the script (in the project and the library); Reset takes it all away.
  */
-function InitSection({ script, names, labels, problems, onEdit }: { script: UserScript; names: ReadonlyMap<string, number>; labels: ScriptCheck['labels']; problems: readonly ScriptProblem[]; onEdit: ScriptsViewProps['onEdit'] }) {
+/** How a script starts besides Run: the key that runs it (Alt and a digit, one script a key), and whether it runs by
+ *  itself before Build & Run, on the program just built. */
+function StartsGroup({ script, keysTaken, onEdit }: { script: UserScript; keysTaken: Readonly<Record<string, string>>; onEdit: ScriptsViewProps['onEdit'] }) {
+  return (
+    <div className="init-group init-starts">
+      <h5 className="scr-group-h">Starts</h5>
+      <label className="init-stop" title="A key that runs the script from anywhere in the window, as Run does. It is in the command palette too (Ctrl+Shift+P), as Run the script …">
+        <span>Key</span>
+        <select aria-label="Key that runs the script" value={script.key ?? ''} onChange={e => onEdit(script.id, { key: e.target.value || undefined }, e.target.value ? `${e.target.value} runs "${script.name}"` : `No key runs "${script.name}"`)}>
+          <option value="">none</option>
+          {SCRIPT_KEYS.map(k => <option key={k} value={k} disabled={!!keysTaken[k]}>{k}{keysTaken[k] ? ` (${keysTaken[k]})` : ''}</option>)}
+        </select>
+      </label>
+      <label className="init-when" title="The script runs by itself each time Build & Run (F5, Shift+F5) has built the program, on the built program: what it changes is in what the emulator runs, and nowhere else. For a program whose bytes the project keeps decrypted: the script encrypts them again, as the program's own decryption expects them">
+        <input type="checkbox" checked={script.when === 'build'} onChange={e => onEdit(script.id, { when: e.target.checked ? 'build' : undefined }, e.target.checked ? `"${script.name}" runs before Build & Run` : `"${script.name}" runs only when it is run`)} />
+        Before Build &amp; Run, on the built program
+      </label>
+      {script.when === 'build' && <p className="scr-note">What it changes then is in the program the emulator gets, not in the project or the exported source. Its scratchpads and what it marks up are not kept from those runs.</p>}
+    </div>
+  );
+}
+
+function InitSection({ script, names, labels, problems, keysTaken, onEdit }: { script: UserScript; names: ReadonlyMap<string, number>; labels: ScriptCheck['labels']; problems: readonly ScriptProblem[]; keysTaken: Readonly<Record<string, string>>; onEdit: ScriptsViewProps['onEdit'] }) {
   const init = script.init ?? {};
   const p = init.p ?? SCRIPT_P;
   const zp = init.zp ?? [];
@@ -463,7 +487,8 @@ function InitSection({ script, names, labels, problems, onEdit }: { script: User
         <span className="grow" />
         {!initEmpty(script.init) && <button className="btn ghost small" onClick={() => save({}, `Reset the init of "${script.name}"`)} title="A, X and Y back to 0, only I set, and no zero-page bytes"><Icon name="undo" size={13} />Reset</button>}
       </div>
-      {script.code === 'js' ? <div className="scr-pane-body"><p className="scr-note">A JavaScript script sets what it needs itself: the registers of a call in <span className="mono">cpu.call("routine", {'{'} a: 1, x: 2 {'}'})</span>, the zero page in <span className="mono">mem</span>. It runs in memory only, with the mounted disk as <span className="mono">disk</span>.</p></div>
+      {script.code === 'js' ? <div className="scr-pane-body"><p className="scr-note">A JavaScript script sets what it needs itself: the registers of a call in <span className="mono">cpu.call("routine", {'{'} a: 1, x: 2 {'}'})</span>, the zero page in <span className="mono">mem</span>. It runs in memory only, with the mounted disk as <span className="mono">disk</span>.</p>
+        <StartsGroup script={script} keysTaken={keysTaken} onEdit={onEdit} /></div>
       : <div className="scr-pane-body init-groups">
         <div className="init-group">
           <h5 className="scr-group-h">Registers</h5>
@@ -500,6 +525,7 @@ function InitSection({ script, names, labels, problems, onEdit }: { script: User
           {stopBad && <p className="scr-note init-stop-bad">{stopBad}</p>}
           {script.machine === 'c64' && <p className="scr-note">The 1541 has the mounted disk. What a run wrote is listed under Last run. Debug is for memory only.</p>}
         </div>
+        <StartsGroup script={script} keysTaken={keysTaken} onEdit={onEdit} />
         <div className="init-group init-zp-group">
           <h5 className="scr-group-h">Zero page<span className="grow" />
             <button className="btn ghost small" onClick={addZp} aria-label="Add a zero-page byte" title="A zero-page byte the run starts with (a word: a pointer, low byte first). The address and the value can be names of the program"><Icon name="plus" size={13} />Add</button></h5>

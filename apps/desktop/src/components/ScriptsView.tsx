@@ -52,7 +52,7 @@ export interface ScriptsViewProps {
   onAdd: (s: LibraryScript) => void;
   /** a copy of a template in the project (its scratchpads placed where there is room) */
   onAddTemplate: (t: ScriptTemplate) => void;
-  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table'>>, label: string) => void;
+  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table' | 'key' | 'when'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
    *  runUserScript) */
@@ -711,7 +711,7 @@ ${cryptWhereText(l)}`}>
             const room = Math.max(0, (editRow.current?.offsetHeight ?? 140) - 140);
             set({ [k]: Math.max(dbg ? 110 : 140, Math.min(window.innerHeight - 260, shown + room, shown - d)) });
           }} />}
-          <ScriptOutput script={cur} check={check} kept={kept} stale={stale} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg}
+          <ScriptOutput script={cur} keysTaken={Object.fromEntries(scripts.filter(s => s.id !== cur.id && s.key).map(s => [s.key!, s.name]))} check={check} kept={kept} stale={stale} mine={mine} env={env} names={names} canWrite={check.ok && !running && !dbg}
             folded={outFolded} height={dbg ? dbgOutH : outH} watchCount={spots.length} live={livePad} where={where} theme={theme}
             watch={<WatchSection items={watchItems} mode={watchMode} stale={stale} hidden={hiddenSpots} onRemove={removeWatch} onAdd={addWatch} onGoLine={goLine} onShow={onShow}
               onRestore={() => onEdit(cur.id, { unwatch: undefined }, `Put back on the watch list of "${cur.name}" what was taken off`)} />}

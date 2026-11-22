@@ -10728,3 +10728,77 @@ test('the library of scripts is a folder of files: Save to library writes one, a
     await expect(library.getByLabel('fits this program')).toHaveCount(0);
   });
 });
+
+test('more ways to start a script: a command of the palette, a key of its own, and a run by itself before Build & Run on the built program', async ({ workDir, app, page }) => {
+  // the program of the suggestions test: the 32 bytes at $0840 are EORed with $5a
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const crypted = [...TEXT].map(c => c.charCodeAt(0) ^ 0x5a);
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...crypted];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  await waitForListing(page);
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded crypt-demo.prg at $0801')).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  if (await overview.isVisible()) await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const init = page.getByRole('region', { name: 'Init' });
+  // EOR over the block: run on the program it decrypts it, run on the built program it encrypts it again
+  const XOR = ['        ldx #31', 'loop:   lda $0840,x', '        eor #$5a', '        sta $0840,x', '        dex', '        bpl loop', '        rts'];
+
+  await test.step('the script decrypts the block into the program', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(XOR.join('\n'));
+    await page.keyboard.press('Control+Enter');
+    await expect(toast(page, /It changed 32 bytes of the program in 1 place/)).toBeVisible();
+  });
+
+  await test.step('Init gives it a key and says it runs before Build & Run', async () => {
+    await outTab(page, 'Init');
+    await init.getByLabel('Key that runs the script').selectOption('Alt+3');
+    await init.getByRole('checkbox', { name: 'Before Build & Run, on the built program' }).check();
+    await expect(init).toContainText('What it changes then is in the program the emulator gets, not in the project or the exported source.');
+  });
+
+  await test.step('it is a command of the palette with its key, and the key runs it from the listing', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await page.keyboard.press('Control+Shift+p');
+    const palette = page.getByRole('dialog', { name: 'Command palette' });
+    await palette.getByRole('textbox').fill('run the script');
+    await expect(palette).toContainText('Run the script "script"');
+    await expect(palette).toContainText('Alt+3');
+    await page.keyboard.press('Escape');
+    await listing(page).click();
+    await page.keyboard.press('Alt+3');
+    await expect(toast(page, /^script: Returned .* It changed 32 bytes of the program in 1 place/).last()).toBeVisible();
+  });
+
+  await test.step('Build & Run runs it on the built program: what the emulator gets has the block encrypted again, the project keeps it decrypted', async () => {
+    // VICE itself is not started: a Windows program that ends at once stands in for it
+    const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+    test.skip(!existsSync(standIn), 'needs where.exe');
+    await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+    await page.keyboard.press('F5');
+    await expect(toast(page, /^VICE /).last()).toBeVisible({ timeout: 120_000 });
+    const log = await page.locator('.build-log').innerText();
+    expect(log).toContain('> the script "script" ran on the built program: 32 bytes changed in 1 place');
+    const dir = /is the built program with these changes, in (.+?); the project and its source are as they were/.exec(log);
+    expect(dir, log.slice(-800)).toBeTruthy();
+    const ran = [...readFileSync(join(dir![1], 'crypt-demo.prg'))];
+    expect(ran.slice(0, 2)).toEqual([0x01, 0x08]);
+    expect(ran.slice(2 + 0x0840 - 0x0801, 2 + 0x0840 - 0x0801 + 32)).toEqual(crypted);
+    // the project still has the block as the script decrypted it: its change is in the program
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await outTab(page, 'In the program');
+    await expect(page.getByRole('list', { name: 'Changed in the program' }).getByRole('listitem')).toHaveCount(1);
+    await expect(page.locator('.scr-dump')).toContainText('48 45 4c 4c 4f');
+  });
+});

@@ -1644,6 +1644,9 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 .init-stop input { width: 120px; height: 24px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 6px; font: 12px var(--font-code); }
 .init-stop input.bad { border-color: color-mix(in srgb, var(--err) 70%, transparent); }
 .init-stop-bad { color: var(--err); margin: 0; }
+.init-starts { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; max-width: 320px; }
+.init-stop select { height: 24px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 0 4px; font-size: 12px; }
+.init-when { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-2); cursor: pointer; }
 .scr-wrote { margin-top: 10px; }
 .scr-wrote-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .scr-wrote-list li { display: flex; align-items: center; gap: 10px; padding: 2px 0; font-size: 12.5px; }

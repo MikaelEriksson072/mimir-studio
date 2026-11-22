@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2545,7 +2545,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     addUserScript({ ...base, links: [at], safe: true, ...(cs.init ? { init: cs.init } : {}) }, 'New script that calls a routine');
     toast(`"${base.name}" calls ${k.name}${cs.init ? ` with ${(['a', 'x', 'y'] as const).filter(r => cs.init![r] != null).map(r => `${r.toUpperCase()} = $${h2(cs.init![r]!)}`).join(', ')}, as the program does at $${h4(spaceAddr(cs.from!))} (Init)` : ''}. It is in safe mode: Ctrl+Enter shows what the routine would change, and nothing goes into the program`, 'ok');
   };
-  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table'>>, label: string) =>
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table' | 'key' | 'when'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
   const setScriptSafe = (id: string, on: boolean) => {
@@ -3415,15 +3415,55 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     return w ? { path: `${w.dir}/${copy}`, wrote } : undefined;
   };
 
+  /** The build with the scripts that run before Build & Run (UserScript.when 'build') run on it, in the project's order,
+   *  each on what the one before left: the built programs with what the scripts changed, written as files of their own
+   *  for the emulator, and what each did in the build log. The project, its source and the verified build are as they
+   *  were. null: a script could not run or did not end well, and that was said (nothing is started) */
+  const withBuildScripts = async (res: BuildState, emu: string): Promise<BuildState | null> => {
+    const { project: p, R: r } = latest.current;
+    const hooks = (p.userScripts ?? []).filter(s => s.when === 'build');
+    if (!hooks.length || !kr) return res;
+    if (p.cart) { toast('Scripts that run before Build & Run are not run for a cartridge: its chips are banks, not one memory', 'info'); return res; }
+    if (useScripts.getState().running) { toast(`A script is running: wait for it, or stop it in the Scripts tab; ${emu} was not started`, 'warn'); return null; }
+    const prgOf = (i: number) => res.kick?.compared[i]?.prg ?? res.V.results[i]?.prg ?? null;
+    let files = p.files.map((f, i) => { const prg = prgOf(i); return prg && prg.length > 2 ? { load: prg[0] | (prg[1] << 8), bytes: prg.slice(2) } : { load: f.load, bytes: f.bytes }; });
+    const log: string[] = [];
+    try {
+      for (const s of hooks) {
+        setBuildBusy(`Running the script "${s.name}"`);
+        const env: ScriptEnv = { ...scriptsEnv, files };
+        const c = checkScript(env, s);
+        if (!c.ok) { const e = c.problems.find(x => x.level === 'error'); toast(`The script "${s.name}", which runs before Build & Run, does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}. ${emu} was not started`, 'err'); return null; }
+        const opts = await scriptRunOpts(s, env, s.pads, c);
+        if (!opts) return null;
+        useScripts.getState().set({ running: s.id });
+        let run: ScriptRun;
+        try { run = await runScriptInWorker(env, s, opts); } finally { useScripts.getState().set({ running: null }); }
+        if (!endedWell(run.end)) { toast(`The script "${s.name}", which runs before Build & Run: ${scriptEndText(run)} ${emu} was not started`, 'err'); return null; }
+        files = withRunChanges(files, run);
+        log.push(`> the script "${s.name}" ran on the built program: ${runChangeText(run)}`);
+      }
+      const names = files.map((_, i) => `${r.fileNames[i] ?? `file${i}`}.prg`), prgs = files.map(f => makePrg(f.load, f.bytes));
+      const w = await kr.writeExport({ target: 'temp', name: 'scripted', files: Object.fromEntries(names.map((n, i) => [n, prgs[i]])) });
+      if (!w) return null;
+      setBuild(b => b && { ...b, log: `${b.log}\n\n${log.join('\n')}\n  (what ${emu} runs is the built program with these changes, in ${w.dir}; the project and its source are as they were)` });
+      return { ...res,
+        V: { ...res.V, results: res.V.results.map((x, i) => (prgs[i] ? { ...x, prg: prgs[i] } : x)) },
+        kick: res.kick ? { ...res.kick, compared: res.kick.compared.map((x, i) => (prgs[i] ? { ...x, prg: prgs[i], prgPath: `${w.dir}/${names[i]}` } : x)) } : res.kick };
+    } catch (e) { toast(`${errorText(e) === 'stopped' ? 'The script was stopped' : errorText(e)}: ${emu} was not started`, 'err'); return null; }
+  };
   /** Build & Run: build and verify, then start the program in VICE (F5), or (`inDebugger`, Shift+F5) in the debugger
    *  Settings → Toolchain names, the way VICE starts it (spec 13.2b) */
   const runBuild = async (inDebugger = false) => {
     if (!kr) return needDesktop();
     const emu = inDebugger ? debuggerName : 'VICE';
-    const res = await runVerify({ quiet: true });
+    const verified = await runVerify({ quiet: true });
     setUi({ bottom: 'build', panelOpen: true });
+    if (!verified) return;
+    if (!verified.ok) { toast(`Build failed verification; ${emu} was not started`, 'err'); return; }
+    // the scripts that run before Build & Run work on the program just built: what they change is in what runs
+    const res = await withBuildScripts(verified, emu);
     if (!res) return;
-    if (!res.ok) { toast(`Build failed verification; ${emu} was not started`, 'err'); return; }
     // the analysis and render that were verified (runVerify waited for the latest edit)
     const { A, R, project } = latest.current;
     try {
@@ -3963,6 +4003,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-scripts', label: `Show the scripts: ${LANG_TITLE[codeLang]} code that runs in Mimir on a copy of the program`, run: () => setUi({ tab: 'scripts' }) },
     { id: 'tab-git', label: 'Git: stage, commit and push the project (the Git tab)', run: () => setUi({ tab: 'git' }) },
+    ...userScripts.map((s): Command => ({ id: `script-run-${s.id}`, label: `Run the script "${s.name}"${s.safe ? ' (safe mode: nothing goes into the program)' : ''}`, ...(s.key ? { key: s.key } : {}), run: () => void runUserScript(s.id) })),
     { id: 'script-new', label: sel && sel.multi && sel.end > sel.start ? 'New script from the selection (runs in Mimir on a copy of the program)' : `New script (${LANG_TITLE[codeLang]} code that runs in Mimir on a copy of the program)`, run: () => newUserScript(sel && sel.multi && sel.end > sel.start ? rangeLines(sel.start, sel.end) : []) },
     { id: 'tab-spec', label: 'Open the technical specification', run: () => setUi({ tab: 'spec' }) },
     { id: 'overview', label: 'Show the analysis overview: what the analysis found, with links to each part', run: () => setModal('overview') },
@@ -4030,6 +4071,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (ctrl && (e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'o')) return run(e.key.toLowerCase() === 's' ? 'save' : 'open');
       // Ctrl+C in the listing copies its lines; text selected with the mouse elsewhere is copied as usual
       if (ctrl && !e.shiftKey && !typing && !k.modal && !k.editing && e.key.toLowerCase() === 'c' && k.tab === 'listing' && (t?.closest?.('.listing') || !window.getSelection()?.toString())) return run('copy-lines');
+      if (e.altKey && !ctrl && !e.shiftKey && !k.modal && /^[1-9]$/.test(e.key)) { const c = k.commands.find(x => x.key === `Alt+${e.key}` && x.id.startsWith('script-run-')); if (c) { e.preventDefault(); c.run(); return; } }
       if (e.key === 'F5') return run(e.shiftKey ? 'build-debugger' : 'build');
       if (e.key === 'F9') return run('quicksave');
       if (e.key === 'F7') return run('verify');

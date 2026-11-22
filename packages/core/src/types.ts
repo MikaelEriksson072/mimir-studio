@@ -399,6 +399,11 @@ export interface UserScript {
    *  READY with the program loaded: the ROMs, the I/O chips, interrupts and the 1541 with the mounted disk, the
    *  script's code and scratchpads in its RAM */
   machine?: 'c64';
+  /** the key that runs it (SCRIPT_KEYS: Alt and a digit); one script of the project has a key */
+  key?: string;
+  /** when it runs by itself (script-hooks.ts): build, before Build & Run, on the program as it was just built: what it
+   *  changes is in the program the emulator gets, not in the project. Missing: only when the user runs it */
+  when?: 'build';
   /** the table of values the script is run with, a row a run (Run with values…, script-params.ts), as the user wrote it:
    *  the first line names the settings, each line after it their values */
   table?: string;

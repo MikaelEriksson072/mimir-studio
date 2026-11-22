@@ -181,6 +181,7 @@ mimir-studio/
 │  ├─ src/script-js.ts             skript i JavaScript: mem, addr, pad, cpu.call, disk (10.3)
 │  ├─ src/script-params.ts         skriptets inställningar ur koden, och en tabell av värden att köra med (10.3)
 │  ├─ src/script-file.ts           ett skript som fil: koden med en huvudrad, och om det passar ett program (10.3)
+│  ├─ src/script-hooks.ts          skriptets tangent, och körning på det byggda programmet före Build & Run (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -2800,6 +2801,29 @@ $06, $08` i `.asm`-filen efter en körning.
     byte), annars den längsta sträckan minne den skrev; filerna heter `skript_01.prg`, `skript_02.prg` … och sparas
     i en mapp, läggs till i projektet eller öppnas som ett nytt projekt, som efter *Run on files…*. En rad vars
     körning inte går väl eller inte skriver något sägs i meddelandet efteråt.
+- **Fler sätt att starta ett skript** (`script-hooks.ts`, gruppen *Starts* under *Init*, 2026-11-22):
+  - **Kommando i paletten:** varje skript i projektet är ett kommando, *Run the script "namn"* (Ctrl+Shift+P), som
+    gör vad *Run* gör.
+  - **En egen tangent** (`UserScript.key`): Alt och en siffra, Alt+1 till Alt+9 (inte Ctrl+Alt, som är AltGr på
+    många tangentbord), vald under *Starts*; en tangent hör till ett skript i projektet (de andras är avstängda i
+    listan, med skriptets namn). Tangenten kör skriptet var man än är i fönstret, också medan man skriver, och står
+    vid kommandot i paletten.
+  - **Före Build & Run** (`UserScript.when` = `'build'`, kryssrutan *Before Build & Run, on the built program*):
+    skriptet körs av sig självt varje gång Build & Run (F5, Shift+F5) har byggt och verifierat programmet, **på det
+    byggda programmet**, inte på projektet (`withBuildScripts`): filerna som de just byggdes är minnet det kör på,
+    och det som ändras (`withRunChanges`: varje ändrad byte i den sista fil som har adressen) finns i programmet
+    emulatorn får, skrivet som egna filer i en tillfällig mapp, och ingen annanstans. Projektet, källkoden, exporten
+    och verifieringen är som de var. Flera körs i projektets ordning, vart och ett på det förra lämnade; byggloggen
+    säger vad vart och ett gjorde. Det är så ett program vars byte projektet håller dekrypterade (ett skript
+    dekrypterade dem in i programmet, och de ändrades där: en text översatt, en rutin lagad) går att köra igen:
+    skriptet krypterar byten som programmets egen dekryptering väntar sig dem. Ett skript som inte går att kontrollera
+    eller inte slutar väl stoppar Build & Run med ett meddelande, och emulatorn startas inte. Scratchpads och
+    uppmärkning (`.mark` …) sparas inte från de körningarna. Inte för en cartridge (dess chip är banker, inte ett
+    minne), och inte för den exporterade källkoden: den som bygger den själv med `build.bat` får de byte projektet
+    har.
+  - Inte byggt: en körning av sig själv när en fil laddas. Ett skripts resultat ligger redan kvar i projektet, så
+    en omkörning vid laddning ändrar inget; att låta bibliotekets skript köra av sig själva på varje fil som öppnas
+    kräver ett eget beslut.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett
