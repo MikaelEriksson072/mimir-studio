@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -28,7 +28,7 @@ import { useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
 import { useBuildTemplates } from './store/buildTemplates';
 import { runScriptInWorker, stopScript, type ScriptRunOpts } from './lib/scriptrun';
-import { RunOnFilesModal, type FilesRunBusy, type FilesRunThen, type ScriptFileChoice } from './components/ScriptFiles';
+import { RunOnFilesModal, RunValuesModal, type FilesRunBusy, type FilesRunThen, type ScriptFileChoice } from './components/ScriptFiles';
 import { exportWorker, useAnalysis, verifyInWorker } from './lib/analysis';
 import { PROJECT_FOLDERS } from '../shared/projects';
 import { bankAdr, cx, errorText, filesKey, ROW, store, uid } from './lib/util';
@@ -2529,7 +2529,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     addUserScript({ ...base, links: [at], safe: true, ...(cs.init ? { init: cs.init } : {}) }, 'New script that calls a routine');
     toast(`"${base.name}" calls ${k.name}${cs.init ? ` with ${(['a', 'x', 'y'] as const).filter(r => cs.init![r] != null).map(r => `${r.toUpperCase()} = $${h2(cs.init![r]!)}`).join(', ')}, as the program does at $${h4(spaceAddr(cs.from!))} (Init)` : ''}. It is in safe mode: Ctrl+Enter shows what the routine would change, and nothing goes into the program`, 'ok');
   };
-  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt'>>, label: string) =>
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
   const setScriptSafe = (id: string, on: boolean) => {
@@ -2806,11 +2806,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       }
     } finally { useScripts.getState().set({ running: null }); setFilesBusy(null); }
     setFilesRun(null);
+    const n = files.length;
+    await deliverResults(s, `"${s.name}" ran on ${n} file${n === 1 ? '' : 's'}`, outs, failed, then, stopped);
+  };
+  /** what a run on files or with a table of values ends with: its results opened as a new project, added to this one or
+   *  saved to a folder, and what it did said (`ran`: its first words); a run that was stopped gives nothing */
+  const deliverResults = async (s: UserScript, ran: string, outs: ScriptFileResult[], failed: { name: string; why: string }[], then: FilesRunThen, stopped: boolean) => {
     if (stopped) { toast(`"${s.name}" stopped: nothing was opened or saved`, 'info'); return; }
     // two files of one name: the later ones numbered
     const seen = new Map<string, number>();
     for (const o of outs) { const k = o.name.toLowerCase(), n = (seen.get(k) ?? 0) + 1; seen.set(k, n); if (n > 1) o.name = o.name.replace(/\.prg$/, `_${n}.prg`); }
-    const n = files.length, ran = `"${s.name}" ran on ${n} file${n === 1 ? '' : 's'}`;
     const names = `${outs.slice(0, 4).map(o => `${o.name} ($${h4(o.load)}, ${o.bytes.length} bytes)`).join(', ')}${outs.length > 4 ? `, and ${outs.length - 4} more` : ''}`;
     const failText = failed.length ? `${failed.length} gave no file: ${failed.slice(0, 3).map(x => `${x.name} (${x.why})`).join('; ')}${failed.length > 3 ? `; and ${failed.length - 3} more` : ''}` : '';
     if (!outs.length) { toast(`${ran} and gave no file. ${failText}`, 'warn'); return; }
@@ -2825,6 +2830,43 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       addFiles(outs.map(o => withId(parsePrg(o.name, makePrg(o.load, o.bytes)))), then === 'add',
         { note: `${ran}: ${names} ${then === 'add' ? 'added to the project' : 'opened'}${failText ? `. ${failText}` : ''}`, what: `the result${outs.length === 1 ? '' : 's'} of "${s.name}"`, show: true });
     } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /** Run with values…: the script whose dialog is open */
+  const [valuesRun, setValuesRun] = useState<string | null>(null);
+  const valuesScript = valuesRun ? userScripts.find(s => s.id === valuesRun) ?? null : null;
+  /** the script of the dialog run once for each row of its table of values (kept with the script as `text`), the row's
+   *  values set in its code for that run only. Nothing goes into the program; what the runs give (runResults) is opened
+   *  as a new project, added to this one, or saved to a folder */
+  const runWithValues = async (text: string, rows: Record<string, string>[], then: FilesRunThen) => {
+    const s = latest.current.project.userScripts?.find(x => x.id === valuesRun); if (!s || !rows.length) return;
+    if (useScripts.getState().running) { toast('A script is running: wait for it, or stop it in the Scripts tab', 'info'); return; }
+    if (then === 'save' && !kr) return needDesktop();
+    if (text !== (s.table ?? '')) editUserScript(s.id, { table: text }, `The table of values of "${s.name}"`);
+    const env = scriptEnvFor(s.id), outs: ScriptFileResult[] = [], failed: { name: string; why: string }[] = [];
+    const digits = String(rows.length).length;
+    let stopped = false;
+    useScripts.getState().set({ running: s.id });
+    try {
+      for (let i = 0; i < rows.length && !stopped; i++) {
+        const row = `row ${i + 1}`, what = Object.entries(rows[i]).map(([k, v]) => `${k} = ${v}`).join(', ');
+        setFilesBusy({ done: i, total: rows.length, name: what });
+        const source = setScriptParams(s.source, s, rows[i]).source;
+        const c = checkScript(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init });
+        if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); failed.push({ name: row, why: `${e?.line ? `line ${e.line}: ` : ''}${e?.msg}` }); continue; }
+        try {
+          const opts = await scriptRunOpts(s, env, s.pads, c);
+          if (!opts) { failed.push({ name: row, why: 'it could not start' }); break; }
+          const run = await runScriptInWorker(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init }, opts);
+          if (!endedWell(run.end)) { failed.push({ name: row, why: scriptEndText(run) }); continue; }
+          const r = runResults(s.pads, run, `${s.name}_${String(i + 1).padStart(Math.max(2, digits), '0')}`.replace(/[^A-Za-z0-9_.-]+/g, '_'));
+          if (r.length) outs.push(...r); else failed.push({ name: row, why: 'the run wrote nothing: no scratchpad, no memory' });
+        } catch (e) {
+          if (errorText(e) === 'stopped') stopped = true; else failed.push({ name: row, why: errorText(e) });
+        }
+      }
+    } finally { useScripts.getState().set({ running: null }); setFilesBusy(null); }
+    setValuesRun(null);
+    await deliverResults(s, `"${s.name}" ran with ${rows.length} row${rows.length === 1 ? '' : 's'} of values`, outs, failed, then, stopped);
   };
   /** a scratchpad's bytes as a file that loads at `load`: added to the project, or opened as a new project */
   const padToProject = (name: string, bytes: Uint8Array, load: Addr, add: boolean) => {
@@ -4629,7 +4671,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
                 blocks={scriptBlocks} cursorBlock={cursor != null ? findBlock(A.blocks, cursor)?.start ?? null : null} onCopyBlock={(s, id, pad) => copyBlockIntoPad(s, id, pad)}
                 loops={cryptLoops} onAddLoop={addCryptScript}
-                files={scriptFileChoices} onRunOnFiles={id => openRunOnFiles(id)} onToProject={padToProject} />}
+                files={scriptFileChoices} onRunOnFiles={id => openRunOnFiles(id)} onRunValues={id => setValuesRun(id)} onToProject={padToProject} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
@@ -4731,6 +4773,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
+      {valuesScript && <RunValuesModal script={valuesScript} busy={filesBusy} onRun={(text, rows, then) => void runWithValues(text, rows, then)} onStop={stopScript} onClose={() => setValuesRun(null)} />}
       {filesRun && filesRunScript && <RunOnFilesModal script={filesRunScript} files={filesRun.files} first={filesRun.first} busy={filesBusy} onRun={(f, then) => void runOnFiles(f, then)} onStop={stopScript} onClose={() => setFilesRun(null)} />}
       {exportAsk && <CreateProjectModal title="Export files to project needs a project" name={projectNameFor(exportAsk.from)} moving={movingText()} submit="Create project and export the files" onCreate={exportIntoNewProject} onClose={() => setExportAsk(null)}
         lead={`Export files to project writes the ${exportAsk.groups.length} source${exportAsk.groups.length === 1 ? '' : 's'} of ${exportAsk.from} in a folder of the project, ${exportFolder(exportAsk.from)}. The work becomes the project first, as Save makes it one.`} />}

@@ -2,7 +2,7 @@
  * file…), and a script run on files (Run on files…): each file goes into the scratchpad that takes a file, the script
  * runs, and what it leaves is a file again, opened, added to the project or saved. */
 import { useMemo, useState } from 'react';
-import { filePad, h4, type Addr, type ScriptPad, type UserScript } from '@mimir/core';
+import { filePad, h4, parseParamTable, scriptParams, startParamTable, type Addr, type ScriptPad, type UserScript } from '@mimir/core';
 import { Modal } from './Modal';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
@@ -47,6 +47,48 @@ export function FileToPad({ files, pads, into, onCopy, onCancel }: { files: read
         <button className="btn small" onClick={onCancel}>Cancel</button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Run with values…: the script's settings as a table, written as text (the first line names the settings, each line
+ * after it is a run with those values; commas, tabs or semicolons between them, so a table from a spreadsheet pastes
+ * in), read as it is typed, and what happens with the results. Run runs the script once for each row; the table is
+ * kept with the script.
+ */
+export function RunValuesModal({ script, busy, onRun, onStop, onClose }: {
+  script: UserScript; busy: FilesRunBusy | null;
+  onRun: (text: string, rows: Record<string, string>[], then: FilesRunThen) => void; onStop: () => void; onClose: () => void;
+}) {
+  const params = useMemo(() => scriptParams(script.source, script), [script.source, script.lang, script.code]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [text, setText] = useState(() => script.table?.trim() ? script.table : startParamTable(params));
+  const [then, setThen] = useState<FilesRunThen>('save');
+  const table = useMemo(() => parseParamTable(text, params), [text, params]);
+  const ok = !table.problems.length && table.rows.length > 0;
+  const THEN: { k: FilesRunThen; label: string }[] = [{ k: 'save', label: 'Save them to a folder…' }, { k: 'add', label: 'Add them to this project' }, { k: 'open', label: 'Open them as a new project' }];
+  return (
+    <Modal title={`Run "${script.name}" with values`} onClose={busy ? () => { /* Stop ends it */ } : onClose} wide className="files-run-modal">
+      <div className="modal-body">
+        <p className="small files-run-how">
+          The first line names the settings (<span className="mono">{params.map(p => p.name).join(', ') || 'none'}</span>), each line after it is a run with those values. The values are set in the code for that run only.
+          A run's result is what it writes into its scratchpads (those with the use Result, when it has some), else the longest stretch of memory it writes. Nothing goes into the program.
+        </p>
+        <textarea className="values-table" aria-label="Table of values" spellCheck={false} disabled={!!busy} value={text} onChange={e => setText(e.target.value)} rows={Math.min(14, Math.max(6, text.split('\n').length + 1))} />
+        {table.problems.length > 0
+          ? <ul className="values-problems" aria-label="What is wrong with the table">{table.problems.slice(0, 6).map((p, i) => <li key={i}>Line {p.line}: {p.msg}</li>)}</ul>
+          : <p className="small muted" aria-live="polite">{plural(table.rows.length, 'run')}{table.names.length ? `, each setting ${table.names.join(', ')}` : ''}</p>}
+        <div className="files-run-then" role="radiogroup" aria-label="With the results">
+          <span className="small muted">With the results</span>
+          {THEN.map(t => <label key={t.k}><input type="radio" name="values-run-then" disabled={!!busy} checked={then === t.k} onChange={() => setThen(t.k)} />{t.label}</label>)}
+        </div>
+      </div>
+      <div className="modal-foot">
+        {busy ? <span className="small files-run-busy" role="status"><span className="spinner" />Run {Math.min(busy.done + 1, busy.total)} of {busy.total}: {busy.name}</span> : null}
+        <span className="grow" />
+        {busy ? <button className="btn" onClick={onStop}>Stop</button> : <button className="btn" onClick={onClose}>Cancel</button>}
+        <button className="btn primary" disabled={!!busy || !ok} onClick={() => onRun(text, table.rows, then)}><Icon name="play" size={13} />Run {plural(table.rows.length, 'time')}</button>
+      </div>
+    </Modal>
   );
 }
 

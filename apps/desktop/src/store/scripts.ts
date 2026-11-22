@@ -7,7 +7,7 @@ import { store } from '../lib/util';
 
 /** the output's tabs (spec 10.3): what the runs start with, the watch list, what the script changed in the program,
  *  its scratchpads, how the last run ended, and what the check found */
-export type OutTab = 'init' | 'watch' | 'program' | 'pads' | 'run' | 'problems';
+export type OutTab = 'settings' | 'init' | 'watch' | 'program' | 'pads' | 'run' | 'problems';
 /** the change In the program shows beside its list: one of the script's changes to the program (its patch's id) or one
  *  a run in safe mode would make (by index in its `would`) */
 export type ChangeShown = { kind: 'patch'; id: string } | { kind: 'would'; i: number };

@@ -52,7 +52,7 @@ export interface ScriptsViewProps {
   onAdd: (s: LibraryScript) => void;
   /** a copy of a template in the project (its scratchpads placed where there is room) */
   onAddTemplate: (t: ScriptTemplate) => void;
-  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt'>>, label: string) => void;
+  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
    *  runUserScript) */
@@ -85,6 +85,8 @@ export interface ScriptsViewProps {
   files: () => ScriptFileChoice[];
   /** Run on files…: the dialog that runs a script on files of the disk or the tape */
   onRunOnFiles: (id: string) => void;
+  /** Run with values…: the dialog that runs a script once for each row of a table of its settings' values */
+  onRunValues: (id: string) => void;
   /** a scratchpad's bytes as a file that loads at `load`: added to the project (`add`), or a new project of its own */
   onToProject: (name: string, bytes: Uint8Array, load: Addr, add: boolean) => void;
 }
@@ -92,7 +94,7 @@ export interface ScriptsViewProps {
 const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, loops, onAddLoop, files, onRunOnFiles, onToProject }: ScriptsViewProps) {
+export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, loops, onAddLoop, files, onRunOnFiles, onRunValues, onToProject }: ScriptsViewProps) {
   const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -706,7 +708,8 @@ ${cryptWhereText(l)}`}>
             onGoLine={goLine} onWrite={write} placePad={placePad} blocks={blocks} cursorBlock={cursorBlock}
             onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onCopyBlock={onCopyBlock} onShow={onShow} onCopy={onCopy}
             onSave={onSave} onSaveText={onSaveText} onMenu={onMenu} toast={toast}
-            files={files} onRunOnFiles={() => { flush(); onRunOnFiles(cur.id); }} onToProject={onToProject} />
+            files={files} onRunOnFiles={() => { flush(); onRunOnFiles(cur.id); }} onToProject={onToProject}
+            onSource={(text, label) => { flush(); onEdit(cur.id, { source: text }, label); }} onRunValues={() => { flush(); onRunValues(cur.id); }} />
         </div>
       </div>}
     </div>

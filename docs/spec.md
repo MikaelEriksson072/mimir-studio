@@ -179,6 +179,7 @@ mimir-studio/
 │  ├─ src/script-machine.ts        ett skript kört i hela C64:an: ROM, I/O, avbrott och 1541 med disken (10.3)
 │  ├─ src/script-actions.ts        skriptens egna direktiv: .mark, .name, .note och .junk (10.3)
 │  ├─ src/script-js.ts             skript i JavaScript: mem, addr, pad, cpu.call, disk (10.3)
+│  ├─ src/script-params.ts         skriptets inställningar ur koden, och en tabell av värden att köra med (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -2776,6 +2777,28 @@ $06, $08` i `.asm`-filen efter en körning.
     Editorn färgar koden som JavaScript och föreslår det skriptet får (`JS_API`) och programmets namn inom citattecknen
     i `addr("…")`, `cpu.call("…")` med flera (`jsSuggestions`). *Run on files…*, safe mode, biblioteket och *Memory it
     wrote* fungerar som för andra skript. En evig loop i JavaScript stoppas med *Stop* (workern avslutas).
+- **Inställningar och körning med värden** (`script-params.ts`, 2026-11-22): värdena överst i koden som en körning
+  handlar om (var byten ligger, hur många, nyckeln) läses ur koden och visas som fält, och skriptet kan köras en gång
+  för varje rad i en tabell av dem.
+  - **En inställning** är en rad som ger ett namn ett enda värde: `.var key = $77 // the key byte` i Kick Assembler,
+    `key = $77 ; …` i 64tass, `const key = 0x77; // …` vid vänsterkanten i JavaScript (`scriptParams`). Värdet är ett
+    ord: ett tal, ett namn (`result`, `tbl_001`, `SUB`, `true`) eller en sträng. En rad vars värde räknas fram
+    (`dest + length`) är ingen inställning. Kommentaren på raden säger vad den är.
+  - **Fliken *Settings*** (först i utdatats flikrad, bara när skriptet har inställningar): en rad per inställning med
+    namnet (ett klick visar raden i koden), värdet i ett fält och kommentaren. Enter eller att lämna fältet skriver
+    värdet på raden i koden (`setScriptParams`: kommentaren står kvar i sin kolumn), som ett ångra-steg; det som inte
+    är ett enda värde vägras med ett meddelande.
+  - ***Run with values…*** (i *Settings*) öppnar en dialog med en tabell som text: första raden namnger
+    inställningarna, varje rad efter den är en körning med de värdena, åtskilda med komma, tabb eller semikolon (en
+    tabell ur ett kalkylblad går att klistra in); tomma rader och rader som börjar med `#` hoppas över. Den läses
+    medan den skrivs (`parseParamTable`) och det som är fel sägs med sin rad: en kolumn som inte är en inställning,
+    en rad med för få eller för många värden, ett värde som inte är ett ord. Tabellen sparas med skriptet
+    (`UserScript.table`). För varje rad sätts värdena i koden **för den körningen bara** och skriptet körs i
+    skriptens worker; **ingenting går in i programmet**. Vad en körning ger (`runResults`) är dess *Result*-
+    scratchpads som den skrev i, annars de övriga scratchpads den skrev i (från början till efter sista skrivna
+    byte), annars den längsta sträckan minne den skrev; filerna heter `skript_01.prg`, `skript_02.prg` … och sparas
+    i en mapp, läggs till i projektet eller öppnas som ett nytt projekt, som efter *Run on files…*. En rad vars
+    körning inte går väl eller inte skriver något sägs i meddelandet efteråt.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

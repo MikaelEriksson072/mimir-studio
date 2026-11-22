@@ -399,6 +399,9 @@ export interface UserScript {
    *  READY with the program loaded: the ROMs, the I/O chips, interrupts and the 1541 with the mounted disk, the
    *  script's code and scratchpads in its RAM */
   machine?: 'c64';
+  /** the table of values the script is run with, a row a run (Run with values…, script-params.ts), as the user wrote it:
+   *  the first line names the settings, each line after it their values */
+  table?: string;
   /** an address (a number or a name, as typed) at which a run ends, before the instruction there runs: for code that
    *  never returns (a loader that jumps into what it loaded) */
   stopAt?: string;

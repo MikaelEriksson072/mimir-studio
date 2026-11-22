@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, LANG_TITLE, endedWell as ranWell, scriptStopAt, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
@@ -76,16 +76,25 @@ export interface ScriptOutputProps {
   /** Run on files…: the dialog that runs the script on files of the disk or the tape */
   onRunOnFiles: () => void;
   onToProject: ScriptsViewProps['onToProject'];
+  /** the script's code set (a setting's value changed): the editor takes it */
+  onSource: (source: string, label: string) => void;
+  /** Run with values…: the dialog that runs the script once for each row of a table of its settings' values */
+  onRunValues: () => void;
 }
 
 export function ScriptOutput(props: ScriptOutputProps) {
   const { script, check, kept, stale, mine, folded, height, watch, watchCount } = props;
-  const { outTab, set } = useScripts();
+  const { outTab: tabKept, set } = useScripts();
   const errors = check.problems.filter(p => p.level === 'error').length, warnings = check.problems.length - errors;
   const would = kept?.safe ? kept.would ?? [] : null;
   const run = kept?.run, ok = !!kept && endedWell(kept);
   const open = (k: OutTab) => set({ outTab: k, outFolded: false });
+  // the script's settings: the lines of its code that give a name one value (a tab of their own when it has some)
+  const params = useMemo(() => scriptParams(script.source, script), [script.source, script.lang, script.code]); // eslint-disable-line react-hooks/exhaustive-deps
+  const outTab: OutTab = tabKept === 'settings' && !params.length ? 'watch' : tabKept;
   const tabs: { k: OutTab; label: string; tip: string; badge: React.ReactNode }[] = [
+    ...(params.length ? [{ k: 'settings' as const, label: 'Settings', tip: 'The values at the top of the code that a run is about (where the bytes are, how many, the key), as fields: a change here changes the line in the code. Run with values… runs the script once for each row of a table of them',
+      badge: <span className="count">{params.length}</span> }] : []),
     { k: 'init', label: 'Init', tip: 'What every run (and Debug) starts with: A, X and Y, the flags and zero-page bytes',
       badge: script.machine === 'c64' ? <span className="count scr-count-on" title="Its runs are in the whole C64: ROMs, I/O and the 1541 with the mounted disk">C64</span>
         : (!initEmpty(script.init) || script.stopAt) && <span className="count scr-count-on" title="Init is set: runs start with it">set</span> },
@@ -119,6 +128,7 @@ export function ScriptOutput(props: ScriptOutputProps) {
           <Icon name="down" size={14} className={folded ? 'flip' : ''} /></button>
       </div>
       {!folded && <div className={cx('scr-out', `scr-out-${outTab}`)} id="scr-out" role="tabpanel" aria-labelledby={`scr-tab-${outTab}`} aria-label={label} style={{ height, maxHeight: height }}>
+        {outTab === 'settings' && <SettingsPane script={script} params={params} canRun={check.ok} onSource={props.onSource} onRunValues={props.onRunValues} onGoLine={props.onGoLine} toast={props.toast} />}
         {outTab === 'init' && <InitSection script={script} names={props.names} labels={check.labels} problems={check.problems} onEdit={props.onEdit} />}
         {outTab === 'watch' && watch}
         {outTab === 'program' && <ProgramPane {...props} would={would} />}
@@ -127,6 +137,47 @@ export function ScriptOutput(props: ScriptOutputProps) {
         {outTab === 'problems' && <ProblemsPane check={check} where={props.where} onGoLine={props.onGoLine} />}
       </div>}
     </>
+  );
+}
+
+/** Settings: the values at the top of the code that a run is about, a field each; a change sets the line in the code.
+ *  Run with values… runs the script once for each row of a table of them. */
+function SettingsPane({ script, params, canRun, onSource, onRunValues, onGoLine, toast }: { script: UserScript; params: readonly ScriptParam[]; canRun: boolean; onSource: ScriptOutputProps['onSource']; onRunValues: () => void; onGoLine: (n: number) => void; toast: ScriptsViewProps['toast'] }) {
+  const commit = (p: ScriptParam, v: string): boolean => {
+    const value = v.trim();
+    if (value === p.value) return true;
+    if (!paramValueOk(value)) { toast(`"${value}" is not a value for ${p.name}: one number, name or string (write what is worked out in the code)`, 'warn'); return false; }
+    onSource(setScriptParams(script.source, script, { [p.name]: value }).source, `Set ${p.name} = ${value} in "${script.name}"`);
+    return true;
+  };
+  return (
+    <section className="scr-pane scr-settings" aria-label="Settings">
+      <div className="scr-pane-bar">
+        <p className="scr-pane-help">The lines of the code that give a name one value. A change here changes the line; the comment on it says what it is.</p>
+        <span className="grow" />
+        <button className="btn small" disabled={!canRun} onClick={onRunValues} title={canRun ? 'Run the script once for each row of a table of these values (a key a level, an address a file): what each run gives is opened, added to the project or saved. Nothing goes into the program' : 'The script must check out before it can run: see the errors'}><Icon name="play" size={13} />Run with values…</button>
+      </div>
+      <div className="scr-pane-body">
+        <div className="set-table" role="table" aria-label="Settings of the script">
+          {params.map(p => <SettingRow key={`${script.id}-${p.name}`} p={p} onCommit={v => commit(p, v)} onGoLine={() => onGoLine(p.line)} />)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** A setting: its name (a click shows its line), its value in a field (Enter or leaving it keeps it) and its comment. */
+function SettingRow({ p, onCommit, onGoLine }: { p: ScriptParam; onCommit: (v: string) => boolean; onGoLine: () => void }) {
+  const [t, setT] = useState(p.value);
+  useEffect(() => setT(p.value), [p.value]);
+  const commit = () => { if (!onCommit(t)) setT(p.value); };
+  return (
+    <div className="set-row" role="row">
+      <button className="linkish mono set-name" onClick={onGoLine} title={`Line ${p.line} of the code: a click shows it`}>{p.name}</button>
+      <input aria-label={`Setting ${p.name}`} className="mono" value={t} onChange={e => setT(e.target.value)} onBlur={commit} onFocus={e => e.target.select()}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setT(p.value); (e.target as HTMLInputElement).blur(); } }} />
+      <span className="muted small set-what">{p.comment}</span>
+    </div>
   );
 }
 

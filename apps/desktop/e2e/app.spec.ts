@@ -13,7 +13,7 @@ import { dialogOptions, fromFileMenu, fromSubmenu, goTo, expectFiles, headerRow,
 const OLD = 'var_092d';
 const NEW = 'sine_pos';
 /** a tab of the output under a script's editor (Init, Watch, In the program, Scratchpads, Last run, Problems) shown */
-const outTab = async (page: Page, name: 'Init' | 'Watch' | 'In the program' | 'Scratchpads' | 'Last run' | 'Problems') => {
+const outTab = async (page: Page, name: 'Settings' | 'Init' | 'Watch' | 'In the program' | 'Scratchpads' | 'Last run' | 'Problems') => {
   const tab = page.getByRole('tablist', { name: 'Output of the script' }).getByRole('tab', { name: new RegExp(`^${name}`) });
   await tab.click();
   await expect(tab).toHaveAttribute('aria-selected', 'true');
@@ -9964,7 +9964,8 @@ test('scripts: the output has a tab each for Init, Watch, In the program, Scratc
   const title = page.locator('.scr-view-title');
 
   await test.step('the tabs, each saying what it holds; one tab shown at a time', async () => {
-    await expect(tabs.getByRole('tab')).toHaveText([/^Init/, /^Watch\d+$/, /^In the program0$/, /^Scratchpads1$/, /^Last run$/, /^Problems0$/]);
+    // (a template has settings, so their tab is there, first)
+    await expect(tabs.getByRole('tab')).toHaveText([/^Settings4$/, /^Init/, /^Watch\d+$/, /^In the program0$/, /^Scratchpads1$/, /^Last run$/, /^Problems0$/]);
     await expect(tabs.getByRole('tab', { selected: true })).toHaveText(/^Scratchpads/);
     await expect(page.getByRole('region', { name: 'Init' })).toHaveCount(0);
     await outTab(page, 'Problems');
@@ -10557,5 +10558,90 @@ test('scripts in JavaScript: mem, the program\'s own code called, what is printe
     await expect(page.locator('.scr-end')).toContainText('Returned');
     await outTab(page, 'Last run');
     await expect(printed).toHaveText(/^MIMIR DEMO: RASTER DEMO,SPRITE,NOTES\n\d+$/);
+  });
+});
+
+test('scripts\' settings: the values at the top of the code are fields that set the code; Run with values runs the script once for each row of a table and saves what each run gives', async ({ workDir, app, page }) => {
+  // the program of the suggestions test: 32 bytes at $0840 EORed with $5a
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...[...TEXT].map(c => c.charCodeAt(0) ^ 0x5a)];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  await waitForListing(page);
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded crypt-demo.prg at $0801')).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  if (await overview.isVisible()) await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const settings = page.getByRole('region', { name: 'Settings' });
+  const dialog = page.getByRole('dialog', { name: 'Run "xor_key" with values' });
+  const shown = async () => (await editor.locator('.view-lines').innerText()).replace(/ /g, ' ');
+  const set = async (name: string, value: string) => { const f = settings.getByLabel(`Setting ${name}`, { exact: true }); await f.fill(value); await f.press('Enter'); };
+
+  await test.step('a template\'s settings are a tab of fields, each with what its line says it is', async () => {
+    await page.getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
+    await expect(page.getByRole('option', { name: 'xor_key' })).toHaveAttribute('aria-selected', 'true');
+    await outTab(page, 'Settings');
+    await expect(settings.getByRole('row')).toHaveCount(4);
+    await expect(settings.getByLabel('Setting key', { exact: true })).toHaveValue('$77');
+    await expect(settings.getByRole('row').filter({ hasText: 'key' }).last()).toContainText('the key byte');
+  });
+
+  await test.step('a field sets its line in the code, and what is not one value is refused', async () => {
+    await set('source', '$0840');
+    await set('length', '$0020');
+    await set('key', '$5a');
+    // (a click on a setting's name shows its line in the code)
+    await settings.getByRole('button', { name: 'key', exact: true }).click();
+    await expect.poll(shown).toMatch(/\.var key     = \$5a        \/\/ the key byte/);
+    await expect.poll(shown).toMatch(/\.var source  = \$0840 /);
+    await set('key', '$5a + 1');
+    await expect(toast(page, '"$5a + 1" is not a value for key: one number, name or string (write what is worked out in the code)')).toBeVisible();
+    await expect(settings.getByLabel('Setting key', { exact: true })).toHaveValue('$5a');
+    // with them the template decrypts the block into its scratchpad
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await outTab(page, 'Scratchpads');
+    await page.getByRole('group', { name: 'Show as' }).getByRole('button', { name: 'Text' }).click();
+    await expect(page.locator('.scr-dump')).toContainText(TEXT);
+  });
+
+  await test.step('Run with values reads a table as it is typed and says what is wrong with it', async () => {
+    await outTab(page, 'Settings');
+    await settings.getByRole('button', { name: 'Run with values…' }).click();
+    await expect(dialog).toBeVisible();
+    const table = dialog.getByLabel('Table of values');
+    await expect(table).toHaveValue('source, dest, length, key\n$0840, result, $0020, $5a\n');
+    await expect(dialog).toContainText('1 run, each setting source, dest, length, key');
+    await table.fill('key, speed\n$5a');
+    await expect(dialog.getByRole('list', { name: 'What is wrong with the table' }).getByRole('listitem')).toHaveText(['Line 1: "speed" is no setting of the script (it has source, dest, length, key)', 'Line 2: 1 value, but the first line names 2 settings']);
+    await expect(dialog.getByRole('button', { name: /^Run \d+ times?$/ })).toBeDisabled();
+  });
+
+  await test.step('each row is a run with its values: the right key gives the text, and the results are saved', async () => {
+    await dialog.getByLabel('Table of values').fill('key\n$5a\n$00');
+    await expect(dialog).toContainText('2 runs, each setting key');
+    await dialog.getByRole('radio', { name: 'Save them to a folder…' }).check();
+    const out = join(workDir, 'values-results');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await dialog.getByRole('button', { name: 'Run 2 times' }).click();
+    await expect(toast(page, /^"xor_key" ran with 2 rows of values: 2 results saved to /)).toBeVisible({ timeout: 30_000 });
+    expect(readdirSync(out).sort()).toEqual(['xor_key_01.prg', 'xor_key_02.prg']);
+    const first = [...readFileSync(join(out, 'xor_key_01.prg'))].slice(2), second = [...readFileSync(join(out, 'xor_key_02.prg'))].slice(2);
+    expect(String.fromCharCode(...first)).toBe(TEXT);
+    expect(second).toEqual([...TEXT].map(c => c.charCodeAt(0) ^ 0x5a));
+    // the code keeps its own key, and the table is kept with the script
+    await expect(settings.getByLabel('Setting key', { exact: true })).toHaveValue('$5a');
+    await settings.getByRole('button', { name: 'Run with values…' }).click();
+    await expect(dialog.getByLabel('Table of values')).toHaveValue('key\n$5a\n$00');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
   });
 });
