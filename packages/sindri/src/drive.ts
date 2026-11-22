@@ -143,7 +143,10 @@ export class Drive implements Bus {
   }
 
   // --- memory ---------------------------------------------------------------------------------------------------
+  // The 1541 decodes A15 and A10-A12 only: RAM and the VIAs at $0000-$1FFF are there again at $2000, $4000 and $6000
+  // (Elite's drive code calls itself at $2303 and $234E), the ROM at $8000-$FFFF twice.
   read(a: number): number {
+    if (a < 0x8000) a &= 0x1fff;
     if (a < 0x1800) return this.ram[a & 0x7ff];
     if (a < 0x1c00) return this.via1.read(a & 0x0f);
     if (a < 0x2000) return this.via2.read(a & 0x0f);
@@ -154,6 +157,7 @@ export class Drive implements Bus {
   fetch(a: number): number { return a < 0x1800 ? this.ram[a & 0x7ff] : a >= 0x8000 ? this.rom[a & 0x3fff] : this.read(a); }
 
   write(a: number, v: number): void {
+    if (a < 0x8000) a &= 0x1fff;
     if (a < 0x1800) this.ram[a & 0x7ff] = v;
     else if (a < 0x1c00) this.via1.write(a & 0x0f, v);
     else if (a < 0x2000) this.via2.write(a & 0x0f, v);

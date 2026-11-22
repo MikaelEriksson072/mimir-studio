@@ -7184,6 +7184,66 @@ test('a mounted Para-Protect disk: its loader\'s files, a page past track 35 and
   });
 });
 
+test('a mounted Disk-Speed disk: the boot, the drive code\'s key and the files of its table in the Disk-Speed tab, opened, re-assembled and saved', async ({ app, page, workDir }) => {
+  // fixtures/d64/diskspeed-demo.d64 (packages/core/test/diskspeed.test.ts): a boot at $0308 that decodes a B-E 2 0 14 0
+  // and a call of $033c when two files are left, drive code at 14/0 whose checks 14/3 and 14/14 have error 5 (the key),
+  // the next stage on 36/11 and 36/1, and a table at 14/4 of the raster demo, a sine table and the hook, inverted
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/diskspeed-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, /^Mounted diskspeed-demo\.d64: "DISKSPEED DEMO", 1 file; Disk-Speed \(Morse Technology\): 3 files from the table at 14\/4, the program starting at \$0810; .* \(the Disk-Speed tab\)$/)).toBeVisible();
+  await openSection(page, 'Disk');
+  await expect(page.locator('.disk-spindle')).toContainText("Disk-Speed: the loader's table at 14/4 has 3 files the directory does not list; the key $05 from the checksum errors of 14/3 and 14/14");
+  const table = page.getByRole('table', { name: 'Disk-Speed files' });
+
+  await test.step('the Explorer opens the tab: the boot, the drive code and a row per file', async () => {
+    await page.locator('.disk-spindle').getByRole('button', { name: 'Disk-Speed' }).click();
+    await expect(page.getByRole('tab', { name: /Disk-Speed/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.ps-notes')).toContainText('sends B-E 2 0 14 0, so the DOS reads 14/0 into $0500 and runs it. Between files it calls $033c (JSR) when 2 files are left.');
+    await expect(page.locator('.ps-notes')).toContainText('has the DOS read 14/3 (status $05) and 14/14 (status $05): their wrong checksums are the key, $05');
+    await expect(page.locator('.ps-notes')).toContainText('11 sectors on each time round a track of 21, the next track down');
+    await expect(page.locator('.ps-notes')).toContainText("Its text (in the BAM): THIS DEMO USES THE 'DISK-SPEED' LOADING SYSTEM");
+    await expect(table.locator('tbody tr td:nth-child(2)')).toHaveText(['DEMO.prg', 'SINE.prg', 'HOOK.prg']);
+    await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['14/15', '12/18', '12/8']);
+    await expect(table.locator('tbody tr td:nth-child(5)')).toHaveText(['$0801–$37ff', '$4000–$40ff', '$033c–$0345']);
+  });
+
+  await test.step('a row opens its file as a PRG at its load address; + adds one; the source builds the same bytes', async () => {
+    await table.getByRole('row', { name: /SINE\.prg/ }).click();
+    await expect(toast(page, 'Loaded SINE.prg at $4000')).toBeVisible();
+    await expect(inProject(table, 2)).toHaveText(['SINE.prg']);
+    await table.getByRole('button', { name: 'Add DEMO.prg to this project' }).click();
+    await expectFiles(page, ['SINE.prg', 'DEMO.prg']);
+    await expect(inProject(table, 2)).toHaveText(['DEMO.prg', 'SINE.prg']);
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+  });
+
+  await test.step('Save files… saves every file as the C64 gets it with files.txt; Copy list copies that list', async () => {
+    await page.getByRole('tab', { name: /Disk-Speed/ }).click();
+    const out = join(workDir, 'diskspeed-files');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await page.getByRole('button', { name: 'Save files…' }).click();
+    await expect(toast(page, /^Saved 3 files of diskspeed-demo\.d64 to .*, as the C64 gets them, and files\.txt that lists them$/)).toBeVisible();
+    expect(readdirSync(out).sort()).toEqual(['DEMO.prg', 'HOOK.prg', 'SINE.prg', 'files.txt']);
+    expect(readFileSync(join(out, 'DEMO.prg'))).toEqual(readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')));
+    expect(readFileSync(join(out, 'HOOK.prg')).subarray(0, 2)).toEqual(Buffer.from([0x3c, 0x03]));
+    const list = readFileSync(join(out, 'files.txt'), 'utf8').split('\r\n');
+    expect(list[0]).toBe("; Disk-Speed files of diskspeed-demo.d64, read by Mimir Studio: 3 files of the loader's table at 14/4 (the directory lists only the boot).");
+    expect(list[3]).toMatch(/^DEMO\.prg +; 14\/15, 48 sectors, loads at \$0801-\$37ff \(12287 bytes\): 47 whole sectors and 255 bytes of one more, inverted on the disk/);
+    await page.getByRole('button', { name: 'Copy list' }).click();
+    await expect(toast(page, 'Copied the file list')).toBeVisible();
+    expect((await app.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n').split('\n')).toEqual(list.slice(0, -1));
+  });
+
+  await test.step('ejecting the disk takes the tab away', async () => {
+    await page.getByRole('button', { name: 'Eject disk' }).click();
+    await expect(page.getByRole('tab', { name: /Disk-Speed/ })).toHaveCount(0);
+  });
+});
+
 test('a tape in the datasette: its files in the Explorer and the Tape tab, TapeTool\'s command lines, the boot file with its header, Build & Run and Sindri reading the tape', async ({ app, page, workDir }) => {
   // fixtures/tap/mimir-demo.tap (packages/core/test/tap.test.ts): a KERNAL boot file whose loader, in the tape buffer,
   // reads the raster demo (TapeTool's TinyHeader format) from the tape and starts it; a sine table in two blocks in

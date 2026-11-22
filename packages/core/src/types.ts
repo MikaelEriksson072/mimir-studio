@@ -1003,7 +1003,7 @@ export interface SpaceInfo {
   entry: Addr | null;
 }
 
-export type LoaderId = 'spindle' | 'krill' | 'bitfire' | 'sparkle' | 'boozeloader' | 'pirateslayer' | 'paraprotect' | 'covert' | 'dloc' | 'ar-fastload' | 'ar-warp' | 'ar-tape' | 'ar-turbotape' | 'novaload' | 'freeload' | 'usgold' | 'megasave' | 'cyberload' | 'interceptor' | 'microload' | 'mastertronic' | 'firebird' | 'tapetool' | 'ss-turbo' | 'ss-copier' | 'freezer-split' | 'fastloader' | 'tape' | 'kernal';
+export type LoaderId = 'spindle' | 'krill' | 'bitfire' | 'sparkle' | 'boozeloader' | 'pirateslayer' | 'paraprotect' | 'diskspeed' | 'covert' | 'dloc' | 'ar-fastload' | 'ar-warp' | 'ar-tape' | 'ar-turbotape' | 'novaload' | 'freeload' | 'usgold' | 'megasave' | 'cyberload' | 'interceptor' | 'microload' | 'mastertronic' | 'firebird' | 'tapetool' | 'ss-turbo' | 'ss-copier' | 'freezer-split' | 'fastloader' | 'tape' | 'kernal';
 /** part of a loader: the code on the C64 that receives the data (resident), the code that runs in the drive, the drive
  *  commands that upload and start it, the code that sends them, a tape loader's code, a KERNAL LOAD call, or its name */
 export interface LoaderPart {

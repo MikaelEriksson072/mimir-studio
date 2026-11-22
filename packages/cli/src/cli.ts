@@ -7,7 +7,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   addDecisionChecks, addRunChecks, analyze, bankFiles, checkDecisions, builtCartridge, cartridgeFiles, checkRun, comparePrg, compareCrt, createProject, DEFAULT_SETTINGS, deserializeProject, detectPacking, expectedCartridge,
   exportFiles, goneCounts, h4, isCrt, isProblem, kindInfo, isVsf, makeDemo, makePrg, nextSides, openC64File, openCartridge, parseCrt, parseD64, parsePrg, PROBLEM_CODES, projectNameFor, readD64File, readTape, render, tapeBoot, tapeFileName, unpackedName, unpackLog, unpackPrg, verify,
-  covertSummary, dlocSummary, krillPackerName, readBitfireDisk, readBoozeDisk, readCovertDisk, readDlocDisk, readKrillDisk, readParaProtectDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
+  covertSummary, dlocSummary, krillPackerName, readBitfireDisk, readBoozeDisk, readCovertDisk, readDlocDisk, readKrillDisk, readDiskSpeedDisk, readParaProtectDisk, readPirateSlayerDisk, readSparkleDisk, readSpindleDisk,
   type Cartridge, type DecisionCheck, type FileInput, type GoneWhy, type ProblemCode, type Project, type RunCheck, type SerializedProject, type Settings, type UnpackRun, type UnpackTape,
 } from '@mimir/core';
 import { find64tass, findC64Roms, findKickAssJar, findVice, run64tass, runKickAssembler, splitArgs, writeVfs, type KickRunResult } from '@mimir/core/node';
@@ -260,8 +260,9 @@ function disksCmd(inputs: string[], io: Io, flags: Map<string, string | true>): 
     }
     try { const ps = readPirateSlayerDisk(bytes); take('pirateslayer', ps && ps.summary); } catch { /* not one */ }
     try { const pp = readParaProtectDisk(bytes); take('paraprotect', pp && pp.summary); } catch { /* not one */ }
+    try { const ds = readDiskSpeedDisk(bytes); take('diskspeed', ds && ds.summary); } catch { /* not one */ }
   }
-  const summary = [...DISK_READERS.map(([r]) => r), 'pirateslayer', 'paraprotect'].map(r => ({ reader: r, disks: counts.get(r)?.disks ?? 0, different: counts.get(r)?.different.size ?? 0 }));
+  const summary = [...DISK_READERS.map(([r]) => r), 'pirateslayer', 'paraprotect', 'diskspeed'].map(r => ({ reader: r, disks: counts.get(r)?.disks ?? 0, different: counts.get(r)?.different.size ?? 0 }));
   if (flags.has('json')) { io.out(JSON.stringify({ disks: paths.length, unreadable: failed, readers: summary, ...(flags.has('list') ? { list: rows } : {}) }, null, 2)); return 0; }
   if (flags.has('list')) for (const r of rows) io.out(`${r.reader.padEnd(12)} ${r.path}: ${r.what}`);
   io.out(`${paths.length} disk image${paths.length === 1 ? '' : 's'}${failed ? ` (${failed} not readable as one)` : ''}`);

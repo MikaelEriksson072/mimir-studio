@@ -3,9 +3,9 @@
  * Bitops loader and DLoC's loader, Pirate Slayer and Para-Protect
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
-  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocScript, dlocScriptText, dlocUnpackedName, type DlocFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, paraProtectFileList, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
+  BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocScript, dlocScriptText, dlocUnpackedName, type DlocFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, paraProtectFileList, diskSpeedFileList, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
   ASSEMBLERS, assemblerOf, findPetsciiAnims, shownAddress, shownTarget, storePagesText, viewOffsetAt, type PetsciiAnim,
-  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type ParaProtectFile, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
+  type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type DiskSpeedFile, type ParaProtectFile, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { useMemo } from 'react';
 import { Icon, LVL_ICON } from '../lib/icons';
@@ -780,6 +780,55 @@ export function ParaProtectPanel({ disk, open, onCopy, onOpenFile, onExportFiles
   );
 }
 
+/** The Disk-Speed tab (spec 13.5p): Morse Technology's loader on the mounted disk: the boot (what it loads over, the
+ *  drive command it sends, the call it makes between files), the drive code's two stages (the DOS reads whose status is
+ *  the key, the sectors it decodes with it), how the second stage steps from sector to sector, and the files of its
+ *  table, a row each. A row opens the file as a PRG at its load address, as the C64 gets it (the disk holds every byte
+ *  inverted); + adds it. Save files… saves them all with files.txt that lists them; Copy list copies that list. */
+export function DiskSpeedPanel({ disk, open, onCopy, onOpenFile, onExportFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenFile: (f: DiskSpeedFile, add: boolean) => void; onExportFiles: () => void; onSaveFiles: () => void }) {
+  const p = disk.diskspeed!, b = p.boot, st = p.stepping;
+  const ts = (x: { track: number; sector: number }) => `${x.track}/${x.sector}`;
+  const byte = (n: number) => `$${n.toString(16).toUpperCase().padStart(2, '0')}`;
+  return (
+    <div className="xref spindle">
+      <div className="xref-head spindle-head">
+        <span>{p.summary} <span className="muted">· Sindri runs the boot with {disk.name} in its drive{p.format === 'G64' ? ', every track as it is' : ''}</span></span>
+      </div>
+      <div className="ps-notes">
+        {b && <p><b>Boot ({b.name}, {b.blocks} blocks at ${h4(b.load)}–${h4(b.end - 1)}):</b> it loads over the KERNAL&apos;s vectors, so the next thing BASIC prints (READY.) runs it. It decodes three pages of itself, opens buffer 2 in the drive and sends {b.command ? <span className="mono">{b.command}</span> : 'a B-E command'}, so the DOS reads {ts(p.stage1)} into ${h4(p.stage1.at)} and runs it.{b.hook ? <> Between files it calls ${h4(b.hook.at)} (JSR) when {b.hook.left} file{b.hook.left === 1 ? ' is' : 's are'} left.</> : ''}</p>}
+        <p><b>The drive code at {ts(p.stage1)}</b> has the DOS read {p.checks.map(c => `${ts(c)} (status ${byte(c.status)})`).join(' and ')}: {p.keyFrom === 'errors' ? <>their wrong checksums are the key, <span className="mono">{byte(p.key)}</span>, the status ANDed. A copy that reads them right gets $01 and garbage.</> : <>this image reads them without an error (a copy, or a D64 without error bytes), so a 1541 would get the key $01; the key here, <span className="mono">{byte(p.key)}</span>, is worked out from the next stage&apos;s first instruction.</>} It then reads {p.stage2.map(r => `${ts(r)} into $${h4(r.at)}`).join(' and ')} itself (by their headers, with the disk&apos;s ID), EORs them with the key and runs them.</p>
+        <p><b>The next stage</b> reads the table at {ts(p.table)} and sends it, then the files from {ts(p.data)}: {st.step} sectors on each time round a track of {st.count}, the next track {st.down ? 'down' : 'up'} when it comes round to 0. The C64 gets two bits at a time, 128 bytes a turn, every byte inverted on the disk; it checks each file&apos;s sum and starts the program at ${h4(p.start)} with an RTS.</p>
+        {p.text && <p><b>Its text</b> (in the BAM): <span className="mono">{p.text}</span></p>}
+      </div>
+      {p.files.length > 0 && <>
+        <div className="xref-head spindle-head">
+          <span>Files of the loader&apos;s table: {p.files.length} <span className="muted">· the directory lists only the boot; they keep the table&apos;s names{p.files.some(f => !f.label) ? ' (named after their place in it and their load address where it has none)' : ''}</span></span>
+          <button className="btn small" onClick={() => onCopy(diskSpeedFileList(p, disk.name).join('\n'), 'Copied the file list')}><Icon name="copy" size={14} />Copy list</button>
+          <FileButtons n={p.files.length} onExport={onExportFiles} onSave={onSaveFiles} saveTitle="Save every file as a PRG to a folder, as the C64 gets it, with files.txt that lists them" />
+        </div>
+        <table className="tbl ps-files" aria-label="Disk-Speed files"><thead><tr><th>#</th><th>Name</th><th>From</th><th>Sectors</th><th>Loads</th><th>Bytes</th><th>Sum</th><th>Notes</th><th /></tr></thead><tbody>
+          {p.files.map(f => {
+            const past = f.load + f.bytes.length - f.end;
+            return (
+              <tr key={f.index} className={cx(open.has(f) && 'on')} {...mark(open.has(f), `Open ${f.name} as a PRG at ${h4(f.load)}`)} onClick={() => onOpenFile(f, false)}>
+                <td className="mono">{f.index + 1}</td>
+                <td className="mono">{f.name}</td>
+                <td className="mono">{ts(f)}</td>
+                <td className="mono" title={f.sectors.join(' ')}>{f.sectors.length}</td>
+                <td className="mono">${h4(f.load)}–${h4(f.end - 1)}</td>
+                <td className="mono">{f.bytes.length}</td>
+                <td className={cx('mono', !f.ok && 'err')}>{byte(f.sum)} {f.ok ? '✓' : '✗'}</td>
+                <td className="muted">{[f.note, f.bad ? `${f.bad} sector${f.bad === 1 ? '' : 's'} with an error` : '', f.missing ? `${f.missing} sector${f.missing === 1 ? '' : 's'} not on the image` : '', past > 0 ? `the ${past} bytes past $FFFF are left out` : ''].filter(Boolean).join(' · ')}</td>
+                <td><button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFile(f, true); }}><Icon name="plus" size={13} /></button></td>
+              </tr>
+            );
+          })}
+        </tbody></table>
+      </>}
+    </div>
+  );
+}
+
 /** The Tape tab (spec 13.5e): what is on the tape in the datasette, in tape order: each file (KERNAL, TapeTool, Turbo
  *  Tape) with where it starts, and the stretches of turbo data no format here reads. A row opens the file, + adds it.
  *  A TapeTool tape has TapeTool's command lines that write it again from its files, which Save files… saves with them.
@@ -1043,4 +1092,4 @@ export function BuildPanel({ build, S, names, cart, stale, busy, onVerify, onRun
   );
 }
 
-export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['iffl', 'IFFL parts'], ['covert', 'Covert script'], ['dloc', 'DLoC script'], ['pirateslayer', 'Pirate Slayer'], ['paraprotect', 'Para-Protect'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];
+export const BOTTOM_TABS: [BottomTab, string][] = [['log', 'Analysis log'], ['messages', 'Messages'], ['problems', 'Problems'], ['xrefs', 'Cross-references'], ['irqs', 'Raster IRQs'], ['relocs', 'Relocated'], ['spindle', 'Spindle script'], ['bitfire', 'Bitfire script'], ['booze', 'Booze script'], ['sparkle', 'Sparkle script'], ['krill', 'Krill script'], ['iffl', 'IFFL parts'], ['covert', 'Covert script'], ['dloc', 'DLoC script'], ['pirateslayer', 'Pirate Slayer'], ['paraprotect', 'Para-Protect'], ['diskspeed', 'Disk-Speed'], ['tape', 'Tape'], ['stats', 'Statistics'], ['build', 'Build output']];

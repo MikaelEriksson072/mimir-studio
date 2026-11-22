@@ -7,7 +7,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   bankRange, comparePrg, createProject, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
-  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
+  formatOverride, openC64File, overwritesSystemArea, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, diskSpeedFileList, diskSpeedPrg, readDiskSpeedDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
   charsetFile, libraryStem, parsePsid, sidWithTexts, spriteFile, findPictureColors, type LibraryColors, type LibraryItem, type LibraryKind, type LibrarySource,
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
@@ -16,7 +16,7 @@ import {
   checkScript, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
-  type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
+  type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
   type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
@@ -62,7 +62,7 @@ import { Sidebar, tapeOpens } from './components/Sidebar';
 import { Listing, type ListingFind, type ScriptMark, type XrefBox } from './components/Listing';
 import { FindBar } from './components/FindBar';
 import { Inspector } from './components/Inspector';
-import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, CovertPanel, DlocPanel, IfflPanel, KrillPanel, LogList, MessagesPanel, ParaProtectPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
+import { BitfirePanel, BoozePanel, BOTTOM_TABS, BuildPanel, CovertPanel, DlocPanel, IfflPanel, KrillPanel, LogList, MessagesPanel, DiskSpeedPanel, ParaProtectPanel, PirateSlayerPanel, ProblemsPanel, RasterPanel, RelocPanel, SparklePanel, SpindlePanel, StatsPanel, TapePanel, XrefPanel } from './components/BottomPanel';
 import { SettingsModal, type AppPrefs } from './components/Settings';
 import { CommandPalette, GotoModal } from './components/CommandPalette';
 import { MergeRangeModal } from './components/MergeRange';
@@ -137,10 +137,10 @@ function extendSel(s: Sel | null, from: Range | null, r: Range): Sel {
 }
 
 /** the bottom panel's tabs of a loader's script or the tape, which the analysis overview links to */
-const SCRIPT_TABS: readonly BottomTab[] = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer', 'paraprotect', 'tape'];
+const SCRIPT_TABS: readonly BottomTab[] = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer', 'paraprotect', 'diskspeed', 'tape'];
 /** the script tabs a mounted disk's own load script (or files) fills, each named as the disk's field that holds it: the
  *  tab row marks them, so a disk with a script is seen to have one */
-const DISK_SCRIPT_TABS = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer', 'paraprotect'] as const satisfies readonly (BottomTab & keyof MountedDisk)[];
+const DISK_SCRIPT_TABS = ['spindle', 'bitfire', 'booze', 'sparkle', 'krill', 'iffl', 'covert', 'dloc', 'pirateslayer', 'paraprotect', 'diskspeed'] as const satisfies readonly (BottomTab & keyof MountedDisk)[];
 const isDiskScriptTab = (k: BottomTab): k is (typeof DISK_SCRIPT_TABS)[number] => (DISK_SCRIPT_TABS as readonly BottomTab[]).includes(k);
 
 /** what the workspace says when it opens (from the start screen); `n` tells two of the same apart */
@@ -707,6 +707,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try { pirateslayer = readPirateSlayerDisk(bytes); } catch { /* not one */ }
     let paraprotect: ParaProtectDisk | null = null;
     try { paraprotect = readParaProtectDisk(bytes); } catch { /* not one */ }
+    let diskspeed: DiskSpeedDisk | null = null;
+    try { diskspeed = readDiskSpeedDisk(bytes); } catch { /* not one */ }
     let spindle: SpindleDisk | null = null;
     try { spindle = readSpindleDisk(bytes); } catch { /* not one */ }
     let bitfire: BitfireDisk | null = null;
@@ -724,7 +726,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // an IFFL file is beside whatever else the disk is: one file holding the parts a game loads
     let iffl: IfflDisk | null = null;
     try { iffl = readIfflDisk(bytes); } catch { /* none */ }
-    setDisk({ name, path, bytes, img, spindle, bitfire, booze, sparkle, krill, covert, dloc, iffl, pirateslayer, paraprotect, sides });
+    setDisk({ name, path, bytes, img, spindle, bitfire, booze, sparkle, krill, covert, dloc, iffl, pirateslayer, paraprotect, diskspeed, sides });
     const out = !keepOther && tape ? `; ejected ${tape.name}` : '';
     if (!keepOther) setTape(null);
     showSection('disk');
@@ -736,7 +738,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       : covert ? `, a disk for the Covert Bitops loader (${covertSummary(covert)})`
       : dloc ? `, a disk for DLoC's loader (${dlocSummary(dloc)})`
       : pirateslayer ? `; ${pirateslayer.summary}`
-      : paraprotect ? `; ${paraprotect.summary} (the Para-Protect tab)` : '';
+      : paraprotect ? `; ${paraprotect.summary} (the Para-Protect tab)`
+      : diskspeed ? `; ${diskspeed.summary} (the Disk-Speed tab)` : '';
     const ifflText = iffl ? `; ${iffl.files.map(f => `"${f.name}"`).join(', ')} ${iffl.files.length === 1 ? 'is an IFFL file' : 'are IFFL files'} with ${iffl.files.reduce((a, f) => a + f.parts.length, 0)} parts (the IFFL parts tab)` : '';
     const then = sides.length ? `; then ${sides.map(s => s.name).join(', ')}, which Sindri turns to when the program asks` : '';
     toast(`Mounted ${name}: "${img.name}"${img.format === 'G64' ? ' (G64)' : ''}, ${img.files.length} file${img.files.length === 1 ? '' : 's'}${kind}${ifflText}${then}${out}`, 'ok');
@@ -1246,6 +1249,28 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try {
       const w = await kr.writeExport({ target: 'pick', files });
       if (w) toast(`Saved ${p.files.length} file${p.files.length === 1 ? '' : 's'} of ${disk.name} to ${w.dir}, and files.txt that lists them`, 'ok');
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /** a file of a Disk-Speed disk's table as a PRG at its load address (as much as memory holds) */
+  const diskSpeedFile = (f: DiskSpeedFile) => withId(parsePrg(f.name, diskSpeedPrg(f)));
+  const openDiskSpeedFile = (f: DiskSpeedFile, add: boolean) => {
+    try { addFiles(fromLoader(f, [diskSpeedFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+  };
+  const exportDiskSpeedFiles = () => {
+    const p = disk?.diskspeed;
+    if (disk && p) exportLoaderFiles(disk.name, p.files.map(f => { const x = diskSpeedFile(f); return { name: stemOf(x.name), what: `${f.label ? `${f.label}, ` : ''}the loader's file ${f.index + 1} from ${f.track}/${f.sector} of ${disk.name}`, files: () => [x] }; }));
+  };
+  /** every file of a Disk-Speed disk's table as a PRG each in a folder, with files.txt that lists them */
+  const saveDiskSpeedFiles = async () => {
+    if (!kr) return needDesktop();
+    const p = disk?.diskspeed;
+    if (!disk || !p?.files.length) return;
+    const files: Record<string, Uint8Array | string> = {};
+    for (const f of p.files) files[f.name] = diskSpeedPrg(f);
+    files['files.txt'] = `${diskSpeedFileList(p, disk.name).join('\r\n')}\r\n`;
+    try {
+      const w = await kr.writeExport({ target: 'pick', files });
+      if (w) toast(`Saved ${p.files.length} file${p.files.length === 1 ? '' : 's'} of ${disk.name} to ${w.dir}, as the C64 gets them, and files.txt that lists them`, 'ok');
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /* ---- the project's cartridge (13.9) ---- */
@@ -4094,7 +4119,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     ...packing.flatMap((p, i) => (p ? [{ lvl: 'warn' as const, msg: `${A.files[i].name} ${p.verdict === 'packed' ? 'is packed' : 'may be packed'}${p.signature ? ` (${p.signature})` : ''}: ${p.reasons.join('; ')}. Unpack it (${unpackLabel}) to see the program.`, addr: p.decruncher, cat: 'packing' }] : [])),
   ], [A, R, kickProblems, packing, unpackLabel]);
   // the Spindle script tab is there when the analysis found Spindle's drivers
-  const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'sparkle' || !!disk?.sparkle) && (k !== 'krill' || !!disk?.krill || !!A.krill?.steps.length) && (k !== 'covert' || !!disk?.covert) && (k !== 'dloc' || !!disk?.dloc) && (k !== 'iffl' || !!disk?.iffl) && (k !== 'pirateslayer' || !!disk?.pirateslayer) && (k !== 'paraprotect' || !!disk?.paraprotect) && (k !== 'tape' || !!tape));
+  const bottomTabs = BOTTOM_TABS.filter(([k]) => (k !== 'spindle' || A.spindle.length > 0 || !!disk?.spindle) && (k !== 'bitfire' || !!disk?.bitfire) && (k !== 'booze' || !!A.booze?.steps.length || !!disk?.booze) && (k !== 'sparkle' || !!disk?.sparkle) && (k !== 'krill' || !!disk?.krill || !!A.krill?.steps.length) && (k !== 'covert' || !!disk?.covert) && (k !== 'dloc' || !!disk?.dloc) && (k !== 'iffl' || !!disk?.iffl) && (k !== 'pirateslayer' || !!disk?.pirateslayer) && (k !== 'paraprotect' || !!disk?.paraprotect) && (k !== 'diskspeed' || !!disk?.diskspeed) && (k !== 'tape' || !!tape));
   const shownBottom = bottomTabs.some(([k]) => k === bottom) ? bottom : 'log';
   /** a tab the mounted disk's own load script fills is marked, and comes in anew (it pulses) with each disk mounted:
    *  the disk's number is in its key */
@@ -4248,7 +4273,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           scripts={{ list: userScripts, checks: scriptChecks, patches: project.patches, onNew: () => newUserScript(), onOpen: id => { openUserScript(id); setDrawer(null); }, onRun: id => void runUserScript(id), onRemove: removeUserScript, onAdd: addLibraryScript }}
           cart={crt} onOpenBank={(bank, leave) => { openBank(bank, leave); setDrawer(null); }}
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onShowBlock={b => { showBlock(b); setDrawer(null); }}
-          disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowCovert={() => setUi({ bottom: 'covert', panelOpen: true })} onShowDloc={() => setUi({ bottom: 'dloc', panelOpen: true })} onShowIffl={() => setUi({ bottom: 'iffl', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onShowParaProtect={() => setUi({ bottom: 'paraprotect', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
+          disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowCovert={() => setUi({ bottom: 'covert', panelOpen: true })} onShowDloc={() => setUi({ bottom: 'dloc', panelOpen: true })} onShowIffl={() => setUi({ bottom: 'iffl', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onShowParaProtect={() => setUi({ bottom: 'paraprotect', panelOpen: true })} onShowDiskSpeed={() => setUi({ bottom: 'diskspeed', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
           tape={tape} onEjectTape={ejectTape} onShowTape={() => setUi({ bottom: 'tape', panelOpen: true })} onOpenFromTape={(f, add) => { openFromTape(f, add); setDrawer(null); }}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
@@ -4427,6 +4452,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {shownBottom === 'dloc' && disk?.dloc && <DlocPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openDlocFile} onExportFiles={exportDlocFiles} onSaveFiles={() => void saveDlocFiles()} />}
             {shownBottom === 'pirateslayer' && disk?.pirateslayer &&<PirateSlayerPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openPirateSlayerFile} onExportFiles={exportPirateSlayerFiles} onSaveFiles={() => void savePirateSlayerFiles()} />}
             {shownBottom === 'paraprotect' && disk?.paraprotect && <ParaProtectPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openParaProtectFile} onExportFiles={exportParaProtectFiles} onSaveFiles={() => void saveParaProtectFiles()} />}
+            {shownBottom === 'diskspeed' && disk?.diskspeed && <DiskSpeedPanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openDiskSpeedFile} onExportFiles={exportDiskSpeedFiles} onSaveFiles={() => void saveDiskSpeedFiles()} />}
             {shownBottom === 'tape' && tape && <TapePanel tape={tape} open={tapeOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openFromTape} onExportFiles={exportTapeFiles} onSaveFiles={() => void saveTapeFiles()} />}
             {shownBottom === 'stats' && <StatsPanel A={A} />}
             {shownBottom === 'build' && <BuildPanel build={build} S={S} names={R.fileNames} cart={cartBuild({ ...project, settings: S })} stale={stale} busy={buildBusy} onVerify={() => void runVerify()} onRun={() => void runBuild()} onCopy={t => void copyText(t)} />}

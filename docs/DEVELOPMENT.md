@@ -1263,6 +1263,24 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     that can be heard (`heard`). Old against new on 444 programs unpacked with Sindri: 431 the same, 13 changed, all
     played in VICE; none plays worse, 12 play where they did not (spec 8.6 has the list), time within noise. Tests:
     `test/music.test.ts` (a player with no table and two songs; a routine that starts a sound effect only).
+61. Disk-Speed (spec 13.5p; the analysis is `docs/diskspeed.md`) is new: Morse Technology's copy protection and loader
+    on Elite (Firebird) and Fighter Pilot (Digital Integration). Elite's G64 stopped in Sindri at `$044a`, waiting for
+    the drive. The boot (`GAME`, 3 blocks at `$0308` over the KERNAL's vectors) decodes itself and sends `B-E 2 0 14 0`;
+    that drive code has the DOS read 14/3 and 14/14, whose wrong data checksums give status `$05`, the key for the next
+    stage (36/11 and 36/1, which it reads itself). That stage calls itself at `$2303` and `$234e`: the 1541 decodes
+    A15 and A10-A12 only, so its RAM and VIAs are there again at `$2000`, `$4000` and `$6000`, and Sindri gave open bus.
+    Sindri's drive now mirrors them (`drive.ts`), and Elite loads to its game (`$886f`), Fighter Pilot to `$0c00`. Old
+    against new on 297 random disks of `Games` and `Demos`: four touch `$2000-$7fff` in the drive (BeachHead II from
+    Bitnappers, Hoaxagon, Seaworld, Panda Lovers), and all four give the same layers and saved bytes as before. The
+    stage reads a table from 14/4 (files: load address, bytes of the last sector, pages, checksum; the start; names
+    from `$60`) and sends the files from 14/15 on, 11 sectors on, the next track down at sector 0, every byte inverted
+    on the disk. `readDiskSpeedDisk` follows the code on the disk (the boot run on Sindri's `Cpu` for its B-E and its
+    call between files, both drive stages instruction by instruction), takes the key from the image's error bytes or,
+    on a copy without them, from the next stage's first `JMP`, and checks each file's sum. The Disk-Speed tab (open,
+    add, Export, Save files…, Copy list), an Explorer line, `mimir disks`, and `diskspeed` in `loaders.ts`. 139 036
+    game disks scanned: four have it (the two G64s, two German Elite D64s with error bytes), all sums right. Elite's
+    52 254 bytes the C64 side stored in Sindri, and its RAM in VICE at `$0346` and `$ce27`, are the reader's byte for
+    byte. Tests: `diskspeed.test.ts` (own disks, no code of Morse's), Sindri's `drive.test.ts` (the mirror).
 
 ## Roadmap
 

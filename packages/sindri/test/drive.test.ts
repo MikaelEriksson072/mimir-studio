@@ -543,3 +543,23 @@ describe.skipIf(!withDrive)('programs that load from the disk', () => {
     expect(unpack(KERNAL_BOOT.prg, { roms: null, disk }).drive).toBe('the stand-ins have no serial bus: the disk was not used');
   });
 });
+
+describe("the 1541's address decoding", () => {
+  // the drive decodes A15 and A10-A12 only: its RAM and VIAs at $0000-$1fff are there again at $2000, $4000 and
+  // $6000 (Elite's Disk-Speed drive code calls itself at $2303 and $234e)
+  it('has its RAM and VIAs at $2000, $4000 and $6000 too, for the CPU as well', () => {
+    const d = new Drive(new Uint8Array(0x4000));
+    d.write(0x2345, 0xab);
+    expect(d.ram[0x345]).toBe(0xab);
+    for (const a of [0x0345, 0x2345, 0x4345, 0x6345]) expect(d.read(a), `$${a.toString(16)}`).toBe(0xab);
+    d.write(0x7c03, 0x5a); // VIA 2's port A direction, through the mirror at $6000
+    expect(d.read(0x1c03)).toBe(0x5a);
+    // jsr $2510 at $0500, which stores $42 at $0600 through $4600 and returns
+    d.ram.set([0x20, 0x10, 0x25, 0xea], 0x0500);
+    d.ram.set([0xa9, 0x42, 0x8d, 0x00, 0x46, 0x60], 0x0510);
+    d.cpu.pc = 0x0500; d.cpu.s = 0xff;
+    for (let i = 0; i < 4; i++) d.cpu.step();
+    expect(d.ram[0x600]).toBe(0x42);
+    expect(d.cpu.pc).toBe(0x0503);
+  });
+});

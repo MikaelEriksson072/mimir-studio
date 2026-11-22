@@ -145,6 +145,21 @@ const KNOWN: Known[] = [
     ],
   },
   {
+    // Disk-Speed (Morse Technology Ltd, 1985-86) on Firebird's Elite and Digital Integration's Fighter Pilot: read from
+    // their G64s and run in VICE (spec 13.5p, docs/diskspeed.md). The boot decodes itself first, so these are found in
+    // what it decodes (Sindri's layer 1)
+    id: 'diskspeed', name: 'Disk-Speed (Morse Technology)',
+    how: "a copy protection and loader: the boot loads over the KERNAL's vectors at $0308, decodes itself and sends B-E 2 0 14 0, so the DOS runs 14/0 from buffer 2; that code has the DOS read 14/3 and 14/14, whose wrong checksums give the job status $05, the key it EORs the next stage with (36/11 and 36/1, which it reads itself). That stage reads a table from 14/4 (the files' load addresses, sizes and checksums, where the program starts, their names) and sends it and the files from 14/15 on, 11 sectors on each time, the next track down at sector 0, every byte inverted on the disk; it calls itself at $2303 and $234E, the 1541's RAM mirror. The C64 gets two bits at a time on CLK and DATA, 128 bytes a turn into $0680, checks each file's sum and starts the program with an RTS",
+    signs: [
+      { pat: pat('A9 27 8D 00 DD 2C 00 DD 50 FB A9 03 8D 00 DD A2 07 CA 10 FD'), role: 'resident', what: 'receives a byte: lets the lines go, waits for the drive on CLK, pulls CLK, waits and reads CLK and DATA four times' },
+      { pat: pat('A0 80 A9 27 8D 00 DD 2C 00 DD 50 FB A9 03 8D 00 DD A2 0A CA D0 FD'), role: 'resident', what: 'receives 128 bytes of a sector into $0680-$06FF, two bits at a time, the border flashing' },
+      { pat: pat('20 00 04 85 BE 20 00 04 85 FB 20 00 04 85 FC'), role: 'resident', what: "takes the loader's table: the number of files, then each file's load address, size and checksum" },
+      { pat: pat('A9 08 20 0C ED A9 F2 20 B9 ED A9 23 20 DD ED'), role: 'install', what: 'opens buffer 2 in the drive (OPEN 2,8,2,"#2") for the drive code' },
+      { pat: pat('42 2D 45 20 32 20 30 20 31 34 20 30'), role: 'command', what: 'drive command B-E 2 0 14 0: the DOS reads 14/0 into buffer 2 and runs it', weak: true },
+    ],
+    text: 'DISK-SPEED',
+  },
+  {
     id: 'covert', name: 'Covert Bitops loader (Cadaver)', how: '2-bit, the C64 reads $dd00 four times per byte (lsr / lsr / eor $dd00), or 1-bit (version 2); files by a name of two letters (version 3: two hex digits), loaded as they are or unpacked with Exomizer or Pucrunch while they load',
     signs: [
       // waits out badlines, then pulls CLK and reads with the classic loop (which older loaders use too)
