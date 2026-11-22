@@ -176,6 +176,7 @@ mimir-studio/
 │  ├─ src/script-watch.ts          skriptets watch-lista: det koden skriver, hittat i koden, och värdena (10.3)
 │  ├─ src/script-files.ts          ett skript kört på filer: filen i en scratchpad, och vad körningen ger som filer (10.3)
 │  ├─ src/script-suggest.ts        skript som analysen föreslår: dekrypteringsloopar och rutinanrop (10.3)
+│  ├─ src/script-machine.ts        ett skript kört i hela C64:an: ROM, I/O, avbrott och 1541 med disken (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -2694,6 +2695,32 @@ $06, $08` i `.asm`-filen efter en körning.
     JSR ger *New script that calls … as the program does*: ett skript med en enda `jsr`, och A, X och Y som
     programmets första anrop laddar dem med tal precis före sin JSR (`lda #3` / `ldx #$20` / `jsr show`) som skriptets
     Init. Det skapas i safe mode: en körning visar vad rutinen skulle ändra, och ingenting går in i programmet.
+- **Hela C64:an** (`script-machine.ts`, `UserScript.machine` = `'c64'`, 2026-11-22): under *Init* väljer *Runs in* mellan
+  *Memory only* (som förut: en kopia av programmets minne och inget annat, skriptets kod och scratchpads minne för sig)
+  och *The whole C64*: Sindris maskin som den står vid READY (`readyC64`), med KERNAL och BASIC, VIC, CIA:erna och
+  deras avbrott, och en 1541 med den monterade disken på seriebussen (`driveWith`). Skriptet kan då anropa kod som
+  behöver maskinen: KERNAL:s LOAD, spelets egen loader med sin drivkod, en rutin som väntar på en timer eller en
+  rasterrad.
+  - Programmets filer läggs i C64:ans RAM på sina laddadresser, och **skriptets kod och scratchpads också**: här finns
+    ett enda minne, så programmets kod ser dem, och skriptets kod får inte ligga där det den laddar hamnar (sätt
+    `* =` överst; utan det hamnar koden i ledigt minne, ofta `$c000`). Körningen börjar vid skriptets start, anropad
+    som SYS, med `$01` som vid READY och registren och flaggorna från Init (avbrott av tills Init eller koden slår på
+    dem). Den slutar när skriptet återvänder, vid en BRK eller JAM, vid stoppadressen eller efter 600 miljoner
+    cykler (tio minuter C64-tid).
+  - Resultatet är en `ScriptRun` som den vanliga maskinens: programmets byte som ändrats (inte skriptets egna) blir
+    patchar som förut (eller visas, i safe mode), scratchpadsen får vad körningen lämnade, och `wrote` är varje
+    sträcka minne körningen skrev (`C64.wtime`).
+  - Den behöver VICE:s ROM-filer (`kr.c64Roms()`, och 1541:ans DOS-ROM för disken); utan dem sägs det och inget
+    körs. Körningen går i skriptens worker; *Stop* avbryter. *Debug* finns bara för *Memory only* (knappen är av).
+    *Run on files…* kör också i hela C64:an när skriptet gör det.
+- **Stop at** (`UserScript.stopAt`, under *Init*; `scriptStopAt`): en adress där körningen slutar, innan
+  instruktionen där körs, för kod som aldrig återvänder (en loader som hoppar in i det den laddat). Ett tal
+  (`$c000`) eller ett namn från programmet eller skriptet, med `+n`; det som inte är en adress sägs under fältet.
+  Gäller båda maskinerna; körningen slutar då som *Stopped at $…, the address it stops at* och räknas som en körning
+  som gick väl (`endedWell`).
+- **Memory it wrote** (under *Last run*): de längsta sträckorna minne körningen skrev, som den lämnade dem (det en
+  loader laddade, det en uppackare packade upp), var och en med *To the project…* (en fil i projektet eller ett nytt
+  projekt, på sin adress) och *To a scratchpad*.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

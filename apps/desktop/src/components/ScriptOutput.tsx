@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, LANG_TITLE, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, endedWell as ranWell, scriptStopAt, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
@@ -46,7 +46,7 @@ export interface BlockChoice { start: Addr; end: Addr; kind: BlockKind; name: st
 export interface LivePad { name: string; bytes: Uint8Array; before: Uint8Array | null }
 
 /** the run ended as a run should (RTS or BRK) and wrote what it changed */
-const endedWell = (k: ScriptRunKept) => (k.run.end === 'rts' || k.run.end === 'brk') && !k.failed.length && !k.run.overCode?.length;
+const endedWell = (k: ScriptRunKept) => ranWell(k.run.end) && !k.failed.length && !k.run.overCode?.length;
 
 export interface ScriptOutputProps {
   script: UserScript; check: ScriptCheck; kept?: ScriptRunKept;
@@ -87,7 +87,8 @@ export function ScriptOutput(props: ScriptOutputProps) {
   const open = (k: OutTab) => set({ outTab: k, outFolded: false });
   const tabs: { k: OutTab; label: string; tip: string; badge: React.ReactNode }[] = [
     { k: 'init', label: 'Init', tip: 'What every run (and Debug) starts with: A, X and Y, the flags and zero-page bytes',
-      badge: !initEmpty(script.init) && <span className="count scr-count-on" title="Init is set: runs start with it">set</span> },
+      badge: script.machine === 'c64' ? <span className="count scr-count-on" title="Its runs are in the whole C64: ROMs, I/O and the 1541 with the mounted disk">C64</span>
+        : (!initEmpty(script.init) || script.stopAt) && <span className="count scr-count-on" title="Init is set: runs start with it">set</span> },
     { k: 'watch', label: 'Watch', tip: 'The memory the code changes, found in it by itself, and what you add: the values as a run starts, after the last run, or now while debugging',
       badge: <span className="count">{watchCount}</span> },
     { k: 'program', label: 'In the program', tip: 'What the script changed in the program\'s bytes: the listing, the source, the export and Build & Run have it. In safe mode also what a run would change',
@@ -118,11 +119,11 @@ export function ScriptOutput(props: ScriptOutputProps) {
           <Icon name="down" size={14} className={folded ? 'flip' : ''} /></button>
       </div>
       {!folded && <div className={cx('scr-out', `scr-out-${outTab}`)} id="scr-out" role="tabpanel" aria-labelledby={`scr-tab-${outTab}`} aria-label={label} style={{ height, maxHeight: height }}>
-        {outTab === 'init' && <InitSection script={script} names={props.names} problems={check.problems} onEdit={props.onEdit} />}
+        {outTab === 'init' && <InitSection script={script} names={props.names} labels={check.labels} problems={check.problems} onEdit={props.onEdit} />}
         {outTab === 'watch' && watch}
         {outTab === 'program' && <ProgramPane {...props} would={would} />}
         {outTab === 'pads' && <PadsPane {...props} />}
-        {outTab === 'run' && <RunPane kept={kept} stale={stale} />}
+        {outTab === 'run' && <RunPane {...props} />}
         {outTab === 'problems' && <ProblemsPane check={check} where={props.where} onGoLine={props.onGoLine} />}
       </div>}
     </>
@@ -279,10 +280,18 @@ function PadsPane(p: ScriptOutputProps) {
 
 /** Last run: how it ended, the registers it ended with, how long it took; what could not be written, and whether it
  *  wrote over its own code. */
-function RunPane({ kept, stale }: { kept?: ScriptRunKept; stale: boolean }) {
+function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, placePad, toast }: ScriptOutputProps) {
   const run = kept?.run;
+  // the memory the run wrote, the longest stretches first (the zero page and the stack are not among them)
+  const wrote = useMemo(() => [...(run?.wrote ?? [])].filter(r => r.end - r.start >= 2).sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start), [run]);
+  const bytesOf = (r: { start: number; end: number }) => run!.mem.slice(r.start, r.end);
+  const toPad = (r: { start: number; end: number }) => {
+    const n = r.end - r.start, name = padName(script.pads), start = placePad(n);
+    onEdit(script.id, { pads: [...script.pads, { name, start, size: n, data: bytesOf(r) }] }, `Copy what "${script.name}" wrote at ${rangeText(r)} into a new scratchpad ${name}`);
+    toast(`${rangeText(r)} (${n} bytes, as the run left them) copied into the new scratchpad ${name} at $${h4(start)}: a run starts it with them`, 'ok');
+  };
   if (!kept || !run) return <div className="scr-pane-body"><p className="scr-empty">Not run yet. <b>Run</b> (Ctrl+Enter) runs the script here in Mimir, and how it ended shows here: the instruction it stopped at, the registers, the time. <b>Debug</b> (F8) goes through it an instruction at a time.</p></div>;
-  const ok = endedWell(kept), well = run.end === 'rts' || run.end === 'brk';
+  const ok = endedWell(kept), well = ranWell(run.end);
   return (
     <div className="scr-pane-body scr-run-sec">
       <dl className="scr-facts">
@@ -299,6 +308,23 @@ function RunPane({ kept, stale }: { kept?: ScriptRunKept; stale: boolean }) {
         {run.overCode?.length ? <p className="small scr-failed" title="A run that writes over its code no longer runs the code it was written as (a loop stops early). Code that changes itself on purpose (an operand) is said here too"><Icon name="warn" size={13} />It wrote over its own code: {run.overCode.slice(0, 4).map(o => `line ${o.line} ($${h4(o.at)}${o.times > 1 ? `, ${o.times} times` : ''})`).join(', ')}{run.overCode.length > 4 ? ', …' : ''}. If that was not meant, an address the code writes lies where the code is.</p> : null}
         {run.other > 0 && <p className="small muted">{plural(run.other, 'byte')} changed outside the program and the scratchpads (the zero page, the stack, …): not kept.</p>}
       </div> : null}
+      {wrote.length > 0 && <div className="scr-wrote">
+        <h5 className="scr-group-h" title="Every stretch of memory the run wrote, as the run left it (not the script's own code and scratchpads in the whole C64): what a loader loaded, what an unpacker unpacked. The program's own bytes among them are also under In the program">Memory it wrote</h5>
+        <ul className="scr-wrote-list" aria-label="Memory the run wrote">{wrote.slice(0, 8).map(r => (
+          <li key={r.start}>
+            <span className="mono">{rangeText(r)}</span><span className="muted small">{plural(r.end - r.start, 'byte')}</span>
+            <button className="btn tiny" onClick={e => {
+              const b = e.currentTarget.getBoundingClientRect(), name = `${script.name}_${h4(r.start)}.prg`.replace(/[^A-Za-z0-9_.-]+/g, '_');
+              onMenu(b.left, b.bottom + 2, [
+                { header: `${rangeText(r)}, ${r.end - r.start} bytes, as a file that loads at $${h4(r.start)}` },
+                { label: 'Add it to this project', icon: 'plus', run: () => onToProject(name, bytesOf(r), r.start, true) },
+                { label: 'Open it as a new project', run: () => onToProject(name, bytesOf(r), r.start, false) },
+              ]);
+            }} title="These bytes as a file of the project, or as a new project of their own">To the project…</button>
+            <button className="btn tiny ghost" onClick={() => toPad(r)} title="These bytes into a new scratchpad: shown as hex, code or text, saved, compared">To a scratchpad</button>
+          </li>))}</ul>
+        {wrote.length > 8 && <p className="small muted">and {wrote.length - 8} shorter stretches</p>}
+      </div>}
     </div>
   );
 }
@@ -348,11 +374,14 @@ function BlockToPad({ blocks, pads, lang, first, into, onCopy, onCancel }: { blo
  * zero page, or $fb) and its value (a number, or a name: a label's address). What differs from a run without an init
  * is kept with the script (in the project and the library); Reset takes it all away.
  */
-function InitSection({ script, names, problems, onEdit }: { script: UserScript; names: ReadonlyMap<string, number>; problems: readonly ScriptProblem[]; onEdit: ScriptsViewProps['onEdit'] }) {
+function InitSection({ script, names, labels, problems, onEdit }: { script: UserScript; names: ReadonlyMap<string, number>; labels: ScriptCheck['labels']; problems: readonly ScriptProblem[]; onEdit: ScriptsViewProps['onEdit'] }) {
   const init = script.init ?? {};
   const p = init.p ?? SCRIPT_P;
   const zp = init.zp ?? [];
   const save = (next: ScriptInit, label: string) => onEdit(script.id, { init: tidyInit(next) ?? undefined }, label);
+  // what is wrong with the address the run stops at, when it is none
+  const stop = scriptStopAt(script.stopAt, names, { labels });
+  const stopBad = stop != null && typeof stop === 'object' ? stop.error : null;
   /** the program's names in the zero page, by address (what the address of a zero-page init shows) */
   const zpNames = useMemo(() => { const m = new Map<number, string>(); for (const [n, a] of names) if (a < 0x100 && !m.has(a)) m.set(a, n); return m; }, [names]);
   const addZp = () => {
@@ -391,6 +420,21 @@ function InitSection({ script, names, problems, onEdit }: { script: UserScript; 
             })}
           </div>
         </div>
+        <div className="init-group init-machine">
+          <h5 className="scr-group-h">Runs in</h5>
+          <div className="seg" role="group" aria-label="Runs in">
+            <button className={cx(script.machine !== 'c64' && 'on')} aria-pressed={script.machine !== 'c64'} onClick={() => { if (script.machine) onEdit(script.id, { machine: undefined }, `"${script.name}" runs in memory only`); }}
+              title="A copy of the program's memory and nothing else: no ROMs, no I/O, no interrupts. The script's code and scratchpads are memory of their own. Fast, and Debug goes through it">Memory only</button>
+            <button className={cx(script.machine === 'c64' && 'on')} aria-pressed={script.machine === 'c64'} onClick={() => { if (!script.machine) onEdit(script.id, { machine: 'c64' }, `"${script.name}" runs in the whole C64`); }}
+              title="The whole C64 as it stands at READY with the program loaded: the KERNAL and BASIC ROMs, the VIC, the CIAs and their interrupts, and the 1541 with the mounted disk. The script can call the KERNAL's LOAD or the program's own loader. Its code and scratchpads are in the C64's RAM: keep them away from where what it loads goes (* = at the top). It needs VICE's ROM files">The whole C64</button>
+          </div>
+          <label className="init-stop" title="An address at which the run ends, before the instruction there runs: for code that never returns, such as a loader that jumps into what it loaded. A number ($c000) or a name of the program or the script, with +n; empty: the run ends when the script returns">
+            <span>Stop at</span>
+            <StopAt key={script.id} value={script.stopAt ?? ''} bad={!!stopBad} onCommit={v => onEdit(script.id, { stopAt: v || undefined }, v ? `"${script.name}" stops at ${v}` : `"${script.name}" stops nowhere but at its end`)} />
+          </label>
+          {stopBad && <p className="scr-note init-stop-bad">{stopBad}</p>}
+          {script.machine === 'c64' && <p className="scr-note">The 1541 has the mounted disk. What a run wrote is listed under Last run. Debug is for memory only.</p>}
+        </div>
         <div className="init-group init-zp-group">
           <h5 className="scr-group-h">Zero page<span className="grow" />
             <button className="btn ghost small" onClick={addZp} aria-label="Add a zero-page byte" title="A zero-page byte the run starts with (a word: a pointer, low byte first). The address and the value can be names of the program"><Icon name="plus" size={13} />Add</button></h5>
@@ -407,6 +451,15 @@ function InitSection({ script, names, problems, onEdit }: { script: UserScript; 
       </div>
     </section>
   );
+}
+
+/** The address a run stops at, as typed: Enter or leaving the field keeps it. */
+function StopAt({ value, bad, onCommit }: { value: string; bad: boolean; onCommit: (v: string) => void }) {
+  const [t, setT] = useState(value);
+  useEffect(() => setT(value), [value]);
+  const commit = () => { const v = t.trim(); if (v !== value) onCommit(v); else setT(value); };
+  return <input aria-label="Stop at" aria-invalid={bad || undefined} className={cx('mono', bad && 'bad')} value={t} placeholder="its end" onChange={e => setT(e.target.value)} onBlur={commit}
+    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setT(value); (e.target as HTMLInputElement).blur(); } }} />;
 }
 
 /** A register of Init: its value as `$xx`; a number or `<name` / `>name` typed, Enter or leaving it keeps it. */

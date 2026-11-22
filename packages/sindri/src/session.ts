@@ -1953,6 +1953,30 @@ function bootC64(roms: Roms): { state: MachineState; leftover: Uint8Array } | nu
   return { state, leftover };
 }
 
+/**
+ * A C64 with these ROMs, started up and standing at the READY prompt (the start-up is run once for a set of ROMs and
+ * kept); null when it does not get there. For running code in the whole machine without a file to unpack.
+ */
+export function readyC64(roms: Roms): C64 | null {
+  const m = new C64(roms);
+  const key = `${roms.source}:${checksum(m.kernal)}:${checksum(m.basic)}`;
+  if (!bootCache.has(key)) bootCache.set(key, bootC64(roms));
+  const booted = bootCache.get(key);
+  if (!booted) return null;
+  m.restore(booted.state);
+  return m;
+}
+
+/** A 1541 with this DOS ROM, started up a while ago, with the disk (a D64 or a G64) in it: for C64.attachDrive. */
+export function driveWith(rom: Uint8Array, image: Uint8Array): Drive {
+  const key = checksum(rom);
+  if (!driveCache.has(key)) driveCache.set(key, bootDrive(rom));
+  const d = new Drive(rom);
+  d.restore(driveCache.get(key)!);
+  d.insert(isG64(image) ? g64ToDisk(image) : d64ToDisk(image));
+  return d;
+}
+
 let standIns: Uint8Array | null = null;
 /** the bytes the stand-ins' start-up leaves as they were powered on (as bootC64 finds them) */
 function standInLeftover(): Uint8Array {

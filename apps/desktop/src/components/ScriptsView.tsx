@@ -50,7 +50,7 @@ export interface ScriptsViewProps {
   onAdd: (s: LibraryScript) => void;
   /** a copy of a template in the project (its scratchpads placed where there is room) */
   onAddTemplate: (t: ScriptTemplate) => void;
-  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) => void;
+  onEdit: (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt'>>, label: string) => void;
   onRemove: (id: string) => void;
   /** Run: the script with this code, in its worker; its changes go into the program, unless it is in safe mode (App
    *  runUserScript) */
@@ -656,7 +656,7 @@ ${cryptWhereText(l)}`}>
                 : cur.safe ? 'Run the script in safe mode (Ctrl+Enter in the editor): nothing goes into the program or its .asm; what it would change is listed under Would change'
                 : 'Run the script (Ctrl+Enter in the editor): it starts from the program without what its last run changed, and what it changes now goes into the program'}>
                 <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
-            <button className="btn scr-debug-btn" disabled={!check.ok || !!running} onClick={startDebug} title={check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
+            <button className="btn scr-debug-btn" disabled={!check.ok || !!running || cur.machine === 'c64'} onClick={startDebug} title={cur.machine === 'c64' ? 'Debug goes through a run in memory only: this script runs in the whole C64 (Init → Runs in)' : check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
             <span className="tb-sep" />
             <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
               title={inLibrary ? 'Save the script in the library again, in place of the one of the same name there' : 'Save a copy of the script in the library, so that other projects can add it'}><Icon name="bookmark" /><span className="lbl">{inLibrary ? 'Update library' : 'Save to library'}</span></button>

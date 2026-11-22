@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -27,7 +27,7 @@ import { useUi, type Activity, type BottomTab, type InspectorMode } from './stor
 import { useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
 import { useBuildTemplates } from './store/buildTemplates';
-import { runScriptInWorker, stopScript } from './lib/scriptrun';
+import { runScriptInWorker, stopScript, type ScriptRunOpts } from './lib/scriptrun';
 import { RunOnFilesModal, type FilesRunBusy, type FilesRunThen, type ScriptFileChoice } from './components/ScriptFiles';
 import { exportWorker, useAnalysis, verifyInWorker } from './lib/analysis';
 import { PROJECT_FOLDERS } from '../shared/projects';
@@ -2475,7 +2475,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a copy of a library script, under a name of its own in the project */
   const addLibraryScript = (l: LibraryScript) => {
     const name = userScripts.some(s => s.name.toLowerCase() === l.name.toLowerCase()) ? scriptName(userScripts, l.name) : l.name;
-    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
+    addUserScript({ id: newId(), name, lang: l.lang, source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
     toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}`, 'ok');
   };
   /** a copy of a template in the project (script-templates.ts): its code checked with its scratchpads out of the way,
@@ -2524,7 +2524,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     addUserScript({ ...base, links: [at], safe: true, ...(cs.init ? { init: cs.init } : {}) }, 'New script that calls a routine');
     toast(`"${base.name}" calls ${k.name}${cs.init ? ` with ${(['a', 'x', 'y'] as const).filter(r => cs.init![r] != null).map(r => `${r.toUpperCase()} = $${h2(cs.init![r]!)}`).join(', ')}, as the program does at $${h4(spaceAddr(cs.from!))} (Init)` : ''}. It is in safe mode: Ctrl+Enter shows what the routine would change, and nothing goes into the program`, 'ok');
   };
-  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) =>
+  const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
   const setScriptSafe = (id: string, on: boolean) => {
@@ -2588,7 +2588,23 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const what = safe
       ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → In the program → Would change).` : 'It would change none of the program\'s bytes.'}`
       : w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
-    toast(`${s.name}: ${scriptEndText(r)}${what}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, r.end === 'rts' || r.end === 'brk' ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+    toast(`${s.name}: ${scriptEndText(r)}${what}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+  };
+  /** the C64's ROMs, for scripts that run in the whole C64 (asked for once they are needed, kept once found) */
+  const scriptRoms = useRef<Roms | null>(null);
+  /** how a script's run is to go beyond its code: the address it stops at (UserScript.stopAt, read with the names the
+   *  code has), and for one that runs in the whole C64 the ROMs and the mounted disk. null: it cannot run, and why was
+   *  said */
+  const scriptRunOpts = async (s: UserScript, env: ScriptEnv, pads: readonly ScriptPad[], c: ScriptCheck): Promise<ScriptRunOpts | null> => {
+    const stop = scriptStopAt(s.stopAt, scriptNames(env, pads), c);
+    if (stop != null && typeof stop === 'object') { toast(`"${s.name}": its Stop at is no address: ${stop.error} (Scripts → Init)`, 'warn'); return null; }
+    if (s.machine !== 'c64') return { stopAt: stop };
+    scriptRoms.current ??= await (kr?.c64Roms() ?? Promise.resolve(null)).catch(() => null);
+    const roms = scriptRoms.current;
+    if (!roms) { toast(`"${s.name}" runs in the whole C64, which needs the C64's ROM files: they come with VICE (Settings → Toolchain). Memory only (Scripts → Init) runs without them`, 'warn'); return null; }
+    const image = disk?.bytes ?? null;
+    if (image && !roms.drive) toast('The ROMs have no 1541 DOS ROM: the script runs without the disk', 'warn');
+    return { stopAt: stop, c64: { roms, disk: image && roms.drive ? image : null } };
   };
   /** Run a script (`text`: its code as the editor has it, else as the project has it), in its worker; one at a time.
    *  `write`: what it changes goes into the program also when the script is in safe mode (Write into the program) */
@@ -2598,9 +2614,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const source = text ?? s.source, env = scriptEnvFor(id);
     const c = checkScript(env, { source, lang: s.lang, pads: s.pads, init: s.init });
     if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); toast(`"${s.name}" does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}`, 'warn'); return; }
+    const opts = await scriptRunOpts(s, env, s.pads, c);
+    if (!opts) return;
     useScripts.getState().set({ running: id });
     try {
-      const r = await runScriptInWorker(env, { source, lang: s.lang, pads: s.pads, init: s.init });
+      const r = await runScriptInWorker(env, { source, lang: s.lang, pads: s.pads, init: s.init }, opts);
       useScripts.getState().set({ running: null });
       finishScriptRun(id, r, source, write);
     } catch (e) {
@@ -2750,8 +2768,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const plan = fileRunPlan(env, s, file);
         if ('error' in plan) { failed.push({ name: f.name, why: plan.error }); continue; }
         try {
-          const run = await runScriptInWorker(env, { source: s.source, lang: s.lang, pads: plan.script.pads, init: s.init });
-          if (run.end === 'jam' || run.end === 'limit') { failed.push({ name: f.name, why: scriptEndText(run) }); continue; }
+          const opts = await scriptRunOpts(s, env, plan.script.pads, plan.check);
+          if (!opts) { failed.push({ name: f.name, why: 'it could not start' }); break; }
+          const run = await runScriptInWorker(env, { source: s.source, lang: s.lang, pads: plan.script.pads, init: s.init }, opts);
+          if (!endedWell(run.end)) { failed.push({ name: f.name, why: scriptEndText(run) }); continue; }
           const r = fileRunResults(plan, file, run, s.name);
           if (r.length) outs.push(...r); else failed.push({ name: f.name, why: 'the run wrote nothing: no result scratchpad, not the file\'s scratchpad, no memory' });
         } catch (e) {

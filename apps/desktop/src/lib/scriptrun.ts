@@ -2,14 +2,15 @@
  * ends the worker. */
 import * as Comlink from 'comlink';
 import type { ScriptEnv, ScriptRun, UserScript } from '@mimir/core';
-import type { ScriptApi } from '../workers/script.worker';
+import type { ScriptApi, ScriptRunOpts } from '../workers/script.worker';
+export type { ScriptRunOpts };
 
 let worker: Worker | null = null;
 let remote: Comlink.Remote<ScriptApi> | null = null;
 let reject: ((e: Error) => void) | null = null;
 
 /** Run a script that checked ok; rejects with "stopped" when stopScript() ends the run. */
-export function runScriptInWorker(env: ScriptEnv, script: Pick<UserScript, 'source' | 'lang' | 'pads' | 'init'>): Promise<ScriptRun> {
+export function runScriptInWorker(env: ScriptEnv, script: Pick<UserScript, 'source' | 'lang' | 'pads' | 'init'>, opts: ScriptRunOpts = {}): Promise<ScriptRun> {
   if (!worker) {
     worker = new Worker(new URL('../workers/script.worker.ts', import.meta.url), { type: 'module', name: 'mimir-script' });
     remote = Comlink.wrap<ScriptApi>(worker);
@@ -17,7 +18,7 @@ export function runScriptInWorker(env: ScriptEnv, script: Pick<UserScript, 'sour
   const files = env.files.map(f => ({ load: f.load, bytes: f.bytes }));
   return new Promise<ScriptRun>((ok, fail) => {
     reject = fail;
-    remote!.run({ files, names: new Map(env.names) }, { source: script.source, lang: script.lang, pads: script.pads.map(({ bytes: _, ...p }) => p), ...(script.init ? { init: script.init } : {}) })
+    remote!.run({ files, names: new Map(env.names) }, { source: script.source, lang: script.lang, pads: script.pads.map(({ bytes: _, ...p }) => p), ...(script.init ? { init: script.init } : {}) }, opts)
       .then(r => { reject = null; ok(r); }, e => { reject = null; fail(e instanceof Error ? e : new Error(String(e))); });
   });
 }

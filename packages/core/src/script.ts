@@ -448,8 +448,12 @@ export function linkName(R: Pick<RenderResult, 'labels' | 'zp'>, A: Pick<Analysi
   return { at, name: '$' + h4(at), what: 'address' };
 }
 
-/** how a run ended: the RTS that returns from the script, a BRK, a JAM opcode, or the instruction limit */
-export type ScriptEnd = 'rts' | 'brk' | 'jam' | 'limit';
+/** how a run ended: the RTS that returns from the script, a BRK, a JAM opcode, the instruction limit, or the address
+ *  the script says to stop at (UserScript.stopAt) */
+export type ScriptEnd = 'rts' | 'brk' | 'jam' | 'limit' | 'stop';
+
+/** whether a run ended as a run should: it returned, came to a BRK, or reached the address it stops at */
+export const endedWell = (end: ScriptEnd): boolean => end === 'rts' || end === 'brk' || end === 'stop';
 
 /** A run changed `start`..`end` (excluded) of the program's bytes: `bytes` as it left them, `old` as they were. */
 export interface ScriptChange extends ScriptRange { bytes: Uint8Array; old: Uint8Array }
@@ -587,7 +591,6 @@ export class ScriptMachine implements ScriptMemory {
   /** the address of the instruction run last */
   at: Addr;
   private readonly before: Uint8Array;
-  private readonly loaded: Uint8Array;
   /** who made each JSR whose return address is on the stack, by the stack pointer before it: the script or not */
   private readonly frames = new Map<number, boolean>();
   private readonly t0 = Date.now();
@@ -600,7 +603,6 @@ export class ScriptMachine implements ScriptMemory {
   constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
     if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
     const { mem, own, mine, ctx } = this;
-    this.loaded = loadedMask(env.files);
     // the files, the scratchpads, the script's code, the SYS return on the stack and the init's zero page
     scriptStartMemory(env, script, check, this);
     this.inScript = !!mine[check.entry];
@@ -702,22 +704,8 @@ export class ScriptMachine implements ScriptMemory {
 
   /** the run as it stands (once it has ended: its result): what it changed in the program, what its pads hold */
   result(): ScriptRun {
-    const { mem, before, loaded, cpu, env } = this;
-    // what changed in the program's bytes (not its zero page and stack: the CPU's work area), nearby changes taken
-    // together, in one file (the file a byte is in is the last one LOAD put there)
-    const file = new Int16Array(0x10000).fill(-1);
-    env.files.forEach((f, i) => file.fill(i, f.load, Math.min(0x10000, f.load + f.bytes.length)));
-    const changes: ScriptChange[] = [];
-    let other = 0;
-    const GAP = 8;
-    for (let a = 0; a < 0x10000; a++) {
-      if (mem[a] === before[a]) continue;
-      if (a < 0x200 || !loaded[a]) { other++; continue; }
-      const last = changes[changes.length - 1];
-      if (last && a - last.end <= GAP && file[last.start] === file[a] && [...Array(a - last.end).keys()].every(k => file[last.end + k] === file[a])) last.end = a + 1;
-      else changes.push({ start: a, end: a + 1, bytes: new Uint8Array(0), old: new Uint8Array(0) });
-    }
-    for (const c of changes) { c.bytes = mem.slice(c.start, c.end); c.old = before.slice(c.start, c.end); }
+    const { mem, before, cpu, env } = this;
+    const { changes, other } = runChanges(mem, before, env.files);
     // the script's own code it wrote over, by line (the first address and how many writes)
     const overCode: ScriptRun['overCode'] = [];
     for (let a = 0; a < 0x10000; a++) {
@@ -737,11 +725,55 @@ export class ScriptMachine implements ScriptMemory {
   }
 }
 
-/** Run a script that checked ok to its end (ScriptMachine), in one go. */
-export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT): ScriptRun {
+/**
+ * What a run changed in the program's bytes (not its zero page and stack: the CPU's work area; not at `skip`: the
+ * script's own bytes, where they are in the same memory), nearby changes taken together, in one file (the file a byte
+ * is in is the last one LOAD put there); and how many other bytes it changed.
+ */
+export function runChanges(mem: Uint8Array, before: Uint8Array, files: ScriptEnv['files'], skip?: Uint8Array): { changes: ScriptChange[]; other: number } {
+  const loaded = loadedMask(files);
+  const file = new Int16Array(0x10000).fill(-1);
+  files.forEach((f, i) => file.fill(i, f.load, Math.min(0x10000, f.load + f.bytes.length)));
+  const changes: ScriptChange[] = [];
+  let other = 0;
+  const GAP = 8;
+  for (let a = 0; a < 0x10000; a++) {
+    if (mem[a] === before[a] || skip?.[a]) continue;
+    if (a < 0x200 || !loaded[a]) { other++; continue; }
+    const last = changes[changes.length - 1];
+    if (last && a - last.end <= GAP && file[last.start] === file[a] && [...Array(a - last.end).keys()].every(k => file[last.end + k] === file[a])) last.end = a + 1;
+    else changes.push({ start: a, end: a + 1, bytes: new Uint8Array(0), old: new Uint8Array(0) });
+  }
+  for (const c of changes) { c.bytes = mem.slice(c.start, c.end); c.old = before.slice(c.start, c.end); }
+  return { changes, other };
+}
+
+/** Run a script that checked ok to its end (ScriptMachine), in one go; `stopAt`: the run ends when it gets to this
+ *  address (before the instruction there runs). */
+export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT, stopAt: Addr | null = null): ScriptRun {
   const m = new ScriptMachine(env, script, check, limit);
-  m.runUntil(null);
+  if (stopAt == null) m.runUntil(null);
+  else if (m.runUntil(x => x.cpu.pc === stopAt) === 'stopped') { m.end = 'stop'; m.at = m.cpu.pc; }
   return m.result();
+}
+
+/**
+ * The address a script's run stops at (UserScript.stopAt), from what the user wrote: a number (`$c000`, `49152`) or
+ * a name the code may use (a label of the program, a scratchpad, one of the script's own labels), with `+n` or `-n`
+ * after it. null: nothing written; an error: it is no address.
+ */
+export function scriptStopAt(expr: string | undefined, names: ReadonlyMap<string, Addr>, check?: Pick<ScriptCheck, 'labels'>): Addr | null | { error: string } {
+  const t = (expr ?? '').trim();
+  if (!t) return null;
+  const m = /^(\$[0-9a-fA-F]{1,4}|\d{1,5}|[A-Za-z_][\w.]*)\s*(?:([+-])\s*(\$[0-9a-fA-F]{1,4}|\d{1,5}))?$/.exec(t);
+  const num = (s: string) => (s[0] === '$' ? parseInt(s.slice(1), 16) : parseInt(s, 10));
+  if (!m) return { error: `"${t}" is not an address: write $c000, 49152, a label, or label+2` };
+  let base: number | undefined;
+  if (/^[$\d]/.test(m[1])) base = num(m[1]);
+  else { base = names.get(m[1]); if (base == null && check) for (const [a, n] of check.labels) if (n === m[1]) { base = a; break; } }
+  if (base == null) return { error: `"${m[1]}" is not a name of the program or the script` };
+  const a = base + (m[2] ? (m[2] === '-' ? -1 : 1) * num(m[3]) : 0);
+  return a >= 0 && a <= 0xffff ? a : { error: `"${t}" is outside $0000-$ffff` };
 }
 
 /** How a run ended, in a sentence. */
@@ -751,6 +783,7 @@ export function scriptEndText(r: Pick<ScriptRun, 'end' | 'at' | 'instructions' |
     case 'rts': return `Returned (RTS at $${h4(r.at)}) after ${n}.`;
     case 'brk': return `Stopped at the BRK at $${h4(r.at)} after ${n}.`;
     case 'jam': return `The CPU jammed at $${h4(r.at)} (a JAM opcode) after ${n}: did the code run into data?`;
+    case 'stop': return `Stopped at $${h4(r.at)}, the address it stops at, after ${n}.`;
     case 'limit': return `Stopped after ${n} at $${h4(r.at)}, the most a run may take: does it loop for ever?`;
   }
 }

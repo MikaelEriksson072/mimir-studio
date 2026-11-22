@@ -391,6 +391,14 @@ export interface UserScript {
   safe?: boolean;
   /** what its runs start with: registers, flags, zero-page bytes (missing: A, X and Y 0, only I set) */
   init?: ScriptInit;
+  /** what it runs in (script-machine.ts): missing, a copy of the program's memory and nothing else (no ROMs, no I/O,
+   *  no interrupts), the script's code and scratchpads memory of their own; `c64`, the whole C64 as it stands at
+   *  READY with the program loaded: the ROMs, the I/O chips, interrupts and the 1541 with the mounted disk, the
+   *  script's code and scratchpads in its RAM */
+  machine?: 'c64';
+  /** an address (a number or a name, as typed) at which a run ends, before the instruction there runs: for code that
+   *  never returns (a loader that jumps into what it loaded) */
+  stopAt?: string;
   /** memory the user put on its watch list (the list finds what the code writes by itself) */
   watch?: ScriptWatchEntry[];
   /** what the watch list found in the code that the user took off it, by the operand as the code writes it

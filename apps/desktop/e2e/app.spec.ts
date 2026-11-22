@@ -10359,3 +10359,67 @@ test('scripts the analysis suggests: a decryption loop gives a script from its t
     await expect(page.locator('.scr-end')).toContainText('Returned');
   });
 });
+
+test('scripts in the whole C64: a script loads a file from the mounted disk with the KERNAL, the memory it wrote is listed and goes into the project; a run stops at an address', async ({ app, page }) => {
+  // fixtures/d64/kernal-load.d64: PART2 loads at $c000. The whole C64 needs VICE's ROMs (and the 1541's DOS ROM).
+  const vice = 'C:\\C64\\VICE';
+  const drives = () => { try { return readdirSync(vice).some(d => existsSync(join(vice, d, 'DRIVES'))); } catch { return false; } };
+  test.skip(!process.env.C64_ROMS && !drives(), 'needs VICE\'s ROMs');
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/kernal-load.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, /^Mounted kernal-load\.d64/)).toBeVisible();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const init = page.getByRole('region', { name: 'Init' });
+  const code = async (lines: string[]) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(lines.join('\n'));
+  };
+  const LOAD = ['* = $9000', 'start:  lda #5', '        ldx #<name', '        ldy #>name', '        jsr $ffbd', '        lda #1', '        ldx #8', '        ldy #1', '        jsr $ffba', '        lda #0', '        jsr $ffd5'];
+  const NAME = 'name:   .byte $50, $41, $52, $54, $32';
+
+  await test.step('Init says what the script runs in: the whole C64, with no debugger', async () => {
+    await outTab(page, 'Init');
+    const runsIn = init.getByRole('group', { name: 'Runs in' });
+    await expect(runsIn.getByRole('button', { name: 'Memory only' })).toHaveAttribute('aria-pressed', 'true');
+    await runsIn.getByRole('button', { name: 'The whole C64' }).click();
+    await expect(runsIn.getByRole('button', { name: 'The whole C64' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(init).toContainText('The 1541 has the mounted disk.');
+    await expect(page.getByRole('tablist', { name: 'Output of the script' }).getByRole('tab', { name: /^Init/ })).toContainText('C64');
+    await expect(page.getByRole('button', { name: /^Debug/ })).toBeDisabled();
+  });
+
+  await test.step('the KERNAL loads PART2 from the disk in the 1541: Last run lists the memory it wrote, which goes into the project', async () => {
+    await code([...LOAD, '        rts', NAME, '']);
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText('Returned', { timeout: 60_000 });
+    await outTab(page, 'Last run');
+    const wrote = page.getByRole('list', { name: 'Memory the run wrote' });
+    const loaded = wrote.getByRole('listitem').filter({ hasText: /^\$c000-\$c/ });
+    await expect(loaded).toHaveCount(1);
+    await loaded.getByRole('button', { name: 'To the project…' }).click();
+    await expect(page.locator('.ctx')).toContainText(/as a file that loads at \$c000/);
+    await page.locator('.ctx').getByRole('menuitem', { name: 'Add it to this project' }).click();
+    await expect(toast(page, /^script_c000\.prg \(\$c000, \d+ bytes, from a scratchpad\) added to the project$/)).toBeVisible();
+  });
+
+  await test.step('Stop at ends a run that never returns, at a label of the script; what is no address is said', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await code([...LOAD, 'after:  jmp after', NAME, '']);
+    await outTab(page, 'Init');
+    const stop = init.getByLabel('Stop at');
+    await stop.fill('nowhere');
+    await stop.press('Enter');
+    await expect(init).toContainText('"nowhere" is not a name of the program or the script');
+    await stop.fill('after');
+    await stop.press('Enter');
+    await expect(init).not.toContainText('is not a name');
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText(/Stopped at \$90[0-9a-f]{2}, the address it stops at/, { timeout: 60_000 });
+  });
+});
