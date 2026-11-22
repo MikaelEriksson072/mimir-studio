@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-templates-js.ts   skriptmallarna i JavaScript: exempel på vad språket är bra på (10.3)
 │  ├─ src/script-watch.ts          skriptets watch-lista: det koden skriver, hittat i koden, och värdena (10.3)
 │  ├─ src/script-files.ts          ett skript kört på filer: filen i en scratchpad, och vad körningen ger som filer (10.3)
 │  ├─ src/script-suggest.ts        skript som analysen föreslår: dekrypteringsloopar och rutinanrop (10.3)
@@ -2830,6 +2831,27 @@ $06, $08` i `.asm`-filen efter en körning.
     De körs ett i taget, vart och ett när analysen av det förra gjorde är klar, och ett meddelande säger vilka; det
     de gör (byte, uppmärkning) är vanliga körningar som Ctrl+Z tar tillbaka. Ett projekt som öppnas kör inga: dess
     skripts resultat ligger redan i det.
+- **Mallar i JavaScript** (`script-templates-js.ts`, `JS_TEMPLATES`, 2026-11-22): listans *Templates* har två flikar,
+  *Assembler* (dekrypteringsmallarna, som förut) och *JavaScript* (vald flik sparas av appen,
+  `kr.scriptTemplatesTab`). JavaScript-mallarna är exempel på det språket är bra på i Mimir, var och en något man
+  vill göra med ett program; en kopia läggs till som ett JavaScript-skript med *Settings* visad:
+  - *XOR key byte* (`xor_js`): varje byte EOR:ad med en nyckel, till scratchpaden `result` eller på plats.
+  - *Find text* (`find_text`): programmets texter (följder av bokstäver, siffror och skiljetecken, minst
+    `minLength` långa med minst fyra bokstäver) i PETSCII eller skärmkoder, skrivna med adress; `markThem` märker dem
+    som text.
+  - *Find bytes* (`find_bytes`): varje ställe där ett mönster av byte finns, skrivet i hex, `??` för vilken byte som
+    helst (`"8d 20 d0"`, `"20 ?? c0"`).
+  - *Name a jump table* (`jump_table`): rutinerna som en tabell av adresser pekar på (låga och höga byte var för
+    sig, `plusOne` för adresser lagda för en RTS), skrivna, och namngivna med `nameThem`.
+  - *Unpack RLE* (`rle_unpack`): run-length-data (ett antal och en byte, 0 avslutar) till `result`; loopen är stället
+    att skriva packarens eget format.
+  - *Read the disk* (`disk_files`): den monterade diskens directory med var varje program laddas, eller en fil
+    kopierad till scratchpaden `file`.
+  - *Call a routine* (`call_many`): en rutin anropad med varje värde på A från `first` till `last`, och vad den
+    lämnar; kopian börjar i safe mode (`ScriptTemplate.safe`).
+  Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
+  kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
+  variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

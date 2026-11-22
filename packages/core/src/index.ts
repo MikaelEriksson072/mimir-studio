@@ -102,6 +102,7 @@ export {
   scriptEol, sfxEntry, TEMPLATE_PLACEHOLDERS, templateText, templateValues, type BuildTarget, type TemplateValues,
 } from './build-template';
 export { SCRIPT_TEMPLATES, templateSource, type ScriptTemplate } from './script-templates';
+export { JS_TEMPLATES } from './script-templates-js';
 export { asmOfLang, assembleIn, codeLabels, codeLines, codeOfLine, commentAt, definedNames, LANG_TITLE, langIs, langOf, LANGS, lineComment, needsTassCpu, setsItsPlace, splitLabel, startsInBlockComment, usedWords, withoutComment } from './code-lang';
 export { kickToTass, type Converted } from './code-convert';
 export { patchIn64tass, scriptIn64tass, type Moved } from './script-convert';

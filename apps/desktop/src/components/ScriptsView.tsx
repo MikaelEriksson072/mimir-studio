@@ -7,10 +7,10 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { checkScript, LANG_TITLE, SCRIPT_TEMPLATES, scriptIn64tass, type ScriptLang, type ScriptTemplate, h4, padName, padStoreAt, padStoreLine, padStoreReach, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot, cryptStepsText, cryptWhereText, type CryptLoop } from '@mimir/core';
+import { checkScript, LANG_TITLE, SCRIPT_TEMPLATES, JS_TEMPLATES, scriptIn64tass, type ScriptLang, type ScriptTemplate, h4, padName, padStoreAt, padStoreLine, padStoreReach, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot, cryptStepsText, cryptWhereText, type CryptLoop } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
-import { cx } from '../lib/util';
+import { cx, store } from '../lib/util';
 import { stopScript } from '../lib/scriptrun';
 import { initValue } from '../lib/scriptinit';
 import { useScripts, type LibraryScript } from '../store/scripts';
@@ -756,26 +756,36 @@ const templateTip = (t: ScriptTemplate) => {
   return `${t.about}\n\n${text.join('\n')}`;
 };
 
-/** The templates Mimir comes with (decryptions, script-templates.ts): each can be added to the project as a copy. The
- *  heading folds the list in (kept by the app). */
+/** The templates Mimir comes with, each added to the project as a copy: a tab for those in assembler (decryptions the
+ *  ways games do them, script-templates.ts) and one for those in JavaScript (examples of what it is good at,
+ *  script-templates-js.ts). The heading folds the list in; the tab shown and the fold are kept by the app. */
 function TemplateList({ folded, onFold, onAdd }: { folded: boolean; onFold: (v: boolean) => void; onAdd: (t: ScriptTemplate) => void }) {
+  const [tab, setTabState] = useState<'asm' | 'js'>(() => (store.get<string>(TEMPLATES_TAB_KEY, 'asm') === 'js' ? 'js' : 'asm'));
+  const setTab = (k: 'asm' | 'js') => { store.set(TEMPLATES_TAB_KEY, k); setTabState(k); };
+  const list = tab === 'js' ? JS_TEMPLATES : SCRIPT_TEMPLATES;
   return <>
     <div className="scr-list-head scr-lib-head scr-tpl-head">
       <button className="scr-tpl-fold" onClick={() => onFold(!folded)} aria-expanded={!folded} aria-controls="scr-templates"
-        title={folded ? 'Show the templates: ready scripts that decrypt and encrypt the ways games do' : 'Fold the templates in'}>
+        title={folded ? 'Show the templates: ready scripts in assembler (decryptions the ways games do them) and in JavaScript (examples of what it is good at)' : 'Fold the templates in'}>
         <Icon name={folded ? 'chevron' : 'down'} size={11} /><span>Templates</span></button>
-      <span className="grow" /><span className="scr-lib-n">{SCRIPT_TEMPLATES.length}</span></div>
-    {!folded && <div role="list" aria-label="Templates" id="scr-templates">
-      {SCRIPT_TEMPLATES.map(t => (
+      <span className="grow" /><span className="scr-lib-n">{list.length}</span></div>
+    {!folded && <div className="scr-tpl-tabs" role="tablist" aria-label="Templates in">
+      <button role="tab" aria-selected={tab === 'asm'} className={cx(tab === 'asm' && 'on')} onClick={() => setTab('asm')} title="Templates in assembler (Kick Assembler or 64tass, as the project's is): decryptions and encryptions the ways C64 games do them">Assembler</button>
+      <button role="tab" aria-selected={tab === 'js'} className={cx(tab === 'js' && 'on')} onClick={() => setTab('js')} title="Templates in JavaScript: decrypt a block, find the texts, find a byte pattern, name a jump table, unpack run-length data, read the disk, call a routine with every value">JavaScript</button>
+    </div>}
+    {!folded && <div role="list" aria-label={tab === 'js' ? 'JavaScript templates' : 'Templates'} id="scr-templates">
+      {list.map(t => (
         <div key={t.name} role="listitem" className="scr-lib-item scr-tpl-item" title={templateTip(t)}>
           <span className="scr-item-name">{t.title}</span>
-          <button className="icon-btn" aria-label={`Add the template ${t.title} to the project`} title={`Add a copy to this project, as "${t.name}": set its .vars and run it`} onClick={() => onAdd(t)}><Icon name="plus" size={13} /></button>
+          <button className="icon-btn" aria-label={`Add the template ${t.title} to the project`} title={`Add a copy to this project, as "${t.name}": set its settings and run it`} onClick={() => onAdd(t)}><Icon name="plus" size={13} /></button>
         </div>
       ))}
     </div>}
   </>;
 }
 
+/** which tab of the templates is shown (kept by the app) */
+const TEMPLATES_TAB_KEY = 'kr.scriptTemplatesTab';
 function NameField({ value, taken, onCommit, toast }:{ value: string; taken: string[]; onCommit: (n: string) => void; toast: ScriptsViewProps['toast'] }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);

@@ -10856,3 +10856,70 @@ test('scripts that run after a load: one of the library with it is added to a pr
     await expect(listing(page)).toContainText(TEXT.slice(0, 16));
   });
 });
+
+test('the JavaScript templates have a tab of their own: one is added with its settings shown, set there and run on the program', async ({ workDir, app, page }) => {
+  // the program of the suggestions test: the 32 bytes at $0840 are EORed with $5a; sta $d020 is at $0828
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...[...TEXT].map(c => c.charCodeAt(0) ^ 0x5a)];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  await waitForListing(page);
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded crypt-demo.prg at $0801')).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  if (await overview.isVisible()) await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const tabs = page.getByRole('tablist', { name: 'Templates in' });
+  const settings = page.getByRole('region', { name: 'Settings' });
+  const printed = page.getByLabel('What the run printed');
+  const editor = page.locator('.scr-editor');
+  const set = async (name: string, value: string) => { const f = settings.getByLabel(`Setting ${name}`, { exact: true }); await f.fill(value); await f.press('Enter'); };
+  const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); await expect(page.locator('.scr-end')).toContainText('Returned'); };
+
+  await test.step('the templates have a tab for assembler and one for JavaScript', async () => {
+    await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
+    await tabs.getByRole('tab', { name: 'JavaScript' }).click();
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/]);
+  });
+
+  await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
+    await page.getByRole('button', { name: 'Add the template XOR key byte to the project' }).click();
+    await expect(toast(page, '"xor_js" added from the JavaScript templates: set its settings (the Settings tab) and press Ctrl+Enter')).toBeVisible();
+    await expect(page.getByLabel('Language')).toHaveText('JavaScript');
+    await expect(settings.getByRole('row')).toHaveCount(4);
+    await set('source', '0x0840');
+    await set('length', '32');
+    await set('key', '0x5a');
+    await runIt();
+    await outTab(page, 'Last run');
+    await expect(printed).toHaveText('$0840-$085f EOR $5a -> ' + (await printed.innerText()).split('-> ')[1]);
+    await outTab(page, 'Scratchpads');
+    await page.getByRole('group', { name: 'Show as' }).getByRole('button', { name: 'Text' }).click();
+    await expect(page.locator('.scr-dump')).toContainText(TEXT);
+  });
+
+  await test.step('Find bytes finds sta $d020, and Call a routine comes in safe mode', async () => {
+    await page.getByRole('button', { name: 'Add the template Find bytes to the project' }).click();
+    await expect(page.getByRole('option', { name: 'find_bytes' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await outTab(page, 'Last run');
+    await expect(printed).toHaveText('$0828  8d 20 d0 \n1 place');
+    await page.getByRole('button', { name: 'Add the template Call a routine to the project' }).click();
+    await expect(toast(page, /^"call_many" added from the JavaScript templates: .* It is in safe mode/)).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Safe mode' })).toBeChecked();
+  });
+
+  await test.step('the tab shown is kept', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(tabs.getByRole('tab', { name: 'JavaScript' })).toHaveAttribute('aria-selected', 'true');
+    await tabs.getByRole('tab', { name: 'Assembler' }).click();
+    await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
+  });
+});

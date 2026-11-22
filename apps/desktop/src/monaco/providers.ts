@@ -95,6 +95,7 @@ export const JS_API: readonly { label: string; insert: string; detail: string }[
   { label: 'name', insert: 'name(', detail: 'name(address, "label"): the address gets this label' },
   { label: 'note', insert: 'note(', detail: 'note(address, "text"): the line at the address gets this comment' },
   { label: 'junk', insert: 'junk(', detail: 'junk(start, end): the bytes are junk, left out of everything' },
+  { label: 'files', insert: 'files', detail: 'the program\'s files in memory: [{ start, end }], end the address after the last byte' },
   { label: 'disk', insert: 'disk', detail: 'the mounted disk, or null: disk.files, disk.read("NAME"), disk.sector(track, sector)' },
 ];
 

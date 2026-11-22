@@ -16,6 +16,10 @@ export interface ScriptTemplate {
   /** what it does, in a line */
   about: string;
   source: string;
+  /** written in JavaScript (script-templates-js.ts); missing: in assembler, Kick Assembler's or 64tass's as the project's is */
+  code?: 'js';
+  /** a copy of it starts in safe mode (it calls the program's code: what that writes is shown, not written) */
+  safe?: boolean;
   /** its scratchpads, without a place: one is found when the template is added */
   pads: { name: string; size: number; fill?: number; src?: ScriptPadSource }[];
 }
@@ -581,8 +585,8 @@ export const SCRIPT_TEMPLATES: readonly ScriptTemplate[] = [xorKey, xorString, x
 
 /** A template's source in a language: as it is written (Kick Assembler), or as 64tass (kickToTass; the tests check
  *  that each gives the same bytes in both). */
-export function templateSource(t: Pick<ScriptTemplate, 'source'>, lang: ScriptLang = 'kickass'): string {
-  if (lang !== '64tass') return t.source;
+export function templateSource(t: Pick<ScriptTemplate, 'source' | 'code'>, lang: ScriptLang = 'kickass'): string {
+  if (lang !== '64tass' || t.code === 'js') return t.source;
   const r = kickToTass(t.source);
   return 'source' in r ? r.source : t.source;
 }

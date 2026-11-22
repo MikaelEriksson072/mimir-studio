@@ -23,9 +23,9 @@ describe('a script\'s settings', () => {
     const tass = templateSource(xor, '64tass');
     expect(scriptParams(tass, { lang: '64tass' }).filter(x => ['source', 'dest', 'length', 'key'].includes(x.name)).map(x => [x.name, x.value]))
       .toEqual([['source', '$0801'], ['dest', 'result'], ['length', '$0100'], ['key', '$77']]);
-    const js = ['const key = 0x77;        // the key byte', 'let from = "level1";', 'const n = 16', '  const inner = 1;', 'const sum = key + 1;', 'for (let i = 0; i < n; i++) mem[addr(from) + i] ^= key;'].join('\n');
+    const js = ['const key = 0x77;        // the key byte', 'const from = "level1";', 'let found = 0;', 'const n = 16', '  const inner = 1;', 'const sum = key + 1;', 'for (let i = 0; i < n; i++) mem[addr(from) + i] ^= key;'].join('\n');
     expect(scriptParams(js, { code: 'js' })).toEqual([
-      { name: 'key', value: '0x77', line: 1, comment: 'the key byte' }, { name: 'from', value: '"level1"', line: 2, comment: '' }, { name: 'n', value: '16', line: 3, comment: '' }]);
+      { name: 'key', value: '0x77', line: 1, comment: 'the key byte' }, { name: 'from', value: '"level1"', line: 2, comment: '' }, { name: 'n', value: '16', line: 4, comment: '' }]);
   });
 
   it('are set in the code, the comment staying in its column', () => {
@@ -41,7 +41,7 @@ describe('a script\'s settings', () => {
     expect(setScriptParams('.var a = 1 // one', {}, { a: 'a_long_name' }).source).toBe('.var a = a_long_name // one');
     expect(lines.filter((l, i) => l !== was[i])).toHaveLength(2);
     // JavaScript: the ; stays after the value
-    expect(setScriptParams('const key = 0x77;        // the key byte\nlet n = 16', { code: 'js' }, { key: '0x12', n: '32' }).source).toBe('const key = 0x12;        // the key byte\nlet n = 32');
+    expect(setScriptParams('const key = 0x77;        // the key byte\nconst n = 16', { code: 'js' }, { key: '0x12', n: '32' }).source).toBe('const key = 0x12;        // the key byte\nconst n = 32');
     expect(paramValueOk('$12')).toBe(true);
     expect(paramValueOk('"a b"')).toBe(true);
     expect(paramValueOk('a + b')).toBe(false);

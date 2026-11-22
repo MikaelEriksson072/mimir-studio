@@ -2508,13 +2508,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const addTemplateScript = (t: ScriptTemplate) => {
     const name = scriptName(userScripts, t.name);
     const source = templateSource(t, codeLang);
-    const c = checkScript(scriptsEnv, { source, lang: codeLang, pads: t.pads.map(p => ({ ...p, start: 0xffff, size: 1 })) });
+    const c = checkScript(scriptsEnv, { source, lang: codeLang, code: t.code, pads: t.pads.map(p => ({ ...p, start: 0xffff, size: 1 })) });
     const pads: ScriptPad[] = [];
     for (const p of t.pads) {
       const taken = [...c.code, ...c.access, ...pads.map(q => ({ start: q.start, end: q.start + q.size }))];
       pads.push({ ...p, start: scriptPlace(scriptsEnv.files, p.size, taken)?.at ?? 0xc000 });
     }
-    addUserScript({ id: newId(), name, lang: codeLang, source, pads }, 'Add template');
+    addUserScript({ id: newId(), name, lang: codeLang, ...(t.code ? { code: t.code } : {}), ...(t.safe ? { safe: true } : {}), source, pads }, 'Add template');
+    // a JavaScript template: its settings are the place to start
+    if (t.code === 'js') {
+      useScripts.getState().set({ outTab: 'settings', outFolded: false });
+      toast(`"${name}" added from the JavaScript templates: set its settings (the Settings tab) and press Ctrl+Enter${t.safe ? '. It is in safe mode: what the routine it calls writes is shown, not written' : ''}`, 'ok');
+      return;
+    }
     // what it decrypts goes into its scratchpad: the output shows the scratchpads
     if (pads.length) useScripts.getState().set({ outTab: 'pads', outFolded: false });
     toast(`"${name}" added from the templates: set its settings (source, dest, length, the key) and press Ctrl+Enter. With dest = result the program stays as it is`, 'ok');

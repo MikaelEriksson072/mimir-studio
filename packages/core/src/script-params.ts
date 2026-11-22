@@ -7,7 +7,7 @@
  * A setting is a line of the code that gives a name one value and nothing more:
  *     Kick Assembler   .var key     = $77        // the key byte
  *     64tass           key     = $77             ; the key byte
- *     JavaScript       const key = 0x77;         // the key byte      (at the left edge)
+ *     JavaScript       const key = 0x77;         // the key byte      (const, at the left edge: a let is the code's own)
  * The value is one word: a number ($77, 0x77, %1010, 119), a name (result, tbl_001, SUB, true) or a string. A line
  * whose value is worked out (`dest + length`, `step1 == ADD ? …`) is no setting. The comment on the line says what
  * the setting is.
@@ -29,7 +29,7 @@ const VALUE = String.raw`"[^"\n]*"|'[^'\n]*'|-?[$%]?[A-Za-z0-9_][\w.]*`;
 const LINE: Record<'kickass' | '64tass' | 'js', RegExp> = {
   kickass: new RegExp(String.raw`^(\s*\.var\s+)([A-Za-z_]\w*)(\s*=\s*)(${VALUE})([ \t]*)(//.*)?$`),
   '64tass': new RegExp(String.raw`^()([A-Za-z_]\w*)(\s*:?=\s*)(${VALUE})([ \t]*)(;.*)?$`),
-  js: new RegExp(String.raw`^((?:const|let|var)\s+)([A-Za-z_$][\w$]*)(\s*=\s*)(${VALUE})([ \t]*;?[ \t]*)(//.*)?$`),
+  js: new RegExp(String.raw`^(const\s+)([A-Za-z_$][\w$]*)(\s*=\s*)(${VALUE})([ \t]*;?[ \t]*)(//.*)?$`),
 };
 const kindOf = (how: How): keyof typeof LINE => (how.code === 'js' ? 'js' : langIs(how.lang as ScriptLang | undefined));
 

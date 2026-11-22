@@ -19,6 +19,7 @@
  *   hex(v, digits)           "$1a2b"
  *   mark(start, end, "type"), name(a, "name"), note(a, "text"), junk(start, end)
  *                            what script-actions.ts's directives do, done when the run ends
+ *   files                    the program's files in memory: [{ start, end }], end the address after the last byte
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
  *                            sector }], sector(track, sector) → its 256 bytes, read(file or name) → the file's bytes }
  *
@@ -162,7 +163,8 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
 
   let error: ScriptRun['error'];
   try {
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, disk };
+    const files = env.files.map(f => ({ start: f.load, end: Math.min(0x10000, f.load + f.bytes.length) })).filter(f => f.end > f.start);
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk };
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const fn = new Function(...Object.keys(given), ...HIDDEN, `"use strict";${script.source}\n`) as (...a: unknown[]) => unknown;
     fn(...Object.values(given));

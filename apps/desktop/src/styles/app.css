@@ -1632,6 +1632,15 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 .set-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .values-table { width: 100%; min-height: 150px; resize: vertical; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 8px 10px; font: 12.5px/1.5 var(--font-code); }
 .values-problems { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: var(--err); }
+/* the list's heading holds three buttons (new, new in JavaScript, fold): narrow ones, so that all fit */
+.scr-list-head { gap: 2px; }
+.scr-list-head > span:first-child { margin-right: 4px; }
+.scr-list-head .icon-btn { width: 22px; height: 24px; }
+/* the templates' two tabs: those in assembler, those in JavaScript */
+.scr-tpl-tabs { display: flex; gap: 2px; margin: 2px 4px 4px; padding: 2px; min-width: 0; border-radius: 6px; background: var(--panel-2); }
+.scr-tpl-tabs button { flex: 1 1 0; min-width: 0; height: 22px; padding: 0 2px; border: 0; border-radius: 4px; background: none; color: var(--fg-2); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.scr-tpl-tabs button:hover { color: var(--fg); }
+.scr-tpl-tabs button.on { background: var(--panel); color: var(--fg); box-shadow: 0 0 0 1px var(--line-2); }
 /* a script of the library that fits this program */
 .scr-fits-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--ok, #3fb950); }
 .scr-lib-item.fits .scr-item-name { color: var(--fg); font-weight: 600; }
