@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2480,9 +2480,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a copy of a library script, under a name of its own in the project */
   const addLibraryScript = (l: LibraryScript) => {
     const name = userScripts.some(s => s.name.toLowerCase() === l.name.toLowerCase()) ? scriptName(userScripts, l.name) : l.name;
-    addUserScript({ id: newId(), name, lang: l.lang, ...(l.code ? { code: l.code } : {}), source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
-    toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}`, 'ok');
+    // the routines it needs that are known from another project and have no name here yet get their names first
+    const naming = suggested.filter(m => scriptFitsHere.get(l.name)?.naming.includes(m.name));
+    if (naming.length) update(naming.length === 1 ? `Name $${h4(naming[0].addr)} ${naming[0].name} (a known routine)` : `Name ${naming.length} known routines`, d => { for (const m of naming) d.labels[m.addr] = m.name; });
+    addUserScript({ id: newId(), name, lang: l.lang, ...(l.table ? { table: l.table } : {}), ...(l.code ? { code: l.code } : {}), source: l.source, pads: l.pads.map(p => ({ ...p })), ...(l.safe ? { safe: true } : {}), ...(l.init ? { init: structuredClone(l.init) } : {}), ...(l.machine ? { machine: l.machine } : {}), ...(l.stopAt ? { stopAt: l.stopAt } : {}), ...(l.watch?.length ? { watch: l.watch.map(w => ({ ...w })) } : {}), ...(l.unwatch?.length ? { unwatch: [...l.unwatch] } : {}) }, 'Add script from the library');
+    toast(`"${name}" added from the library: Ctrl+Enter runs it on this program${l.safe ? ' in safe mode (nothing goes into the program)' : ''}${naming.length ? `. ${naming.map(m => `$${h4(m.addr)} is ${m.name} now`).join(', ')}, as the script needs` : ''}`, 'ok');
   };
+  /** the library's scripts, read from its folder when the app starts and when the Scripts tab is shown */
+  const scriptLibrary = useScripts(s => s.library);
+  useEffect(() => { if (tab === 'scripts' || !useScripts.getState().libraryDir) void useScripts.getState().loadLibrary(); }, [tab]);
+  /** the library's scripts that fit this program: it has every name they need, as a label or as a routine known from
+   *  another project (which adding the script names) */
+  const scriptFitsHere = useMemo(() => {
+    const names = new Set([...R.labels.values()].map(l => l.name)), known = new Set(suggested.map(m => m.name));
+    const m = new Map<string, { naming: string[] }>();
+    for (const l of scriptLibrary) { const f = scriptFits(l, n => names.has(n), n => known.has(n)); if (f.fits && !userScripts.some(s => s.name === l.name)) m.set(l.name, { naming: f.naming }); }
+    return m;
+  }, [scriptLibrary, R, suggested, userScripts]);
+  /** the names the user gave in this program: a script saved to the library keeps those its code uses (what it needs) */
+  const userNames = useMemo(() => new Set([...R.labels.values()].filter(l => l.user).map(l => l.name)), [R]);
   /** a copy of a template in the project (script-templates.ts): its code checked with its scratchpads out of the way,
    *  then each scratchpad placed where there is room, away from the code and from what the code reaches */
   const addTemplateScript = (t: ScriptTemplate) => {
@@ -4670,7 +4686,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
                 blocks={scriptBlocks} cursorBlock={cursor != null ? findBlock(A.blocks, cursor)?.start ?? null : null} onCopyBlock={(s, id, pad) => copyBlockIntoPad(s, id, pad)}
-                loops={cryptLoops} onAddLoop={addCryptScript}
+                loops={cryptLoops} onAddLoop={addCryptScript} fits={scriptFitsHere} userNames={userNames} onRevealLibrary={kr ? () => void kr.scriptsReveal().catch(e => toast(errorText(e), 'err')) : undefined}
                 files={scriptFileChoices} onRunOnFiles={id => openRunOnFiles(id)} onRunValues={id => setValuesRun(id)} onToProject={padToProject} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
@@ -4756,7 +4772,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       </div>}
       {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} animData={animData} looking={lookingFor} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
-        known={suggested} onNameKnown={() => nameKnown()} crypt={cryptLoops} onCryptScript={addCryptScript} links={overviewLinks} onClose={() => setModal(null)} />}
+        known={suggested} onNameKnown={() => nameKnown()} crypt={cryptLoops} onCryptScript={addCryptScript} fitting={scriptLibrary.filter(l => scriptFitsHere.has(l.name))} onAddFitting={l => addLibraryScript(l)} links={overviewLinks} onClose={() => setModal(null)} />}
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}

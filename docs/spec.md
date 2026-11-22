@@ -180,6 +180,7 @@ mimir-studio/
 │  ├─ src/script-actions.ts        skriptens egna direktiv: .mark, .name, .note och .junk (10.3)
 │  ├─ src/script-js.ts             skript i JavaScript: mem, addr, pad, cpu.call, disk (10.3)
 │  ├─ src/script-params.ts         skriptets inställningar ur koden, och en tabell av värden att köra med (10.3)
+│  ├─ src/script-file.ts           ett skript som fil: koden med en huvudrad, och om det passar ett program (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -2803,6 +2804,30 @@ $06, $08` i `.asm`-filen efter en körning.
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett
   likadant) och `×` tar bort det ur biblioteket; projekten behåller sina kopior.
+- **Biblioteket är en mapp med filer** (`script-file.ts`, `electron/main/scripts.ts`, 2026-11-22): skripten i
+  biblioteket ligger i mappen `Scripts` i bibliotekets mapp (10.6: `Documents\Mimir\Library`, eller den som
+  inställningarna säger), en fil per skript, så att skript kan delas, versionshanteras och skrivas i en annan editor.
+  - **Filen är skriptets kod som den är**: `decrypt.asm` för ett skript i assembler, `decrypt.js` för ett i
+    JavaScript; filens namn är skriptets. Det ett skript är utöver koden (assemblern, scratchpadsen med sitt
+    startinnehåll, Init, safe mode, maskin och stoppadress, watch-listan, värdetabellen och namnen det behöver) står
+    på **en rad överst**, en kommentar för assemblern och för JavaScript: `// mimir-script {"lang":"kickass",…}`
+    (`; mimir-script …` i 64tass). En fil utan raden är också ett skript: koden ensam, i Kick Assembler eller, efter
+    ändelsen, i JavaScript. Det raden håller läses med försiktighet (`readScriptFile`): det som inte är som det ska
+    lämnas ute.
+  - Bara huvudprocessens `ScriptStore` rör mappen; fönstret namnger en fil med dess rena namn där (inget
+    mappnamn, `.asm` eller `.js`, inte dold; `isScriptFileName`), högst 2 MB. *Save to library* skriver filen (i
+    stället för den med samma namn; en som bytt ändelse tas bort), *Remove* flyttar den till papperskorgen, och
+    mappknappen i *Library*-rubriken visar mappen i filhanteraren. Listan läses om när appen startar och när
+    Scripts-fliken visas, så en fil som lagts dit för hand syns. **Första gången flyttas det appen själv höll**
+    (`kr.scriptLibrary` i localStorage) in i mappen, där ingen fil har namnet. Utan skrivbordsapp (förhandsvisningen)
+    håller appen biblioteket själv som förut.
+  - **Ett skript som passar programmet erbjuds** (`scriptFits`): när ett skript sparas i biblioteket följer namnen
+    med som dess kod använder och som användaren själv gett i det projektet (`needs`: en rutin, en tabell). I ett
+    annat program **passar** skriptet när programmet har alla de namnen, som etiketter eller som rutiner kända från
+    ett annat projekt (10.5) som ännu inte har namn här. Då står det först i *Library* med en grön prick (verktygs-
+    tipset säger vad det behöver), och översikten har kortet *Scripts that fit* med *Add*. Läggs det till får de kända
+    rutinerna sina namn först, så att skriptet går att assemblera. Ett skript som redan finns i projektet erbjuds
+    inte.
 - **Mallar** (*Templates*, under *Library* i skriptlistan; `script-templates.ts`, `SCRIPT_TEMPLATES`) är färdiga skript
   som Mimir har med sig: dekrypteringar (och krypteringar) som spelen i referensarkivet visade sig göra
   (`docs/encryption.md`). *XOR key byte* (`xor_key`, EOR med en byte, `$FF` vänder alla bitar), *XOR key string*
@@ -3681,6 +3706,10 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `library:remove` | renderer → main | `{ kind, file }` → bibliotekets innehåll: filen till papperskorgen, posten ut ur `library.json` |
 | `library:reveal` | renderer → main | `{ kind?, file? }`: filhanteraren vid filen, eller vid sortens eller bibliotekets mapp |
 | `library:pick` | renderer → main | `{ current? }` → `{ dir }` eller `null`: en mappdialog för bibliotekets mapp (Settings sparar den) |
+| `scripts:list` | renderer → main | → `{ dir, files: [{ file, text, mtime }] }`: skripten i bibliotekets mapp `Scripts`, en fil var (10.3) |
+| `scripts:save` | renderer → main | `{ file, text, was? }` → listan: filen skrivs (ett rent filnamn, `.asm` eller `.js`); `was`, filen den ersätter under ett annat namn, till papperskorgen |
+| `scripts:remove` | renderer → main | `{ file }` → listan: filen till papperskorgen |
+| `scripts:reveal` | renderer → main | mappen `Scripts` visas i filhanteraren (görs om den inte finns) |
 
 ### 13.4b Smart attach
 

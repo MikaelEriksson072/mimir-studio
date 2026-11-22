@@ -85,6 +85,10 @@ const api: KrApi = {
   libraryRemove: req => invoke(CHANNELS.libraryRemove, req),
   libraryReveal: req => invoke(CHANNELS.libraryReveal, req ?? {}),
   libraryPick: req => invoke(CHANNELS.libraryPick, req ?? {}),
+  scriptsList: () => invoke(CHANNELS.scriptsList),
+  scriptsSave: req => invoke(CHANNELS.scriptsSave, req),
+  scriptsRemove: req => invoke(CHANNELS.scriptsRemove, req),
+  scriptsReveal: () => invoke(CHANNELS.scriptsReveal),
 };
 
 contextBridge.exposeInMainWorld('kr', api);

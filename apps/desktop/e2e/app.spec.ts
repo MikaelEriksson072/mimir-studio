@@ -10645,3 +10645,86 @@ test('scripts\' settings: the values at the top of the code are fields that set 
     await dialog.getByRole('button', { name: 'Cancel' }).click();
   });
 });
+
+test('the library of scripts is a folder of files: Save to library writes one, a file put there by hand shows, and a script whose routine a program has fits it and is offered', async ({ workDir, userData, app, page }) => {
+  // the program of the suggestions test: xorit at $0818 EORs the 32 bytes at $0840 with $5a
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...[...TEXT].map(c => c.charCodeAt(0) ^ 0x5a)];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  const folder = join(userData, 'library', 'Scripts');
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  const editor = page.locator('.scr-editor');
+  const library = page.getByRole('list', { name: 'Library' });
+  const open = async (again = false) => {
+    await stubDialogs(app, { open: [file] });
+    await page.keyboard.press('Control+o');
+    // (the second time the work on the first is asked about)
+    if (again) await page.getByRole('dialog', { name: 'The work is not saved' }).getByRole('button', { name: 'Do not save' }).click();
+    await expect(toast(page, 'Loaded crypt-demo.prg at $0801').last()).toBeVisible();
+    if (await overview.isVisible()) await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+  };
+  const run = async (lines: string[]) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(lines.join('\n'));
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+  };
+  await waitForListing(page);
+  await open();
+
+  await test.step('Save to library writes the script as a file: its code under a line that says the rest, with the names it needs', async () => {
+    await page.getByRole('button', { name: 'New script' }).first().click();
+    // the program's routine gets a name of the user's, and the script that calls it is saved
+    await run(['        .name $0818, "unscramble"', '        rts']);
+    await run(['        jsr unscramble', '        rts']);
+    await page.getByRole('textbox', { name: 'Script name' }).fill('caller');
+    await page.getByRole('textbox', { name: 'Script name' }).press('Enter');
+    await page.getByRole('button', { name: /^Save to library/ }).click();
+    await expect(toast(page, '"caller" saved in the library: every project can add it')).toBeVisible();
+    await expect.poll(() => existsSync(join(folder, 'caller.asm'))).toBe(true);
+    const text = readFileSync(join(folder, 'caller.asm'), 'utf8').split('\n');
+    expect(text[0]).toBe('// mimir-script {"lang":"kickass","needs":["unscramble"]}');
+    // (the editor indents what is put in after the first line)
+    expect(text.slice(1).map(l => l.trim())).toEqual(['jsr unscramble', 'rts']);
+    await expect(library.getByRole('listitem')).toHaveText([/^caller/]);
+  });
+
+  await test.step('a file put in the folder by hand is a script of the library, and Remove takes its file away', async () => {
+    writeFileSync(join(folder, 'by hand.js'), 'print("hello from a file");\n');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(library.getByRole('listitem')).toHaveText([/^by hand/, /^caller/]);
+    await page.getByRole('button', { name: 'Add by hand to the project' }).click();
+    await expect(page.getByLabel('Language')).toHaveText('JavaScript');
+    await page.getByRole('button', { name: 'Remove by hand from the library' }).click();
+    await expect(library.getByRole('listitem')).toHaveText([/^caller/]);
+    await expect.poll(() => existsSync(join(folder, 'by hand.js'))).toBe(false);
+  });
+
+  await test.step('in a program without the routine\'s name the script does not fit; once the routine has it, it fits and the overview offers it', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await open(true);
+    await expect(library.getByRole('listitem')).toHaveText([/^caller/]);
+    await expect(library.getByLabel('fits this program')).toHaveCount(0);
+    await page.getByRole('button', { name: 'New script' }).first().click();
+    await run(['        .name $0818, "unscramble"', '        rts']);
+    await expect(library.getByLabel('fits this program')).toHaveCount(1);
+    await page.locator('.titlebar').getByRole('button', { name: 'Analysis overview', exact: true }).click();
+    const card = overview.getByRole('region', { name: 'Scripts that fit' });
+    await expect(card).toContainText('caller');
+    await expect(card).toContainText('unscramble');
+    await card.getByRole('button', { name: 'Add the script caller' }).click();
+    await expect(toast(page, /^"caller" added from the library: Ctrl\+Enter runs it on this program$/)).toBeVisible();
+    await expect(page.getByRole('option', { name: 'caller' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    // added, it is no longer offered
+    await expect(library.getByLabel('fits this program')).toHaveCount(0);
+  });
+});

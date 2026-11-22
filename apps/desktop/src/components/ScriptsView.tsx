@@ -78,6 +78,13 @@ export interface ScriptsViewProps {
   cursorBlock: Addr | null;
   /** a block copied into a scratchpad of the script (its index; null: a new one), written as its type is */
   onCopyBlock: (start: Addr, id: string, pad: number | null) => void;
+  /** the library's scripts that fit this program (it has the names they need), by name: `naming`, the routines known
+   *  from another project that adding the script names */
+  fits: ReadonlyMap<string, { naming: string[] }>;
+  /** the names the user gave in the program: a script saved to the library keeps those its code uses */
+  userNames: ReadonlySet<string>;
+  /** the library's folder of scripts shown in the file manager (missing: there is no folder) */
+  onRevealLibrary?: () => void;
   /** the program's loops that change bytes with a key (decryption, most likely), and what adds the script for one */
   loops: readonly CryptLoop[];
   onAddLoop: (l: CryptLoop) => void;
@@ -94,7 +101,7 @@ export interface ScriptsViewProps {
 const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, loops, onAddLoop, files, onRunOnFiles, onRunValues, onToProject }: ScriptsViewProps) {
+export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, fits, userNames, onRevealLibrary, loops, onAddLoop, files, onRunOnFiles, onRunValues, onToProject }: ScriptsViewProps) {
   const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -512,7 +519,7 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
 
   // the library, and below it the templates Mimir comes with
   const libraryList = <>
-    <LibraryList library={library} onAdd={onAdd} onRemove={name => { removeFromLibrary(name); toast(`"${name}" removed from the library`, 'ok'); }} />
+    <LibraryList library={library} fits={fits} onReveal={onRevealLibrary} onAdd={onAdd} onRemove={name => { removeFromLibrary(name); toast(`"${name}" removed from the library`, 'ok'); }} />
     {loops.length > 0 && <>
       <div className="scr-list-head scr-lib-head"><span title="Loops of the program that change bytes with a key and store them: decryption, most likely. + adds a script that does the same into a scratchpad">In the program</span><span className="grow" /><span className="scr-lib-n">{loops.length}</span></div>
       <div role="list" aria-label="Loops found in the program">
@@ -666,7 +673,10 @@ ${cryptWhereText(l)}`}>
                 <Icon name="play" />Run<kbd>Ctrl+Enter</kbd></button>}
             <button className="btn scr-debug-btn" disabled={!check.ok || !!running || cur.machine === 'c64' || cur.code === 'js'} onClick={startDebug} title={cur.code === 'js' ? 'Debug goes through assembler code an instruction at a time: this script is JavaScript (print(...) shows values under Last run)' : cur.machine === 'c64' ? 'Debug goes through a run in memory only: this script runs in the whole C64 (Init → Runs in)' : check.ok ? 'Debug: start the run and stop before its first instruction, then go an instruction at a time (F8), over a JSR (F6) or on to a breakpoint (click left of a line number). The registers and the stack show beside the code' : 'The script must check out before it can be debugged: see the errors'}>Debug<kbd>F8</kbd></button>
             <span className="tb-sep" />
-            <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const had = saveToLibrary({ ...s, source: models.current[cur.id]?.getValue() ?? s.source }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
+            <button className="btn" onClick={() => { flush(); const s = scriptsRef.current.find(x => x.id === cur.id) ?? cur; const text = models.current[cur.id]?.getValue() ?? s.source;
+              // the names of the program its code uses that the user gave: what it needs of another program
+              const used = s.code === 'js' ? [...text.matchAll(/["']([A-Za-z_][\w.]*)["']/g)].map(m => m[1]) : (check?.uses ?? []).map(u => u.name);
+              const had = saveToLibrary({ ...s, source: text, needs: [...new Set(used.filter(n => userNames.has(n)))] }); toast(had ? `"${cur.name}" in the library is replaced by this one` : `"${cur.name}" saved in the library: every project can add it`, 'ok'); }}
               title={inLibrary ? 'Save the script in the library again, in place of the one of the same name there' : 'Save a copy of the script in the library, so that other projects can add it'}><Icon name="bookmark" /><span className="lbl">{inLibrary ? 'Update library' : 'Save to library'}</span></button>
             <button className="icon-btn" aria-label="Delete script" title={`Delete the script "${cur.name}"${mine.length ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`} onClick={() => { flush(); onRemove(cur.id); }}><Icon name="trash" size={15} /></button>
           </>}
@@ -717,13 +727,17 @@ ${cryptWhereText(l)}`}>
 }
 
 /** The library's scripts: each can be added to the project, or removed from the library. */
-function LibraryList({ library, onAdd, onRemove }: { library: LibraryScript[]; onAdd: (s: LibraryScript) => void; onRemove: (name: string) => void }) {
+function LibraryList({ library, fits, onReveal, onAdd, onRemove }: { library: LibraryScript[]; fits: ReadonlyMap<string, { naming: string[] }>; onReveal?: () => void; onAdd: (s: LibraryScript) => void; onRemove: (name: string) => void }) {
+  // those that fit this program first
+  const sorted = [...library].sort((a, b) => +fits.has(b.name) - +fits.has(a.name));
   return <>
-    <div className="scr-list-head scr-lib-head" title="Scripts kept by Mimir for every project: Save to library puts one here"><span>Library</span><span className="grow" /><span className="scr-lib-n">{library.length || ''}</span></div>
+    <div className="scr-list-head scr-lib-head" title="Scripts kept by Mimir for every project: Save to library puts one here"><span>Library</span><span className="grow" /><span className="scr-lib-n">{library.length || ''}</span>
+      {onReveal && <button className="icon-btn" aria-label="Show the library's folder of scripts" title="Show the library's folder of scripts in the file manager: a file a script (.asm or .js), to share, to keep under version control or to write with another editor. A file put there shows here" onClick={onReveal}><Icon name="folder" size={13} /></button>}</div>
     {!library.length && <p className="scr-lib-empty">Save to library keeps a script here for every project.</p>}
     <div role="list" aria-label="Library">
-      {library.map(l => (
-        <div key={l.name} role="listitem" className="scr-lib-item" title={`${l.name}, saved ${new Date(l.saved).toLocaleString()}\n\n${l.source.split('\n').slice(0, 12).join('\n')}`}>
+      {sorted.map(l => (
+        <div key={l.name} role="listitem" className={cx('scr-lib-item', fits.has(l.name) && 'fits')} title={`${l.name}${l.code === 'js' ? ' (JavaScript)' : ''}, saved ${new Date(l.saved).toLocaleString()}${l.needs?.length ? `\nIt needs ${l.needs.join(', ')}${fits.has(l.name) ? `: this program has ${l.needs.length === 1 ? 'it' : 'them'}${fits.get(l.name)!.naming.length ? ` (${fits.get(l.name)!.naming.join(', ')} known from another project: adding the script names ${fits.get(l.name)!.naming.length === 1 ? 'it' : 'them'})` : ''}` : ''}` : ''}\n\n${l.source.split('\n').slice(0, 12).join('\n')}`}>
+          {fits.has(l.name) && <span className="scr-fits-dot" aria-label="fits this program" />}
           <span className="scr-item-name">{l.name}</span>
           <button className="icon-btn" aria-label={`Add ${l.name} to the project`} title="Add a copy to this project" onClick={() => onAdd(l)}><Icon name="plus" size={13} /></button>
           <button className="icon-btn" aria-label={`Remove ${l.name} from the library`} title="Remove it from the library (the projects keep their copies)" onClick={() => onRemove(l.name)}><Icon name="x" size={13} /></button>

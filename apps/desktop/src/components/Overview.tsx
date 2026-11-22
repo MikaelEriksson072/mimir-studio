@@ -18,7 +18,11 @@ import type { UiProblem } from '../lib/types';
 import { bankAdr, cx, fmtBytes, GROUP_LABEL, musicPlayTitle } from '../lib/util';
 import type { BottomTab, EditorTab } from '../store/ui';
 import { Modal } from './Modal';
+import type { LibraryScript } from '../store/scripts';
 import { SnapshotScreen } from './SnapshotScreen';
+
+/** a script of the library that fits the program: its name and the names it needs */
+type T_Fitting = LibraryScript;
 
 /** a check of whether a file is packed: Sindri running it (or unp64 -i naming its packer) */
 export interface PackCheck {
@@ -83,6 +87,8 @@ interface OverviewProps {
   /** the program's loops that change bytes with a key and store them (10.3), and what makes a script that does the
    *  same from one (the window closes: the script is shown) */
   crypt?: readonly CryptLoop[]; onCryptScript?: (l: CryptLoop) => void;
+  /** the library's scripts that fit this program (it has every name they need), and what adds one (the window closes) */
+  fitting?: readonly T_Fitting[]; onAddFitting?: (s: T_Fitting) => void;
   links: OverviewLinks; onClose: () => void;
 }
 
@@ -125,7 +131,7 @@ function useSeenRunning(looks: readonly PackLook[]) {
   return (l: PackLook) => seen.has(`${l.id}@${l.since}`);
 }
 
-export function AnalysisOverview({ A, project, labels, snap, packing, animData = [], looking = [], problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, crypt = [], onCryptScript, links, onClose }: OverviewProps) {
+export function AnalysisOverview({ A, project, labels, snap, packing, animData = [], looking = [], problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, crypt = [], onCryptScript, fitting = [], onAddFitting, links, onClose }: OverviewProps) {
   /** every link closes the window, then goes there */
   const go = (f: () => void) => () => { onClose(); f(); };
   const start = startOf(A, project);
@@ -378,6 +384,17 @@ export function AnalysisOverview({ A, project, labels, snap, packing, animData =
               {crypt.length > 5 && <p className="muted">and {crypt.length - 5} more: right-click a loop in the listing</p>}
             </div>
             <p className="muted">Loops that change bytes with a key and store them: decryption, most likely. A script decrypts them into a scratchpad.</p>
+          </Card>}
+
+          {fitting.length > 0 && onAddFitting && <Card icon="prompt" title="Scripts that fit" n={fitting.length}>
+            <div className="ov-rows">
+              {fitting.slice(0, 5).map(s => (
+                <div key={s.name} className="ov-music-row">
+                  <span className="ov-row" title={`It needs ${(s.needs ?? []).join(', ')}, which this program has`}><i className="ov-dot" style={{ background: 'var(--g-code)' }} /><span className="mono ov-known-name">{s.name}</span><span className="muted ov-known-from">{(s.needs ?? []).join(', ')}</span></span>
+                  <button type="button" className="btn small ov-play" aria-label={`Add the script ${s.name}`} title="Add a copy of the script from the library to this project" onClick={go(() => onAddFitting(s))}><Icon name="plus" size={12} />Add</button>
+                </div>))}
+            </div>
+            <p className="muted">Scripts of the library whose routines this program has.</p>
           </Card>}
 
           <Card icon="image" title="Graphics" n={gfx.length ? count(gfx.reduce((n, t) => n + t.total, 0), 'block') : undefined}>

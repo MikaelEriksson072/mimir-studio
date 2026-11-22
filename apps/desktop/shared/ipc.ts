@@ -62,6 +62,10 @@ export const CHANNELS = {
   libraryRemove: 'library:remove',
   libraryReveal: 'library:reveal',
   libraryPick: 'library:pick',
+  scriptsList: 'scripts:list',
+  scriptsSave: 'scripts:save',
+  scriptsRemove: 'scripts:remove',
+  scriptsReveal: 'scripts:reveal',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
@@ -414,6 +418,8 @@ export interface GitInitOutcome { ok: boolean; root: string; nested: string | nu
  * plain name in that kind's folder, never by a path.
  * --------------------------------------------------------------------- */
 
+/** the library's folder of scripts (spec 10.3) and its files: each a script, its name and its text (script-file.ts) */
+export interface ScriptsListing { dir: string; files: { file: string; text: string; mtime: number }[] }
 /** the library's folder and what is in it; `exists`: the folder is there (nothing was added yet when it is not) */
 export interface LibraryListing { dir: string; exists: boolean; items: LibraryItem[] }
 /** a file for the library: its kind, the name its file gets without the extension (made unique in the folder), its
@@ -520,4 +526,10 @@ export interface KrApi {
   libraryReveal(req?: LibraryRevealRequest): Promise<void>;
   /** a folder dialog for the library's folder (Settings stores it); null: cancelled */
   libraryPick(req?: { current?: string }): Promise<{ dir: string } | null>;
+  /** the library's scripts, a file each in its folder Scripts: listed, written (`was`: the file it takes the place of
+   *  under another name), moved to the Recycle Bin, and the folder shown in the file manager */
+  scriptsList(): Promise<ScriptsListing>;
+  scriptsSave(req: { file: string; text: string; was?: string }): Promise<ScriptsListing>;
+  scriptsRemove(req: { file: string }): Promise<ScriptsListing>;
+  scriptsReveal(): Promise<void>;
 }

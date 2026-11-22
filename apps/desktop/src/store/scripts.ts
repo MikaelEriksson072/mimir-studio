@@ -2,7 +2,7 @@
  * (its scratchpads and its changes to the program are kept in the project, the rest of a run is not), the one running
  * and the output's height; and the library of scripts, which every project can take a copy of (kept by the app). */
 import { create } from 'zustand';
-import { b64dec, b64enc, tidyInit, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWatchEntry, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { readScriptFile, scriptFileName, scriptFileText, b64dec, b64enc, tidyInit, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWatchEntry, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
 import { store } from '../lib/util';
 
 /** the output's tabs (spec 10.3): what the runs start with, the watch list, what the script changed in the program,
@@ -22,7 +22,17 @@ export interface ScriptRunKept { run: ScriptRun; source: string; at: number; fai
 
 /** a script in the library: its code and its scratchpads (without what they held), whether it runs in safe mode,
  *  what its runs start with and its watch list (what the user added and took off) */
-export interface LibraryScript { name: string; lang: ScriptLang; code?: 'js'; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit; machine?: 'c64'; stopAt?: string; watch?: ScriptWatchEntry[]; unwatch?: string[] }
+export interface LibraryScript { name: string; lang: ScriptLang; code?: 'js'; source: string; pads: Omit<ScriptPad, 'bytes'>[]; saved: number; safe?: boolean; init?: ScriptInit; machine?: 'c64'; stopAt?: string; watch?: ScriptWatchEntry[]; unwatch?: string[];
+  /** its table of values (Run with values…), and the names of the program its code needs (a routine the user named): where a program has them, the script fits it */
+  table?: string; needs?: string[];
+  /** its file in the library's folder Scripts (missing: kept by the app, where there is no folder) */
+  file?: string }
+
+/** the scripts moved from the app's own keeping into the library's folder (once) */
+const MOVED_KEY = 'kr.scriptLibraryMoved';
+/** the library's folder as its listing gives it: each file a script, named after its file */
+const fromFiles = (files: readonly { file: string; text: string; mtime: number }[]): LibraryScript[] => files.flatMap(f => { const s = readScriptFile(f.file, f.text); return s ? [{ ...s, saved: f.mtime, file: f.file }] : []; })
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 const LIBRARY_KEY = 'kr.scriptLibrary';
 const LIST_FOLDED_KEY = 'kr.scriptListFolded';
@@ -95,20 +105,40 @@ interface ScriptsState {
    *  with (what the last run changed in it) */
   cmpWith: string | null;
   library: LibraryScript[];
+  /** the library's folder of scripts (null: the app keeps them itself, where there is no folder) */
+  libraryDir: string | null;
+  /** the library read from its folder again (files added, changed or removed there by hand show); the first time, the
+   *  scripts the app kept itself are moved into the folder */
+  loadLibrary: () => Promise<void>;
   /** a line of the shown script to go to once its editor is there (a click on a script's mark in the listing) */
   gotoLine: number | null;
   /** each script's breakpoints, by line (the editor keeps them while it is open; this while it is not) */
   bps: Record<string, number[]>;
   setBps: (id: string, lines: number[]) => void;
-  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded'>>) => void;
+  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'libraryDir' | 'loadLibrary' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
-  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt'>) => boolean;
+  saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table'> & { needs?: string[] }) => boolean;
   removeFromLibrary: (name: string) => void;
 }
 
 export const useScripts = create<ScriptsState>((set, get) => ({
   selected: null, runs: {}, running: null, gotoLine: null, outTab: 'watch', pad: 0, change: null, mode: 'hex', screen: false, outH: 300, dbgOutH: 170, outFolded: false, cmpWith: null,
   library: readLibrary(),
+  libraryDir: null,
+  loadLibrary: async () => {
+    const kr = window.kr;
+    if (!kr) return;
+    try {
+      let listing = await kr.scriptsList();
+      if (store.get<boolean>(MOVED_KEY, false) !== true) {
+        // what the app kept itself goes into the folder, where no file has its name
+        const have = new Set(fromFiles(listing.files).map(s => s.name.toLowerCase()));
+        for (const { saved: _s, file: _f, ...s } of readLibrary()) if (!have.has(s.name.toLowerCase())) listing = await kr.scriptsSave({ file: scriptFileName(s), text: scriptFileText(s) });
+        store.set(MOVED_KEY, true);
+      }
+      set({ library: fromFiles(listing.files), libraryDir: listing.dir });
+    } catch { /* the folder cannot be read: the list stays as it is */ }
+  },
   bps: {},
   setBps: (id, lines) => set(s => ({ bps: { ...s.bps, [id]: lines } })),
   set: s => set(s),
@@ -118,13 +148,23 @@ export const useScripts = create<ScriptsState>((set, get) => ({
   setTemplatesFolded: v => { store.set(TEMPLATES_FOLDED_KEY, v); set({ templatesFolded: v }); },
   saveToLibrary: s => {
     const lib = get().library, had = lib.some(x => x.name.toLowerCase() === s.name.toLowerCase());
-    const entry: LibraryScript = { name: s.name, lang: s.lang, ...(s.code ? { code: s.code } : {}), source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}), ...(s.machine ? { machine: s.machine } : {}), ...(s.stopAt ? { stopAt: s.stopAt } : {}), ...(s.watch?.length ? { watch: structuredClone(s.watch) } : {}), ...(s.unwatch?.length ? { unwatch: [...s.unwatch] } : {}) };
-    const library = [...lib.filter(x => x.name.toLowerCase() !== s.name.toLowerCase()), entry].sort((a, b) => a.name.localeCompare(b.name));
-    storeLibrary(library); set({ library });
+    const entry: LibraryScript = { name: s.name, lang: s.lang, ...(s.code ? { code: s.code } : {}), source: s.source, pads: s.pads.map(({ bytes: _, ...p }) => p), saved: Date.now(), ...(s.safe ? { safe: true } : {}), ...(s.init ? { init: structuredClone(s.init) } : {}), ...(s.machine ? { machine: s.machine } : {}), ...(s.stopAt ? { stopAt: s.stopAt } : {}), ...(s.watch?.length ? { watch: structuredClone(s.watch) } : {}), ...(s.unwatch?.length ? { unwatch: [...s.unwatch] } : {}),
+      ...(s.table ? { table: s.table } : {}), ...(s.needs?.length ? { needs: [...s.needs] } : {}) };
+    const was = lib.find(x => x.name.toLowerCase() === s.name.toLowerCase());
+    const kr = window.kr;
+    if (kr) entry.file = scriptFileName(entry);
+    const library = [...lib.filter(x => x !== was), entry].sort((a, b) => a.name.localeCompare(b.name));
+    set({ library });
+    // a file in the library's folder; without a folder the app keeps it
+    if (kr) { const { saved: _s, file: _f, ...doc } = entry; void kr.scriptsSave({ file: entry.file!, text: scriptFileText(doc), ...(was?.file ? { was: was.file } : {}) }).then(l => set({ library: fromFiles(l.files), libraryDir: l.dir }), () => undefined); }
+    else storeLibrary(library);
     return had;
   },
   removeFromLibrary: name => {
-    const library = get().library.filter(x => x.name !== name);
-    storeLibrary(library); set({ library });
+    const gone = get().library.find(x => x.name === name), library = get().library.filter(x => x.name !== name);
+    set({ library });
+    const kr = window.kr;
+    if (kr && gone) void kr.scriptsRemove({ file: gone.file ?? scriptFileName(gone) }).then(l => set({ library: fromFiles(l.files), libraryDir: l.dir }), () => undefined);
+    else storeLibrary(library);
   },
 }));

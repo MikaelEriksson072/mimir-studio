@@ -1632,6 +1632,9 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 .set-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .values-table { width: 100%; min-height: 150px; resize: vertical; border-radius: 6px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--fg); padding: 8px 10px; font: 12.5px/1.5 var(--font-code); }
 .values-problems { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: var(--err); }
+/* a script of the library that fits this program */
+.scr-fits-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--ok, #3fb950); }
+.scr-lib-item.fits .scr-item-name { color: var(--fg); font-weight: 600; }
 /* a new script in JavaScript: a button beside the + */
 .icon-btn.scr-new-js { font: 600 10.5px var(--font-code); letter-spacing: 0.02em; }
 .scr-prints-run { margin: 4px 0 0; max-height: 180px; overflow: auto; }

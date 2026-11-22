@@ -12,6 +12,7 @@ import { ExportWatcher } from './project-fs';
 import { ProjectStore } from './projects';
 import { GitService } from './git';
 import { defaultLibraryDir, LibraryStore } from './library';
+import { ScriptStore } from './scripts';
 import { QuicksaveHistory, QuicksaveWatcher } from './quicksave';
 import { RecentFolders } from './recent';
 import { SettingsStore } from './settings';
@@ -88,7 +89,8 @@ app.whenReady().then(() => {
   const settings = new SettingsStore(app.getPath('userData'));
   // the library's folder: the one in the settings, else Mimir\Library in the documents folder (spec 10.6)
   const library = new LibraryStore(() => settings.get().libraryDir || defaultLibraryDir(app.getPath('documents')), p => shell.trashItem(p));
-  registerIpc({ policy: new PathPolicy(), settings, recent: new RecentFolders(app.getPath('userData')), watcher, isTrustedUrl, quicksave, history, projects, git: new GitService(() => projects.current?.dir ?? null), library });
+  const scripts = new ScriptStore(() => library.root(), p => shell.trashItem(p));
+  registerIpc({ scripts, policy: new PathPolicy(), settings, recent: new RecentFolders(app.getPath('userData')), watcher, isTrustedUrl, quicksave, history, projects, git: new GitService(() => projects.current?.dir ?? null), library });
   buildMenu();
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

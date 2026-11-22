@@ -28,9 +28,10 @@ import {
   buildSchema, deepSidPlaySchema, diskOpenSchema, locateSchema, tapeOpenSchema, editorOpenSchema, exportWriteSchema, fileSaveSchema, packFolderSchema, packSchema, prgOpenSchema, projectCreateSchema, projectForgetSchema, projectOpenSchema, projectSaveSchema, quicksaveEntrySchema, quicksaveFavouriteSchema, quicksaveRenameSchema, quicksaveSaveSchema,
   quicksaveSchema, runSchema, smartAttachSchema, terminalOpenSchema, unpackSchema, toolchainSettingsSchema, viceAttachSchema, viceCommandSchema, windowCloseSchema,
   gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRangeSchema, gitRemoteSchema, gitStatusSchema,
-  libraryAddSchema, libraryFileSchema, libraryPickSchema, libraryRevealSchema, libraryUpdateSchema,
+  scriptsFileSchema, scriptsSaveSchema, libraryAddSchema, libraryFileSchema, libraryPickSchema, libraryRevealSchema, libraryUpdateSchema,
 } from './schemas';
 import type { LibraryStore } from './library';
+import type { ScriptStore } from './scripts';
 import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
 
@@ -52,6 +53,8 @@ export interface IpcDeps {
   git: GitService;
   /** the library's folder (spec 10.6) */
   library: LibraryStore;
+  /** the library's scripts, files in its folder Scripts (spec 10.3) */
+  scripts: ScriptStore;
 }
 
 const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undefined;
@@ -84,7 +87,7 @@ async function sourceAssembler(path: string): Promise<AssemblerId> {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { policy, settings, watcher, recent, quicksave, history, projects, git, library } = deps;
+  const { policy, settings, watcher, recent, quicksave, history, projects, git, library, scripts } = deps;
   quicksave.watch(quicksaveFiles(settings.get().viceQuicksave));
   // the quicksave there is now (from before the app started, or in a newly set file) joins the kept ones
   const keepCurrent = () => quicksaveInfo(quicksaveFiles(settings.get().viceQuicksave)).then(i => (i.found && i.saved ? history.add(i.path, i.saved) : null)).catch(() => null);
@@ -368,6 +371,15 @@ export function registerIpc(deps: IpcDeps): void {
     const dir = req.kind ? library.folder(req.kind) : library.root();
     await mkdir(dir, { recursive: true });
     const problem = await shell.openPath(dir);
+    if (problem) throw new Error(problem);
+  });
+  // the library's scripts (10.3): a file only by its plain name in the folder Scripts
+  handle(CHANNELS.scriptsList, none, () => scripts.list());
+  handle(CHANNELS.scriptsSave, scriptsSaveSchema, req => scripts.save(req));
+  handle(CHANNELS.scriptsRemove, scriptsFileSchema, req => scripts.remove(req));
+  handle(CHANNELS.scriptsReveal, none, async () => {
+    await mkdir(scripts.dir(), { recursive: true });
+    const problem = await shell.openPath(scripts.dir());
     if (problem) throw new Error(problem);
   });
   // Settings → Library folder → Choose…: nothing is stored here (Save settings goes through settings:set)

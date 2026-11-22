@@ -1,6 +1,6 @@
 /* zod schemas for everything that crosses the IPC boundary or is read from disk (spec 4.2). */
 import { z } from 'zod';
-import { extraProblem, isBookmarkColor, isLibraryFileName, LEGACY_PROJECT_FORMAT, LIBRARY_MAX_BYTES, MAX_BLANKS, type BlockKind } from '@mimir/core';
+import { extraProblem, isBookmarkColor, isLibraryFileName, isScriptFileName, SCRIPT_FILE_MAX, LEGACY_PROJECT_FORMAT, LIBRARY_MAX_BYTES, MAX_BLANKS, type BlockKind } from '@mimir/core';
 
 const addr = z.number().int().min(0).max(0x10000);
 /** an address in the project's work: in a cartridge's bank s, s * $10000 + the address (spec 13.9b) */
@@ -359,4 +359,7 @@ export const libraryUpdateSchema = z.object({ kind: libraryKind, file: z.string(
   .refine(r => isLibraryFileName(r.kind, r.file), 'not a plain file name of the kind');
 export const libraryRevealSchema = z.object({ kind: libraryKind.optional(), file: z.string().min(1).max(255).optional() }).strict()
   .refine(r => r.file == null || (r.kind != null && isLibraryFileName(r.kind, r.file)), 'not a plain file name of the kind');
+const scriptFile = z.string().min(1).max(130).refine(isScriptFileName, 'not a plain name of a script\'s file');
+export const scriptsSaveSchema = z.object({ file: scriptFile, text: z.string().max(SCRIPT_FILE_MAX), was: scriptFile.optional() }).strict();
+export const scriptsFileSchema = z.object({ file: scriptFile }).strict();
 export const libraryPickSchema = z.object({ current: z.string().max(1024).optional() }).strict();
