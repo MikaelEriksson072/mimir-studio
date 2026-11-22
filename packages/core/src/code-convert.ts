@@ -122,6 +122,8 @@ function stmt(s: string): { text: string; ill: boolean } | { error: string } {
   if ((m = /^(?:\*|\.pc)\s*=\s*([^"]*?)(?:\s+"[^"]*")?$/.exec(s))) { const p = exprProblem(m[1]); if (p) return { error: p }; return { text: `* = ${conv(m[1].trim())}`, ill: false }; }
   if ((m = /^\.print\s+("[^"\\]*")$/.exec(s))) return { text: `.warn ${m[1]}`, ill: false };
   if ((m = /^\.error\s+(".*")$/.exec(s))) return { text: `.error ${m[1]}`, ill: false };
+  // Mimir's own directives (script-actions.ts) are the same in both languages
+  if (/^\.(mark|name|note|junk)\b/.test(s)) return { text: s, ill: false };
   if (s.startsWith('.') || s.startsWith('#') || s.startsWith('{')) return { error: `${s.split(/\s/)[0]} is not written for 64tass yet: keep the script in Kick Assembler` };
   // an instruction: its mnemonic as 64tass names it, .abs as @w, .zp as @b
   if ((m = /^([A-Za-z]{3})(?:\.([A-Za-z]+))?(?:\s+(.*))?$/.exec(s))) {

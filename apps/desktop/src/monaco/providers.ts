@@ -19,9 +19,9 @@ export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly
 export const PAD_STORE_CMD = 'mimir.script.padStore';
 
 /** what a script's code may write besides names: Kick Assembler's directives and functions, and 64tass's */
-const TASS_WORDS = ['.byte', '.word', '.text', '.null', '.fill', '.if', '.elsif', '.else', '.endif', '.warn', '.error', '.cerror', '.cwarn', '.enc', '.cpu', '.logical', '.here',
+const TASS_WORDS = ['.mark', '.name', '.note', '.junk', '.byte', '.word', '.text', '.null', '.fill', '.if', '.elsif', '.else', '.endif', '.warn', '.error', '.cerror', '.cwarn', '.enc', '.cpu', '.logical', '.here',
   '.block', '.bend', '.namespace', '.endnamespace', '.comment', '.endc', 'len', 'format', 'true', 'false'];
-const SCRIPT_WORDS = ['.byte', '.word', '.text', '.fill', '.const', '.var', '.label', '.eval', '.for', '.while', '.if', 'else', '.print', '.error', '.encoding', '.align', '.pseudopc',
+const SCRIPT_WORDS = ['.mark', '.name', '.note', '.junk', '.byte', '.word', '.text', '.fill', '.const', '.var', '.label', '.eval', '.for', '.while', '.if', 'else', '.print', '.error', '.encoding', '.align', '.pseudopc',
   'round', 'floor', 'ceil', 'abs', 'min', 'max', 'mod', 'pow', 'sqrt', 'sin', 'cos', 'tan', 'toRadians', 'toDegrees', 'toIntString', 'toHexString', 'toBinaryString', 'PI', 'true', 'false'];
 
 /** the hardware's names (the include file's): they come after the program's own */

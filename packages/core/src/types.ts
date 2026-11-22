@@ -1165,6 +1165,9 @@ export type Vfs = Record<string, string | Uint8Array>;
 export interface AsmError { msg: string; file: string; line: number }
 export interface AsmBlock { start: Addr; name: string; end: Addr }
 export interface AssembleResult {
+  /** the values the top level's `.var`s have at the end of the last pass (Kick Assembler; 64tass keeps its constants
+   *  among `symbols`): what Mimir's own directives in a script read them from (script-actions.ts) */
+  vars?: Map<string, unknown>;
   mem: Uint8Array;
   written: Uint8Array;
   min: number;

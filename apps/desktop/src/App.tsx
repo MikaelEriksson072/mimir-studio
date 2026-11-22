@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2550,21 +2550,36 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   };
   /** a run ended: what it changed goes into the program as the script's patches (in place of its earlier ones, a change
    *  the user switched off staying off), what its scratchpads hold into the project, as one step */
-  const ranUserScript = (id: string, run: ScriptRun) => {
+  const ranUserScript = (id: string, run: ScriptRun, text: string) => {
     const { A: a, R: r, project: p, S: st } = latest.current;
     const s = p.userScripts?.find(x => x.id === id); if (!s) return null;
     const base = { ...p, ...withoutScriptPatches(p, id), settings: st };
     const w = writeScriptRun(a, r, base, s, run, scriptPatches(p.patches, id));
+    // what its directives say beyond the bytes (.mark, .name, .note, .junk), in the same step
+    const acts = scriptActsOf(id, text);
     update(`Run script "${s.name}"`, d => {
       d.files = w.files; d.patches = w.patches;
+      if (acts) {
+        d.overrides.push(...acts.overrides);
+        for (const [at, name] of acts.labels) d.labels[at] = name;
+        for (const [at, c] of acts.comments) d.comments[at] = c;
+        if (acts.junk) d.junk = acts.junk;
+      }
       const t = d.userScripts?.find(x => x.id === id); if (!t) return;
       for (const pad of t.pads) { const b = run.pads.find(x => x.name === pad.name); if (b && b.bytes.length === pad.size) pad.bytes = b.bytes; }
     });
-    return { written: w.written, failed: w.failed };
+    return { written: w.written, failed: w.failed, acted: acts ? { done: acts.done, failed: acts.failed } : undefined };
+  };
+  /** what a script's directives (.mark, .name, .note, .junk) come to in the project as it is now (null: it has none) */
+  const scriptActsOf = (id: string, text: string) => {
+    const { A: a, R: r, project: p } = latest.current;
+    const s = p.userScripts?.find(x => x.id === id); if (!s) return null;
+    const c = checkScript(scriptEnvFor(id), { source: text, lang: s.lang, pads: s.pads, init: s.init });
+    return c.actions.length ? planScriptActions(a, r, p, c.actions) : null;
   };
   /** a run in safe mode ended: what it would change in the program worked out as Run would write it, but nothing goes
    *  into the program; only its scratchpads (the script's own memory, not the program's) are kept in the project */
-  const ranSafely = (id: string, run: ScriptRun) => {
+  const ranSafely = (id: string, run: ScriptRun, text: string) => {
     const { A: a, R: r, project: p, S: st } = latest.current;
     const s = p.userScripts?.find(x => x.id === id); if (!s) return null;
     const w = writeScriptRun(a, r, { ...p, ...withoutScriptPatches(p, id), settings: st }, s, run, scriptPatches(p.patches, id));
@@ -2572,23 +2587,25 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const t = d.userScripts?.find(x => x.id === id); if (!t) return;
       for (const pad of t.pads) { const b = run.pads.find(x => x.name === pad.name); if (b && b.bytes.length === pad.size) pad.bytes = b.bytes; }
     });
-    return { written: w.written, failed: w.failed };
+    // (its directives are only worked out, as its changes are)
+    const acts = scriptActsOf(id, text);
+    return { written: w.written, failed: w.failed, acted: acts ? { done: acts.done, failed: acts.failed } : undefined };
   };
   /** a run has ended (Run in the Scripts tab or the Scripts view, or debugging to its end): its changes into the program
    *  (in safe mode only worked out, unless `write`: Write into the program), the run kept to show, and what it did said */
   const finishScriptRun = (id: string, r: ScriptRun, text: string, write = false) => {
     const s = latest.current.project.userScripts?.find(x => x.id === id); if (!s) return;
     const safe = !!s.safe && !write;
-    const w = safe ? ranSafely(id, r) : ranUserScript(id, r);
+    const w = safe ? ranSafely(id, r, text) : ranUserScript(id, r, text);
     const st = useScripts.getState();
-    st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [], ...(safe ? { safe: true, would: w?.written ?? [] } : {}) } } });
+    st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [], ...(w?.acted ? { acted: w.acted } : {}), ...(safe ? { safe: true, would: w?.written ?? [] } : {}) } } });
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
     if (st.selected === id) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
     const what = safe
       ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → In the program → Would change).` : 'It would change none of the program\'s bytes.'}`
       : w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
-    toast(`${s.name}: ${scriptEndText(r)}${what}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+    toast(`${s.name}: ${scriptEndText(r)}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
   };
   /** the C64's ROMs, for scripts that run in the whole C64 (asked for once they are needed, kept once found) */
   const scriptRoms = useRef<Roms | null>(null);

@@ -694,5 +694,5 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   // an error a loop met in each round is said once
   const said = new Set<string>();
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts, ops };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, vars: new Map(root.vars), prints, first, external, lines, starts, ops };
 }

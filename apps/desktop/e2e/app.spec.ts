@@ -10423,3 +10423,71 @@ test('scripts in the whole C64: a script loads a file from the mounted disk with
     await expect(page.locator('.scr-end')).toContainText(/Stopped at \$90[0-9a-f]{2}, the address it stops at/, { timeout: 60_000 });
   });
 });
+
+test('scripts say more than bytes: .mark, .name and .note in the code are done when the run ends, in its undo step; safe mode only lists them; a wrong one is an error on its line', async ({ workDir, app, page }) => {
+  // the program of the suggestions test: a loop at $081a that EORs the 32 bytes at $0840 with $5a
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...[...TEXT].map(c => c.charCodeAt(0) ^ 0x5a)];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  await waitForListing(page);
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded crypt-demo.prg at $0801')).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  if (await overview.isVisible()) await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const check = page.locator('.scr-check');
+  const setCode = async (lines: string[]) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(lines.join('\n'));
+  };
+  // decrypts the block in place, and says what it is
+  const SCRIPT = ['.var dest = $0840', '.var length = 32', '        ldx #0', 'loop:   lda dest,x', '        eor #$5a', '        sta dest,x', '        inx', '        cpx #length', '        bne loop', '        rts',
+    '        .mark dest, dest + length, "text"', '        .name dest, "secret"', '        .note $081a, "the game decrypts its text here"'];
+
+  await test.step('a directive that is wrong is an error on its line', async () => {
+    await setCode([...SCRIPT.slice(0, 10), '        .mark dest, dest + length, "poem"', '']);
+    await expect(check).toContainText('Line 11: .mark: "poem" is no type: code, bytes, words, text');
+    await expect(page.getByRole('button', { name: /^Run(?! on files)/ })).toBeDisabled();
+  });
+
+  await test.step('in safe mode a run lists what it would mark up, and the program has none of it', async () => {
+    await setCode([...SCRIPT, '']);
+    await expect(check).toHaveText('Ready to run');
+    await page.getByRole('switch', { name: 'Safe mode' }).check();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(toast(page, /It would mark up 3 things \(\$0840-\$085f marked as Text \(PETSCII\), …\)/)).toBeVisible();
+    await outTab(page, 'Last run');
+    await expect(page.getByRole('list', { name: 'What the run would mark up' }).getByRole('listitem')).toHaveText(['$0840-$085f marked as Text (PETSCII)', '$0840 named secret', '$081a commented: the game decrypts its text here']);
+    await page.getByRole('switch', { name: 'Safe mode' }).uncheck();
+  });
+
+  await test.step('a run does them with its changes: the decrypted block is text, named and commented in the listing', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(toast(page, /It changed 32 bytes of the program in 1 place: the listing and the source have them\. It marked up 3 things/)).toBeVisible();
+    await outTab(page, 'Last run');
+    await expect(page.getByRole('list', { name: 'What the run marked up' }).getByRole('listitem')).toHaveCount(3);
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'secret');
+    await expect(listing(page)).toContainText('secret:');
+    await expect(listing(page)).toContainText(TEXT.slice(0, 16));
+    await goTo(page, '$081a');
+    await expect(listing(page)).toContainText('the game decrypts its text here');
+  });
+
+  await test.step('Ctrl+Z takes the run back whole: the bytes, the type, the name and the comment', async () => {
+    await page.keyboard.press('Control+z');
+    await expect(listing(page)).not.toContainText('the game decrypts its text here');
+    await expect(listing(page)).not.toContainText('secret:');
+  });
+});

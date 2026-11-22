@@ -16,7 +16,9 @@ export type PadMode = 'hex' | 'code' | 'text' | 'compare';
 
 /** a run kept to show; `safe`: it ran in safe mode, so nothing went into the program, and `would` holds the patches it
  *  would have written (`failed`: what could not have been) */
-export interface ScriptRunKept { run: ScriptRun; source: string; at: number; failed: ScriptWriteFailure[]; safe?: boolean; would?: Patch[] }
+export interface ScriptRunKept { run: ScriptRun; source: string; at: number; failed: ScriptWriteFailure[]; safe?: boolean; would?: Patch[];
+  /** what the script's directives did to the program beyond its bytes (in safe mode: would do), and what they could not */
+  acted?: { done: string[]; failed: { line: number; why: string }[] } }
 
 /** a script in the library: its code and its scratchpads (without what they held), whether it runs in safe mode,
  *  what its runs start with and its watch list (what the user added and took off) */

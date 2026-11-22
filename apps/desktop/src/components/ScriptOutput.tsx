@@ -308,6 +308,14 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, placePad, t
         {run.overCode?.length ? <p className="small scr-failed" title="A run that writes over its code no longer runs the code it was written as (a loop stops early). Code that changes itself on purpose (an operand) is said here too"><Icon name="warn" size={13} />It wrote over its own code: {run.overCode.slice(0, 4).map(o => `line ${o.line} ($${h4(o.at)}${o.times > 1 ? `, ${o.times} times` : ''})`).join(', ')}{run.overCode.length > 4 ? ', …' : ''}. If that was not meant, an address the code writes lies where the code is.</p> : null}
         {run.other > 0 && <p className="small muted">{plural(run.other, 'byte')} changed outside the program and the scratchpads (the zero page, the stack, …): not kept.</p>}
       </div> : null}
+      {kept.acted && <div className="scr-wrote scr-acted">
+        <h5 className="scr-group-h" title="What the script's directives (.mark, .name, .note, .junk) say about the program beyond its bytes: done with the run, in its undo step">{kept.safe ? 'Would mark up' : 'Marked up'}</h5>
+        <ul className="scr-acted-list" aria-label={kept.safe ? 'What the run would mark up' : 'What the run marked up'}>
+          {kept.acted.done.map((d, i) => <li key={i}><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{d}</li>)}
+          {kept.acted.failed.map((f, i) => <li key={`f${i}`} className="scr-failed"><Icon name="warn" size={12} />Line {f.line}: {f.why}</li>)}
+        </ul>
+        {kept.safe && kept.acted.done.length > 0 && <p className="small muted">Safe mode: none of it is in the program. Write into the program does it.</p>}
+      </div>}
       {wrote.length > 0 && <div className="scr-wrote">
         <h5 className="scr-group-h" title="Every stretch of memory the run wrote, as the run left it (not the script's own code and scratchpads in the whole C64): what a loader loaded, what an unpacker unpacked. The program's own bytes among them are also under In the program">Memory it wrote</h5>
         <ul className="scr-wrote-list" aria-label="Memory the run wrote">{wrote.slice(0, 8).map(r => (

@@ -177,6 +177,7 @@ mimir-studio/
 │  ├─ src/script-files.ts          ett skript kört på filer: filen i en scratchpad, och vad körningen ger som filer (10.3)
 │  ├─ src/script-suggest.ts        skript som analysen föreslår: dekrypteringsloopar och rutinanrop (10.3)
 │  ├─ src/script-machine.ts        ett skript kört i hela C64:an: ROM, I/O, avbrott och 1541 med disken (10.3)
+│  ├─ src/script-actions.ts        skriptens egna direktiv: .mark, .name, .note och .junk (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -2721,6 +2722,30 @@ $06, $08` i `.asm`-filen efter en körning.
 - **Memory it wrote** (under *Last run*): de längsta sträckorna minne körningen skrev, som den lämnade dem (det en
   loader laddade, det en uppackare packade upp), var och en med *To the project…* (en fil i projektet eller ett nytt
   projekt, på sin adress) och *To a scratchpad*.
+- **Skript som säger mer än bytes** (`script-actions.ts`, 2026-11-22): Mimirs egna direktiv i skriptets kod, som
+  assemblern aldrig ser och som görs när en körning slutar, med byten den ändrade och i samma ångra-steg:
+  - `.mark start, end, "typ"`: byten från start fram till (inte med) end är av den typen, som *Mark as* gör dem:
+    `code`, `bytes` (eller `data`), `words`, `text`, `textsc`, `textmix`, `textscmix`, `table`, `sprite`, `charset`,
+    `bitmap`, `screen`, `music`, `fill`. Blocken märket skär behåller sin typ bredvid (`keepCutTypes`).
+  - `.name adress, "namn"`: adressen får den etiketten.
+  - `.note adress, "text"`: raden på adressen får den kommentaren.
+  - `.junk start, end`: byten är junk (11.7).
+  - En adress är ett tal (`$c000`, `49152`, `%1010`) eller ett namn koden har (en etikett i programmet, en
+    scratchpad, skriptets egna etiketter, `.var` och `.const`), adderat och subtraherat: `dest + length`,
+    `tbl_001_end - 2`. Ett skript som dekrypterar ett block säger så vad det är:
+    `.mark dest, dest + length, "text"`. Direktiven är desamma i Kick Assembler och 64tass och följer med när ett
+    skript flyttas dit. (Inte `.label` och `.comment`: de finns redan i Kick Assembler respektive 64tass.)
+  - `checkScript` tar ut raderna innan assemblern får koden (`scriptDirectives`: raden blir tom, så övriga rader
+    behåller sitt nummer) och läser dem när namnen fått sina värden (`scriptActions`; Kick Assemblers `.var` på
+    toppnivå lämnas ut i `AssembleResult.vars`). Det som är fel är ett fel på sin rad, och skriptet kör inte: ett
+    argument som saknas, ett okänt namn, en adress utanför minnet, ett slut som inte ligger efter starten, en typ som
+    inte finns, ett namn som inte är en etikett. Editorn föreslår direktiven efter en punkt.
+  - När körningen slutar (`planScriptActions` med analysen som den är då) görs de i projektet. Det som inte går sägs
+    under *Last run* med sin rad: ett märke eller en kommentar där ingen fil har byte, ett märke över ett flyttat
+    block eller över två filer, ett namn en annan adress har, junk som junkreglerna vägrar. *Last run* listar under
+    *Marked up* vad som gjordes; meddelandet efter körningen säger hur många. **I safe mode görs ingenting**: listan
+    heter *Would mark up*, och *Write into the program* gör dem. De hör inte till skriptets patchar: *Take out* och en
+    ny körning tar inte bort dem (Ctrl+Z gör det). *Run on files…* gör dem inte.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

@@ -16,6 +16,7 @@ import { musicVarName } from './render/kick';
 import { monitorChar } from './c64/monitor';
 import { assembleIn, codeLabels, codeOfLine, langIs, langOf, lineComment, needsTassCpu, setsItsPlace, splitLabel, type ScriptLang } from './code-lang';
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
+import { scriptActions, scriptDirectives, type ScriptAction } from './script-actions';
 import { fileSpaces } from './spaces';
 import { OPC } from './cpu/opcodes';
 import { lineText, type LineTextSettings } from './render/lines';
@@ -285,6 +286,8 @@ export interface ScriptCheck {
   /** the program's memory its instructions read and write at an address (not the script's own): Mimir places the
    *  code and finds room for scratchpads away from it */
   access: ScriptAccess[];
+  /** what its directives (.mark, .name, .note, .junk) say a run does to the program beyond its bytes (script-actions.ts) */
+  actions: ScriptAction[];
 }
 
 const PAD_NAME = /^[A-Za-z_]\w*$/;
@@ -360,6 +363,8 @@ const namesPad = (text: string, pad: ScriptPad) => new RegExp(`(^|[^\\w.])(${pad
  */
 export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>): ScriptCheck {
   const lang = langIs(script.lang);
+  // Mimir's own directives (.mark, .name, .note, .junk) are taken out: the assembler gets the rest, line for line
+  const dir = scriptDirectives(script.source, lang), text = dir.source;
   const problems: ScriptProblem[] = [];
   checkInit(script.init, problems);
   const err = (msg: string, line?: number, pad?: number) => problems.push({ level: 'error', msg, ...(line ? { line } : {}), ...(pad != null ? { pad } : {}) });
@@ -376,8 +381,8 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
     good.push(p);
   });
   const pads = good.map(p => ({ start: p.start, end: p.start + p.size }));
-  const names = withAddressNames(scriptNames(env, script.pads), script.source);
-  const at = (pc: number) => assembleIn(lang, { 'script.asm': script.source }, 'script.asm', { names, pc });
+  const names = withAddressNames(scriptNames(env, script.pads), text);
+  const at = (pc: number) => assembleIn(lang, { 'script.asm': text }, 'script.asm', { names, pc });
   // assembled once where it may go, to learn how big it is and which of the program's names it uses
   const free = freePlace(env.files, 0x100, pads);
   let pc = free ?? 0xc000;
@@ -385,17 +390,17 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
   const padNames = new Set(script.pads.flatMap(p => [p.name, `${p.name}_end`, `${p.name}_load`]));
   const used = [...asm.external].filter(([n]) => !padNames.has(n) && !env.values?.has(n)).map(([name, line]) => ({ name, line, at: names.get(name)! }));
   let place: ScriptCheck['place'] = 'own';
-  if (!setsItsPlace(script.source, lang) && !asm.errors.length) {
+  if (!setsItsPlace(text, lang) && !asm.errors.length) {
     let n = 0; while (pc + n < 0x10000 && asm.written[pc + n]) n++;
     const elsewhere = maskRanges(asm.written).filter(r => r.start !== pc);
     // not where the code reads or writes the program's memory (`sta $0400,x` over the code would change the code)
-    const reached = programAccesses(asm, script.source, lang);
+    const reached = programAccesses(asm, text, lang);
     const p = scriptPlace(env.files, Math.max(1, n), [...pads, ...elsewhere, ...used.map(u => ({ start: u.at, end: u.at + 1 })), ...reached], free ?? undefined);
     if (!p) err('There is no room for the script\'s code: it uses the program\'s memory all over. Give it an address with * = at its top.');
     else { place = p.free ? 'free' : 'program'; if (p.at !== pc) { pc = p.at; asm = at(pc); } }
   }
   // (a line that names a scratchpad and reaches into it means the scratchpad)
-  const access = programAccesses(asm, script.source, lang).filter(x => !good.some(p => p.start < x.end && x.start < p.start + p.size && namesPad(x.text, p)));
+  const access = programAccesses(asm, text, lang).filter(x => !good.some(p => p.start < x.end && x.start < p.start + p.size && namesPad(x.text, p)));
   for (const e of asm.errors) err(e.msg, e.file === 'script.asm' && e.line > 0 ? e.line : undefined);
   const code = maskRanges(asm.written);
   const bytes = code.reduce((n, r) => n + r.end - r.start, 0);
@@ -424,9 +429,13 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
       if (pad >= 0) err(`"${x.text}" ${verb} ${span} of the program, but the scratchpad ${script.pads[pad].name} is at ${rangeText({ start: script.pads[pad].start, end: script.pads[pad].start + script.pads[pad].size })}: it would ${x.write ? 'write' : 'read'} the scratchpad there, not the program. Give the scratchpad another address (or write ${script.pads[pad].name} when the scratchpad is meant).`, x.line, pad);
     }
   }
+  // the directives, once the names have their values: what a run does to the program beyond its bytes
+  const act = dir.directives.length && !asm.errors.length
+    ? scriptActions(dir.directives, name => { const v = names.get(name) ?? asm.symbols.get(name) ?? asm.vars?.get(name); return typeof v === 'number' ? v : undefined; }) : { actions: [], problems: [] };
+  for (const p of act.problems) err(p.msg, p.line);
   const labels = new Map<Addr, string>();
   for (const [k, v] of asm.symbols) if (typeof v === 'number' && /^[A-Za-z_]\w*$/.test(k) && v >= 0 && v < 0x10000 && asm.written[v] && !labels.has(v)) labels.set(v, k);
-  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written, lines: asm.lines, starts: asm.starts, ops: asm.ops, labels, uses: used, access };
+  return { ok: !problems.some(p => p.level === 'error'), problems, entry, code, bytes, place, prints: asm.prints, mem: asm.mem, written: asm.written, lines: asm.lines, starts: asm.starts, ops: asm.ops, labels, uses: used, access, actions: act.actions };
 }
 
 /** An address of the program linked to a script (UserScript.links), with the name its code writes for it and what that
