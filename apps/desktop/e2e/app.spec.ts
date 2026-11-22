@@ -8798,7 +8798,7 @@ test('scripts: Kick Assembler that runs in Mimir; what it changes goes into the 
   await page.keyboard.press('Control+o');
   await expect(toast(page, 'Loaded raster-demo.prg at $0801')).toBeVisible();
   const check = page.locator('.scr-check');
-  const run = page.getByRole('button', { name: /^Run/ });
+  const run = page.getByRole('button', { name: /^Run(?! on files)/ });
   const editor = page.locator('.scr-editor');
   const changes = page.getByRole('list', { name: 'Changed in the program' });
   const tag = listing(page).locator('.patch-tag', { hasText: 'script brighter' });
@@ -9644,13 +9644,13 @@ test('scripts: an address the code writes where its own code is, is an error on 
   await test.step('code at $0400 that clears the screen from $0400: the line says it would write over the code', async () => {
     await code(['* = $0400', '        ldx #$00', 'loop:   lda #$20', '        sta $0400,x', '        inx', '        bne loop', '        rts'].join('\n'));
     await expect(check).toContainText('Line 4: "sta $0400,x" writes $0400-$04ff of the program, but the script\'s own code is at');
-    await expect(page.getByRole('button', { name: /^Run/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /^Run(?! on files)/ })).toBeDisabled();
   });
 
   await test.step('without * = Mimir puts the code elsewhere, and the loop goes all 256 rounds', async () => {
     await code(['        ldx #$00', 'loop:   lda #$20', '        sta $0400,x', '        inx', '        bne loop', '        rts'].join('\n'));
     await expect(check).toHaveText('Ready to run');
-    await page.getByRole('button', { name: /^Run/ }).click();
+    await page.getByRole('button', { name: /^Run(?! on files)/ }).click();
     await expect(page.locator('.scr-end')).toContainText('Returned');
     await outTab(page, 'Last run');
     await expect(page.locator('.scr-run-sec')).not.toContainText('It wrote over its own code');
@@ -9659,7 +9659,7 @@ test('scripts: an address the code writes where its own code is, is an error on 
   await test.step('code that changes itself: Last run and the message say which line was written over', async () => {
     await code(['        ldx #2', '!:      inc ld+1', 'ld:     lda #0', '        dex', '        bne !-', '        rts'].join('\n'));
     await expect(check).toHaveText('Ready to run');
-    await page.getByRole('button', { name: /^Run/ }).click();
+    await page.getByRole('button', { name: /^Run(?! on files)/ }).click();
     await expect(toast(page, /It wrote over its own code \(line 3\)/)).toBeVisible();
     await expect(page.locator('.scr-run-sec')).toContainText('It wrote over its own code: line 3 ($c006, 2 times)');
   });
@@ -9741,7 +9741,7 @@ test('scripts: a store (sta $ff40,x) is written into a scratchpad too with a cli
   });
 
   await test.step('a run: both scratchpads hold what the store wrote', async () => {
-    await page.getByRole('button', { name: /^Run/ }).click();
+    await page.getByRole('button', { name: /^Run(?! on files)/ }).click();
     await expect(page.locator('.scr-end')).toContainText('Returned');
     await outTab(page, 'Scratchpads');
     for (const name of ['pad1', 'pad2']) {
@@ -9938,7 +9938,7 @@ test('scripts: templates that decrypt and encrypt have a section of their own in
   });
 
   await test.step('run as it comes: the program\'s first $100 bytes from $0801, EORed with $77, are in result; the program stays as it is', async () => {
-    await page.getByRole('button', { name: /^Run/ }).click();
+    await page.getByRole('button', { name: /^Run(?! on files)/ }).click();
     await expect(page.locator('.scr-end')).toContainText('Returned');
     const bytes = readFileSync(prg).subarray(2, 18);
     const row = [...bytes].map(b => (b ^ 0x77).toString(16).padStart(2, '0')).join(' ');
@@ -9985,7 +9985,7 @@ test('scripts: the output has a tab each for Init, Watch, In the program, Scratc
   });
 
   await test.step('after a run the changed one has a dot; a click shows it, another click the other; the run\'s end is in the tab row', async () => {
-    await page.getByRole('button', { name: /^Run/ }).click();
+    await page.getByRole('button', { name: /^Run(?! on files)/ }).click();
     await expect(page.locator('.scr-end')).toContainText('Returned');
     await expect(rows.nth(0).getByLabel('changed by the last run')).toHaveCount(1);
     await expect(rows.nth(1).getByLabel('changed by the last run')).toHaveCount(0);
@@ -10171,5 +10171,114 @@ test('a selection shows how many bytes it takes in, in the right margin beside i
     expect(Math.abs(c.y - line.y)).toBeLessThan(4);
     await page.keyboard.press('ArrowRight');
     await expect(src).toBeHidden();
+  });
+});
+
+test('scripts and files: a file of the disk into a scratchpad, the script run on files of the disk with the results added and saved, a scratchpad into the project', async ({ workDir, app, page }) => {
+  // fixtures/d64/mimir-demo.d64: "RASTER DEMO" (the demo), "SPRITE" at $c000, "NOTES" (SEQ)
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/mimir-demo.d64')] });
+  await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+  await expect(toast(page, 'Mounted mimir-demo.d64: "MIMIR DEMO", 3 files')).toBeVisible();
+  // the file as the disk has it: its bytes after the load address
+  const sprite = [...readFileSync(join(repoDir, 'fixtures/d64/mimir-demo.d64'))];
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const padRows = page.locator('.pad-row:not(.pad-head)');
+  const dump = page.locator('.scr-dump');
+  const dialog = page.getByRole('dialog', { name: 'Run "script" on files' });
+  /** the Explorer, when the Scripts tab folded the side panel in */
+  const showExplorer = async () => { if (!(await page.getByRole('region', { name: 'Files', exact: true }).isVisible())) await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Explorer' }).click(); };
+
+  await test.step('From a file… lists the disk\'s files and puts one into a new scratchpad, which takes the file from then on', async () => {
+    await outTab(page, 'Scratchpads');
+    await page.getByRole('button', { name: 'From a file…' }).click();
+    const form = page.getByRole('group', { name: 'Put a file into a scratchpad' });
+    const file = form.getByLabel('File', { exact: true });
+    await expect(file.locator('option')).toHaveText([/^RASTER DEMO · \d+ bytes, loads at \$0801$/, /^SPRITE · \d+ bytes, loads at \$c000$/, /^NOTES \(SEQ\) · \d+ bytes$/]);
+    await file.selectOption({ index: 1 });
+    await expect(form).toContainText('A new scratchpad of');
+    await form.getByRole('button', { name: 'Put in' }).click();
+    await expect(toast(page, /^"SPRITE" is in the new scratchpad pad1 \(\$[0-9a-f]{4}, \d+ bytes\): a run starts it with them\. Its use is File/)).toBeVisible();
+    await expect(padRows).toHaveCount(1);
+    await expect(padRows.getByLabel('Scratchpad use')).toHaveValue('file');
+    await expect(page.locator('.scr-start-pill')).toContainText(/at the start · \d+ set/);
+    await expect(dump).toHaveText(/^\$[0-9a-f]{4}\s+([0-9a-f]{2} ){8}/i);
+  });
+
+  await test.step('the code knows the file by the scratchpad\'s names: pad1, pad1_end and pad1_load', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.insertText(['        ldx #0', 'loop:   lda pad1,x', '        eor #$ff', '        sta pad1,x', '        inx', '        cpx #<(pad1_end - pad1)', '        bne loop', '        lda #>pad1_load', '        rts', ''].join('\n'));
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+
+  await test.step('Run on files… lists the files with a box each and adds the result of the ticked one to the project', async () => {
+    await outTab(page, 'Scratchpads');
+    await expect(page.locator('.pad-files')).toContainText('Each file goes into pad1; the result is pad1 as the run leaves it, or the memory the run writes.');
+    await page.getByRole('button', { name: 'Run on files…' }).click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Each file goes into pad1');
+    await expect(dialog).toContainText('0 of 3 picked');
+    await expect(dialog.getByRole('button', { name: 'Run on 0 files' })).toBeDisabled();
+    await dialog.getByRole('checkbox', { name: 'SPRITE', exact: true }).check();
+    await expect(dialog).toContainText('1 of 3 picked');
+    await dialog.getByRole('radio', { name: 'Add them to this project' }).check();
+    await dialog.getByRole('button', { name: 'Run on 1 file' }).click();
+    await expect(toast(page, /^"script" ran on 1 file: SPRITE_script\.prg \(\$c000, \d+ bytes\) added to the project$/)).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    await showExplorer();
+    await expectFiles(page, [/./, 'SPRITE_script.prg']);
+    // nothing went into the program: the script changed no byte of it
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await outTab(page, 'In the program');
+    await expect(page.getByRole('list', { name: 'Changed in the program' }).getByRole('listitem')).toHaveCount(0);
+  });
+
+  await test.step('a right-click on a file of the disk in the Explorer runs a script on it; the results saved to a folder are the file changed', async () => {
+    await showExplorer();
+    await openSection(page, 'Disk');
+    await page.getByRole('list', { name: 'Files on mimir-demo.d64' }).getByRole('listitem').filter({ hasText: 'SPRITE' }).click({ button: 'right' });
+    await expect(page.locator('.ctx')).toContainText('Run a script on "SPRITE"');
+    await page.locator('.ctx').getByRole('menuitem', { name: '"script"…' }).click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('1 of 3 picked');
+    await expect(dialog.getByRole('checkbox', { name: 'SPRITE', exact: true })).toBeChecked();
+    // all of the disk's files: the SEQ file too (it has no load address)
+    await dialog.getByRole('button', { name: 'All', exact: true }).click();
+    await dialog.getByRole('radio', { name: 'Save them to a folder…' }).check();
+    const out = join(workDir, 'script-results');
+    mkdirSync(out, { recursive: true });
+    await stubDialogs(app, { open: [out] });
+    await dialog.getByRole('button', { name: 'Run on 3 files' }).click();
+    await expect(toast(page, /^"script" ran on 3 files: 3 results saved to /)).toBeVisible({ timeout: 30_000 });
+    expect(readdirSync(out).sort()).toEqual(['NOTES_SEQ_script.prg', 'RASTER_DEMO_script.prg', 'SPRITE_script.prg']);
+    // the sprite: at its load address, every byte the script's loop reached turned over
+    const saved = [...readFileSync(join(out, 'SPRITE_script.prg'))];
+    expect(saved.slice(0, 2)).toEqual([0x00, 0xc0]);
+    const body = saved.slice(2);
+    const at = sprite.findIndex((_, i) => body.every((b, k) => (sprite[i + k] ^ 0xff) === b));
+    expect(at).toBeGreaterThanOrEqual(0);
+  });
+
+  await test.step('a scratchpad goes into the project as a file at its address', async () => {
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await outTab(page, 'Scratchpads');
+    await page.getByRole('button', { name: 'To the project…' }).click();
+    await expect(page.locator('.ctx')).toContainText(/pad1, \d+ bytes, as a file that loads at \$c000/);
+    await page.locator('.ctx').getByRole('menuitem', { name: 'Add it to this project' }).click();
+    await expect(toast(page, /^script_pad1\.prg \(\$c000, \d+ bytes, from a scratchpad\) added to the project$/)).toBeVisible();
+  });
+
+  await test.step('a script with no scratchpad that takes a file says how, and the use is set in the list', async () => {
+    await outTab(page, 'Scratchpads');
+    await padRows.getByLabel('Scratchpad use').selectOption('');
+    await expect(page.getByRole('button', { name: 'Run on files…' })).toBeDisabled();
+    await expect(page.locator('.pad-files')).toContainText('Set the use of a scratchpad to File');
+    await padRows.getByLabel('Scratchpad use').selectOption('result');
+    await expect(padRows.getByLabel('Scratchpad use')).toHaveValue('result');
+    await padRows.getByLabel('Scratchpad use').selectOption('file');
+    await expect(page.getByRole('button', { name: 'Run on files…' })).toBeEnabled();
   });
 });

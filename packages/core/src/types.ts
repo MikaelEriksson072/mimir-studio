@@ -346,6 +346,13 @@ export interface ScriptPad {
   data?: Uint8Array;
   /** how the user wrote `data` (missing: it was copied in as bytes) */
   src?: ScriptPadSource;
+  /** what it is when the script is run on files (script-files.ts): `file`, the scratchpad that takes the file (its
+   *  bytes are what it starts with, and it is as big as the file), or `result`, one whose bytes the run leaves are a
+   *  file of the result. Missing: neither. A scratchpad with a role is memory the program's code sees too (a routine
+   *  of the program the script calls reads the file there); the others only the script's own code sees */
+  role?: 'file' | 'result';
+  /** the load address of the file its start content came from (`name_load` in the code, 0 when missing) */
+  load?: Addr;
 }
 
 /** A scratchpad's start content as the user wrote it (spec 10.3): Kick Assembler at the scratchpad's address (code

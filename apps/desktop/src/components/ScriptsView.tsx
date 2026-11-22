@@ -18,6 +18,7 @@ import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { WatchSection, WatchTable, type WatchItem, type WatchKind, type WatchMode } from './ScriptWatch';
 import { ScriptOutput, type BlockChoice, type LivePad } from './ScriptOutput';
+import type { ScriptFileChoice } from './ScriptFiles';
 
 /** a script being debugged: its machine, the code it was assembled from, the registers and its scratchpads' bytes
  *  before the last step (what the step changed is marked) */
@@ -75,12 +76,18 @@ export interface ScriptsViewProps {
   cursorBlock: Addr | null;
   /** a block copied into a scratchpad of the script (its index; null: a new one), written as its type is */
   onCopyBlock: (start: Addr, id: string, pad: number | null) => void;
+  /** the files of the mounted disk and the tape a script can be given (read when they are asked for) */
+  files: () => ScriptFileChoice[];
+  /** Run on files…: the dialog that runs a script on files of the disk or the tape */
+  onRunOnFiles: (id: string) => void;
+  /** a scratchpad's bytes as a file that loads at `load`: added to the project (`add`), or a new project of its own */
+  onToProject: (name: string, bytes: Uint8Array, load: Addr, add: boolean) => void;
 }
 
 const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock }: ScriptsViewProps) {
+export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, files, onRunOnFiles, onToProject }: ScriptsViewProps) {
   const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -677,7 +684,8 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
               onRestore={() => onEdit(cur.id, { unwatch: undefined }, `Put back on the watch list of "${cur.name}" what was taken off`)} />}
             onGoLine={goLine} onWrite={write} placePad={placePad} blocks={blocks} cursorBlock={cursorBlock}
             onEdit={onEdit} onTakeOut={onTakeOut} onSwitchPatch={onSwitchPatch} onCopyBlock={onCopyBlock} onShow={onShow} onCopy={onCopy}
-            onSave={onSave} onSaveText={onSaveText} onMenu={onMenu} toast={toast} />
+            onSave={onSave} onSaveText={onSaveText} onMenu={onMenu} toast={toast}
+            files={files} onRunOnFiles={() => { flush(); onRunOnFiles(cur.id); }} onToProject={onToProject} />
         </div>
       </div>}
     </div>

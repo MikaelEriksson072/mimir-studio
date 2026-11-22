@@ -1566,7 +1566,7 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 /* In the program and Scratchpads: the list at the left, what is picked in it at the right (stacked when narrow) */
 .scr-split { flex: 1; min-height: 0; display: flex; }
 .scr-master { width: 300px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
-.scr-master.scr-pads-master { width: 360px; }
+.scr-master.scr-pads-master { width: 440px; }
 .scr-master .scr-pane-bar { flex-wrap: nowrap; padding: 4px 8px 4px 12px; }
 .scr-master-body { flex: 1; min-height: 0; overflow: auto; padding: 6px 8px 10px; }
 .scr-master-body > .scr-empty, .scr-master-body > .scr-note { padding: 2px 4px; }
@@ -1612,7 +1612,7 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 .pad-from p { margin: 0; }
 .pad-from-act { display: flex; gap: 6px; justify-content: flex-end; }
 /* a scratchpad in the list: its fields read as a table, and show as fields where the pointer is and on the one picked */
-.pad-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 60px 56px 40px 24px; gap: 4px; align-items: center; padding: 2px 2px 2px 4px; border-radius: 5px; cursor: pointer; }
+.pad-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) 60px 56px 40px 66px 24px; gap: 4px; align-items: center; padding: 2px 2px 2px 4px; border-radius: 5px; cursor: pointer; }
 .pad-row:hover { background: var(--row-hover); }
 .pad-row.on { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
 .pad-row input { height: 24px; min-width: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--fg); padding: 0 5px; font: 12px var(--font-code); }
@@ -1621,6 +1621,25 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 .pad-row.bad input { border-color: color-mix(in srgb, var(--err) 70%, transparent); }
 .pad-row.warn input[aria-label="Scratchpad name"] { border-color: color-mix(in srgb, var(--warn) 70%, transparent); }
 .pad-row .icon-btn { width: 24px; height: 24px; }
+.pad-row select { height: 24px; min-width: 0; width: 100%; padding: 0 2px 0 4px; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--fg); font-size: 12px; }
+.pad-row:hover select, .pad-row.on select { border-color: var(--line-2); background: var(--panel-2); }
+/* Run on files…: under the scratchpads' table, with what it does in a line */
+.pad-files { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 4px 0; border-top: 1px solid var(--line); }
+.pad-files .btn { flex: none; }
+/* the dialog: the files with a box each, by where they are from */
+.files-run-modal { width: min(620px, 100%); }
+.files-run-how { margin: 4px 0 10px; color: var(--fg-2); line-height: 1.45; }
+.files-run-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.files-run-list { max-height: min(46vh, 380px); overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); padding: 4px 0; }
+.files-run-gh { display: flex; align-items: center; gap: 8px; padding: 5px 10px 3px; font-size: 12px; position: sticky; top: -4px; background: var(--panel-2); }
+.files-run-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 48px 56px; gap: 8px; align-items: center; padding: 2px 10px 2px 26px; font-size: 12px; cursor: pointer; }
+.files-run-row:hover { background: var(--row-hover); }
+.files-run-row.at { background: var(--sel); }
+.files-run-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-run-size { text-align: right; }
+.files-run-then { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 10px; font-size: 12.5px; }
+.files-run-then label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.files-run-busy { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pad-dot-cell { display: grid; place-items: center; }
 .pad-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .pad-head { cursor: default; padding-top: 0; padding-bottom: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-3); }

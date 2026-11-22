@@ -135,6 +135,8 @@ const patch = z.object({ ...patchFields, id: z.string().max(64), bytes: z.instan
   .refine(p => p.bytes.length === p.old.length && p.bytes.length > 0 && p.start + p.bytes.length <= 0x10000, 'the bytes written and the bytes written over differ in length');
 /** a user script (spec 10.3): its code and its scratchpads, what a pad holds after the last run as many bytes as it is big */
 const padFields = { name: z.string().min(1).max(64), start: z.number().int().min(0).max(0xffff), size: z.number().int().min(1).max(0x10000), fill: z.number().int().min(0).max(255).optional(),
+  // what it is when the script is run on files (the scratchpad that takes the file, or a result), and the load address of the file in it
+  role: z.enum(['file', 'result']).optional(), load: z.number().int().min(0).max(0xffff).optional(),
   src: z.object({ form: z.enum(['asm', 'hex', 'text']), text: z.string().max(400000), screen: z.boolean().optional() }).optional() };
 const b64 = z.string().max(0x16000).regex(/^[A-Za-z0-9+/]*={0,2}$/);
 const padFits = (p: { start: number; size: number }) => p.start + p.size <= 0x10000;

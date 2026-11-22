@@ -116,7 +116,7 @@ test('64tass: a patch, a script and a template are written in it; a Kick Assembl
     await page.keyboard.press('Control+End');
     await expect.poll(shown).toMatch(/\n\+\s+lda todo\n\s+bne \+\n/);
     await expect(check).toHaveText('Ready to run');
-    await page.getByRole('button', { name: /^Run/ }).click();
+    await page.getByRole('button', { name: /^Run(?! on files)/ }).click();
     await expect(page.locator('.scr-end')).toContainText('Returned');
     const bytes = readFileSync(join(repoDir, 'fixtures/prg/raster-demo.prg')).subarray(2, 18);
     await expect(page.locator('.scr-dump')).toContainText([...bytes].map(b => (b ^ 0x77).toString(16).padStart(2, '0')).join(' '));

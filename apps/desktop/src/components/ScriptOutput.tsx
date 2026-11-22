@@ -10,9 +10,10 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, LANG_TITLE, byteLines, disassembleBytes, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
+import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
 import { initValue } from '../lib/scriptinit';
@@ -70,6 +71,11 @@ export interface ScriptOutputProps {
   onEdit: ScriptsViewProps['onEdit']; onTakeOut: ScriptsViewProps['onTakeOut']; onSwitchPatch: ScriptsViewProps['onSwitchPatch'];
   onCopyBlock: ScriptsViewProps['onCopyBlock']; onShow: ScriptsViewProps['onShow']; onCopy: ScriptsViewProps['onCopy'];
   onSave: ScriptsViewProps['onSave']; onSaveText: ScriptsViewProps['onSaveText']; onMenu: ScriptsViewProps['onMenu']; toast: ScriptsViewProps['toast'];
+  /** the files of the mounted disk and the tape a scratchpad can be filled from (read when From a file… opens) */
+  files: () => ScriptFileChoice[];
+  /** Run on files…: the dialog that runs the script on files of the disk or the tape */
+  onRunOnFiles: () => void;
+  onToProject: ScriptsViewProps['onToProject'];
 }
 
 export function ScriptOutput(props: ScriptOutputProps) {
@@ -177,10 +183,37 @@ function ProgramPane(p: ScriptOutputProps & { would: Patch[] | null }) {
 /** Scratchpads: the script's own memory, each with its name, address, size and fill (edited in the list); beside the
  *  list, the scratchpad picked as bytes. */
 function PadsPane(p: ScriptOutputProps) {
-  const { script, check, env, names, blocks, cursorBlock, onCopyBlock, onEdit } = p;
+  const { script, check, env, names, blocks, cursorBlock, onCopyBlock, onEdit, toast } = p;
   const { pad, set } = useScripts();
   const [fromBlock, setFromBlock] = useState(false);
+  // From a file…: the files as they were when it opened
+  const [fromFile, setFromFile] = useState<ScriptFileChoice[] | null>(null);
   const setPads = (pads: ScriptPad[], label: string) => onEdit(script.id, { pads }, label);
+  const takes = filePad(script.pads);
+  /** a file of the disk or the tape as what a scratchpad starts with: a new one as big as the file (the one that takes
+   *  the file when the script is run on files, when the script has none yet), or one of the script's, made as big as
+   *  the file when nothing of the script's is in the way (else it takes the file's first bytes) */
+  const copyFile = (f: ScriptFileChoice, into: number | null) => {
+    const file = { name: f.name, load: f.load, bytes: f.bytes }, n = f.bytes.length;
+    const others = (skip: number) => [...check.code, ...check.access, ...script.pads.filter((_, k) => k !== skip).map(x => ({ start: x.start, end: x.start + x.size }))];
+    setFromFile(null);
+    if (!n) { toast(`"${f.name}" is empty`, 'warn'); return; }
+    if (into == null) {
+      const last = script.pads[script.pads.length - 1], name = padName(script.pads);
+      const start = scriptPlace(env.files, n, others(-1), last ? last.start + last.size : undefined)?.at ?? 0xc000;
+      const q = padWithFile({ name, start, size: n, ...(takes < 0 ? { role: 'file' as const } : {}) }, file, start);
+      setPads([...script.pads, q], `Put "${f.name}" into a new scratchpad ${name} of "${script.name}"`);
+      set({ pad: script.pads.length });
+      toast(`"${f.name}" is in the new scratchpad ${name} ($${h4(start)}, ${q.size} bytes): a run starts it with them${takes < 0 ? `. Its use is File: Run on files… puts each file there, and ${name}_load is the file's load address` : ''}`, q.size < n ? 'warn' : 'ok');
+      return;
+    }
+    const t = script.pads[into]; if (!t) return;
+    const fits = t.size >= n || (t.start + n <= 0x10000 && !others(into).some(r => r.start < t.start + n && t.start < r.end));
+    const q = fits ? { ...padWithFile(t, file), size: Math.max(t.size, Math.min(n, 0x10000 - t.start)) } : { ...padWithFile(t, { ...file, bytes: f.bytes.subarray(0, t.size) }), size: t.size };
+    setPads(script.pads.map((x, k) => (k === into ? q : x)), `Put "${f.name}" into scratchpad ${t.name} of "${script.name}"`);
+    set({ pad: into });
+    toast(fits ? `"${f.name}" is in ${t.name}: a run starts it with its ${n} bytes${q.size > t.size ? ` (${t.name} is ${q.size} bytes now)` : ''}` : `${t.name} holds ${t.size} bytes and cannot grow (something of the script's is after it): the first ${t.size} of the ${n} bytes of "${f.name}" went in`, fits ? 'ok' : 'warn');
+  };
   const addPad = () => {
     // not over the code, another scratchpad, or memory the code reads and writes as the program's ($0400 for the screen)
     const taken = [...check.code, ...script.pads.map(x => ({ start: x.start, end: x.start + x.size })), ...check.access];
@@ -211,21 +244,30 @@ function PadsPane(p: ScriptOutputProps) {
         <div className="scr-pane-bar">
           <h5 className="scr-group-h">Scratchpads</h5>
           <span className="grow" />
-          <button className={cx('btn ghost small', fromBlock && 'on')} aria-expanded={fromBlock} onClick={() => setFromBlock(v => !v)} title="Copy a block of the program into a scratchpad, written as its type is: code as code, text as text, characters, sprites and bitmaps as .byte lines in their shape, other data as hex"><Icon name="copy" size={13} />From a block…</button>
+          <button className={cx('btn ghost small', fromBlock && 'on')} aria-expanded={fromBlock} onClick={() => { setFromFile(null); setFromBlock(v => !v); }} title="Copy a block of the program into a scratchpad, written as its type is: code as code, text as text, characters, sprites and bitmaps as .byte lines in their shape, other data as hex"><Icon name="copy" size={13} />From a block…</button>
+          <button className={cx('btn ghost small', fromFile && 'on')} aria-expanded={!!fromFile} onClick={() => { setFromBlock(false); setFromFile(v => (v ? null : p.files())); }} title="Put a file of the mounted disk or the tape into a scratchpad: its bytes are what a run starts the scratchpad with (the program's own unpacker can be called on it, say)"><Icon name="disk" size={13} />From a file…</button>
           <button className="btn ghost small" onClick={addPad} title="A scratchpad: memory of the script's own at an address, for data kept outside the program (a log, say) that can be saved as a file. It is cleared before each run; its name (and name_end) are labels in the code"><Icon name="plus" size={13} />Add</button>
         </div>
         <div className="scr-master-body">
           {fromBlock && <BlockToPad blocks={blocks} pads={script.pads} lang={script.lang} first={cursorBlock} into={shown ? i : null}
             onCopy={(start, into) => { onCopyBlock(start, script.id, into); setFromBlock(false); }} onCancel={() => setFromBlock(false)} />}
-          {!script.pads.length && <p className="scr-empty">None. Add one to keep data outside the program, a log the script writes, say, and save it as a file.</p>}
+          {fromFile && <FileToPad files={fromFile} pads={script.pads} into={shown ? i : null} onCopy={copyFile} onCancel={() => setFromFile(null)} />}
+          {!script.pads.length && <p className="scr-empty">None. Add one to keep data outside the program, a log the script writes, say, and save it as a file; or put a file of the disk or the tape into one (From a file…).</p>}
           {script.pads.length > 0 && <div className="pad-table" role="table" aria-label="Scratchpads">
-            <div className="pad-row pad-head" role="row"><span /><span>Name</span><span>Address</span><span>Size</span><span>Fill</span><span /></div>
+            <div className="pad-row pad-head" role="row"><span /><span>Name</span><span>Address</span><span>Size</span><span>Fill</span><span title="What the scratchpad is when the script is run on files">Use</span><span /></div>
             {script.pads.map((x, j) => (
               <PadRow key={`${script.id}-${j}`} pad={x} on={j === i} changed={changed[j]} bad={check.problems.some(q => q.pad === j && q.level === 'error')} warn={check.problems.some(q => q.pad === j && q.level === 'warning')}
                 onShow={() => { if (j !== i) set({ pad: j }); }}
-                onChange={q => setPads(script.pads.map((y, k) => (k === j ? moved(y, q) : y)), `Change scratchpad ${x.name} of "${script.name}"`)}
+                // (one scratchpad takes the file: another that did is a plain one again)
+                onChange={q => setPads(script.pads.map((y, k) => { if (k === j) return moved(y, q); if (q.role === 'file' && y.role === 'file') { const { role: _r, ...plain } = y; return plain; } return y; }), `Change scratchpad ${x.name} of "${script.name}"`)}
                 onRemove={() => { setPads(script.pads.filter((_, k) => k !== j), `Remove scratchpad ${x.name} from "${script.name}"`); set({ pad: 0 }); }} />
             ))}
+          </div>}
+          {script.pads.length > 0 && <div className="pad-files">
+            <button className="btn small" disabled={takes < 0 || !check.ok} onClick={p.onRunOnFiles}
+              title={takes < 0 ? 'Set the use of a scratchpad to File first: it takes each file' : !check.ok ? 'The script must check out before it can run: see the errors' : `Run the script on files of the mounted disk or the tape: each goes into ${script.pads[takes].name}, and what the run leaves is opened, added to the project or saved`}><Icon name="play" size={13} />Run on files…</button>
+            <span className="muted small">{takes < 0 ? 'Set the use of a scratchpad to File, and the script can be run on files of the disk or the tape.'
+              : `Each file goes into ${script.pads[takes].name}; the result is ${script.pads.some(x => x.role === 'result') ? `what the run writes into ${script.pads.filter(x => x.role === 'result').map(x => x.name).join(', ')}` : `${script.pads[takes].name} as the run leaves it, or the memory the run writes`}.`}</span>
           </div>}
         </div>
       </div>
@@ -428,7 +470,7 @@ function PadRow({ pad, on, changed, bad, warn, onShow, onChange, onRemove }: { p
     const a = num(start), n = num(size), f = num(fill);
     if (!(a >= 0 && a <= 0xffff) || !(n >= 1 && a + n <= 0x10000) || !(f >= 0 && f <= 255) || !name.trim()) { setName(pad.name); setStart($(pad.start)); setSize($(pad.size)); setFill('$' + h2(pad.fill ?? 0)); return; }
     // its start content goes with it (written as code, PadsPane assembles it again where it is now)
-    const q: ScriptPad = { name: name.trim(), start: a, size: n, ...(f ? { fill: f } : {}), ...(pad.data ? { data: pad.data } : {}), ...(pad.src ? { src: pad.src } : {}) };
+    const q: ScriptPad = { name: name.trim(), start: a, size: n, ...(f ? { fill: f } : {}), ...(pad.data ? { data: pad.data } : {}), ...(pad.src ? { src: pad.src } : {}), ...(pad.role ? { role: pad.role } : {}), ...(pad.load != null ? { load: pad.load } : {}) };
     if (q.name === pad.name && q.start === pad.start && q.size === pad.size && (q.fill ?? 0) === (pad.fill ?? 0)) return;
     // what the last run left belongs to the old place and size
     onChange(q.start === pad.start && q.size === pad.size && pad.bytes ? { ...q, bytes: pad.bytes } : q);
@@ -441,6 +483,13 @@ function PadRow({ pad, on, changed, bad, warn, onShow, onChange, onRemove }: { p
       <input aria-label="Scratchpad address" className="mono" value={start} onChange={e => setStart(e.target.value)} onBlur={commit} onKeyDown={key} onFocus={onShow} title="Where it is in memory while the script runs: over the program's bytes there, if any" />
       <input aria-label="Scratchpad size" className="mono" value={size} onChange={e => setSize(e.target.value)} onBlur={commit} onKeyDown={key} onFocus={onShow} title="How many bytes ($100 or 256)" />
       <input aria-label="Scratchpad fill" className="mono" value={fill} onChange={e => setFill(e.target.value)} onBlur={commit} onKeyDown={key} onFocus={onShow} title="The byte it holds when a run starts" />
+      <select aria-label="Scratchpad use" value={pad.role ?? ''} onFocus={onShow} onClick={e => e.stopPropagation()}
+        title={pad.role === 'file' ? `It takes the file when the script is run on files: it is as big as the file then, and ${pad.name}_load is the file's load address${pad.load != null ? ` ($${h4(pad.load)} for the file in it now)` : ''}. The program's code sees it too`
+          : pad.role === 'result' ? 'What a run on a file writes into it is the result, a file that loads at its address. The program\'s code sees it too'
+          : 'What it is when the script is run on files: File takes each file, Result holds what the run gives. Neither: memory only the script\'s own code sees'}
+        onChange={e => { const { role: _r, ...rest } = pad; const role = e.target.value; onChange(role === 'file' || role === 'result' ? { ...rest, role } : rest); }}>
+        <option value="">–</option><option value="file">File</option><option value="result">Result</option>
+      </select>
       <button className="icon-btn" aria-label={`Remove scratchpad ${pad.name}`} title="Remove the scratchpad" onClick={e => { e.stopPropagation(); onRemove(); }}><Icon name="x" size={13} /></button>
     </div>
   );
@@ -455,7 +504,7 @@ type ViewTarget = { kind: 'pad'; pad: ScriptPad; i: number } | { kind: 'patch'; 
  *  has it now (`live`), the bytes the last step changed marked in the hex. A scratchpad that has not run (or whose start
  *  content changed since) shows what a run starts it with; Edit start sets that, Copy to copies it to another
  *  scratchpad (or a new one), and Compare sets it against another scratchpad or its start with a heat map. */
-function PadView({ script, target, empty, names, live, theme, onShow, onCopy, onSave, onSaveText, onEdit, onMenu, placePad, toast }: ScriptOutputProps & { target: ViewTarget; empty: string }) {
+function PadView({ script, target, empty, names, live, theme, onShow, onCopy, onSave, onSaveText, onEdit, onMenu, onToProject, placePad, toast }: ScriptOutputProps & { target: ViewTarget; empty: string }) {
   const { cmpWith, mode, screen, set } = useScripts();
   const onMode = (m: PadMode) => set({ mode: m }), onScreen = (v: boolean) => set({ screen: v });
   const [editing, setEditing] = useState<string | null>(null);
@@ -582,6 +631,14 @@ function PadView({ script, target, empty, names, live, theme, onShow, onCopy, on
               { label: 'A new scratchpad (a copy)', run: () => copyTo(null) },
             ]);
           }} title={others.length ? 'Copy these bytes to another scratchpad, or to a new one: a run starts it with them' : 'Copy these bytes to a new scratchpad: a run starts it with them'}><Icon name="copy" size={13} /><span className="lbl">{others.length ? 'Copy to…' : 'Copy to a new pad'}</span></button>
+          <button className="btn small scr-to-project" onClick={e => {
+            const r = e.currentTarget.getBoundingClientRect(), load = pad!.role === 'file' && pad!.load != null ? pad!.load : at;
+            onMenu(r.left, r.bottom + 2, [
+              { header: `${pad!.name}, ${bytes.length} bytes, as a file that loads at $${h4(load)}` },
+              { label: 'Add it to this project', icon: 'plus', run: () => onToProject(`${fileName}.prg`, bytes.slice(), load, true) },
+              { label: 'Open it as a new project', run: () => onToProject(`${fileName}.prg`, bytes.slice(), load, false) },
+            ]);
+          }} title="These bytes as a file of the project, or as a new project of their own: a decrypted or unpacked file goes on to the listing, the graphics and the analysis"><Icon name="plus" size={13} /><span className="lbl">To the project…</span></button>
           <span className="grow" />
           {showAs !== 'compare' && <button className="btn small" onClick={() => onSaveText(`${fileName}.txt`, showAs === 'text' ? logText(bytes, pad!.fill ?? 0, screen) : text + '\n')}
             title={showAs === 'text' ? `Save the text as a log file: ${screen ? 'screen codes, 40 to a line' : 'PETSCII, a line to each RETURN ($0d)'}, without the fill after it` : `Save what is shown (${showAs === 'hex' ? 'the hex dump' : 'the code'}) as a text file`}><Icon name="download" size={13} /><span className="lbl">Save </span>.txt…</button>}

@@ -289,10 +289,14 @@ export interface ScriptCheck {
 
 const PAD_NAME = /^[A-Za-z_]\w*$/;
 
-/** the names a script's code may use: the program's, the hardware's and its scratchpads' (`pad`, `pad_end`) */
+/** the names a script's code may use: the program's, the hardware's and its scratchpads' (`pad`, `pad_end`, and
+ *  `pad_load`, the load address of the file in the scratchpad that takes a file) */
 export function scriptNames(env: ScriptEnv, pads: readonly ScriptPad[]): Map<string, Addr> {
   const out = new Map(env.names);
-  for (const p of pads) if (PAD_NAME.test(p.name)) { out.set(p.name, p.start); out.set(`${p.name}_end`, p.start + p.size); }
+  for (const p of pads) if (PAD_NAME.test(p.name)) {
+    out.set(p.name, p.start); out.set(`${p.name}_end`, p.start + p.size);
+    if (p.role === 'file') out.set(`${p.name}_load`, (p.load ?? 0) & 0xffff);
+  }
   return out;
 }
 
@@ -378,7 +382,7 @@ export function checkScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 
   const free = freePlace(env.files, 0x100, pads);
   let pc = free ?? 0xc000;
   let asm = at(pc);
-  const padNames = new Set(script.pads.flatMap(p => [p.name, `${p.name}_end`]));
+  const padNames = new Set(script.pads.flatMap(p => [p.name, `${p.name}_end`, `${p.name}_load`]));
   const used = [...asm.external].filter(([n]) => !padNames.has(n) && !env.values?.has(n)).map(([name, line]) => ({ name, line, at: names.get(name)! }));
   let place: ScriptCheck['place'] = 'own';
   if (!setsItsPlace(script.source, lang) && !asm.errors.length) {
@@ -457,8 +461,12 @@ export interface ScriptRun {
   instructions: number;
   cycles: number;
   regs: { a: number; x: number; y: number; s: number; p: number; pc: number };
-  /** what each scratchpad holds after the run, by name */
-  pads: { name: string; bytes: Uint8Array }[];
+  /** what each scratchpad holds after the run, by name; `wrote`: the bytes of it the run wrote, from the first to
+   *  after the last (missing: it wrote none) */
+  pads: { name: string; bytes: Uint8Array; wrote?: [number, number] }[];
+  /** the program's memory the run wrote, from $0200 (also where it wrote the bytes that were there, and where no
+   *  file has bytes) */
+  wrote?: ScriptRange[];
   /** the program's bytes it changed, nearby changes taken together (not the zero page and the stack) */
   changes: ScriptChange[];
   /** bytes changed that are not the program's, or are its zero page and stack (the CPU's work area): not kept */
@@ -500,7 +508,8 @@ export function scriptStartMemory(env: ScriptEnv, script: Pick<UserScript, 'pads
   // each scratchpad as a run starts it: its start content, the rest its fill
   for (const p of script.pads) {
     if (!(p.start >= 0 && p.size >= 1 && p.start + p.size <= 0x10000)) continue;
-    own.set(padStart(p), p.start); mine.fill(1, p.start, p.start + p.size);
+    // (2: a scratchpad that takes a file or holds a result, which the program's code sees too)
+    own.set(padStart(p), p.start); mine.fill(p.role ? 2 : 1, p.start, p.start + p.size);
   }
   for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
   // its instructions' bytes (not its data): a write there changes its code
@@ -527,7 +536,9 @@ export interface StackEntry {
  * holds. Two memories: the program's, as LOAD leaves it, and the script's own, with its code and its scratchpads
  * (filled). The script's code reads and writes its own memory at its own addresses and the program's everywhere else;
  * the program's code (a routine the script calls) only ever sees the program's memory, even at the addresses of the
- * script's code. Whose code runs follows the jumps: a JSR, JMP or branch from the script to an address of its own
+ * script's code. A scratchpad that takes a file or holds a result (ScriptPad.role) is the one part of the script's
+ * memory the program's code sees too: a routine of the program the script calls reads the file there and writes its
+ * result there. Whose code runs follows the jumps: a JSR, JMP or branch from the script to an address of its own
  * stays in the script, anything else goes to the program, and an RTS goes back to whoever made the JSR. The zero page
  * and the stack are shared. The 6510 starts at the entry with the stack holding the return address of a SYS, and goes
  * until the script returns, a BRK or JAM, or `limit` instructions.
@@ -540,14 +551,19 @@ export interface StackEntry {
 class ScriptBus implements Bus {
   constructor(private readonly mem: Uint8Array, private readonly own: Uint8Array, private readonly mine: Uint8Array, private readonly ctx: { script: boolean; at: number },
     /** the script's code bytes, and how many times the script wrote over each (a check: code that changes itself) */
-    private readonly code: Uint8Array, readonly overCode: Uint32Array) { }
+    private readonly code: Uint8Array, readonly overCode: Uint32Array,
+    /** which bytes the run wrote: of the program's memory, and of the script's own */
+    private readonly wrote: Uint8Array, private readonly wroteOwn: Uint8Array) { }
   /** the instruction running (the script's, at ctx.at) reaches memory through a pointer */
   private viaPointer(): boolean { const m = OPC[this.own[this.ctx.at]].mode; return m === 'izy' || m === 'izx'; }
-  read(a: number): number { return this.ctx.script && this.mine[a] && !(this.code[a] && this.viaPointer()) ? this.own[a] : this.mem[a]; }
+  /** whether an access at `a` goes to the script's own memory: the script's code at its own addresses, and anyone's at
+   *  a scratchpad that takes a file or holds a result (`m` 2) */
+  private ownAt(a: number): boolean { const m = this.mine[a]; return m !== 0 && (m === 2 || (this.ctx.script && !(this.code[a] && this.viaPointer()))); }
+  read(a: number): number { return this.ownAt(a) ? this.own[a] : this.mem[a]; }
   write(a: number, v: number): void {
-    if (this.ctx.script && this.mine[a] && !(this.code[a] && this.viaPointer())) { this.own[a] = v; if (this.code[a]) this.overCode[a]++; } else this.mem[a] = v;
+    if (this.ownAt(a)) { this.own[a] = v; this.wroteOwn[a] = 1; if (this.code[a]) this.overCode[a]++; } else { this.mem[a] = v; this.wrote[a] = 1; }
   }
-  fetch(a: number): number { return this.ctx.script && this.mine[a] ? this.own[a] : this.mem[a]; }
+  fetch(a: number): number { const m = this.mine[a]; return m !== 0 && (m === 2 || this.ctx.script) ? this.own[a] : this.mem[a]; }
 }
 
 export class ScriptMachine implements ScriptMemory {
@@ -577,6 +593,9 @@ export class ScriptMachine implements ScriptMemory {
   private readonly t0 = Date.now();
   /** how many times the script wrote over each byte of its own code */
   readonly overCode = new Uint32Array(0x10000);
+  /** which bytes the run wrote: of the program's memory, and of the script's own (its scratchpads) */
+  private readonly wrote = new Uint8Array(0x10000);
+  private readonly wroteOwn = new Uint8Array(0x10000);
 
   constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
     if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
@@ -585,7 +604,7 @@ export class ScriptMachine implements ScriptMemory {
     // the files, the scratchpads, the script's code, the SYS return on the stack and the init's zero page
     scriptStartMemory(env, script, check, this);
     this.inScript = !!mine[check.entry];
-    const bus = new ScriptBus(mem, own, mine, ctx, this.code, this.overCode);
+    const bus = new ScriptBus(mem, own, mine, ctx, this.code, this.overCode, this.wrote, this.wroteOwn);
     const cpu = this.cpu = new Cpu(bus);
     // called like SYS (the stack holds its return); the registers and the flags the script's init gives (else A, X
     // and Y 0 and interrupts off)
@@ -651,7 +670,7 @@ export class ScriptMachine implements ScriptMemory {
   }
 
   /** a byte as the code running now sees it (or as the script's code or the program's does) */
-  peek(a: Addr, script = this.inScript): number { return script && this.mine[a & 0xffff] ? this.own[a & 0xffff] : this.mem[a & 0xffff]; }
+  peek(a: Addr, script = this.inScript): number { const m = this.mine[a & 0xffff]; return m && (script || m === 2) ? this.own[a & 0xffff] : this.mem[a & 0xffff]; }
 
   /** the line of the script's code at `pc` (null: not the script's code, or no line) */
   lineAt(pc: Addr = this.cpu.pc): number | null { return this.mine[pc] && this.check.lines[pc] ? this.check.lines[pc] : null; }
@@ -709,8 +728,11 @@ export class ScriptMachine implements ScriptMemory {
     return {
       end: this.end ?? 'limit', at: this.end ? this.at : cpu.pc, instructions: this.instructions, cycles: this.cycles,
       regs: { a: cpu.a, x: cpu.x, y: cpu.y, s: cpu.s, p: cpu.p, pc: cpu.pc },
-      pads: this.script.pads.map(p => ({ name: p.name, bytes: this.own.slice(p.start, p.start + p.size) })),
-      changes, other, mem, own: this.own, ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
+      pads: this.script.pads.map(p => {
+        const w = this.wroteOwn.subarray(p.start, p.start + p.size), first = w.indexOf(1);
+        return { name: p.name, bytes: this.own.slice(p.start, p.start + p.size), ...(first >= 0 ? { wrote: [first, w.lastIndexOf(1) + 1] as [number, number] } : {}) };
+      }),
+      changes, other, mem, own: this.own, wrote: maskRanges(this.wrote, 0x200), ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
     };
   }
 }

@@ -174,6 +174,7 @@ mimir-studio/
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-watch.ts          skriptets watch-lista: det koden skriver, hittat i koden, och värdena (10.3)
+│  ├─ src/script-files.ts          ett skript kört på filer: filen i en scratchpad, och vad körningen ger som filer (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -2636,6 +2637,38 @@ $06, $08` i `.asm`-filen efter en körning.
   cell visar adressen, båda värdena och hur många bitar som skiljer; ett klick går till cellens rad. Bredvid kartan
   (under den när visningen är smal) står raderna om 16 byte där något skiljer, båda scratchpadsens byte under varandra
   med de olika markerade, högst 300 åt gången runt raden som klickats.
+- **Filer in och ut** (`script-files.ts`, `ScriptFiles.tsx`, 2026-11-22): ett skript arbetar också på filer från den
+  monterade disken eller bandet, så att spelets egen uppackare eller en dekryptering körs på en nivåfil och det den
+  ger blir en fil igen.
+  - **En fil in i en scratchpad:** *From a file…* (bredvid *From a block…*) listar diskens directory (en PRG utan sin
+    laddadress, en annan fil som den är), det diskens loader laddar (som loaderns flik öppnar dem: uppackade, på sin
+    adress) och bandets filer, och lägger den valda i en ny scratchpad, lika stor som filen, eller i en av skriptets
+    (som blir så stor som filen när inget av skriptets ligger i vägen, annars får den filens första byte). Filens byte
+    är det en körning börjar scratchpaden med (`ScriptPad.data`), och filens laddadress sparas (`ScriptPad.load`).
+  - **Användning** (kolumnen *Use* i scratchpadlistan, `ScriptPad.role`): *File* är scratchpaden som tar filen när
+    skriptet körs på filer (en i varje skript; den första som fylls med *From a file…* får den), *Result* en vars
+    innehåll efter körningen är resultatet. I koden finns `pad_load` för en *File*-scratchpad: filens laddadress (0
+    utan). **En scratchpad med en användning ser programmets kod också** (`mine` = 2 i `ScriptMachine`): en
+    rutin i programmet som skriptet anropar läser filen där och skriver sitt resultat där. Övriga scratchpads ser
+    bara skriptets egen kod, som förut.
+  - **Run on files…** (under scratchpadlistan, och högerklick på en fil i Explorerns disk- eller bandlista: *Run a
+    script on "…"*) öppnar en dialog med filerna, en ruta var, grupperade efter var de kommer ifrån (*All*, *None*,
+    en ruta för hela gruppen), och vad som händer med resultaten: *Open them as a new project*, *Add them to this
+    project* eller *Save them to a folder…*. För varje fil (`fileRunPlan`) blir *File*-scratchpaden så stor som
+    filen (`pad_end` är adressen efter den) och står kvar där den är när filen får plats, annars placeras den om;
+    skriptet körs i skriptens worker på programmet utan skriptets tidigare ändringar. **Ingenting går in i
+    programmet.** Resultatet (`fileRunResults`) är, i den här ordningen: varje *Result*-scratchpad körningen skrev
+    i, från dess början till efter sista skrivna byte, som en fil på scratchpadens adress; annars
+    *File*-scratchpaden när körningen skrev i den (arbete på plats), hela, på filens laddadress; annars den längsta
+    sträckan av programmets minne som körningen skrev (en uppackares utdata), på sin adress. Vad körningen skrev
+    spåras per byte (`ScriptRun.wrote`, `pads[].wrote`), så nollor som skrivs över nollor räknas. Filerna heter
+    efter filen och skriptet (`level1_decrypt.prg`). En körning som jammar eller når gränsen, eller inte skriver
+    något, ger ingen fil och sägs i meddelandet efteråt; *Stop* avbryter och då öppnas eller sparas ingenting.
+  - **En scratchpad till projektet:** *To the project…* i visningen lägger byten som visas som en fil i projektet
+    (*Add it to this project*) eller öppnar dem som ett nytt projekt, på scratchpadens adress (för en
+    *File*-scratchpad filens laddadress). *Save .bin…* och *Save .prg…* finns kvar.
+  - Inte med än: en fil från datorn (bara disk och band), loaderfiler som de ligger packade på disken, och
+    högerklick i loaderflikarna och i Explorerns C64-utseende.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

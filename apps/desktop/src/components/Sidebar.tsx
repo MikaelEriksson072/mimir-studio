@@ -38,6 +38,8 @@ interface SidebarProps {
   tape: MountedTape | null; onEjectTape: () => void;
   /** open a file from the tape (`add`: add it to the project), and the Tape tab (every block, the TapeTool script) */
   onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void;
+  /** a right-click on a file of the disk or the tape in the Explorer's list: the app's menu for it (Run a script on it…) */
+  onDiskFileMenu?: (f: D64File, x: number, y: number) => void; onTapeFileMenu?: (f: TapeFile, x: number, y: number) => void;
   /** the disk's and the tape's files that are in the project: marked in their lists */
   diskOpen: ReadonlySet<D64File>; tapeOpen: ReadonlySet<TapeFile>;
   /** the project's cartridge, read (spec 13.9): a bank in the project is gone to with a click, one out of it added
@@ -156,7 +158,7 @@ interface QuicksaveProps {
   onFavouriteKept: (q: QuicksaveEntry, on: boolean) => void;
 }
 
-export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
+export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLabel, onAdd, onDemo, onRemoveFile, onSetStart, disk, onEject, tape, onEjectTape, onOpenFromTape, onShowTape, onDiskFileMenu, onTapeFileMenu, diskOpen, tapeOpen, cart, onOpenBank, onOneSource, fileAddr, bankView, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed, onOpenFromDisk, packing, bmSel, onBmSelect, onBmGo, onBmAdd, onBmEdit, onBmDelete, bmEditing, pack, quicksave, patches, junk, viewOffsets, scripts, onPlayMusic, musicPlayer = 'vice', onShowBlock, library }: SidebarProps) {
   const [q, setQ] = useState('');
   const [symTab, setSymTab] = useState<'labels' | 'hw'>('labels');
   if (view === 'explorer') {
@@ -189,8 +191,8 @@ export function Sidebar({ view, A, R, project, colors, cursor, onNavigate, onLab
           <p className="side-hint">The File menu opens a new program, a cartridge, a snapshot, a D64 or a TAP. Dropped on the window with Shift, files are added.</p>
         </SideSection>
         {cart && project.cart && <CartridgeSection crt={cart} name={project.cart.name} project={project} onOpenBank={onOpenBank} onOneSource={onOneSource} />}
-        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowDloc={onShowDloc} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} onShowParaProtect={onShowParaProtect} onShowDiskSpeed={onShowDiskSpeed} />}
-        {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} />}
+        {disk && <DiskSection disk={disk} open={diskOpen} onEject={onEject} onOpenFromDisk={onOpenFromDisk} onFileMenu={onDiskFileMenu} onShowSpindle={onShowSpindle} onShowBitfire={onShowBitfire} onShowBooze={onShowBooze} onShowSparkle={onShowSparkle} onShowKrill={onShowKrill} onShowCovert={onShowCovert} onShowDloc={onShowDloc} onShowIffl={onShowIffl} onShowPirateSlayer={onShowPirateSlayer} onShowParaProtect={onShowParaProtect} onShowDiskSpeed={onShowDiskSpeed} />}
+        {tape && <TapeSection tape={tape} open={tapeOpen} onEject={onEjectTape} onOpenFromTape={onOpenFromTape} onShowTape={onShowTape} onFileMenu={onTapeFileMenu} />}
         <QuicksaveSection {...quicksave} />
         {patches.list.length > 0 && <PatchesSection {...patches} />}
         {junk.list.length > 0 && <JunkSection {...junk} A={A} project={project} fileAddr={fileAddr} />}
@@ -629,7 +631,7 @@ function CartridgeSection({ crt, name, project, onOpenBank, onOneSource }: { crt
  *  screen after LOAD"$",8 and LIST, where Aa switches the character set. A PRG opens with a click or Enter; + adds it
  *  to the project. Enter's default is prevented: it would also press the button a dialog the opening shows has focused
  *  ("The work is not saved" → Save as a project…) */
-function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowDloc: () => void; onShowIffl: () => void; onShowPirateSlayer: () => void; onShowParaProtect: () => void; onShowDiskSpeed: () => void }) {
+function DiskSection({ disk, open, onEject, onOpenFromDisk, onFileMenu, onShowSpindle, onShowBitfire, onShowBooze, onShowSparkle, onShowKrill, onShowCovert, onShowDloc, onShowIffl, onShowPirateSlayer, onShowParaProtect, onShowDiskSpeed }: { disk: MountedDisk; open: ReadonlySet<D64File>; onEject: () => void; onOpenFromDisk: (f: D64File, add: boolean) => void; onFileMenu?: (f: D64File, x: number, y: number) => void; onShowSpindle: () => void; onShowBitfire: () => void; onShowBooze: () => void; onShowSparkle: () => void; onShowKrill: () => void; onShowCovert: () => void; onShowDloc: () => void; onShowIffl: () => void; onShowPirateSlayer: () => void; onShowParaProtect: () => void; onShowDiskSpeed: () => void }) {
   const { img } = disk;
   // Settings → General: the directory as a C64 lists it, and its character set switched as Commodore+Shift does (for
   // this disk; null: as the listing leaves it)
@@ -657,6 +659,7 @@ function DiskSection({ disk, open, onEject, onOpenFromDisk, onShowSpindle, onSho
           return (
             <div key={i} role="listitem" className={cx('disk-row', !prg && 'off', open.has(f) && 'on', f.pastEnd && 'cut')} aria-current={open.has(f) || undefined}
               title={titleOf(f)}
+              onContextMenu={onFileMenu && (e => { e.preventDefault(); onFileMenu(f, e.clientX, e.clientY); })}
               tabIndex={prg ? 0 : -1} onClick={() => { if (prg) onOpenFromDisk(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (prg && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromDisk(f, false); } }}>
               <span className="mono small disk-blocks">{f.blocks}</span>
               <span className="mono disk-name">"{f.name}"</span>
@@ -781,7 +784,7 @@ const TAPE_FORMAT: Record<TapeFile['format'], string> = { cbm: 'KERNAL', tapetoo
  *  the directory they would make on a disk, as LOAD"$",8 and LIST list it (core's tapeDirectory), the turbo loaders'
  *  too; FOUND switches to the lines LOAD prints as it searches the tape (core's tapeScreen), where a turbo loader's
  *  files, which the KERNAL does not see, are listed under the screen; Aa switches the character set. */
-function TapeSection({ tape, open, onEject, onOpenFromTape, onShowTape }: { tape: MountedTape; open: ReadonlySet<TapeFile>; onEject: () => void; onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void }) {
+function TapeSection({ tape, open, onEject, onOpenFromTape, onShowTape, onFileMenu }: { tape: MountedTape; open: ReadonlySet<TapeFile>; onEject: () => void; onOpenFromTape: (f: TapeFile, add: boolean) => void; onShowTape: () => void; onFileMenu?: (f: TapeFile, x: number, y: number) => void }) {
   const { img } = tape;
   const tt = img.files.filter(f => f.format === 'tapetool').length;
   const t64 = img.t64;
@@ -810,6 +813,7 @@ function TapeSection({ tape, open, onEject, onOpenFromTape, onShowTape }: { tape
     const can = tapeOpens(f);
     return (
       <div key={i} role="listitem" className={cx('disk-row tape-row', !can && 'off', f.errors.length > 0 && 'bad', open.has(f) && 'on')} aria-current={open.has(f) || undefined} title={titleOf(f)}
+        onContextMenu={onFileMenu && (e => { e.preventDefault(); onFileMenu(f, e.clientX, e.clientY); })}
         tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (can && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromTape(f, false); } }}>
         <span className="mono small disk-blocks" title={t64 ? `Entry ${f.id} of the directory` : undefined}>{t64 ? f.id : tapeTime(f.seconds)}</span>
         <span className="mono disk-name">{f.format === 'tapetool' ? f.name : `"${f.name}"`}{f.headerCode ? <span className="muted"> +header</span> : null}</span>

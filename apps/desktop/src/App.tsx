@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -27,7 +27,8 @@ import { useUi, type Activity, type BottomTab, type InspectorMode } from './stor
 import { useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
 import { useBuildTemplates } from './store/buildTemplates';
-import { runScriptInWorker } from './lib/scriptrun';
+import { runScriptInWorker, stopScript } from './lib/scriptrun';
+import { RunOnFilesModal, type FilesRunBusy, type FilesRunThen, type ScriptFileChoice } from './components/ScriptFiles';
 import { exportWorker, useAnalysis, verifyInWorker } from './lib/analysis';
 import { PROJECT_FOLDERS } from '../shared/projects';
 import { bankAdr, cx, errorText, filesKey, ROW, store, uid } from './lib/util';
@@ -909,7 +910,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const exporting = useRef(false);
   /** the folder in the project a disk's or tape's sources go in: its name, kept clear of the project's own folders */
   const exportFolder = (from: string) => { const n = projectNameFor(from); return (Object.values(PROJECT_FOLDERS) as string[]).includes(n.toLowerCase()) ? `${n}-files` : n; };
+  /** set while the loader tabs' export functions are only asked which files they have (scriptFileChoices): the
+   *  groups are kept here and nothing is exported */
+  const groupsOnly = useRef<LoaderGroup[] | null>(null);
   const exportLoaderFiles = (from: string, groups: LoaderGroup[]) => {
+    if (groupsOnly.current) { groupsOnly.current.push(...groups); return; }
     if (!kr) return needDesktop();
     if (!groups.length) { toast(`${from} has no file that opens as a program`, 'info'); return; }
     if (!home) { setExportAsk({ from, groups }); return; }
@@ -2643,6 +2648,114 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (r) toast(`Saved ${r.path} (${bytes.length} bytes${prg ? `, loads at $${h4(load)}` : ''})`, 'ok');
     } catch (e) { toast(`Save failed: ${errorText(e)}`, 'err'); }
   };
+  /* ---- scripts and files (spec 10.3): a file of the mounted disk or the tape into a scratchpad, a script run on
+     files, and a scratchpad's bytes as a file of the project ---- */
+  /** the files a script can be given: the mounted disk's directory (a PRG without its load address, another file as it
+   *  is), what the disk's loader loads (as its tab opens them: unpacked, at their addresses) and the tape's files */
+  const scriptFileChoices = (): ScriptFileChoice[] => {
+    const out: ScriptFileChoice[] = [];
+    const add = (group: string, key: string, name: string, load: Addr | null, bytes: Uint8Array) => { if (bytes.length) out.push({ key, group, name, load, bytes }); };
+    if (disk) {
+      for (const f of disk.img.files) {
+        if (f.pastEnd) continue;
+        try {
+          const raw = readD64File(disk.bytes, f);
+          if (f.type === 'PRG' && raw.length > 2) add(`${disk.name}: the directory`, `dir/${f.track}/${f.sector}`, f.name, raw[0] | raw[1] << 8, raw.subarray(2));
+          else if (f.type !== 'PRG') add(`${disk.name}: the directory`, `dir/${f.track}/${f.sector}`, `${f.name} (${f.type})`, null, raw);
+        } catch { /* a file that cannot be read is not listed */ }
+      }
+      const loaders: [string, () => void][] = [['Spindle jobs', exportSpindleFiles], ['Bitfire files', exportBitfireFiles], ['BoozeLoader files', exportBoozeFiles], ['Sparkle bundles', exportSparkleFiles],
+        ['IFFL parts', exportIfflParts], ['Krill\'s loader', exportKrillFiles], ['Covert Bitops loader', exportCovertFiles], ['DLoC\'s loader', exportDlocFiles], ['Pirate Slayer files', exportPirateSlayerFiles],
+        ['Para-Protect files', exportParaProtectFiles], ['Disk-Speed files', exportDiskSpeedFiles]];
+      for (const [label, ask] of loaders) {
+        const groups: LoaderGroup[] = groupsOnly.current = [];
+        try { ask(); } catch { /* not such a disk */ } finally { groupsOnly.current = null; }
+        for (const g of groups) try { g.files().forEach((f, k) => add(`${disk.name}: ${label}`, `${label}/${g.name}/${k}`, f.name, f.load, f.bytes)); } catch { /* a file that does not open is not listed */ }
+      }
+    }
+    if (tape) tape.img.files.forEach((f, i) => { if (f.load != null && f.data.length) add(`${tape.name}: the tape`, `tape/${i}`, f.name || tapeFileName(f), f.load, f.data); });
+    return out;
+  };
+  /** Run on files…: the script, the files it can be given and the ones ticked first; and where a run is */
+  const [filesRun, setFilesRun] = useState<{ id: string; files: ScriptFileChoice[]; first: string[] } | null>(null);
+  const [filesBusy, setFilesBusy] = useState<FilesRunBusy | null>(null);
+  const filesRunScript = filesRun ? userScripts.find(s => s.id === filesRun.id) ?? null : null;
+  /** the dialog that runs a script on files (`first`: the files ticked when it opens, by their keys); a script with no
+   *  scratchpad that takes a file is shown instead, with its scratchpads */
+  const openRunOnFiles = (id: string, first: string[] = []) => {
+    const s = userScripts.find(x => x.id === id); if (!s) return;
+    if (filePad(s.pads) < 0) {
+      openUserScript(id); useScripts.getState().set({ outTab: 'pads', outFolded: false });
+      toast(`"${s.name}" has no scratchpad that takes a file: under Scratchpads, set the use of one to File (or fill one with From a file…), and it can be run on files`, 'info');
+      return;
+    }
+    setFilesRun({ id, files: scriptFileChoices(), first });
+  };
+  /** a right-click on a file of the disk or the tape in the Explorer: the scripts that can be run on it */
+  const fileScriptMenu = (key: string, name: string, x: number, y: number) => {
+    const can = userScripts.filter(s => filePad(s.pads) >= 0);
+    setMenu({ x, y, items: [
+      { header: `Run a script on "${name}"` },
+      ...can.map((s): MenuItem => ({ label: `"${s.name}"…`, icon: 'play', run: () => openRunOnFiles(s.id, [key]) })),
+      ...(can.length ? [] : [{ label: userScripts.length ? 'No script takes a file yet: show how' : 'There is no script yet: show the Scripts tab', run: () => {
+        if (userScripts.length) openRunOnFiles(userScripts[0].id);
+        else { setUi({ tab: 'scripts' }); toast('A script that takes a file: New script, then under Scratchpads put a file into a scratchpad with From a file… (its use becomes File). Run on files… then runs it on any file of the disk or the tape', 'info'); }
+      } }] satisfies MenuItem[]),
+    ] });
+  };
+  /** the script of the dialog run on each of `files` in turn, in the scripts' worker (Stop ends it): the file in the
+   *  scratchpad that takes it, on the program without what the script's earlier runs changed. Nothing goes into the
+   *  program; the files the runs give are opened as a new project, added to this one, or saved to a folder */
+  const runOnFiles = async (files: ScriptFileChoice[], then: FilesRunThen) => {
+    const s = latest.current.project.userScripts?.find(x => x.id === filesRun?.id); if (!s || !files.length) return;
+    if (useScripts.getState().running) { toast('A script is running: wait for it, or stop it in the Scripts tab', 'info'); return; }
+    if (then === 'save' && !kr) return needDesktop();
+    const env = scriptEnvFor(s.id), outs: ScriptFileResult[] = [], failed: { name: string; why: string }[] = [];
+    let stopped = false;
+    useScripts.getState().set({ running: s.id });
+    try {
+      for (let i = 0; i < files.length && !stopped; i++) {
+        const f = files[i], file = { name: f.name, load: f.load, bytes: f.bytes };
+        setFilesBusy({ done: i, total: files.length, name: f.name });
+        const plan = fileRunPlan(env, s, file);
+        if ('error' in plan) { failed.push({ name: f.name, why: plan.error }); continue; }
+        try {
+          const run = await runScriptInWorker(env, { source: s.source, lang: s.lang, pads: plan.script.pads, init: s.init });
+          if (run.end === 'jam' || run.end === 'limit') { failed.push({ name: f.name, why: scriptEndText(run) }); continue; }
+          const r = fileRunResults(plan, file, run, s.name);
+          if (r.length) outs.push(...r); else failed.push({ name: f.name, why: 'the run wrote nothing: no result scratchpad, not the file\'s scratchpad, no memory' });
+        } catch (e) {
+          if (errorText(e) === 'stopped') stopped = true; else failed.push({ name: f.name, why: errorText(e) });
+        }
+      }
+    } finally { useScripts.getState().set({ running: null }); setFilesBusy(null); }
+    setFilesRun(null);
+    if (stopped) { toast(`"${s.name}" stopped: nothing was opened or saved`, 'info'); return; }
+    // two files of one name: the later ones numbered
+    const seen = new Map<string, number>();
+    for (const o of outs) { const k = o.name.toLowerCase(), n = (seen.get(k) ?? 0) + 1; seen.set(k, n); if (n > 1) o.name = o.name.replace(/\.prg$/, `_${n}.prg`); }
+    const n = files.length, ran = `"${s.name}" ran on ${n} file${n === 1 ? '' : 's'}`;
+    const names = `${outs.slice(0, 4).map(o => `${o.name} ($${h4(o.load)}, ${o.bytes.length} bytes)`).join(', ')}${outs.length > 4 ? `, and ${outs.length - 4} more` : ''}`;
+    const failText = failed.length ? `${failed.length} gave no file: ${failed.slice(0, 3).map(x => `${x.name} (${x.why})`).join('; ')}${failed.length > 3 ? `; and ${failed.length - 3} more` : ''}` : '';
+    if (!outs.length) { toast(`${ran} and gave no file. ${failText}`, 'warn'); return; }
+    if (then === 'save') {
+      try {
+        const w = await kr!.writeExport({ target: 'pick', files: Object.fromEntries(outs.map(o => [o.name, makePrg(o.load, o.bytes)])) });
+        if (w) toast(`${ran}: ${outs.length} result${outs.length === 1 ? '' : 's'} saved to ${w.dir}: ${names}${failText ? `. ${failText}` : ''}`, failed.length ? 'warn' : 'ok');
+      } catch (e) { toast(errorText(e), 'err'); }
+      return;
+    }
+    try {
+      addFiles(outs.map(o => withId(parsePrg(o.name, makePrg(o.load, o.bytes)))), then === 'add',
+        { note: `${ran}: ${names} ${then === 'add' ? 'added to the project' : 'opened'}${failText ? `. ${failText}` : ''}`, what: `the result${outs.length === 1 ? '' : 's'} of "${s.name}"`, show: true });
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
+  /** a scratchpad's bytes as a file that loads at `load`: added to the project, or opened as a new project */
+  const padToProject = (name: string, bytes: Uint8Array, load: Addr, add: boolean) => {
+    try {
+      addFiles([withId(parsePrg(name, makePrg(load, bytes)))], add, { note: `${name} ($${h4(load)}, ${bytes.length} bytes, from a scratchpad) ${add ? 'added to the project' : 'opened as a new project'}`, show: true });
+    } catch (e) { toast(errorText(e), 'err'); }
+  };
   /** the drive code's source (the Drive code tab), as a file of its own */
   const saveDrive = async (D: DriveCode) => {
     if (!kr) return needDesktop();
@@ -4294,6 +4407,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
           onOneSource={oneSource} fileAddr={fileAddr} bankView={{ A: As, base, cursor: vCursor }} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer} onShowBlock={b => { showBlock(b); setDrawer(null); }}
           disk={disk} packing={packing} onEject={ejectDisk} onShowSpindle={() => setUi({ bottom: 'spindle', panelOpen: true })} onShowBitfire={() => setUi({ bottom: 'bitfire', panelOpen: true })} onShowBooze={() => setUi({ bottom: 'booze', panelOpen: true })} onShowSparkle={() => setUi({ bottom: 'sparkle', panelOpen: true })} onShowKrill={() => setUi({ bottom: 'krill', panelOpen: true })} onShowCovert={() => setUi({ bottom: 'covert', panelOpen: true })} onShowDloc={() => setUi({ bottom: 'dloc', panelOpen: true })} onShowIffl={() => setUi({ bottom: 'iffl', panelOpen: true })} onShowPirateSlayer={() => setUi({ bottom: 'pirateslayer', panelOpen: true })} onShowParaProtect={() => setUi({ bottom: 'paraprotect', panelOpen: true })} onShowDiskSpeed={() => setUi({ bottom: 'diskspeed', panelOpen: true })} onOpenFromDisk={(f, add) => { openFromDisk(f, add); setDrawer(null); }} diskOpen={diskOpen} tapeOpen={tapeOpen}
           tape={tape} onEjectTape={ejectTape} onShowTape={() => setUi({ bottom: 'tape', panelOpen: true })} onOpenFromTape={(f, add) => { openFromTape(f, add); setDrawer(null); }}
+          onDiskFileMenu={(f, x, y) => fileScriptMenu(`dir/${f.track}/${f.sector}`, f.name, x, y)} onTapeFileMenu={(f, x, y) => fileScriptMenu(`tape/${tape?.img.files.indexOf(f)}`, f.name, x, y)}
           bmSel={bmSel} onBmSelect={setBmSel} onBmGo={goBookmark} onBmAdd={() => startBookmark()} onBmEdit={openBookmarkEditor} onBmDelete={deleteBookmark}
           bmEditing={bmEdit != null ? {
             addr: bmEdit.at, end: bmEdit.end ?? null, cursorAt: lineAddr() ?? null, cursorEnd: curLine ? lineRange(curLine)?.end ?? null : null, selection: selArea(),
@@ -4426,7 +4540,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 onEdit={editUserScript} onRemove={removeUserScript} onRun={runUserScript} onWrite={(id, text) => runUserScript(id, text, true)} onSafe={setScriptSafe} onFinish={finishScriptRun} onTakeOut={takeOutScript} onSwitchPatch={switchOnePatch}
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
-                blocks={scriptBlocks} cursorBlock={cursor != null ? findBlock(A.blocks, cursor)?.start ?? null : null} onCopyBlock={(s, id, pad) => copyBlockIntoPad(s, id, pad)} />}
+                blocks={scriptBlocks} cursorBlock={cursor != null ? findBlock(A.blocks, cursor)?.start ?? null : null} onCopyBlock={(s, id, pad) => copyBlockIntoPad(s, id, pad)}
+                files={scriptFileChoices} onRunOnFiles={id => openRunOnFiles(id)} onToProject={padToProject} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
               {tab === 'gfx' && (g => <MemoryGfx key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
@@ -4528,6 +4643,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         onSave={saveTemplate} onRemove={name => { useBuildTemplates.getState().remove(name); toast(`The template "${name}" is deleted${project.buildTemplate?.name === name && !project.buildTemplate.builtIn ? ': this project keeps its copy' : ''}`, 'ok'); }}
         onUse={t => applyTemplate(t)} onClose={closeTemplates} />}
       {modal === 'project' && <CreateProjectModal name={project.name} moving={movingText()} submit="Create project and move the work" onCreate={createFromWork} onClose={() => setModal(null)} />}
+      {filesRun && filesRunScript && <RunOnFilesModal script={filesRunScript} files={filesRun.files} first={filesRun.first} busy={filesBusy} onRun={(f, then) => void runOnFiles(f, then)} onStop={stopScript} onClose={() => setFilesRun(null)} />}
       {exportAsk && <CreateProjectModal title="Export files to project needs a project" name={projectNameFor(exportAsk.from)} moving={movingText()} submit="Create project and export the files" onCreate={exportIntoNewProject} onClose={() => setExportAsk(null)}
         lead={`Export files to project writes the ${exportAsk.groups.length} source${exportAsk.groups.length === 1 ? '' : 's'} of ${exportAsk.from} in a folder of the project, ${exportFolder(exportAsk.from)}. The work becomes the project first, as Save makes it one.`} />}
       {unsavedAsk && <UnsavedWorkModal name={(unsavedAsk.kept ?? project).name} what={unsavedAsk.what} left={unsavedAsk.kept && home ? home.name : null}

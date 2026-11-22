@@ -54,9 +54,9 @@ const readLibrary = (): LibraryScript[] => {
       return {
         name: s.name, lang: s.lang === '64tass' ? '64tass' : 'kickass', source: s.source, saved: Number(s.saved) || 0, ...(s.safe === true ? { safe: true } : {}), ...(init ? { init } : {}),
         ...(watch.length ? { watch } : {}), ...(unwatch.length ? { unwatch } : {}),
-        pads: s.pads.map(({ name, start, size, fill, data, src }) => {
+        pads: s.pads.map(({ name, start, size, fill, data, src, role, load }) => {
           const d = readData(data), w = readSrc(src);
-          return { name, start, size, ...(fill ? { fill } : {}), ...(d ? { data: d } : {}), ...(w ? { src: w } : {}) };
+          return { name, start, size, ...(fill ? { fill } : {}), ...(d ? { data: d } : {}), ...(w ? { src: w } : {}), ...(role === 'file' || role === 'result' ? { role } : {}), ...(Number.isInteger(load) && load! >= 0 && load! <= 0xffff ? { load } : {}) };
         }),
       };
     }) : [];
