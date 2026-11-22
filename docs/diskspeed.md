@@ -110,8 +110,28 @@ C64:an väntar på driven på CLK:
 
 Avkodaren på `$1D22` sparar nollsidan till `$CE00`. Den avkodar `$1D81-$3ED1` och `$6A00-$CCE2` bakifrån med en
 löpande subtraktion (varje byte minus den förra avkodade, start `$36` och `$49`), anropar `$AAB2` och startar spelet på
-`$886F`. Filerna i Disk-Speed-fliken är alltså som C64:an tar emot dem. Det färdiga spelet får man med Unpack på
-`GAME`: Sindri kör bootet till `$886F` och sparar `$0308-$F8FF`.
+`$886F`. Filerna i Disk-Speed-fliken är alltså som C64:an tar emot dem.
+
+### Är filerna packade?
+
+Analysen säger att 2NDBIT (71 % av filen ser komprimerad ut) och 3RDBIT (80 %) är packade och att FILE1 kanske är det.
+Ingen av dem är packad med en packare:
+
+- **2NDBIT och 3RDBIT** är krypterade av spelet självt (avkodaren ovan). Avkodaren ligger okrypterad först i 3RDBIT
+  (`$1D00-$1D80`), och OVER hoppar dit. Ingen fil kan avkodas för sig: avkodaren körs först när alla fem ligger inne.
+- **FILE1** är okrypterad. Rutinen på `$7596`, som PATCH anropar innan 2NDBIT laddas över `$6A00-$865B`, flyttar
+  `$4000-$55FF` till `$0700-$1CFF` och `$5600-$75FF` till `$D000-$EFFF` (under ROM:en). Sida för sida är det exakt de
+  byte spelet har där när det startar.
+- **PATCH och OVER** är vanlig kod.
+
+Körd för sig ger ingen av filerna något i Sindri: 2NDBIT från `$6A00` stannar i en JAM vid `$6AA6`, de andra går till
+READY efter en BRK. **Unpack på en fil ur Disk-Speed-fliken kör därför disken från `GAME`**, som LOAD och RUN gör
+(spec 13.5f), och alla fem ger det färdiga spelet: `$0308-$FFFF` med start `$886F` och `$01 = $3C`, samma som Unpack på
+`GAME`. Mimir analyserar det till 764 block och 1 896 etiketter med programstarten på `$886F`.
+
+Sindris sparade spel är VICE:s RAM när spelet startar på `$886F`, utom det RAM som ingen skrev (Sindri sparar `$00`
+där, VICE har sitt mönster från starten) och några byte av nollsidan som avkodaren sparat på `$CE00` (KERNAL:ns
+variabler, som beror på hur LOAD skrevs in).
 
 ## Sindri
 
@@ -124,6 +144,11 @@ Sindri stannade först i `$044A` och väntade på driven. Felet var att Sindris 
   adressen de byte läsaren ger.
 - Gammal mot ny drive: 297 slumpvisa skivor ur `Games` och `Demos` körda, 4 rör `$2000-$7FFF` i driven (BeachHead II
   från Bitnappers, Hoaxagon, Seaworld, Panda Lovers). Alla fyra ger samma lager och samma sparade byte som förut.
+- **Vektorerna.** Avkodaren sätter IRQ `$A8FA` och NMI `$AB33` i RAM:et på `$FFFE` och `$FFFA` innan spelet startar
+  med `$01 = $3C` (KERNAL:n bortkopplad). Sindri sparade först bara `$0308-$F8FF`, eftersom en del på sex byte långt
+  från resten inte räknades, och i VICE gick spelet då in i skräp vid första avbrottet. Nu behålls vektorerna när
+  programmet startar med KERNAL:n bortkopplad (spec 8.11b, *Vektorerna på `$FFFA-$FFFF`*). Gammal mot ny på 696
+  program: 4 sparas annorlunda, och i alla pekar vektorerna på en riktig avbrottsrutin.
 
 ## VICE
 
@@ -135,3 +160,11 @@ byte för byte läsarens vid `$0346`, 2NDBIT och 3RDBIT vid `$CE27`, och spelet 
 
 Spåren 37-40 på G64:orna är brus (långa SYNC, inga sektorer). Varken drivkoden eller C64:an läser dem. Om spelet
 senare kontrollerar skivan igen är inte utrett.
+
+Det uppackade spelet startar inte för sig. I VICE, laddat med monitorn och startat på `$886F` med `$01 = $3C`, kör det
+sin avbrottsrutin men skärmen är skräp. Det beror på I/O-läget, som inte finns i en PRG. OVER stänger av CIA:ornas
+avbrott (`$DC0D`/`$DD0D = $03`) och väljer VIC-bank 1 (`$DD02 = $3F`, `$DD00 = $C6`) och svart ram och bakgrund.
+Spelets init på `$AAB2`, som avkodaren anropar, sätter bitmappsläge (`$D011 = $3B`), rasteravbrottet (`$D01A = $01`,
+`$D012 = $28`) och volymen (`$D418 = $0F`). Startat från `$886F` i en nystartad C64 ligger CIA 1:s timeravbrott kvar och
+VIC tittar i bank 0. För att läsa och analysera spelet räcker filen. För att köra det skulle Sindri behöva spara I/O-läget
+med starten.

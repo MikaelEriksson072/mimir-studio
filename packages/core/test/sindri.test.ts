@@ -171,6 +171,55 @@ name:  .byte ${ascii('PART2')}
     expect(run.layers.map(l => l.entry)).toEqual([0x080d, 0xc000]);
     expect(unpackLog(run, 'boot', 0x0801, prg.length - 2).split('\n')[2]).toMatch(/^Drive: 1541 with "SIDE 1" S1, then "SIDE 2" S2 at \d+\.\d s, \d+ bytes read$/);
   });
+
+  it('runs a file a loader on the disk loads, which does not run alone, from the disk\'s boot file (Elite\'s 2NDBIT)', () => {
+    // BOOT copies a decoder to $c000, loads DATA to $4000 and jumps to the decoder, which takes the EOR $5a off DATA and
+    // starts it: DATA alone starts on a JAM, as Elite's files from the Disk-Speed table do one by one
+    const plain = Uint8Array.from([0x58, 0xee, 0x20, 0xd0, 0x4c, 0x01, 0x40, ...Array.from({ length: 249 }, (_, i) => (i * 7) & 0xff)]);
+    const data = makePrg(0x4000, plain.map(b => b ^ 0x5a));
+    const src = fromSource('boot.prg', `*=$0801
+.byte $0b,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00
+*=$080d
+       ldx #15
+cp:    lda dec,x
+       sta $c000,x
+       dex
+       bpl cp
+       lda #4
+       ldx #<name
+       ldy #>name
+       jsr $ffbd
+       lda #1
+       ldx #8
+       ldy #1
+       jsr $ffba
+       lda #0
+       jsr $ffd5
+       jmp $c000
+name:  .byte $44,$41,$54,$41
+dec:   .byte $a2,$00,$bd,$00,$40,$49,$5a,$9d,$00,$40,$e8,$d0,$f5,$4c,$00,$40
+`);
+    const boot = makePrg(src.load, src.bytes);
+    const disk = makeD64({ name: 'disk boot', id: 'db', files: [{ name: 'boot', data: boot }, { name: 'data', data }] });
+    const at = (start: number, end: number) => ({ name: 'BOOT', prg: boot, start, end });
+    expect(unpackPrg(data, roms, disk)).toMatchObject({ unpacked: false, stop: { reason: 'jam', pc: 0x4000 } });
+    const run = unpackPrg(data, roms, disk, null, null, null, null, [], at(0x4000, 0x40ff));
+    expect(run.boot).toEqual({ name: 'BOOT', after: 1, loading: [], alone: { entry: 0x4000, stop: expect.objectContaining({ reason: 'jam', pc: 0x4000 }) }, from: 'disk' });
+    expect(run.layers.map(l => l.entry)).toEqual([0x080d, 0xc000, 0x4000]);
+    expect(run.unpacked).toBe(true);
+    expect(run.saved).toMatchObject({ entry: 0x4000, start: 0x4000, end: 0x40ff });
+    expect(run.saved!.prg).toEqual(makePrg(0x4000, plain));
+    expect(notPacked(run)).toBe(false);
+    expect(unpackSummary(run)).toMatch(/^A loader on the disk loads it: Sindri ran the disk's boot file "BOOT", and after its loader had loaded it peels off 1 layer: an unknown decoder at \$c000 \(fingerprint [0-9a-f]{8}\); the program starts at \$4000$/);
+    const log = unpackLog(run, 'data.prg', 0x4000, 256).split('\n');
+    expect(log).toContain('Alone, started at $4000, it stopped: jam, the CPU stopped on the JAM opcode at $4000');
+    expect(log).toContain('A loader on the disk loads it: run from the disk\'s boot file "BOOT"; layer 1 on started after its loader had loaded the file');
+    // a file the boot never loads: the file's own run, and why
+    const never = unpackPrg(makePrg(0x6000, Uint8Array.from([0x02, 1, 2, 3])), roms, disk, null, null, null, null, [], at(0x6000, 0x6003));
+    expect(never).toMatchObject({ unpacked: false, boot: { name: 'BOOT', after: null, from: 'disk' } });
+    expect(unpackSummary(never)).toMatch(/; the disk's boot file "BOOT", run too, never loaded it$/);
+    expect(unpackLog(never, 'never.prg', 0x6000, 4).split('\n')).toContain('The disk\'s boot file "BOOT", run too, never loaded it: its loader did not load the file');
+  });
 });
 
 const vendored = join(__dirname, '..', '..', '..', 'apps', 'desktop', 'vendor', 'exomizer', 'exomizer.exe');

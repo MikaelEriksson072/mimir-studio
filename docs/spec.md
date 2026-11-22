@@ -1382,6 +1382,16 @@ laddar första filen och trycker *Unpack*:
 
 The Lab, Eyes, Multiverse, I'm Back och Ranx sparas som förut (musiken låg redan i det sparade).
 
+**Vektorerna på `$FFFA-$FFFF`.** Startar programmet med KERNAL:n bortkopplad (`$01`:s HIRAM låg, som `$35` eller
+`$3C`) tar CPU:n NMI, RESET och IRQ ur RAM:et där, så de sex byten hör till programmet när det har dem, hur långt
+från resten de än ligger (`saveRange` behåller den delen som delen med starten). Elites avkodare sätter IRQ `$A8FA` och
+NMI `$AB33` innan den hoppar till spelet på `$886F` med `$01 = $3C`; utan dem slutade sparandet på `$F8FF`, och
+första avbrottet gick in i det RAM:et höll där. Med KERNAL:n inkopplad tar CPU:n vektorerna ur ROM:en, och de räknas som
+förut. Mätt 2026-11-22 på 696 program (297 slumpvisa skivor ur `Games` och `Demos`, 400 enfilsdemor och intron): 24
+sparas med KERNAL:n bortkopplad, 4 sparas annorlunda, och i alla fyra pekar vektorerna på en riktig avbrottsrutin i det
+sparade (Christmas Megademos The Santas, två skivor, IRQ `$02E5`; Kannanotto, `$01 = $15`, IRQ `$9C00`; Double Image,
+RTI på `$1702`). Sindris `test/unpack.test.ts` prövar båda fallen.
+
 I No Bounds laddar programmets eget lager (ramverket vid `$ff40`) delarna och musiken efter att det startat och anropar
 dem med `JSR`; de återvänder till ramverket och blir inga egna lager, och musiken spelar i delarnas avbrott. Minnet när
 lagret startade har inget av det, och det sparade programmet kan inte göra det igen, för det kommer från disken. Därför
@@ -4301,6 +4311,22 @@ laddarens lager hade 87 av banden filer med båda svaren, nu 27 (som Bomb Jack I
 och skriver `$4000-$ffff` i ett och samma lager). En körning av en fil som faller tillbaka tar median 35 ms, eftersom bootfilens körning sparas; den
 första på ett band tar bootfilens tid (Delta 6 s).
 
+**En fil som en laddare på disken laddar.** Disk-Speeds filer (13.5p) står i laddarens tabell, inte i katalogen, och kör
+inte heller för sig: Elites 2NDBIT och 3RDBIT avkodar spelet självt när alla fem filerna ligger inne, så 2NDBIT körd från
+`$6A00` stannar i en JAM vid `$6AA6`. En fil som öppnas ur Disk-Speed-fliken har därför med sig disken och dess bootfil
+(`GAME`) och var filen ligger i minnet (`UnpackDiskBoot`, `unpackPrg`:s sista argument). Packar filen körd för sig inte
+upp något och är den inte *not packed*, kör Sindri disken från bootfilen som LOAD och RUN gör (körningen sparas för nästa
+fil från samma disk). Det första lagret som började när lagren före det skrivit eller kört mer än hälften av filens byte
+är det första efter laddningen (`BootRun.after`, `from: 'disk'`): ett lagers rapport har bara det det skrev som inget
+senare lager skrev över och som det inte körde (Elites PATCH körs inne i laddaren, och avkodaren sparar nollsidan över
+OVERs första byte), och bootfilens egen kod (lager 0) räknas inte, för PATCH laddas där bootet avkodade sig självt. Sedan
+som för bandet: uppackad när ett lager därifrån packade upp något, och Unpack tar programmet i filens ställe. För Elite
+ger alla fem filerna spelet, `$0308-$FFFF` med start `$886F` och `$01 = $3C`, genom avkodaren på `$0200`; Fighter Pilots
+tre filer ger *not packed* (programmet på `$0C00` kör som det är); den tyska Elite (OTD) ger spelet med start `$8ED3`.
+Texterna säger *disk* där de för ett band säger *tape* (*A loader on the disk loads it: Sindri ran the disk's boot file
+"GAME" …*). Testet: `packages/core/test/sindri.test.ts` (en egen disk vars boot kopierar en avkodare till `$C000`,
+laddar DATA med KERNAL:n och hoppar dit; DATA för sig stannar i en JAM).
+
 `mimir unpack spel.tap [--file NAMN]` packar upp bandets första program (eller det namngivna) med bandet i datasetten,
 `--tape band.tap` lägger ett band i datasetten för en PRG; Sindris egen CLI tar samma (`sindri spel.tap`, `--tape`).
 
@@ -5179,7 +5205,9 @@ ger samma lager och samma sparade byte som förut.
   `fixtures/d64/diskspeed-demo.d64` som e2e-testet monterar. Sindris `test/drive.test.ts` prövar speglingen.
 
 Filerna är som C64:an tar emot dem. Elite krypterar 2NDBIT och 3RDBIT själv (avkodaren på `$1D22`, som OVER hoppar
-till), så det färdiga spelet får man med Unpack på `GAME`. Inte gjort: spåren 37-40 på G64:orna (brus) är inte
+till), och FILE1 flyttar sig själv (`$7596`, som PATCH anropar: `$4000-$55FF` till `$0700`, `$5600-$75FF` till
+`$D000`). **Unpack** på en fil ur fliken kör därför disken från `GAME` (13.5f, *En fil som en laddare på disken laddar*)
+och ger det färdiga spelet, `$0308-$FFFF` med start `$886F` och `$01 = $3C`, som Unpack på `GAME` gör. Inte gjort: spåren 37-40 på G64:orna (brus) är inte
 utredda, och inte heller om spelet kontrollerar skivan igen senare.
 
 ### 13.6 Terminal

@@ -17,7 +17,7 @@ import {
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
-  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackRun, type VerifyResult,
+  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
@@ -845,6 +845,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const diskFileOf = useRef(new Map<string, D64File>());
   /** the next sides of the disk each file came from (Sindri turns to them when the program asks) */
   const sidesOf = useRef(new Map<string, Uint8Array[]>());
+  /** a file a disk's loader loads that the directory does not list (a Disk-Speed file): the disk, its next sides and its
+   *  boot file, which Sindri runs when the file does not run alone (its loader loads it with the rest of the program) */
+  const diskBootOf = useRef(new Map<string, { disk: Uint8Array; sides: Uint8Array[]; boot: UnpackDiskBoot }>());
   const openFromDisk = (f: D64File, add: boolean) => {
     if (!disk) return;
     lastFrom.current = { kind: 'disk', f };
@@ -1254,7 +1257,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** a file of a Disk-Speed disk's table as a PRG at its load address (as much as memory holds) */
   const diskSpeedFile = (f: DiskSpeedFile) => withId(parsePrg(f.name, diskSpeedPrg(f)));
   const openDiskSpeedFile = (f: DiskSpeedFile, add: boolean) => {
-    try { addFiles(fromLoader(f, [diskSpeedFile(f)]), add, { gfx: true }); } catch (e) { toast(errorText(e), 'err'); }
+    try {
+      const x = diskSpeedFile(f);
+      // a file of the loader's table does not run alone (Elite decodes 2NDBIT and 3RDBIT once all five are in): Unpack
+      // runs the disk from its boot file, as LOAD and RUN do
+      const b = disk?.diskspeed?.boot, e = b && disk.img.files.find(z => z.type === 'PRG' && z.track === b.track && z.sector === b.sector);
+      if (disk && e) diskBootOf.current.set(x.id, { disk: disk.bytes, sides: disk.sides.map(s => s.bytes), boot: { name: e.name, prg: readD64File(disk.bytes, e), start: f.load, end: f.end - 1 } });
+      addFiles(fromLoader(f, [x]), add, { gfx: true });
+    } catch (e) { toast(errorText(e), 'err'); }
   };
   const exportDiskSpeedFiles = () => {
     const p = disk?.diskspeed;
@@ -1407,7 +1417,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const t = tapeOf.current.get(f.id), b = t?.boot;
       // (a turbo file goes with the boot file whose loader loads it: Sindri runs that when the file does not run alone)
       const boot = b?.load != null ? { name: tapeFileName(b).replace(/\.\w+$/, ''), prg: makePrg(b.load, b.data), at: b.to } : null;
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? null, t ? { tap: t.tap, at: t.file.to, boot } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? []);
+      // (so does a file a disk's loader loads, with the disk's boot file)
+      const db = diskBootOf.current.get(f.id);
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? db?.disk ?? null, t ? { tap: t.tap, at: t.file.to, boot } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? db?.sides ?? [], db?.boot ?? null);
       running.current.set(key, p);
       checkBegins(key);
       p.then(r => { setRuns(m => ({ ...m, [key]: r })); checkEnds(key); }, () => { running.current.delete(key); checkEnds(key, true); });
@@ -1494,9 +1506,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       try {
         const run = await runFor(f);
         const output = unpackLog(run, f.name, f.load, f.bytes.length);
-        // a turbo file that did not run from where it loads: Sindri ran the tape's boot file, whose loader loads it
-        const b = run.boot, viaBoot = b?.after != null;
-        const loads = b && viaBoot ? ` A loader on the tape loads it: Sindri ran the tape's boot file "${b.name}" (alone, from $${h4(b.alone.entry)}, it stopped: ${b.alone.stop.reason}).` : '';
+        // a turbo file (or a file a disk's loader loads) that did not run from where it loads: Sindri ran the tape's (the
+        // disk's) boot file, whose loader loads it
+        const b = run.boot, viaBoot = b?.after != null, media = b?.from === 'disk' ? 'disk' : 'tape';
+        const loads = b && viaBoot ? ` A loader on the ${media} loads it: Sindri ran the ${media}'s boot file "${b.name}" (alone, from $${h4(b.alone.entry)}, it stopped: ${b.alone.stop.reason}).` : '';
         if (!run.unpacked || !run.saved) {
           const stop = `${run.stop.reason}${run.stop.detail ? `, ${run.stop.detail}` : ''}`;
           // a program that ran as it is to where programs end up is not packed: nothing went wrong (a one-block intro)
@@ -1505,7 +1518,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             toast(`${f.name} is not packed`, 'info');
             return;
           }
-          setUnpacked({ ok: false, title: viaBoot ? `Sindri found nothing to unpack in ${f.name}:${loads} Nothing unpacked itself after its loader had loaded it (it stopped: ${stop}).` : `Sindri found nothing to unpack in ${f.name}: it stopped (${stop}) before a layer came off${b ? `, and the tape's boot file "${b.name}", run too, never loaded it` : ''}.`, output, label: 'Layer report' });
+          setUnpacked({ ok: false, title: viaBoot ? `Sindri found nothing to unpack in ${f.name}:${loads} Nothing unpacked itself after its loader had loaded it (it stopped: ${stop}).` : `Sindri found nothing to unpack in ${f.name}: it stopped (${stop}) before a layer came off${b ? `, and the ${media}'s boot file "${b.name}", run too, never loaded it` : ''}.`, output, label: 'Layer report' });
           toast(`Sindri could not unpack ${f.name}`, 'err');
           return;
         }

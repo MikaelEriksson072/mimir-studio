@@ -1872,9 +1872,13 @@ class Session {
 
   private rangeOf(l: Layer): Range | null {
     const ram = l.snapshot.ram, mask = l.live ?? l.mask!;
-    if (!l.basic) return saveRange(mask, [l.entry]);
+    // with the KERNAL banked out as it starts ($01's HIRAM low) the CPU takes NMI, RESET and IRQ from the RAM at
+    // $fffa-$ffff: vectors the program has there stay with it however far they are from the rest (Elite's decoder sets
+    // IRQ $a8fa and NMI $ab33 before it jumps to the game at $886f, which runs with $01 = $3c)
+    const vectors = l.snapshot.port & 2 ? [] : [0xfffa, 0xfffc, 0xfffe];
+    if (!l.basic) return saveRange(mask, [l.entry, ...vectors]);
     const start = ram[0x2b] | (ram[0x2c] << 8), end = (ram[0x2d] | (ram[0x2e] << 8)) - 1;
-    const r = saveRange(mask, [start]);
+    const r = saveRange(mask, [start, ...vectors]);
     return { start: Math.min(r?.start ?? start, start), end: Math.max(r?.end ?? end, end) };
   }
 

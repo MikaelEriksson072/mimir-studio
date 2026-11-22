@@ -656,6 +656,43 @@ ${byteLines(code)}
       expect(r.saved).toMatchObject({ entry: 0x1000, start: 0x1000, port: 0x35 });
     });
 
+    it('keeps the vectors a program has at $fffa when it starts with the KERNAL out, however far from the rest (Elite)', () => {
+      // Elite's decoder sets IRQ and NMI in the RAM at $fffe and $fffa, then jumps to the game with $01 = $3c: without
+      // those six bytes the first interrupt goes into whatever the RAM holds there
+      const code = asm(`
+* = $1000
+loop:  inc $d020
+       jmp loop
+irq:   inc $d019
+       rti`).prg.subarray(2);
+      const stub = (port: number) => asm(`${SYS_LINE}
+       sei
+       ldx #${code.length - 1}
+cp:    lda payload,x
+       sta $1000,x
+       dex
+       bpl cp
+       ldx #5
+vec:   lda vectors,x
+       sta $fffa,x
+       dex
+       bpl vec
+       lda #$${port.toString(16)}
+       sta $01
+       jmp $1000
+vectors:
+       .word $1006, $1000, $1006
+payload:
+${byteLines(code)}
+`).prg;
+      const out = unpack(stub(0x35), { roms: mode === 'ROMs' ? roms : null }).saved!;
+      expect(out).toMatchObject({ entry: 0x1000, start: 0x1000, end: 0xffff, port: 0x35 });
+      expect([...out.prg.subarray(out.prg.length - 6)]).toEqual([0x06, 0x10, 0x00, 0x10, 0x06, 0x10]);
+      // with the KERNAL in, the CPU takes its vectors from the ROM: the six bytes stay out
+      const kernal = unpack(stub(0x37), { roms: mode === 'ROMs' ? roms : null }).saved!;
+      expect(kernal).toMatchObject({ entry: 0x1000, start: 0x1000, end: 0x1000 + code.length - 1, port: 0x37 });
+    });
+
     it('starts a layer where the program goes on in code it ran before and then wrote anew: a game loaded over its loader', () => {
       // as The Last Ninja 3 +6 Censor: the loader at $0400 is called, the game it loaded is copied over it, and an RTS
       // goes into the game there

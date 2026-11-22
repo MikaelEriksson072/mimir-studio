@@ -1281,6 +1281,20 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     game disks scanned: four have it (the two G64s, two German Elite D64s with error bytes), all sums right. Elite's
     52 254 bytes the C64 side stored in Sindri, and its RAM in VICE at `$0346` and `$ce27`, are the reader's byte for
     byte. Tests: `diskspeed.test.ts` (own disks, no code of Morse's), Sindri's `drive.test.ts` (the mirror).
+62. Elite's files from the Disk-Speed tab looked packed (2NDBIT 71 % and 3RDBIT 80 % high entropy, FILE1 "may be"),
+    and Unpack on them found nothing: 2NDBIT from `$6a00` stops in a JAM at `$6aa6`, the others BRK to READY. They are
+    not packed by a packer: the game decodes 2NDBIT and 3RDBIT itself (`$1d22`, once all five files are in), and FILE1
+    moves itself (`$7596`). A file opened from the tab now carries the disk and its boot file (`UnpackDiskBoot`, the
+    last argument of `unpackPrg`), and one that does not unpack alone and is not "not packed" is run from the boot, as
+    a tape's turbo file is (spec 13.5f): `BootRun.from = 'disk'`, `after` the first layer once the layers before had
+    written or (after the boot's own layer 0) run more than half of the file. All five give the game, `$0308-$ffff`
+    from `$886f` with `$01 = $3c`; Fighter Pilot's three "not packed"; the German Elite its game at `$8ed3`. Sindri's
+    save left out the decoder's IRQ/NMI vectors at `$fffa-$ffff` (a six-byte part far from the rest), and the game
+    starts with the KERNAL out: `saveRange` now keeps them when `$01`'s HIRAM is low (spec 8.11b). Old against new on
+    696 programs: 4 saves change, each with a real handler where the vectors point. The saved game is VICE's RAM at
+    `$886f` but does not start alone: OVER and the game's init set the VIC bank, bitmap mode, the raster IRQ and turn
+    the CIA IRQs off, and a PRG has no I/O state (`docs/diskspeed.md`). Tests: core `sindri.test.ts` (an own disk whose
+    boot loads an encrypted file and decodes it), Sindri `unpack.test.ts` (the vectors with `$35` and `$37`).
 
 ## Roadmap
 

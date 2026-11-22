@@ -21,7 +21,7 @@ export function withUnpackRun(h: PackingInfo | null, run: UnpackRun | undefined,
 /** A run whose layers only move code to where the analysis reads it (8.1b): relocated blocks, or copies it suggests
  *  relocating. That is a program that copies some of itself elsewhere to run there, not a packed one. */
 export function onlyRelocates(run: UnpackRun | undefined, A: Pick<AnalysisResult, 'relocs' | 'copies'>): boolean {
-  // (a run from the tape's boot file, whose loader loads the file, has the boot's layers, not the file's)
+  // (a run from the tape's or the disk's boot file, whose loader loads the file, has the boot's layers, not the file's)
   const d = run?.unpacked && run.boot?.after == null ? depackers(run) : [];
   if (!d.length || d.some(l => l.kind !== 'mover')) return false;
   const spans = [...A.relocs, ...A.copies].map(r => [r.to, r.to + r.end - r.start]);
