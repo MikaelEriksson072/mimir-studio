@@ -269,8 +269,10 @@ export function unpackLog(run: UnpackRun, name: string, load: number, size: numb
 export function ioSummary(io: StartIo): string {
   const w = io.steps.filter(s => s.value != null), parts: string[] = [];
   const at = (a: number) => w.filter(s => s.at === a);
-  const bank = at(0xdd00).at(-1);
-  if (bank) parts.push(`VIC bank ${3 - (bank.value! & 3)}`);
+  // ($dd00 holds the serial bus's lines too, which the KERNAL's LOAD from a disk leaves otherwise than READY: bank 0,
+  // as at READY, is no news)
+  const port = at(0xdd00).at(-1);
+  if (port) parts.push(3 - (port.value! & 3) ? `VIC bank ${3 - (port.value! & 3)}` : "CIA 2's port A");
   const vic = w.filter(s => s.at >= 0xd000 && s.at < 0xd02f && s.at !== 0xd019 && s.at !== 0xd01a).length;
   if (vic) parts.push(`${vic} VIC register${vic === 1 ? '' : 's'}`);
   const raster = at(0xd01a).at(-1);

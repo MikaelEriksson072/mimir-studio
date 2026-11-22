@@ -2413,7 +2413,8 @@ test('a VICE snapshot that still holds packed data: Sindri goes on from it, and 
   await expect(bar).toContainText(/Going on from the snapshot \(the CPU at \$07f8\), Sindri peels off 2 layers: an unknown mover at \$07f8 .*, then an unknown decoder at \$0340 .*; the packed data was at \$090e-\$390c; the program starts at \$0810/);
   await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
   await expect(toast(page, 'Unpacked packed-menu.prg: 65024 bytes at $0200-$ffff')).toBeVisible({ timeout: 30_000 });
-  await expect(done).toContainText('packed-menu-unpacked.prg, $0200-$ffff, starting at $0810 (set as the program start).');
+  // (with the I/O the demo started in, as the snapshot's VIC-II had it: Saved.io)
+  await expect(done).toContainText(/packed-menu-unpacked\.prg, \$0200-\$ffff, starting at \$0810 and the I\/O it started in \(\d+ steps?: [^)]*\) \(set as the program start\)\./);
   await done.getByText('Layer report').click();
   await expect(done.locator('.unpack-log')).toContainText('Snapshot: going on from where it was taken, the CPU at $07f8');
   await expect(bar).toHaveCount(0);
@@ -2445,7 +2446,8 @@ test('a file opened from a mounted disk is unpacked with the disk in a 1541', as
   await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
   await expect(toast(page, 'Unpacked BOOT.prg: 609 bytes at $c000-$c260')).toBeVisible({ timeout: 30_000 });
   const done = page.locator('.unpack-bar');
-  await expect(done).toContainText('BOOT-unpacked.prg, $c000-$c260, starting at $c000 (set as the program start).');
+  // (with the I/O the KERNAL's LOAD from the disk left: CIA 2's serial lines, CIA 1's timer B)
+  await expect(done).toContainText("BOOT-unpacked.prg, $c000-$c260, starting at $c000 and the I/O it started in (4 steps: CIA 2's port A, CIA 1's timer B) (set as the program start).");
   await done.getByText('Layer report').click();
   await expect(done.locator('.unpack-log')).toContainText(/Drive: 1541 with "LOADER DISK" LD, \d+ bytes read/);
   // the unpacked program (PART2's loop at $c000) is a load: the start Sindri set opens Program start, and Loaders stays
@@ -7592,7 +7594,8 @@ test('Unpack on a turbo file its loader starts elsewhere runs the tape from its 
   await bar.getByRole('button', { name: 'Unpack', exact: true }).click();
   await expect(toast(page, /^Unpacked tinyheader\.prg: \d+ bytes at \$0800-\$37ff$/)).toBeVisible({ timeout: 60_000 });
   const done = page.locator('.unpack-bar');
-  await expect(done).toContainText('tinyheader-unpacked.prg, $0800-$37ff, starting at $0810 (set as the program start).');
+  // (with the I/O the tape's loader left: CIA 1's interrupts off, its timer A)
+  await expect(done).toContainText("tinyheader-unpacked.prg, $0800-$37ff, starting at $0810 and the I/O it started in (5 steps: CIA 1's interrupts off, CIA 1's timer A) (set as the program start).");
   await expect(done).toContainText('A loader on the tape loads it: Sindri ran the tape\'s boot file "LOADER DEMO" (alone, from $0800, it stopped: jam).');
   await done.getByText('Layer report').click();
   await expect(done.locator('.unpack-log')).toContainText('Alone, started at $0800, it stopped: jam, the CPU stopped on the JAM opcode at $0800');
