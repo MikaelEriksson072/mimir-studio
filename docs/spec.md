@@ -175,6 +175,7 @@ mimir-studio/
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-watch.ts          skriptets watch-lista: det koden skriver, hittat i koden, och värdena (10.3)
 │  ├─ src/script-files.ts          ett skript kört på filer: filen i en scratchpad, och vad körningen ger som filer (10.3)
+│  ├─ src/script-suggest.ts        skript som analysen föreslår: dekrypteringsloopar och rutinanrop (10.3)
 │  └─ test/{opcodes.test.ts, trace.test.ts, roundtrip.test.ts, fuzz.test.ts}
 ├─ packages/cli/                  mimir analyse|export|verify|unpack|measure (Node, för CI och batch)
 ├─ packages/sindri/               Sindri, den inbyggda uppackaren: en emulerad C64 som följer ett packat program genom sina lager
@@ -2669,6 +2670,30 @@ $06, $08` i `.asm`-filen efter en körning.
     *File*-scratchpad filens laddadress). *Save .bin…* och *Save .prg…* finns kvar.
   - Inte med än: en fil från datorn (bara disk och band), loaderfiler som de ligger packade på disken, och
     högerklick i loaderflikarna och i Explorerns C64-utseende.
+- **Skript som analysen föreslår** (`script-suggest.ts`, 2026-11-22): programmets egen kod säger vad ett skript
+  kan göra, så att man inte börjar från en tom editor.
+  - **Dekrypteringsloopar** (`findCryptLoops`, statiskt ur koden som analysen har den, ingenting körs): en bakåtgren
+    vars kropp är en läsning med index (`lda a,x`, `lda a,y`, `lda (zp),y`), en till fyra ändringar med en nyckel
+    (`eor #k`, `clc`/`adc #k`, `sec`/`sbc #k`), en skrivning med samma index, och indexet stegat en gång (och jämfört
+    med `cpx`/`cpy #n`); inget annat får stå i loopen. Loopen ger metoden och nyckeln, och när operanderna är adresser
+    och indexet laddas med ett tal precis före loopen också var byten ligger, vart de skrivs och hur många
+    (`visited` går indexet som loopen gör: `dex`/`bpl` från 39 är 40 byte, `inx`/`bne` från 0 är 256). Genom en
+    pekare vet loopen inte var. Bort faller text som skrivs till skärmen eller I/O-området från en annan adress
+    (skärmkoder som skiftas), loopar under 8 byte och en ren kopiering. På 141 diskprogram ur arkivet (första PRG
+    per disk) gav den en träff, och den var tveksam: få falsklarm, men också få träffar, eftersom looparna oftast
+    ligger bakom en packare eller i en bandladdare som inte är i projektet förrän filen är uppackad.
+  - **Skriptet för en loop** (`cryptScript`): mallen som gör samma sak (en EOR: *XOR key byte*; en ADC eller SBC:
+    *Add/subtract*; flera: *Several steps*) med nyckeln eller stegen satta och, när loopen säger dem, `source` (med
+    programmets namn för adressen) och `length`; `dest` förblir scratchpaden `result`, som görs så stor som byten,
+    så att **programmet lämnas som det är**. En kommentar före inställningarna säger var loopen är och vad den gör,
+    och editorn visar den raden. Skriptet heter `decrypt_081a` och är länkat till loopen. Det nås från **översikten**
+    (kortet *Decryption loops*: adressen, metoden, antalet byte, knappen *Script*), från **högerklick på en rad i
+    loopen** (*Script for this loop: EOR #$5a over 32 bytes, into a scratchpad*) och från **Scripts-flikens lista**
+    (*In the program*, ovanför *Templates*).
+  - **En rutin anropad som programmet anropar den** (`callScript`): högerklick på en rad som programmet anropar med
+    JSR ger *New script that calls … as the program does*: ett skript med en enda `jsr`, och A, X och Y som
+    programmets första anrop laddar dem med tal precis före sin JSR (`lda #3` / `ldx #$20` / `jsr show`) som skriptets
+    Init. Det skapas i safe mode: en körning visar vad rutinen skulle ändra, och ingenting går in i programmet.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

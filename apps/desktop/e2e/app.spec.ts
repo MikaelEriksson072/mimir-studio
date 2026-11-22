@@ -10282,3 +10282,80 @@ test('scripts and files: a file of the disk into a scratchpad, the script run on
     await expect(page.getByRole('button', { name: 'Run on files…' })).toBeEnabled();
   });
 });
+
+test('scripts the analysis suggests: a decryption loop gives a script from its template with the key, source and length filled in; a routine is called as the program calls it', async ({ workDir, app, page }) => {
+  // a program of its own: SYS 2061, lda #3 / ldx #$20 / jsr show / jsr xorit / rts, a loop that EORs 32 bytes at $0840
+  // with $5a in place, and show (sta $d020 / stx $d021)
+  const TEXT = 'HELLO FROM THE DECRYPTED BLOCK!!';
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00,
+    0xa9, 0x03, 0xa2, 0x20, 0x20, 0x28, 0x08, 0x20, 0x18, 0x08, 0x60,
+    0xa2, 0x00, 0xbd, 0x40, 0x08, 0x49, 0x5a, 0x9d, 0x40, 0x08, 0xe8, 0xe0, 0x20, 0xd0, 0xf3, 0x60,
+    0x8d, 0x20, 0xd0, 0x8e, 0x21, 0xd0, 0x60];
+  const prg = [0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...[...TEXT].map(c => c.charCodeAt(0) ^ 0x5a)];
+  const file = join(workDir, 'crypt-demo.prg');
+  writeFileSync(file, Uint8Array.from(prg));
+  await waitForListing(page);
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded crypt-demo.prg at $0801')).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  const editor = page.locator('.scr-editor');
+  /** the script's code as the editor shows it */
+  const shown = async () => (await editor.locator('.view-lines').innerText()).replace(/ /g, ' ');
+
+  await test.step('the overview lists the loop with its method and how many bytes, and makes the script for it', async () => {
+    if (!(await overview.isVisible())) await page.locator('.titlebar').getByRole('button', { name: 'Analysis overview', exact: true }).click();
+    const card = overview.getByRole('region', { name: 'Decryption loops' });
+    await expect(card).toContainText('EOR #$5a');
+    await expect(card).toContainText('32 bytes');
+    await card.getByRole('button', { name: 'Script for the loop at $081a' }).click();
+    await expect(overview).toHaveCount(0);
+    await expect(toast(page, '"decrypt_081a" does what the loop at $081a does (EOR #$5a, 32 bytes at $0840, in place): Ctrl+Enter decrypts the bytes into the scratchpad result. The program stays as it is')).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Scripts' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('option', { name: 'decrypt_081a' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  });
+
+  await test.step('a run decrypts the bytes into the scratchpad and leaves the program as it is', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+    await outTab(page, 'Scratchpads');
+    await expect(page.locator('.pad-row:not(.pad-head)').getByLabel('Scratchpad size')).toHaveValue('$0020');
+    await page.getByRole('group', { name: 'Show as' }).getByRole('button', { name: 'Text' }).click();
+    await expect(page.locator('.scr-dump')).toContainText(TEXT);
+    await outTab(page, 'In the program');
+    await expect(page.getByRole('list', { name: 'Changed in the program' }).getByRole('listitem')).toHaveCount(0);
+  });
+
+  await test.step('the Scripts tab lists the loop under In the program, and a right-click on the loop in the listing makes the script too', async () => {
+    const found = page.getByRole('list', { name: 'Loops found in the program' });
+    await expect(found.getByRole('listitem')).toHaveCount(1);
+    await expect(found.getByRole('listitem')).toContainText('EOR #$5a');
+    await expect(found.getByRole('listitem')).toContainText('$081a');
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, '$081d');
+    await listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: /^081d$/ }) }).click({ button: 'right' });
+    await fromSubmenu(page, 'Program', 'Script for this loop: EOR #$5a over 32 bytes, into a scratchpad');
+    await expect(page.getByRole('option', { name: 'decrypt_081a2' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  await test.step('a routine the program calls gets a script that calls it with the registers of the call, in safe mode', async () => {
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, '$0828');
+    await listing(page).locator('.row.k-ins', { has: page.locator('.adr', { hasText: /^0828$/ }) }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Program', exact: true }).hover();
+    await page.getByRole('menuitem', { name: /^New script that calls \S+ as the program does$/ }).click();
+    await expect(toast(page, /^"script" calls \S+ with A = \$03, X = \$20, as the program does at \$0811 \(Init\)\. It is in safe mode/)).toBeVisible();
+    await expect(page.getByRole('option', { name: 'script', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('switch', { name: 'Safe mode' })).toBeChecked();
+    await expect.poll(shown).toMatch(/as the program does at \$0811: A = \$03, X = \$20 \(Init\)\n\s*jsr \S+\n\s*rts/);
+    await outTab(page, 'Init');
+    const init = page.getByRole('region', { name: 'Init' });
+    await expect(init.getByLabel('Init A')).toHaveValue('$03');
+    await expect(init.getByLabel('Init X')).toHaveValue('$20');
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText('Returned');
+  });
+});

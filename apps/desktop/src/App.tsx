@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2494,6 +2494,36 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (pads.length) useScripts.getState().set({ outTab: 'pads', outFolded: false });
     toast(`"${name}" added from the templates: set its settings (source, dest, length, the key) and press Ctrl+Enter. With dest = result the program stays as it is`, 'ok');
   };
+  /* ---- scripts the analysis suggests (script-suggest.ts): the program's loops that change bytes with a key, and a
+     routine called as the program calls it ---- */
+  const cryptLoops = useMemo(() => findCryptLoops(A), [A]);
+  /** a script that does what a decryption loop does: the template for its method with its key (and, when the loop says
+   *  them, its source and length) filled in, the result in the scratchpad `result`; linked to the loop */
+  const addCryptScript = (l: CryptLoop) => {
+    const cs = cryptScript(l, a => R.labels.get(a)?.name ?? null, codeLang);
+    const name = scriptName(userScripts, `decrypt_${h4(spaceAddr(l.start))}`);
+    const c = checkScript(scriptsEnv, { source: cs.source, lang: codeLang, pads: cs.pads.map(p => ({ ...p, start: 0xffff, size: 1 })) });
+    const pads: ScriptPad[] = [];
+    for (const p of cs.pads) {
+      const taken = [...c.code, ...c.access, ...pads.map(q => ({ start: q.start, end: q.start + q.size }))];
+      pads.push({ ...p, start: scriptPlace(scriptsEnv.files, p.size, taken)?.at ?? 0xc000 });
+    }
+    addUserScript({ id: newId(), name, lang: codeLang, source: cs.source, pads, links: [l.start] }, 'Add the script for a loop');
+    // the editor shows what was filled in: the note about the loop, and the settings under it
+    const found = cs.source.split('\n').findIndex(x => x.includes('Found in the program'));
+    useScripts.getState().set({ outTab: 'pads', outFolded: false, ...(found >= 0 ? { gotoLine: found + 1 } : {}) });
+    toast(cs.placed
+      ? `"${name}" does what the loop at $${h4(spaceAddr(l.start))} does (${cryptStepsText(l.steps)}, ${cryptWhereText(l)}): Ctrl+Enter decrypts the bytes into the scratchpad result. The program stays as it is`
+      : `"${name}" has the key of the loop at $${h4(spaceAddr(l.start))} (${cryptStepsText(l.steps)}): set source and length under settings (the code before the loop says where the bytes are), then Ctrl+Enter decrypts them into the scratchpad result`, 'ok');
+  };
+  /** a script that calls the routine at `at` as the program does: one JSR, with A, X and Y as the program's call loads
+   *  them (its init). In safe mode: the routine's writes are shown, not written into the program */
+  const addCallScript = (at: Addr) => {
+    const k = scriptLinkOf(at), cs = callScript(A, at, k.name);
+    const base = newScript(userScripts, [`        ${lineComment(codeLang)} ${cs.comment}`, cs.line], newId(), codeLang);
+    addUserScript({ ...base, links: [at], safe: true, ...(cs.init ? { init: cs.init } : {}) }, 'New script that calls a routine');
+    toast(`"${base.name}" calls ${k.name}${cs.init ? ` with ${(['a', 'x', 'y'] as const).filter(r => cs.init![r] != null).map(r => `${r.toUpperCase()} = $${h2(cs.init![r]!)}`).join(', ')}, as the program does at $${h4(spaceAddr(cs.from!))} (Init)` : ''}. It is in safe mode: Ctrl+Enter shows what the routine would change, and nothing goes into the program`, 'ok');
+  };
   const editUserScript = (id: string, change: Partial<Pick<UserScript, 'name' | 'source' | 'lang' | 'pads' | 'links' | 'init' | 'watch' | 'unwatch'>>, label: string) =>
     update(label, d => { const s = d.userScripts?.find(x => x.id === id); if (s) Object.assign(s, change); });
   /** safe mode on or off: on, the script's runs write nothing into the program (its .asm stays as it is) */
@@ -4118,6 +4148,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         return r ? [{ label: `New script from ${inSel ? 'selection' : 'block'} (runs in Mimir on a copy of the program)`, run: () => newUserScript(rangeLines(r.start, r.end)) }] : [];
       })(),
       ...((): MenuItem[] => {
+        // what the code at the line suggests a script for (10.3): a loop that decrypts, a routine the program calls
+        const a = l.a;
+        if (a == null) return [];
+        const loop = cryptLoops.find(x => a >= x.start && a < x.end);
+        const called = A.xrefs.get(a)?.some(x => x.kind === 'call');
+        return [
+          ...(loop ? [{ label: `Script for this loop: ${cryptStepsText(loop.steps)}${loop.length != null ? ` over ${loop.length} bytes` : ''}, into a scratchpad`, icon: 'prompt' as const, run: () => addCryptScript(loop) }] : []),
+          ...(called ? [{ label: `New script that calls ${scriptLinkOf(a).name} as the program does`, icon: 'prompt' as const, run: () => addCallScript(a) }] : []),
+        ];
+      })(),
+      ...((): MenuItem[] => {
         // on a relocated block (where it is loaded or runs): where it runs, or not; else relocate the selection or the block
         const rl = l.a != null ? (relocLoadedAt(A, l.a) ?? (inSel ? undefined : relocAt(A, l.a))) : undefined;
         if (rl) return [
@@ -4541,6 +4582,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 onShow={(s, e) => { setUi({ tab: 'listing' }); selectRange(s, e); }} onCopy={(t, what) => void copyText(t, what ? `Copied ${what}` : undefined)}
                 onSave={(n, b, prg, load) => void saveScriptBytes(n, b, prg, load)} onSaveText={(n, t) => void saveScriptText(n, t)} toast={toast} onMenu={(x, y, items) => setMenu({ x, y, items })}
                 blocks={scriptBlocks} cursorBlock={cursor != null ? findBlock(A.blocks, cursor)?.start ?? null : null} onCopyBlock={(s, id, pad) => copyBlockIntoPad(s, id, pad)}
+                loops={cryptLoops} onAddLoop={addCryptScript}
                 files={scriptFileChoices} onRunOnFiles={id => openRunOnFiles(id)} onToProject={padToProject} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
@@ -4626,7 +4668,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       </div>}
       {modal === 'overview' && <AnalysisOverview A={A} project={project} labels={R.labels} snap={snapPc} packing={packing} animData={animData} looking={lookingFor} problems={problems} source={mainSource(R)} unpackLabel={unpackLabel} busy={!!buildBusy}
         scripts={bottomTabs.filter(([k]) => SCRIPT_TABS.includes(k))} auto={ui.overview} onAuto={v => setUi({ overview: v })} onPlayMusic={a => void playMusic(a)} musicPlayer={toolchain.musicPlayer}
-        known={suggested} onNameKnown={() => nameKnown()} links={overviewLinks} onClose={() => setModal(null)} />}
+        known={suggested} onNameKnown={() => nameKnown()} crypt={cryptLoops} onCryptScript={addCryptScript} links={overviewLinks} onClose={() => setModal(null)} />}
       {modal === 'settings' && <SettingsModal settings={S} prefs={{ startScreen: ui.startScreen, inspector, gfxPictures, autoUnpack: ui.autoUnpack, overview: ui.overview, diskLook: ui.diskLook, autoMerge: ui.autoMerge, learnRoutines: ui.learnRoutines }} desktop={!!kr} editors={editors?.found ?? []} onSave={(s, prefs) => void saveSettings(s, prefs)} onClose={() => setModal(null)} />}
       {modal === 'goto' && <GotoModal R={R} resolve={(a, bank) => { const r = resolveAddr(a, bank); return shownTarget(R.viewOffsets, r)?.at ?? r; }} onGo={a => { setModal(null); nav(a); }} onSelect={(s, e) => { setModal(null); selectRange(s, e); }} onClose={() => setModal(null)} />}
       {modal === 'palette' && <CommandPalette commands={commands} onClose={() => setModal(null)} />}

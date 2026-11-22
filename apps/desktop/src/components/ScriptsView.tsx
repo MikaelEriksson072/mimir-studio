@@ -7,7 +7,7 @@
  * be saved as a file. The library keeps scripts for every project. */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { checkScript, LANG_TITLE, SCRIPT_TEMPLATES, scriptIn64tass, type ScriptLang, type ScriptTemplate, h4, padName, padStoreAt, padStoreLine, padStoreReach, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot } from '@mimir/core';
+import { checkScript, LANG_TITLE, SCRIPT_TEMPLATES, scriptIn64tass, type ScriptLang, type ScriptTemplate, h4, padName, padStoreAt, padStoreLine, padStoreReach, rangeText, scriptEndText, ScriptMachine, scriptNames, scriptPatches, scriptPlace, scriptStartMemory, scriptWatches, userWatches, watchEntryKey, watchView, withAddressNames, type Addr, type Patch, type ScriptCheck, type ScriptEnv, type ScriptLink, type ScriptMemory, type ScriptRun, type ScriptWatchEntry, type UserScript, type WatchSpot, cryptStepsText, cryptWhereText, type CryptLoop } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { Icon } from '../lib/icons';
 import { cx } from '../lib/util';
@@ -76,6 +76,9 @@ export interface ScriptsViewProps {
   cursorBlock: Addr | null;
   /** a block copied into a scratchpad of the script (its index; null: a new one), written as its type is */
   onCopyBlock: (start: Addr, id: string, pad: number | null) => void;
+  /** the program's loops that change bytes with a key (decryption, most likely), and what adds the script for one */
+  loops: readonly CryptLoop[];
+  onAddLoop: (l: CryptLoop) => void;
   /** the files of the mounted disk and the tape a script can be given (read when they are asked for) */
   files: () => ScriptFileChoice[];
   /** Run on files…: the dialog that runs a script on files of the disk or the tape */
@@ -87,7 +90,7 @@ export interface ScriptsViewProps {
 const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, files, onRunOnFiles, onToProject }: ScriptsViewProps) {
+export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, loops, onAddLoop, files, onRunOnFiles, onToProject }: ScriptsViewProps) {
   const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
@@ -506,6 +509,18 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
   // the library, and below it the templates Mimir comes with
   const libraryList = <>
     <LibraryList library={library} onAdd={onAdd} onRemove={name => { removeFromLibrary(name); toast(`"${name}" removed from the library`, 'ok'); }} />
+    {loops.length > 0 && <>
+      <div className="scr-list-head scr-lib-head"><span title="Loops of the program that change bytes with a key and store them: decryption, most likely. + adds a script that does the same into a scratchpad">In the program</span><span className="grow" /><span className="scr-lib-n">{loops.length}</span></div>
+      <div role="list" aria-label="Loops found in the program">
+        {loops.map(l => (
+          <div key={l.start} role="listitem" className="scr-lib-item scr-tpl-item" title={`The loop at ${$(l.start)}: ${l.text}
+${cryptWhereText(l)}`}>
+            <span className="scr-item-name">{cryptStepsText(l.steps)} <span className="muted">{$(l.start)}</span></span>
+            <button className="icon-btn" aria-label={`Add a script for the loop at ${$(l.start)}`} title="Add a script that does what the loop does: the template for it with the loop's key (and its source and length, when the loop says them) filled in, the result in a scratchpad" onClick={() => onAddLoop(l)}><Icon name="plus" size={13} /></button>
+          </div>
+        ))}
+      </div>
+    </>}
     <TemplateList folded={templatesFolded} onFold={setTemplatesFolded} onAdd={onAddTemplate} />
   </>;
 

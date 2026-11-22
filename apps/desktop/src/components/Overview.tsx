@@ -8,7 +8,7 @@
  * running a file to see whether it is packed, which can take half a minute, a card says it is looking, and what it
  * found once it is done. */
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { h4, T, type Addr, type AnalysisResult, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project, type RoutineMatch } from '@mimir/core';
+import { cryptStepsText, cryptWhereText, h4, T, type Addr, type AnalysisResult, type CryptLoop, type Block, type BlockKind, type LoaderPart, type MusicPlayer, type PackingInfo, type Project, type RoutineMatch } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import type { IconName } from '../lib/icon-paths';
 import { animDataText, type AnimData } from '../lib/storeanim';
@@ -80,6 +80,9 @@ interface OverviewProps {
   /** the routines known from other projects that have no name of the user's yet, with the names suggested (10.5), and
    *  what names them all (the overview stays open) */
   known?: readonly RoutineMatch[]; onNameKnown?: () => void;
+  /** the program's loops that change bytes with a key and store them (10.3), and what makes a script that does the
+   *  same from one (the window closes: the script is shown) */
+  crypt?: readonly CryptLoop[]; onCryptScript?: (l: CryptLoop) => void;
   links: OverviewLinks; onClose: () => void;
 }
 
@@ -122,7 +125,7 @@ function useSeenRunning(looks: readonly PackLook[]) {
   return (l: PackLook) => seen.has(`${l.id}@${l.since}`);
 }
 
-export function AnalysisOverview({ A, project, labels, snap, packing, animData = [], looking = [], problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, links, onClose }: OverviewProps) {
+export function AnalysisOverview({ A, project, labels, snap, packing, animData = [], looking = [], problems, source, unpackLabel, busy, scripts, auto, onAuto, onPlayMusic, musicPlayer, known = [], onNameKnown, crypt = [], onCryptScript, links, onClose }: OverviewProps) {
   /** every link closes the window, then goes there */
   const go = (f: () => void) => () => { onClose(); f(); };
   const start = startOf(A, project);
@@ -357,6 +360,24 @@ export function AnalysisOverview({ A, project, labels, snap, packing, animData =
             <div className="ov-more">
               {onNameKnown && <button type="button" className="btn small" title="Each gets the name it had in the other project (one step: Ctrl+Z takes it back)" onClick={onNameKnown}>{known.length === 1 ? 'Name it' : `Name all ${known.length}`}</button>}
             </div>
+          </Card>}
+
+          {crypt.length > 0 && <Card icon="prompt" title="Decryption loops" n={crypt.length}>
+            <div className="ov-rows">
+              {crypt.slice(0, 5).map(l => (
+                <div key={l.start} className="ov-music-row ov-crypt-row">
+                  <button type="button" className="ov-row" title={`${l.text}\n${cryptWhereText(l)}\nClick to go to the loop in the listing`} onClick={go(() => links.addr(l.start))}>
+                    <i className="ov-dot" style={{ background: 'var(--g-code)' }} />
+                    <span className="mono">{bankAdr(A, l.start)}</span><span className="mono ov-known-name">{cryptStepsText(l.steps)}</span>
+                    <span className="muted ov-known-from">{l.length != null ? `${l.length} bytes` : 'by a pointer'}</span>
+                  </button>
+                  {onCryptScript && <button type="button" className="btn small ov-play" aria-label={`Script for the loop at $${h4(l.start)}`}
+                    title={`A script that does what the loop does, from the template for it: ${l.length != null ? 'its source, length and key filled in' : 'its key filled in (the source and the length are for you to set)'}, the result in a scratchpad. The program stays as it is`}
+                    onClick={go(() => onCryptScript(l))}><Icon name="plus" size={12} />Script</button>}
+                </div>))}
+              {crypt.length > 5 && <p className="muted">and {crypt.length - 5} more: right-click a loop in the listing</p>}
+            </div>
+            <p className="muted">Loops that change bytes with a key and store them: decryption, most likely. A script decrypts them into a scratchpad.</p>
           </Card>}
 
           <Card icon="image" title="Graphics" n={gfx.length ? count(gfx.reduce((n, t) => n + t.total, 0), 'block') : undefined}>
