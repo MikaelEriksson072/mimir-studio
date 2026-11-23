@@ -333,7 +333,7 @@ function PadsPane(p: ScriptOutputProps) {
 
 /** Last run: how it ended, the registers it ended with, how long it took; what could not be written, and whether it
  *  wrote over its own code. */
-function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onGoLine, placePad, toast }: ScriptOutputProps) {
+function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onSave, onGoLine, placePad, toast }: ScriptOutputProps) {
   const run = kept?.run;
   // the memory the run wrote, the longest stretches first (the zero page and the stack are not among them)
   const wrote = useMemo(() => [...(run?.wrote ?? [])].filter(r => r.end - r.start >= 2).sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start), [run]);
@@ -365,6 +365,22 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onGoLine, p
       {run.prints?.length ? <div className="scr-wrote">
         <h5 className="scr-group-h" title="What the script's print(...) wrote, a line each">print</h5>
         <pre className="scr-prints scr-prints-run" aria-label="What the run printed">{run.prints.join('\n')}</pre>
+      </div> : null}
+      {run.made?.length ? <div className="scr-wrote">
+        <h5 className="scr-group-h" title="The files the script made with save(name, bytes, load): kept with this run until the next one. Nothing is written anywhere before one of them is saved or put in the project">Files it made</h5>
+        <ul className="scr-wrote-list scr-made-list" aria-label="Files the run made">{run.made.map((f, i) => (
+          <li key={i}>
+            <span className="mono scr-made-name" title={f.name}>{f.name}</span><span className="muted small">{plural(f.bytes.length, 'byte')}{f.load != null ? `, loads at $${h4(f.load)}` : ''}</span>
+            {f.load != null && <button className="btn tiny" onClick={e => {
+              const b = e.currentTarget.getBoundingClientRect(), name = /\.prg$/i.test(f.name) ? f.name : `${f.name}.prg`, load = f.load!;
+              onMenu(b.left, b.bottom + 2, [
+                { header: `${f.name}, ${f.bytes.length} bytes, as a file that loads at $${h4(load)}` },
+                { label: 'Add it to this project', icon: 'plus', run: () => onToProject(name, f.bytes.slice(), load, true, 'made by the script') },
+                { label: 'Open it as a new project', run: () => onToProject(name, f.bytes.slice(), load, false, 'made by the script') },
+              ]);
+            }} title="The file as a file of the project, or as a new project of its own">To the project…</button>}
+            <button className="btn tiny ghost" onClick={() => onSave(f.name, f.bytes, f.load != null, f.load ?? 0)} title={f.load != null ? `Save it as a PRG that loads at $${h4(f.load)}` : 'Save its bytes as they are'}>Save…</button>
+          </li>))}</ul>
       </div> : null}
       {kept.acted && <div className="scr-wrote scr-acted">
         <h5 className="scr-group-h" title="What the script's directives (.mark, .name, .note, .junk) say about the program beyond its bytes: done with the run, in its undo step">{kept.safe ? 'Would mark up' : 'Marked up'}</h5>

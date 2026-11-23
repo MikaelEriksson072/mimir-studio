@@ -95,7 +95,7 @@ export interface ScriptsViewProps {
   /** Run with values…: the dialog that runs a script once for each row of a table of its settings' values */
   onRunValues: (id: string) => void;
   /** a scratchpad's bytes as a file that loads at `load`: added to the project (`add`), or a new project of its own */
-  onToProject: (name: string, bytes: Uint8Array, load: Addr, add: boolean) => void;
+  onToProject: (name: string, bytes: Uint8Array, load: Addr, add: boolean, from?: string) => void;
 }
 
 const $ = (a: number) => '$' + h4(a);

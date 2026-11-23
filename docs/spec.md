@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-sindri.ts         Sindri för ett JavaScript-skript: `sindri` (uppackaren, en hel C64, disassemblering) (10.3)
 │  ├─ src/script-templates-js.ts   skriptmallarna i JavaScript: exempel på vad språket är bra på (10.3)
 │  ├─ src/script-watch.ts          skriptets watch-lista: det koden skriver, hittat i koden, och värdena (10.3)
 │  ├─ src/script-files.ts          ett skript kört på filer: filen i en scratchpad, och vad körningen ger som filer (10.3)
@@ -2831,6 +2832,17 @@ $06, $08` i `.asm`-filen efter en körning.
     De körs ett i taget, vart och ett när analysen av det förra gjorde är klar, och ett meddelande säger vilka; det
     de gör (byte, uppmärkning) är vanliga körningar som Ctrl+Z tar tillbaka. Ett projekt som öppnas kör inga: dess
     skripts resultat ligger redan i det.
+- **Vad ett värde har, efter punkten** (`lib/jsmembers.ts`, 2026-11-23): i ett JavaScript-skript föreslår editorn
+  efter en punkt egenskaperna och metoderna hos värdet framför den, var och en med vad den är (metoder sätts in med
+  sin parentes; Tab tar förslaget). Det som skrivs efter punkten smalnar av listan. Värdena är de ett skript får:
+  `disk.` (`name`, `id`, `tracks`, `files`, `read(`, `sector(`), en fil i dess directory (`name`, `type`, `blocks`,
+  `track`, `sector`), `cpu.` (`call(`, `limit`), det ett anrop ger (`a`, `x`, `y`, `p`, `c`, `z`, `n`, `brk`), en av
+  programmets filer (`start`, `end`), byte (`mem.`, en scratchpad, en fil läst från disken: `length`, `fill(`,
+  `set(`, `subarray(` …), en lista (`forEach(`, `map(`, `filter(`, `find(` …) och en text (`padEnd(`, `padStart(` …).
+  Vad ett namn är läses ur koden (`jsTypeOf`): `const r = cpu.call(…)`, `for (const f of disk.files)`,
+  `disk.files.forEach((f, i) => …)`, `const first = disk.files[0]`; uttrycket framför punkten läses bakifrån över
+  hela parenteser (`tailExpression`). Efter punkten på ett värde Mimir inte känner föreslås ingenting, och inte inuti
+  en text.
 - **Mallar i JavaScript** (`script-templates-js.ts`, `JS_TEMPLATES`, 2026-11-22): listans *Templates* har två flikar,
   *Assembler* (dekrypteringsmallarna, som förut) och *JavaScript* (vald flik sparas av appen,
   `kr.scriptTemplatesTab`). JavaScript-mallarna är exempel på det språket är bra på i Mimir, var och en något man
@@ -2849,9 +2861,40 @@ $06, $08` i `.asm`-filen efter en körning.
     kopierad till scratchpaden `file`.
   - *Call a routine* (`call_many`): en rutin anropad med varje värde på A från `first` till `last`, och vad den
     lämnar; kopian börjar i safe mode (`ScriptTemplate.safe`).
+  - *Unpack with Sindri* (`sindri_unpack`): Sindris uppackare körd på programmets första fil eller en fil på disken
+    (`fileName`); varje lager skrivs, och det uppackade programmet blir en fil (`saveAs`).
+  - *Run in a C64* (`sindri_run`): programmet startat i en hel C64 (`start`: `"RUN"` eller `"SYS 2064"`) och kört
+    `seconds` sekunder eller till `stopAt`; skärmen skrivs, och minnet `saveFrom`–`saveTo` blir en fil.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Sindri i ett JavaScript-skript** (`script-sindri.ts`, `sindriApi`, 2026-11-23): ett skript får `sindri`, det
+  Sindri kan, och `save(name, bytes, load)` för filer det gör.
+  - `sindri.unpack(prg, { disk, entry, port })` kör uppackaren på en PRG (programmets första fil när ingen ges; den
+    monterade disken sitter i 1541:an om inte `disk: false`) och ger `{ unpacked, packer, start, end, entry, port,
+    basic, bytes, prg, layers, listing, stop, drive, cycles, ms }`; `end` är adressen efter sista byten, som överallt
+    i skripten (Sindris egna slut är inklusiva och räknas om). Ett lager är `{ index, entry, kind, packer,
+    instructions, written: [{ start, end }], what }`, `what` samma mening som uppackningsloggen har.
+  - `sindri.disassemble(at, count, bytes)` ger rader av `mem` (eller av givna byte, som om de låg på `at`),
+    `sindri.basic(at)` BASIC-programmets rader, `sindri.sys(at)` adressen dess SYS går till (eller `null`),
+    `sindri.prg(start, end)` en bit av `mem` som PRG, `sindri.roms` varifrån ROM:arna kommer (`"stand-ins"` utan).
+  - `sindri.c64({ disk, program })` ger en hel C64 vid READY (kräver ROM:arna; felet säger var de finns), med
+    programmets filer i RAM (en fil på `$0801` får BASIC:s slutpekare satta som LOAD gör) och disken i 1541:an. Den
+    har `mem` (sitt eget RAM, inte skriptets), registren `a x y s p pc` (läs och skriv), `cycles`, `load(bytes, at)`,
+    `loadPrg(prg)`, `peek(a)` (som CPU:n läser, med ROM), `run({ until, cycles })` → `{ reason: "until" | "cycles" |
+    "jam", pc, cycles }`, `call(where, { a, x, y, c })` (till rutinens RTS, med ROM, I/O och avbrott), `type(text)`
+    (tangentbordsbufferten, högst 10 tecken) och `screen()` (textskärmens 25 rader, där VIC:en läser dem). Maskinen
+    stegas som Sindri själv gör (`dmaWait`, avbrott, NMI).
+  - En körning i en maskin tar `SINDRI_RUN_CYCLES` (20 miljoner) cykler om inget annat sägs, och allt ett skript kör
+    i Sindri får tillsammans ta `SINDRI_BUDGET` (1,2 miljarder cykler, tjugo minuter C64-tid); *Stop* avslutar
+    workern som för andra skript. Ingenting av detta ändrar programmet: Sindris maskiner är skriptets egna.
+  - `save(name, bytes, load)` lägger en fil i `ScriptRun.made` (högst 64, namnet rensat från tecken en fil inte får
+    ha; `load` utelämnad: en fil utan laddadress). *Last run* listar dem under *Files it made* med *To the
+    project…* (lägg till i projektet eller öppna som nytt, när filen har en laddadress) och *Save…* (PRG med
+    laddadress, annars byten som de är); ingenting skrivs någonstans förrän man väljer. En körning som gjorde
+    filer visar *Last run* och säger det i meddelandet.
+  - ROM:arna hämtas (`kr.c64Roms`) bara för ett skript vars kod nämner `sindri`. Editorn föreslår medlemmarna efter
+    `sindri.`, en maskin, ett uppackningsresultat, ett lager och ett körresultat (`lib/jsmembers.ts`).
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

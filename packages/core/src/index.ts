@@ -111,6 +111,7 @@ export { callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops
 export { runScriptInC64, SCRIPT_C64_CYCLES, type ScriptC64 } from './script-machine';
 export { MARK_NAMES, planScriptActions, scriptActions, scriptDirectives, type ActionsPlan, type ScriptAction, type ScriptDirective } from './script-actions';
 export { JS_CALL_LIMIT, JS_RUN_LIMIT, runJs, type JsExtras } from './script-js';
+export { SINDRI_BUDGET, SINDRI_RUN_CYCLES, sindriApi, type SindriContext } from './script-sindri';
 export { paramValueOk, parseParamTable, runResults, scriptParams, setScriptParams, startParamTable, type ParamTable, type ScriptParam } from './script-params';
 export { isScriptFileName, readScriptFile, SCRIPT_FILE_MAX, SCRIPT_FOLDER, scriptFileName, scriptFileText, scriptFits, type StoredScript } from './script-file';
 export { loadScripts, runChangeText, SCRIPT_KEYS, withRunChanges } from './script-hooks';

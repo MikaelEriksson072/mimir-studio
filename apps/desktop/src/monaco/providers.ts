@@ -1,6 +1,7 @@
 /* Hover (registers, labels, opcodes) and go-to-definition (Ctrl+click, F12) for the sources of both assemblers, and
  * a script's suggestions and light bulb in its language (Kick Assembler or 64tass). */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import { jsMembers } from '../lib/jsmembers';
 import { driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptLang, type ScriptPad } from '@mimir/core';
 import { KICKASS } from './kickass-language';
 import { TASS64 } from './tass-language';
@@ -97,22 +98,29 @@ export const JS_API: readonly { label: string; insert: string; detail: string }[
   { label: 'junk', insert: 'junk(', detail: 'junk(start, end): the bytes are junk, left out of everything' },
   { label: 'files', insert: 'files', detail: 'the program\'s files in memory: [{ start, end }], end the address after the last byte' },
   { label: 'disk', insert: 'disk', detail: 'the mounted disk, or null: disk.files, disk.read("NAME"), disk.sector(track, sector)' },
+  { label: 'sindri', insert: 'sindri', detail: 'Sindri, Mimir\'s C64 and unpacker: sindri.unpack(prg), sindri.c64(), sindri.disassemble(at), sindri.basic()' },
+  { label: 'save', insert: 'save(', detail: 'save("name.prg", bytes, load): a file the run made, listed under Last run (To the project…, Save…)' },
 ];
 
 /**
  * What a JavaScript script's code may write where the cursor is: inside the quotes of addr("…"), cpu.call("…") and the
  * others that take an address, the program's names that start with what is typed (a scratchpad's inside pad("…"));
- * elsewhere what the script is given (JS_API) that starts with it.
+ * after a dot the properties and methods of the value before it (lib/jsmembers.ts); elsewhere what the script is
+ * given (JS_API) that starts with what is typed. `source`: the script's code, where a name's value is looked up.
  */
-export function jsSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[]): { label: string; insert: string; detail: string; kind: 'name' | 'pad' | 'api' }[] {
+export function jsSuggestions(before: string, typed: string, names: ReadonlyMap<string, number>, pads: readonly Pick<ScriptPad, 'name'>[], source = ''): { label: string; insert: string; detail: string; kind: 'name' | 'pad' | 'api' | 'member' }[] {
   const starts = (s: string) => s.toLowerCase().startsWith(typed.toLowerCase()) && s.length > typed.length;
   if (/\bpad\(\s*["'][^"']*$/.test(before)) return pads.filter(p => starts(p.name)).map(p => ({ label: p.name, insert: p.name, detail: 'scratchpad', kind: 'pad' as const }));
   if (/\b(?:addr|call|word|setWord|mark|name|note|junk)\((?:[^()"']*,)?\s*["'][^"']*$/.test(before))
     return [...names].filter(([n]) => starts(n)).slice(0, 200).map(([n, a]) => ({ label: n, insert: n, detail: `$${h4(a)}`, kind: 'name' as const }));
-  if (!typed || /["'][^"']*$/.test(before.replace(/"[^"]*"|'[^']*'/g, ''))) return [];
-  const head = /\bcpu\.$/.test(before) ? 'cpu.' : '';
-  return JS_API.filter(x => (head ? x.label.startsWith(head) && starts(x.label.slice(head.length)) : !x.label.includes('.') ? starts(x.label) : starts(x.label.split('.')[0]) && typed.toLowerCase() !== 'cpu'))
-    .map(x => (head ? { label: x.label.slice(head.length), insert: x.insert.slice(head.length), detail: x.detail, kind: 'api' as const } : x.label.includes('.') ? { label: 'cpu', insert: 'cpu', detail: x.detail, kind: 'api' as const } : { ...x, kind: 'api' as const }));
+  if (/["'][^"']*$/.test(before.replace(/"[^"]*"|'[^']*'/g, ''))) return [];
+  // after a dot: what the value before it has (disk., cpu., mem., a call's result, one of disk.files …); nothing for a
+  // value Mimir does not know
+  if (before.endsWith('.')) return (jsMembers(before.slice(0, -1), typed, source) ?? []).map(x => ({ ...x, kind: 'member' as const }));
+  if (!typed) return [];
+  // (cpu.call is listed as cpu: its call comes after the dot)
+  return JS_API.filter(x => starts(x.label.split('.')[0]))
+    .map(x => (x.label.includes('.') ? { label: 'cpu', insert: 'cpu', detail: 'the 6510: cpu.call("name", { a, x, y }) runs the program\'s code', kind: 'api' as const } : { ...x, kind: 'api' as const }));
 }
 
 /** the name with a dot in it (`music.location`) that the character at `at` of a line is in, or null */
@@ -144,7 +152,7 @@ export function registerProviders(monaco: typeof Monaco): void {
       const w = model.getWordUntilPosition(pos), before = model.getLineContent(pos.lineNumber).slice(0, w.startColumn - 1);
       const range = new monaco.Range(pos.lineNumber, w.startColumn, pos.lineNumber, w.endColumn);
       const K = monaco.languages.CompletionItemKind, kind = { name: K.Variable, pad: K.Struct, api: K.Function } as const;
-      return { suggestions: jsSuggestions(before, w.word, scriptContext.names, scriptContext.pads).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.insert, detail: s.detail, range })) };
+      return { suggestions: jsSuggestions(before, w.word, scriptContext.names, scriptContext.pads, model.getValue()).map((s, i) => ({ label: s.label, kind: s.kind === 'member' ? (s.insert.endsWith('(') ? K.Method : K.Property) : kind[s.kind], insertText: s.insert, detail: s.detail, sortText: String(i).padStart(3, '0'), range })) };
     },
   });
   // (the hover and go-to-definition serve both assemblers' sources: Kick Assembler's and 64tass's, spec 11.8)

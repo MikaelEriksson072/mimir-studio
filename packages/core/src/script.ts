@@ -493,6 +493,9 @@ export interface ScriptRun {
    *  what it said to do to the program beyond its bytes (mark, name, note, junk) */
   error?: { msg: string; line?: number };
   prints?: string[];
+  /** the files a JavaScript script made with save(name, bytes, load): each with where it loads (null: it has no load
+   *  address), listed under Last run */
+  made?: { name: string; load: number | null; bytes: Uint8Array }[];
   /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
   js?: boolean;
   actions?: ScriptAction[];

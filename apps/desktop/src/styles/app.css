@@ -1660,6 +1660,7 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 .scr-wrote-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .scr-wrote-list li { display: flex; align-items: center; gap: 10px; padding: 2px 0; font-size: 12.5px; }
 .scr-wrote-list li > .mono { min-width: 108px; }
+.scr-made-list li > .scr-made-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scr-acted-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
 .scr-acted-list li { display: flex; align-items: center; gap: 7px; }
 .scr-wrote-list li > .muted { min-width: 84px; }

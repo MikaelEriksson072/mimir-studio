@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkScript, JS_TEMPLATES, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
 const KEY = 0x5a, TEXT = 'HELLO FROM THE GAME', SCREEN = 'GAME OVER';
@@ -43,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are seven, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many']);
+  it('are nine, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -129,5 +130,48 @@ describe('the JavaScript templates', () => {
     const r = run(template('call_many'), { routine: '"double"', first: '126', last: '129' });
     expect(r.error).toBeUndefined();
     expect(r.prints).toEqual(['A=$7e  ->  A=$fc X=$00 Y=$00', 'A=$7f  ->  A=$fe X=$00 Y=$00', 'A=$80  ->  A=$00 X=$00 Y=$00  carry set', 'A=$81  ->  A=$02 X=$00 Y=$00  carry set']);
+  });
+});
+
+describe('the JavaScript templates that use Sindri', () => {
+  const demo = makeDemo(), demoFile = parsePrg(demo.name, demo.prg), roms = findC64Roms();
+  const runIn = (e: ScriptEnv, t: ScriptTemplate, values: Record<string, string>, extras = {}) => runJs(e, { source: setScriptParams(t.source, { code: 'js' }, values).source, pads: [] }, extras);
+
+  it('Unpack with Sindri prints the layers and makes a file of the unpacked program', async () => {
+    const p = await packWithBrokkr([{ name: demo.name, prg: demo.prg }], { ...DEFAULT_PACK, format: 'exomizer', effect: 'none' });
+    const r = runIn({ files: [parsePrg('packed.prg', p.prg!)], names: new Map() }, template('sindri_unpack'), {});
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toHaveLength(4);
+    expect(r.prints![0]).toMatch(/^0  \$[0-9a-f]{4}  \S/);
+    expect(r.prints![3]).toMatch(/^Unpacked \(Brokkr \/ Exomizer format \(stage 1\) → Brokkr \/ Exomizer format \(depacker\)\): \$[0-9a-f]{4}-\$[0-9a-f]{4}, \d+ bytes, starts at \$0810, \$01 = \$37$/);
+    expect(r.made).toHaveLength(1);
+    const made = r.made![0];
+    expect(made.name).toBe('unpacked.prg');
+    expect(made.bytes.subarray(demoFile.load - made.load!, demoFile.load - made.load! + demoFile.bytes.length)).toEqual(demoFile.bytes);
+    expect(r.changes).toEqual([]);
+  });
+
+  it('Unpack with Sindri takes a file of the disk by its name, says when one is not packed, and makes no file with no name', () => {
+    const disk = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/d64/mimir-demo.d64')));
+    const r = runIn({ files: [demoFile], names: new Map() }, template('sindri_unpack'), { fileName: '"SPRITE"' }, { disk });
+    expect(r.error).toBeUndefined();
+    expect(r.prints![r.prints!.length - 1]).toMatch(/^Not unpacked\. /);
+    expect(r.made).toBeUndefined();
+    expect(runIn({ files: [demoFile], names: new Map() }, template('sindri_unpack'), { fileName: '"SPRITE"' }).error?.msg).toBe('Error: No disk is mounted: fileName needs one');
+  });
+
+  it.skipIf(!roms)('Run in a C64 starts the program with RUN, prints the screen and makes a file of its memory', () => {
+    const e: ScriptEnv = { files: [demoFile], names: new Map() };
+    const r = runIn(e, template('sindri_run'), { seconds: '1', saveFrom: '0x0400', saveTo: '0x07e8' }, { roms });
+    expect(r.error).toBeUndefined();
+    expect(r.prints![0]).toMatch(/^Ran 1 s, now at \$[0-9a-f]{4} after \d+ cycles; \$01 = \$3[0-7]$/);
+    expect(r.prints!.length).toBeGreaterThan(1);
+    expect(r.made!.map(m => [m.name, m.load, m.bytes.length])).toEqual([['memory_0400.prg', 0x0400, 1000]]);
+    // to an address: the demo's start, which RUN's SYS gets to
+    const s = runIn(e, template('sindri_run'), { seconds: '2', stopAt: '0x0810' }, { roms });
+    expect(s.prints![0]).toMatch(/^Got to \$0810 after \d+ cycles/);
+    expect(s.made).toBeUndefined();
+    // without the ROMs it says what it needs
+    expect(runIn(e, template('sindri_run'), {}).error?.msg).toMatch(/sindri\.c64 needs the C64's ROM files/);
   });
 });

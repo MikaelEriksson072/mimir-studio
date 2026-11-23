@@ -20,6 +20,10 @@
  *   mark(start, end, "type"), name(a, "name"), note(a, "text"), junk(start, end)
  *                            what script-actions.ts's directives do, done when the run ends
  *   files                    the program's files in memory: [{ start, end }], end the address after the last byte
+ *   sindri                   Sindri, Mimir's C64 and unpacker (script-sindri.ts): sindri.unpack(prg), sindri.c64() for a
+ *                            whole C64 to run code in, sindri.disassemble(at), sindri.basic(at), sindri.prg(start, end)
+ *   save(name, bytes, load)  a file the run made, listed under Last run (To the project…, Save…); load: where it
+ *                            loads, left out for a file without a load address
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
  *                            sector }], sector(track, sector) → its 256 bytes, read(file or name) → the file's bytes }
  *
@@ -27,7 +31,8 @@
  * it (fetch, importScripts, self, …) are not there for the script. An error it throws ends the run and is said with
  * its line. Nothing is checked before it runs but its scratchpads: a syntax error is said by the run.
  * ===================================================================== */
-import { Cpu, type Bus } from '@mimir/sindri';
+import { Cpu, type Bus, type Roms } from '@mimir/sindri';
+import { SINDRI_BUDGET, sindriApi } from './script-sindri';
 import type { Addr, UserScript } from './types';
 import { diskSectors, parseD64, readD64File, sectorOffset, type D64File } from './c64/d64';
 import { MARK_NAMES, type ScriptAction } from './script-actions';
@@ -35,7 +40,9 @@ import { maskRanges, padStart, runChanges, SCRIPT_P, scriptNames, type ScriptChe
 import { h2, h4 } from './util/hex';
 
 /** what a JavaScript script may be given besides the program: the mounted disk's image (a D64 or a G64) */
-export interface JsExtras { disk?: Uint8Array | null }
+export interface JsExtras { disk?: Uint8Array | null;
+  /** the C64's ROMs, for sindri.unpack (the stand-ins run without them) and sindri.c64 (which needs them) */
+  roms?: Roms | null }
 
 /** the instructions one cpu.call may take, and all of a run's together */
 export const JS_CALL_LIMIT = 50_000_000;
@@ -77,6 +84,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   const before = mem.slice();
   const names = scriptNames(env, script.pads);
   const prints: string[] = [], actions: ScriptAction[] = [];
+  const made: NonNullable<ScriptRun['made']> = [];
   let instructions = 0, cycles = 0;
   let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
 
@@ -164,7 +172,14 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   let error: ScriptRun['error'];
   try {
     const files = env.files.map(f => ({ start: f.load, end: Math.min(0x10000, f.load + f.bytes.length) })).filter(f => f.end > f.start);
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk };
+    const sindri = sindriApi({ mem, addr, files, roms: extras.roms ?? null, disk: extras.disk ?? null, budget: { left: SINDRI_BUDGET } });
+    const save = (name: unknown, bytes: unknown, load?: unknown) => {
+      if (!(bytes instanceof Uint8Array) && !Array.isArray(bytes)) throw new TypeError('save: bytes are wanted (a Uint8Array, such as mem.subarray(…) or what sindri.unpack gave)');
+      const n = String(name ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'file';
+      if (made.length >= 64) throw new RangeError('save: a run makes 64 files at most');
+      made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
+    };
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, save };
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const fn = new Function(...Object.keys(given), ...HIDDEN, `"use strict";${script.source}\n`) as (...a: unknown[]) => unknown;
     fn(...Object.values(given));
@@ -183,6 +198,6 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
-    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}),
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}),
   };
 }

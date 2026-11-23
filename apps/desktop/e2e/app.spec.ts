@@ -10887,7 +10887,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -10923,5 +10923,99 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'JavaScript' })).toHaveAttribute('aria-selected', 'true');
     await tabs.getByRole('tab', { name: 'Assembler' }).click();
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
+  });
+});
+
+test('a JavaScript script\'s editor lists what a value has after its dot: the disk, the CPU, what a call gives, one of the disk\'s files', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+  const editor = page.locator('.scr-editor');
+  const suggest = page.locator('.suggest-widget.visible');
+  /** the code replaced by `lines`, the cursor at its end, then `typed` typed there */
+  const type = async (lines: string[], typed: string) => {
+    await page.keyboard.press('Escape');
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    if (lines.length) { await page.keyboard.insertText(lines.join('\n') + '\n'); await page.keyboard.press('Control+End'); }
+    await page.keyboard.type(typed);
+  };
+  const rows = () => suggest.locator('.monaco-list-row .label-name');
+
+  await test.step('disk. lists the disk\'s properties and methods, and what is typed narrows them', async () => {
+    await type([], 'disk.');
+    await expect(rows()).toHaveText(['name', 'id', 'tracks', 'files', 'read', 'sector']);
+    await page.keyboard.type('se');
+    await expect(rows()).toHaveText(['sector']);
+    // Tab takes it, with its bracket
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await editor.locator('.view-lines').innerText()).replace(/ /g, ' ')).toContain('disk.sector(');
+  });
+
+  await test.step('cpu. and what a call gives back', async () => {
+    await type([], 'cpu.');
+    await expect(rows()).toHaveText(['call', 'limit']);
+    await type(['const r = cpu.call(0x0810, { a: 1 });'], 'print(r.');
+    await expect(rows()).toHaveText(['a', 'x', 'y', 'p', 'c', 'z', 'n', 'brk']);
+  });
+
+  await test.step('one of the disk\'s files in a loop, and the bytes of mem', async () => {
+    await type(['for (const f of disk.files) {'], 'print(f.');
+    await expect(rows()).toHaveText(['name', 'type', 'blocks', 'track', 'sector']);
+    await type([], 'mem.');
+    await expect(rows().first()).toHaveText('length');
+    await expect(suggest).toContainText('subarray');
+  });
+});
+
+test('a JavaScript script has Sindri: the unpacker and a disassembly from its code, the files it makes under Last run and into the project', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const made = page.getByRole('list', { name: 'Files the run made' });
+  const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); await expect(page.locator('.scr-end')).toContainText('Ran to its end'); };
+
+  await test.step('the template Unpack with Sindri runs Sindri on the program: the demo is not packed, and it says so', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Unpack with Sindri to the project' }).click();
+    await expect(page.getByRole('option', { name: 'sindri_unpack' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    // Last run is shown by itself: the run printed
+    await expect(printed).toContainText('Not unpacked.');
+    await expect(made).toHaveCount(0);
+  });
+
+  await test.step('sindri. lists what Sindri has, and a script of one\'s own disassembles and makes files', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('sindri.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['unpack', 'c64', 'disassemble', 'basic', 'sys', 'prg', 'roms']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'print(sindri.basic().join("|") + " " + hex(sindri.sys()));',
+      'print(sindri.disassemble(sindri.sys(), 1)[0]);',
+      'const r = sindri.unpack();',
+      'print(r.unpacked, r.layers.length);',
+      'save("first bytes.prg", mem.subarray(0x0810, 0x0820), 0xc000);',
+      'save("notes.txt", [72, 73]);',
+    ].join('\n') + '\n');
+    await runIt();
+    await expect(printed).toContainText(/^10 SYS\s?2064 \$0810\n\$0810  /);
+    await expect(printed).toContainText('false 1');
+    await expect(made.getByRole('listitem')).toHaveText([/^first bytes\.prg16 bytes, loads at \$c000To the project…Save…$/, /^notes\.txt2 bytesSave…$/]);
+    await expect(toast(page, /It made 2 files \(Scripts → Last run\): first bytes\.prg, …\./)).toBeVisible();
+  });
+
+  await test.step('a file it made goes into the project as a file at its address', async () => {
+    await made.getByRole('button', { name: 'To the project…' }).click();
+    await expect(page.locator('.ctx')).toContainText('first bytes.prg, 16 bytes, as a file that loads at $c000');
+    await page.locator('.ctx').getByRole('menuitem', { name: 'Add it to this project' }).click();
+    await expect(toast(page, 'first bytes.prg ($c000, 16 bytes, made by the script) added to the project')).toBeVisible();
   });
 });

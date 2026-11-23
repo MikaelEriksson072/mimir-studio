@@ -224,5 +224,58 @@ const callMany = js('call_many', 'Call a routine', 'A routine of the program cal
   '}',
 ], true);
 
+const sindriUnpack = js('sindri_unpack', 'Unpack with Sindri', 'Sindri\'s unpacker run on the program\'s file or a file of the disk: what it went through, and the unpacked program as a file.', [], [
+  ...box('Unpack with Sindri', [
+  'Runs Sindri, Mimir\'s unpacker, on a file: the program\'s own first file, or',
+  'a file of the mounted disk by its name. It prints what Sindri went through',
+  '(each packer, loader and copy, layer by layer) and makes a file of the',
+  'unpacked program, listed under Last run: To the project… puts it in the',
+  'project, Save… writes it where you choose. Nothing of the program is changed.',
+  ]),
+  '',
+  part('settings: change these'),
+  'const fileName = "";             // a file of the mounted disk to unpack, by its name; "" for the program\'s first file',
+  'const saveAs = "unpacked.prg";   // the name of the file it makes; "" to make none',
+  '',
+  part('the run'),
+  'if (fileName && !disk) throw new Error("No disk is mounted: fileName needs one");',
+  'const r = fileName ? sindri.unpack(disk.read(fileName)) : sindri.unpack();',
+  'for (const layer of r.layers) print(layer.index + "  " + hex(layer.entry) + "  " + layer.what);',
+  'if (!r.unpacked) {',
+  '  print("Not unpacked. " + r.stop);',
+  '} else {',
+  '  print("Unpacked" + (r.packer ? " (" + r.packer + ")" : "") + ": " + hex(r.start) + "-" + hex(r.end - 1) + ", " + r.bytes.length + " bytes, starts " + (r.basic ? "with RUN" : "at " + hex(r.entry)) + ", $01 = " + hex(r.port, 2));',
+  '  if (saveAs) save(saveAs, r.bytes, r.start);',
+  '}',
+]);
+
+const sindriRun = js('sindri_run', 'Run in a C64', 'The program started in a whole C64 of Sindri\'s and run for some seconds or to an address: the screen it leaves, and a stretch of its memory as a file.', [], [
+  ...box('Run the program in a C64', [
+  'Starts the program in a whole C64 (Sindri\'s: the ROMs, the VIC, the CIAs,',
+  'the mounted disk in a true 1541), as typed at the READY prompt, and lets it',
+  'run for some seconds or until it gets to an address. It prints where the',
+  'C64 stopped and the text screen it left, and can make a file of a stretch',
+  'of its memory (Last run: To the project…, Save…). The C64 is the script\'s',
+  'own: nothing of the program is changed. The C64\'s ROM files are needed',
+  '(they come with VICE: Settings, Toolchain).',
+  ]),
+  '',
+  part('settings: change these'),
+  'const start = "RUN";       // what is typed at READY to start it: "RUN", or "SYS 2064" (at most 9 characters)',
+  'const seconds = 3;         // how long the C64 runs, in its own seconds',
+  'const stopAt = 0;          // an address to stop at when the program gets there (a number, or a name in quotes); 0 for none',
+  'const saveFrom = 0;        // memory made a file after the run: from this address ...',
+  'const saveTo = 0;          // ... up to (not with) this one; both 0 to make no file',
+  '',
+  part('the run'),
+  'const c64 = sindri.c64();',
+  'c64.type(start + "\\r");',
+  'const r = c64.run({ until: stopAt ? stopAt : undefined, cycles: Math.round(seconds * 985248) });',
+  'print((r.reason === "until" ? "Got to " + hex(r.pc) : r.reason === "jam" ? "Jammed at " + hex(r.pc) : "Ran " + seconds + " s, now at " + hex(r.pc)) + " after " + r.cycles + " cycles; $01 = " + hex(c64.mem[1], 2));',
+  'const screen = c64.screen();',
+  'while (screen.length && !screen[screen.length - 1]) screen.pop();',
+  'screen.forEach(line => print("| " + line));',
+  'if (saveTo > saveFrom) save("memory_" + hex(saveFrom).slice(1) + ".prg", c64.mem.subarray(saveFrom, saveTo), saveFrom);',
+]);
 /** The JavaScript templates, in the order the Scripts tab lists them. */
-export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany];
+export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun];
