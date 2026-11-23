@@ -127,3 +127,20 @@ describe('the C64 screen in the suggestions', () => {
     expect(jsTypeOf('screen', 'const screen = c64.screen();')).not.toBe('screen');
   });
 });
+
+describe('what Brokkr\'s values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('brokkr., a packed file, a stream, a mem file and an area', () => {
+    expect(names('brokkr')).toEqual(['pack', 'crunch', 'decrunch', 'mem', 'decruncher', 'formats']);
+    const src = 'const p = brokkr.pack();\nconst c = brokkr.crunch(mem.subarray(0, 9));\nconst f = brokkr.mem(c.bytes, 0x1000);\nfor (const a of p.areas) {\n}\n';
+    expect(names('p', src)).toEqual(['prg', 'bytes', 'load', 'end', 'size', 'from', 'saved', 'format', 'entry', 'basic', 'port', 'cycles', 'seconds', 'areas', 'warnings']);
+    expect(names('c', src)).toEqual(['bytes', 'size', 'from', 'saved', 'format']);
+    expect(names('f', src)).toEqual(['bytes', 'start', 'end', 'inPlace', 'size', 'from', 'saved', 'format', 'warnings']);
+    expect(names('a', src)).toEqual(['name', 'start', 'end']);
+    expect(jsTypeOf('p.prg', src)).toBe('bytes');
+    expect(jsTypeOf('brokkr.decrunch(c.bytes)', src)).toBe('bytes');
+    expect(jsTypeOf('f.inPlace', src)).toBe('file');
+    expect(jsTypeOf('brokkr.formats[0]', src)).toBe('text');
+    expect(jsTypeOf('brokkr.decruncher()', src)).toBe('text');
+  });
+});

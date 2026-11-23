@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-brokkr.ts         Brokkr för ett JavaScript-skript: `brokkr` (packa, kruncha, avkruncha) (10.3)
 │  ├─ src/script-sindri.ts         Sindri för ett JavaScript-skript: `sindri` (uppackaren, en hel C64, disassemblering) (10.3)
 │  ├─ src/script-templates-js.ts   skriptmallarna i JavaScript: exempel på vad språket är bra på (10.3)
 │  ├─ src/script-watch.ts          skriptets watch-lista: det koden skriver, hittat i koden, och värdena (10.3)
@@ -2887,6 +2888,26 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Brokkr i ett JavaScript-skript** (`script-brokkr.ts`, `brokkrApi`, 2026-11-23): ett skript får `brokkr`, det
+  Brokkr kan, med Brokkrs egen kod (samma som *Pack with Brokkr* och kommandoraden kör).
+  - `brokkr.pack(prg, { format, start, effect, effort, port, irq, maxSeconds })` gör en PRG (programmets första fil
+    när ingen ges) till en fil som packar upp sig själv och ger `{ prg, bytes, load, end, size, from, saved, format,
+    entry, basic, port, cycles, seconds, areas: [{ name, start, end }], warnings }`. `format` är `"exomizer"`
+    (förval), `"brokkr"`, `"fast"` eller `"auto"` (den minsta som packar upp inom `maxSeconds`); `start` är `"sys"`
+    (förval), `"basic"` eller en adress eller ett namn; `saved` är procent mindre, `seconds` tiden på en PAL-C64.
+    Filen är körd i Brokkrs emulerade C64 innan den ges, som alltid.
+  - `brokkr.crunch(bytes, { format, backward, effort })` ger en ren ström (som `exomizer raw`): `{ bytes, size,
+    from, saved, format }`; `brokkr.decrunch(stream, { format, backward })` ger byten tillbaka.
+  - `brokkr.mem(bytes, start, { format, forward, load, effort })` ger en ström med datats adress, laddad där den
+    avkrunchas på plats (som `exomizer mem`): `{ bytes, start, end, inPlace, size, from, saved, format, warnings }`;
+    `load` är `"auto"` (förval), `"none"` eller en adress, och bara Exomizer-formatet kan krunchas framåt.
+  - `brokkr.decruncher({ format, zp, at })` ger källkoden (Kick Assembler) till rutinen som avkrunchar en mem-fil;
+    `brokkr.formats` är formatens namn.
+  - Fel i det som ges (inga byte, okänt format eller `effort`) sägs med funktionens namn. Ingenting ändrar
+    programmet; det skriptet gör sparas med `save`. Editorn föreslår medlemmarna efter `brokkr.` och efter det
+    varje funktion ger. Mallen *Pack with Brokkr* (`brokkr_pack`) packar programmets fil, skriver storleken och
+    uppackningstiden i varje format, packar upp den valda med Sindri och jämför byte för byte (`check`), och gör
+    filen (`saveAs`). Assembler-skript har inget motsvarande: de kör bara 6510-kod.
 - **Sindri i ett JavaScript-skript** (`script-sindri.ts`, `sindriApi`, 2026-11-23): ett skript får `sindri`, det
   Sindri kan, och `save(name, bytes, load)` för filer det gör.
   - `sindri.unpack(prg, { disk, entry, port })` kör uppackaren på en PRG (programmets första fil när ingen ges; den

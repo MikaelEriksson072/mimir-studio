@@ -20,6 +20,8 @@
  *   mark(start, end, "type"), name(a, "name"), note(a, "text"), junk(start, end)
  *                            what script-actions.ts's directives do, done when the run ends
  *   files                    the program's files in memory: [{ start, end }], end the address after the last byte
+ *   brokkr                   Brokkr, Mimir's cruncher (script-brokkr.ts): brokkr.pack(prg) for a file that unpacks itself,
+ *                            brokkr.crunch(bytes) and brokkr.decrunch(stream), brokkr.mem(bytes, start), brokkr.decruncher()
  *   sindri                   Sindri, Mimir's C64 and unpacker (script-sindri.ts): sindri.unpack(prg), sindri.c64() for a
  *                            whole C64 to run code in, sindri.disassemble(at), sindri.basic(at), sindri.prg(start, end)
  *   save(name, bytes, load)  a file the run made, listed under Last run (To the project…, Save…); load: where it
@@ -37,6 +39,7 @@
  * ===================================================================== */
 import { Cpu, type Bus, type Roms } from '@mimir/sindri';
 import { SINDRI_BUDGET, sindriApi, sindriMachine } from './script-sindri';
+import { brokkrApi } from './script-brokkr';
 import { SCREEN_C64, screenApi, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
 import type { Addr, UserScript } from './types';
 import { diskSectors, parseD64, readD64File, sectorOffset, type D64File } from './c64/d64';
@@ -188,6 +191,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   try {
     const files = env.files.map(f => ({ start: f.load, end: Math.min(0x10000, f.load + f.bytes.length) })).filter(f => f.end > f.start);
     const sindri = sindriApi({ mem, addr, files, roms: extras.roms ?? null, disk: extras.disk ?? null, budget: { left: SINDRI_BUDGET } });
+    const brokkr = brokkrApi({ mem, addr, files });
     const save = (name: unknown, bytes: unknown, load?: unknown) => {
       if (!(bytes instanceof Uint8Array) && !Array.isArray(bytes)) throw new TypeError('save: bytes are wanted (a Uint8Array, such as mem.subarray(…) or what sindri.unpack gave)');
       const n = String(name ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'file';
@@ -195,7 +199,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, save, screen };
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval

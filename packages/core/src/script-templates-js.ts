@@ -350,5 +350,44 @@ const hexDump = js('screen_hexdump', 'Hex dump on the screen', 'Memory as a hex 
   'print("A dump of " + hex(from) + " on the C64 screen: " + perRow + " bytes a row, " + screen.cols + " x " + screen.rows);',
 ]);
 
+const brokkrPack = js('brokkr_pack', 'Pack with Brokkr', 'The program\'s file packed with Brokkr to a file that unpacks itself: its size in each format, checked by unpacking it with Sindri, and made a file.', [], [
+  ...box('Pack with Brokkr', [
+  'Packs the program\'s first file with Brokkr, Mimir\'s cruncher, to a file',
+  'that unpacks itself when it is run. It prints the size in each format',
+  '(Exomizer\'s, Brokkr\'s own and its fast one) with the time the C64 takes to',
+  'unpack it, unpacks the chosen one with Sindri to see that the program comes',
+  'back byte for byte, and makes a file of it, listed under Last run: To the',
+  'project… puts it in the project, Save… writes it where you choose. Nothing',
+  'of the program is changed.',
+  ]),
+  '',
+  part('settings: change these'),
+  'const format = "exomizer";     // the format of the file made: "exomizer", "brokkr", "fast", or "auto" for the smallest that unpacks in time',
+  'const effect = true;           // the border flashing while it unpacks: true or false',
+  'const check = true;            // unpack the packed file with Sindri and compare it with the program: true or false',
+  'const saveAs = "packed.prg";   // the name of the file it makes; "" to make none',
+  '',
+  part('the run'),
+  'if (!files.length) throw new Error("The program has no file to pack");',
+  'for (const f of brokkr.formats) {',
+  '  try {',
+  '    const p = brokkr.pack(undefined, { format: f, effect });',
+  '    print(f.padEnd(9) + String(p.size).padStart(6) + " bytes  " + String(p.saved).padStart(5) + " % smaller  unpacks in " + p.seconds + " s");',
+  '  } catch (e) {',
+  '    print(f.padEnd(9) + "no file: " + e.message);',
+  '  }',
+  '}',
+  'const packed = brokkr.pack(undefined, { format, effect });',
+  'print("Packed (" + packed.format + "): " + packed.from + " -> " + packed.size + " bytes, starts " + (packed.basic ? "with RUN" : "at " + hex(packed.entry)));',
+  'packed.warnings.forEach(w => print("Warning: " + w));',
+  'if (check) {',
+  '  const back = sindri.unpack(packed.prg, { disk: false });',
+  '  const file = files[0], at = file.start - back.start;',
+  '  let same = back.unpacked && at >= 0;',
+  '  for (let i = 0; same && i < file.end - file.start; i++) same = back.bytes[at + i] === mem[file.start + i];',
+  '  print(same ? "Checked: Sindri unpacks it to the program, byte for byte" : "NOT the program again when Sindri unpacks it: " + back.stop);',
+  '}',
+  'if (saveAs) save(saveAs, packed.bytes, packed.load);',
+]);
 /** The JavaScript templates, in the order the Scripts tab lists them. */
-export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, screenShow, hexDump];
+export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, brokkrPack, screenShow, hexDump];

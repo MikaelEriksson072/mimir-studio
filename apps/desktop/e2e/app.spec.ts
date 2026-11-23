@@ -10838,7 +10838,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11110,5 +11110,36 @@ test('scripts: full screen gives the script editor the whole window; the button,
     await page.keyboard.press('Enter');
     await expect(shell).not.toHaveClass(/scripts-full/);
     await restShown();
+  });
+});
+
+test('a JavaScript script has Brokkr: the template packs the program, checks it with Sindri and makes the packed file; brokkr. lists what it has', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const made = page.getByRole('list', { name: 'Files the run made' });
+
+  await test.step('Pack with Brokkr prints each format, the check, and makes packed.prg', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Pack with Brokkr to the project' }).click();
+    await expect(page.getByRole('option', { name: 'brokkr_pack' })).toHaveAttribute('aria-selected', 'true');
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end', { timeout: 30_000 });
+    await expect(printed).toContainText(/exomizer +\d+ bytes/);
+    await expect(printed).toContainText(/brokkr +\d+ bytes/);
+    await expect(printed).toContainText(/fast +\d+ bytes/);
+    await expect(printed).toContainText('Checked: Sindri unpacks it to the program, byte for byte');
+    await expect(made.getByRole('listitem')).toHaveText([/^packed\.prg\d+ bytes, loads at \$0801To the project…Save…$/]);
+  });
+
+  await test.step('brokkr. lists what Brokkr has', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('brokkr.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['pack', 'crunch', 'decrunch', 'mem', 'decruncher', 'formats']);
   });
 });

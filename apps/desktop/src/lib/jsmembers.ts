@@ -9,7 +9,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 
 /** the kinds of value a script works with */
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
-  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen';
+  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
 
@@ -57,6 +57,32 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST,
+  brokkr: [
+    m('pack', 'pack(prg, { format, start, effect, effort, port, irq }): a PRG (the program\'s first file when none is given) as a file that unpacks itself; gives { prg, bytes, load, end, size, from, saved, format, entry, … }', true),
+    m('crunch', 'crunch(bytes, { format, backward, effort }): a bare stream of the bytes; gives { bytes, size, from, saved, format }', true),
+    m('decrunch', 'decrunch(stream, { format, backward }): the bytes of a bare stream again', true),
+    m('mem', 'mem(bytes, start, { format, forward, load, effort }): a stream with the data\'s address, loaded where it decrunches in place; gives { bytes, start, end, inPlace, size, … }', true),
+    m('decruncher', 'decruncher({ format, zp, at }): the 6510 source (Kick Assembler) of the routine that decrunches a mem file', true),
+    m('formats', 'the formats: "exomizer" (Exomizer 3\'s), "brokkr" (smaller, slower to unpack) and "fast" (a little larger, quick)'),
+  ],
+  packed: [
+    m('prg', 'the packed file as a PRG, its load address first'), m('bytes', 'the packed file\'s bytes, without the load address'),
+    m('load', 'where the packed file loads ($0801)'), m('end', 'the address after its last byte'),
+    m('size', 'the packed file\'s size in bytes, with its load address'), m('from', 'the size of the file it was made from'), m('saved', 'how much smaller it is, in per cent'),
+    m('format', 'the format it is in: "exomizer", "brokkr" or "fast"'), m('entry', 'where the program starts when it is unpacked'), m('basic', 'true when the program starts with RUN'),
+    m('port', 'the value of $01 the program starts with'), m('cycles', 'the cycles the C64 takes to unpack it'), m('seconds', 'the seconds a PAL C64 takes to unpack it'),
+    m('areas', 'where everything is while it unpacks: a list of { name, start, end }'), m('warnings', 'what Brokkr warns of, a text each'),
+  ],
+  crunched: [
+    m('bytes', 'the stream'), m('size', 'its size in bytes'), m('from', 'the size of the bytes it was made from'), m('saved', 'how much smaller it is, in per cent'), m('format', 'the format it is in'),
+  ],
+  memFile: [
+    m('bytes', 'the file: its load address first, unless load was "none"'), m('start', 'where the file lies when it is loaded (null without a load address)'), m('end', 'the address after its last byte there'),
+    m('inPlace', 'where it decrunches in place: { start, end }'), m('size', 'the file\'s size in bytes'), m('from', 'the size of the bytes it was made from'),
+    m('saved', 'how much smaller it is, in per cent'), m('format', 'the format it is in'), m('warnings', 'what Brokkr warns of, a text each'),
+  ],
+  area: [m('name', 'what is there: "Crunched data", "Decruncher", …'), m('start', 'its first address'), m('end', 'the address after its last')],
+  areas: LIST,
   sindri: [
     m('unpack', 'unpack(prg, { disk, entry, port }): Sindri\'s unpacker run on a PRG (the program\'s first file when none is given); gives { unpacked, packer, start, end, entry, bytes, prg, layers, … }', true),
     m('c64', 'c64({ disk, program }): a whole C64 at READY, the program in its RAM and the disk in its 1541 (the ROMs are needed)', true),
@@ -111,7 +137,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -171,6 +197,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'mem') return 'bytes';
   if (e === 'files') return 'files';
   if (e === 'sindri') return 'sindri';
+  if (e === 'brokkr') return 'brokkr';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
     const n = esc(e);
@@ -196,6 +223,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (!callee || callee[1][0] !== '.') return null;
     const on = jsTypeOf(callee[0], source, depth + 1), name = callee[1].slice(1);
     if (on === 'cpu' && name === 'call') return 'regs';
+    if (on === 'brokkr') return name === 'pack' ? 'packed' : name === 'crunch' ? 'crunched' : name === 'mem' ? 'memFile' : name === 'decrunch' ? 'bytes' : name === 'decruncher' ? 'text' : null;
     if (on === 'sindri') return name === 'unpack' ? 'unpacked' : name === 'c64' ? 'machine' : name === 'prg' ? 'bytes' : name === 'disassemble' || name === 'basic' ? 'texts' : null;
     if (on === 'machine') return name === 'call' ? 'regs' : name === 'run' ? 'ran' : name === 'screen' ? 'texts' : null;
     if (on === 'disk' && (name === 'read' || name === 'sector')) return 'bytes';
@@ -216,6 +244,11 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'disk') return name === 'files' ? 'diskFiles' : name === 'name' || name === 'id' ? 'text' : null;
   if (on === 'diskFile') return name === 'name' || name === 'type' ? 'text' : null;
   if (on === 'sindri') return name === 'roms' ? 'text' : null;
+  if (on === 'brokkr') return name === 'formats' ? 'texts' : null;
+  if (on === 'packed') return name === 'prg' || name === 'bytes' ? 'bytes' : name === 'areas' ? 'areas' : name === 'warnings' ? 'texts' : name === 'format' ? 'text' : null;
+  if (on === 'crunched') return name === 'bytes' ? 'bytes' : name === 'format' ? 'text' : null;
+  if (on === 'memFile') return name === 'bytes' ? 'bytes' : name === 'inPlace' ? 'file' : name === 'warnings' ? 'texts' : name === 'format' ? 'text' : null;
+  if (on === 'area') return name === 'name' ? 'text' : null;
   if (on === 'machine') return name === 'mem' ? 'bytes' : null;
   if (on === 'screen') return name === 'codes' || name === 'colors' ? 'bytes' : null;
   if (on === 'unpacked') return name === 'bytes' || name === 'prg' ? 'bytes' : name === 'layers' ? 'layers' : name === 'listing' ? 'texts' : name === 'packer' || name === 'stop' ? 'text' : null;

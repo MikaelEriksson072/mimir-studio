@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are eleven, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'screen_show', 'screen_hexdump']);
+  it('are twelve, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -201,5 +201,27 @@ describe('the JavaScript templates that use Sindri', () => {
     expect(s.made).toBeUndefined();
     // without the ROMs it says what it needs
     expect(runIn(e, template('sindri_run'), {}).error?.msg).toMatch(/sindri\.c64 needs the C64's ROM files/);
+  });
+});
+
+describe('the JavaScript template that uses Brokkr', () => {
+  it('Pack with Brokkr prints each format\'s size, checks the packed file with Sindri and makes a file of it', () => {
+    const demo = makeDemo(), demoFile = parsePrg(demo.name, demo.prg);
+    const go = (values: Record<string, string>) => runJs({ files: [demoFile], names: new Map() }, { source: setScriptParams(template('brokkr_pack').source, { code: 'js' }, values).source, pads: [] });
+    const r = go({});
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toHaveLength(5);
+    for (const [i, f] of ['exomizer', 'brokkr', 'fast'].entries()) expect(r.prints![i]).toMatch(new RegExp(`^${f} +\\d+ bytes +[\\d.]+ % smaller  unpacks in [\\d.]+ s$`));
+    expect(r.prints![3]).toMatch(new RegExp(`^Packed \\(exomizer\\): ${demo.prg.length} -> \\d+ bytes, starts at \\$0810$`));
+    expect(r.prints![4]).toBe('Checked: Sindri unpacks it to the program, byte for byte');
+    expect(r.made!.map(m => [m.name, m.load])).toEqual([['packed.prg', 0x0801]]);
+    expect(r.made![0].bytes.length).toBeLessThan(demo.prg.length);
+    expect(r.changes).toEqual([]);
+    // another format, unchecked, and no file
+    const o = go({ format: '"brokkr"', check: 'false', saveAs: '""' });
+    expect(o.prints![3]).toMatch(/^Packed \(brokkr\): /);
+    // Brokkr's warnings are printed: its own format's decruncher has no room but on the screen here
+    expect(o.prints!.slice(4)).toEqual([expect.stringMatching(/^Warning: The decruncher runs on the screen /)]);
+    expect(o.made).toBeUndefined();
   });
 });
