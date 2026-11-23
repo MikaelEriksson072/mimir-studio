@@ -103,7 +103,7 @@ const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, fits, userNames, onRevealLibrary, loops, onAddLoop, files, onRunOnFiles, onRunValues, onToProject }: ScriptsViewProps) {
-  const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded, c64, setC64 } = useScripts();
+  const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded, c64, setC64, full } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   /** the code's row: the output's edge goes up only as far as it has more than its least height */
@@ -187,6 +187,8 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
       editor.addCommand(monaco.KeyCode.F8, () => keys.current.step());
       editor.addCommand(monaco.KeyCode.F6, () => keys.current.over());
       editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F6, () => keys.current.out());
+      // Alt+Enter: full screen and back (outside the editor App's keys do it)
+      editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.Enter, () => { const st = useScripts.getState(); st.set({ full: !st.full }); });
       // a click in the gutter left of the line numbers sets or clears a breakpoint
       editor.onMouseDown(ev => {
         if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && ev.target.position) keys.current.toggleBp(ev.target.position.lineNumber);
@@ -684,6 +686,12 @@ ${cryptWhereText(l)}`}>
               title={inLibrary ? 'Save the script in the library again, in place of the one of the same name there' : 'Save a copy of the script in the library, so that other projects can add it'}><Icon name="bookmark" /><span className="lbl">{inLibrary ? 'Update library' : 'Save to library'}</span></button>
             <button className="icon-btn" aria-label="Delete script" title={`Delete the script "${cur.name}"${mine.length ? ', and take what it changed out of the program' : ''} (Ctrl+Z brings it back)`} onClick={() => { flush(); onRemove(cur.id); }}><Icon name="trash" size={15} /></button>
           </>}
+          {/* full screen: the script editor gets the whole window (App puts .scripts-full on the window) */}
+          <span className="tb-sep" />
+          <button className={cx('icon-btn scr-full-btn', full && 'on')} aria-pressed={full} aria-label={full ? 'Leave full screen' : 'Full screen'} onClick={() => set({ full: !full })}
+            title={full ? 'Leave full screen: the title bar, the tabs, the side panel, the bottom panel and the status bar come back as they were (Alt+Enter, or Esc outside the code)'
+              : 'Full screen: the script editor gets the whole window. The title bar, the activity bar, the side panel, the inspector, the tabs, the bottom panel and the status bar go until you leave it (Alt+Enter; Esc outside the code leaves it too). F11 makes the window itself fill the screen'}>
+            <Icon name={full ? 'shrink' : 'expand'} size={15} /></button>
         </div>
         {howTo && !dbg && (cur.safe
           ? <p className="scr-howto scr-safe-note" role="note"><Icon name="shield" size={13} /><span><b>Safe mode</b> is on: <b>Run</b> (Ctrl+Enter) runs the code here in Mimir and leaves the program and its .asm as they are. What it would change is listed under <i>In the program → Would change</i>, and <b>Write into the program</b> puts it in. <b>Debug</b> (F8) goes through it an instruction at a time.</span></p>

@@ -11031,3 +11031,84 @@ test('scripts: a C64 screen beside the code that JavaScript and assembler print 
     await expect(text).toHaveText(/^HI\n?/);
   });
 });
+
+test('scripts: full screen gives the script editor the whole window; the button, Alt+Enter, Esc outside the code and the palette leave it, and the window comes back as it was', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const shell = page.locator('.app');
+  const editor = page.locator('.scr-editor');
+  const scripts = page.locator('.scripts');
+  const full = page.getByRole('button', { name: 'Full screen', exact: true });
+  const leave = page.getByRole('button', { name: 'Leave full screen' });
+  // what the rest of the window is: the title bar, the activity bar, the tab row, the bottom panel's tab row and the status bar
+  const rest = [page.locator('.titlebar'), page.getByRole('navigation', { name: 'Views' }), page.getByRole('tab', { name: 'Listing' }), page.getByRole('region', { name: 'Panels' }), page.locator('.statusbar')];
+  const restShown = async () => { for (const r of rest) await expect(r).toBeVisible(); };
+  const restHidden = async () => { for (const r of rest) await expect(r).toBeHidden(); };
+  await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+  await restShown();
+  // Monaco is loaded when the tab first opens: its box is measured once it is there
+  await expect(editor.locator('.view-lines')).toBeVisible();
+  const before = (await editor.boundingBox())!;
+
+  await test.step('the toolbar\'s button: the script editor has the whole window, and the code gets the room', async () => {
+    await expect(full).toHaveAttribute('aria-pressed', 'false');
+    await full.click();
+    await expect(shell).toHaveClass(/scripts-full/);
+    await restHidden();
+    const win = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+    await expect.poll(async () => { const b = (await scripts.boundingBox())!; return [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)]; }).toEqual([0, 0, win.w, win.h]);
+    await expect.poll(async () => (await editor.boundingBox())!.width).toBeGreaterThan(before.width + 40);
+    await expect.poll(async () => (await editor.boundingBox())!.y).toBeLessThan(before.y - 30);
+    // the code is still written and run there
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText('start:  lda #1\n        sta $c000\n        rts\n');
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.scr-end')).not.toBeEmpty();
+    await expect(shell).toHaveClass(/scripts-full/);
+  });
+
+  await test.step('its button again: the window as it was', async () => {
+    await expect(leave).toHaveAttribute('aria-pressed', 'true');
+    await leave.click();
+    await expect(shell).not.toHaveClass(/scripts-full/);
+    await restShown();
+    await expect.poll(async () => Math.round((await editor.boundingBox())!.width)).toBe(Math.round(before.width));
+  });
+
+  await test.step('Alt+Enter in the code goes there and back; Esc in the code stays, Esc outside it leaves', async () => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Alt+Enter');
+    await expect(shell).toHaveClass(/scripts-full/);
+    await page.keyboard.press('Escape');
+    await expect(shell).toHaveClass(/scripts-full/);
+    await page.keyboard.press('Alt+Enter');
+    await expect(shell).not.toHaveClass(/scripts-full/);
+    await full.click();
+    await expect(shell).toHaveClass(/scripts-full/);
+    await page.keyboard.press('Escape');
+    await expect(shell).not.toHaveClass(/scripts-full/);
+    await restShown();
+  });
+
+  await test.step('another tab shows the window as it is, and the Scripts tab is full screen again; the palette leaves it', async () => {
+    await full.click();
+    await page.keyboard.press('Control+Shift+p');
+    const palette = page.getByRole('dialog', { name: 'Command palette' });
+    await palette.getByRole('textbox').fill('show listing');
+    await page.keyboard.press('Enter');
+    await expect(shell).not.toHaveClass(/scripts-full/);
+    await restShown();
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await expect(shell).toHaveClass(/scripts-full/);
+    await page.keyboard.press('Control+Shift+p');
+    await palette.getByRole('textbox').fill('full screen');
+    await expect(palette).toContainText('Alt+Enter');
+    await page.keyboard.press('Enter');
+    await expect(shell).not.toHaveClass(/scripts-full/);
+    await restShown();
+  });
+});

@@ -2359,7 +2359,7 @@ $06, $08` i `.asm`-filen efter en körning.
 - **Fliken Scripts** ligger bland huvudflikarna mellan Memory och källkoden. Till vänster står projektets skript
   (*Project*, med *New script*), biblioteket (*Library*) och mallarna (*Templates*). I mitten står verktygsraden i
   grupper med streck emellan (skriptets namn och kontrollen · *Safe mode* · *Run* och *Debug* · *Save to library* och
-  papperskorgen), sedan editorn och under den **utdatat, en flikrad som bottenpanelens** (`ScriptOutput.tsx`):
+  papperskorgen · *Full screen*), sedan editorn och under den **utdatat, en flikrad som bottenpanelens** (`ScriptOutput.tsx`):
   *Init*, *Watch*, *In the program*, *Scratchpads*, *Last run* och *Problems*. Varje flik har utdatats hela bredd och
   säger på fliken vad den håller (antal rader, ändringar och scratchpads, *set* när Init är satt, en bock eller en
   varning för senaste körningen, antal problem i rött när det är fel); längst till höger i raden står hur senaste
@@ -2372,6 +2372,17 @@ $06, $08` i `.asm`-filen efter en körning.
   fälls in till en smal remsa med knappen i rubriken; remsan har knappen som fäller ut den, *New script* och ett kort
   namn för varje skript (första bokstaven och siffran det slutar med: `s`, `s2`) som byter skript. Appen minns om den
   är infälld.
+  **Full screen** (knappen längst till höger i verktygsraden, ikonen med fyra hörn; Alt+Enter, också i koden; i
+  kommandopaletten *Script editor in full screen*; 2026-11-23): skripteditorn får hela fönstret. Titelraden,
+  aktivitetsraden, sidopanelen, inspektorn (och deras avdelare), flikraden, bottenpanelen och statusraden döljs
+  (`.app.scripts-full`, fönstrets rutnät är bara editorytan) tills man lämnar läget: samma knapp (nu med hörnen inåt,
+  *Leave full screen*), Alt+Enter, Esc utanför koden (Esc i koden är editorns, och med en dialog öppen stänger Esc
+  den) eller kommandot i paletten. Menyer, dialoger och meddelanden visas ovanpå som vanligt. Det som döljs behåller sin
+  storlek och sitt läge, så fönstret kommer tillbaka som det var. Läget gäller medan fönstret är öppet (`full` i
+  `store/scripts.ts`, sparas inte över en omstart): en annan flik (*Show listing* i paletten, Shift+klick på en länk)
+  visar fönstret som vanligt, och Scripts-fliken är i full screen igen när man kommer tillbaka. Utan skript visas
+  fliken som vanligt. F11 (Electrons *View → Toggle Full Screen*) gör fönstret självt till helskärm, oberoende av det
+  här.
 - **Nytt skript:** *New script* i fliken och i kommandopaletten (med markeringen, när det finns en), eller högerklick i
   listningen → *Program* → *New script from selection / block*, som börjar skriptet med markeringens eller blockets
   rader som listningen skriver dem: så klipper man ut en loop ur programmet. Skriptet heter `script`, `script2`, …,

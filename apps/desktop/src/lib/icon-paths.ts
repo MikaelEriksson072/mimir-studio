@@ -34,6 +34,8 @@ export const ICONS = {
   // books on a shelf, one leaning: the library of SIDs, sprites and charsets (spec 10.6)
   library: 'M4 4h4v16H4zM10 4h4v16h-4zM15.6 5.3l3.4-.9 3.5 14.5-3.4.9zM3 20.5h12',
   pause: 'M8 5v14M16 5v14',
+  // four corners pointing out, and in: full screen, and back out of it (the script editor's Full screen)
+  expand: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5', shrink: 'M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5',
   // a strip of film: frames one after the other (animation data, spec 13.5b)
   film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4',
 } as const;

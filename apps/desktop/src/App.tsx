@@ -2337,6 +2337,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   const userScripts = project.userScripts ?? [];
   /** the script running (the Scripts view's button has a spinner meanwhile) */
   const scriptRunning = useScripts(s => s.running);
+  // the script editor in full screen (10.3): while the Scripts tab shows a script, the rest of the window is hidden
+  const scriptsFull = useScripts(s => s.full) && tab === 'scripts' && userScripts.length > 0;
+  const toggleScriptsFull = () => { const st = useScripts.getState(); st.set({ full: !st.full }); };
   const scriptsEnv = useMemo(() => scriptEnv(project, R, S, A.blocks, A.music), [project.files, project.cart, R, A, S.hexCase]); // eslint-disable-line react-hooks/exhaustive-deps
   /** what a script runs on: the program without what its earlier runs changed (a decryption runs on the bytes as they
    *  were, not on what it decrypted the last time) */
@@ -4013,6 +4016,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'tab-gfx', label: 'Show memory as graphics (characters, sprites, bitmaps) to find and mark graphics', run: () => setUi({ tab: 'gfx' }) },
     { id: 'tab-mem', label: 'Show memory as the VICE monitor does (m: hex and text, i: PETSCII, ii: screen codes)', run: () => setUi({ tab: 'mem' }) },
     { id: 'tab-scripts', label: `Show the scripts: ${LANG_TITLE[codeLang]} code that runs in Mimir on a copy of the program`, run: () => setUi({ tab: 'scripts' }) },
+    ...(userScripts.length ? [{ id: 'script-full', label: scriptsFull ? 'Leave the script editor\'s full screen (the rest of the window comes back)' : 'Script editor in full screen: it gets the whole window until you leave it', key: 'Alt+Enter',
+      run: () => { useScripts.getState().set({ full: !scriptsFull }); if (!scriptsFull) setUi({ tab: 'scripts' }); } }] : []),
     { id: 'tab-git', label: 'Git: stage, commit and push the project (the Git tab)', run: () => setUi({ tab: 'git' }) },
     ...userScripts.map((s): Command => ({ id: `script-run-${s.id}`, label: `Run the script "${s.name}"${s.safe ? ' (safe mode: nothing goes into the program)' : ''}`, ...(s.key ? { key: s.key } : {}), run: () => void runUserScript(s.id) })),
     { id: 'script-new', label: sel && sel.multi && sel.end > sel.start ? 'New script from the selection (runs in Mimir on a copy of the program)' : `New script (${LANG_TITLE[codeLang]} code that runs in Mimir on a copy of the program)`, run: () => newUserScript(sel && sel.multi && sel.end > sel.start ? rangeLines(sel.start, sel.end) : []) },
@@ -4091,8 +4096,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     pickCell(next, extend);
   };
   const closeXref = () => setXrefPick(null);
-  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref });
-  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref };
+  const keyRef = useRef({ commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref, scriptsFull });
+  keyRef.current = { commands, cursor, curLine, lineOf, R, lines: view.lines, folded, tab, sel, editing, modal: dialog, overWork, extendTo, stepCell, findOpen, closeFind, drawer, closeInspector, removeHoveredComment, xrefOpen: !!xrefBox, closeXref, scriptsFull };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = keyRef.current;
@@ -4115,6 +4120,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (ctrl && (e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'o')) return run(e.key.toLowerCase() === 's' ? 'save' : 'open');
       // Ctrl+C in the listing copies its lines; text selected with the mouse elsewhere is copied as usual
       if (ctrl && !e.shiftKey && !typing && !k.modal && !k.editing && e.key.toLowerCase() === 'c' && k.tab === 'listing' && (t?.closest?.('.listing') || !window.getSelection()?.toString())) return run('copy-lines');
+      // Alt+Enter: the script editor in full screen and back (in its code Monaco's command does it)
+      if (e.altKey && !ctrl && !e.shiftKey && e.key === 'Enter' && k.tab === 'scripts' && !k.modal && !e.defaultPrevented) { e.preventDefault(); toggleScriptsFull(); return; }
       if (e.altKey && !ctrl && !e.shiftKey && !k.modal && /^[1-9]$/.test(e.key)) { const c = k.commands.find(x => x.key === `Alt+${e.key}` && x.id.startsWith('script-run-')); if (c) { e.preventDefault(); c.run(); return; } }
       if (e.key === 'F5') return run(e.shiftKey ? 'build-debugger' : 'build');
       if (e.key === 'F9') return run('quicksave');
@@ -4123,6 +4130,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       if (typing || k.editing || k.modal || ctrl || (e.altKey && !['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp'].includes(e.key))) return;
       // the inspector opened from its strip (or a narrow window's drawer): Esc folds it in, and only that
       if (e.key === 'Escape' && k.drawer === 'insp') { e.preventDefault(); k.closeInspector(); return; }
+      // the script editor in full screen: Esc outside its code (and with no dialog open, whose Esc closes it) leaves it
+      if (e.key === 'Escape' && k.scriptsFull && !document.querySelector('[role="dialog"]')) { e.preventDefault(); toggleScriptsFull(); return; }
       if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goBack(); return; }
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goFwd(); return; }
       // the next program on the disk or the tape, and the one before
@@ -4601,7 +4610,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
 
   return (
     <AssemblerContext.Provider value={asm}>
-    <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
+    <div className={cx('app', drawer && `drawer-${drawer}`, !sidePanel && 'side-closed', inspector === 'auto' && 'insp-auto', scriptsFull && 'scripts-full')} style={{ '--side-w': sizes.side + 'px', '--insp-w': sizes.insp + 'px', '--bottom-h': sizes.bottom + 'px' } as React.CSSProperties}>
       <TitleBar asmTool={asmTool} projectName={project.name} home={home?.name ?? null} changed={unsavedChanges} onProject={projectMenu} undoLabel={undoLabel} canRedo={!!future.length} theme={theme} busy={!!buildBusy} snapshot={project.files.some(f => f.vsf)} cartridge={!!project.cart}
         verifyState={build && !stale ? (build.ok ? 'ok' : 'bad') : null}
         onFile={fileMenu} fileOpen={menu?.owner === 'file'} onUndo={undo} onRedo={redo} onPalette={() => setModal('palette')}

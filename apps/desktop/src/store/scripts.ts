@@ -112,6 +112,10 @@ interface ScriptsState {
   dbgOutH: number;
   /** the output below the editor folded down to its bar (the editor takes the room) */
   outFolded: boolean;
+  /** the script editor in full screen: it has the whole window, the rest of the window (the title bar, the activity
+   *  bar, the side panel, the inspector, the tab row, the bottom panel, the status bar) is hidden until it is left
+   *  (kept while the window is open: another tab shows the window as it is, and the Scripts tab is full screen again) */
+  full: boolean;
   /** the Scripts tab's list of the project's scripts and the library folded in to a strip (kept by the app) */
   listFolded: boolean;
   setListFolded: (v: boolean) => void;
@@ -142,7 +146,7 @@ interface ScriptsState {
 }
 
 export const useScripts = create<ScriptsState>((set, get) => ({
-  selected: null, runs: {}, running: null, gotoLine: null, outTab: 'watch', pad: 0, change: null, mode: 'hex', screen: false, outH: 300, dbgOutH: 170, outFolded: false, cmpWith: null,
+  selected: null, runs: {}, running: null, gotoLine: null, outTab: 'watch', pad: 0, change: null, mode: 'hex', screen: false, outH: 300, dbgOutH: 170, outFolded: false, cmpWith: null, full: false,
   library: readLibrary(),
   libraryDir: null,
   loadLibrary: async () => {

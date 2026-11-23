@@ -1498,6 +1498,14 @@ button.tpl-ph:disabled { cursor: default; color: var(--fg-2); }
    fit is cut off at the editor area's foot, never drawn over the bottom panel */
 .editor:has(> .scripts) { flex: 1 1 auto; overflow: hidden; }
 main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
+/* the script editor in full screen (Alt+Enter, the button at the toolbar's right end): the window's grid is the editor
+   area alone, and the title bar, the activity bar, the side panel and the inspector with their splitters, the tab row,
+   the bottom panel and the status bar are hidden until it is left (menus, dialogs and messages still show over it).
+   Each keeps its size and state, so leaving brings the window back as it was */
+.app.scripts-full { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; }
+.app.scripts-full > :is(.titlebar, .activity, .sidebar, .side-collapse, .side-split, .insp-split, .insp-col, .insp-rail, .statusbar, .drawer-back),
+.app.scripts-full main.main > :not(.editor) { display: none !important; }
+.scr-full-btn.on { color: var(--accent-hi); }
 .scr-list, .scr-edit-row { contain: size; }
 .scripts-empty p { max-width: 560px; margin: 0; }
 .scr-list { width: 150px; flex: none; display: flex; flex-direction: column; gap: 1px; padding: 6px; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
@@ -1527,7 +1535,7 @@ main.main:has(> .editor > .scripts) > .bottom { flex-shrink: 100000; }
 .scr-run kbd { margin-left: 6px; }
 .scr-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .scr-fallback { flex: 1; min-height: 0; resize: none; border: 0; padding: 8px 12px; background: var(--editor); color: var(--fg); font: 13px/20px var(--font-code); }
-/* the toolbar's groups: the name and its check · safe mode · Run and Debug · the library and delete */
+/* the toolbar's groups: the name and its check · safe mode · Run and Debug · the library and delete · full screen */
 .tb-sep { width: 1px; height: 18px; flex: none; margin: 0 2px; background: var(--line-2); }
 /* the output under a script's editor (10.3): a tab row as the window's bottom panel has (Init, Watch, In the program,
    Scratchpads, Last run, Problems), each tab saying what it holds, the last run's end at its right; under it the tab
