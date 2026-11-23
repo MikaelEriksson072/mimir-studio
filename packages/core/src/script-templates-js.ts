@@ -1,7 +1,8 @@
 /* =====================================================================
  * Script templates in JavaScript (spec 10.3): ready scripts that show what JavaScript is good at in Mimir, each a
  * thing one wants to do with a program: decrypt a block, find its texts, find a byte pattern, name the routines of a
- * jump table, unpack run-length data, read the disk, call a routine with every value. Each starts with a comment that
+ * jump table, unpack run-length data, read the disk, call a routine with every value, show a screen of the program's
+ * or a hex dump on the script's C64 screen. Each starts with a comment that
  * says what it does, then its settings: lines that give a name one value (`const key = 0x77;`), which the Settings
  * tab shows as fields. An address in a setting is a number, or a name of the program in quotes ("tbl_001").
  * ===================================================================== */
@@ -254,7 +255,8 @@ const sindriRun = js('sindri_run', 'Run in a C64', 'The program started in a who
   'Starts the program in a whole C64 (Sindri\'s: the ROMs, the VIC, the CIAs,',
   'the mounted disk in a true 1541), as typed at the READY prompt, and lets it',
   'run for some seconds or until it gets to an address. It prints where the',
-  'C64 stopped and the text screen it left, and can make a file of a stretch',
+  'C64 stopped and the text screen it left (and shows it on the C64 screen:',
+  'the toolbar\'s C64 screen), and can make a file of a stretch',
   'of its memory (Last run: To the project…, Save…). The C64 is the script\'s',
   'own: nothing of the program is changed. The C64\'s ROM files are needed',
   '(they come with VICE: Settings, Toolchain).',
@@ -272,10 +274,81 @@ const sindriRun = js('sindri_run', 'Run in a C64', 'The program started in a who
   'c64.type(start + "\\r");',
   'const r = c64.run({ until: stopAt ? stopAt : undefined, cycles: Math.round(seconds * 985248) });',
   'print((r.reason === "until" ? "Got to " + hex(r.pc) : r.reason === "jam" ? "Jammed at " + hex(r.pc) : "Ran " + seconds + " s, now at " + hex(r.pc)) + " after " + r.cycles + " cycles; $01 = " + hex(c64.mem[1], 2));',
-  'const screen = c64.screen();',
-  'while (screen.length && !screen[screen.length - 1]) screen.pop();',
-  'screen.forEach(line => print("| " + line));',
+  'const lines = c64.screen();',
+  'while (lines.length && !lines[lines.length - 1]) lines.pop();',
+  'lines.forEach(line => print("| " + line));',
+  'screen.show(c64);          // the C64\'s screen, as its VIC shows it, on the script\'s C64 screen',
   'if (saveTo > saveFrom) save("memory_" + hex(saveFrom).slice(1) + ".prg", c64.mem.subarray(saveFrom, saveTo), saveFrom);',
 ]);
+const screenShow = js('screen_show', 'Show a screen', 'A screen of the program\'s (1000 screen codes, their colours, its own character set) shown on the C64 screen as the C64 shows it.', [], [
+  ...box('Show a screen of the program on the C64 screen', [
+  'Shows 1000 screen codes of the program (a title picture, a level, a',
+  'PETSCII screen) on the script\'s C64 screen, as the C64 shows them: with',
+  'their colours when the program has them, in the character set it uses',
+  '(its own, 2 KB, or the ROM\'s), and the border and background colours.',
+  'Nothing of the program is changed. The screen is the toolbar\'s C64',
+  'screen: it opens when the run has drawn on it.',
+  ]),
+  '',
+  part('settings: change these'),
+  'const screenAt = 0x0400;       // where the 1000 screen codes are: a number, or a name in quotes ("tbl_001")',
+  'const colorsAt = 0;            // where their 1000 colours are (one a byte); 0: all in textColor',
+  'const charsetAt = 0;           // where the program\'s own character set is (2 KB); 0: the C64\'s ROM',
+  'const lowerCase = false;       // the ROM\'s lower case set (true) or its upper case and graphics one',
+  'const textColor = "light blue"; // the colour without colorsAt: 0-15 or a name',
+  'const border = "light blue";   // the border\'s colour',
+  'const background = "blue";     // the background\'s colour',
+  '',
+  part('the screen'),
+  'screen.border = border;',
+  'screen.background = background;',
+  'screen.color = textColor;',
+  'screen.lower = lowerCase;',
+  'screen.show(screenAt, colorsAt ? colorsAt : null);',
+  'if (charsetAt) screen.charset(charsetAt);',
+  'print("Shown: " + hex(addr(screenAt)) + "-" + hex(addr(screenAt) + 999) + (colorsAt ? ", colours from " + hex(addr(colorsAt)) : "") + (charsetAt ? ", characters from " + hex(addr(charsetAt)) : ""));',
+]);
+
+const hexDump = js('screen_hexdump', 'Hex dump on the screen', 'Memory as a hex dump on the C64 screen: addresses, bytes and their text, as many bytes a row as the screen is wide (extended mode gives more).', [], [
+  ...box('Hex dump on the C64 screen', [
+  'Prints memory from start as a monitor does, on the script\'s C64 screen:',
+  'the address in yellow, the bytes in hex (those that are zero in grey) and',
+  'what they read as text. A row has as many bytes as the screen is wide: 8',
+  'on the C64\'s 40 columns, 16 or more in the screen\'s Extended mode, and',
+  'the dump goes on as far as the screen has rows. Nothing of the program is',
+  'changed.',
+  ]),
+  '',
+  part('settings: change these'),
+  'const start = 0x0801;      // the first address: a number, or a name in quotes ("tbl_001")',
+  'const screenCodes = false; // the text column as screen codes (true) or as PETSCII',
+  '',
+  part('the dump'),
+  'const from = addr(start);',
+  '// a row: "$0801 " and three columns a byte (" 0a") and one of text',
+  'const perRow = Math.max(1, Math.floor((screen.cols - 6) / 4 / 4) * 4);',
+  'screen.clear();',
+  'for (let row = 0; row < screen.rows - 1; row++) {',
+  '  const at = from + row * perRow;',
+  '  if (at > 0xffff) break;',
+  '  screen.color = "yellow";',
+  '  screen.write(hex(at).slice(1) + " ");',
+  '  for (let i = 0; i < perRow; i++) {',
+  '    const b = mem[(at + i) & 0xffff];',
+  '    screen.color = b ? "light blue" : "dark grey";',
+  '    screen.write(hex(b, 2).slice(1) + " ");',
+  '  }',
+  '  for (let i = 0; i < perRow; i++) {',
+  '    const b = mem[(at + i) & 0xffff];',
+  '    // the byte as a character: a screen code put straight into the cell, PETSCII through the screen editor\'s rules',
+  '    const code = screenCodes ? b : b < 0x20 || (b >= 0x80 && b < 0xa0) ? 0x2e : b < 0x40 ? b : b < 0x60 ? b - 0x40 : b < 0x80 ? b - 0x20 : b < 0xc0 ? b - 0x40 : b === 0xff ? 0x5e : b - 0x80;',
+  '    screen.poke(screen.col, screen.row, code, "white");',
+  '    if (screen.col < screen.cols - 1) screen.col = screen.col + 1;',
+  '  }',
+  '  screen.print();',
+  '}',
+  'print("A dump of " + hex(from) + " on the C64 screen: " + perRow + " bytes a row, " + screen.cols + " x " + screen.rows);',
+]);
+
 /** The JavaScript templates, in the order the Scripts tab lists them. */
-export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun];
+export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, screenShow, hexDump];

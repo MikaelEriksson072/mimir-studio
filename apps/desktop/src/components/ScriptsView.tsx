@@ -13,12 +13,13 @@ import { Icon } from '../lib/icons';
 import { cx, store } from '../lib/util';
 import { stopScript } from '../lib/scriptrun';
 import { initValue } from '../lib/scriptinit';
-import { useScripts, type LibraryScript } from '../store/scripts';
+import { runScreenSize, useScripts, type LibraryScript } from '../store/scripts';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { WatchSection, WatchTable, type WatchItem, type WatchKind, type WatchMode } from './ScriptWatch';
 import { ScriptOutput, type BlockChoice, type LivePad } from './ScriptOutput';
 import type { ScriptFileChoice } from './ScriptFiles';
+import { ScriptScreenPanel } from './ScriptScreen';
 
 /** a script being debugged: its machine, the code it was assembled from, the registers and its scratchpads' bytes
  *  before the last step (what the step changed is marked) */
@@ -102,7 +103,7 @@ const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, fits, userNames, onRevealLibrary, loops, onAddLoop, files, onRunOnFiles, onRunValues, onToProject }: ScriptsViewProps) {
-  const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded } = useScripts();
+  const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded, c64, setC64 } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
   const host = useRef<HTMLDivElement>(null);
   /** the code's row: the output's edge goes up only as far as it has more than its least height */
@@ -465,7 +466,7 @@ export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf
     const text = models.current[s.id]?.getValue() ?? s.source;
     const e = envFor(s.id), c = checkScript(e, { source: text, lang: s.lang, pads: s.pads, init: s.init });
     if (!c.ok) { toast(`The script does not check out: ${c.problems.find(p => p.level === 'error')?.msg}`, 'warn'); return; }
-    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, lang: s.lang, pads: s.pads, init: s.init }, c), source: text, prev: null, padsBefore: null, start: scriptStartMemory(e, s, c), before: null };
+    const d: Debugging = { id: s.id, m: new ScriptMachine(e, { source: text, lang: s.lang, pads: s.pads, init: s.init }, c, undefined, runScreenSize()), source: text, prev: null, padsBefore: null, start: scriptStartMemory(e, s, c), before: null };
     setDbg(d); dbgRef.current = d;
     stopped(d);
   };
@@ -643,7 +644,7 @@ ${cryptWhereText(l)}`}>
           </span>
           {/* the script's language; one in Kick Assembler in a 64tass project can be moved there */}
           {cur.code === 'js' ? <span className="pill scr-lang other" aria-label="Language"
-            title="Written in JavaScript: mem is the program's memory with the scratchpads in it, addr(&quot;name&quot;) a name's address, pad(&quot;pad1&quot;) a scratchpad's bytes, cpu.call(&quot;name&quot;, { a, x, y }) runs the program's own code, print(...) writes a line under Last run, and mark, name, note and junk say what the bytes are">JavaScript</span>
+            title="Written in JavaScript: mem is the program's memory with the scratchpads in it, addr(&quot;name&quot;) a name's address, pad(&quot;pad1&quot;) a scratchpad's bytes, cpu.call(&quot;name&quot;, { a, x, y }) runs the program's own code, print(...) writes a line under Last run, screen.print(...) a line on the C64 screen, and mark, name, note and junk say what the bytes are">JavaScript</span>
           : <span className={cx('pill scr-lang', cur.lang !== lang && 'other')} aria-label="Language"
             title={cur.lang === lang ? `Written in ${LANG_TITLE[cur.lang]}, as the project's source is` : `Written in ${LANG_TITLE[cur.lang]}: it is assembled as ${LANG_TITLE[cur.lang]}, though the project's source is ${LANG_TITLE[lang]}`}>{LANG_TITLE[cur.lang]}</span>}
           {cur.code !== 'js' && cur.lang === 'kickass' && lang === '64tass' && !dbg && <button className="btn small scr-move" onClick={moveTo64tass}
@@ -655,6 +656,9 @@ ${cryptWhereText(l)}`}>
             <input type="checkbox" role="switch" className="switch" aria-label="Safe mode" checked={!!cur.safe} onChange={e => onSafe(cur.id, e.target.checked)} />
             <Icon name="shield" size={14} /><span className="lbl">Safe mode</span>
           </label>
+          <button className="btn scr-screen-btn" aria-pressed={c64.open} onClick={() => setC64({ open: !c64.open })}
+            title={c64.open ? 'Close the C64 screen beside the code' : 'Open a C64 screen beside the code, for the script to print on: screen.print(…) in JavaScript, JSR $FFD2 (CHROUT) in assembler. Its Extended mode gives it more columns and rows than 40×25'}>
+            <Icon name="screen" size={14} /><span className="lbl">C64 screen</span></button>
           <span className="tb-sep" />
           {dbg ? <div className="scr-dbg-tools" role="group" aria-label="Debugging">
             {dbgBusy
@@ -701,6 +705,17 @@ ${cryptWhereText(l)}`}>
             {state !== 'ready' && <textarea className="fallback-code scr-fallback" aria-label="Script code" value={source} readOnly={!!dbg} onChange={e => { setLive(l => ({ ...l, [cur.id]: e.target.value })); onEdit(cur.id, { source: e.target.value }, `Edit script "${cur.name}"`); }} />}
             {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={byAddr} busy={dbgBusy} atBp={atBp}
               watch={watchItems.length ? <WatchTable items={watchItems} mode="now" compact onGoLine={goLine} /> : null} />}
+            {c64.open && <>
+              {/* the screen's edge: a drag gives it more or less of the row, the code keeps at least 200px */}
+              <Splitter dir="v" onDrag={d => {
+                const row = editRow.current?.offsetWidth ?? 1200, other = (dbg ? 300 : 0) + 200;
+                setC64({ width: Math.max(240, Math.min(row - other, useScripts.getState().c64.width - d)) });
+              }} />
+              <div className="scr-screen-col" style={{ width: c64.width }}>
+                <ScriptScreenPanel screen={dbg ? dbg.m.screen.state() : kept?.run.screen ?? null} live={!!dbg} extended={c64.extended} zoom={c64.zoom} size={c64.size}
+                  onExtended={v => setC64({ extended: v })} onZoom={z => setC64({ zoom: z })} onSize={sz => setC64({ size: sz })} onCopy={onCopy} onClose={() => setC64({ open: false })} />
+              </div>
+            </>}
           </div>
           {/* the output gives way only when the window is low (the bottom panel stops above it): a drag goes on from the
               height it has, and goes up only as far as the code has more than its 140px (a higher output would grow

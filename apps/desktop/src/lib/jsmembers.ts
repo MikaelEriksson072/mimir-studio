@@ -9,7 +9,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 
 /** the kinds of value a script works with */
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
-  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts';
+  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
 
@@ -90,6 +90,23 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('index', 'its number, from 0'), m('entry', 'where it started'), m('kind', 'what it is: a packer\'s stage, a loader, the program …'), m('packer', 'the packer\'s name, or null'),
     m('instructions', 'how many instructions it ran'), m('written', 'the memory it wrote: a list of { start, end }'), m('what', 'what it did, as a sentence'),
   ],
+  screen: [
+    m('print', 'print(...values): a line on the C64 screen, then RETURN (the cursor goes to the next row; the screen scrolls)', true),
+    m('write', 'write(...values): text on the C64 screen where the cursor is, without RETURN', true),
+    m('chrout', 'chrout(byte or bytes): PETSCII as CHROUT prints it: colour codes, RVS ON $12/OFF $92, CLR $93, HOME $13, cursor moves', true),
+    m('at', 'at(col, row): the cursor to a column and a row, from 0', true),
+    m('clear', 'clear(): CLR, the screen in the cursor\'s colour, the cursor home', true), m('home', 'home(): the cursor to the top left', true),
+    m('poke', 'poke(col, row, code, color): a screen code (and its colour) into a cell, as POKE does', true),
+    m('peek', 'peek(col, row): the screen code in a cell', true),
+    m('show', 'show(at, colorsAt): 1000 screen codes of the program (an address, a name or bytes) and their colours at the top left; show(c64) the screen of a C64 of sindri.c64()', true),
+    m('charset', 'charset(at): the program\'s own character set (2 KB) in place of the ROM\'s; charset(null) for the ROM\'s', true),
+    m('color', 'the colour text is printed in: 0-15 or a name ("light blue"), read and set'),
+    m('border', 'the border\'s colour: 0-15 or a name, read and set'), m('background', 'the background\'s colour: 0-15 or a name, read and set'),
+    m('reverse', 'RVS ON: true or false'), m('lower', 'the lower case character set: true or false'),
+    m('cols', 'how many columns it has (40; more in extended mode)'), m('rows', 'how many rows it has (25; more in extended mode)'),
+    m('col', 'the cursor\'s column, read and set'), m('row', 'the cursor\'s row, read and set'),
+    m('codes', 'every cell\'s screen code, a row after another (cols bytes a row)'), m('colors', 'every cell\'s colour, a row after another'),
+  ],
   ran: [m('reason', 'why it stopped: "until" (it got to the address), "cycles" or "jam"'), m('pc', 'where it is'), m('cycles', 'the cycles this run took')],
 };
 
@@ -154,6 +171,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'mem') return 'bytes';
   if (e === 'files') return 'files';
   if (e === 'sindri') return 'sindri';
+  if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
     const n = esc(e);
     // const r = cpu.call(…)
@@ -199,6 +217,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'diskFile') return name === 'name' || name === 'type' ? 'text' : null;
   if (on === 'sindri') return name === 'roms' ? 'text' : null;
   if (on === 'machine') return name === 'mem' ? 'bytes' : null;
+  if (on === 'screen') return name === 'codes' || name === 'colors' ? 'bytes' : null;
   if (on === 'unpacked') return name === 'bytes' || name === 'prg' ? 'bytes' : name === 'layers' ? 'layers' : name === 'listing' ? 'texts' : name === 'packer' || name === 'stop' ? 'text' : null;
   if (on === 'layer') return name === 'written' ? 'ranges' : name === 'what' || name === 'kind' || name === 'packer' ? 'text' : null;
   return null;

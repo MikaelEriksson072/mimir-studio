@@ -1863,6 +1863,25 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .scr-edit-row .scr-editor { flex: 1; min-width: 0; min-height: 0; }
 .scr-edit-row .scr-fallback { flex: 1; min-width: 0; }
 .scr-dbg-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+/* the C64 screen beside a script's code (ScriptScreen.tsx) */
+.scr-edit-row > .splitter.v { width: 4px; flex: none; }
+.scr-screen-col { flex: none; display: flex; min-width: 0; max-width: 75%; }
+.scr-screen-col > .c64s { flex: 1; border-left: 0; }
+.c64s { flex: none; display: flex; flex-direction: column; min-width: 240px; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); }
+.c64s-head { display: flex; align-items: center; gap: 6px; flex: none; height: 30px; padding: 0 6px 0 8px; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--fg-2); font-size: 12px; white-space: nowrap; overflow: hidden; }
+.c64s-title { font-weight: 600; color: var(--fg); cursor: help; }
+.c64s-size { font: 11px/1 var(--font-code); flex: none; }
+.c64s-live { flex: none; color: var(--accent); }
+.c64s-ext { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 24px; padding: 0 6px; border-radius: 6px; cursor: pointer; user-select: none; }
+.c64s-ext:hover { background: var(--row-hover); color: var(--fg); }
+.c64s-ext.on { color: var(--accent); }
+.c64s-zoom { flex: none; height: 22px; font-size: 11.5px; }
+.c64s-body { flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.c64s-pic { position: relative; flex: none; }
+.c64s-pic canvas { display: block; }
+.c64s-note { flex: none; margin: 0; padding: 5px 8px; border-top: 1px solid var(--line); color: var(--fg-2); font-size: 11.5px; line-height: 1.45; }
+.c64s-note code { font: 11px var(--font-code); color: var(--fg); }
+.btn.scr-screen-btn[aria-pressed="true"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2)); }
 @container scrmain (max-width: 980px) {
   .scr-main .toolbar kbd { display: none; }
   .scr-main .toolbar .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

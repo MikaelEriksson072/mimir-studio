@@ -10838,7 +10838,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -10968,5 +10968,66 @@ test('a JavaScript script has Sindri: the unpacker and a disassembly from its co
     await expect(page.locator('.ctx')).toContainText('first bytes.prg, 16 bytes, as a file that loads at $c000');
     await page.locator('.ctx').getByRole('menuitem', { name: 'Add it to this project' }).click();
     await expect(toast(page, 'first bytes.prg ($c000, 16 bytes, made by the script) added to the project')).toBeVisible();
+  });
+});
+
+test('scripts: a C64 screen beside the code that JavaScript and assembler print on, with more columns and rows in extended mode', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const panel = page.getByRole('region', { name: 'C64 screen' });
+  const text = page.getByLabel('Text on the C64 screen');
+  const size = panel.getByLabel('Screen size');
+  const button = page.getByRole('button', { name: 'C64 screen' });
+  const runIt = async () => { await editor.locator('.view-lines').click(); await page.keyboard.press('Control+Enter'); await expect(page.locator('.scr-end')).not.toBeEmpty(); };
+  const code = async (lines: string[]) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText(lines.join('\n') + '\n');
+  };
+  /** the size the screen says it has */
+  const cells = async () => { const m = /^(\d+)×(\d+)$/.exec((await size.textContent()) ?? ''); return m ? [+m[1], +m[2]] : [0, 0]; };
+
+  await test.step('the toolbar opens and closes it: 40×25, and how to print on it until something is', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await expect(button).toHaveAttribute('aria-pressed', 'false');
+    await expect(panel).toHaveCount(0);
+    await button.click();
+    await expect(panel).toBeVisible();
+    await expect(size).toHaveText('40×25');
+    await expect(panel).toContainText('Nothing printed yet');
+    await panel.getByRole('button', { name: 'Close the C64 screen' }).click();
+    await expect(panel).toHaveCount(0);
+  });
+
+  await test.step('a JavaScript run that prints on it opens it, with what it printed, in its colours', async () => {
+    await code(['screen.border = "black";', 'screen.print("HELLO, SCREEN");', 'screen.color = "yellow";', 'screen.print("ROW", 2);']);
+    await runIt();
+    await expect(panel).toBeVisible();
+    await expect(text).toContainText('HELLO, SCREEN\nROW 2');
+    await expect(toast(page, /It printed on its C64 screen \(Scripts → C64 screen\)/)).toBeVisible();
+  });
+
+  await test.step('extended mode gives it as many columns and rows as the panel has room for, and the next run gets them', async () => {
+    await panel.getByRole('switch', { name: 'Extended mode' }).check();
+    await panel.getByLabel('Pixel size').selectOption('1');
+    await expect.poll(async () => (await cells())[0]).toBeGreaterThan(40);
+    const [cols, rows] = await cells();
+    expect(rows).toBeGreaterThanOrEqual(25);
+    await code(['screen.print(screen.cols + "X" + screen.rows);']);
+    await runIt();
+    await expect(text).toContainText(`${cols}X${rows}`);
+    // off again: 40×25
+    await panel.getByRole('switch', { name: 'Extended mode' }).uncheck();
+    await expect(size).toHaveText('40×25');
+  });
+
+  await test.step('assembler prints with CHROUT, as on a C64', async () => {
+    await page.getByRole('button', { name: 'New script' }).first().click();
+    await code(['start:  lda #$93', '        jsr $ffd2', '        lda #$48', '        jsr $ffd2', '        lda #$49', '        jsr $ffd2', '        rts']);
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await runIt();
+    await expect(text).toHaveText(/^HI\n?/);
   });
 });

@@ -124,6 +124,11 @@ export function sindriApi(ctx: SindriContext): Record<string, unknown> {
   };
 }
 
+/** the C64 behind each machine sindri.c64() gave (screen.show(c64) shows its screen) */
+const machines = new WeakMap<object, C64>();
+/** The C64 of a machine a script got from sindri.c64(), or null when the value is none. */
+export const sindriMachine = (v: unknown): C64 | null => (v && typeof v === 'object' ? machines.get(v) ?? null : null);
+
 /** One step of a machine as Sindri runs it; false when the CPU jammed. */
 function step(c: C64): boolean {
   const cpu = c.cpu, iWas = cpu.i;
@@ -196,5 +201,6 @@ function machine(c: C64, ctx: SindriContext): Record<string, unknown> {
   for (const r of ['a', 'x', 'y', 's', 'pc'] as const) Object.defineProperty(m, r, { enumerable: true, get: () => cpu[r], set: (v: number) => { cpu[r] = r === 'pc' ? v & 0xffff : v & 0xff; } });
   Object.defineProperty(m, 'p', { enumerable: true, get: () => cpu.p, set: (v: number) => { cpu.p = v & 0xff; } });
   Object.defineProperty(m, 'cycles', { enumerable: true, get: () => c.cycles });
+  machines.set(m, c);
   return m;
 }

@@ -2,7 +2,7 @@
  * (its scratchpads and its changes to the program are kept in the project, the rest of a run is not), the one running
  * and the output's height; and the library of scripts, which every project can take a copy of (kept by the app). */
 import { create } from 'zustand';
-import { readScriptFile, scriptFileName, scriptFileText, b64dec, b64enc, tidyInit, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWatchEntry, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { readScriptFile, scriptFileName, scriptFileText, b64dec, b64enc, tidyInit, SCREEN_C64, screenSize, type ScreenSize, type Patch, type ScriptInit, type ScriptLang, type ScriptPad, type ScriptPadSource, type ScriptRun, type ScriptWatchEntry, type ScriptWriteFailure, type ScriptZpInit, type UserScript } from '@mimir/core';
 import { store } from '../lib/util';
 
 /** the output's tabs (spec 10.3): what the runs start with, the watch list, what the script changed in the program,
@@ -37,6 +37,21 @@ const fromFiles = (files: readonly { file: string; text: string; mtime: number }
   .sort((a, b) => a.name.localeCompare(b.name));
 
 const LIBRARY_KEY = 'kr.scriptLibrary';
+const SCREEN_KEY = 'kr.scriptScreen';
+
+/** The C64 screen beside a script's code (kept by the app): shown or not, extended mode (more columns and rows than
+ *  the C64's 40×25, as many as the panel has room for), how big a C64 pixel is there (SCREEN_ZOOMS),
+ *  the panel's width, and the size extended mode last had (what a run gets). */
+export interface ScreenPrefs { open: boolean; extended: boolean; zoom: number; width: number; size: ScreenSize }
+/** the sizes of a C64 pixel extended mode has: CSS pixels, made whole pixels of the display (ScriptScreen.tsx) */
+export const SCREEN_ZOOMS = [1, 2, 3, 4] as const;
+const readScreenPrefs = (): ScreenPrefs => {
+  const v = store.get<Partial<ScreenPrefs> | null>(SCREEN_KEY, null) ?? {};
+  const zoom = SCREEN_ZOOMS.includes(v.zoom as 1) ? v.zoom! : 1;
+  return { open: v.open === true, extended: v.extended === true, zoom, width: Number.isFinite(v.width) ? Math.max(240, Math.min(2000, v.width!)) : 520, size: screenSize(v.size) };
+};
+/** The size of the C64 screen a run gets now: 40×25, or in extended mode what the panel had room for. */
+export const runScreenSize = (): ScreenSize => { const p = useScripts.getState().c64; return p.extended ? screenSize(p.size) : { ...SCREEN_C64 }; };
 const LIST_FOLDED_KEY = 'kr.scriptListFolded';
 const TEMPLATES_FOLDED_KEY = 'kr.scriptTemplatesFolded';
 const isPad = (p: unknown): p is Omit<ScriptPad, 'bytes'> => !!p && typeof (p as ScriptPad).name === 'string' && Number.isInteger((p as ScriptPad).start) && Number.isInteger((p as ScriptPad).size);
@@ -116,8 +131,11 @@ interface ScriptsState {
   gotoLine: number | null;
   /** each script's breakpoints, by line (the editor keeps them while it is open; this while it is not) */
   bps: Record<string, number[]>;
+  /** the C64 screen beside the code (kept by the app) */
+  c64: ScreenPrefs;
+  setC64: (p: Partial<ScreenPrefs>) => void;
   setBps: (id: string, lines: number[]) => void;
-  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'libraryDir' | 'loadLibrary' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded'>>) => void;
+  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'libraryDir' | 'loadLibrary' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded' | 'c64' | 'setC64'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
   saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table' | 'when'> & { needs?: string[] }) => boolean;
   removeFromLibrary: (name: string) => void;
@@ -142,6 +160,12 @@ export const useScripts = create<ScriptsState>((set, get) => ({
     } catch { /* the folder cannot be read: the list stays as it is */ }
   },
   bps: {},
+  c64: readScreenPrefs(),
+  setC64: p => {
+    const next = { ...get().c64, ...p };
+    if (p.size && next.size.cols === get().c64.size.cols && next.size.rows === get().c64.size.rows && Object.keys(p).length === 1) return;
+    store.set(SCREEN_KEY, next); set({ c64: next });
+  },
   setBps: (id, lines) => set(s => ({ bps: { ...s.bps, [id]: lines } })),
   set: s => set(s),
   listFolded: store.get<boolean>(LIST_FOLDED_KEY, false) === true,

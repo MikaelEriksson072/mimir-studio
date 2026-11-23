@@ -2864,7 +2864,15 @@ $06, $08` i `.asm`-filen efter en körning.
   - *Unpack with Sindri* (`sindri_unpack`): Sindris uppackare körd på programmets första fil eller en fil på disken
     (`fileName`); varje lager skrivs, och det uppackade programmet blir en fil (`saveAs`).
   - *Run in a C64* (`sindri_run`): programmet startat i en hel C64 (`start`: `"RUN"` eller `"SYS 2064"`) och kört
-    `seconds` sekunder eller till `stopAt`; skärmen skrivs, och minnet `saveFrom`–`saveTo` blir en fil.
+    `seconds` sekunder eller till `stopAt`; skärmen skrivs, visas på C64-skärmen (`screen.show(c64)`), och minnet
+    `saveFrom`–`saveTo` blir en fil.
+  - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
+    C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
+    ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
+  - *Hex dump on the screen* (`screen_hexdump`, 2026-11-23): minnet från `start` som en monitor visar det, på
+    C64-skärmen: adressen i gult, byten i hex (nollor i grått) och texten (PETSCII, eller skärmkoder med
+    `screenCodes`); så många byte en rad som skärmen är bred (8 på 40 kolumner, fler i extended mode) och så många
+    rader som den har.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
@@ -2895,6 +2903,40 @@ $06, $08` i `.asm`-filen efter en körning.
     filer visar *Last run* och säger det i meddelandet.
   - ROM:arna hämtas (`kr.c64Roms`) bara för ett skript vars kod nämner `sindri`. Editorn föreslår medlemmarna efter
     `sindri.`, en maskin, ett uppackningsresultat, ett lager och ett körresultat (`lib/jsmembers.ts`).
+- **C64-skärmen** (`script-screen.ts`, `components/ScriptScreen.tsx`, 2026-11-23): knappen *C64 screen* (ikonen med
+  en skärm) i verktygsraden öppnar en emulerad C64-skärm till höger om koden, som skriptet kan använda som utdata:
+  40×25 tecken med VICE:s teckenset-ROM (Mimirs egna bokstäver utan den), C64:ans färger, ramen runt (32 pixlar på
+  sidorna, 36 över och under) och en blinkande markör (tecknet under den inverterat i markörens färg). Panelens kant
+  dras för bredd (`kr.scriptScreen` sparar öppen/stängd, bredd, extended mode och pixelstorlek).
+  - **Skärmeditorn** (`TextScreen`) är KERNAL:ens som CHROUT driver den: PETSCII skrivs där markören står,
+    färgkoderna, RVS ON/OFF, CLR och HOME, markörförflyttningarna, DEL och INST, citatläge (kontrollkoder inom citat
+    visas inverterade), båda teckenseten ($0e/$8e), logiska rader på två rader (en rad som går förbi sista kolumnen
+    skjuter in en tom rad under sig) och skärmen som rullar upp en logisk rad när markören går förbi sista raden. CLR
+    fyller färg-RAM med markörens färg, som de senare KERNAL:erna (VICE:s).
+  - **Extended mode** (brytaren *Extended* i panelens rubrik): skärmen får så många kolumner och rader som panelen
+    har plats för, aldrig färre än 40×25 (och högst 240×120, `SCREEN_MAX`); i vanligt läge skalas 40×25 i stället
+    upp så stort det får plats (i hela pixlar på skärmen). *Pixel size* (1×–4×, CSS-pixlar avrundade till hela
+    pixlar på skärmen så att bokstäverna är skarpa) väljer hur stor en C64-pixel är; 1× är C64:ans egen upplösning.
+    Storleken står i rubriken (*57×31*). En körning får storleken skärmen har när den startar (`runScreenSize`,
+    `ScriptRunOpts.screen`); det en körning lämnade visas från övre vänstra hörnet om storleken ändrats sedan.
+  - **I JavaScript** ger `screen`: `print(...)` (en rad, sedan RETURN), `write(...)` (utan RETURN), `chrout(byte
+    eller bytes)` (PETSCII som CHROUT), `at(col, row)`, `clear()`, `home()`, `color`, `border` och `background`
+    (0–15 eller ett namn, `"light blue"`), `reverse`, `lower`, `poke(col, row, code, color)`, `peek(col, row)`,
+    `codes` och `colors` (alla celler, en rad efter en annan), `cols`, `rows`, `col`, `row`, `show(at, colorsAt)` (1000
+    skärmkoder ur programmet och deras färger; `show(c64)` en maskins skärm från `sindri.c64()`) och `charset(at)`
+    (programmets eget teckenset, 2 KB). Text skrivs som text i båda teckenseten (`\n` är RETURN, `\x93` CLR, `\x1c`
+    röd …; £, pilarna, π, kortfärgerna och linjegrafiken som PETSCII). Editorn föreslår medlemmarna efter `screen.`.
+    Ett skript som själv deklarerar `screen` (`const screen = …`) har sitt eget: koden körs i ett block.
+  - **I assembler** (körning i minnet) gör körningen KERNAL:ens och BASIC:s utskriftsrutiner själv där programmet
+    inte har byte (`SCREEN_ROUTINES`, `screenTraps`): `$ffd2` CHROUT och `$e716` (tecknet i A), `$e544` (rensa),
+    `$e566` (hem), `$fff0` PLOT (C satt: läs rad i X och kolumn i Y; annars sätt), `$ab1e` STROUT (texten på A/Y till
+    en nollbyte) och `$bdcd` LINPRT (talet i A/X). Rutinen görs och returneras från som dess RTS (`JMP $ffd2` sist
+    avslutar körningen), också när programmets egen kod anropar den (och från `cpu.call` i JavaScript). I
+    felsökaren är ett `JSR $FFD2` ett steg och skärmen visar körningens skärm som den är nu (*now*).
+  - **I hela C64:an** är skärmen C64:ans egen, som VIC:en visar den (`c64TextScreen`): matrisen i banken CIA 2 och
+    $d018 väljer, färg-RAM, ram- och bakgrundsfärg, teckensetet (ROM:ens, eller 2 KB i RAM); markören visas inte.
+  - Det en körning skrev på skärmen sparas med körningen (`ScriptRun.screen`, `ScriptScreen`); en körning som skrev
+    där öppnar panelen och säger det i meddelandet (*It printed on its C64 screen*). *Copy* kopierar skärmen som text.
 - **Biblioteket** har skript för alla projekt (sparat av appen, `kr.scriptLibrary`). *Save to library* sparar en kopia
   av skriptet (koden och scratchpadsens platser, inte vad de höll) i stället för ett med samma namn (*Update library*
   när det redan finns). I listan *Library* lägger `+` en kopia i projektet (med ett eget namn när det finns ett

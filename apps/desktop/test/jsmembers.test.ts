@@ -115,3 +115,15 @@ describe('what Sindri\'s values have', () => {
     expect(jsTypeOf('sindri.sys()', src)).toBeNull();
   });
 });
+
+describe('the C64 screen in the suggestions', () => {
+  const labels = (before: string, source = '') => (jsMembers(before, '', source) ?? []).map(x => x.label);
+  it('lists what screen has, and its codes and colours as bytes', () => {
+    expect(labels('screen')).toEqual(['print', 'write', 'chrout', 'at', 'clear', 'home', 'poke', 'peek', 'show', 'charset', 'color', 'border', 'background', 'reverse', 'lower', 'cols', 'rows', 'col', 'row', 'codes', 'colors']);
+    expect(jsTypeOf('screen.codes', '')).toBe('bytes');
+    expect(jsMembers('screen', 'pr', '')!.map(x => x.label)).toEqual(['print']);
+  });
+  it('is not the screen when the script names its own screen', () => {
+    expect(jsTypeOf('screen', 'const screen = c64.screen();')).not.toBe('screen');
+  });
+});

@@ -17,6 +17,7 @@
 import { driveWith, readyC64, type Roms } from '@mimir/sindri';
 import type { Addr, UserScript } from './types';
 import { checkScript, maskRanges, padStart, runChanges, SCRIPT_P, type ScriptCheck, type ScriptEnd, type ScriptEnv, type ScriptRun } from './script';
+import { vicMatrix, c64TextScreen } from './script-screen';
 
 /** What a run in the whole C64 needs: the ROMs (with the 1541's DOS ROM when a disk is to be used), and the disk in the
  *  drive (a D64 or a G64; null: no drive on the bus). */
@@ -57,7 +58,7 @@ export function runScriptInC64(env: ScriptEnv, script: Pick<UserScript, 'source'
   for (const z of init?.zp ?? []) { const a = z.at & 0xff; if (a > 1) ram[a] = z.value & 0xff; if (z.word && a + 1 > 1) ram[(a + 1) & 0xff] = (z.value >> 8) & 0xff; }
   cpu.a = (init?.a ?? 0) & 0xff; cpu.x = (init?.x ?? 0) & 0xff; cpu.y = (init?.y ?? 0) & 0xff; cpu.p = (init?.p ?? SCRIPT_P) & 0xff;
   cpu.pc = check.entry;
-  const before = ram.slice();
+  const before = ram.slice(), colorBefore = m.color.slice(), sideBefore = [m.vic.regs[0x20] & 15, m.vic.regs[0x21] & 15, m.vic.regs[0x18]];
   // (what is written from here on has an instruction count past this one: C64.wtime)
   m.icount++;
   const ic0 = m.icount, c0 = m.cycles;
@@ -79,6 +80,11 @@ export function runScriptInC64(env: ScriptEnv, script: Pick<UserScript, 'source'
     if (m.nmiDue()) m.advance(m.takeNmi());
   }
   const mem = ram.slice();
+  // the C64's screen as the VIC shows it now: changed when the run wrote into its matrix or the colour RAM, or set the
+  // border, the background or where the screen is
+  const matrix = vicMatrix(m);
+  let drew = m.color.some((v, i) => (v & 15) !== (colorBefore[i] & 15)) || (m.vic.regs[0x20] & 15) !== sideBefore[0] || (m.vic.regs[0x21] & 15) !== sideBefore[1] || m.vic.regs[0x18] !== sideBefore[2];
+  for (let i = 0; i < 1000 && !drew; i++) if (m.wtime[(matrix + i) & 0xffff] >= ic0) drew = true;
   // what the run wrote: of the program's memory (not the script's own bytes), and of each scratchpad
   const wrote = new Uint8Array(0x10000);
   for (let a = 0x200; a < 0x10000; a++) if (m.wtime[a] >= ic0) wrote[a] = 1;
@@ -91,6 +97,6 @@ export function runScriptInC64(env: ScriptEnv, script: Pick<UserScript, 'source'
   return {
     end, at, instructions: m.icount - ic0, cycles: m.cycles - c0,
     regs: { a: cpu.a, x: cpu.x, y: cpu.y, s: cpu.s, p: cpu.p, pc: cpu.pc },
-    pads, changes, other, mem, own: mem, wrote: maskRanges(wrote, 0x200), ms: Date.now() - t0,
+    pads, changes, other, mem, own: mem, wrote: maskRanges(wrote, 0x200), ms: Date.now() - t0, screen: c64TextScreen(m, drew),
   };
 }

@@ -26,13 +26,18 @@
  *                            loads, left out for a file without a load address
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
  *                            sector }], sector(track, sector) → its 256 bytes, read(file or name) → the file's bytes }
+ *   screen                   the script's C64 screen (script-screen.ts): screen.print(...), write, chrout, at, clear,
+ *                            color, border, background, poke, show, charset; 40×25, larger in extended mode. What the
+ *                            program's own code prints through CHROUT and the other printing routines of the KERNAL
+ *                            and BASIC (where the program has no bytes) goes there too
  *
  * It runs in the scripts' worker, which has no network and no file system to give; the names that would reach out of
  * it (fetch, importScripts, self, …) are not there for the script. An error it throws ends the run and is said with
  * its line. Nothing is checked before it runs but its scratchpads: a syntax error is said by the run.
  * ===================================================================== */
 import { Cpu, type Bus, type Roms } from '@mimir/sindri';
-import { SINDRI_BUDGET, sindriApi } from './script-sindri';
+import { SINDRI_BUDGET, sindriApi, sindriMachine } from './script-sindri';
+import { SCREEN_C64, screenApi, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
 import type { Addr, UserScript } from './types';
 import { diskSectors, parseD64, readD64File, sectorOffset, type D64File } from './c64/d64';
 import { MARK_NAMES, type ScriptAction } from './script-actions';
@@ -42,7 +47,9 @@ import { h2, h4 } from './util/hex';
 /** what a JavaScript script may be given besides the program: the mounted disk's image (a D64 or a G64) */
 export interface JsExtras { disk?: Uint8Array | null;
   /** the C64's ROMs, for sindri.unpack (the stand-ins run without them) and sindri.c64 (which needs them) */
-  roms?: Roms | null }
+  roms?: Roms | null;
+  /** the size of the script's C64 screen (40×25 when not said) */
+  screen?: Partial<ScreenSize> | null }
 
 /** the instructions one cpu.call may take, and all of a run's together */
 export const JS_CALL_LIMIT = 50_000_000;
@@ -83,6 +90,8 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (const z of script.init?.zp ?? []) { mem[z.at & 0xff] = z.value & 0xff; if (z.word) mem[(z.at + 1) & 0xff] = (z.value >> 8) & 0xff; }
   const before = mem.slice();
   const names = scriptNames(env, script.pads);
+  // the C64 screen, and where the program's code calling CHROUT (and the others) prints on it
+  const scr = new TextScreen(extras.screen ?? SCREEN_C64), traps = screenTraps(env.files, own);
   const prints: string[] = [], actions: ScriptAction[] = [];
   const made: NonNullable<ScriptRun['made']> = [];
   let instructions = 0, cycles = 0;
@@ -112,6 +121,12 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       let brk = false;
       for (;;) {
         if (instructions >= top) throw new Error(`the code called at $${h4(start)} did not return after ${budget.toLocaleString('en-US')} instructions (it was at $${h4(c.pc)}): does it loop for ever?`);
+        // a printing routine of the KERNAL's or BASIC's, where the program has no bytes: done on the screen
+        if (traps[c.pc]) {
+          screenRoutine(scr, c, a => mem[a]); instructions++;
+          if (c.s === 0xff && c.pc === 0) break;
+          continue;
+        }
         const pc = c.pc;
         cycles += c.step(); instructions++;
         if (c.jammed) throw new Error(`the code called at $${h4(start)} jammed at $${h4(pc)} (a JAM opcode): did it run into data?`);
@@ -179,9 +194,12 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       if (made.length >= 64) throw new RangeError('save: a run makes 64 files at most');
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, save };
+    const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, save, screen };
+    // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
+    // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const fn = new Function(...Object.keys(given), ...HIDDEN, `"use strict";${script.source}\n`) as (...a: unknown[]) => unknown;
+    const fn = new Function(...Object.keys(given), ...HIDDEN, `"use strict";{${script.source}\n}`) as (...a: unknown[]) => unknown;
     fn(...Object.values(given));
   } catch (e) {
     const line = errorLine(e);
@@ -199,5 +217,6 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
     ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}),
+    ...(scr.wrote ? { screen: scr.state() } : {}),
   };
 }

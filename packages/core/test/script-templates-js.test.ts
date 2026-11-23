@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are nine, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run']);
+  it('are eleven, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -131,6 +131,32 @@ describe('the JavaScript templates', () => {
     expect(r.error).toBeUndefined();
     expect(r.prints).toEqual(['A=$7e  ->  A=$fc X=$00 Y=$00', 'A=$7f  ->  A=$fe X=$00 Y=$00', 'A=$80  ->  A=$00 X=$00 Y=$00  carry set', 'A=$81  ->  A=$02 X=$00 Y=$00  carry set']);
   });
+
+  it('Show a screen puts the screen codes, colours and character set of the program on the C64 screen', () => {
+    const r = run(template('screen_show'), { screenAt: '0x0960', colorsAt: '"packed"', border: '"black"', background: '0' });
+    expect(r.error).toBeUndefined();
+    const s = r.screen!;
+    expect(s).toMatchObject({ cols: 40, rows: 25, border: 0, background: 0, wrote: true });
+    expect([...s.codes.subarray(1, 10)]).toEqual([...SCREEN].map(c => (c === ' ' ? 32 : c.charCodeAt(0) - 64)));
+    expect(s.colors[0]).toBe(3);
+    expect(s.font).toBeUndefined();
+    expect(r.prints).toEqual(['Shown: $0960-$0d47, colours from $0980']);
+    expect(run(template('screen_show'), { charsetAt: '0x0800' }).screen!.font!.length).toBe(2048);
+  });
+
+  it('Hex dump on the screen fills the rows of the screen, more bytes a row on a wider screen', () => {
+    const r = run(template('screen_hexdump'), { start: '"crypted"' });
+    expect(r.error).toBeUndefined();
+    const s = r.screen!, row0 = [...s.codes.subarray(0, 40)];
+    // "0920 " in yellow, then the bytes
+    expect(row0.slice(0, 4)).toEqual([0x30, 0x39, 0x32, 0x30]);
+    expect(s.colors[0]).toBe(7);
+    expect(r.prints).toEqual(['A dump of $0920 on the C64 screen: 8 bytes a row, 40 x 25']);
+    const wide = run(template('screen_hexdump'), { start: '"crypted"' }, { screen: { cols: 80, rows: 30 } });
+    expect(wide.prints).toEqual(['A dump of $0920 on the C64 screen: 16 bytes a row, 80 x 30']);
+    // the 29th row (the last of the dump) starts at $0920 + 28 * 16
+    expect([...wide.screen!.codes.subarray(28 * 80, 28 * 80 + 4)]).toEqual([0x30, 0x01, 0x05, 0x30]);
+  });
 });
 
 describe('the JavaScript templates that use Sindri', () => {
@@ -167,6 +193,8 @@ describe('the JavaScript templates that use Sindri', () => {
     expect(r.prints![0]).toMatch(/^Ran 1 s, now at \$[0-9a-f]{4} after \d+ cycles; \$01 = \$3[0-7]$/);
     expect(r.prints!.length).toBeGreaterThan(1);
     expect(r.made!.map(m => [m.name, m.load, m.bytes.length])).toEqual([['memory_0400.prg', 0x0400, 1000]]);
+    // the C64 screen of the script shows the C64's own
+    expect(r.screen).toMatchObject({ cols: 40, rows: 25, wrote: true });
     // to an address: the demo's start, which RUN's SYS gets to
     const s = runIn(e, template('sindri_run'), { seconds: '2', stopAt: '0x0810' }, { roms });
     expect(s.prints![0]).toMatch(/^Got to \$0810 after \d+ cycles/);

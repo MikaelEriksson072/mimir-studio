@@ -99,6 +99,7 @@ export const JS_API: readonly { label: string; insert: string; detail: string }[
   { label: 'files', insert: 'files', detail: 'the program\'s files in memory: [{ start, end }], end the address after the last byte' },
   { label: 'disk', insert: 'disk', detail: 'the mounted disk, or null: disk.files, disk.read("NAME"), disk.sector(track, sector)' },
   { label: 'sindri', insert: 'sindri', detail: 'Sindri, Mimir\'s C64 and unpacker: sindri.unpack(prg), sindri.c64(), sindri.disassemble(at), sindri.basic()' },
+  { label: 'screen', insert: 'screen', detail: 'the script\'s C64 screen (Scripts → C64 screen): screen.print("HELLO"), screen.at(col, row), screen.color = "white", screen.poke(col, row, code)' },
   { label: 'save', insert: 'save(', detail: 'save("name.prg", bytes, load): a file the run made, listed under Last run (To the project…, Save…)' },
 ];
 

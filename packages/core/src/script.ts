@@ -18,6 +18,7 @@ import { assembleIn, codeLabels, codeOfLine, langIs, langOf, lineComment, needsT
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
 import { scriptActions, scriptDirectives, type ScriptAction } from './script-actions';
 import { checkJs, runJs } from './script-js';
+import { SCREEN_C64, screenRoutine, screenTraps, TextScreen, type ScreenSize, type ScriptScreen } from './script-screen';
 import { fileSpaces } from './spaces';
 import { OPC } from './cpu/opcodes';
 import { lineText, type LineTextSettings } from './render/lines';
@@ -515,6 +516,9 @@ export interface ScriptRun {
   /** the script's own code it wrote over while it ran (code that changes itself, or an address it writes that lies
    *  where its code is): by line of the code, its first address written and how many writes */
   overCode?: { at: Addr; line: number; times: number }[];
+  /** what the run printed or drew on its C64 screen (script-screen.ts; missing: nothing); a run in the whole C64 has
+   *  the C64's own screen */
+  screen?: ScriptScreen;
 }
 
 /** instructions a run may take before it is stopped (about 2.5 s; a run goes some 80 million a second) */
@@ -630,12 +634,18 @@ export class ScriptMachine implements ScriptMemory {
   /** which bytes the run wrote: of the program's memory, and of the script's own (its scratchpads) */
   private readonly wrote = new Uint8Array(0x10000);
   private readonly wroteOwn = new Uint8Array(0x10000);
+  /** the run's C64 screen: what CHROUT and the other printing routines print (script-screen.ts) */
+  readonly screen: TextScreen;
+  /** where the run does the KERNAL's and BASIC's printing routines itself: where the program has no bytes */
+  private readonly traps: Uint8Array;
 
-  constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT) {
+  constructor(readonly env: ScriptEnv, readonly script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang'>>, readonly check: ScriptCheck = checkScript(env, script), readonly limit = SCRIPT_LIMIT, screen: Partial<ScreenSize> = SCREEN_C64) {
     if (!check.ok || check.entry == null) throw new Error(check.problems.find(p => p.level === 'error')?.msg ?? 'The script has no code to run.');
     const { mem, own, mine, ctx } = this;
     // the files, the scratchpads, the script's code, the SYS return on the stack and the init's zero page
     scriptStartMemory(env, script, check, this);
+    this.screen = new TextScreen(screen);
+    this.traps = screenTraps(env.files, mine);
     this.inScript = !!mine[check.entry];
     const bus = new ScriptBus(mem, own, mine, ctx, this.code, this.overCode, this.wrote, this.wroteOwn);
     const cpu = this.cpu = new Cpu(bus);
@@ -663,7 +673,21 @@ export class ScriptMachine implements ScriptMemory {
     if (op === 0x20) { this.frames.set(s0, was); this.inScript = was && !!mine[cpu.pc]; }
     else if (op === 0x60) { const back = this.frames.get(cpu.s); this.frames.delete(cpu.s); this.inScript = back ?? (was && !!mine[cpu.pc]); }
     else if (was) this.inScript = !!mine[cpu.pc];
+    if (this.traps[cpu.pc] && this.routine()) { this.end = 'rts'; return false; }
     return true;
+  }
+
+  /** A printing routine of the KERNAL's or BASIC's the code got to, done on the screen and returned from (as its RTS
+   *  would); true when that return ends the run (the script jumped to it to end). */
+  private routine(): boolean {
+    const cpu = this.cpu, frames = this.frames, ctx = this.ctx;
+    // who called it: the text STROUT prints is read as that code sees memory
+    const caller = frames.get((cpu.s + 2) & 0xff) ?? false;
+    screenRoutine(this.screen, cpu, a => this.peek(a, caller));
+    if (cpu.s === 0xff && cpu.pc === DONE) return true;
+    const back = frames.get(cpu.s); frames.delete(cpu.s);
+    ctx.script = back ?? (caller && !!this.mine[cpu.pc]);
+    return false;
   }
 
   /**
@@ -680,7 +704,7 @@ export class ScriptMachine implements ScriptMemory {
     }
     // nothing to stop at: step()'s work in a loop of its own, the hot fields in locals (twice as fast)
     if (this.end) return 'ended';
-    const cpu = this.cpu, mine = this.mine, frames = this.frames, ctx = this.ctx;
+    const cpu = this.cpu, mine = this.mine, frames = this.frames, ctx = this.ctx, traps = this.traps;
     const until = Math.min(this.limit, this.instructions + max);
     let n = this.instructions, cycles = this.cycles, end: ScriptEnd | null = null, at = this.at;
     while (n < until) {
@@ -695,6 +719,7 @@ export class ScriptMachine implements ScriptMemory {
         const back = frames.get(cpu.s); frames.delete(cpu.s); ctx.script = back ?? (was && !!mine[cpu.pc]);
       } else if (op === 0x20) { frames.set(s0, was); ctx.script = was && !!mine[cpu.pc]; }
       else if (was) ctx.script = !!mine[cpu.pc];
+      if (traps[cpu.pc] !== 0 && this.routine()) { end = 'rts'; break; }
     }
     this.instructions = n; this.cycles = cycles; this.at = at;
     if (end) { this.end = end; return 'ended'; }
@@ -752,6 +777,7 @@ export class ScriptMachine implements ScriptMemory {
         return { name: p.name, bytes: this.own.slice(p.start, p.start + p.size), ...(first >= 0 ? { wrote: [first, w.lastIndexOf(1) + 1] as [number, number] } : {}) };
       }),
       changes, other, mem, own: this.own, wrote: maskRanges(this.wrote, 0x200), ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
+      ...(this.screen.wrote ? { screen: this.screen.state() } : {}),
     };
   }
 }
@@ -781,9 +807,9 @@ export function runChanges(mem: Uint8Array, before: Uint8Array, files: ScriptEnv
 
 /** Run a script that checked ok to its end (ScriptMachine), in one go; `stopAt`: the run ends when it gets to this
  *  address (before the instruction there runs). */
-export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang' | 'code'>>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT, stopAt: Addr | null = null): ScriptRun {
-  if (script.code === 'js') return runJs(env, script);
-  const m = new ScriptMachine(env, script, check, limit);
+export function runScript(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads' | 'init'> & Partial<Pick<UserScript, 'lang' | 'code'>>, check: ScriptCheck = checkScript(env, script), limit = SCRIPT_LIMIT, stopAt: Addr | null = null, screen: Partial<ScreenSize> = SCREEN_C64): ScriptRun {
+  if (script.code === 'js') return runJs(env, script, { screen });
+  const m = new ScriptMachine(env, script, check, limit, screen);
   if (stopAt == null) m.runUntil(null);
   else if (m.runUntil(x => x.cpu.pc === stopAt) === 'stopped') { m.end = 'stop'; m.at = m.cpu.pc; }
   return m.result();

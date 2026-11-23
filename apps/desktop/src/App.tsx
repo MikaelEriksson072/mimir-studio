@@ -24,7 +24,7 @@ import {
 } from '@mimir/core';
 import { forgetUnsavedWork, keepDeclinedWork, keepUnsavedWork, newProjectSettings, unsavedWork, unsavedWorkChanged, useProject, workChanged } from './store/project';
 import { useUi, type Activity, type BottomTab, type InspectorMode } from './store/ui';
-import { useScripts, type LibraryScript } from './store/scripts';
+import { runScreenSize, useScripts, type LibraryScript } from './store/scripts';
 import { useRoutines } from './store/routines';
 import { useBuildTemplates } from './store/buildTemplates';
 import { runScriptInWorker, stopScript, type ScriptRunOpts } from './lib/scriptrun';
@@ -2618,17 +2618,22 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const w = safe ? ranSafely(id, r, text) : ranUserScript(id, r, text);
     const st = useScripts.getState();
     st.set({ runs: { ...st.runs, [id]: { run: r, source: text, at: Date.now(), failed: w?.failed ?? [], ...(w?.acted ? { acted: w.acted } : {}), ...(safe ? { safe: true, would: w?.written ?? [] } : {}) } } });
+    // the script the Scripts tab shows: the one picked, else its first (as ScriptsView picks it)
+    const list = latest.current.project.userScripts ?? [], shown = (list.find(x => x.id === st.selected) ?? list[0])?.id === id;
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
-    if (st.selected === id) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
+    if (shown) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     // what it printed, the files it made, or the error it stopped with, is under Last run: that tab is shown
-    if (st.selected === id && (r.prints?.length || r.made?.length || r.error)) st.set({ outTab: 'run', outFolded: false });
+    if (shown && (r.prints?.length || r.made?.length || r.error)) st.set({ outTab: 'run', outFolded: false });
+    // what it printed on its C64 screen: the screen is shown
+    if (shown && r.screen?.wrote && !st.c64.open) st.setC64({ open: true });
     const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
     const what = safe
       ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → In the program → Would change).` : 'It would change none of the program\'s bytes.'}`
       : w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
     const printed = r.prints?.length ? ` It printed ${r.prints.length} line${r.prints.length === 1 ? '' : 's'} (Scripts → Last run): ${r.prints[0].length > 60 ? `${r.prints[0].slice(0, 60)}…` : r.prints[0]}${r.prints.length > 1 ? ' …' : ''}` : '';
     const made = r.made?.length ? ` It made ${r.made.length} file${r.made.length === 1 ? '' : 's'} (Scripts → Last run): ${r.made[0].name}${r.made.length > 1 ? ', …' : ''}.` : '';
-    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+    const drew = r.screen?.wrote ? ` It printed on ${r.screen.c64 ? 'the C64\'s screen' : 'its C64 screen'} (Scripts → C64 screen).` : '';
+    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${drew}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
   };
   /** the C64's ROMs, for scripts that run in the whole C64 (asked for once they are needed, kept once found) */
   const scriptRoms = useRef<Roms | null>(null);
@@ -2637,14 +2642,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  said */
   const scriptRunOpts = async (s: UserScript, env: ScriptEnv, pads: readonly ScriptPad[], c: ScriptCheck): Promise<ScriptRunOpts | null> => {
     const stop = scriptStopAt(s.stopAt, scriptNames(env, pads), c);
+    // the C64 screen it prints on: 40×25, or what the screen's extended mode has room for (Scripts → C64 screen)
+    const screen = runScreenSize();
     // JavaScript runs in its own way: no stop address, no C64 of the run's; it gets the mounted disk, and the ROMs when
     // its code uses Sindri (without them sindri.unpack runs on the stand-ins, and sindri.c64 says what it needs)
     if (s.code === 'js') {
       if (/\bsindri\b/.test(s.source)) scriptRoms.current ??= await (kr?.c64Roms() ?? Promise.resolve(null)).catch(() => null);
-      return { disk: disk?.bytes ?? null, roms: /\bsindri\b/.test(s.source) ? scriptRoms.current : null };
+      return { disk: disk?.bytes ?? null, roms: /\bsindri\b/.test(s.source) ? scriptRoms.current : null, screen };
     }
     if (stop != null && typeof stop === 'object') { toast(`"${s.name}": its Stop at is no address: ${stop.error} (Scripts → Init)`, 'warn'); return null; }
-    if (s.machine !== 'c64') return { stopAt: stop };
+    if (s.machine !== 'c64') return { stopAt: stop, screen };
     scriptRoms.current ??= await (kr?.c64Roms() ?? Promise.resolve(null)).catch(() => null);
     const roms = scriptRoms.current;
     if (!roms) { toast(`"${s.name}" runs in the whole C64, which needs the C64's ROM files: they come with VICE (Settings → Toolchain). Memory only (Scripts → Init) runs without them`, 'warn'); return null; }
