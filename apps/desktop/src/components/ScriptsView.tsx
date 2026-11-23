@@ -720,8 +720,8 @@ ${cryptWhereText(l)}`}>
                 setC64({ width: Math.max(240, Math.min(row - other, useScripts.getState().c64.width - d)) });
               }} />
               <div className="scr-screen-col" style={{ width: c64.width }}>
-                <ScriptScreenPanel screen={dbg ? dbg.m.screen.state() : kept?.run.screen ?? null} live={!!dbg} extended={c64.extended} zoom={c64.zoom} size={c64.size}
-                  onExtended={v => setC64({ extended: v })} onZoom={z => setC64({ zoom: z })} onSize={sz => setC64({ size: sz })} onCopy={onCopy} onClose={() => setC64({ open: false })} />
+                <ScriptScreenPanel screen={dbg ? dbg.m.screen.state() : kept?.run.screen ?? null} live={!!dbg} extended={c64.extended} zoom={c64.zoom} mag={c64.mag} size={c64.size}
+                  onExtended={v => setC64({ extended: v })} onZoom={z => setC64({ zoom: z })} onMag={m => setC64({ mag: m })} onSize={sz => setC64({ size: sz })} onCopy={onCopy} onClose={() => setC64({ open: false })} />
               </div>
             </>}
           </div>

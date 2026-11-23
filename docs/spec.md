@@ -2939,15 +2939,26 @@ $06, $08` i `.asm`-filen efter en körning.
   en skärm) i verktygsraden öppnar en emulerad C64-skärm till höger om koden, som skriptet kan använda som utdata:
   40×25 tecken med VICE:s teckenset-ROM (Mimirs egna bokstäver utan den), C64:ans färger, ramen runt (32 pixlar på
   sidorna, 36 över och under) och en blinkande markör (tecknet under den inverterat i markörens färg). Panelens kant
-  dras för bredd (`kr.scriptScreen` sparar öppen/stängd, bredd, extended mode och pixelstorlek).
+  dras för bredd (`kr.scriptScreen` sparar öppen/stängd, bredd, extended mode, pixelstorlek och zoom).
+  - **Zoom** (2026-11-23, för små skärmar): *Zoom* i panelens rubrik är *Fit* (förval: så stor som panelen har plats
+    för, i hela pixlar på skärmen när det gör den högst en tiondel mindre, annars hela platsen) eller 1×–8×
+    (`SCREEN_MAGS`: en C64-pixel så många CSS-pixlar, avrundat till hela pixlar på skärmen). En skärm större än
+    panelen rullar (hjulet, rullningslisterna) och flyttas med ett drag (handen); Ctrl+hjul över skärmen zoomar ett
+    steg i taget med punkten under pekaren kvar där den var (i extended mode byter det *Pixel size*), och fönstret
+    zoomas inte. En storlek mellan hela pixlar ritas skarpt i närmaste större hela storlek och skalas ner mjukt, så
+    att bokstäverna blir så skarpa de kan. **Show large** (förstoringsglaset med plus, eller ett dubbelklick på
+    skärmen) visar skärmen så stor fönstret har plats för, över fönstret (under dialoger, menyer och meddelanden) tills
+    ett klick, krysset eller Esc (bara den: inte helskärmsläget också); den följer körningen, också i felsökaren
+    (F8/F6 stegar med den öppen). Rubriken lämnar ut ordet *Extended*, sedan titeln, sedan storleken när panelen är
+    smal, så att knapparna alltid syns.
   - **Skärmeditorn** (`TextScreen`) är KERNAL:ens som CHROUT driver den: PETSCII skrivs där markören står,
     färgkoderna, RVS ON/OFF, CLR och HOME, markörförflyttningarna, DEL och INST, citatläge (kontrollkoder inom citat
     visas inverterade), båda teckenseten ($0e/$8e), logiska rader på två rader (en rad som går förbi sista kolumnen
     skjuter in en tom rad under sig) och skärmen som rullar upp en logisk rad när markören går förbi sista raden. CLR
     fyller färg-RAM med markörens färg, som de senare KERNAL:erna (VICE:s).
   - **Extended mode** (brytaren *Extended* i panelens rubrik): skärmen får så många kolumner och rader som panelen
-    har plats för, aldrig färre än 40×25 (och högst 240×120, `SCREEN_MAX`); i vanligt läge skalas 40×25 i stället
-    upp så stort det får plats (i hela pixlar på skärmen). *Pixel size* (1×–4×, CSS-pixlar avrundade till hela
+    har plats för, aldrig färre än 40×25 (och högst 240×120, `SCREEN_MAX`); i vanligt läge visas 40×25 i stället
+    med sin *Zoom* (ovan). *Pixel size* (1×–4×, CSS-pixlar avrundade till hela
     pixlar på skärmen så att bokstäverna är skarpa) väljer hur stor en C64-pixel är; 1× är C64:ans egen upplösning.
     Storleken står i rubriken (*57×31*). En körning får storleken skärmen har när den startar (`runScreenSize`,
     `ScriptRunOpts.screen`); det en körning lämnade visas från övre vänstra hörnet om storleken ändrats sedan.

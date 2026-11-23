@@ -8,6 +8,8 @@ export const ICONS = {
   download: 'M12 4v11M7 10.5l5 5 5-5M5 20h14', upload: 'M12 20V9M7 13.5l5-5 5 5M5 4h14',
   undo: 'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11', redo: 'M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
   search: 'M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0zM20 20l-4.6-4.6',
+  // a magnifying glass with a plus: seen larger (the script's C64 screen shown large)
+  zoomin: 'M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0zM20 20l-4.6-4.6M10.5 7.75v5.5M7.75 10.5h5.5',
   moon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z', sun: 'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
   x: 'M6 6l12 12M18 6 6 18', chip: 'M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4',
   doc: 'M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6', code: 'M9 7l-5 5 5 5M15 7l5 5-5 5', list: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',

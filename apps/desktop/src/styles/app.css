@@ -1875,7 +1875,11 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .scr-edit-row > .splitter.v { width: 4px; flex: none; }
 .scr-screen-col { flex: none; display: flex; min-width: 0; max-width: 75%; }
 .scr-screen-col > .c64s { flex: 1; border-left: 0; }
-.c64s { flex: none; display: flex; flex-direction: column; min-width: 240px; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); }
+.c64s { flex: none; display: flex; flex-direction: column; min-width: 240px; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); container: c64s / inline-size; }
+/* a narrow panel: its head keeps its buttons, leaving out Extended's word, then the title, then the size */
+@container c64s (max-width: 430px) { .c64s-head .c64s-ext .lbl { display: none; } }
+@container c64s (max-width: 350px) { .c64s-head .c64s-title { display: none; } }
+@container c64s (max-width: 280px) { .c64s-head .c64s-size { display: none; } }
 .c64s-head { display: flex; align-items: center; gap: 6px; flex: none; height: 30px; padding: 0 6px 0 8px; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--fg-2); font-size: 12px; white-space: nowrap; overflow: hidden; }
 .c64s-title { font-weight: 600; color: var(--fg); cursor: help; }
 .c64s-size { font: 11px/1 var(--font-code); flex: none; }
@@ -1884,8 +1888,21 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .c64s-ext:hover { background: var(--row-hover); color: var(--fg); }
 .c64s-ext.on { color: var(--accent); }
 .c64s-zoom { flex: none; height: 22px; font-size: 11.5px; }
-.c64s-body { flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-.c64s-pic { position: relative; flex: none; }
+/* the picture in the middle while it fits (margin: auto, so that a zoomed one bigger than the panel scrolls from its
+   top left); a zoomed one scrolls, and moves with a drag */
+.c64s-body { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; }
+.c64s-body.zoomed { overflow: auto; }
+.c64s-body.pan { cursor: grab; }
+.c64s-body.pan:active { cursor: grabbing; }
+.c64s-pic { position: relative; flex: none; margin: auto; }
+/* the screen shown large, over the window (below dialogs, menus and messages) */
+.c64s-large { position: fixed; inset: 0; z-index: 48; display: flex; flex-direction: column; background: rgb(6 6 12 / 0.95); color: #c9c6dc; }
+.c64s-large-head { display: flex; align-items: center; gap: 8px; flex: none; height: 36px; padding: 0 8px 0 14px; font-size: 12px; white-space: nowrap; }
+.c64s-large-head .c64s-title { color: #f1effa; cursor: default; }
+.c64s-large-head .icon-btn { color: #c9c6dc; }
+.c64s-large-head .icon-btn:hover { color: #fff; background: rgb(255 255 255 / 0.1); }
+.c64s-large-hint { color: #8d8aa3; }
+.c64s-large-body { flex: 1; min-height: 0; display: flex; overflow: hidden; margin: 0 16px 16px; cursor: zoom-out; }
 .c64s-pic canvas { display: block; }
 .c64s-note { flex: none; margin: 0; padding: 5px 8px; border-top: 1px solid var(--line); color: var(--fg-2); font-size: 11.5px; line-height: 1.45; }
 .c64s-note code { font: 11px var(--font-code); color: var(--fg); }

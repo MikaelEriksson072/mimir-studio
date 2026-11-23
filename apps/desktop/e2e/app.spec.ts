@@ -11009,6 +11009,38 @@ test('scripts: a C64 screen beside the code that JavaScript and assembler print 
     await expect(toast(page, /It printed on its C64 screen \(Scripts → C64 screen\)/)).toBeVisible();
   });
 
+  await test.step('zoom: bigger than the panel it scrolls and Ctrl+wheel zooms; Show large shows it over the window until Esc or a click', async () => {
+    const body = panel.locator('.c64s-body'), zoom = panel.getByLabel('Zoom');
+    const width = (pic: Locator) => pic.evaluate((p: HTMLElement) => p.getBoundingClientRect().width);
+    await expect(zoom).toHaveValue('0');
+    const fit = await width(panel.locator('.c64s-pic'));
+    await zoom.selectOption('4');
+    await expect.poll(() => width(panel.locator('.c64s-pic'))).toBeGreaterThan(fit);
+    await expect(body).toHaveClass(/\bpan\b/);
+    expect(await body.evaluate((b: HTMLElement) => b.scrollWidth > b.clientWidth && b.scrollLeft > 0)).toBe(true);
+    const box = (await body.boundingBox())!;
+    await page.mouse.move(box.x + 40, box.y + 30);
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, 100);
+    await page.keyboard.up('Control');
+    await expect(zoom).toHaveValue('3');
+    await zoom.selectOption('0');
+    await expect.poll(() => width(panel.locator('.c64s-pic'))).toBeCloseTo(fit, 0);
+    await expect(body).not.toHaveClass(/\bpan\b/);
+
+    const large = page.getByRole('dialog', { name: 'The C64 screen, large' });
+    await panel.getByRole('button', { name: 'Show the screen large' }).click();
+    await expect(large).toBeVisible();
+    expect(await width(large.locator('.c64s-pic'))).toBeGreaterThan(fit);
+    await page.keyboard.press('Escape');
+    await expect(large).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: 'Show the screen large' })).toBeFocused();
+    await body.dblclick();
+    await expect(large).toBeVisible();
+    await large.locator('.c64s-large-body').click();
+    await expect(large).toHaveCount(0);
+  });
+
   await test.step('extended mode gives it as many columns and rows as the panel has room for, and the next run gets them', async () => {
     await panel.getByRole('switch', { name: 'Extended mode' }).check();
     await panel.getByLabel('Pixel size').selectOption('1');

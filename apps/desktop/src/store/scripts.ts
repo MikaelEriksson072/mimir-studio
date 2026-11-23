@@ -40,15 +40,18 @@ const LIBRARY_KEY = 'kr.scriptLibrary';
 const SCREEN_KEY = 'kr.scriptScreen';
 
 /** The C64 screen beside a script's code (kept by the app): shown or not, extended mode (more columns and rows than
- *  the C64's 40×25, as many as the panel has room for), how big a C64 pixel is there (SCREEN_ZOOMS),
- *  the panel's width, and the size extended mode last had (what a run gets). */
-export interface ScreenPrefs { open: boolean; extended: boolean; zoom: number; width: number; size: ScreenSize }
+ *  the C64's 40×25, as many as the panel has room for), how big a C64 pixel is there (SCREEN_ZOOMS), the zoom of the
+ *  40×25 screen (`mag`: 0 is Fit, as big as the panel has room for; else SCREEN_MAGS, the panel scrolling when it is
+ *  bigger), the panel's width, and the size extended mode last had (what a run gets). */
+export interface ScreenPrefs { open: boolean; extended: boolean; zoom: number; mag: number; width: number; size: ScreenSize }
 /** the sizes of a C64 pixel extended mode has: CSS pixels, made whole pixels of the display (ScriptScreen.tsx) */
 export const SCREEN_ZOOMS = [1, 2, 3, 4] as const;
+/** the zooms of the 40×25 screen besides Fit: a C64 pixel's size in CSS pixels, made whole pixels of the display */
+export const SCREEN_MAGS = [1, 2, 3, 4, 5, 6, 8] as const;
 const readScreenPrefs = (): ScreenPrefs => {
   const v = store.get<Partial<ScreenPrefs> | null>(SCREEN_KEY, null) ?? {};
-  const zoom = SCREEN_ZOOMS.includes(v.zoom as 1) ? v.zoom! : 1;
-  return { open: v.open === true, extended: v.extended === true, zoom, width: Number.isFinite(v.width) ? Math.max(240, Math.min(2000, v.width!)) : 520, size: screenSize(v.size) };
+  const zoom = SCREEN_ZOOMS.includes(v.zoom as 1) ? v.zoom! : 1, mag = SCREEN_MAGS.includes(v.mag as 1) ? v.mag! : 0;
+  return { open: v.open === true, extended: v.extended === true, zoom, mag, width: Number.isFinite(v.width) ? Math.max(240, Math.min(2000, v.width!)) : 520, size: screenSize(v.size) };
 };
 /** The size of the C64 screen a run gets now: 40×25, or in extended mode what the panel had room for. */
 export const runScreenSize = (): ScreenSize => { const p = useScripts.getState().c64; return p.extended ? screenSize(p.size) : { ...SCREEN_C64 }; };
