@@ -9,7 +9,7 @@ import { makePrg, makeTap, notPacked, readTape, replaceTapeFile, tapeBoot, tapeF
 import { findC64Roms } from '../src/node';
 import { fakePack } from './helpers/fake-packer';
 import { blockFile, bootLoader, demoTape, firebirdChain, firebirdDemoTape, firebirdFile, firebirdPause, loaderStartTape, megaSaveDemoTape, megaSaveFile, novaFile, novaloadDemoTape, novaPages, pilotFile, rle, runs, sineTable, tinyFile, tinyLoader, turboTapeFile, TurboWriter, microFile, microloadDemoTape, wildChain, wildloadDemoTape, withTurbo } from './helpers/tapetool-tape';
-import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, secondStageCode } from './helpers/cyberload-tape';
+import { cyberBlocks, cyberFirstStage, cyberloadDemoTape, cyberNamedFile, cyberPause, cyberSecondStage, otherSideDemoTape, secondStageCode } from './helpers/cyberload-tape';
 
 const bytes = (n: number, seed = 1) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed * 7) & 0xff);
 const demo = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/prg/raster-demo.prg')));
@@ -699,6 +699,56 @@ describe('Cyberload', () => {
     const again = readTape(t);
     expect(again.files).toEqual([]);
     expect(again.unknown).toHaveLength(1);
+  });
+
+  it("reads a file of the tape's other side backwards where this side is blank, as far as it is not under this side's recording", () => {
+    // side A: a boot file and a Freeload file; side B: a file by name, which side A's datasette hears last pulse first
+    // after side A's recording, its end under that recording (Preservers' IK+: side B's "M" after a Novaload copy)
+    const a = cyber();
+    pilotFile(a, { pilot: 0x40, sync: 0x5a, load: 0x0801, data: bytes(600, 4) });
+    const b = cyber();
+    cyberNamedFile(b, { name: 'M', load: 0x0200, data: bytes(2000, 5), speed: 340 });
+    const heard = b.pulses.slice().reverse();
+    // hidden: the zeros after the last block, the last two blocks (208 and 256 bytes, each with its sum) and half of
+    // the one before them, more than side A's file has after its sum
+    const img = readTape(withTurbo(bootTape(), [...a.pulses, ...heard.slice(8 * 8 + 209 * 8 + 257 * 8 + 1000)]));
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors, !!f.backwards])).toEqual([
+      ['cbm', 'BOOT', 0x029f, 0x029f + 156, [], false],
+      ['freeload', 'file_0801', 0x0801, 0x0801 + 600, [], false],
+      ['cyberload', 'M', 0x0200, 0x0700, ['the tape has it from $0200 to $0700: its header says it ends at $09d0, the rest is not on the tape'], true],
+    ]);
+    const m = img.files[2];
+    expect(m.data).toEqual(bytes(2000, 5).subarray(0, 0x500));
+    expect(m.note).toBe("on the tape's other side, heard backwards where this side is blank (under this side's recordings it is not heard); fourth stage (LOAD by name), sync $aa, 8 blocks, read with a timer of 510 cycles");
+    // its pulses: this side's, from where side A's file ends to the tape's end
+    expect(m.at).toBeGreaterThanOrEqual(img.files[1].to);
+    expect(m.to).toBe(tapPulses(withTurbo(bootTape(), [...a.pulses, ...heard.slice(8 * 8 + 209 * 8 + 257 * 8 + 1000)])).cycles.length);
+    // no loader on this side loads it
+    expect(tapeBoot(img, m)).toBeNull();
+    // all of it, when this side is blank where it is
+    const whole = readTape(withTurbo(bootTape(), heard));
+    expect(whole.files.map(f => [f.name, f.load, f.end, f.errors, !!f.backwards])).toEqual([['BOOT', 0x029f, 0x029f + 156, [], false], ['M', 0x0200, 0x09d0, [], true]]);
+    expect(whole.files[1].data).toEqual(bytes(2000, 5));
+    // played forwards, a file the stretch ends in is not taken: the loader would read on past it
+    const cut = readTape(withTurbo(bootTape(), b.pulses.slice(0, b.pulses.length - 8 * 8 - 209 * 8 - 300)));
+    expect(cut.files.map(f => f.name)).toEqual(['BOOT']);
+    expect(cut.unknown).toHaveLength(1);
+  });
+
+  it("is fixtures/tap/other-side-demo.tap, which the e2e tests insert: side A's files, then the demo from side B backwards", () => {
+    const tape = otherSideDemoTape(demo);
+    const path = join(__dirname, '../../../fixtures/tap/other-side-demo.tap');
+    if (process.env.WRITE_FIXTURES) writeFileSync(path, tape);
+    expect(new Uint8Array(readFileSync(path))).toEqual(tape);
+    const img = readTape(tape);
+    expect(img.unknown).toEqual([]);
+    expect(img.files.map(f => [f.format, f.name, f.load, f.end, f.errors, !!f.backwards])).toEqual([
+      ['cbm', 'SIDE A', 0x0801, 0x0801 + 300, [], false],
+      ['freeload', 'file_c000', 0xc000, 0xc200, [], false],
+      ['cyberload', 'DEMO', 0x0801, 0x0801 + demo.length - 2, [], true],
+    ]);
+    expect(img.files[2].data).toEqual(demo.subarray(2));
   });
 });
 

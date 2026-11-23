@@ -323,7 +323,8 @@ fixtures/crt     mimir-demo.crt, a Magic Desk cartridge of 2 banks made from sou
 - **Tape images.** *File → Insert tape image (TAP, T64)…* (or drop a `.tap` or `.t64`) puts a tape in the datasette, beside the disk:
   the Explorer's *Tape* section lists its files (`packages/core/src/c64/tap.ts`: KERNAL, Turbo Tape 64, Freeload, US
   Gold's, Mega-Save, Novaload's files and the pages its boot loader reads, Cyberload's four stages, Firebird's first
-  stage and second loader, TapeTool) and the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the
+  stage and second loader, TapeTool; and where this side is blank, files of the tape's other side read backwards,
+  `backwardsFiles`, marked ◂) and the *Tape* tab everything on it. A file opens with the tape in Sindri's datasette (the
   renderer's `tapeOf` map, as `diskOf` for disks); a KERNAL boot file with code in its header opens with the header as
   a second file, which Sindri does not run. Build & Run writes the built boot file back on the tape when the project's first file came from it,
   else puts a copy in VICE's datasette. A T64 (`packages/core/src/c64/t64.ts`, `readTape` reads it when its header is
@@ -1322,6 +1323,19 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     entry 53's (`lib/storeanim.ts`: `spinPetsciiAnims`, `chunkAnimData`). A file of a PETSCII animation's stream
     opened from the tab is treated as entry 53's are: no Sindri run, no packing verdict, the bar above the listing
     and the *Animation data* card. Saved Graphics settings with the view picked open on Characters.
+65. A tape's other side is read backwards where this side is blank (spec 13.5e). Preservers' *Ik+ system 3.tap* had
+    a KERNAL boot, a Novaload copy of the game (an Action Replay backup packed with SuperCrunch) and then 122 s of
+    "turbo" no format read. Read forwards its bytes were 6502 code in reverse order, and every 257 bytes XORed to 0:
+    the stretch is the cassette's side B heard last pulse first, a Cyberload LOAD-by-name file "M" ($0200, $be00
+    bytes) with its pilot and header at the tape's end, 109 of its 190 blocks before side A's recording covers it
+    (the five nearest it with a bit wrong each). `backwardsFiles` reads each unknown stretch through `backwardsPulses`
+    with `cyberNamedFiles`, whose new `cut` keeps a file the stretch ends in as far as its whole blocks go (two have to
+    check; forwards such a file is still not taken); the files take their pulses from the stretch, `TapeFile.backwards`
+    marks them (`◂` in the Explorer, *other side ◂* in the Tape tab), `tapeBoot` gives them no boot file and Sindri
+    runs them without the tape. Only Cyberload's files are read backwards: with every format, Freeload took 64 bytes
+    of Rockin Roll's music for a file. Old against new on 1 931 tapes: only IK+ changed (unknown stretches 8 912 to
+    8 911). Tests in `test/tap.test.ts` (a file cut short, a whole one, a forward one cut short), fixture
+    `fixtures/tap/other-side-demo.tap` (`otherSideDemoTape`), an e2e test that inserts it.
 
 ## Roadmap
 

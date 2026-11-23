@@ -3,7 +3,7 @@
  * page (it holds the two XOR keys where Cyberload's does, and calls the byte reader at once): nothing of Cyberload's own
  * code is on the tapes. Bits are pulses of 384 and 720 cycles (48 and 90 in TAP units), the top bit first. */
 import { makeTap, readTape } from '../../src';
-import { TurboWriter, withTurbo } from './tapetool-tape';
+import { pilotFile, TurboWriter, withTurbo } from './tapetool-tape';
 
 /** the pilot of $0f bytes before every sync byte */
 const pilot = (w: TurboWriter, n = 8) => { for (let i = 0; i < n; i++) w.byte(0x0f); };
@@ -106,4 +106,19 @@ export function cyberloadDemoTape(demo: Uint8Array): Uint8Array {
   cyberBlocks(w, 0xe000, Uint8Array.from({ length: 600 }, (_, i) => (i * 5 + 1) & 0xff), { call: 0xe003, pause: cyberPause });
   cyberNamedFile(w, { name: 'DEMO', load: demo[0] | (demo[1] << 8), data: demo.subarray(2), speed: 340 });
   return withTurbo(kernal, w.pulses);
+}
+
+/**
+ * fixtures/tap/other-side-demo.tap: side A's recording (the KERNAL boot file "SIDE A" and a Freeload file at $c000),
+ * then side B's heard backwards where side A is blank, last pulse first: the demo as a Cyberload file by name "DEMO"
+ * (the later header, Tusker's), all of it, its pilot and header at the tape's end (Preservers' IK+ tape has side B's
+ * main file "M" so, the rest of it under side A's recording).
+ */
+export function otherSideDemoTape(demo: Uint8Array): Uint8Array {
+  const kernal = makeTap({ files: [{ name: 'SIDE A', load: 0x0801, data: Uint8Array.from({ length: 300 }, (_, i) => (i * 3 + 1) & 0xff) }] });
+  const a = new TurboWriter(48, 90);
+  pilotFile(a, { pilot: 0x40, sync: 0x5a, load: 0xc000, data: Uint8Array.from({ length: 512 }, (_, i) => (i * 9 + 2) & 0xff) });
+  const b = new TurboWriter(48, 90);
+  cyberNamedFile(b, { name: 'DEMO', load: demo[0] | (demo[1] << 8), data: demo.subarray(2), speed: 340 });
+  return withTurbo(kernal, [...a.pulses, ...b.pulses.reverse()]);
 }

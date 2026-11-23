@@ -817,7 +817,7 @@ function TapeSection({ tape, open, onEject, onOpenFromTape, onShowTape, onFileMe
         tabIndex={can ? 0 : -1} onClick={() => { if (can) onOpenFromTape(f, false); }} onKeyDown={e => { if (listKeys(e)) return; if (can && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOpenFromTape(f, false); } }}>
         <span className="mono small disk-blocks" title={t64 ? `Entry ${f.id} of the directory` : undefined}>{t64 ? f.id : tapeTime(f.seconds)}</span>
         <span className="mono disk-name">{f.format === 'tapetool' ? f.name : `"${f.name}"`}{f.headerCode ? <span className="muted"> +header</span> : null}</span>
-        <span className="mono small muted">{f.format === 't64' ? (f.load == null ? 'FRZ' : f.type) : f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}</span>
+        <span className="mono small muted">{f.format === 't64' ? (f.load == null ? 'FRZ' : f.type) : f.format === 'cbm' ? f.type : TAPE_FORMAT[f.format]}{f.backwards ? ' ◂' : ''}</span>
         {can ? <button className="icon-btn" title={`Add ${f.name} to this project`} aria-label={`Add ${f.name} to this project`} onClick={e => { e.stopPropagation(); onOpenFromTape(f, true); }}><Icon name="plus" size={13} /></button> : <span />}
       </div>
     );

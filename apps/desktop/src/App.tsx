@@ -1414,9 +1414,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       const t = tapeOf.current.get(f.id), b = t?.boot;
       // (a turbo file goes with the boot file whose loader loads it: Sindri runs that when the file does not run alone)
       const boot = b?.load != null ? { name: tapeFileName(b).replace(/\.\w+$/, ''), prg: makePrg(b.load, b.data), at: b.to } : null;
-      // (so does a file a disk's loader loads, with the disk's boot file)
+      // (so does a file a disk's loader loads, with the disk's boot file; a file of the tape's other side, heard
+      // backwards, runs without the tape: nothing on this side loads it)
       const db = diskBootOf.current.get(f.id);
-      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? db?.disk ?? null, t ? { tap: t.tap, at: t.file.to, boot } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? db?.sides ?? [], db?.boot ?? null, runIo(f));
+      p = unpackBuiltIn(makePrg(f.load, f.bytes), diskOf.current.get(f.id) ?? db?.disk ?? null, t && !t.file.backwards ? { tap: t.tap, at: t.file.to, boot } : null, runStart(f), f.vsf ?? null, runPort(f), sidesOf.current.get(f.id) ?? db?.sides ?? [], db?.boot ?? null, runIo(f));
       running.current.set(key, p);
       checkBegins(key);
       p.then(r => { setRuns(m => ({ ...m, [key]: r })); checkEnds(key); }, () => { running.current.delete(key); checkEnds(key, true); });

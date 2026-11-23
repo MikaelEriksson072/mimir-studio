@@ -4464,6 +4464,23 @@ fönstret på en gång. `readTape()` (`packages/core/src/c64/tap.ts`) läser avb
   har dem). Ett block vars summa inte stämmer tas bara där det fortsätter en kedja eller fil, med felet. Formaten lästes
   ur Bubble Bobbles laddare vid `$1c00` och den dess första steg dekrypterar, körda i Sindri med bandet; alla 72 256
   byte i filerna är byte de lagrade.
+- **Bandets andra sida, baklänges.** Där den här sidan är tom kan datasetten höra det som är inspelat på kassettens
+  andra sida. Den sidan går åt andra hållet, så dess pulser kommer sist först, dess filer från slutet till pilotens
+  början och varje byte med bitarna åt andra hållet. En sträcka som inget format läser läses därför också baklänges
+  (`backwardsFiles`, med Cyberloads LOAD med namn, fjärde steget ovan). En fil som fortsätter in under den här sidans
+  inspelning (där hörs den andra sidan inte) tas så långt dess hela block räcker, när minst två av dem stämmer, med ett
+  fel som säger var bandet slutar ha den och var huvudet säger att den slutar; spelad framlänges tas en sådan fil inte
+  (laddaren läser vidare). Filen står med formatet och **◂** i Explorer (*other side ◂* i Tape-fliken) och en
+  anteckning; ingen laddare på den här sidan laddar den, så den har ingen bootfil (`tapeBoot` ger null) och Sindri kör
+  den utan bandet. Preservers *Ik+ system 3.tap*: sida A har en kopia av spelet (KERNAL-bootfilen `IK +`, Novaload-
+  filen `NOVA` `$0801`–`$c648`, en Action Replay-backup packad med SuperCrunch) och sedan 122 s "turbodata" med pulser
+  på 344 och 728 cykler. Den är sida B:s Cyberload-fil `M` (troligen originalets huvudfil: `$0200`, `$be00` byte, timern
+  `$0154` × 1,5 = 510 cykler) baklänges, med piloten och huvudet vid bandets slut; 109 av dess 190 block hörs, de fem
+  närmast Novaload-filen med en bit fel var (blocksummorna skiljer på bit 3), och resten ligger under Novaload-filen.
+  Läsaren ger `$0200`–`$6eff` (koden vid `$6604` sätter rasteravbrottet `$674f`, som finns där), byte för byte som
+  sträckan avkodad för hand. Bara Cyberloads filer läses baklänges: med alla format tog Freeloads svagare kontroll 64
+  byte av Rockin Rolls musik (byte `$40` som pilot, en summa som råkade stämma) för en fil. Av arkivets 1 931 band
+  ändrades bara IK+ (okända sträckor 8 912 till 8 911); ingen annan fil ändrades.
 - **Okänd turbodata.** Det som återstår mellan KERNAL-blocken och pauserna med två pulslängder (en 1 som är 1,3–3 gånger
   så lång som en 0) och som inte är en ledare (fyra bytevärden som utgör 90 %) listas som turbodata som inget format här
   läser, med sina två pulslängder. Den läses av Sindri (13.5f). En sträcka med för få pulser av den andra längden för

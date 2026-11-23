@@ -33,6 +33,8 @@
  * - Firebird's loader (Firebird's, Silverbird's, Rainbird's, Psygnosis', Odin's …): blocks of a pilot byte, its
  *   complement and the pilot again, the first stage's in a chain where each names the next one's pilot, a second kind
  *   in files of their own (firebirdBlocks, firebirdFiles).
+ * Where this side is blank, the datasette can hear the tape's other side backwards: a stretch none of these reads is
+ * read last pulse first as well (backwardsFiles).
  * Anything else that holds data is the turbo data of a loader not known here: the boot program's loader reads it, so
  * Sindri does, running the boot program with the tape in its datasette (13.5f). */
 import { Cpu, type Bus } from '@mimir/sindri';
@@ -152,6 +154,9 @@ export interface TapeFile {
   errors: string[];
   /** what is unusual about it, not an error (a header that says more than its data block holds) */
   note?: string;
+  /** it is on the tape's other side, heard backwards where this side is blank (backwardsFiles): no loader on this side
+   *  loads it; `at` and `to` are the pulses of this side it lies in */
+  backwards?: boolean;
 }
 
 /** a stretch of the tape with data no format here reads: an unknown loader's turbo data */
@@ -1244,9 +1249,11 @@ function cyberBlockFiles(p: TapPulses, blocks: CyberBlock[]): TapeFile[] {
  * $55 on Myth's; not the other stages' $cc and $f0), a header (16 name bytes, the load address, the length; on later
  * tapes, as Tusker's, a word whose 1.5 times is the timer the data is read with), the XOR of the header; a byte on the
  * later ones; then the data, 256 bytes at a time, each followed by the XOR of all bytes since the header's. Which
- * header it is shows where the blocks check.
+ * header it is shows where the blocks check. `cut`: a file the stretch ends in is taken as far as its whole blocks go,
+ * when two of them check (the other side heard backwards, whose rest lies under this side's recording); otherwise a
+ * file has to be on the tape to its end.
  */
-function cyberNamedFiles(p: TapPulses, bits: Uint8Array, r: Region, threshold: number): TapeFile[] {
+function cyberNamedFiles(p: TapPulses, bits: Uint8Array, r: Region, threshold: number, cut = false): TapeFile[] {
   const out: TapeFile[] = [], c = p.cycles;
   const byteAt = (at: number, t: number) => {
     if (at < r.from || at + 8 > r.to) return -1;
@@ -1281,24 +1288,28 @@ function cyberNamedFiles(p: TapPulses, bits: Uint8Array, r: Region, threshold: n
       let at = r.from + k + 1 + 8 * (later ? 23 : 21), x = 0;
       if (later) { x = byteAt(at, t); at += 8; }
       const data = new Uint8Array(len), bad: number[] = [];
-      let whole = true;
+      // the bytes of the whole blocks read, and the pulse after the last one's sum
+      let whole = true, got = 0, end = at;
       for (let o = 0; o < len && whole; o += 256) {
-        for (let i = o; i < Math.min(len, o + 256); i++, at += 8) { const v = byteAt(at, t); if (v < 0) { whole = false; break; } data[i] = v; x ^= v; }
+        const n = Math.min(len, o + 256);
+        for (let i = o; i < n; i++, at += 8) { const v = byteAt(at, t); if (v < 0) { whole = false; break; } data[i] = v; x ^= v; }
         const sum = byteAt(at, t);
         at += 8;
         if (sum < 0) whole = false;
-        else if ((x ^= sum) !== 0) { bad.push(load + o); x = 0; }
+        else { if ((x ^= sum) !== 0) { bad.push(load + o); x = 0; } got = n; end = at; }
       }
-      if (!whole || bad.length > len / 512) continue;
-      if (!best || bad.length < best.bad.length) best = { data, bad, to: at, speed: later ? speed : null };
+      if (whole ? bad.length > len / 512 : !cut || got / 256 - bad.length < 2 || bad.length > got / 512) continue;
+      if (!best || bad.length < best.bad.length) best = { data: whole ? data : data.slice(0, got), bad, to: end, speed: later ? speed : null };
     }
     if (!best) continue;
     const raw = Uint8Array.from(head.slice(0, 16));
     const blocks = Math.ceil(len / 256);
+    const errors = best.bad.map(a => `checksum: the block at $${hex4(a)} could not be read cleanly`);
+    if (best.data.length < len) errors.push(`the tape has it from $${hex4(load)} to $${hex4(load + best.data.length)}: its header says it ends at $${hex4((load + len) & 0xffff)}, the rest is not on the tape`);
     out.push({
-      format: 'cyberload', name: petsciiName(raw.subarray(0, named).map(v => (v === 0x20 ? 0xa0 : v))).trimEnd(), raw, type: 'PRG', load, end: load + len, data: best.data,
+      format: 'cyberload', name: petsciiName(raw.subarray(0, named).map(v => (v === 0x20 ? 0xa0 : v))).trimEnd(), raw, type: 'PRG', load, end: load + best.data.length, data: best.data,
       at: r.from + pilot, offset: p.offsets[r.from + pilot] ?? 0, seconds: (p.times[r.from + pilot] ?? 0) / TAPE_CLOCK, to: best.to,
-      errors: best.bad.map(a => `checksum: the block at $${hex4(a)} could not be read cleanly`),
+      errors,
       note: `fourth stage (LOAD by name), sync $${sync.toString(16).padStart(2, '0')}, ${blocks} block${blocks === 1 ? '' : 's'}${best.speed ? `, read with a timer of ${Math.round(best.speed * 1.5)} cycles` : ''}`,
     });
     k = best.to - r.from - 1; reg = 0;
@@ -1464,6 +1475,37 @@ function firebirdFiles(p: TapPulses, blocks: FbBlock[]): { files: TapeFile[]; ta
   return { files, taken };
 }
 
+/* ---- the other side, heard backwards ---- */
+
+/* Where this side of a tape is blank, the datasette can hear what is recorded on the tape's other side: that side runs
+ * the other way, so its pulses come last to first, and its files' bytes last to first, each byte's bits the other way
+ * round. Read backwards, an unknown stretch can be a file of a format known here. Preservers' IK+ (System 3) tape: side
+ * A has a copy of the game (Novaload, an Action Replay backup), and after it the rest of the side holds side B's
+ * Cyberload main file "M" ($0200, $be00 bytes) backwards, from its pilot and header at the end of the tape to the
+ * Novaload file, under whose recording the rest of it lies (109 of its 190 blocks are on the tape). */
+
+/** a stretch of the tape, last pulse first: the pulses as the other side plays them */
+function backwardsPulses(p: TapPulses, from: number, to: number): TapPulses {
+  const n = to - from, cycles = new Uint32Array(n), offsets = new Uint32Array(n), times = new Float64Array(n + 1);
+  for (let j = 0; j < n; j++) { cycles[j] = p.cycles[to - 1 - j]; offsets[j] = p.offsets[to - 1 - j]; times[j + 1] = times[j] + cycles[j]; }
+  return { version: p.version, cycles, offsets, times };
+}
+
+/** The files of the tape's other side in an unknown stretch, read backwards (Cyberload's LOAD-by-name files: a file the
+ *  stretch ends in, the rest of it under this side's recording, as far as its whole blocks go); their pulses are this
+ *  side's, the file's end first. */
+function backwardsFiles(p: TapPulses, u: TapeUnknown): TapeFile[] {
+  if (u.short == null || u.long == null) return [];
+  const bp = backwardsPulses(p, u.at, u.to), r = { from: 0, to: u.to - u.at }, threshold = (u.short + u.long) / 2;
+  // (only Cyberload's: read backwards, the other formats' weaker checks took data for files, a Freeload file of 64
+  // bytes in Rockin Roll's music, pilot $40 and a sum that fits by chance; Cyberload's name, header XOR and block sums
+  // found IK+'s file and nothing else on 1 931 tapes)
+  return cyberNamedFiles(bp, bitsOf(bp.cycles, r, threshold), r, threshold, true).map(f => {
+    const at = u.to - f.to, to = u.to - f.at;
+    return { ...f, ...fileAt(p, at), to, backwards: true, note: `on the tape's other side, heard backwards where this side is blank (under this side's recordings it is not heard); ${f.note}` };
+  });
+}
+
 /* ---------------------------------------------------------------------------------------------------------------- */
 
 /** Read a .tap image: its files in every format known here, and the stretches with data none of them reads. A .t64
@@ -1555,7 +1597,14 @@ export function readTape(u8: Uint8Array): TapeImage {
     files.push(f);
     stretches[s].taken.push([f.at, f.to]);
   }
-  for (const { r, taken } of stretches) unknown.push(...unknownTurbo(p, r, taken));
+  for (const { r, taken } of stretches) {
+    for (const u of unknownTurbo(p, r, taken)) {
+      // the other side, heard backwards: its files take their pulses, what is left stays unknown
+      const back = backwardsFiles(p, u);
+      files.push(...back);
+      unknown.push(...(back.length ? unknownTurbo(p, { from: u.at, to: u.to }, back.map(f => [f.at, f.to] as const)) : [u]));
+    }
+  }
   files.sort((a, b) => a.at - b.at);
   return { version: p.version, pulses: p.cycles.length, seconds: p.times[p.times.length - 1] / TAPE_CLOCK, files, unknown, tapetool };
 }
@@ -1574,11 +1623,11 @@ export function tapeFileName(f: Pick<TapeFile, 'name' | 'type' | 'format' | 'id'
  * The KERNAL program whose loader loads `f`, a file of a turbo loader's format (13.5f): the last KERNAL program before
  * it on the tape, as LOAD on a C64 loads it, with its loader reading on from the tape. A turbo file is a part of what
  * the loader loads (a Wildload chain's block, a Cyberload part): its load address is no place to start it, the loader
- * starts what it loaded. Null for a KERNAL file or a T64's (a program of its own), and for one with no KERNAL program
- * before it.
+ * starts what it loaded. Null for a KERNAL file or a T64's (a program of its own), for one with no KERNAL program
+ * before it, and for a file of the other side heard backwards (its loader is on that side).
  */
 export function tapeBoot(img: Pick<TapeImage, 'files'>, f: TapeFile): TapeFile | null {
-  if (f.format === 'cbm' || f.format === 't64') return null;
+  if (f.format === 'cbm' || f.format === 't64' || f.backwards) return null;
   let boot: TapeFile | null = null;
   for (const x of img.files) {
     if (x.at >= f.at) break;

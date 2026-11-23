@@ -7578,6 +7578,29 @@ test('a tape with Firebird\'s loader: its first stage\'s chain and a file of the
   await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
 });
 
+test('a file of the tape\'s other side, heard backwards where this side is blank, is listed with ◂ and opens, as IK+\'s side B is', async ({ app, page }) => {
+  // fixtures/tap/other-side-demo.tap (packages/core/test/tap.test.ts): side A's KERNAL file and a Freeload file, then
+  // side B's Cyberload file "DEMO" (the raster demo) last pulse first, as a datasette hears the other side
+  await waitForListing(page);
+  await openSection(page, 'Files');
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/tap/other-side-demo.tap')] });
+  await fromFileMenu(page, 'Insert tape image (TAP, T64)…');
+  await expect(toast(page, /^Inserted other-side-demo\.tap \(\d+ s\): 3 files \(1 KERNAL, 1 Freeload, 1 Cyberload\)$/)).toBeVisible();
+  const files = page.getByRole('list', { name: 'Files on other-side-demo.tap' });
+  await expect(files.getByRole('listitem')).toHaveText([/0:00\s*"SIDE A"\s*PRG/, /"file_c000"\s*Freeload/, /"DEMO"\s*Cyberload ◂/]);
+  await expect(files.getByRole('listitem').nth(2)).toHaveAttribute('title', /on the tape's other side, heard backwards where this side is blank/);
+  // nothing left for Sindri alone
+  await expect(page.locator('.disk-spindle')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: /^Tape/ }).click();
+  const table = page.getByRole('table', { name: 'Tape files' });
+  await expect(table.locator('tbody tr td:nth-child(3)')).toHaveText(['KERNAL PRG', 'Freeload', 'Cyberload, other side ◂']);
+  await expect(table.locator('tbody tr td:nth-child(7)').nth(2)).toHaveText(/^on the tape's other side, heard backwards where this side is blank \(under this side's recordings it is not heard\); fourth stage \(LOAD by name\), sync \$aa, \d+ blocks, read with a timer of 510 cycles$/);
+  await table.getByRole('row', { name: /"DEMO"/ }).click();
+  await expect(toast(page, 'Loaded DEMO.prg at $0801')).toBeVisible();
+  await expect(listing(page).locator('.row', { hasText: 'BasicUpstart2(start)' }).first()).toBeVisible();
+});
+
 test('the tape as a C64 lists its files as a directory, FOUND shows LOAD\'s search with a turbo loader\'s files under it, and Mimir\'s list again', async ({ app, page }) => {
   // fixtures/tap/cyberload-demo.tap: the KERNAL boot file "CYBER DEMO", whose data block starts as a header does and
   // prints a FOUND of its own, then Cyberload's files, which the KERNAL does not see. The directory is listed by the

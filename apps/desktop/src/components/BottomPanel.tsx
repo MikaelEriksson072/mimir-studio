@@ -858,7 +858,7 @@ export function TapePanel({ tape, open, onCopy, onOpenFile, onExportFiles, onSav
             <tr key={`f${i}`} className={cx(!can && 'muted', open.has(file) && 'on')} {...mark(open.has(file), can ? `Open ${file.name}${file.headerCode ? ' and its header' : ''}` : undefined)} onClick={() => { if (can) onOpenFile(file, false); }}>
               <td className="mono">{t64 ? file.id : time(file.seconds)}</td>
               <td className="mono">${file.offset.toString(16)}</td>
-              <td>{FORMAT[file.format]}{file.format === 'cbm' ? ` ${file.type}` : file.format === 't64' ? ` ${file.load == null ? 'FRZ' : file.type}` : ''}</td>
+              <td>{FORMAT[file.format]}{file.format === 'cbm' ? ` ${file.type}` : file.format === 't64' ? ` ${file.load == null ? 'FRZ' : file.type}` : ''}{file.backwards ? ', other side ◂' : ''}</td>
               <td className="mono">{file.format === 'tapetool' ? file.name : `"${file.name}"`}</td>
               <td className="mono">{file.load != null ? `$${h4(file.load)}–$${h4((file.load + Math.max(1, file.data.length) - 1) & 0xffff)}` : <span className="muted">—</span>}</td>
               <td className="mono">{file.data.length}</td>
