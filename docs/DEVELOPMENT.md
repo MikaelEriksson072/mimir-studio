@@ -197,7 +197,7 @@ from `%APPDATA%\@kickreasm\desktop` (`settings.json`, `recent-folders.json` and 
 `kickreasm-project`) and saves them as `.mimir.json`.
 
 The e2e tests also run against a packaged app: set `MIMIR_E2E_EXE` to its exe, for example
-`release/0.8.0-beta/win-unpacked/Mimir Studio.exe` (relative to `apps/desktop`) or an installed copy, and run
+`release/0.9.0-beta/win-unpacked/Mimir Studio.exe` (relative to `apps/desktop`) or an installed copy, and run
 `pnpm --filter @mimir/desktop exec playwright test`.
 
 ## Layout
