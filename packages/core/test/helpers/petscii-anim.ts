@@ -54,8 +54,8 @@ export function encodeFrames(screens: Screen[], from: Screen = screenWith([])): 
 export interface PlayerOptions {
   /** where the player and the part's code go */
   code?: number;
-  /** the tables (colours first: the reader tells them apart by their values) */
-  chars: number; colours: number; coloursFirst?: boolean;
+  /** the tables */
+  chars: number; colours: number;
   /** each sequence: where it starts, how many frames, and the state the code sets with it (null: none) */
   sequences: { start: number; frames: number; state?: number | null }[];
   /** the code sets the frame counter (else it does not count, and the frames run on until the stream stops) */
@@ -68,8 +68,8 @@ export interface PlayerOptions {
  *  counter and state), and a routine called each frame that draws one and counts down. */
 export function playerSource(o: PlayerOptions): string {
   const order = o.codeOrder ?? o.sequences.map((_, i) => i);
-  const [t1, t2] = o.coloursFirst ? [o.colours, o.chars] : [o.chars, o.colours];
-  const [q1, q2] = o.coloursFirst ? ['col', 'scr'] : ['scr', 'col'];
+  const [t1, t2] = [o.chars, o.colours];
+  const [q1, q2] = ['scr', 'col'];
   return `
 .label ptr = $80
 .label pos = $82

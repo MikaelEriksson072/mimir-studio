@@ -23,7 +23,6 @@ import type { Sel } from '../lib/types';
 import { useUi, type GfxPrefs } from '../store/ui';
 import type { CharRomResult } from '../../shared/ipc';
 import { charRom } from '../lib/charrom';
-import { AnimGfx } from './AnimGfx';
 import { GFX_MODES, pngOf } from '../lib/gfxmodes';
 
 /** what the view shows, beside the mode switch (whose buttons say the size); bitmaps say their bytes */
@@ -108,13 +107,7 @@ const VIC_COLOURS_OF: Record<GfxKind, string> = {
   bitmap: 'the background $d021 and the colours most cells of its screen and colour RAM give',
 };
 
-/** The tab: memory as cells, or an animation's frames (a view of its own, spec 14.5b). */
-export function MemoryGfx(p: MemoryGfxProps) {
-  const kind = useUi(s => s.gfx.kind);
-  return kind === 'anim' ? <AnimGfx {...p} /> : <MemoryView {...p} />;
-}
-
-function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
@@ -122,8 +115,7 @@ function MemoryView({ A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor
   // bitmaps: the part of each drawn (character rows and columns), the whole by default
   const win = useMemo(() => bitmapWindowOf({ top: bitmapTop, rows: bitmapRows, left: bitmapLeft, cols: bitmapCols }), [bitmapTop, bitmapRows, bitmapLeft, bitmapCols]);
   const wholeWin = isWholeBitmap(win);
-  // (MemoryGfx shows Animations with a view of its own)
-  const kind = prefs.kind as GfxKind;
+  const kind = prefs.kind;
   // a project opened from a VICE snapshot is drawn in its VIC-II's colours while the box is on: the view's colours from
   // its registers and colour RAM, the screen and the bitmap it showed cell by cell (lib/vicgfx.ts)
   const snapVic = useMemo(() => snapshotVic(A.files), [A.files]);

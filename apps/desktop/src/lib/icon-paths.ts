@@ -34,7 +34,7 @@ export const ICONS = {
   // books on a shelf, one leaning: the library of SIDs, sprites and charsets (spec 10.6)
   library: 'M4 4h4v16H4zM10 4h4v16h-4zM15.6 5.3l3.4-.9 3.5 14.5-3.4.9zM3 20.5h12',
   pause: 'M8 5v14M16 5v14',
-  // a strip of film: frames one after the other (the Graphics tab's Animations, spec 14.5b)
+  // a strip of film: frames one after the other (animation data, spec 13.5b)
   film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4',
 } as const;
 

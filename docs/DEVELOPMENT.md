@@ -1095,7 +1095,7 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     is too but for the 7 bytes the installer rewrites, and on the archive's 277 829 D64/G64 the reader takes only the
     5 copies of Halloween 2026 (one disk in five folders). Tests: `test/dloc-disk.test.ts` (own ZX0 writer, a boot
     laid out as Six's packer lays it out, the fixture `fixtures/d64/dloc-demo.d64`), `loaders.test.ts`, an e2e test.
-52. PETSCII animations (spec 14.5b) are new. Breadbin of Horror's `job0d_8000.bin` (side 1, Spindle job 13) "could not
+52. PETSCII animations are new (the view was taken away again, see 64). Breadbin of Horror's `job0d_8000.bin` (side 1, Spindle job 13) "could not
     be unpacked": it is no packed program but the stream a player in the part draws one frame at a time (Sindri ran it
     from `$8000` into a JAM). Read from the part's code: `findPetsciiAnims` (`packages/core/src/c64/petscii-anim.ts`)
     finds the player by its run loop and the run's header, the stream pointer's settings, the frame counter the code
@@ -1314,6 +1314,14 @@ memory configuration and VIC bank (`bankTracking`, `Project.bankZones`): the dif
     Tests: Sindri `unpack.test.ts` (saved and restarted, both ROM modes), core `vice.integration.test.ts` (the
     routine's bytes, the monitor script, and real VICE: four starts exit $42, without the I/O it does not),
     `sindri.test.ts` (`fixtures/prg/start-io.prg`), e2e (Unpack, the Program start card, Build & Run's monitor file).
+64. Graphics → Animations is gone (it was entry 52's view; one demo used it): the view (`AnimGfx.tsx`,
+    `lib/animview.ts`), its settings, the animated GIF writer (`util/gif.ts`), the drawing of frames in core and the
+    Spindle tab's *Open job N*. What stays is the recognition (spec 13.5b): `findPetsciiAnims` still finds the player
+    and reads where each frame starts and ends (not the screens they leave), and the Spindle script tab says which
+    job plays a PETSCII animation and labels every file that holds an animation's frames *animation*, this kind and
+    entry 53's (`lib/storeanim.ts`: `spinPetsciiAnims`, `chunkAnimData`). A file of a PETSCII animation's stream
+    opened from the tab is treated as entry 53's are: no Sindri run, no packing verdict, the bar above the listing
+    and the *Animation data* card. Saved Graphics settings with the view picked open on Characters.
 
 ## Roadmap
 

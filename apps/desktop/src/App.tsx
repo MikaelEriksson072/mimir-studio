@@ -17,7 +17,7 @@ import {
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
-  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type PetsciiAnim, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type StartIo, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
+  type BitfireDisk, type BitfireFile, type BoozeDisk, type BoozeFile, type CovertDisk, type CovertFile, type DlocDisk, type DlocFile, type IfflDisk, type IfflFile, type IfflPart, type KrillDisk, type KrillFile, type SparkleBundle, type SparkleChunk, type SparkleDisk, type SerializedProject, type Settings, type SpindleChunk, type SpindleDisk, type SpindleJob, type TapeFile, type Token, type StartIo, type ToolchainSettings, type UnpackDiskBoot, type UnpackRun, type VerifyResult,
   debugSources,
   knownRoutines, learnProject, learnRoutine, routineAt, routineSuggestions, startsRoutine, type RoutineMatch,
   builtInTemplate, originalTemplate, renderTemplate, sfxEntry, templateScripts, templateText, type BuildTemplate, type BuiltInTemplateId,
@@ -52,7 +52,7 @@ import { findLines, findRegExp, findText, nextHit, type FindOptions } from './li
 import { AssemblerContext, asmWords } from './lib/assembler';
 import { onlyRelocates, withIdentified, withUnpackRun } from './lib/packing';
 import { unpackBuiltIn } from './lib/unpack';
-import { animDataText, chunkAnimData, spinStoreAnims, type AnimData } from './lib/storeanim';
+import { animDataText, chunkAnimData, type AnimData } from './lib/storeanim';
 import { packDefaults, packKeyOf } from './lib/pack';
 import { Icon, LVL_ICON } from './lib/icons';
 import type { BuildState, CartCheck, Changed, Command, ContextMenuState, DiskSide, Editing, KickBuild, MenuItem, Message, MountedDisk, MountedTape, NavOptions, ScrollReq, Sel, Toast, ToastKind, UiProblem, ViewAt } from './lib/types';
@@ -551,7 +551,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  `what`: what "The work is not saved" calls it (the files' names), `asked`: that was answered;
    *  `show`: the Explorer shows what was opened (the File menu's choices), the cartridge or the files;
    *  `gfx`: a file from a loader's script or the tape, whose start Graphics shows (14.6b) */
-  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean; show?: boolean; gfx?: boolean; then?: () => void } = {}) => {
+  const addFiles = (opened: OpenedPrg[], add: boolean, opts: { undoLabel?: string; note?: string; what?: string; asked?: boolean; show?: boolean; gfx?: boolean } = {}) => {
     if (!opened.length) return;
     // a cartridge's chips open as a project of their own, with the image (13.9): a project holds one cartridge
     const cart = opened.find(f => f.cart)?.cart;
@@ -587,7 +587,6 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (opts.gfx) setGfxGo({ id: files[0].id, n: Date.now() });
     if (opts.show) setUi({ activity: 'explorer', sidePanel: true });
     afterLoad(files.map(f => f.id), add);
-    opts.then?.();
     if (note) { toast(note, 'ok'); return; }
     toast(`Loaded ${opened.map(f => `${f.name} at $${h4(f.load)}${f.snapshot ? ` from a ${f.snapshot}${f.entries?.length ? `; traced from ${f.entries.map(e => `$${h4(e)}`).join(', ')}` : ''}${f.start != null && !add ? `; program start $${h4(f.start)}` : ''}` : ''}`).join(', ')}${leftNote}`, 'ok');
   };
@@ -964,12 +963,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     setExportAsk(null);
     await exportGroups(a.from, a.groups);
   };
-  /** the animation streams of the mounted Spindle disk (a player in one job stores them frame by frame, core
-   *  store-anim): a chunk opened from the Spindle tab that holds one is animation data, not a packed file */
-  const storeAnims = useMemo(() => (disk?.spindle ? spinStoreAnims(disk.spindle) : []), [disk]);
+  /** the animation streams of the mounted Spindle disk (a player stores or draws them frame by frame, core store-anim
+   *  and petscii-anim): a chunk opened from the Spindle tab that holds one is animation data, not a packed file */
+  const spinDisk = disk?.spindle ?? null;
   const animDataOf = (f: LoadedFile | undefined): AnimData | null => {
     const c = f && loaderOf.current.get(f.id);
-    return c ? chunkAnimData(storeAnims, c as SpindleChunk) : null;
+    return c && spinDisk ? chunkAnimData(spinDisk, c as SpindleChunk) : null;
   };
   /** a chunk of a Spindle disk's job, as a PRG at its address */
   const spinChunkFile = (j: SpindleJob, c: SpindleChunk) => withId(parsePrg(spinChunkName(j, c).replace(/\.bin$/, '.prg'), makePrg(c.start, c.bytes)));
@@ -999,19 +998,6 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     try {
       const w = await kr.writeExport({ target: 'pick', files });
       if (w) toast(`Saved ${n} chunk${n === 1 ? '' : 's'} of ${disk.name}'s jobs to ${w.dir}, each as the script names it (.bin) and as a PRG, and ${script}, the load script Spin reads`, 'ok');
-    } catch (e) { toast(errorText(e), 'err'); }
-  };
-  /** all the chunks of a Spindle disk's job as a project, each a PRG at its address (a part's code, tables and data
-   *  together); `anim`: the PETSCII animation its code plays (spec 14.5b), shown in Graphics → Animations then */
-  const openJob = (j: SpindleJob, anim: PetsciiAnim | null) => {
-    try {
-      const files = j.chunks.map(c => fromLoader(c, [spinChunkFile(j, c)])[0]);
-      const lo = Math.min(...j.chunks.map(c => c.start)), hi = Math.max(...j.chunks.map(c => c.end)) - 1;
-      addFiles(files, false, {
-        what: `job ${j.n} (${files.length} chunk${files.length === 1 ? '' : 's'})`, gfx: !anim,
-        note: `Opened job ${j.n} of ${disk?.name ?? 'the disk'}: ${files.length} chunk${files.length === 1 ? '' : 's'}, $${h4(lo)}–$${h4(hi)}${anim ? `; Graphics shows the PETSCII animation its code plays, ${anim.frames.length} frames` : ''}`,
-        then: anim ? () => { setUi({ tab: 'gfx', gfx: { ...useUi.getState().gfx, kind: 'anim' } }); setGfxGo({ addr: anim.start, n: Date.now() }); } : undefined,
-      });
     } catch (e) { toast(errorText(e), 'err'); }
   };
   /** a file of a Bitfire disk as a PRG: unpacked, at where it unpacks to; else as it loads */
@@ -1330,7 +1316,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** every bank at once in Graphics and Memory (13.9b): with All banks in one .asm and more than one bank, as the source
    *  has them; a font per row stays in one bank */
   const allBanks = !!project.settings.cartOneSource && (A.spaces?.length ?? 0) > 1;
-  const allGfx = allBanks && ui.gfx.kind !== 'fontrows' && ui.gfx.kind !== 'anim';
+  const allGfx = allBanks && ui.gfx.kind !== 'fontrows';
   /** the banks' loaded memory for Graphics with every bank: from 8 KB to 8 KB, so the cells are where the VIC has them */
   const bankParts = useMemo(() => {
     if (!A.spaces) return null;
@@ -1477,9 +1463,9 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // a program that only copies code elsewhere to run there is relocated (8.1b), not packed
     if (!external && f && onlyRelocates(run, A)) return null;
     return external ? withIdentified(h, f ? identified[idKey(f)] : undefined, at, unpackerName) : withUnpackRun(h, run, at);
-  }), [A, identified, runs, project.files, project.entryPoint, project.entryPort, external, unpackerName, storeAnims]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [A, identified, runs, project.files, project.entryPoint, project.entryPort, external, unpackerName, spinDisk]); // eslint-disable-line react-hooks/exhaustive-deps
   /** what each file is when it is animation data (the bar above the listing and the analysis overview say it) */
-  const animData = useMemo(() => project.files.map(f => animDataOf(f)), [project.files, storeAnims]); // eslint-disable-line react-hooks/exhaustive-deps
+  const animData = useMemo(() => project.files.map(f => animDataOf(f)), [project.files, spinDisk]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Put the unpacked PRG in place of file `i` (a project of its own when it was the only file); says where it went.
    *  `port`: $01 as the program starts at `start` (Sindri's saved.port), kept with the start when it is not $37; `io`:
    *  the I/O it starts in there (saved.io: the VIC bank, the raster interrupt, the colour RAM …), kept with the start */
@@ -4815,7 +4801,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
             {shownBottom === 'xrefs' && <XrefPanel A={A} R={R} cursor={cursor} onNavigate={nav} S={S} />}
             {shownBottom === 'irqs' && <RasterPanel A={A} R={R} onNavigate={nav} />}
             {shownBottom === 'relocs' && <RelocPanel A={A} R={R} relocs={project.relocs} onNavigate={nav} onRelocate={(r, copyAt) => startRelocate(r, copyAt)} onUnrelocate={unrelocate} />}
-            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} onOpenJob={openJob} onExportFiles={exportSpindleFiles} onSaveFiles={() => void saveSpindleFiles()} />}
+            {shownBottom === 'spindle' && <SpindlePanel A={A} R={R} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openChunk} onExportFiles={exportSpindleFiles} onSaveFiles={() => void saveSpindleFiles()} />}
             {shownBottom === 'bitfire' && disk?.bitfire && <BitfirePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBitfireFile} onExportFiles={exportBitfireFiles} onSaveFiles={() => void saveBitfireFiles()} />}
             {shownBottom === 'booze' && <BoozePanel A={A} disk={disk} open={loaderOpen} onNavigate={nav} onCopy={(t, what) => void copyText(t, what)} onOpenFile={openBoozeFile} onExportFiles={exportBoozeFiles} onSaveFiles={() => void saveBoozeFiles()} />}
             {shownBottom === 'sparkle' && disk?.sparkle && <SparklePanel disk={disk} open={loaderOpen} onCopy={(t, what) => void copyText(t, what)} onOpenChunk={openSparkleChunk} onExportFiles={exportSparkleFiles} onSaveFiles={() => void saveSparkleFiles()} />}

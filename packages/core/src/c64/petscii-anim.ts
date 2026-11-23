@@ -1,7 +1,7 @@
-/* PETSCII animations that a player in the program draws frame by frame (spec 14.5b). The bytes of such an animation are
+/* PETSCII animations that a player in the program draws frame by frame (spec 13.5b). The bytes of such an animation are
  * no packed program: nothing unpacks them into memory, the player reads one frame at a time and writes it to the screen.
- * So they are read here as the player reads them, and each frame comes out as the screen it leaves: 1000 screen codes
- * and 1000 colours.
+ * So they are recognised here, read as the player reads them: where each frame starts and ends, and how many there are
+ * (the loader's script tab says which files hold them).
  *
  * The player known so far is the one in The Pumpkins' Breadbin of Horror (side 1, Spindle job 13: the pumpkin growing
  * out of a sprout). Its frames are a stream of runs:
@@ -26,8 +26,6 @@ import { MODE_LEN, OPC } from '../cpu/opcodes';
 /** instructions that leave A as it is (a value `lda #` loaded is still the one a `sta` after them stores) */
 const KEEPS_A = new Set(['STA', 'STX', 'STY', 'LDX', 'LDY', 'INX', 'INY', 'DEX', 'DEY', 'INC', 'DEC', 'CLC', 'SEC', 'CLI', 'SEI', 'CLD', 'SED', 'CLV', 'NOP', 'CPX', 'CPY', 'CMP', 'BIT', 'TAX', 'TAY', 'PHA', 'PHP']);
 
-/** characters a screen shows: 40 x 25 */
-export const PETSCII_SCREEN = 1000;
 /** frames read at most from a start the code does not count */
 const MAX_FRAMES = 2000;
 /** runs a frame has at most (a screen's worth of one-character runs and more) */
@@ -40,8 +38,8 @@ export interface PetsciiPlayer {
   entry: Addr | null;
   /** the zero-page pointer into the stream; the counter of frames the code counts down after each call (null: none) */
   ptr: number; counter: number | null;
-  /** the screen code and the colour of each index */
-  chars: Addr; colours: Addr;
+  /** its two tables: the screen code and the colour of each index (which is which is not told) */
+  tables: [Addr, Addr];
 }
 
 export interface PetsciiSequence {
@@ -59,8 +57,6 @@ export interface PetsciiFrame {
   n: number; seq: number; k: number;
   /** its bytes in the stream */
   start: Addr; end: Addr;
-  /** the screen after it: 1000 screen codes and 1000 colours (0-15) */
-  chars: Uint8Array; colours: Uint8Array;
   /** characters it writes */
   writes: number;
 }
@@ -77,15 +73,15 @@ export interface PetsciiAnim {
 
 const indexOf = (b: Uint8Array, p: number[]) => { for (let i = 0; i + p.length <= b.length; i++) if (p.every((x, k) => b[i + k] === x)) return i; return -1; };
 
-/** a frame's runs as (position, index) pairs and where it ends; or why it is not one */
-function readFrame(mem: Uint8Array, at: Addr, loaded: (a: Addr) => boolean): { end: Addr; puts: [number, number][] } | { problem: string } {
-  const puts: [number, number][] = [];
+/** where a frame ends and how many characters it writes; or why it is not one */
+function readFrame(mem: Uint8Array, at: Addr, loaded: (a: Addr) => boolean): { end: Addr; writes: number } | { problem: string } {
+  let writes = 0;
   let p = at, pos = 0;
   const byte = (a: Addr) => (loaded(a & 0xffff) ? mem[a & 0xffff] : -1);
   for (let runs = 0; ; runs++) {
     const h = byte(p);
     if (h < 0) return { problem: `$${hex(p & 0xffff)} is not loaded` };
-    if (h === 0) return { end: (p + 1) & 0xffff, puts };
+    if (h === 0) return { end: (p + 1) & 0xffff, writes };
     if (runs >= MAX_RUNS) return { problem: `no end of the frame in ${MAX_RUNS} runs` };
     let y = 1, skip = h & 15;
     if (skip === 15) {
@@ -98,7 +94,7 @@ function readFrame(mem: Uint8Array, at: Addr, loaded: (a: Addr) => boolean): { e
     for (let i = 0; i < n; i++, y++) {
       const x = byte(p + y);
       if (x < 0) return { problem: `$${hex((p + y) & 0xffff)} is not loaded` };
-      puts.push([pos + i, x]);
+      writes++;
     }
     pos += n;
     p = (p + y) & 0xffff;
@@ -167,9 +163,8 @@ export function findPetsciiAnims(mem: Uint8Array, loaded: (a: Addr) => boolean =
     const state = setters.length > 1 ? others(setters[0]).find(z => setters.every(s => s.stores.has(z))) : undefined;
     if (state != null) setters.sort((x, y) => x.stores.get(state)! - y.stores.get(state)! || x.at - y.at);
 
-    // the frames, in the order they are played: each draws over the screen the one before left
-    const screen: [number, number][] = Array.from({ length: 0x400 }, () => [0x20, -1]);
-    const raw: { seq: number; k: number; start: Addr; end: Addr; puts: [number, number][] }[] = [];
+    // the frames, in the order they are played
+    const frames: PetsciiFrame[] = [];
     const sequences: PetsciiSequence[] = [];
     const starts = new Set(setters.map(s => s.start));
     let problem: string | null = setters.length ? null : 'the code never sets where the frames start';
@@ -181,44 +176,16 @@ export function findPetsciiAnims(mem: Uint8Array, loaded: (a: Addr) => boolean =
         const f = readFrame(mem, p, a => a < size && loaded(a));
         if ('problem' in f) { if (s.count != null || k === 0) problem ??= `frame ${k + 1} from $${hex(s.start)}: ${f.problem}`; break; }
         // (not counted: a frame that changes nothing is taken as the end, so zeros after the stream are no frames)
-        if (s.count == null && !f.puts.length) break;
-        raw.push({ seq, k, start: p, end: f.end, puts: f.puts });
+        if (s.count == null && !f.writes) break;
+        frames.push({ n: frames.length, seq, k, start: p, end: f.end, writes: f.writes });
         p = f.end;
       }
       sequences.push({ start: s.start, setAt: s.at, count: s.count, frames: k });
     });
-    // which table holds colours: the one whose values (at the indexes the frames use) are all below 16; the first one
-    // is the screen's when both or neither are
-    const used = new Set(raw.flatMap(f => f.puts.map(([, x]) => x)));
-    const small = (t: Addr) => [...used].every(x => mem[(t + x) & 0xffff] < 16);
-    const [chars, colours] = small(t1) && !small(t2) ? [t2, t1] : [t1, t2];
-    const frames = raw.map((f, i): PetsciiFrame => {
-      for (const [pos, x] of f.puts) screen[pos] = [mem[(chars + x) & 0xffff], mem[(colours + x) & 0xffff] & 15];
-      return {
-        n: i, seq: f.seq, k: f.k, start: f.start, end: f.end, writes: f.puts.length,
-        chars: Uint8Array.from(screen.slice(0, PETSCII_SCREEN), c => c[0]), colours: Uint8Array.from(screen.slice(0, PETSCII_SCREEN), c => Math.max(0, c[1])),
-      };
-    });
     const startAt = frames.length ? Math.min(...frames.map(f => f.start)) : setters[0]?.start ?? next;
     const endAt = frames.length ? Math.max(...frames.map(f => (f.end < f.start ? 0x10000 : f.end))) : startAt;
-    out.push({ player: { loop: a, next, entry, ptr, counter, chars, colours }, sequences, frames, start: startAt, end: endAt, problem: frames.length ? problem : problem ?? 'no frame could be read' });
+    out.push({ player: { loop: a, next, entry, ptr, counter, tables: [t1, t2] }, sequences, frames, start: startAt, end: endAt, problem: frames.length ? problem : problem ?? 'no frame could be read' });
     a += 20;
   }
   return out;
-}
-
-/** A frame as pixels: 320 x 200 colour numbers (0-15), each screen code drawn with `font` (2 KB, 8 bytes a character) in
- *  its colour over `bg`. */
-export function petsciiFramePixels(f: Pick<PetsciiFrame, 'chars' | 'colours'>, font: Uint8Array, bg: number): Uint8Array {
-  const px = new Uint8Array(320 * 200);
-  for (let i = 0; i < PETSCII_SCREEN; i++) {
-    const g = f.chars[i] * 8, fg = f.colours[i] & 15, x0 = (i % 40) * 8, y0 = Math.floor(i / 40) * 8;
-    for (let y = 0; y < 8; y++) { const bits = font[g + y] ?? 0; for (let x = 0; x < 8; x++) px[(y0 + y) * 320 + x0 + x] = bits & (0x80 >> x) ? fg : bg & 15; }
-  }
-  return px;
-}
-
-/** The frame playing at `a` in the stream (the first, when the bytes are played more than once), or -1. */
-export function petsciiFrameAt(anim: PetsciiAnim, a: Addr): number {
-  return anim.frames.findIndex(f => a >= f.start && a < (f.end < f.start ? 0x10000 : f.end));
 }

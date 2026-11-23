@@ -4,12 +4,12 @@
  * on the mounted disk, the tape in the datasette, statistics, build output. */
 import {
   BITFIRE_VERSION, bitfireFileName, BOOZE_CRUNCHER, cc1541Script, COVERT_PACKER, COVERT_RAW_AT, IFFL_PACKER, ifflPartName, ifflPieceName, type IfflFile, type IfflPart, covertCallText, covertFileName, covertScript, covertScriptText, type CovertFile, DLOC_ROUTINE, dlocCallText, dlocFileName, dlocScript, dlocScriptText, dlocUnpackedName, type DlocFile, krillCallText, krillFileName, krillFileTs, krillLoads, krillPackerName, krillScriptText, type KrillFile, type KrillLoad, PIRATESLAYER_SIGNATURE, pirateSlayerFileList, pirateSlayerFileName, paraProtectFileList, diskSpeedFileList, tapeToolScript, boozeFileList, boozeFileName, boozeLine, boozeScript, d64writeScript, decode, goneCounts, h2, h4, hwSymbol, kickMnemonic, lineText, OPC, PROBLEM_CODES, sparkleChunkName, sparkleScript, spinChunkName, spindleCondition, spindleLabel, spindleName, spindleRoutines, spindleScript, spinScript,
-  ASSEMBLERS, assemblerOf, findPetsciiAnims, shownAddress, shownTarget, storePagesText, viewOffsetAt, type PetsciiAnim,
+  ASSEMBLERS, assemblerOf, shownAddress, shownTarget, storePagesText, viewOffsetAt,
   type Addr, type AnalysisResult, type BitfireFile, type BoozeFile, type BoozeStep, type CartBuild, type DeepReport, type DiskSpeedFile, type ParaProtectFile, type PirateSlayerFile, type RasterIrq, type Reloc, type RenderResult, type Settings, type SparkleBundle, type SparkleChunk, type SpindleChunk, type SpindleDriver, type SpindleJob, type TapeFile, type TapeUnknown,
 } from '@mimir/core';
 import { useMemo } from 'react';
 import { Icon, LVL_ICON } from '../lib/icons';
-import { animDataText, jobAnimData, jobsText, spinStoreAnims } from '../lib/storeanim';
+import { animDataText, chunkAnimData, jobAnimData, jobsText, petsciiText, spinPetsciiAnims, spinStoreAnims } from '../lib/storeanim';
 import { cx, fmtBytes, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
 import type { BottomTab } from '../store/ui';
 import type { BuildState, Message, MountedDisk, MountedTape, UiProblem } from '../lib/types';
@@ -233,37 +233,29 @@ interface SpindlePanelProps {
   onNavigate: (a: Addr) => void; onCopy: (text: string, what: string) => void;
   /** open a job's chunk as a PRG (`add`: add it to the project) */
   onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void;
-  /** open all of a job's chunks as a project (`anim`: then Graphics shows the PETSCII animation its code plays) */
-  onOpenJob: (j: SpindleJob, anim: PetsciiAnim | null) => void;
   /** Add files to project, Save files…: every chunk of the disk's jobs */
   onExportFiles: () => void; onSaveFiles: () => void;
 }
 
 /** The Spindle script tab: a mounted Spindle 3 disk's load script (Spin's jobs), and the effect drivers in memory. */
-export function SpindlePanel({ A, R, disk, open, onNavigate, onCopy, onOpenChunk, onOpenJob, onExportFiles, onSaveFiles }: SpindlePanelProps) {
+export function SpindlePanel({ A, R, disk, open, onNavigate, onCopy, onOpenChunk, onExportFiles, onSaveFiles }: SpindlePanelProps) {
   if (!A.spindle.length && !disk?.spindle) return <div className="empty">No Spindle script: a Spindle 3 disk holds the jobs its load script lists, and a VICE snapshot of a trackmo linked with Pefchain holds its effect drivers.</div>;
   return (
     <>
-      {disk?.spindle && <SpinDiskSection disk={disk} open={open} onCopy={onCopy} onOpenChunk={onOpenChunk} onOpenJob={onOpenJob} onExportFiles={onExportFiles} onSaveFiles={onSaveFiles} />}
+      {disk?.spindle && <SpinDiskSection disk={disk} open={open} onCopy={onCopy} onOpenChunk={onOpenChunk} onExportFiles={onExportFiles} onSaveFiles={onSaveFiles} />}
       {A.spindle.length > 0 && <DriversSection A={A} R={R} onNavigate={onNavigate} onCopy={onCopy} />}
     </>
   );
 }
 
-/** the PETSCII animation a job's code plays (spec 14.5b), read from the job's chunks alone; null: none */
-export function jobAnim(j: SpindleJob): PetsciiAnim | null {
-  const mem = new Uint8Array(0x10000), on = new Uint8Array(0x10000);
-  for (const c of j.chunks) { mem.set(c.bytes, c.start); on.fill(1, c.start, c.end); }
-  return findPetsciiAnims(mem, a => on[a] === 1).find(a => a.frames.length) ?? null;
-}
-
 /** A Spindle 3 disk's jobs (spec 13.5b), a row per chunk; a row opens the chunk as a PRG at its address, + adds it. A
- *  job's first row opens all its chunks at once, and says when its code plays a PETSCII animation (14.5b), or when the
- *  job is animation data another job's player stores frame by frame, or holds that player. */
-function SpinDiskSection({ disk, open, onCopy, onOpenChunk, onOpenJob, onExportFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void; onOpenJob: (j: SpindleJob, anim: PetsciiAnim | null) => void; onExportFiles: () => void; onSaveFiles: () => void }) {
+ *  job's first row says when its code plays a PETSCII animation, or when the job is animation data another job's
+ *  player stores frame by frame, or holds that player; each file that holds an animation's frames is labelled
+ *  *animation*. */
+function SpinDiskSection({ disk, open, onCopy, onOpenChunk, onExportFiles, onSaveFiles }: { disk: MountedDisk; open: InProject; onCopy: (text: string, what: string) => void; onOpenChunk: (j: SpindleJob, c: SpindleChunk, add: boolean) => void; onExportFiles: () => void; onSaveFiles: () => void }) {
   const d = disk.spindle!;
   const chunks = d.jobs.reduce((n, j) => n + j.chunks.length, 0);
-  const anims = useMemo(() => new Map(d.jobs.map(j => [j, jobAnim(j)])), [d]);
+  const anims = useMemo(() => spinPetsciiAnims(d), [d]);
   const stores = useMemo(() => spinStoreAnims(d), [d]);
   /** animation data a player in another job stores frame by frame (Bliss Machine's lightning): the jobs that hold it
    *  are no packed files, and the player's job plays it */
@@ -284,21 +276,19 @@ function SpinDiskSection({ disk, open, onCopy, onOpenChunk, onOpenJob, onExportF
       </div>
       <table className="tbl" aria-label="Spindle load script"><thead><tr><th>Job</th><th>Loads</th><th>Bytes</th><th>File</th><th>Notes</th><th /></tr></thead><tbody>
         {d.jobs.flatMap(j => j.chunks.map((c, k) => {
-          const name = spinChunkName(j, c);
+          const name = spinChunkName(j, c), data = chunkAnimData(d, c);
           return (
             <tr key={`${j.n}-${c.start}`} className={cx(k === 0 && 'job-first', open.has(c) && 'on')} {...mark(open.has(c), `Open ${name} as a PRG at $${h4(c.start)}`)} onClick={() => onOpenChunk(j, c, false)}>
               <td className="mono">{k === 0 && <>{j.n}{j.labels.map(l => <span key={l} className="pill">{h2(l)}:</span>)}</>}</td>
               <td className="mono">${h4(c.start)}–${h4(c.end - 1)}</td>
               <td className="mono">{c.end - c.start}</td>
-              <td className="mono">{name}</td>
+              <td className="mono">{name}{data && <span className="pill spin-anim" title={`${name} is animation data, not packed: ${animDataText(data)}`}><Icon name="film" size={11} />animation</span>}</td>
               <td className="muted">{k === 0 && <>
                 {notes(j)}
                 {(x => x && <span className="spin-store" title={x.title}>{notes(j) ? ' · ' : ''}{x.text}</span>)(storeNote(j))}
-                {(a => a && <button className="linkish spin-anim" title={`The job's code plays a PETSCII animation: ${a.frames.length} frames from $${h4(a.start)}-$${h4((a.end - 1) & 0xffff)}, drawn by the player at $${h4(a.player.entry ?? a.player.next)}. Open the whole job and show the frames in Graphics → Animations`}
-                  onClick={e => { e.stopPropagation(); onOpenJob(j, a); }}>{notes(j) || storeNote(j) ? ' · ' : ''}<Icon name="film" size={12} />PETSCII animation: {a.frames.length} frames (${h4(a.start)}–${h4((a.end - 1) & 0xffff)})</button>)(anims.get(j))}
+                {(a => a && <span className="spin-store" title={`The job's code plays a PETSCII animation: ${a.frames.length} frames from $${h4(a.start)}–$${h4((a.end - 1) & 0xffff)}, drawn by the player at $${h4(a.player.entry ?? a.player.next)}. The files that hold the frames are animation data, not packed`}>{notes(j) || storeNote(j) ? ' · ' : ''}PETSCII animation, not packed: {petsciiText(a)} for the player at ${h4(a.player.entry ?? a.player.next)}</span>)(anims.get(j))}
               </>}</td>
               <td className="spin-acts">
-                {k === 0 && j.chunks.length > 1 && <button className="icon-btn" title={`Open job ${j.n}: all its ${j.chunks.length} chunks as one project`} aria-label={`Open job ${j.n}`} onClick={e => { e.stopPropagation(); onOpenJob(j, null); }}><Icon name="files" size={13} /></button>}
                 <button className="icon-btn" title={`Add ${name} to this project`} aria-label={`Add ${name} to this project`} onClick={e => { e.stopPropagation(); onOpenChunk(j, c, true); }}><Icon name="plus" size={13} /></button></td>
             </tr>
           );

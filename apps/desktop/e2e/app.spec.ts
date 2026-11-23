@@ -6911,7 +6911,7 @@ test('a mounted Spindle 3 disk: its load script in the Spindle script tab, each 
   });
 });
 
-test('a Spindle job whose code plays a PETSCII animation: the whole job opened, its frames in Graphics → Animations', async ({ workDir: work, app, page }) => {
+test('a Spindle job whose code plays a PETSCII animation: the file with its frames is labelled, and not called packed', async ({ app, page }) => {
   // fixtures/d64/petscii-anim.d64 (packages/core/test/petscii-anim.test.ts): job 2 holds the stream at $8000, the tables
   // at $9000/$9100 and the code at $c000; 12 frames, "MIMIR" sliding in (8) and flashing (4)
   await waitForListing(page);
@@ -6922,81 +6922,30 @@ test('a Spindle job whose code plays a PETSCII animation: the whole job opened, 
   await openSection(page, 'Disk');
   await page.locator('.disk-spindle').getByRole('button', { name: 'Load script' }).click();
   const table = page.getByRole('table', { name: 'Spindle load script' });
+  const cell = (row: number, col: number) => table.locator('tbody tr').nth(row).locator('td').nth(col);
 
-  await test.step('the script says which job plays an animation, and a job opens with all its chunks', async () => {
-    await expect(table.locator('tbody tr').nth(1).locator('td').nth(4)).toHaveText(/^PETSCII animation: 12 frames \(\$8000–\$80[0-9a-f]{2}\)$/);
-    await expect(table.getByRole('button', { name: 'Open job 1' })).toHaveCount(0);
-    await table.getByRole('button', { name: 'Open job 2' }).click();
-    await expect(toast(page, /^Opened job 2 of petscii-anim\.d64: 4 chunks, \$8000–\$c[0-9a-f]{3}$/)).toBeVisible();
-    await expectFiles(page, ['job02_8000.prg', 'job02_9000.prg', 'job02_9100.prg', 'job02_c000.prg']);
+  await test.step('the script says which job plays an animation, and labels the file that holds its frames', async () => {
+    await expect(cell(1, 4)).toHaveText(/^PETSCII animation, not packed: 12 frames \(\$8000–\$80[0-9a-f]{2}\) for the player at \$c0[0-9a-f]{2}$/);
+    // the stream's chunk alone: not the part before, the tables or the code
+    await expect(table.locator('.spin-anim')).toHaveCount(1);
+    await expect(cell(1, 3)).toHaveText('job02_8000.binanimation');
+    await expect(cell(1, 3).locator('.spin-anim')).toHaveAttribute('title', /^job02_8000\.bin is animation data, not packed: it holds a PETSCII animation of 12 frames \(\$8000–\$80[0-9a-f]{2}\) that the player at \$c0[0-9a-f]{2} in the same job draws on the screen/);
+    await expect(table.getByRole('button', { name: /^Open job/ })).toHaveCount(0);
+    await expect(table.getByRole('button', { name: /PETSCII animation/ })).toHaveCount(0);
   });
 
-  const view = page.locator('.gfxv[aria-label="Animations"]');
-  await test.step('the note opens the job and shows the frames in Graphics → Animations', async () => {
-    await table.getByRole('button', { name: /^PETSCII animation: 12 frames/ }).click();
-    await expect(toast(page, /; Graphics shows the PETSCII animation its code plays, 12 frames$/)).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'Graphics' })).toHaveAttribute('aria-selected', 'true');
-    await expect(view.getByRole('button', { name: 'Animations' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(view.locator('.view-now')).toContainText('12 frames · 2 sequences');
-    await expect(view.getByRole('status')).toContainText(/The frames the player at \$c0[0-9a-f]{2} draws, from the stream at \$8000–\$80[0-9a-f]{2} \(\$8000 × 8, \$80[0-9a-f]{2} × 4, in the order the code plays them\)/);
+  await test.step('the file opened: the bar says what it is, and nothing calls it packed', async () => {
+    await table.locator('tbody tr').nth(1).click();
+    await expectFiles(page, ['job02_8000.prg']);
+    await expect(page.locator('.anim-data-bar')).toContainText(/^job02_8000\.prg is animation data, not packed: it holds a PETSCII animation of 12 frames \(\$8000–\$80[0-9a-f]{2}\) that the player at \$c0[0-9a-f]{2} in the same job draws on the screen, a frame each time it is called; nothing unpacks it, the player reads it frame by frame\. There is nothing to unpack\.$/);
+    await expect(page.locator('.pack-bar')).toHaveCount(0);
   });
 
-  await view.getByLabel('Zoom').selectOption('1');
-  await view.getByLabel('Frames per row').selectOption('4');
-  const canvas = view.locator('.gfxv-canvas'), scroller = view.locator('.gfxv-scroll');
-  /** a point in frame `i` (4 a row at zoom 1): character row `r`, column `c` */
-  const at = (i: number, r: number, c: number) => ({ x: (i % 4) * 328 + c * 8 + 4, y: Math.floor(i / 4) * 208 + r * 8 + 4 });
-
-  await test.step('the pointer says the frame, its sequence and bytes, and the character under it', async () => {
-    await canvas.hover({ position: at(0, 12, 33) });
-    await expect(view.locator('.gfxv-info')).toHaveText(/^frame 1 of 12 · sequence 1 of 2, frame 1 of 8 \(from \$8000\) · \$8000–\$80[0-9a-f]{2}, \d+ bytes, 25 characters written · row 12, column 33: \$0d in yellow$/);
-    // the third row of frames at the top
-    await scroller.evaluate(el => { el.scrollTop = 416; });
-    await canvas.hover({ position: at(9, 12, 19) });
-    await expect(view.locator('.gfxv-info')).toHaveText(/^frame 10 of 12 · sequence 2 of 2, frame 2 of 4 \(from \$80[0-9a-f]{2}\) · .* row 12, column 19: \$0d in red$/);
-    await scroller.evaluate(el => { el.scrollTop = 0; });
-  });
-
-  await test.step('a click selects a frame\'s bytes, Shift+click the frames between', async () => {
-    await canvas.click({ position: at(0, 1, 1) });
-    await expect(view.getByRole('status')).toContainText(/^frame 1 of 12 · \$8000–\$80[0-9a-f]{2} \(\d+ bytes\)/);
-    await canvas.click({ position: at(2, 1, 1), modifiers: ['Shift'] });
-    await expect(view.getByRole('status')).toContainText(/^frames 1–3 of 12 · \$8000–/);
-    await expect(view.locator('.gfxv-selrect')).toHaveCount(3);
-  });
-
-  await test.step('the frames saved as an image and as an animated GIF, the whole animation too', async () => {
-    await view.getByRole('button', { name: 'Save…' }).click();
-    await expect(view.getByRole('menu', { name: 'Save the selection as' }).getByRole('menuitem')).toHaveText([
-      'Raw bytes of the stream (.bin)', 'With its load address (.prg)', 'The 3 frames as one image, 3 a row (.png)', 'The 3 frames as an animated GIF (.gif)', 'The whole animation as an animated GIF, 12 frames (.gif)',
-    ]);
-    await page.keyboard.press('Escape');
-    const saveAs = async (item: string | RegExp, file: string) => {
-      await stubDialogs(app, { save: join(work, file) });
-      await view.getByRole('button', { name: 'Save…' }).click();
-      await view.getByRole('menu', { name: 'Save the selection as' }).getByRole('menuitem', { name: item }).click();
-      await expect(toast(page, `Saved ${join(work, file)}`)).toBeVisible();
-      return readFileSync(join(work, file));
-    };
-    const png = await saveAs(/one image/, 'frames.png');
-    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([960, 200]);
-    expect((await dialogOptions(app)).pop()).toMatchObject({ defaultPath: expect.stringMatching(/anim_8000_frames1-3\.png$/) });
-    const gif = await saveAs(/whole animation/, 'all.gif');
-    expect(gif.subarray(0, 6).toString('latin1')).toBe('GIF89a');
-    expect([gif.readUInt16LE(6), gif.readUInt16LE(8)]).toEqual([320, 200]);
-    // a graphic control block (4 video frames: 8/100 s) before each of the 12 images
-    expect(gif.toString('latin1').split('\x21\xf9\x04\x00\x08\x00').length - 1).toBe(12);
-    const bin = await saveAs(/Raw bytes/, 'stream.bin');
-    expect(bin.length).toBeGreaterThan(20);
-  });
-
-  await test.step('Play shows the frames over the whole window until Esc', async () => {
-    await view.getByRole('button', { name: 'Play' }).click();
-    const shown = page.locator('figure.gfx-focus');
-    await expect(shown).toContainText('Playing at 12.5 frames a second');
-    await expect(shown).toHaveAttribute('aria-label', /^Frame \d+ of 12$/);
-    await page.keyboard.press('Escape');
-    await expect(shown).toHaveCount(0);
+  await test.step('Graphics has no Animations view', async () => {
+    await page.getByRole('tab', { name: 'Graphics' }).click();
+    const view = page.locator('.gfxv');
+    await expect(view.getByRole('button', { name: 'Characters' })).toBeVisible();
+    await expect(view.getByRole('button', { name: 'Animations' })).toHaveCount(0);
   });
 });
 
@@ -7017,6 +6966,8 @@ test('Spindle jobs that are animation data another job\'s player stores frame by
     await expect(notes(0)).toHaveText('its player at $2000 plays the animation data in jobs 2–3 (60 frames)');
     await expect(notes(3)).toHaveText(/^animation data, not packed: frames 1–(\d+) of 60 for the player at \$2000 \(job 1\)$/);
     await expect(notes(4)).toHaveText(/^animation data, not packed: frames \d+–60 of 60 for the player at \$2000 \(job 1\)$/);
+    // each file that holds frames is labelled: the chunks of jobs 2 and 3, not the player's
+    await expect(table.locator('tbody tr').filter({ has: page.locator('.spin-anim') }).locator('td:nth-child(4)')).toHaveText(['job02_5000.binanimation', /^job03_[0-9a-f]{4}\.binanimation$/]);
   });
 
   await test.step('a chunk of the stream opened: the bar says what it is, and nothing calls it packed', async () => {

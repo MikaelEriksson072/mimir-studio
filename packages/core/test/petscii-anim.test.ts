@@ -1,4 +1,4 @@
-/* PETSCII animations a player draws frame by frame (c64/petscii-anim.ts, spec 14.5b). The frames are written by the
+/* PETSCII animations a player draws frame by frame (c64/petscii-anim.ts, spec 13.5b). The frames are written by the
  * helper's own encoder and played by a player of its own, written to the shape the reader looks for
  * (test/helpers/petscii-anim.ts). The reader was also checked against The Pumpkins' Breadbin of Horror (side 1, Spindle
  * job 13): from the job's code alone it finds the player at $faaf, the pointer $80, the counter $8c and the tables
@@ -8,8 +8,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { findPetsciiAnims, gifAnimation, PETSCII_SCREEN, petsciiFrameAt, petsciiFramePixels, readSpindleDisk, type PetsciiAnim } from '../src';
-import { readGif } from './helpers/gif';
+import { findPetsciiAnims, readSpindleDisk, type PetsciiAnim } from '../src';
 import { animDemo, animMemory, encodeFrames, screenWith, type PlayerOptions, type Screen } from './helpers/petscii-anim';
 import { makeSpindleDisk } from './helpers/spindle-disk';
 
@@ -22,7 +21,6 @@ const find = (o: PlayerOptions, streams: { at: number; bytes: number[] }[], tabl
   const m = animMemory(o, streams, tables);
   return findPetsciiAnims(m.mem, a => m.loaded[a] === 1);
 };
-const screenOf = (f: { chars: Uint8Array; colours: Uint8Array }): Screen => ({ chars: [...f.chars], colours: [...f.colours] });
 
 describe('PETSCII animations', () => {
   it('reads the frames of each sequence the code sets, in the order of the state it sets with them', () => {
@@ -34,10 +32,9 @@ describe('PETSCII animations', () => {
     const [anim, ...more] = find(o, [{ at: sA, bytes: all.stream }], all);
     expect(more).toEqual([]);
     expect(anim.problem).toBeNull();
-    expect(anim.player).toMatchObject({ ptr: 0x80, counter: 0x8c, chars: 0x9000, colours: 0x9100 });
+    expect(anim.player).toMatchObject({ ptr: 0x80, counter: 0x8c, tables: [0x9000, 0x9100] });
     expect(anim.player.entry).toBe(anim.player.next - 8);
     expect(anim.sequences.map(q => [q.start, q.count, q.frames])).toEqual([[sA, 5, 5], [sB, 4, 4], [sC, 1, 1]]);
-    expect(anim.frames.map(screenOf)).toEqual([...a, ...b, ...c]);
     expect(anim.frames.map(f => [f.n, f.seq, f.k])).toEqual([[0, 0, 0], [1, 0, 1], [2, 0, 2], [3, 0, 3], [4, 0, 4], [5, 1, 0], [6, 1, 1], [7, 1, 2], [8, 1, 3], [9, 2, 0]]);
     expect(anim.frames.map(f => f.start - sA)).toEqual(all.starts);
     expect(anim.start).toBe(sA);
@@ -47,7 +44,6 @@ describe('PETSCII animations', () => {
     expect(anim.frames[0].writes).toBe(6);
     expect(anim.frames[1].writes).toBe(6);
     expect(anim.frames[1].writes).toBe(4 + 2);
-    expect(anim.frames[0].chars.length).toBe(PETSCII_SCREEN);
   });
 
   it('skips far with bytes after the header, $ff while more follow', () => {
@@ -56,28 +52,17 @@ describe('PETSCII animations', () => {
     // skips of 13, 15 (15 and a 15), 269 ($ff and 14) and 698 ($ff, $ff and 188)
     expect(e.stream).toEqual([0x10, 0, 0x1d, 1, 0x1f, 15, 2, 0x1f, 0xff, 14, 3, 0x1f, 0xff, 0xff, 188, 4, 0]);
     const [anim] = find({ chars: 0x9000, colours: 0x9100, sequences: [{ start: 0x8000, frames: 1 }] }, [{ at: 0x8000, bytes: e.stream }], e);
-    expect(anim.frames.map(screenOf)).toEqual(s);
+    expect(anim.frames.map(f => [f.start, f.end, f.writes])).toEqual([[0x8000, 0x8000 + e.stream.length, 5]]);
   });
 
-  it('tells the colour table from the screen codes by its values, whichever the player writes first', () => {
-    const s = moving(3), e = encodeFrames(s);
-    for (const coloursFirst of [false, true]) {
-      const [anim] = find({ chars: 0xa000, colours: 0xa400, coloursFirst, sequences: [{ start: 0x6000, frames: 3 }] }, [{ at: 0x6000, bytes: e.stream }], e);
-      expect(anim.player.colours).toBe(0xa400);
-      expect(anim.frames.map(screenOf)).toEqual(s);
-    }
-  });
-
-  it('plays a sequence that starts inside another one again, and finds the frame at an address', () => {
+  it('plays a sequence that starts inside another one again', () => {
     // frames 0-4, then again from frame 3: the same bytes are drawn twice (on the screen frame 4 left)
     const a = moving(5), e = encodeFrames(a);
     const again = 0x8000 + e.starts[3];
     const [anim] = find({ chars: 0x9000, colours: 0x9100, sequences: [{ start: 0x8000, frames: 5, state: 0 }, { start: again, frames: 2, state: 1 }] }, [{ at: 0x8000, bytes: e.stream }], e);
     expect(anim.frames.length).toBe(7);
     expect(anim.frames.slice(5).map(f => f.start)).toEqual(anim.frames.slice(3, 5).map(f => f.start));
-    expect(petsciiFrameAt(anim, again)).toBe(3);
-    expect(petsciiFrameAt(anim, anim.end - 1)).toBe(4);
-    expect(petsciiFrameAt(anim, anim.end)).toBe(-1);
+    expect(anim.end).toBe(0x8000 + e.stream.length);
   });
 
   it('reads a start the code does not count up to the next start, or to a frame that changes nothing', () => {
@@ -86,7 +71,7 @@ describe('PETSCII animations', () => {
     // zeros follow the stream: an empty frame, not 2000 of them
     const [anim] = find({ chars: 0x9000, colours: 0x9100, counted: false, sequences: [{ start: 0x8000, frames: 3, state: 0 }, { start: sB, frames: 2, state: 1 }] }, [{ at: 0x8000, bytes: [...e.stream, 0, 0, 0, 0] }], e);
     expect(anim.sequences.map(q => [q.count, q.frames])).toEqual([[null, 3], [null, 2]]);
-    expect(anim.frames.map(screenOf)).toEqual([...a, ...b]);
+    expect(anim.frames.map(f => f.start - 0x8000)).toEqual(e.starts);
     expect(anim.problem).toBeNull();
   });
 
@@ -116,26 +101,6 @@ describe('PETSCII animations', () => {
     expect(noSet[0].problem).toBe('the code never sets where the frames start');
   });
 
-  it('draws a frame as pixels in its colours, and writes frames as an animated GIF', () => {
-    const font = new Uint8Array(0x800);
-    font.set([0x80, 0, 0, 0, 0, 0, 0, 0x01], 0x41 * 8);
-    const f = { chars: new Uint8Array(PETSCII_SCREEN).fill(0x20), colours: new Uint8Array(PETSCII_SCREEN) };
-    f.chars[41] = 0x41; f.colours[41] = 7;
-    const px = petsciiFramePixels(f, font, 6);
-    expect(px.length).toBe(320 * 200);
-    // character 41 is row 1, column 1: its top-left and bottom-right pixels in yellow, the rest in the background
-    expect(px[8 * 320 + 8]).toBe(7);
-    expect(px[15 * 320 + 15]).toBe(7);
-    expect(px[8 * 320 + 9]).toBe(6);
-    expect(px[0]).toBe(6);
-    const g = gifAnimation([px, petsciiFramePixels({ ...f, colours: f.colours.map(() => 2) }, font, 0)], 320, 200, [0x000000, 0xffffff, 0x880000, 0xaaffee, 0xcc44cc, 0x00cc55, 0x0000aa, 0xeeee77], 8);
-    const r = readGif(g);
-    expect([r.width, r.height, r.loop, r.frames.length, r.frames[0].delay]).toEqual([320, 200, true, 2, 8]);
-    expect(r.palette.slice(0, 8)).toEqual([0x000000, 0xffffff, 0x880000, 0xaaffee, 0xcc44cc, 0x00cc55, 0x0000aa, 0xeeee77]);
-    expect(r.frames[0].pixels).toEqual(px);
-    expect(r.frames[1].pixels[8 * 320 + 8]).toBe(2);
-  });
-
   it('is fixtures/d64/petscii-anim.d64, which the e2e tests mount: a Spindle disk whose job 2 plays the animation', () => {
     const demo = animDemo();
     // job 1: the part before (an rts at $0800); job 2: the stream, the tables and the code
@@ -148,16 +113,8 @@ describe('PETSCII animations', () => {
     const mem = new Uint8Array(0x10000), on = new Uint8Array(0x10000);
     for (const c of s.jobs[1].chunks) { mem.set(c.bytes, c.start); on.fill(1, c.start, c.end); }
     const [anim] = findPetsciiAnims(mem, a => on[a] === 1);
-    expect(anim.frames.map(screenOf)).toEqual(demo.screens);
+    expect(anim.frames.length).toBe(demo.screens.length);
     expect(anim.sequences.map(q => [q.start, q.frames])).toEqual([[0x8000, 8], [anim.frames[8].start, 4]]);
     expect([anim.start, anim.end]).toEqual([0x8000, 0x8000 + demo.stream.length]);
-  });
-
-  it('writes a GIF whose codes reach 12 bits and start again (a clear code), and still reads back', () => {
-    // noise in 16 colours: the table fills up more than once
-    let seed = 1;
-    const noise = Uint8Array.from({ length: 320 * 200 }, () => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 16) & 15; });
-    const r = readGif(gifAnimation([noise], 320, 200, Array.from({ length: 16 }, (_, i) => i * 0x111111), 4));
-    expect(r.frames[0].pixels).toEqual(noise);
   });
 });
