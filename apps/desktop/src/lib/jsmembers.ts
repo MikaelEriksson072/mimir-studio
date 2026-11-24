@@ -13,6 +13,7 @@ export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | '
   | 'library' | 'libItem' | 'libItems' | 'libFrom' | 'libColors'
   | 'snapshot' | 'snapCpu' | 'snapPort' | 'snapCia' | 'snapSid' | 'snapVic' | 'snapSprite' | 'snapSprites' | 'snapDrive' | 'snapVia' | 'snapModule' | 'snapModules'
   | 'scripts' | 'scriptOne' | 'scriptList' | 'scriptSetting' | 'scriptSettings' | 'scriptPads' | 'scriptTemplate' | 'scriptTemplates'
+  | 'disks' | 'diskImage' | 'diskEntry' | 'diskEntries'
   | 'blocks' | 'block' | 'blockList' | 'struct' | 'structFields' | 'structField' | 'customType' | 'customTypes'
   | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
 
@@ -63,6 +64,31 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
   libItems: LIST, blockList: LIST, structFields: LIST, customTypes: LIST, snapSprites: LIST, snapModules: LIST,
+  diskEntries: LIST,
+  disks: [
+    m('create', 'create("d64" or "d81", { name, id }): a new, formatted disk (a 1541 disk or a 1581 disk)', true),
+    m('open', 'open(bytes): a disk image\'s bytes to work on (a D64, a G64\'s sectors, a D81)', true),
+    m('mounted', 'the mounted disk to work on, a copy (a D81 that was mounted is kept for scripts), or null'),
+    m('kinds', 'the kinds of disk: "d64" and "d81"'), m('blocksFor', 'blocksFor(bytes or a length): how many blocks they take as a file', true),
+  ],
+  diskImage: [
+    m('kind', '"d64" or "d81"'), m('name', 'the disk\'s name (set: up to 16 characters)'), m('id', 'the disk\'s ID (set: two characters)'), m('dosType', 'its DOS type: "2A", "3D"'),
+    m('tracks', 'how many tracks it has'), m('sectors', 'how many sectors it has'), m('size', 'how many bytes the image is'), m('free', 'blocks free, as the drive counts them'),
+    m('files', 'its directory: a list of { name, type, blocks, size, track, sector, locked, closed }'),
+    m('find', 'find("name"): a file\'s entry, or null', true), m('has', 'has("name"): whether a file is on it', true), m('read', 'read("name"): a file\'s bytes (a PRG\'s with its load address first)', true),
+    m('add', 'add("name", bytes, { type, load, replace }): a file added in free sectors; type "prg", "seq", "usr" or "del"; load: a load address put in front', true),
+    m('remove', 'remove("name"): a file taken off, its sectors free again', true), m('rename', 'rename("name", "new name")', true),
+    m('lock', 'lock("name", on): the file locked (< in a listing) or not', true), m('setType', 'setType("name", "seq"): the file\'s type', true),
+    m('sector', 'sector(track, sector): its 256 bytes in the image: what is written there is on the disk', true), m('sectorsOn', 'sectorsOn(track): how many sectors a track has', true),
+    m('isFree', 'isFree(track, sector): whether the BAM has it as free', true), m('allocate', 'allocate(track, sector): taken in the BAM', true), m('release', 'release(track, sector): free in the BAM', true),
+    m('chain', 'chain("name"): a file\'s sectors in order, a list of { track, sector }', true),
+    m('validate', 'validate(): the BAM worked out again from the files, as the drive\'s V command; gives what was wrong, a text each', true),
+    m('format', 'format("name", "id"): everything off the disk', true), m('list', 'list(): the directory as LOAD"$" lists it, a line each', true),
+    m('bytes', 'the image, as it is now'), m('file', 'file(): the image\'s bytes, a copy', true),
+    m('save', 'save("name.d64"): the image a file of the run (Last run: Save…)', true),
+    m('mount', 'mount(): the image mounted when the run has ended well (a D81: kept for scripts)', true),
+  ],
+  diskEntry: [m('name', 'its name'), m('type', '"prg", "seq", "usr", "del", "rel" or "cbm"'), m('blocks', 'its size in blocks'), m('size', 'its size in bytes'), m('track', 'the track of its first sector'), m('sector', 'its first sector'), m('locked', 'true when it is locked'), m('closed', 'false for a file that was never closed')],
   scriptList: LIST, scriptSettings: LIST, scriptPads: LIST, scriptTemplates: LIST,
   scripts: [
     m('all', 'the project\'s scripts: a list of { name, code, source, settings, … }'), m('names', 'their names'), m('self', 'the script that runs'),
@@ -385,7 +411,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', scriptList: 'scriptOne', scriptSettings: 'scriptSetting', scriptPads: 'file', scriptTemplates: 'scriptTemplate', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', diskEntries: 'diskEntry', scriptList: 'scriptOne', scriptSettings: 'scriptSetting', scriptPads: 'file', scriptTemplates: 'scriptTemplate', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -454,6 +480,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'blocks') return 'blocks';
   if (e === 'snapshot') return 'snapshot';
   if (e === 'scripts') return 'scripts';
+  if (e === 'disks') return 'disks';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -488,6 +515,8 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (on === 'block') return name === 'mark' || name === 'format' ? 'file' : null;
     if (on === 'snapshot') return name === 'module' || name === 'file' ? 'bytes' : name === 'write' ? 'texts' : null;
     if (on === 'scripts') return name === 'find' ? 'scriptOne' : null;
+    if (on === 'disks') return name === 'create' || name === 'open' ? 'diskImage' : null;
+    if (on === 'diskImage') return name === 'read' || name === 'sector' || name === 'file' ? 'bytes' : name === 'find' || name === 'add' ? 'diskEntry' : name === 'list' || name === 'validate' ? 'texts' : name === 'save' ? 'text' : name === 'chain' ? 'list' : null;
     if (on === 'scriptOne') return name === 'withSettings' || name === 'setting' ? 'text' : null;
     if (on === 'struct' || on === 'customType') return name === 'mark' || name === 'markRecords' ? 'file' : null;
     if (on === 'tune') return name === 'sid' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : null;
@@ -517,6 +546,9 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
   if (on === 'library') return name === 'items' || name === 'sids' || name === 'sprites' || name === 'chars' || name === 'bitmaps' ? 'libItems' : name === 'requests' ? 'texts' : name === 'folder' ? 'text' : null;
   if (on === 'libItem') return name === 'bytes' || name === 'bitmap' || name === 'screen' || name === 'colorRam' ? 'bytes' : name === 'tune' ? 'sidFile' : name === 'from' ? 'libFrom' : name === 'colors' ? 'libColors' : name === 'name' || name === 'file' || name === 'kind' || name === 'hash' ? 'text' : null;
+  if (on === 'disks') return name === 'mounted' ? 'diskImage' : name === 'kinds' ? 'texts' : null;
+  if (on === 'diskImage') return name === 'files' ? 'diskEntries' : name === 'bytes' ? 'bytes' : name === 'name' || name === 'id' || name === 'kind' || name === 'dosType' ? 'text' : null;
+  if (on === 'diskEntry') return name === 'name' || name === 'type' ? 'text' : null;
   if (on === 'scripts') return name === 'all' || name === 'library' ? 'scriptList' : name === 'self' ? 'scriptOne' : name === 'templates' ? 'scriptTemplates' : name === 'names' || name === 'requests' ? 'texts' : null;
   if (on === 'scriptOne') return name === 'settings' ? 'scriptSettings' : name === 'pads' ? 'scriptPads' : name === 'name' || name === 'code' || name === 'lang' || name === 'source' || name === 'when' || name === 'key' ? 'text' : null;
   if (on === 'scriptTemplate') return name === 'settings' ? 'scriptSettings' : name === 'safe' || name === 'lines' ? null : 'text';

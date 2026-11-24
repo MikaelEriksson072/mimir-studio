@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { openC64File, parseVsf, analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { DiskEdit, makeD64, openC64File, parseVsf, analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
 import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are twenty-one, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'script_tools', 'screen_show', 'screen_hexdump']);
+  it('are twenty-two, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'script_tools', 'disk_make', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -336,6 +336,36 @@ describe('the JavaScript template for the library', () => {
     const has = go({ addMusic: 'true' }, lib([{ kind: 'sid', file: 'music.sid', name: 'm', data: a.library![0].bytes }]));
     expect(has.prints!.at(-1)).toBe('music is in the library already: music.sid');
     expect(has.library).toBeUndefined();
+  });
+});
+
+describe('the JavaScript template for disks', () => {
+  const mounted = makeD64({ name: 'OLD DISK', id: 'OD', files: [{ name: 'INTRO', data: Uint8Array.of(0x01, 0x08, 0x60) }, { name: 'PROGRAM', data: Uint8Array.of(1, 2, 3) }, { name: 'NOTES', type: 'SEQ', data: new Uint8Array(600).fill(0x41) }] });
+  const go = (values: Record<string, string> = {}, disk: Uint8Array | null = mounted) =>
+    runJs(env, { source: setScriptParams(template('disk_make').source, { code: 'js' }, values).source, pads: [] }, { disk });
+
+  it('Make a disk of the program makes a D64 or a D81 with the program on it, copies the mounted disk\'s files, saves and mounts it', () => {
+    const r = go();
+    expect(r.error).toBeUndefined();
+    const blocks = Math.ceil((program.bytes.length + 2) / 254);
+    expect(r.prints).toEqual(['0 "MIMIR           " 01 2A', `${String(blocks).padEnd(5)}"PROGRAM"          PRG`, `${664 - blocks} BLOCKS FREE.`, 'Saved as mimir.d64, 174848 bytes']);
+    expect(r.made!.map(f => [f.name, f.bytes.length])).toEqual([['mimir.d64', 174848]]);
+    const d = new DiskEdit(r.made![0].bytes);
+    expect(d.read('program')).toEqual(Uint8Array.of(program.load & 0xff, program.load >> 8, ...program.bytes));
+    expect(r.disk).toBeUndefined();
+    // a D81, with the mounted disk's files copied onto it, and mounted
+    const big = go({ kind: '"d81"', diskName: '"COLLECTION"', diskId: '"81"', fileName: '"GAME"', copyMounted: 'true', saveAs: '"all"', mountIt: 'true' });
+    expect(big.error).toBeUndefined();
+    expect(big.prints![0]).toBe('0 "COLLECTION      " 81 3D');
+    expect(big.prints!.slice(1, 5).map(l => l.replace(/^\d+ +/, ''))).toEqual(['"GAME"             PRG', '"INTRO"            PRG', '"PROGRAM"          PRG', '"NOTES"            SEQ']);
+    expect(big.prints!.at(-1)).toBe('Saved as all.d81, 819200 bytes');
+    const e = new DiskEdit(big.made![0].bytes);
+    expect([e.kind, e.read('notes').length, e.read('intro'), e.validate()]).toEqual(['d81', 600, Uint8Array.of(0x01, 0x08, 0x60), []]);
+    expect([big.disk!.name, big.disk!.kind, big.disk!.files]).toEqual(['all.d81', 'd81', 4]);
+    // a file of the mounted disk with the name the program's has is left out, and said
+    expect(go({ copyMounted: 'true' }).prints).toContain('Left out: PROGRAM (the disk has a file of that name)');
+    expect(go({ copyMounted: 'true' }, null).error?.msg).toMatch(/^Error: No disk is mounted to copy the files of/);
+    expect(go({ kind: '"d71"' }).error?.msg).toMatch(/^TypeError: disks\.create: the kind is "d64"/);
   });
 });
 

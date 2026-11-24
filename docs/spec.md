@@ -173,6 +173,8 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-disks.ts          diskavbilder för ett JavaScript-skript: `disks` (skapa och ändra D64 och D81, spara, montera) (10.3)
+│  ├─ src/c64/diskedit.ts          `DiskEdit`: en D64 eller D81 formaterad och ändrad (katalog, BAM, sektorkedjor), som c1541 gör dem
 │  ├─ src/script-scripts.ts        skripten för ett JavaScript-skript: `scripts` (läs, anropa som bibliotek, lägg till, ändra, kör efteråt) (10.3)
 │  ├─ src/script-snapshot.ts       VICE-snapshoten för ett JavaScript-skript: `snapshot` (CPU, port, RAM, CIA, SID, VIC-II, drive: läs och ändra) (10.3, 13.7)
 │  ├─ src/script-blocks.ts         blocken för ett JavaScript-skript: `blocks` (läs, märk, struct, egna typer, dela, kommentera) (10.3)
@@ -2906,6 +2908,9 @@ $06, $08` i `.asm`-filen efter en körning.
   - *List the scripts and use one as a library* (`script_tools`, 2026-11-24): projektets skript listade med sina
     inställningar (`showSettings`); `helpers` gör ett skript med hjälpfunktioner när projektet inte har det och
     använder det när det finns (`scripts.call`); `runAfter` kör ett annat skript efteråt.
+  - *Make a disk of the program* (`disk_make`, 2026-11-24): en ny D64 eller D81 (`kind`, `diskName`, `diskId`) med
+    programmets filer som de är i minnet (`fileName`), och den monterade diskens filer med `copyMounted`; katalogen
+    skrivs, avbilden blir en fil (`saveAs`) och monteras med `mountIt`.
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2916,6 +2921,39 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Diskavbilder i ett JavaScript-skript** (`script-disks.ts`, `disksApi`; `c64/diskedit.ts`, `DiskEdit`,
+  2026-11-24): ett skript får `disks`, med vilket det gör och ändrar diskavbilder: en 1541-disk (.d64) och en
+  1581-disk (.d81).
+  - `disks.create("d64" | "d81", { name, id })` ger en ny, formaterad disk, `disks.open(bytes)` en avbilds bytes att
+    arbeta på (en D64, en G64:s sektorer som D64, en D81), och `disks.mounted` den monterade disken som kopia (`null`
+    utan disk). `disks.kinds` och `disks.blocksFor(bytes)`.
+  - En disk har `kind`, `name` och `id` (går att sätta), `dosType`, `tracks`, `sectors`, `size`, `free`, `files`
+    (`name`, `type`, `blocks`, `size`, `track`, `sector`, `locked`, `closed`) och `bytes` (avbilden som den är nu).
+    `find(namn)`, `has(namn)`, `read(namn)`; `add(namn, bytes, { type, load, replace })` (typ `"prg"`, `"seq"`,
+    `"usr"`, `"del"`; `load` lägger en laddadress först; `replace` tar bort filen som finns först),
+    `remove(namn)`, `rename(namn, nytt)`, `lock(namn, on)`, `setType(namn, typ)`; `sector(spår, sektor)` (sektorns
+    256 byte i avbilden: det som skrivs där står på disken), `sectorsOn(spår)`, `isFree`, `allocate`, `release`,
+    `chain(namn)`; `validate()` (BAM räknas om från filerna som drivens V-kommando och säger vad som var fel),
+    `format(namn, id)`, `list()` (katalogen som `LOAD"$"` listar den), `file()` (en kopia av avbilden),
+    `save(filnamn)` (avbilden som en fil av körningen, hel: *Last run*, *Save…*) och `mount()`.
+  - `DiskEdit` håller katalogen, BAM och filernas sektorkedjor i takt. En fil som läggs till tar fria sektorer som
+    drivens DOS tar dem: från spåret intill katalogens och utåt (17, 19, 16, 20 … på en 1541; 39, 41, 38 … på en
+    1581), tio sektorer isär på en 1541 och en efter en på en 1581, och första fria katalogposten (en ny
+    katalogsektor tas när alla är fulla). En fil som tas bort lämnar tillbaka sina sektorer. Layouterna: D64 med BAM
+    i 18/0 (fyra byte per spår från byte 4, namnet på $90, ID på $a2, `2A`) och katalogen från 18/1; D81 med
+    huvudet i 40/0 (namnet på 4, ID på $16, `3D`), BAM i 40/1 och 40/2 (sex byte per spår från $10) och katalogen
+    från 40/3. En formaterad disk och en disk med filer är byte för byte den VICE:s c1541 gör av samma filer (utom
+    bytes efter en fils slut i dess sista sektor), och c1541 listar, läser och validerar en disk som ändrats här
+    (`diskedit.test.ts`, när c1541 finns). En D64 med 40 eller 42 spår läses, och skrivs på sina första 35. REL-filer
+    och 1581:ans partitioner (CBM) läses i katalogen men görs inte.
+  - En disk ett skript arbetar på är skriptets egen: den monterade disken och filerna på datorn är som de var. Det
+    den gjort lämnar körningen som fil (`save`) eller som monterad disk: `mount()` ber om att avbilden monteras
+    (`ScriptRun.disk`, `ScriptDiskRequest`), vilket görs när körningen slutat väl (`finishScriptRun`,
+    `mountBytes`); i safe mode monteras ingenting och *Last run* visar *Would mount*, annars *Mounted*.
+  - **En D81 för skript:** Mimirs egen disk (Explorer, filerna, laddarna, Sindris drive) är en D64 eller G64. En
+    .d81 som monteras (*Mount disk image…* tar den) behålls bara för skript (`scriptD81` i `App.tsx`):
+    `disks.mounted` är då den, och den disk som var monterad står kvar. Den släpps när en D64/G64 monteras eller
+    disken matas ut. Bara JavaScript.
 - **Skripten i ett JavaScript-skript** (`script-scripts.ts`, `scriptsApi`, `planScriptsRequests`, 2026-11-24): ett
   skript får `scripts`: projektets skript, bibliotekets och mallarna att läsa, ett annat skripts kod att använda som
   bibliotek, och skript att lägga till, ändra och köra.

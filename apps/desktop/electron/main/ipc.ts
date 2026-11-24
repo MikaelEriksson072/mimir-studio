@@ -195,7 +195,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.diskOpen, diskOpenSchema, async (req, e) => {
     let path = req.path ? policy.assert(req.path, 'Disk image') : null;
     if (!path) {
-      [path] = await pick(e, 'disk', { title: 'Mount disk image (D64, G64)', properties: ['openFile'], filters: [{ name: 'C64 disk images', extensions: ['d64', 'D64', 'g64', 'G64'] }, { name: 'All files', extensions: ['*'] }] });
+      [path] = await pick(e, 'disk', { title: 'Mount disk image (D64, G64; a D81 for scripts)', properties: ['openFile'], filters: [{ name: 'C64 disk images', extensions: ['d64', 'D64', 'g64', 'G64', 'd81', 'D81'] }, { name: 'All files', extensions: ['*'] }] });
       if (!path) return null;
       chose(dirname(path), 'disk');
     }

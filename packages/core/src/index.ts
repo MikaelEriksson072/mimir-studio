@@ -117,6 +117,7 @@ export { blocksApi, scriptBlocksData, type ScriptBlock, type ScriptBlocksData } 
 export { decodeText, encodeText, fieldSize, fieldTypeText, readStruct, STRUCT_FIELDS, STRUCT_SIZE, STRUCT_TYPES, structFields, structSize, structText, validStruct } from './struct';
 export { snapshotApi, snapshotRequestText, type ScriptSnapshotData, type ScriptSnapshotRequest } from './script-snapshot';
 export { planScriptsRequests, scriptsApi, scriptsRequestText, SCRIPTS_CALL_DEPTH, SCRIPTS_REQUESTS, SCRIPTS_RUN_CHAIN, type ScriptInfo, type ScriptScriptsData, type ScriptScriptsRequest, type ScriptsPlan } from './script-scripts';
+export { diskRequestText, disksApi, type ScriptDiskRequest, type ScriptDisksData } from './script-disks';
 export { LIBRARY_REQUESTS, libraryApi, libraryRequestText, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 export { SID_REQUESTS, SID_RUN_DEFAULT, SID_RUN_FRAMES, sidApi, sidRequestText, type ScriptSidData, type ScriptSidRequest, type ScriptSidTune } from './script-sid';
 export { BUILD_REQUESTS, buildApi, buildRequestText, type ScriptBuildData, type ScriptBuildRequest } from './script-build';
@@ -144,3 +145,4 @@ export { safeStem, sourceStem } from './util/names';
 export { fileOffsetBases, offsetText } from './offsets';
 export { charsetFile, fileStem, isLibraryFileName, LIBRARY_EXT, libraryExt, LIBRARY_FOLDERS, LIBRARY_INDEX, LIBRARY_KINDS, LIBRARY_MAX_BYTES, LIBRARY_READS, libraryHash, libraryIndexJson, libraryItems, libraryRange, librarySourceText, libraryStem, readLibraryFile, readLibraryIndex, safeFileName, sidWithTexts, spriteFile, uniqueLibraryName, type LibraryColors, type LibraryDigi, type LibraryEntry, type LibraryFile, type LibraryItem, type LibraryKind, type LibrarySource } from './library';
 export { knownRoutines, learnable, learnProject, learnRoutine, readRoutineLibrary, ROUTINE_MAX, ROUTINE_MIN, routineAt, routineSuggestions, sameRoutine, startsRoutine, type KnownRoutine, type Routine, type RoutineMatch } from './routines';
+export { DiskEdit, diskKindOf, diskName, type DiskEntry, type DiskFileType, type DiskKind } from './c64/diskedit';

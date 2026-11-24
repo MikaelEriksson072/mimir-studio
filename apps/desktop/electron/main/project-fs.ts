@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
-import { deserializeProject, isCrt, isT64, isTap, nextSides, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
+import { diskKindOf, deserializeProject, isCrt, isT64, isTap, nextSides, openC64File, openCartridge, parseD64, serializeProject, withId, type OpenedFile, type OpenOptions, type Project, type SerializedProject, type Settings } from '@mimir/core';
 import type { DiskOpenResult, DiskSide, OpenedPrg } from '../../shared/ipc';
 import { writeVfs } from '@mimir/core/node';
 import { serializedProjectSchema } from './schemas';
@@ -61,7 +61,8 @@ async function readImage(path: string): Promise<Uint8Array> {
   const st = await stat(path);
   if (!st.isFile() || st.size > 1024 * 1024) throw new Error(`${basename(path)} is not a .d64 or .g64 disk image (${st.size} bytes)`);
   const bytes = new Uint8Array(await readFile(path));
-  parseD64(bytes);
+  // (a D81 is taken as it is: it is for scripts, which read it themselves)
+  if (diskKindOf(bytes) !== 'd81') parseD64(bytes);
   return bytes;
 }
 

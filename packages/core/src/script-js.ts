@@ -43,6 +43,9 @@
  *   scripts                  the scripts (script-scripts.ts): scripts.all, the library's and the templates;
  *                            scripts.call(name, settings) runs another JavaScript script's code here and gives what it
  *                            returns; scripts.add, scripts.edit and scripts.run are done when the run has ended
+ *   disks                    disk images made and changed (script-disks.ts): disks.create("d64" or "d81", { name, id }),
+ *                            disks.open(bytes), disks.mounted; a disk's files, add(name, bytes), remove, rename,
+ *                            sector(t, s), validate(), save(fileName) and mount()
  *   save(name, bytes, load)  a file the run made, listed under Last run (To the project…, Save…); load: where it
  *                            loads, left out for a file without a load address
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
@@ -68,6 +71,7 @@ import { buildApi, type ScriptBuildData, type ScriptBuildRequest } from './scrip
 import { blocksApi, type ScriptBlocksData } from './script-blocks';
 import { snapshotApi, type ScriptSnapshotData, type ScriptSnapshotRequest } from './script-snapshot';
 import { scriptsApi, type ScriptScriptsData, type ScriptScriptsRequest } from './script-scripts';
+import { disksApi, type ScriptDiskRequest, type ScriptDisksData } from './script-disks';
 import { libraryApi, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 import { sidApi, type ScriptSidData, type ScriptSidRequest } from './script-sid';
 import { SCREEN_C64, screenApi, screenMemory, screenRanges, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
@@ -97,6 +101,8 @@ export interface JsExtras { disk?: Uint8Array | null;
   snapshot?: ScriptSnapshotData | null;
   /** the project's scripts and the library's, for `scripts` (null: the run is not given them) */
   scripts?: ScriptScriptsData | null;
+  /** the mounted disk for `disks.mounted`, when it is not `disk` (a D81 mounted for scripts); missing: `disk` */
+  disks?: ScriptDisksData | null;
   /** the size of the script's C64 screen (40×25 when not said) */
   screen?: Partial<ScreenSize> | null }
 
@@ -152,6 +158,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   const libraryAdds: ScriptLibraryRequest[] = [];
   let snapshotAsked: ScriptSnapshotRequest | undefined;
   const scriptsAsked: ScriptScriptsRequest[] = [];
+  let diskAsked: ScriptDiskRequest | undefined;
   let instructions = 0, cycles = 0;
   let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
 
@@ -273,8 +280,13 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       if (made.length >= 64) throw new RangeError('save: a run makes 64 files at most');
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
+    // (a disk image is a file of the run whole: it is larger than the memory a file made of bytes is cut to)
+    const disks = disksApi(extras.disks ?? (extras.disk ? { name: 'disk.d64', bytes: extras.disk } : null), { addr, save: (name, bytes) => {
+      if (made.length >= 64) throw new RangeError('save: a run makes 64 files at most');
+      made.push({ name: name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'disk', load: null, bytes });
+    } }, r => { diskAsked = r; });
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, scripts, save, screen };
+    given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, scripts, disks, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -298,7 +310,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
-    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}), ...(scriptsAsked.length && !error ? { scripts: scriptsAsked } : {}),
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}), ...(scriptsAsked.length && !error ? { scripts: scriptsAsked } : {}), ...(diskAsked && !error ? { disk: diskAsked } : {}),
     ...(scr.wrote ? { screen: scr.state() } : {}),
   };
 }

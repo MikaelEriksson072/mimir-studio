@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, planScriptsRequests, SCRIPTS_RUN_CHAIN, type ScriptsPlan, scriptBlocksData, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type ScriptBuildData, type ScriptBuildRequest, buildRequestText, type ScriptSidData, type ScriptSidRequest, sidRequestText, type ScriptLibraryData, type ScriptLibraryRequest, type UserScript,
+  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, DiskEdit, diskKindOf, planScriptsRequests, SCRIPTS_RUN_CHAIN, type ScriptsPlan, scriptBlocksData, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type ScriptBuildData, type ScriptBuildRequest, buildRequestText, type ScriptSidData, type ScriptSidRequest, sidRequestText, type ScriptLibraryData, type ScriptLibraryRequest, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -705,10 +705,22 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     else toast('VICE saved a new quicksave: F9 opens it', 'info');
   }), [toast, refreshQuicksave]);
   /* ---- the mounted .d64 or .g64 ---- */
+  /** a .d81 that was mounted: kept for JavaScript scripts (`disks.mounted`), until a disk is mounted or ejected */
+  const [scriptD81, setScriptD81] = useState<{ name: string; bytes: Uint8Array } | null>(null);
+  const scriptD81Ref = useRef(scriptD81);
+  scriptD81Ref.current = scriptD81;
   /** a disk mounted takes the tape out of the datasette, and a tape put in takes the disk out (the one loaded last is
    *  the one worked on, and Build & Run gives VICE no medium left from before); both stay when they come together
    *  (`keepOther`: Smart attach or a drop with both) */
   const mountBytes = (name: string, path: string | null, bytes: Uint8Array, sides: DiskSide[] = [], keepOther = false) => {
+    // a 1581 disk is for scripts (disks.mounted): Mimir's own disk is a 1541's, and stays as it is
+    if (diskKindOf(bytes) === 'd81') {
+      const d = new DiskEdit(bytes);
+      setScriptD81({ name, bytes });
+      toast(`${name}: "${d.name}", a D81 with ${d.files.length} file${d.files.length === 1 ? '' : 's'}, kept for scripts: disks.mounted in a JavaScript script is this disk${disk ? ` (${disk.name} stays mounted)` : ''}. Mimir's own disk, with its files and loaders, is a D64 or a G64`, 'ok');
+      return;
+    }
+    setScriptD81(null);
     const img = parseD64(bytes);
     let pirateslayer: PirateSlayerDisk | null = null;
     try { pirateslayer = readPirateSlayerDisk(bytes); } catch { /* not one */ }
@@ -755,7 +767,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!kr) return needDesktop();
     try { const r = await kr.openDisk(); if (r) mountBytes(r.name, r.path, r.bytes, r.sides); } catch (e) { toast(errorText(e), 'err'); }
   };
-  const ejectDisk = () => { if (disk) toast(`Ejected ${disk.name}`, 'info'); setDisk(null); };
+  const ejectDisk = () => { if (disk) toast(`Ejected ${disk.name}`, 'info'); setDisk(null); setScriptD81(null); };
   /* ---- the tape in the datasette (13.5e) ---- */
   /** (the disk goes out, as `mountBytes` says, unless `keepOther`) */
   const insertTapeBytes = (name: string, path: string | null, bytes: Uint8Array, keepOther = false) => {
@@ -2641,10 +2653,12 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
     if (shown) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     // what it printed, the files it made, or the error it stopped with, is under Last run: that tab is shown
-    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.snapshot || r.scripts?.length || r.error)) st.set({ outTab: 'run', outFolded: false });
+    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.snapshot || r.scripts?.length || r.disk || r.error)) st.set({ outTab: 'run', outFolded: false });
     // the export it asked for: written now that the run has ended well and its changes are in the program (a safe run's
     // is only said, under Last run)
     if ((r.exports || r.builds?.length || r.plays?.length || r.library?.length || w?.scripts?.runs.length) && !safe && endedWell(r.end)) void doScriptRequests(s.name, r, !!w?.written.length || !!w?.acted?.done.length, w?.scripts?.runs ?? [], chain);
+    // the disk it asked to be mounted (a disk's mount()), when the run has ended well
+    if (r.disk && !safe && endedWell(r.end)) { try { mountBytes(r.disk.name, null, r.disk.bytes); } catch (e) { toast(`"${s.name}": ${r.disk.name} was not mounted: ${errorText(e)}`, 'err'); } }
     // what it printed on its C64 screen: the screen is shown
     if (shown && r.screen?.wrote && !st.c64.open) st.setC64({ open: true });
     const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
@@ -2658,10 +2672,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const adding = r.library?.length ? (safe ? ` It would add ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to the library (Scripts → Last run).` : ` It asked for ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to be added to the library.`) : '';
     const scripted = r.scripts?.length && endedWell(r.end) ? (safe ? ` It would add, change or run ${r.scripts.length} script${r.scripts.length === 1 ? '' : 's'} (Scripts → Last run).`
       : `${w?.scripts?.done.length ? ` Scripts: ${w.scripts.done.slice(0, 2).join('; ')}${w.scripts.done.length > 2 ? '; …' : ''}.` : ''}${w?.scripts?.failed.length ? ` Not done: ${w.scripts.failed.join('; ')}.` : ''}`) : '';
+    const mounting = r.disk && endedWell(r.end) && safe ? ` It would mount ${r.disk.name} (Scripts → Last run).` : '';
     const snapped = r.snapshot && endedWell(r.end) ? (safe ? ' It would change the snapshot (Scripts → Last run).' : r.snapshot.changes.length ? ` It changed the snapshot (${r.snapshot.changes[0]}${r.snapshot.changes.length > 1 ? ', …' : ''}): Build & Run restarts it so.` : ' It asked for the snapshot to be kept, with nothing changed in it.') : '';
     const made = r.made?.length ? ` It made ${r.made.length} file${r.made.length === 1 ? '' : 's'} (Scripts → Last run): ${r.made[0].name}${r.made.length > 1 ? ', …' : ''}.` : '';
     const drew = r.screen?.wrote ? ` It printed on ${r.screen.c64 ? 'the C64\'s screen' : 'its C64 screen'} (Scripts → C64 screen).` : '';
-    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${asked}${building}${adding}${playing}${drew}${snapped}${scripted}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${asked}${building}${adding}${playing}${drew}${mounting}${snapped}${scripted}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
   };
   /** the export as it is now, for a JavaScript script's `exporter` (core script-export.ts): what Export would write,
    *  less the verified PRGs (they are made when it is written); null without a file to export */
@@ -2819,6 +2834,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (s.code === 'js' && /\bsid\b/.test(source)) { await analysisSettled(); opts.sid = scriptSidData(); }
     // and the library of SIDs, sprites, charsets and bitmaps
     if (s.code === 'js' && /\blibrary\b/.test(source)) opts.library = await scriptLibraryData();
+    // and the disk a script takes a copy of to change: the D81 mounted for scripts, else the mounted disk
+    if (s.code === 'js' && /\bdisks\b/.test(source)) opts.disks = scriptD81Ref.current ?? (disk ? { name: disk.name, bytes: disk.bytes } : null);
     // and the project's scripts, with the library's
     if (s.code === 'js' && /\bscripts\b/.test(source)) opts.scripts = {
       self: s.name,

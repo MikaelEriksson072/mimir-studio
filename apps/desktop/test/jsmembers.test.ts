@@ -86,7 +86,7 @@ describe('the members of a JavaScript script\'s values', () => {
     expect(jsSuggestions('count.', '', new Map(), [], SOURCE)).toEqual([]);
     expect(jsSuggestions('print("disk.', '', new Map(), [], SOURCE)).toEqual([]);
     // without a dot, what the script is given, as before
-    expect(jsSuggestions('', 'di', new Map(), []).map(x => x.label)).toEqual(['disk']);
+    expect(jsSuggestions('', 'di', new Map(), []).map(x => x.label)).toEqual(['disk', 'disks']);
     expect(jsSuggestions('', 'cp', new Map(), []).map(x => x.label)).toEqual(['cpu']);
   });
 });
@@ -211,6 +211,22 @@ describe('what the blocks\' values have', () => {
     expect(jsTypeOf('blocks.encode("A")', src)).toBe('bytes');
     expect(jsTypeOf('blocks.find("x")', src)).toBe('block');
     expect(jsTypeOf('blocks.in(1, 2)', src)).toBe('blockList');
+  });
+});
+
+describe('what the disks\' values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('disks., a disk and a file of its directory', () => {
+    expect(names('disks')).toEqual(['create', 'open', 'mounted', 'kinds', 'blocksFor']);
+    const src = 'const d = disks.create("d64", { name: "x" });\nconst m = disks.mounted;\nfor (const f of d.files) {\n}\nconst e = d.add("a", [1]);\n';
+    expect(names('d', src)).toEqual(['kind', 'name', 'id', 'dosType', 'tracks', 'sectors', 'size', 'free', 'files', 'find', 'has', 'read', 'add', 'remove', 'rename', 'lock', 'setType', 'sector', 'sectorsOn', 'isFree', 'allocate', 'release', 'chain', 'validate', 'format', 'list', 'bytes', 'file', 'save', 'mount']);
+    expect(names('m', src)).toEqual(names('d', src));
+    expect(names('disks.open(x)', src)).toEqual(names('d', src));
+    expect(names('f', src)).toEqual(['name', 'type', 'blocks', 'size', 'track', 'sector', 'locked', 'closed']);
+    expect(names('e', src)).toEqual(names('f', src));
+    expect(jsTypeOf('d.read("a")', src)).toBe('bytes');
+    expect(jsTypeOf('d.sector(18, 0)', src)).toBe('bytes');
+    expect(jsTypeOf('d.list()', src)).toBe('texts');
   });
 });
 

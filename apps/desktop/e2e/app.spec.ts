@@ -2503,9 +2503,9 @@ test('file dialogs open in the folder they were last used in', async ({ app, pag
 
   expect(await dialogOptions(app)).toEqual([
     { title: 'Open PRG files', defaultPath: undefined },
-    { title: 'Mount disk image (D64, G64)', defaultPath: prgDir },
+    { title: 'Mount disk image (D64, G64; a D81 for scripts)', defaultPath: prgDir },
     { title: 'Open PRG files', defaultPath: prgDir },
-    { title: 'Mount disk image (D64, G64)', defaultPath: diskDir },
+    { title: 'Mount disk image (D64, G64; a D81 for scripts)', defaultPath: diskDir },
   ]);
   // kept for the next start of the app
   expect(JSON.parse(readFileSync(join(userData, 'recent-folders.json'), 'utf8'))).toEqual({ prg: prgDir, disk: diskDir, last: diskDir });
@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^List the scripts and use one as a library/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^List the scripts and use one as a library/, /^Make a disk of the program/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11658,6 +11658,77 @@ test('a JavaScript script has the scripts: it makes a script of helpers, uses it
     await scripts.getByRole('option', { name: 'helpers' }).click();
     await expect(printed).toHaveText('helpers, factor 3', { timeout: 30_000 });
     await expect(editor).toContainText('const factor = 3;');
+  });
+});
+
+test('a JavaScript script has disks: it makes a D64 and a D81 with files on them, saves them as files and mounts one; a D81 is kept for scripts; safe mode only says', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+  const made = page.getByRole('list', { name: 'Files the run made' }).getByRole('listitem');
+  const setCode = async (lines: string[]) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText(lines.join('\n') + '\n');
+  };
+
+  await test.step('the template makes a D64 of the program, lists it and makes it a file', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Make a disk of the program to the project' }).click();
+    await expect(page.getByRole('option', { name: 'disk_make' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(printed).toContainText('0 "MIMIR           " 01 2A', { timeout: 30_000 });
+    await expect(printed).toContainText(/"PROGRAM" {10}PRG/);
+    await expect(printed).toContainText('Saved as mimir.d64, 174848 bytes');
+    await expect(made).toHaveText([/^mimir\.d64\s*174848 bytes/]);
+  });
+
+  await test.step('a script of one\'s own: disks. lists what it has; in safe mode what it would mount is only said', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('disks.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['create', 'open', 'mounted', 'kinds', 'blocksFor']);
+    await page.keyboard.press('Escape');
+    await setCode([
+      'const d = disks.create("d64", { name: "release", id: "r1" });',
+      'd.add("game", mem.subarray(files[0].start, files[0].end), { load: files[0].start });',
+      'd.add("note", [72, 69, 76, 76, 79], { type: "seq" });',
+      'const big = disks.create("d81", { name: "collection" });',
+      'big.add("game", d.read("game")); big.add("note", d.read("note"), { type: "seq" }); big.rename("note", "readme");',
+      'print(disks.mounted, d.free, big.free, big.files.map(f => f.name + ":" + f.type).join(), JSON.stringify(big.validate()));',
+      'd.save(); big.save();',
+      'd.mount();',
+    ]);
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText(/^null \d+ \d+ GAME:prg,README:seq \[\]$/, { timeout: 30_000 });
+    await expect(made).toHaveText([/^release\.d64\s*174848 bytes/, /^collection\.d81\s*819200 bytes/]);
+    await expect(page.getByRole('list', { name: 'What the run would mount' }).getByRole('listitem')).toHaveText([/^release\.d64 mounted \(a D64, 2 files, \d+ blocks free\)$/]);
+  });
+
+  await test.step('out of safe mode the D64 is mounted: the Explorer has it, and the next run works on a copy of it', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /Mounted release\.d64: "RELEASE", 2 files/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run mounted' }).getByRole('listitem')).toHaveCount(1);
+    await setCode([
+      'const m = disks.mounted;',
+      'm.remove("note"); m.add("extra", [1, 2, 3]);',
+      'print(m.kind, m.name, m.files.map(f => f.name).join(), disk.files.map(f => f.name).join(), disks.mounted.files.length);',
+      'const big = disks.create("d81", { name: "for scripts" });', 'big.add("one", m.read("extra"));', 'big.mount("big");',
+    ]);
+    await runIt();
+    await expect(printed).toHaveText('d64 RELEASE GAME,EXTRA GAME,NOTE 2', { timeout: 30_000 });
+    // a D81 is kept for scripts: the D64 stays mounted
+    await expect(toast(page, /big\.d81: "FOR SCRIPTS", a D81 with 1 file, kept for scripts: disks\.mounted in a JavaScript script is this disk \(release\.d64 stays mounted\)/)).toBeVisible({ timeout: 30_000 });
+    await setCode(['const m = disks.mounted;', 'print(m.kind, m.name, m.read("one").join(), disk.name);']);
+    await runIt();
+    await expect(printed).toHaveText('d81 FOR SCRIPTS 1,2,3 RELEASE', { timeout: 30_000 });
   });
 });
 
