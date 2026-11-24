@@ -214,6 +214,23 @@ describe('what the blocks\' values have', () => {
   });
 });
 
+describe('what the scripts\' values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('scripts., a script, its settings and a template', () => {
+    expect(names('scripts')).toEqual(['all', 'names', 'self', 'find', 'library', 'templates', 'call', 'use', 'add', 'edit', 'run', 'requests']);
+    const src = 'const lib = scripts.find("lib");\nfor (const s of scripts.all) {\n}\nscripts.templates.forEach(t => {});\n';
+    expect(names('lib', src)).toEqual(['name', 'code', 'lang', 'source', 'lines', 'safe', 'when', 'key', 'machine', 'pads', 'settings', 'self', 'setting', 'withSettings', 'call']);
+    expect(names('s', src)).toEqual(names('lib', src));
+    expect(names('scripts.self', src)).toEqual(names('lib', src));
+    expect(names('scripts.library[0]', src)).toEqual(names('lib', src));
+    expect(names('lib.settings[0]', src)).toEqual(['name', 'value', 'line', 'comment']);
+    expect(names('t', src)).toEqual(['name', 'title', 'about', 'code', 'source', 'lines', 'safe', 'settings']);
+    expect(jsTypeOf('lib.source', src)).toBe('text');
+    expect(jsTypeOf('lib.withSettings({})', src)).toBe('text');
+    expect(jsTypeOf('scripts.names', src)).toBe('texts');
+  });
+});
+
 describe('what the snapshot\'s values have', () => {
   const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
   it('snapshot., its CPU, VIC-II, sprites and drive', () => {

@@ -116,6 +116,7 @@ export { loaderApi, type ScriptLoaderData } from './script-loader';
 export { blocksApi, scriptBlocksData, type ScriptBlock, type ScriptBlocksData } from './script-blocks';
 export { decodeText, encodeText, fieldSize, fieldTypeText, readStruct, STRUCT_FIELDS, STRUCT_SIZE, STRUCT_TYPES, structFields, structSize, structText, validStruct } from './struct';
 export { snapshotApi, snapshotRequestText, type ScriptSnapshotData, type ScriptSnapshotRequest } from './script-snapshot';
+export { planScriptsRequests, scriptsApi, scriptsRequestText, SCRIPTS_CALL_DEPTH, SCRIPTS_REQUESTS, SCRIPTS_RUN_CHAIN, type ScriptInfo, type ScriptScriptsData, type ScriptScriptsRequest, type ScriptsPlan } from './script-scripts';
 export { LIBRARY_REQUESTS, libraryApi, libraryRequestText, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 export { SID_REQUESTS, SID_RUN_DEFAULT, SID_RUN_FRAMES, sidApi, sidRequestText, type ScriptSidData, type ScriptSidRequest, type ScriptSidTune } from './script-sid';
 export { BUILD_REQUESTS, buildApi, buildRequestText, type ScriptBuildData, type ScriptBuildRequest } from './script-build';

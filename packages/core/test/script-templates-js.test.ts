@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are twenty, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'screen_show', 'screen_hexdump']);
+  it('are twenty-one, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'script_tools', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -336,6 +336,42 @@ describe('the JavaScript template for the library', () => {
     const has = go({ addMusic: 'true' }, lib([{ kind: 'sid', file: 'music.sid', name: 'm', data: a.library![0].bytes }]));
     expect(has.prints!.at(-1)).toBe('music is in the library already: music.sid');
     expect(has.library).toBeUndefined();
+  });
+});
+
+describe('the JavaScript template for the scripts', () => {
+  const source = (values: Record<string, string>) => setScriptParams(template('script_tools').source, { code: 'js' }, values).source;
+  const go = (values: Record<string, string> = {}, more: { name: string; source: string; code?: 'js' }[] = []) => {
+    const src = source(values);
+    return runJs(env, { source: src, pads: [] }, { scripts: { self: 'script_tools', library: [], scripts: [
+      { name: 'script_tools', lang: 'kickass', code: 'js', source: src, key: 'Alt+2' }, { name: 'decrypt', lang: 'kickass', source: '.var key = $5a   // the key\n        rts', when: 'build', safe: true }, ...more.map(m => ({ lang: 'kickass' as const, ...m }))] } });
+  };
+
+  it('List the scripts and use one as a library lists them, makes the helpers, uses them and asks for a script to be run', () => {
+    const r = go();
+    expect(r.error).toBeUndefined();
+    expect(r.prints![0]).toMatch(/^2 scripts in the project, 0 in the library, \d+ templates$/);
+    expect(r.prints![1]).toMatch(/^> script_tools {12}JavaScript {2,4}\d+ lines {2}Alt\+2$/);
+    expect(r.prints!.slice(2, 5)).toEqual(['      showSettings = true   print each script\'s settings under it: true or false',
+      '      helpers = ""   the name of a script of helpers: made when the project has none of that name, used when it has; "" for none', '      runAfter = ""   a script to run when this one has ended; "" for none']);
+    expect(r.prints!.slice(5)).toEqual(['  decrypt                 assembler      2 lines  safe mode  runs on build', '      key = $5a   the key']);
+    expect(r.scripts).toBeUndefined();
+    expect(go({ showSettings: 'false' }).prints).toHaveLength(3);
+    // the helpers made, and used once they are there: the code it made runs as a library
+    const made = go({ helpers: '"tools"', showSettings: 'false' });
+    expect(made.prints!.at(-1)).toBe('Then added: tools. Run this again to use it');
+    expect(made.scripts).toEqual([expect.objectContaining({ kind: 'add', name: 'tools', code: 'js' })]);
+    const lib = (made.scripts![0] as { source: string }).source;
+    expect(lib.split('\n')[0]).toBe('// Helpers for other scripts: const tools = scripts.use("tools");');
+    const used = go({ helpers: '"tools"', showSettings: 'false' }, [{ name: 'tools', source: lib, code: 'js' }]);
+    expect(used.error).toBeUndefined();
+    const sum = program.bytes.reduce((s, b) => (s + b) & 0xffff, 0);
+    expect(used.prints!.slice(-2)).toEqual(['tools gives: sum, find, text', `  $${program.load.toString(16).padStart(4, '0')}-$${(program.load + program.bytes.length - 1).toString(16).padStart(4, '0')}  sum $${sum.toString(16).padStart(4, '0')}`]);
+    expect(used.scripts).toBeUndefined();
+    const after = go({ runAfter: '"decrypt"', showSettings: 'false' });
+    expect(after.prints!.at(-1)).toBe('Then run: decrypt');
+    expect(after.scripts).toEqual([{ kind: 'run', name: 'decrypt' }]);
+    expect(go({ runAfter: '"nothing"' }).error?.msg).toMatch(/^ReferenceError: scripts\.run: "nothing" is not a script of the project/);
   });
 });
 

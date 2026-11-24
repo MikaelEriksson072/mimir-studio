@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^List the scripts and use one as a library/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11603,6 +11603,60 @@ test('a JavaScript script has the snapshot: the C64, the VIC-II and the drive as
     await page.keyboard.press('Control+z');
     await page.keyboard.press('Control+z');
     await expect(start).toContainText('PC $08c7');
+  });
+});
+
+test('a JavaScript script has the scripts: it makes a script of helpers, uses it as a library, changes it and has another script run after it; safe mode only says', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+  const scripts = page.getByRole('listbox', { name: 'Scripts' });
+
+  await test.step('scripts. lists what it has; in safe mode what it would add is only said', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('scripts.');
+    await expect.poll(async () => (await page.locator('.suggest-widget.visible .monaco-list-row .label-name').allTextContents()).slice(0, 8))
+      .toEqual(['all', 'names', 'self', 'find', 'library', 'templates', 'call', 'use']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'print(scripts.all.length, scripts.self.code, scripts.templates.length > 20);',
+      'const lib = scripts.find("helpers");',
+      'if (!lib) scripts.add("helpers", "const factor = 2;   // what a number is multiplied by\\nprint(\\"helpers, factor \\" + factor);\\nreturn { times: n => n * factor };");',
+      'else {',
+      '  print(lib.call().times(21), scripts.call("helpers", { factor: 10 }).times(21), lib.setting("factor"));',
+      '  if (lib.setting("factor") === "2") { scripts.edit("helpers", { settings: { factor: 3 } }); scripts.run("helpers"); }',
+      '}',
+    ].join('\n') + '\n');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText('1 js true', { timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run would do with the scripts' }).getByRole('listitem')).toHaveText(['helpers added (JavaScript, 3 lines)']);
+    await expect(scripts.getByRole('option')).toHaveCount(1);
+  });
+
+  await test.step('out of safe mode the script is added to the project', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /Scripts: helpers added \(JavaScript, 3 lines\)\./)).toBeVisible({ timeout: 30_000 });
+    await expect(scripts.getByRole('option')).toHaveCount(2);
+    await expect(scripts.getByRole('option', { name: 'helpers' })).toBeVisible();
+  });
+
+  await test.step('run again, it uses the helpers as a library, changes a setting of theirs and has them run after it', async () => {
+    await runIt();
+    await expect(printed).toHaveText(/^2 js true\s*helpers, factor 2\s*helpers, factor 10\s*42 210 2$/, { timeout: 30_000 });
+    await expect(toast(page, /Scripts: helpers changed: its code \(3 lines\); helpers run\./)).toBeVisible({ timeout: 30_000 });
+    // the helpers ran after it, with the setting as changed
+    await scripts.getByRole('option', { name: 'helpers' }).click();
+    await expect(printed).toHaveText('helpers, factor 3', { timeout: 30_000 });
+    await expect(editor).toContainText('const factor = 3;');
   });
 });
 

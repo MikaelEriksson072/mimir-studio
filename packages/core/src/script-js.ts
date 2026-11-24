@@ -40,6 +40,9 @@
  *   snapshot                 the VICE snapshot the project was opened from (script-snapshot.ts), or null: snapshot.cpu,
  *                            port, ram, cia1, cia2, sid, vic and drive as they were saved, read and set, and
  *                            snapshot.write() to have the project keep it as changed
+ *   scripts                  the scripts (script-scripts.ts): scripts.all, the library's and the templates;
+ *                            scripts.call(name, settings) runs another JavaScript script's code here and gives what it
+ *                            returns; scripts.add, scripts.edit and scripts.run are done when the run has ended
  *   save(name, bytes, load)  a file the run made, listed under Last run (To the project…, Save…); load: where it
  *                            loads, left out for a file without a load address
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
@@ -64,6 +67,7 @@ import { exportApi, type ScriptExportData, type ScriptExportRequest } from './sc
 import { buildApi, type ScriptBuildData, type ScriptBuildRequest } from './script-build';
 import { blocksApi, type ScriptBlocksData } from './script-blocks';
 import { snapshotApi, type ScriptSnapshotData, type ScriptSnapshotRequest } from './script-snapshot';
+import { scriptsApi, type ScriptScriptsData, type ScriptScriptsRequest } from './script-scripts';
 import { libraryApi, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 import { sidApi, type ScriptSidData, type ScriptSidRequest } from './script-sid';
 import { SCREEN_C64, screenApi, screenMemory, screenRanges, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
@@ -91,6 +95,8 @@ export interface JsExtras { disk?: Uint8Array | null;
   blocks?: ScriptBlocksData | null;
   /** the snapshot the project was opened from, for `snapshot` (null: there is none, or the run is not given it) */
   snapshot?: ScriptSnapshotData | null;
+  /** the project's scripts and the library's, for `scripts` (null: the run is not given them) */
+  scripts?: ScriptScriptsData | null;
   /** the size of the script's C64 screen (40×25 when not said) */
   screen?: Partial<ScreenSize> | null }
 
@@ -115,7 +121,9 @@ export function checkJs(problems: ScriptProblem[]): ScriptCheck {
 
 /** the line of the script an error came from, from its stack (the function's body starts on its third line) */
 function errorLine(e: unknown): number | undefined {
-  const m = /<anonymous>:(\d+):\d+/.exec(String((e as { stack?: unknown })?.stack ?? ''));
+  // (an error from a script this one called, scripts.call: the line of the call, the outermost of the scripts' frames)
+  const all = [...String((e as { stack?: unknown })?.stack ?? '').matchAll(/<anonymous>:(\d+):\d+/g)];
+  const m = (e as { inScript?: boolean })?.inScript ? all[all.length - 1] : all[0];
   const n = m ? +m[1] - 2 : 0;
   return n >= 1 ? n : undefined;
 }
@@ -143,6 +151,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   const sidPlays: ScriptSidRequest[] = [];
   const libraryAdds: ScriptLibraryRequest[] = [];
   let snapshotAsked: ScriptSnapshotRequest | undefined;
+  const scriptsAsked: ScriptScriptsRequest[] = [];
   let instructions = 0, cycles = 0;
   let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
 
@@ -245,6 +254,19 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
     const library = libraryApi(extras.library ?? null, { mem, addr }, r => { libraryAdds.push(r); });
     const blocks = blocksApi(extras.blocks ?? null, { mem, addr }, a => { actions.push(a); });
     const snapshot = snapshotApi(extras.snapshot ?? null, { addr }, r => { snapshotAsked = r; });
+    // another script's code run in this run (scripts.call): the same things given, what it returns given back; an
+    // error it throws says which script it is from
+    let given: Record<string, unknown> = {};
+    const runSource = (name: string, source: string): unknown => {
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval
+      const f = new Function(...Object.keys(given), ...HIDDEN, `"use strict";{${source}\n}`) as (...a: unknown[]) => unknown;
+      try { return f(...Object.values(given)); } catch (e) {
+        const x = e as Error & { inScript?: boolean };
+        if (x instanceof Error && !x.inScript) { const line = errorLine(x); x.message = `in the script "${name}"${line ? ` (line ${line})` : ''}: ${x.message}`; x.inScript = true; }
+        throw e;
+      }
+    };
+    const scripts = scriptsApi(extras.scripts ?? null, 'kickass', runSource, r => { scriptsAsked.push(r); });
     const save = (name: unknown, bytes: unknown, load?: unknown) => {
       if (!(bytes instanceof Uint8Array) && !Array.isArray(bytes)) throw new TypeError('save: bytes are wanted (a Uint8Array, such as mem.subarray(…) or what sindri.unpack gave)');
       const n = String(name ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'file';
@@ -252,7 +274,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, save, screen };
+    given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, scripts, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -276,7 +298,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
-    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}),
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}), ...(scriptsAsked.length && !error ? { scripts: scriptsAsked } : {}),
     ...(scr.wrote ? { screen: scr.state() } : {}),
   };
 }

@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-scripts.ts        skripten för ett JavaScript-skript: `scripts` (läs, anropa som bibliotek, lägg till, ändra, kör efteråt) (10.3)
 │  ├─ src/script-snapshot.ts       VICE-snapshoten för ett JavaScript-skript: `snapshot` (CPU, port, RAM, CIA, SID, VIC-II, drive: läs och ändra) (10.3, 13.7)
 │  ├─ src/script-blocks.ts         blocken för ett JavaScript-skript: `blocks` (läs, märk, struct, egna typer, dela, kommentera) (10.3)
 │  ├─ src/struct.ts                struct-block: fälten (`StructField`), deras storlek, text och värden (10.3)
@@ -2902,6 +2903,9 @@ $06, $08` i `.asm`-filen efter en körning.
     minneskonfigurationen, VIC-II:n (läge, adresser, färger, raster, sprites med `showSprites`), CIA:ernas timers
     och diskdriven (`showDrive`) skrivna; `border`, `background`, `goOnAt` och `track` ändrar snapshoten, som
     projektet då behåller.
+  - *List the scripts and use one as a library* (`script_tools`, 2026-11-24): projektets skript listade med sina
+    inställningar (`showSettings`); `helpers` gör ett skript med hjälpfunktioner när projektet inte har det och
+    använder det när det finns (`scripts.call`); `runAfter` kör ett annat skript efteråt.
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2912,6 +2916,36 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Skripten i ett JavaScript-skript** (`script-scripts.ts`, `scriptsApi`, `planScriptsRequests`, 2026-11-24): ett
+  skript får `scripts`: projektets skript, bibliotekets och mallarna att läsa, ett annat skripts kod att använda som
+  bibliotek, och skript att lägga till, ändra och köra.
+  - Läsa: `scripts.all` (projektets skript), `scripts.names`, `scripts.self` (det som körs), `scripts.find(namn)`,
+    `scripts.library` (biblioteksmappens skript) och `scripts.templates` (mallarna i assembler och JavaScript:
+    `name`, `title`, `about`, `code`, `source`, `lines`, `safe`, `settings`). Ett skript har `name`, `code` (`"js"`
+    eller `"asm"`), `lang`, `source`, `lines`, `safe`, `when`, `key`, `machine`, `pads` (`name`, `start`, `end`,
+    `size`), `settings` (`name`, `value`, `line`, `comment`: det Settings-fliken visar), `self`, `setting(namn)` och
+    `withSettings({ … })` (koden med inställningar satta, som text).
+  - **Ett skript som bibliotek:** `scripts.call(namn, { inställning: värde })` (och `scripts.use(namn)`, samma sak)
+    kör ett annat JavaScript-skripts kod här, i samma körning: samma `mem`, samma `print`, samma `blocks`, `sid` och
+    resten. Det koden returnerar ges tillbaka, så ett skript som slutar med `return { sum, find };` är ett bibliotek
+    av funktioner. Inställningar sätts i den körda kodens rader först; en inställning skriptet inte har är ett fel.
+    Ett fel i det anropade skriptet sägs med skriptets namn och rad (`in the script "lib" (line 2): …`) på
+    anropets rad. Skript anropar skript högst `SCRIPTS_CALL_DEPTH` = 8 djupt; ett assemblerskript kan inte anropas
+    (det körs med `scripts.run`). Det anropade skriptets scratchpads läggs inte upp: `pad()` är det körande
+    skriptets.
+  - Ändra: `scripts.add(namn, kod, { code, safe, when, key })` lägger till ett skript (`code` `"js"`, annars
+    `"asm"` i projektets assembler), `scripts.edit(namn, { source, settings, safe, when, key, name })` ändrar ett
+    (kod, inställningar i koden, safe mode, när det körs, tangent, namn), och `scripts.run(namn, { settings })` kör
+    ett annat skript när det här har slutat, som *Run* kör det (med `settings`: med den koden, för den körningen).
+    Ingenting görs under körningen: körningen slutar med begäran (`ScriptRun.scripts`, `ScriptScriptsRequest`,
+    högst `SCRIPTS_REQUESTS` = 16), och när den slutat väl läggs skript till och ändras i körningens ångra-steg
+    (`ranUserScript`), och de som ska köras körs ett efter ett sist, efter export, byggen, bibliotek och uppspelning
+    (`doScriptRequests`). En kedja av skript som kör skript slutar efter `SCRIPTS_RUN_CHAIN` = 8. Ett namn som
+    redan finns, ett skript som inte finns och ett namnbyte till ett upptaget namn görs inte och sägs i toasten;
+    en tangent har ett skript i taget. I safe mode görs ingenting: *Last run* visar *Would do with the scripts*;
+    annars *Asked of the scripts*. Ett skript kan inte ta bort skript.
+  - Skripten ges till en körning av skriptet självt när koden nämner `scripts`; annars är listorna tomma (mallarna
+    finns alltid) och `add`, `edit` och `run` säger att det inte går där. Bara JavaScript.
 - **Snapshoten i ett JavaScript-skript** (`script-snapshot.ts`, `snapshotApi`, 2026-11-24): ett skript får
   `snapshot`, VICE-snapshoten projektet öppnades från (13.7), eller `null` när det inte finns någon: C64:an, VIC-II:n
   och diskdriven som de var när snapshoten sparades, att läsa och ändra.

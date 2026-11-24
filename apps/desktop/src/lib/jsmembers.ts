@@ -12,6 +12,7 @@ export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | '
   | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges' | 'build' | 'lastBuild' | 'builtFile' | 'builtFiles'
   | 'library' | 'libItem' | 'libItems' | 'libFrom' | 'libColors'
   | 'snapshot' | 'snapCpu' | 'snapPort' | 'snapCia' | 'snapSid' | 'snapVic' | 'snapSprite' | 'snapSprites' | 'snapDrive' | 'snapVia' | 'snapModule' | 'snapModules'
+  | 'scripts' | 'scriptOne' | 'scriptList' | 'scriptSetting' | 'scriptSettings' | 'scriptPads' | 'scriptTemplate' | 'scriptTemplates'
   | 'blocks' | 'block' | 'blockList' | 'struct' | 'structFields' | 'structField' | 'customType' | 'customTypes'
   | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
 
@@ -62,6 +63,28 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
   libItems: LIST, blockList: LIST, structFields: LIST, customTypes: LIST, snapSprites: LIST, snapModules: LIST,
+  scriptList: LIST, scriptSettings: LIST, scriptPads: LIST, scriptTemplates: LIST,
+  scripts: [
+    m('all', 'the project\'s scripts: a list of { name, code, source, settings, … }'), m('names', 'their names'), m('self', 'the script that runs'),
+    m('find', 'find("name"): a script of the project, or null', true),
+    m('library', 'the scripts of the library folder: a list, as all'), m('templates', 'the templates: a list of { name, title, about, code, source, safe, settings }'),
+    m('call', 'call("name", { setting: value }): another JavaScript script\'s code run here, in this run (the same mem and print); gives what its code returns', true),
+    m('use', 'use("name"): as call: a script that ends with return { … } is a library', true),
+    m('add', 'add("name", source, { code, safe, when, key }): a new script in the project, when the run has ended well; code "js" or "asm"', true),
+    m('edit', 'edit("name", { source, settings, safe, when, key, name }): a script of the project changed, when the run has ended well', true),
+    m('run', 'run("name", { settings }): another script run when this run has ended, as Run runs it', true),
+    m('requests', 'what the script has asked for so far, a text each'),
+  ],
+  scriptOne: [
+    m('name', 'its name'), m('code', 'what it is written in: "js" or "asm"'), m('lang', 'the assembler its assembler code is for: "kickass" or "64tass"'), m('source', 'its code'), m('lines', 'how many lines its code is'),
+    m('safe', 'true when it runs in safe mode'), m('when', 'when it runs by itself: "build", "load" or null'), m('key', 'the key that runs it, or null'), m('machine', '"c64" when it runs in the whole C64, else null'),
+    m('pads', 'its scratchpads: a list of { name, start, end, size }'), m('settings', 'its settings: a list of { name, value, line, comment }'), m('self', 'true for the script that runs'),
+    m('setting', 'setting("name"): a setting\'s value as its code writes it, or null', true),
+    m('withSettings', 'withSettings({ setting: value }): its code with settings set, a text', true),
+    m('call', 'call({ setting: value }): its code run here, in this run; gives what it returns (JavaScript only)', true),
+  ],
+  scriptSetting: [m('name', 'its name'), m('value', 'its value as the code writes it'), m('line', 'the line it is on'), m('comment', 'what its line says it is')],
+  scriptTemplate: [m('name', 'the name a copy gets'), m('title', 'what the list of templates shows'), m('about', 'what it does, in a line'), m('code', '"js" or "asm"'), m('source', 'its code'), m('lines', 'how many lines'), m('safe', 'true when a copy starts in safe mode'), m('settings', 'its settings: a list of { name, value, line, comment }')],
   snapshot: [
     m('name', 'the snapshot\'s file'), m('machine', 'the machine VICE ran: "C64SC" (x64sc) or "C64"'), m('vice', 'the VICE version that wrote it'), m('format', 'the snapshot format, "2.0"'), m('size', 'how many bytes the .vsf is'),
     m('cpu', 'the 6510 as it was: { pc, a, x, y, sp, status, flags }, read and set'), m('port', 'the 6510 port: { data ($01), dir ($00), config }'),
@@ -362,7 +385,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', scriptList: 'scriptOne', scriptSettings: 'scriptSetting', scriptPads: 'file', scriptTemplates: 'scriptTemplate', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -430,6 +453,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'library') return 'library';
   if (e === 'blocks') return 'blocks';
   if (e === 'snapshot') return 'snapshot';
+  if (e === 'scripts') return 'scripts';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -463,6 +487,8 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (on === 'blocks') return name === 'at' || name === 'find' ? 'block' : name === 'in' || name === 'of' ? 'blockList' : name === 'struct' ? 'struct' : name === 'define' ? 'customType' : name === 'text' ? 'text' : name === 'encode' ? 'bytes' : name === 'mark' ? 'file' : null;
     if (on === 'block') return name === 'mark' || name === 'format' ? 'file' : null;
     if (on === 'snapshot') return name === 'module' || name === 'file' ? 'bytes' : name === 'write' ? 'texts' : null;
+    if (on === 'scripts') return name === 'find' ? 'scriptOne' : null;
+    if (on === 'scriptOne') return name === 'withSettings' || name === 'setting' ? 'text' : null;
     if (on === 'struct' || on === 'customType') return name === 'mark' || name === 'markRecords' ? 'file' : null;
     if (on === 'tune') return name === 'sid' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : null;
     if (on === 'loader') return name === 'find' ? 'loaderFile' : name === 'group' ? 'loaderGroup' : name === 'load' ? 'file' : name === 'at' ? 'loaderFiles' : null;
@@ -491,6 +517,10 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
   if (on === 'library') return name === 'items' || name === 'sids' || name === 'sprites' || name === 'chars' || name === 'bitmaps' ? 'libItems' : name === 'requests' ? 'texts' : name === 'folder' ? 'text' : null;
   if (on === 'libItem') return name === 'bytes' || name === 'bitmap' || name === 'screen' || name === 'colorRam' ? 'bytes' : name === 'tune' ? 'sidFile' : name === 'from' ? 'libFrom' : name === 'colors' ? 'libColors' : name === 'name' || name === 'file' || name === 'kind' || name === 'hash' ? 'text' : null;
+  if (on === 'scripts') return name === 'all' || name === 'library' ? 'scriptList' : name === 'self' ? 'scriptOne' : name === 'templates' ? 'scriptTemplates' : name === 'names' || name === 'requests' ? 'texts' : null;
+  if (on === 'scriptOne') return name === 'settings' ? 'scriptSettings' : name === 'pads' ? 'scriptPads' : name === 'name' || name === 'code' || name === 'lang' || name === 'source' || name === 'when' || name === 'key' ? 'text' : null;
+  if (on === 'scriptTemplate') return name === 'settings' ? 'scriptSettings' : name === 'safe' || name === 'lines' ? null : 'text';
+  if (on === 'scriptSetting') return name === 'line' ? null : 'text';
   if (on === 'snapshot') return name === 'cpu' ? 'snapCpu' : name === 'port' ? 'snapPort' : name === 'ram' ? 'bytes' : name === 'cia1' || name === 'cia2' ? 'snapCia' : name === 'sid' ? 'snapSid' : name === 'vic' ? 'snapVic' : name === 'drive' ? 'snapDrive'
     : name === 'modules' ? 'snapModules' : name === 'changes' ? 'texts' : name === 'name' || name === 'machine' || name === 'vice' || name === 'format' ? 'text' : null;
   if (on === 'snapVic') return name === 'regs' || name === 'colorRam' ? 'bytes' : name === 'sprites' ? 'snapSprites' : name === 'mode' ? 'text' : null;

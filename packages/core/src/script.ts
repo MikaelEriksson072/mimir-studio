@@ -512,6 +512,9 @@ export interface ScriptRun {
   /** the snapshot a JavaScript script asked the project to keep (snapshot.write): kept by the app when the run has
    *  ended well (not in safe mode) */
   snapshot?: import('./script-snapshot').ScriptSnapshotRequest;
+  /** what a JavaScript script asked to be done with the project's scripts (scripts.add, edit, run): done by the app
+   *  when the run has ended well (not in safe mode) */
+  scripts?: import('./script-scripts').ScriptScriptsRequest[];
   /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
   js?: boolean;
   actions?: ScriptAction[];
