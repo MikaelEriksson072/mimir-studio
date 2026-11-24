@@ -46,6 +46,9 @@
  *   disks                    disk images made and changed (script-disks.ts): disks.create("d64" or "d81", { name, id }),
  *                            disks.open(bytes), disks.mounted; a disk's files, add(name, bytes), remove, rename,
  *                            sector(t, s), validate(), save(fileName) and mount()
+ *   tapes                    tape images made and changed (script-tapes.ts): tapes.create("tap" or "t64", { name }),
+ *                            tapes.open(bytes), tapes.mounted; a tape's files, add(name, bytes, { load }), remove,
+ *                            rename, toT64(), toTap(), save(fileName) and insert(); a TAP's pulses, pause(), cut()
  *   save(name, bytes, load)  a file the run made, listed under Last run (To the project…, Save…); load: where it
  *                            loads, left out for a file without a load address
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
@@ -72,6 +75,7 @@ import { blocksApi, type ScriptBlocksData } from './script-blocks';
 import { snapshotApi, type ScriptSnapshotData, type ScriptSnapshotRequest } from './script-snapshot';
 import { scriptsApi, type ScriptScriptsData, type ScriptScriptsRequest } from './script-scripts';
 import { disksApi, type ScriptDiskRequest, type ScriptDisksData } from './script-disks';
+import { tapesApi, type ScriptTapeRequest, type ScriptTapesData } from './script-tapes';
 import { libraryApi, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 import { sidApi, type ScriptSidData, type ScriptSidRequest } from './script-sid';
 import { SCREEN_C64, screenApi, screenMemory, screenRanges, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
@@ -103,6 +107,8 @@ export interface JsExtras { disk?: Uint8Array | null;
   scripts?: ScriptScriptsData | null;
   /** the mounted disk for `disks.mounted`, when it is not `disk` (a D81 mounted for scripts); missing: `disk` */
   disks?: ScriptDisksData | null;
+  /** the tape in the datasette, for `tapes.mounted` (null: none) */
+  tapes?: ScriptTapesData | null;
   /** the size of the script's C64 screen (40×25 when not said) */
   screen?: Partial<ScreenSize> | null }
 
@@ -159,6 +165,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   let snapshotAsked: ScriptSnapshotRequest | undefined;
   const scriptsAsked: ScriptScriptsRequest[] = [];
   let diskAsked: ScriptDiskRequest | undefined;
+  let tapeAsked: ScriptTapeRequest | undefined;
   let instructions = 0, cycles = 0;
   let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
 
@@ -281,12 +288,14 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
     // (a disk image is a file of the run whole: it is larger than the memory a file made of bytes is cut to)
-    const disks = disksApi(extras.disks ?? (extras.disk ? { name: 'disk.d64', bytes: extras.disk } : null), { addr, save: (name, bytes) => {
+    const saveImage = (name: string, bytes: Uint8Array) => {
       if (made.length >= 64) throw new RangeError('save: a run makes 64 files at most');
-      made.push({ name: name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'disk', load: null, bytes });
-    } }, r => { diskAsked = r; });
+      made.push({ name: name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'image', load: null, bytes });
+    };
+    const disks = disksApi(extras.disks ?? (extras.disk ? { name: 'disk.d64', bytes: extras.disk } : null), { addr, save: saveImage }, r => { diskAsked = r; });
+    const tapes = tapesApi(extras.tapes ?? null, { addr, save: saveImage }, r => { tapeAsked = r; });
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, scripts, disks, save, screen };
+    given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, scripts, disks, tapes, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -310,7 +319,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
-    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}), ...(scriptsAsked.length && !error ? { scripts: scriptsAsked } : {}), ...(diskAsked && !error ? { disk: diskAsked } : {}),
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}), ...(scriptsAsked.length && !error ? { scripts: scriptsAsked } : {}), ...(diskAsked && !error ? { disk: diskAsked } : {}), ...(tapeAsked && !error ? { tape: tapeAsked } : {}),
     ...(scr.wrote ? { screen: scr.state() } : {}),
   };
 }

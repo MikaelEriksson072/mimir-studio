@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DiskEdit, makeD64, openC64File, parseVsf, analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { makeTap, readTape, readT64, DiskEdit, makeD64, openC64File, parseVsf, analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
 import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are twenty-two, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'script_tools', 'disk_make', 'screen_show', 'screen_hexdump']);
+  it('are twenty-three, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'script_tools', 'disk_make', 'tape_make', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -336,6 +336,36 @@ describe('the JavaScript template for the library', () => {
     const has = go({ addMusic: 'true' }, lib([{ kind: 'sid', file: 'music.sid', name: 'm', data: a.library![0].bytes }]));
     expect(has.prints!.at(-1)).toBe('music is in the library already: music.sid');
     expect(has.library).toBeUndefined();
+  });
+});
+
+describe('the JavaScript template for tapes', () => {
+  const inDatasette = makeTap({ files: [{ name: 'INTRO', data: Uint8Array.of(0x60), load: 0x0810 }, { name: 'LEVEL', data: new Uint8Array(40).fill(9), load: 0x4000 }] });
+  const go = (values: Record<string, string> = {}, tape: Uint8Array | null = inDatasette) =>
+    runJs(env, { source: setScriptParams(template('tape_make').source, { code: 'js' }, values).source, pads: [] }, { tapes: tape ? { name: 'game.tap', bytes: tape } : null });
+
+  it('Make a tape of the program makes a TAP or a T64 with the program on it, copies the datasette\'s tape, saves and inserts it', () => {
+    const r = go();
+    expect(r.error).toBeUndefined();
+    const end = program.load + program.bytes.length;
+    expect(r.prints![0]).toBe(` 0  "PROGRAM"          PRG   $${program.load.toString(16).padStart(4, '0')}-$${(end - 1).toString(16).padStart(4, '0')}  ${String(program.bytes.length).padStart(5)} bytes`);
+    expect(r.prints![1]).toMatch(/^Saved as mimir\.tap, \d+ bytes, \d+(\.\d)? seconds of tape$/);
+    const made = readTape(r.made![0].bytes);
+    expect(made.files.map(f => [f.name, f.load, f.errors])).toEqual([['PROGRAM', program.load, []]]);
+    expect(made.files[0].data).toEqual(program.bytes);
+    expect(r.tape).toBeUndefined();
+    // a T64, with the datasette's tape's files copied onto it, and put in the datasette
+    const a = go({ kind: '"t64"', tapeName: '"COLLECTION"', fileName: '"GAME"', copyMounted: 'true', saveAs: '"all"', insertIt: 'true' });
+    expect(a.error).toBeUndefined();
+    expect(a.prints!.slice(0, 3).map(l => l.slice(0, 22).trimEnd())).toEqual([' 0  "GAME"', ' 1  "INTRO"', ' 2  "LEVEL"']);
+    expect(a.prints!.at(-1)).toMatch(/^Saved as all\.t64, \d+ bytes$/);
+    expect(readT64(a.made![0].bytes).files.map(f => [f.name, f.load, f.data.length])).toEqual([['GAME', program.load, program.bytes.length], ['INTRO', 0x0810, 1], ['LEVEL', 0x4000, 40]]);
+    expect([a.tape!.name, a.tape!.kind, a.tape!.files]).toEqual(['all.t64', 't64', 3]);
+    // a pause after each file makes the tape longer
+    const quiet = go({ pause: '2' }), plain = go();
+    expect(readTape(quiet.made![0].bytes).seconds - readTape(plain.made![0].bytes).seconds).toBeCloseTo(2, 0);
+    expect(go({ copyMounted: 'true' }, null).error?.msg).toMatch(/^Error: No tape is in the datasette to copy the files of/);
+    expect(go({ kind: '"tzx"' }).error?.msg).toMatch(/^TypeError: tapes\.create: the kind is "tap"/);
   });
 });
 

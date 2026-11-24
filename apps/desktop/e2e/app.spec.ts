@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^List the scripts and use one as a library/, /^Make a disk of the program/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^List the scripts and use one as a library/, /^Make a disk of the program/, /^Make a tape of the program/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11729,6 +11729,76 @@ test('a JavaScript script has disks: it makes a D64 and a D81 with files on them
     await setCode(['const m = disks.mounted;', 'print(m.kind, m.name, m.read("one").join(), disk.name);']);
     await runIt();
     await expect(printed).toHaveText('d81 FOR SCRIPTS 1,2,3 RELEASE', { timeout: 30_000 });
+  });
+});
+
+test('a JavaScript script has tapes: it makes a TAP and a T64 with files on them, makes one the other, saves them as files and puts one in the datasette; safe mode only says', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+  const made = page.getByRole('list', { name: 'Files the run made' }).getByRole('listitem');
+  const setCode = async (lines: string[]) => {
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText(lines.join('\n') + '\n');
+  };
+
+  await test.step('the template makes a TAP of the program, lists it and makes it a file', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Make a tape of the program to the project' }).click();
+    await expect(page.getByRole('option', { name: 'tape_make' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(printed).toContainText(/0 {2}"PROGRAM" {10}PRG {3}\$0801-/, { timeout: 30_000 });
+    await expect(printed).toContainText(/Saved as mimir\.tap, \d+ bytes, [\d.]+ seconds of tape/);
+    await expect(made).toHaveText([/^mimir\.tap\s*\d+ bytes/]);
+  });
+
+  await test.step('a script of one\'s own: tapes. lists what it has; in safe mode what it would insert is only said', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('tapes.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['create', 'open', 'mounted', 'kinds']);
+    await page.keyboard.press('Escape');
+    await setCode([
+      'const t = tapes.create("tap", { name: "side a" });',
+      't.add("boot", [0x60], { load: 0x0810 });',
+      't.add("level", new Uint8Array(50).fill(7), { load: 0x4000 });',
+      't.pause(1);',
+      'const a = t.toT64("archive");',
+      'a.rename("level", "level one");',
+      'print(tapes.mounted, t.files.map(f => f.name + ":" + f.errors.length).join(), a.kind, a.files.map(f => f.name).join(), a.toTap().files.length);',
+      't.save(); a.save();',
+      't.insert();',
+    ]);
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText('null BOOT:0,LEVEL:0 t64 BOOT,LEVEL ONE 2', { timeout: 30_000 });
+    await expect(made).toHaveText([/^side a\.tap\s*\d+ bytes/, /^side a\.t64\s*\d+ bytes/]);
+    await expect(page.getByRole('list', { name: 'What the run would put in the datasette' }).getByRole('listitem')).toHaveText(['side a.tap put in the datasette (a TAP, 2 files)']);
+  });
+
+  await test.step('out of safe mode the TAP is in the datasette, and the next run works on a copy of it', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /Inserted side a\.tap \(\d+ s\): 2 files/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run put in the datasette' }).getByRole('listitem')).toHaveCount(1);
+    await setCode([
+      'const m = tapes.mounted;',
+      'm.remove("boot"); m.add("extra", [1, 2, 3], { load: 0x2000 });',
+      'print(m.kind, m.files.map(f => f.name).join(), tapes.mounted.files.map(f => f.name).join());',
+      'm.toT64("from the tape").insert("made");',
+    ]);
+    await runIt();
+    await expect(printed).toHaveText('tap LEVEL,EXTRA BOOT,LEVEL', { timeout: 30_000 });
+    await expect(toast(page, /Inserted made\.t64 \(a T64, "FROM THE TAPE"\): 2 files/)).toBeVisible({ timeout: 30_000 });
+    await setCode(['const m = tapes.mounted;', 'print(m.kind, m.name, m.files.map(f => f.name + "@" + hex(f.load)).join());']);
+    await runIt();
+    await expect(printed).toHaveText('t64 FROM THE TAPE LEVEL@$4000,EXTRA@$2000', { timeout: 30_000 });
   });
 });
 

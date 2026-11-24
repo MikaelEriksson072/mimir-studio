@@ -1743,6 +1743,23 @@ export function replaceTapeFile(tap: Uint8Array, f: Pick<TapeFile, 'to'>, header
   return tapOf(out);
 }
 
+/** A TAP (version 1) of pulses given in cycles, each as long as it is: a pulse of a whole number of TAP units (8
+ *  cycles, 1-255 of them) is a byte, any other the long form, which says its cycles as they are. */
+export function tapOfCycles(cycles: ArrayLike<number>): Uint8Array {
+  const out: number[] = [];
+  for (let i = 0; i < cycles.length; i++) { const c = Math.max(1, Math.round(cycles[i])); out.push(c % 8 === 0 && c / 8 <= 255 ? c / 8 : -c); }
+  return tapOf(out);
+}
+
+/** The pulses, in cycles, of files in the KERNAL's format as makeTap writes them: the first with the 10 second leader
+ *  a tape starts with (`first`), else each with the shorter one a file after another has. */
+export function cbmFilePulses(files: Parameters<typeof makeTap>[0]['files'], first: boolean, endOfTape = false): Uint32Array {
+  if (first) return tapPulses(makeTap({ files, endOfTape })).cycles;
+  const dummy = { name: '', data: new Uint8Array(1), load: 0x0801 };
+  const skip = tapPulses(makeTap({ files: [dummy] })).cycles.length;
+  return tapPulses(makeTap({ files: [dummy, ...files], endOfTape })).cycles.subarray(skip);
+}
+
 /** A TAP (version 1) of these pulses: TAP units (cycles / 8), or a longer pulse as minus its cycles. */
 function tapOf(pulses: number[]): Uint8Array {
   let n = 0;

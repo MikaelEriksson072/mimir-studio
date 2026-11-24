@@ -518,6 +518,9 @@ export interface ScriptRun {
   /** the disk image a JavaScript script asked to be mounted (a disk's mount()): mounted by the app when the run has
    *  ended well (not in safe mode) */
   disk?: import('./script-disks').ScriptDiskRequest;
+  /** the tape image a JavaScript script asked to be put in the datasette (a tape's insert()): done by the app when
+   *  the run has ended well (not in safe mode) */
+  tape?: import('./script-tapes').ScriptTapeRequest;
   /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
   js?: boolean;
   actions?: ScriptAction[];

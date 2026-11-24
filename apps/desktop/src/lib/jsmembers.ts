@@ -13,6 +13,7 @@ export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | '
   | 'library' | 'libItem' | 'libItems' | 'libFrom' | 'libColors'
   | 'snapshot' | 'snapCpu' | 'snapPort' | 'snapCia' | 'snapSid' | 'snapVic' | 'snapSprite' | 'snapSprites' | 'snapDrive' | 'snapVia' | 'snapModule' | 'snapModules'
   | 'scripts' | 'scriptOne' | 'scriptList' | 'scriptSetting' | 'scriptSettings' | 'scriptPads' | 'scriptTemplate' | 'scriptTemplates'
+  | 'tapes' | 'tapeImage' | 'tapeEntry' | 'tapeEntries'
   | 'disks' | 'diskImage' | 'diskEntry' | 'diskEntries'
   | 'blocks' | 'block' | 'blockList' | 'struct' | 'structFields' | 'structField' | 'customType' | 'customTypes'
   | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
@@ -64,6 +65,27 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
   libItems: LIST, blockList: LIST, structFields: LIST, customTypes: LIST, snapSprites: LIST, snapModules: LIST,
+  tapeEntries: LIST,
+  tapes: [
+    m('create', 'create("tap" or "t64", { name }): a new, empty tape (a tape\'s pulses, or a tape archive)', true),
+    m('open', 'open(bytes): a tape image\'s bytes to work on (a TAP or a T64)', true),
+    m('mounted', 'the tape in the datasette to work on, a copy, or null'), m('kinds', 'the kinds of tape: "tap" and "t64"'),
+  ],
+  tapeImage: [
+    m('kind', '"tap" or "t64"'), m('name', 'a T64\'s name (set: up to 24 characters); a TAP\'s file name'), m('files', 'its files: a list of { number, name, format, type, load, end, size, seconds, errors }'),
+    m('find', 'find("name" or a number): a file, or null', true), m('has', 'has("name"): whether a file is on it', true),
+    m('read', 'read("name" or a number): a file\'s bytes, without a load address', true), m('prg', 'prg("name" or a number): a file\'s bytes with its load address first', true),
+    m('add', 'add("name", bytes, { load, basic, header }): a file after the last one; on a TAP in the KERNAL\'s format, as SAVE writes it', true),
+    m('remove', 'remove("name" or a number): a file taken off the tape', true), m('rename', 'rename("name" or a number, "new name")', true),
+    m('list', 'list(): the files, a line each', true), m('size', 'how many bytes the image is'), m('bytes', 'the image as it is now, a copy'), m('file', 'file(): the image\'s bytes', true),
+    m('save', 'save("name.tap"): the image a file of the run (Last run: Save…)', true), m('insert', 'insert(): the image in the datasette when the run has ended well', true),
+    m('toT64', 'toT64("name"): a TAP\'s files (turbo ones too) as a T64', true), m('toTap', 'toTap(): a T64\'s files written as a TAP in the KERNAL\'s format', true),
+    m('version', 'a TAP: its version (1)'), m('seconds', 'a TAP: how long it plays'), m('pulses', 'a TAP: its pulses\' lengths in cycles, a copy'),
+    m('unknown', 'a TAP: the stretches no format reads: a list of { from, to, pulses, seconds, short, long }'),
+    m('pause', 'a TAP: pause(seconds): silence at its end', true), m('addPulses', 'a TAP: addPulses([cycles, …]): pulses of your own at its end', true),
+    m('cut', 'a TAP: cut(from, to): the pulses from one up to another taken out; gives how many', true), m('endOfTape', 'a TAP: endOfTape(): the KERNAL\'s end-of-tape marker at its end', true),
+  ],
+  tapeEntry: [m('number', 'its number on the tape, from 0'), m('name', 'its name'), m('format', 'the loader it is in: "cbm" (the KERNAL\'s), "t64", "turbotape", "freeload", …'), m('type', '"prg", "basic", "seq", "end" or "data"'), m('load', 'where it loads, or null'), m('end', 'the address after its last byte, or null'), m('size', 'how many bytes it is'), m('seconds', 'a TAP: when it starts'), m('errors', 'what went wrong reading it, a text each')],
   diskEntries: LIST,
   disks: [
     m('create', 'create("d64" or "d81", { name, id }): a new, formatted disk (a 1541 disk or a 1581 disk)', true),
@@ -411,7 +433,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', diskEntries: 'diskEntry', scriptList: 'scriptOne', scriptSettings: 'scriptSetting', scriptPads: 'file', scriptTemplates: 'scriptTemplate', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', tapeEntries: 'tapeEntry', diskEntries: 'diskEntry', scriptList: 'scriptOne', scriptSettings: 'scriptSetting', scriptPads: 'file', scriptTemplates: 'scriptTemplate', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -481,6 +503,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'snapshot') return 'snapshot';
   if (e === 'scripts') return 'scripts';
   if (e === 'disks') return 'disks';
+  if (e === 'tapes') return 'tapes';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -516,6 +539,8 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (on === 'snapshot') return name === 'module' || name === 'file' ? 'bytes' : name === 'write' ? 'texts' : null;
     if (on === 'scripts') return name === 'find' ? 'scriptOne' : null;
     if (on === 'disks') return name === 'create' || name === 'open' ? 'diskImage' : null;
+    if (on === 'tapes') return name === 'create' || name === 'open' ? 'tapeImage' : null;
+    if (on === 'tapeImage') return name === 'read' || name === 'prg' || name === 'file' ? 'bytes' : name === 'find' || name === 'add' ? 'tapeEntry' : name === 'toT64' || name === 'toTap' ? 'tapeImage' : name === 'list' ? 'texts' : name === 'save' ? 'text' : null;
     if (on === 'diskImage') return name === 'read' || name === 'sector' || name === 'file' ? 'bytes' : name === 'find' || name === 'add' ? 'diskEntry' : name === 'list' || name === 'validate' ? 'texts' : name === 'save' ? 'text' : name === 'chain' ? 'list' : null;
     if (on === 'scriptOne') return name === 'withSettings' || name === 'setting' ? 'text' : null;
     if (on === 'struct' || on === 'customType') return name === 'mark' || name === 'markRecords' ? 'file' : null;
@@ -546,6 +571,9 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
   if (on === 'library') return name === 'items' || name === 'sids' || name === 'sprites' || name === 'chars' || name === 'bitmaps' ? 'libItems' : name === 'requests' ? 'texts' : name === 'folder' ? 'text' : null;
   if (on === 'libItem') return name === 'bytes' || name === 'bitmap' || name === 'screen' || name === 'colorRam' ? 'bytes' : name === 'tune' ? 'sidFile' : name === 'from' ? 'libFrom' : name === 'colors' ? 'libColors' : name === 'name' || name === 'file' || name === 'kind' || name === 'hash' ? 'text' : null;
+  if (on === 'tapes') return name === 'mounted' ? 'tapeImage' : name === 'kinds' ? 'texts' : null;
+  if (on === 'tapeImage') return name === 'files' ? 'tapeEntries' : name === 'bytes' ? 'bytes' : name === 'unknown' ? 'list' : name === 'name' || name === 'kind' ? 'text' : null;
+  if (on === 'tapeEntry') return name === 'name' || name === 'format' || name === 'type' ? 'text' : name === 'errors' ? 'texts' : null;
   if (on === 'disks') return name === 'mounted' ? 'diskImage' : name === 'kinds' ? 'texts' : null;
   if (on === 'diskImage') return name === 'files' ? 'diskEntries' : name === 'bytes' ? 'bytes' : name === 'name' || name === 'id' || name === 'kind' || name === 'dosType' ? 'text' : null;
   if (on === 'diskEntry') return name === 'name' || name === 'type' ? 'text' : null;

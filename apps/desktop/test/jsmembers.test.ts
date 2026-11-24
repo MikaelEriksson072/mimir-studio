@@ -214,6 +214,22 @@ describe('what the blocks\' values have', () => {
   });
 });
 
+describe('what the tapes\' values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('tapes., a tape and a file of it', () => {
+    expect(names('tapes')).toEqual(['create', 'open', 'mounted', 'kinds']);
+    const src = 'const t = tapes.create("tap");\nconst m = tapes.mounted;\nfor (const f of t.files) {\n}\nconst a = t.toT64();\n';
+    expect(names('t', src)).toEqual(['kind', 'name', 'files', 'find', 'has', 'read', 'prg', 'add', 'remove', 'rename', 'list', 'size', 'bytes', 'file', 'save', 'insert', 'toT64', 'toTap', 'version', 'seconds', 'pulses', 'unknown', 'pause', 'addPulses', 'cut', 'endOfTape']);
+    expect(names('m', src)).toEqual(names('t', src));
+    expect(names('a', src)).toEqual(names('t', src));
+    expect(names('f', src)).toEqual(['number', 'name', 'format', 'type', 'load', 'end', 'size', 'seconds', 'errors']);
+    expect(names('t.find(0)', src)).toEqual(names('f', src));
+    expect(jsTypeOf('t.read(0)', src)).toBe('bytes');
+    expect(jsTypeOf('t.prg("x")', src)).toBe('bytes');
+    expect(jsTypeOf('t.list()', src)).toBe('texts');
+  });
+});
+
 describe('what the disks\' values have', () => {
   const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
   it('disks., a disk and a file of its directory', () => {

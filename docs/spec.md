@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
 │  ├─ src/script-disks.ts          diskavbilder för ett JavaScript-skript: `disks` (skapa och ändra D64 och D81, spara, montera) (10.3)
 │  ├─ src/c64/diskedit.ts          `DiskEdit`: en D64 eller D81 formaterad och ändrad (katalog, BAM, sektorkedjor), som c1541 gör dem
 │  ├─ src/script-scripts.ts        skripten för ett JavaScript-skript: `scripts` (läs, anropa som bibliotek, lägg till, ändra, kör efteråt) (10.3)
@@ -2911,6 +2912,10 @@ $06, $08` i `.asm`-filen efter en körning.
   - *Make a disk of the program* (`disk_make`, 2026-11-24): en ny D64 eller D81 (`kind`, `diskName`, `diskId`) med
     programmets filer som de är i minnet (`fileName`), och den monterade diskens filer med `copyMounted`; katalogen
     skrivs, avbilden blir en fil (`saveAs`) och monteras med `mountIt`.
+  - *Make a tape of the program* (`tape_make`, 2026-11-24): en ny TAP eller T64 (`kind`, `tapeName`) med programmets
+    filer som de är i minnet (`fileName`), och filerna på bandet i datasetten med `copyMounted`; `pause` lägger
+    tystnad efter varje fil på en TAP; filerna listas, avbilden blir en fil (`saveAs`) och läggs i datasetten med
+    `insertIt`.
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2921,6 +2926,29 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Bandavbilder i ett JavaScript-skript** (`script-tapes.ts`, `tapesApi`, 2026-11-24): ett skript får `tapes`, med
+  vilket det gör och ändrar bandavbilder: ett bands pulser (.tap) och ett bandarkiv (.t64).
+  - `tapes.create("tap" | "t64", { name })` ger ett nytt, tomt band, `tapes.open(bytes)` en avbilds bytes att arbeta
+    på, och `tapes.mounted` bandet i datasetten som kopia (`null` utan band). `tapes.kinds`.
+  - Ett band har `kind`, `name` (en T64:s namn, går att sätta; en TAP:s filnamn), `files` (`number`, `name`,
+    `format`, `type`, `load`, `end`, `size`, `seconds`, `errors`: det `readTape` läser, turbofiler också), `size` och
+    `bytes`; `find`, `has`, `read` (bytes utan laddadress) och `prg` (med laddadress) tar ett namn eller ett nummer.
+    `add(namn, bytes, { load, basic, header })` lägger en fil efter den sista: på en TAP i KERNAL:s format som SAVE
+    skriver det (huvud och data två gånger; den första filen med bandets tio sekunders ledare, de följande med den
+    kortare; `basic` gör den flyttbar, `header` är resten av huvudet, högst 171 byte), i en T64 som en post. Utan
+    `load` är de två första byten laddadressen. `remove`, `rename` (en TAP-fil i KERNAL:s format skrivs om på sin
+    plats), `list()`, `file()`, `save(filnamn)` (avbilden som en fil av körningen) och `insert()`.
+  - `toT64(namn)` gör en TAP:s filer till en T64 (alla filer bandets laddare ger och som säger var de laddas: så blir
+    ett turboband ett arkiv av sina filer), `toTap()` skriver en T64:s filer som en TAP i KERNAL:s format.
+  - En TAP har också `version`, `seconds`, `pulses` (pulsernas längd i cykler, en kopia), `unknown` (sträckor inget
+    format läser), `pause(sekunder)`, `addPulses([cykler, …])`, `cut(från, till)` och `endOfTape()` (KERNAL:s
+    slutmarkör). En TAP skrivs som version 1 (`tapOfCycles`): en puls på ett helt antal TAP-enheter som en byte,
+    varje annan i den långa formen med sina cykler, så en TAP som öppnas och sparas har de pulser den hade. Filerna
+    ett skript lägger till är puls för puls de `makeTap` skriver (`cbmFilePulses`).
+  - Ett band ett skript arbetar på är skriptets eget. `insert()` ber om att avbilden läggs i datasetten
+    (`ScriptRun.tape`, `ScriptTapeRequest`), vilket görs när körningen slutat väl (`finishScriptRun`,
+    `insertTapeBytes`); i safe mode visar *Last run* *Would put in the datasette*, annars *Put in the datasette*.
+    Bara JavaScript.
 - **Diskavbilder i ett JavaScript-skript** (`script-disks.ts`, `disksApi`; `c64/diskedit.ts`, `DiskEdit`,
   2026-11-24): ett skript får `disks`, med vilket det gör och ändrar diskavbilder: en 1541-disk (.d64) och en
   1581-disk (.d81).
