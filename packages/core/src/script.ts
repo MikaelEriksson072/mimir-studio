@@ -497,6 +497,9 @@ export interface ScriptRun {
   /** the files a JavaScript script made with save(name, bytes, load): each with where it loads (null: it has no load
    *  address), listed under Last run */
   made?: { name: string; load: number | null; bytes: Uint8Array }[];
+  /** the export a JavaScript script asked for with exporter.write(): written by the app when the run has ended well
+   *  (script-export.ts); a safe run's is only said */
+  exports?: import('./script-export').ScriptExportRequest;
   /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
   js?: boolean;
   actions?: ScriptAction[];

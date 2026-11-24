@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, exportRequestText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
@@ -365,6 +365,13 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onSave, onG
       {run.prints?.length ? <div className="scr-wrote">
         <h5 className="scr-group-h" title="What the script's print(...) wrote, a line each">print</h5>
         <pre className="scr-prints scr-prints-run" aria-label="What the run printed">{run.prints.join('\n')}</pre>
+      </div> : null}
+      {run.exports ? <div className="scr-wrote scr-acted">
+        <h5 className="scr-group-h" title="What the script's exporter.write() asked for: the export is verified and written when the run has ended well. In safe mode nothing is written">{kept.safe ? 'Would export' : 'Exported'}</h5>
+        <ul className="scr-acted-list" aria-label={kept.safe ? 'What the run would export' : 'What the run exported'}>
+          {exportRequestText(run.exports).map((d, i) => <li key={i}><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{d}</li>)}
+        </ul>
+        {kept.safe && <p className="small muted">Safe mode: nothing is written. Switch safe mode off and run it again to write the export.</p>}
       </div> : null}
       {run.made?.length ? <div className="scr-wrote">
         <h5 className="scr-group-h" title="The files the script made with save(name, bytes, load): kept with this run until the next one. Nothing is written anywhere before one of them is saved or put in the project">Files it made</h5>

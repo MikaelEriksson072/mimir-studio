@@ -162,3 +162,16 @@ describe('what the loader\'s values have', () => {
     expect(jsTypeOf('loader.at(0x0810)[0]', src)).toBe('loaderFile');
   });
 });
+
+describe('what the export\'s values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('exporter., one of its files and what it has changed', () => {
+    expect(names('exporter')).toEqual(['files', 'names', 'sources', 'main', 'read', 'has', 'add', 'edit', 'replace', 'remove', 'rename', 'write', 'changes', 'name', 'assembler', 'folder', 'outDir']);
+    const src = 'for (const f of exporter.files) {\n}\nconst c = exporter.changes;\n';
+    expect(names('f', src)).toEqual(['name', 'kind', 'size', 'text', 'bytes']);
+    expect(names('c', src)).toEqual(['added', 'changed', 'removed']);
+    expect(jsTypeOf('exporter.sources[0]', src)).toBe('text');
+    expect(jsTypeOf('f.bytes', src)).toBe('bytes');
+    expect(jsTypeOf('exporter.name', src)).toBe('text');
+  });
+});

@@ -9,7 +9,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 
 /** the kinds of value a script works with */
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
-  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles';
+  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
 
@@ -57,6 +57,25 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST,
+  exporter: [
+    m('files', 'every file the export writes: a list of { name, kind, size, text, bytes }'), m('names', 'the names of the export\'s files'),
+    m('sources', 'the names of the sources, in the order they are built'), m('main', 'the name of the first source'),
+    m('read', 'read("name"): a file\'s text (a binary\'s bytes)', true), m('has', 'has("name"): whether the export has a file', true),
+    m('add', 'add("name", content): a file added, or put in place of one: a text or bytes', true),
+    m('edit', 'edit("name", text => …): a text file changed: the function gets the text and gives the new one', true),
+    m('replace', 'replace("name", from, to): every place a text (or a regular expression) is found in a text file, replaced; gives how many', true),
+    m('remove', 'remove("name"): a file left out of the export', true), m('rename', 'rename("from", "to"): a file under another name', true),
+    m('write', 'write({ elsewhere }): the export written when the run has ended well, verified first; elsewhere: true asks for the folder', true),
+    m('changes', 'what the script has done to the export so far: { added, changed, removed }'),
+    m('name', 'the project\'s name'), m('assembler', 'the assembler the sources are for: "kickass" or "64tass"'),
+    m('folder', 'where the export goes (the project\'s source folder, else the last one); null when a folder will be asked for'), m('outDir', 'the folder of the built PRGs in the export'),
+  ],
+  exportFile: [
+    m('name', 'the file\'s name in the export\'s folder (folders with /)'), m('kind', 'what it is: "source", "script", "text" or "binary"'), m('size', 'its size in bytes'),
+    m('text', 'its text; null for a binary'), m('bytes', 'its bytes'),
+  ],
+  exportChanges: [m('added', 'the names of the files the script added'), m('changed', 'the names of the export\'s files it changed'), m('removed', 'the names of the files it left out')],
+  exportFiles: LIST,
   loader: [
     m('name', 'which loader: "Spindle", "Sparkle", "Krill\'s loader", "Tape", …'), m('disk', 'the name of the disk image or tape it is on'),
     m('files', 'every file the loader loads, in the order they load: a list of { name, group, index, start, end, size, bytes, prg }'),
@@ -157,7 +176,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -219,6 +238,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'sindri') return 'sindri';
   if (e === 'brokkr') return 'brokkr';
   if (e === 'loader') return 'loader';
+  if (e === 'exporter') return 'exporter';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -245,6 +265,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (!callee || callee[1][0] !== '.') return null;
     const on = jsTypeOf(callee[0], source, depth + 1), name = callee[1].slice(1);
     if (on === 'cpu' && name === 'call') return 'regs';
+    if (on === 'exporter') return name === 'write' ? 'texts' : null;
     if (on === 'loader') return name === 'find' ? 'loaderFile' : name === 'group' ? 'loaderGroup' : name === 'load' ? 'file' : name === 'at' ? 'loaderFiles' : null;
     if (on === 'brokkr') return name === 'pack' ? 'packed' : name === 'crunch' ? 'crunched' : name === 'mem' ? 'memFile' : name === 'decrunch' ? 'bytes' : name === 'decruncher' ? 'text' : null;
     if (on === 'sindri') return name === 'unpack' ? 'unpacked' : name === 'c64' ? 'machine' : name === 'prg' ? 'bytes' : name === 'disassemble' || name === 'basic' ? 'texts' : null;
@@ -268,6 +289,9 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'diskFile') return name === 'name' || name === 'type' ? 'text' : null;
   if (on === 'sindri') return name === 'roms' ? 'text' : null;
   if (on === 'brokkr') return name === 'formats' ? 'texts' : null;
+  if (on === 'exporter') return name === 'files' ? 'exportFiles' : name === 'names' || name === 'sources' ? 'texts' : name === 'changes' ? 'exportChanges' : name === 'name' || name === 'assembler' || name === 'main' || name === 'outDir' ? 'text' : null;
+  if (on === 'exportFile') return name === 'bytes' ? 'bytes' : name === 'name' || name === 'kind' || name === 'text' ? 'text' : null;
+  if (on === 'exportChanges') return 'texts';
   if (on === 'loader') return name === 'files' ? 'loaderFiles' : name === 'groups' ? 'loaderGroups' : name === 'lines' ? 'texts' : name === 'name' || name === 'disk' || name === 'script' ? 'text' : null;
   if (on === 'loaderGroup') return name === 'files' ? 'loaderFiles' : name === 'name' || name === 'what' ? 'text' : null;
   if (on === 'loaderFile') return name === 'bytes' || name === 'prg' ? 'bytes' : name === 'name' || name === 'group' ? 'text' : null;

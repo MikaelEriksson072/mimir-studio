@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are thirteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'screen_show', 'screen_hexdump']);
+  it('are fourteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -223,5 +223,27 @@ describe('the JavaScript template that uses Brokkr', () => {
     // Brokkr's warnings are printed: its own format's decruncher has no room but on the screen here
     expect(o.prints!.slice(4)).toEqual([expect.stringMatching(/^Warning: The decruncher runs on the screen /)]);
     expect(o.made).toBeUndefined();
+  });
+});
+
+describe('the JavaScript template that writes the export', () => {
+  it('Export with a header and a file list puts the line first in each source, adds the list and asks for the export', () => {
+    const t = template('export_own');
+    const data = { name: 'demo', assembler: 'kickass', folder: null as string | null, main: 'a.asm', sources: ['a.asm', 'b.asm'], outDir: 'out',
+      files: { 'a.asm': '.pc = $0810\n', 'b.asm': '.pc = $2000\n', 'build.bat': 'x', 'bin/a.bin': Uint8Array.of(1, 2) } };
+    const go = (values: Record<string, string>, d = data) => runJs(env, { source: setScriptParams(t.source, { code: 'js' }, values).source, pads: [] }, { export: d });
+    const r = go({});
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toEqual(['demo (kickass): 5 files to a folder that is asked for', 'Changed: a.asm, b.asm', 'Added: FILES.txt']);
+    expect(r.exports!.files['a.asm']).toBe('// Exported by a script\n.pc = $0810\n');
+    expect(r.exports!.files['b.asm']).toBe('// Exported by a script\n.pc = $2000\n');
+    expect((r.exports!.files['FILES.txt'] as string).split('\n').slice(0, 4).map(l => l.split(/\s+/))).toEqual([['a.asm', '36', 'source'], ['b.asm', '36', 'source'], ['build.bat', '1', 'script'], ['bin/a.bin', '2', 'binary']]);
+    expect(r.exports).toMatchObject({ changed: ['a.asm', 'b.asm'], removed: [], elsewhere: false });
+    // 64tass comments, no list, elsewhere
+    const o = go({ listFile: '""', elsewhere: 'true', header: '"x"' }, { ...data, assembler: '64tass', folder: 'C:\\p\\source' });
+    expect(o.prints![0]).toBe('demo (64tass): 4 files to a folder that is asked for');
+    expect(o.exports!.files).toEqual({ 'a.asm': '; x\n.pc = $0810\n', 'b.asm': '; x\n.pc = $2000\n' });
+    expect(o.exports!.elsewhere).toBe(true);
+    expect(go({ header: '""', listFile: '""' }, { ...data, folder: 'C:\\p\\source' }).prints).toEqual(['demo (kickass): 4 files to C:\\p\\source']);
   });
 });

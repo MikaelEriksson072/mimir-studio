@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type UserScript,
+  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2627,7 +2627,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
     if (shown) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     // what it printed, the files it made, or the error it stopped with, is under Last run: that tab is shown
-    if (shown && (r.prints?.length || r.made?.length || r.error)) st.set({ outTab: 'run', outFolded: false });
+    if (shown && (r.prints?.length || r.made?.length || r.exports || r.error)) st.set({ outTab: 'run', outFolded: false });
+    // the export it asked for: written now that the run has ended well and its changes are in the program (a safe run's
+    // is only said, under Last run)
+    if (r.exports && !safe && endedWell(r.end)) void exportProject(r.exports.elsewhere, { request: r.exports, changed: !!w?.written.length || !!w?.acted?.done.length, script: s.name });
     // what it printed on its C64 screen: the screen is shown
     if (shown && r.screen?.wrote && !st.c64.open) st.setC64({ open: true });
     const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
@@ -2635,9 +2638,19 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       ? ` Safe mode: nothing went into the program. ${w?.written.length ? `It would change ${bytes} byte${bytes === 1 ? '' : 's'} in ${on.length} place${on.length === 1 ? '' : 's'} (Scripts → In the program → Would change).` : 'It would change none of the program\'s bytes.'}`
       : w?.written.length ? ` It changed ${bytes} byte${bytes === 1 ? '' : 's'} of the program in ${on.length} place${on.length === 1 ? '' : 's'}: the listing and the source have them.` : ' It changed none of the program\'s bytes.';
     const printed = r.prints?.length ? ` It printed ${r.prints.length} line${r.prints.length === 1 ? '' : 's'} (Scripts → Last run): ${r.prints[0].length > 60 ? `${r.prints[0].slice(0, 60)}…` : r.prints[0]}${r.prints.length > 1 ? ' …' : ''}` : '';
+    const asked = r.exports ? (safe ? ' It would write the export (Scripts → Last run).' : ' It asked for the export, which is being written.') : '';
     const made = r.made?.length ? ` It made ${r.made.length} file${r.made.length === 1 ? '' : 's'} (Scripts → Last run): ${r.made[0].name}${r.made.length > 1 ? ', …' : ''}.` : '';
     const drew = r.screen?.wrote ? ` It printed on ${r.screen.c64 ? 'the C64\'s screen' : 'its C64 screen'} (Scripts → C64 screen).` : '';
-    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${drew}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${asked}${drew}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+  };
+  /** the export as it is now, for a JavaScript script's `exporter` (core script-export.ts): what Export would write,
+   *  less the verified PRGs (they are made when it is written); null without a file to export */
+  const scriptExportData = (): ScriptExportData | null => {
+    const { R: R1, project: p1, S: S1 } = latest.current;
+    if (!p1.files.length) return null;
+    const sep = home?.dir.includes('\\') ? '\\' : '/';
+    return { name: p1.name, assembler: assemblerOf(S1) === '64tass' ? '64tass' : 'kickass', folder: home ? `${home.dir}${sep}${PROJECT_FOLDERS.source}` : exportDir, main: mainSource(R1),
+      sources: Object.keys(R1.files).filter(n => typeof R1.files[n] === 'string' && /\.(asm|s)$/i.test(n) && !n.includes('/')), outDir: S1.outDir, files: exportFiles(p1, R1, S1, null, new Date()) };
   };
   /** the C64's ROMs, for scripts that run in the whole C64 (asked for once they are needed, kept once found) */
   const scriptRoms = useRef<Roms | null>(null);
@@ -2675,6 +2688,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); toast(`"${s.name}" does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}`, 'warn'); return; }
     const opts = await scriptRunOpts(s, env, s.pads, c, source);
     if (!opts) return;
+    // the export, for a script whose code names it (a run of the script itself: not one on files or with values)
+    if (s.code === 'js' && /\bexporter\b/.test(source)) { await analysisSettled(); opts.export = scriptExportData(); }
     useScripts.getState().set({ running: id });
     try {
       const r = await runScriptInWorker(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init }, opts);
@@ -3785,16 +3800,21 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
 
   /** verify, then export to the project's source folder (`elsewhere`, or without a project: to a folder picked); the
    * folder and its first source, or null when nothing was exported */
-  const exportProject = async (elsewhere = false): Promise<{ dir: string; main: string } | null> => {
+  const exportProject = async (elsewhere = false, by?: { request: ScriptExportRequest; changed: boolean; script: string }): Promise<{ dir: string; main: string } | null> => {
     if (!kr) { needDesktop(); return null; }
     const res = await runVerify({ quiet: true });
     if (!res) return null;
     try {
       // the render that was verified (runVerify waited for the latest analysis)
       const { R: R1, project: p1, S: S1 } = latest.current;
-      const w = await kr.writeExport({ target: home && !elsewhere ? 'project' : 'pick', files: exportFiles(p1, R1, S1, res.V, new Date()) });
+      // a script's export (exporter.write()): its files laid over the export as it is now
+      const over = by ? applyExportRequest(exportFiles(p1, R1, S1, res.V, new Date()), by.request, by.changed) : null;
+      const w = await kr.writeExport({ target: home && !elsewhere ? 'project' : 'pick', files: over?.files ?? exportFiles(p1, R1, S1, res.V, new Date()) });
       if (w) { setExportDir(w.dir); exportedFiles.current = filesOf(p1); }
-      if (w) toast(res.ok ? `Exported verified ${ASSEMBLERS[asm].name} project to ${w.dir} (${w.written.length} files)` : `Exported to ${w.dir}, but the round-trip check failed; see Build output`, res.ok ? 'ok' : 'warn');
+      if (w && by) {
+        const n = Object.keys(by.request.files).length - over!.stale.length, gone = by.request.removed.length;
+        toast(`"${by.script}" exported to ${w.dir} (${w.written.length} files${n ? `, ${n} of them the script's` : ''}${gone ? `, ${gone} left out` : ''})${res.ok ? '' : '; the round-trip check failed, see Build output'}${over!.stale.length ? `. Not the script's ${over!.stale.join(', ')}: the run changed the program, so the source is another than the one the script changed; run it again` : ''}`, res.ok && !over!.stale.length ? 'ok' : 'warn');
+      } else if (w) toast(res.ok ? `Exported verified ${ASSEMBLERS[asm].name} project to ${w.dir} (${w.written.length} files)` : `Exported to ${w.dir}, but the round-trip check failed; see Build output`, res.ok ? 'ok' : 'warn');
       return w && { dir: w.dir, main: mainSource(R1) };
     } catch (e) { toast(`Export failed: ${errorText(e)}`, 'err'); return null; }
   };

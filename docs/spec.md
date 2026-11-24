@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-export.ts         exporten för ett JavaScript-skript: `exporter` (läs, ändra, lägg till, skriv) (10.3)
 │  ├─ src/script-loader.ts         loadern för ett JavaScript-skript: `loader` (loaderflikens filer, grupper, skript) (10.3)
 │  ├─ src/script-brokkr.ts         Brokkr för ett JavaScript-skript: `brokkr` (packa, kruncha, avkruncha) (10.3)
 │  ├─ src/script-sindri.ts         Sindri för ett JavaScript-skript: `sindri` (uppackaren, en hel C64, disassemblering) (10.3)
@@ -2889,6 +2890,32 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Exporten i ett JavaScript-skript** (`script-export.ts`, `exportApi`, 2026-11-24): ett skript får `exporter`
+  (`export` är ett ord i språket), det *Export* skriver: källorna, binärerna, byggskripten, README, projektfilen och
+  originalfilerna (`exportFiles`), som de är när körningen börjar.
+  - Läsa: `exporter.name`, `assembler` (`"kickass"`/`"64tass"`), `folder` (projektets källmapp, annars mappen det
+    senast exporterades till; `null` när en mapp kommer att frågas efter), `main`, `sources`, `outDir`,
+    `exporter.files` (`[{ name, kind, size, text, bytes }]`, `kind` är `"source"`, `"script"`, `"text"` eller
+    `"binary"`), `names`, `has(namn)`, `read(namn)` (text, eller byte för en binär).
+  - Ändra: `add(namn, innehåll)` (text eller byte; ersätter en fil med samma namn), `edit(namn, text => …)`,
+    `replace(namn, från, till)` (text eller reguljärt uttryck; ger antalet), `remove(namn)`, `rename(från, till)`;
+    `exporter.changes` är `{ added, changed, removed }` så här långt. Namn är relativa exportmappen, med `/` för
+    mappar; `..`, enhet och absoluta sökvägar tas inte (`exportFileName`), och skiftläget skiljer inte två filer.
+  - Skriva: `exporter.write({ elsewhere })` begär exporten. Ingenting skrivs under körningen: körningen slutar med
+    begäran (`ScriptRun.exports`, `ScriptExportRequest`: skriptets filer, de borttagna, de ändrade, `elsewhere`), och
+    appen skriver den när körningen slutat väl och dess ändringar är i programmet (`finishScriptRun` →
+    `exportProject(…, by)`): verifiering som vanligt, exporten som den är då, med skriptets filer lagda över
+    (`applyExportRequest`) och de verifierade PRG:erna i `out/` som alltid. Till projektets källmapp; utan projekt,
+    eller med `elsewhere: true`, frågas mappen efter. En körning som slutar med fel begär ingenting.
+  - Om körningen också ändrade programmet (byte eller märkning) är en källa skriptet ändrade inte längre källan:
+    den skrivs som den är nu, och meddelandet säger vilka filer och att skriptet ska köras igen (`stale`).
+  - I safe mode skrivs ingenting: *Last run* visar *Would export* med vad som skulle skrivas (`exportRequestText`);
+    annars *Exported*. Exporten ges bara till en körning av skriptet självt (inte *Run on files*, *Run with values*
+    eller krokarna före bygge och efter laddning), och bara när koden nämner `exporter`; annars säger `exporter`
+    att det inte finns något att exportera här.
+  - Editorn föreslår medlemmarna efter `exporter.`, en fil och `changes`. Mallen *Export with a header and a file
+    list* (`export_own`) lägger en kommentarsrad först i varje källa (`header`), lägger till en lista över exportens
+    filer (`listFile`) och skriver exporten (`elsewhere`).
 - **Loadern i ett JavaScript-skript** (`script-loader.ts`, `loaderApi`, 2026-11-24): ett skript får `loader`, det
   loaderfliken för den monterade disken eller bandet visar (Spindle, Bitfire, BoozeLoader, Sparkle, IFFL, Krills,
   Covert Bitops, DLoC:s, Pirate Slayer, Para-Protect, Disk-Speed, band), eller `null` när Mimir inte känner någon;

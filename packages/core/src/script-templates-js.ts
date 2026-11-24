@@ -419,5 +419,31 @@ const loaderFiles = js('loader_files', 'List the loader\'s files', 'The files th
   '  save(file.name, file.bytes, file.start);',
   '}',
 ]);
+const exportOwn = js('export_own', 'Export with a header and a file list', 'The export written by a script: a comment line first in every source, a list of the export\'s files added, and the export written as Export writes it.', [], [
+  ...box('Export with a header and a file list', [
+  'Has the export written (as Export, Ctrl+E, writes it: verified first) with',
+  'changes of the script\'s own: a comment line first in every source, and a',
+  'text file that lists the export\'s files with their sizes. It shows what a',
+  'script can do with the export: read its files (exporter.files, read), change',
+  'a text (edit, replace), add files of its own (add), leave files out (remove)',
+  'and write it (write). Nothing is written before the run has ended well; in',
+  'safe mode Last run says what would be written.',
+  ]),
+  '',
+  part('settings: change these'),
+  'const header = "Exported by a script";   // a comment line put first in every source; "" for none',
+  'const listFile = "FILES.txt";            // the name of the list of the export\'s files; "" for none',
+  'const elsewhere = false;                 // true: a folder is asked for; false: the project\'s folder (asked for when there is none)',
+  '',
+  part('the export'),
+  'let comment = exporter.assembler === "64tass" ? "; " : "// ";',
+  'if (header) for (const name of exporter.sources) exporter.edit(name, text => comment + header + "\\n" + text);',
+  'if (listFile) exporter.add(listFile, exporter.files.map(f => f.name.padEnd(40) + String(f.size).padStart(8) + "  " + f.kind).join("\\n") + "\\n");',
+  'let done = exporter.changes;',
+  'print(exporter.name + " (" + exporter.assembler + "): " + exporter.names.length + " files to " + (elsewhere || !exporter.folder ? "a folder that is asked for" : exporter.folder));',
+  'if (done.changed.length) print("Changed: " + done.changed.join(", "));',
+  'if (done.added.length) print("Added: " + done.added.join(", "));',
+  'exporter.write({ elsewhere });',
+]);
 /** The JavaScript templates, in the order the Scripts tab lists them. */
-export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, brokkrPack, loaderFiles, screenShow, hexDump];
+export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, brokkrPack, loaderFiles, exportOwn, screenShow, hexDump];

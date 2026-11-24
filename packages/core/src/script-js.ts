@@ -22,6 +22,8 @@
  *   files                    the program's files in memory: [{ start, end }], end the address after the last byte
  *   loader, loaders          the loader of the mounted disk or tape, as its loader tab shows it (script-loader.ts): or null;
  *                            loader.files, loader.groups, loader.script, loader.find(name), loader.load(name)
+ *   exporter                 the export (script-export.ts): exporter.files, exporter.read(name), exporter.add(name, content),
+ *                            exporter.edit(name, text => …), exporter.remove(name), exporter.write() to have it written
  *   brokkr                   Brokkr, Mimir's cruncher (script-brokkr.ts): brokkr.pack(prg) for a file that unpacks itself,
  *                            brokkr.crunch(bytes) and brokkr.decrunch(stream), brokkr.mem(bytes, start), brokkr.decruncher()
  *   sindri                   Sindri, Mimir's C64 and unpacker (script-sindri.ts): sindri.unpack(prg), sindri.c64() for a
@@ -43,6 +45,7 @@ import { Cpu, type Bus, type Roms } from '@mimir/sindri';
 import { SINDRI_BUDGET, sindriApi, sindriMachine } from './script-sindri';
 import { brokkrApi } from './script-brokkr';
 import { loaderApi, type ScriptLoaderData } from './script-loader';
+import { exportApi, type ScriptExportData, type ScriptExportRequest } from './script-export';
 import { SCREEN_C64, screenApi, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
 import type { Addr, UserScript } from './types';
 import { diskSectors, parseD64, readD64File, sectorOffset, type D64File } from './c64/d64';
@@ -56,6 +59,8 @@ export interface JsExtras { disk?: Uint8Array | null;
   roms?: Roms | null;
   /** the loaders of the mounted disk and tape, with their files (the app reads them: script-loader.ts) */
   loaders?: readonly ScriptLoaderData[] | null;
+  /** the export as it is now, for `exporter` (null: it is not given to this run) */
+  export?: ScriptExportData | null;
   /** the size of the script's C64 screen (40×25 when not said) */
   screen?: Partial<ScreenSize> | null }
 
@@ -102,6 +107,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   const scr = new TextScreen(extras.screen ?? SCREEN_C64), traps = screenTraps(env.files, own);
   const prints: string[] = [], actions: ScriptAction[] = [];
   const made: NonNullable<ScriptRun['made']> = [];
+  let exports: ScriptExportRequest | undefined;
   let instructions = 0, cycles = 0;
   let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
 
@@ -198,6 +204,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
     const sindri = sindriApi({ mem, addr, files, roms: extras.roms ?? null, disk: extras.disk ?? null, budget: { left: SINDRI_BUDGET } });
     const brokkr = brokkrApi({ mem, addr, files });
     const { loader, loaders } = loaderApi(extras.loaders ?? [], { mem, addr });
+    const exporter = exportApi(extras.export ?? null, r => { exports = r; });
     const save = (name: unknown, bytes: unknown, load?: unknown) => {
       if (!(bytes instanceof Uint8Array) && !Array.isArray(bytes)) throw new TypeError('save: bytes are wanted (a Uint8Array, such as mem.subarray(…) or what sindri.unpack gave)');
       const n = String(name ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'file';
@@ -205,7 +212,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, save, screen };
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -226,7 +233,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
-    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}),
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}),
     ...(scr.wrote ? { screen: scr.state() } : {}),
   };
 }

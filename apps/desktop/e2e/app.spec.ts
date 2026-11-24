@@ -10861,7 +10861,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11249,5 +11249,74 @@ test('a JavaScript script has the loader of the mounted disk: its groups and fil
     await expect(page.locator('.scr-end')).toContainText('Ran to its end');
     await expect(printed).toHaveText('bundle02_0400.prg bundle02 $0400 $0428 true bundle01_d000.prg\n# Sparkle loader script, rebuilt by Mimir Studio from sparkle-demo.d64 (Sparkle): 3 bundles, 4 files.');
     await expect(made.getByRole('listitem')).toHaveText([/^bundle02_0400\.prg40 bytes, loads at \$0400To the project…Save…$/]);
+  });
+});
+
+test('a JavaScript script writes the export: its files read and changed, a file of its own added, written when the run has ended; safe mode only says', async ({ workDir, app, page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+  const out = join(workDir, 'scripted-export');
+
+  await test.step('the template in safe mode says what it would export and writes nothing', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Export with a header and a file list to the project' }).click();
+    await expect(page.getByRole('option', { name: 'export_own' })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end');
+    await expect(printed).toContainText('raster-demo (kickass): ');
+    await expect(printed).toContainText('Changed: raster-demo.asm');
+    await expect(printed).toContainText('Added: FILES.txt');
+    await expect(page.getByRole('list', { name: 'What the run would export' }).getByRole('listitem')).toHaveText([
+      'The export, to the project\'s folder (a folder is asked for when there is none)', '1 file added: FILES.txt', '1 file changed: raster-demo.asm']);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  await test.step('out of safe mode the export is verified and written, with the script\'s line in the source and its list', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await stubDialogs(app, { open: [out] });
+    await runIt();
+    await expect(toast(page, new RegExp('^"export_own" exported to .*scripted-export \\(\\d+ files, 2 of them the script\'s\\)$'))).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByRole('list', { name: 'What the run exported' }).getByRole('listitem')).toHaveCount(3);
+    const source = readFileSync(join(out, 'raster-demo.asm'), 'utf8');
+    expect(source.split('\n')[0]).toBe('// Exported by a script');
+    const list = readFileSync(join(out, 'FILES.txt'), 'utf8').split('\n').map(l => l.split(/\s+/)[0]);
+    expect(list).toContain('raster-demo.asm');
+    expect(list).toContain('build.bat');
+    // what Export always writes is there too: the verified PRG, the original
+    expect(existsSync(join(out, 'out', 'raster-demo.prg'))).toBe(true);
+    expect(existsSync(join(out, 'original', 'raster-demo.prg'))).toBe(true);
+  });
+
+  await test.step('a script of one\'s own leaves a file out, adds bytes and renames; exporter. lists what it has', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('exporter.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name').first()).toHaveText('files');
+    await expect(page.locator('.suggest-widget.visible')).toContainText('write');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'exporter.remove("README.md");',
+      'exporter.add("data/start.bin", mem.subarray(0x0810, 0x0818));',
+      'exporter.rename("build.sh", "make.sh");',
+      'print(exporter.replace("build.bat", /raster-demo/g, "raster-demo"), exporter.has("build.sh"), exporter.folder.endsWith("scripted-export"));',
+      'exporter.write();',
+    ].join('\n') + '\n');
+    const other = join(workDir, 'scripted-export-2');
+    await stubDialogs(app, { open: [other] });
+    await runIt();
+    await expect(toast(page, /exported to .*scripted-export-2 \(\d+ files, 2 of them the script's, 2 left out\)$/)).toBeVisible({ timeout: 90_000 });
+    await expect(printed).toHaveText(/^\d+ false true$/);
+    expect(existsSync(join(other, 'README.md'))).toBe(false);
+    expect(existsSync(join(other, 'build.sh'))).toBe(false);
+    expect(existsSync(join(other, 'make.sh'))).toBe(true);
+    expect([...readFileSync(join(other, 'data', 'start.bin'))]).toHaveLength(8);
   });
 });
