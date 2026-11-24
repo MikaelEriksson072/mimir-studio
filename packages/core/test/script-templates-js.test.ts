@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
 import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are fifteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'screen_show', 'screen_hexdump']);
+  it('are seventeen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -267,5 +267,45 @@ describe('the JavaScript template that builds and starts', () => {
     const o = go({ verifyFirst: 'false', inDebugger: 'true' }, { ...data, last: { ok: true, fresh: false, by: 'built-in', log: '', files: [] } });
     expect(o.prints![0]).toBe('Last build (built-in): OK, of the program before its last change');
     expect(o.builds).toEqual([expect.objectContaining({ kind: 'start', debugger: true })]);
+  });
+});
+
+describe('the JavaScript templates for SID music', () => {
+  /** a player at $1000: init sets the volume, play starts a sawtooth note in each voice */
+  const tune = fromSource('tune.prg', ['.pc = $1000', ' jmp init', ' jmp play', 'init: lda #$0f', ' sta $d418', ' rts',
+    'play: ldx #14', 'v: lda #$10', ' sta $d400,x', ' sta $d401,x', ' lda #$21', ' sta $d404,x', ' lda #$09', ' sta $d405,x', ' txa', ' sec', ' sbc #7', ' tax', ' bpl v', ' rts'].join('\n'));
+  const end = tune.load + tune.bytes.length;
+  const data = { player: 'vice' as const, tunes: [{ name: 'music', file: 'tune.prg', start: 0x1000, end, init: 0x1000, play: 0x1003, why: [], score: 1, data: musicPlayData(tune.bytes, 0x1000, 0x1000, 0x1003) }] };
+  const go = (name: string, values: Record<string, string> = {}, d: typeof data | null = data) =>
+    runJs({ files: [tune], names: new Map([['music', 0x1000]]) }, { source: setScriptParams(template(name).source, { code: 'js' }, values).source, pads: [] }, { sid: d });
+
+  it('List the music and make .sid files lists each tune, makes its .sid and asks for one to be played', () => {
+    const r = go('sid_files');
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toEqual([`0: music  $1000-$${(end - 1).toString(16)}  init $1000  play $1003  3 notes in 5 s`]);
+    expect(r.made!.map(m => m.name)).toEqual(['music.sid']);
+    expect(parsePsid(r.made![0].bytes).data).toEqual(tune.bytes);
+    expect(r.plays).toBeUndefined();
+    const p = go('sid_files', { makeFiles: 'false', author: '"Me"', playTune: '0', playSong: '2' });
+    expect(p.made).toBeUndefined();
+    expect(p.prints![1]).toBe('Then: music played in VICE: init $1000 with song $02, then play $1003 each frame');
+    expect(p.plays).toHaveLength(1);
+    expect(go('sid_files', { playTune: '3' }).error?.msg).toBe('Error: There is no tune 3: the program has 1');
+    expect(go('sid_files', {}, null).error?.msg).toMatch(/^Error: The program has no music block/);
+  });
+
+  it('Print the notes a tune plays prints each frame that differs, for a tune or for routines given', () => {
+    const r = go('sid_notes');
+    expect(r.error).toBeUndefined();
+    expect(r.prints![0]).toBe('frame  voice 1          voice 2          voice 3          volume');
+    expect(r.prints![1]).toBe('    0   --- none         --- none         --- none        15');
+    expect(r.prints![2]).toMatch(/^    1  \*[A-G][-#]\d sawtooth {4}\*[A-G][-#]\d sawtooth {4}\*[A-G][-#]\d sawtooth {4}15$/);
+    expect(r.prints![3]).toMatch(/^100 frames: 3 notes started, 13 SID registers written, play takes \d+ cycles at most$/);
+    expect(r.prints).toHaveLength(4);
+    // the routines given, in memory as the script has it
+    const own = go('sid_notes', { tune: '-1', init: '"music"', play: '0x1003', frames: '10' }, null);
+    expect(own.prints![3]).toMatch(/^10 frames: 3 notes started/);
+    expect(go('sid_notes', { tune: '2' }).error?.msg).toMatch(/^Error: There is no tune 2: the program has 1/);
+    expect(go('sid_notes', { tune: '-1', play: '0x1000' }).prints!.at(-1)).toMatch(/^It does not play: /);
   });
 });

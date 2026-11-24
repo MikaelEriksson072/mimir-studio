@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11333,6 +11333,68 @@ test('a JavaScript script writes the export: its files read and changed, a file 
     expect(existsSync(join(other, 'build.sh'))).toBe(false);
     expect(existsSync(join(other, 'make.sh'))).toBe(true);
     expect([...readFileSync(join(other, 'data', 'start.bin'))]).toHaveLength(8);
+  });
+});
+
+test('a JavaScript script has the SID music: the program\'s tunes listed and made .sid files, a player run frame by frame, and a tune played when the run has ended; safe mode only says', async ({ page }) => {
+  // VICE itself is not started: a Windows program that ends at once stands in for it
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  test.skip(!existsSync(standIn), 'needs where.exe');
+  await waitForListing(page);
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, 'Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop')).toBeVisible();
+  await waitForListing(page);
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+
+  await test.step('the template lists the program\'s music and makes a .sid file of it', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template List the music and make .sid files to the project' }).click();
+    await expect(page.getByRole('option', { name: 'sid_files' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end', { timeout: 30_000 });
+    await expect(printed).toHaveText(/^0: music_1800 {2}\$1800-\$19cc {2}init \$1800 {2}play \$1803 {2}\d+ notes in 5 s$/);
+    await expect(page.getByRole('list', { name: 'Files the run made' }).getByRole('listitem')).toHaveCount(1);
+    await expect(page.getByRole('list', { name: 'Files the run made' })).toContainText('music_1800.sid');
+  });
+
+  await test.step('the notes template prints what the player leaves in the SID, frame by frame', async () => {
+    await page.getByRole('button', { name: 'Add the template Print the notes a tune plays to the project' }).click();
+    await expect(page.getByRole('option', { name: 'sid_notes' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(printed).toContainText('frame  voice 1', { timeout: 30_000 });
+    await expect(printed).toContainText(/100 frames: \d+ notes started, \d+ SID registers written, play takes \d+ cycles at most/);
+  });
+
+  await test.step('a script of one\'s own: sid. lists what it has; in safe mode a tune to play is only said, out of it VICE plays it', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('sid.');
+    // (the list draws the rows that fit: the first twelve of its fourteen are looked at)
+    await expect.poll(async () => (await page.locator('.suggest-widget.visible .monaco-list-row .label-name').allTextContents()).slice(0, 12))
+      .toEqual(['tunes', 'tune', 'at', 'parse', 'make', 'load', 'run', 'player', 'play', 'note', 'voices', 'noteTables']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'const t = sid.at(0x1800);',
+      'const f = sid.parse(t.sid({ author: "Mimir" }));',
+      'print(t.name, hex(t.init), hex(t.play), f.author, f.size === t.size, t.run({ frames: 50 }).plays, sid.musicPlayer, hex(t.player().prg[0] | t.player().prg[1] << 8));',
+      'sid.play(t, { song: 1 });',
+    ].join('\n') + '\n');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText('music_1800 $1800 $1803 Mimir true true VICE $0801', { timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run would play' }).getByRole('listitem')).toHaveText(['music_1800 played in VICE: init $1800 with song $01, then play $1803 each frame']);
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /VICE plays music_1800: init \$1800 with song \$01, then play \$1803 each frame/)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole('list', { name: 'What the run played' }).getByRole('listitem')).toHaveCount(1);
   });
 });
 

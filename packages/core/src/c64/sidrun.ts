@@ -29,6 +29,9 @@ export interface PlayerRunOptions {
   loaded?: (a: Addr) => boolean;
   /** also give what init left for play (`PlayerRun.state`): a player whose songs routines of the program start */
   state?: boolean;
+  /** called once init has returned (0) and after each play call that returned (1, 2, …), with the SID's 25 registers
+   *  as they were last written (the run's own array: copy what is kept) */
+  frame?: (n: number, sid: Uint8Array) => void;
 }
 
 /** What init left for play (PlayerRunOptions.state): the bytes init wrote, memory as init left it, the SID registers
@@ -154,12 +157,14 @@ export function runPlayer(mem0: Uint8Array, o: PlayerRunOptions): PlayerRun {
     if (!r.ok) return out(false, 0, `init ${r.why}`, initCycles, 0);
   }
   if (st) after = mem.slice();
+  o.frame?.(0, sid);
   let maxPlay = 0, played = 0;
   for (frame = 1; frame <= o.frames; frame++) {
     const r = call(o.play, 0, PLAY_CYCLES);
     maxPlay = Math.max(maxPlay, r.cycles);
     if (!r.ok) return out(true, played, `play ${r.why} (call ${frame})`, initCycles, maxPlay);
     played++;
+    o.frame?.(frame, sid);
     if (o.quiet && frame >= o.quiet && !sidWrites) return out(true, played, `play writes no SID register in ${o.quiet} calls`, initCycles, maxPlay);
     if (o.settle && frame - lastNew >= o.settle) break;
   }

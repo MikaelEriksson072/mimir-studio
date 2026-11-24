@@ -176,6 +176,26 @@ describe('what the export\'s values have', () => {
   });
 });
 
+describe('what the SID music\'s values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('sid., a tune, what it plays with, a run and its dump', () => {
+    expect(names('sid')).toEqual(['tunes', 'tune', 'at', 'parse', 'make', 'load', 'run', 'player', 'play', 'note', 'voices', 'noteTables', 'musicPlayer', 'requests']);
+    const src = 'const t = sid.tune;\nconst r = t.run({ frames: 50 });\nfor (const tune of sid.tunes) {\n}\nconst v = sid.voices(r.dump[1]);\nconst p = sid.parse(t.sid());\n';
+    expect(names('t', src)).toEqual(['name', 'file', 'start', 'end', 'size', 'bytes', 'init', 'play', 'song', 'songs', 'samples', 'why', 'score', 'plays', 'sid', 'player', 'run']);
+    expect(names('tune', src)).toEqual(names('t', src));
+    expect(names('t.plays', src)).toEqual(['start', 'end', 'bytes', 'init', 'play', 'parts', 'routine', 'problem', 'alone']);
+    expect(names('r', src)).toContain('dump');
+    expect(jsTypeOf('r.dump[0]', src)).toBe('bytes');
+    expect(names('v', src)).toEqual(expect.arrayContaining(['length', 'map', 'volume', 'filtered']));
+    expect(names('v[0]', src)).toEqual(['note', 'frequency', 'pulse', 'wave', 'gate', 'control', 'attack', 'decay', 'sustain', 'release']);
+    expect(names('p', src)).toEqual(['name', 'author', 'released', 'start', 'end', 'size', 'init', 'play', 'songs', 'song', 'rsid', 'bytes']);
+    expect(jsTypeOf('t.sid()', src)).toBe('bytes');
+    expect(jsTypeOf('sid.player(t).prg', src)).toBe('bytes');
+    expect(jsTypeOf('sid.at(0x1000).name', src)).toBe('text');
+    expect(names('sid.note(1000)', src)).toEqual(['name', 'octave', 'hz', 'cents']);
+  });
+});
+
 describe('what the build\'s values have', () => {
   const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
   it('build., the last build and one of its files', () => {

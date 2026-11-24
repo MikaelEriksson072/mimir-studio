@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-sid.ts            SID-musiken för ett JavaScript-skript: `sid` (programmets låtar, .sid-filer, spelaren körd bild för bild, spela i VICE/DeepSID) (10.3)
 │  ├─ src/script-build.ts          bygge och körning för ett JavaScript-skript: `build` (senaste bygget, Verify, Build & Run, starta en PRG) (10.3)
 │  ├─ src/script-export.ts         exporten för ett JavaScript-skript: `exporter` (läs, ändra, lägg till, skriv) (10.3)
 │  ├─ src/script-loader.ts         loadern för ett JavaScript-skript: `loader` (loaderflikens filer, grupper, skript) (10.3)
@@ -2881,6 +2882,12 @@ $06, $08` i `.asm`-filen efter en körning.
   - *Run in a C64* (`sindri_run`): programmet startat i en hel C64 (`start`: `"RUN"` eller `"SYS 2064"`) och kört
     `seconds` sekunder eller till `stopAt`; skärmen skrivs, visas på C64-skärmen (`screen.show(c64)`), och minnet
     `saveFrom`–`saveTo` blir en fil.
+  - *List the music and make .sid files* (`sid_files`, 2026-11-24): programmets musikblock med init, play och om de
+    spelar för sig själva; varje låt blir en .sid-fil (`makeFiles`, `author`) och en av dem kan spelas (`playTune`,
+    `playSong`).
+  - *Print the notes a tune plays* (`sid_notes`, 2026-11-24): en spelare körd bild för bild (en av programmets låtar,
+    `tune`, eller rutinerna `init` och `play`), och det den lämnar i SID:en skrivet: varje rösts not, vågform och
+    gate, och volymen; en bild som är som den förra utelämnas.
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2891,6 +2898,42 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **SID-musiken i ett JavaScript-skript** (`script-sid.ts`, `sidApi`, 2026-11-24): ett skript får `sid`, det
+  analysen vet om programmets musik (5.8) och det *Play music* och exportens .sid gör.
+  - Låtarna: `sid.tunes` är programmets musikblock (tom lista när det inte har något), `sid.tune` det första och
+    `sid.at(adress)` det som täcker en adress. En låt har `name`, `file` (programfilen den ligger i), `start`,
+    `end`, `size`, `bytes`, `init`, `play` (0: en samplespelare), `song` (sången programmet startar), `songs`,
+    `samples` (`{ nmi, hz }` eller `null`), `why`, `score` och `plays`: det den spelar med i VICE, i DeepSID och
+    som .sid (`musicPlayData`): `{ start, end, bytes, init, play, parts, routine, problem, alone }`. `routine`
+    säger vad Mimirs rutin bredvid blocket gör när `init` är en sådan (ger X och Y som programmet, lägger tillbaka
+    det en snapshots spelare läser, skriver en sångs bytes, startar samplen), annars `null`.
+  - En låt ger `tune.sid({ name, author, released })` (.sid-filen som exporten skriver den; en samplespelares är en
+    RSID), `tune.player({ song, title })` (PRG:n som spelar den i VICE: `{ prg, port, driver, screen, warnings }`)
+    och `tune.run({ song, frames })` (körd för sig själv, med bara sina bytes i minnet).
+  - .sid-filer: `sid.parse(fil)` läser en (`{ name, author, released, start, end, size, init, play, songs, song,
+    rsid, bytes }`), `sid.make(bytes, { load, init, play, name, author, released, song, songs, rsid })` gör en
+    (PSID v2; `init` är `load` och `play` `load + 3` när de inte ges) och `sid.load(fil, at)` kopierar en fils
+    bytes in i `mem` där de laddas (eller på en adress).
+  - Köra: `sid.run({ init, play, song, a, x, y, frames, registers })` kör en spelare i en kopia av `mem` som det är
+    nu (`runPlayer`: init med sången i A, sedan play en gång per bild; högst `SID_RUN_FRAMES` = 30 000 bilder, 500
+    när inget sägs) och ger `{ plays, init, played, frames, stop, registers, notes, heard, used, ran, initCycles,
+    maxCycles, dump }`. `dump` är SID:ens 25 register efter init (`dump[0]`) och efter varje play-anrop
+    (`PlayerRunOptions.frame`); `registers: false` utelämnar den. Utan `play` (eller 0) körs en samplespelare från
+    sitt timeravbrott (`runDigi`: `{ samples: true, hz, nmi, handler, calls, … }`).
+  - Läsa register: `sid.voices(register)` ger de tre rösterna (`{ frequency, pulse, control, gate, wave, attack,
+    decay, sustain, release, note }`) med `volume`, `cutoff`, `resonance` och `filtered` på listan,
+    `sid.note(frekvens, { ntsc })` ett frekvensvärde som `{ name, octave, hz, cents }` (`"A-4"`; `null` för 0) och
+    `sid.noteTables()` var nottabeller finns i `mem` (`noteTables`).
+  - Spela: `sid.player(vad, { song, title })` gör spelar-PRG:n och `sid.play(vad, { song, in })` begär att något
+    spelas, där *vad* är en låt, en .sid-fil eller `{ bytes, load, init, play }` och `in` är `"vice"` eller
+    `"deepsid"` (inte givet: där Settings → Toolchain säger, `sid.musicPlayer`). Ingenting spelas under körningen:
+    körningen slutar med begäran (`ScriptRun.plays`, `ScriptSidRequest` med .sid-filen och spelar-PRG:n, högst
+    `SID_REQUESTS` = 4) och appen spelar dem när körningen slutat väl (`doScriptRequests`, `playScriptTune`), efter
+    exporten och byggena. I safe mode spelas ingenting: *Last run* visar *Would play*; annars *Played*.
+  - Låtarna ges bara till en körning av skriptet självt (inte *Run on files*, *Run with values* eller före Build &
+    Run), och bara när koden nämner `sid`; annars är `sid.tunes` tom och `sid.play` säger att det inte går där.
+    Resten (`parse`, `make`, `load`, `run`, `player`, `note`, `voices`) finns alltid.
+  - Mallarna *List the music and make .sid files* (`sid_files`) och *Print the notes a tune plays* (`sid_notes`).
 - **Bygge och körning i ett JavaScript-skript** (`script-build.ts`, `buildApi`, 2026-11-24): ett skript får `build`,
   det *Verify* (F7) och *Build & Run* (F5, Shift+F5) gör.
   - Läsa: `build.assembler` (`"kickass"`/`"64tass"`), `build.emulator` (`"VICE"`), `build.debugger` (namnet på

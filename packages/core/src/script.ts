@@ -503,6 +503,9 @@ export interface ScriptRun {
   /** the builds and starts a JavaScript script asked for (build.verify(), build.run(), build.start(prg)): done by
    *  the app in this order when the run has ended well (script-build.ts); a safe run's are only said */
   builds?: import('./script-build').ScriptBuildRequest[];
+  /** the tunes a JavaScript script asked to be played (sid.play): played by the app, after the
+   *  builds, when the run has ended well (not in safe mode) */
+  plays?: import('./script-sid').ScriptSidRequest[];
   /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
   js?: boolean;
   actions?: ScriptAction[];

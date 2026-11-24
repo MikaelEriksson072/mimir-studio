@@ -113,6 +113,7 @@ export { JS_CALL_LIMIT, JS_RUN_LIMIT, runJs, type JsExtras } from './script-js';
 export { SINDRI_BUDGET, SINDRI_RUN_CYCLES, sindriApi, type SindriContext } from './script-sindri';
 export { BROKKR_FORMATS, brokkrApi, type BrokkrContext } from './script-brokkr';
 export { loaderApi, type ScriptLoaderData } from './script-loader';
+export { SID_REQUESTS, SID_RUN_DEFAULT, SID_RUN_FRAMES, sidApi, sidRequestText, type ScriptSidData, type ScriptSidRequest, type ScriptSidTune } from './script-sid';
 export { BUILD_REQUESTS, buildApi, buildRequestText, type ScriptBuildData, type ScriptBuildRequest } from './script-build';
 export { applyExportRequest, exportApi, exportFileName, exportRequestText, type ScriptExportData, type ScriptExportRequest } from './script-export';
 export { C64_COLOR_NAMES, c64Color, SCREEN_C64, SCREEN_MAX, SCREEN_ROUTINES, SCREEN_RAM, COLOR_RAM, BORDER_AT, BACKGROUND_AT, screenApi, screenMemory, screenRanges, startScreenMemory, screenRoutine, screenSize, screenTraps, textPetscii, TextScreen, vicMatrix, c64TextScreen, type ScreenContext, type ScreenMemory, type ScreenSize, type ScriptScreen } from './script-screen';

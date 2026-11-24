@@ -9,7 +9,8 @@ export interface JsMember { label: string; insert: string; detail: string }
 
 /** the kinds of value a script works with */
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
-  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges' | 'build' | 'lastBuild' | 'builtFile' | 'builtFiles';
+  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges' | 'build' | 'lastBuild' | 'builtFile' | 'builtFiles'
+  | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
 
@@ -56,7 +57,63 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('toLowerCase', 'toLowerCase(): in small letters', true), m('toUpperCase', 'toUpperCase(): in capitals', true), m('slice', 'slice(from, to): a part of it', true),
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
-  diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST,
+  diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
+  sid: [
+    m('tunes', 'the program\'s music blocks: a list of tunes (empty when it has none)'), m('tune', 'the first tune, or null'),
+    m('at', 'at(address): the tune that covers an address, or null', true),
+    m('parse', 'parse(file): a .sid file read: { name, author, released, start, end, size, init, play, songs, song, rsid, bytes }', true),
+    m('make', 'make(bytes, { load, init, play, name, author, released, song, songs, rsid }): a .sid file of bytes', true),
+    m('load', 'load(file, at): a .sid file\'s bytes copied into mem where they load (or at an address)', true),
+    m('run', 'run({ init, play, song, a, x, y, frames }): a player run in a copy of mem: init, then play once a frame; gives what it wrote to the SID', true),
+    m('player', 'player(tune, .sid file or { bytes, load, init, play }, { song, title }): the PRG that plays it in VICE', true),
+    m('play', 'play(tune, .sid file or { bytes, load, init, play }, { song, in }): played when the run has ended well, in VICE or DeepSID', true),
+    m('note', 'note(frequency, { ntsc }): a voice\'s frequency value as { name, octave, hz, cents }, or null for 0', true),
+    m('voices', 'voices(registers): a dump\'s 25 registers read: the three voices, with volume, cutoff, resonance and filtered', true),
+    m('noteTables', 'noteTables(): where note frequency tables are in mem: a list of { start, end }', true),
+    m('musicPlayer', 'where music plays (Settings → Toolchain): "VICE" or "DeepSID"'), m('requests', 'what the script has asked to be played so far, a text each'),
+  ],
+  tune: [
+    m('name', 'the block\'s label'), m('file', 'the program\'s file it is in'), m('start', 'the address of the block\'s first byte'), m('end', 'the address after its last byte'), m('size', 'how many bytes the block is'),
+    m('bytes', 'the block\'s bytes'), m('init', 'the player\'s init routine'), m('play', 'the player\'s play routine (0: a sample player, nothing is called each frame)'),
+    m('song', 'the song the program starts (0: the first)'), m('songs', 'how many songs its .sid says it has'), m('samples', 'a sample player\'s { nmi, hz }, else null'),
+    m('why', 'what the analysis found it by, a text each'), m('score', 'how sure the analysis is'),
+    m('plays', 'what it plays with in VICE, in DeepSID and as a .sid: { start, end, bytes, init, play, parts, routine, problem, alone }'),
+    m('sid', 'sid({ name, author, released }): its .sid file, as the export writes it', true),
+    m('player', 'player({ song, title }): the PRG that plays it in VICE: { prg, port, driver, screen, warnings }', true),
+    m('run', 'run({ song, frames }): it run on its own: init, then play once a frame; gives what it wrote to the SID', true),
+  ],
+  tunePlays: [
+    m('start', 'where the bytes that play go'), m('end', 'the address after their last byte'), m('bytes', 'the bytes that play: the block, and a routine of Mimir\'s next to it when it needs one'),
+    m('init', 'what is called to start a song: the player\'s init, or Mimir\'s routine that calls it'), m('play', 'what is called each frame (0: nothing)'),
+    m('parts', 'a sample player\'s bytes outside the block (its samples and song): a list of { start, end, bytes }'),
+    m('routine', 'what Mimir\'s routine next to the block does, a text; null when init is the player\'s own'),
+    m('problem', 'why it may not play as the program plays it, or null'), m('alone', 'why it does not play with only these bytes in memory, or null'),
+  ],
+  sidFile: [
+    m('name', 'the tune\'s name'), m('author', 'its author'), m('released', 'the year and who released it'),
+    m('start', 'where its bytes load'), m('end', 'the address after their last byte'), m('size', 'how many bytes'),
+    m('init', 'its init routine'), m('play', 'its play routine (0: init starts the interrupts that play)'), m('songs', 'how many songs it has'), m('song', 'the song it starts with (0: the first)'),
+    m('rsid', 'true for an RSID: it runs as on a real C64'), m('bytes', 'its bytes, without the header and the load address'),
+  ],
+  sidRun: [
+    m('plays', 'true when it ran as music does: init and every play call returned, and the SID was written'), m('samples', 'true for a sample player\'s run (from its timer interrupt)'),
+    m('init', 'true when init returned'), m('played', 'the play calls (frames) that returned'), m('frames', 'the frames asked for'), m('stop', 'why the run stopped early, or null'),
+    m('registers', 'how many SID registers were written (a sample player: a list of { register, writes, values })'), m('notes', 'the notes started (a voice\'s gate switched on)'), m('heard', 'the notes started that can be heard'),
+    m('dump', 'the SID\'s 25 registers after init (dump[0]) and after each play call: a list of bytes'),
+    m('used', 'the bytes the player ran or read: a list of { start, end }'), m('ran', 'the bytes it ran as code: a list of { start, end }'),
+    m('initCycles', 'the cycles init took'), m('maxCycles', 'the most cycles one play call took'), m('hz', 'a sample player: samples a second'),
+  ],
+  sidPlayer: [
+    m('prg', 'the PRG that plays the tune when it is run: start it with build.start(prg) or save it'), m('port', 'the processor port ($01) while it plays'),
+    m('driver', 'where the player\'s own code runs: { start, end }'), m('screen', 'true when its screen shows the addresses and the song'), m('warnings', 'what may not play as on the C64 the program ran on, a text each'),
+  ],
+  voices: [...LIST, m('volume', 'the volume, 0-15'), m('cutoff', 'the filter\'s cutoff, 0-2047'), m('resonance', 'the filter\'s resonance, 0-15'), m('filtered', 'which voices go through the filter: true or false for each')],
+  voice: [
+    m('note', 'the note its frequency is, such as "A-4" ("---" for 0)'), m('frequency', 'its frequency value (registers 0 and 1)'), m('pulse', 'its pulse width, 0-4095'),
+    m('wave', 'its waveform: "triangle", "sawtooth", "pulse", "noise", or several with +'), m('gate', 'true while its note is held'), m('control', 'its control register'),
+    m('attack', 'attack, 0-15'), m('decay', 'decay, 0-15'), m('sustain', 'sustain, 0-15'), m('release', 'release, 0-15'),
+  ],
+  sidNote: [m('name', 'the note, such as "A-4"'), m('octave', 'its octave'), m('hz', 'the frequency in Hz'), m('cents', 'how far from the note it is, in cents')],
   build: [
     m('last', 'the last build, or null before one: { ok, fresh, by, files, log }'),
     m('verify', 'verify(): the round-trip check when the run has ended well, as F7', true),
@@ -195,7 +252,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -259,6 +316,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'loader') return 'loader';
   if (e === 'exporter') return 'exporter';
   if (e === 'build') return 'build';
+  if (e === 'sid') return 'sid';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -286,6 +344,8 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     const on = jsTypeOf(callee[0], source, depth + 1), name = callee[1].slice(1);
     if (on === 'cpu' && name === 'call') return 'regs';
     if (on === 'exporter') return name === 'write' ? 'texts' : null;
+    if (on === 'sid') return name === 'at' ? 'tune' : name === 'parse' || name === 'load' ? 'sidFile' : name === 'make' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : name === 'note' ? 'sidNote' : name === 'voices' ? 'voices' : name === 'noteTables' ? 'ranges' : null;
+    if (on === 'tune') return name === 'sid' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : null;
     if (on === 'loader') return name === 'find' ? 'loaderFile' : name === 'group' ? 'loaderGroup' : name === 'load' ? 'file' : name === 'at' ? 'loaderFiles' : null;
     if (on === 'brokkr') return name === 'pack' ? 'packed' : name === 'crunch' ? 'crunched' : name === 'mem' ? 'memFile' : name === 'decrunch' ? 'bytes' : name === 'decruncher' ? 'text' : null;
     if (on === 'sindri') return name === 'unpack' ? 'unpacked' : name === 'c64' ? 'machine' : name === 'prg' ? 'bytes' : name === 'disassemble' || name === 'basic' ? 'texts' : null;
@@ -310,6 +370,14 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'sindri') return name === 'roms' ? 'text' : null;
   if (on === 'brokkr') return name === 'formats' ? 'texts' : null;
   if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
+  if (on === 'sid') return name === 'tunes' ? 'tunes' : name === 'tune' ? 'tune' : name === 'requests' ? 'texts' : name === 'musicPlayer' ? 'text' : null;
+  if (on === 'tune') return name === 'plays' ? 'tunePlays' : name === 'bytes' ? 'bytes' : name === 'why' ? 'texts' : name === 'name' || name === 'file' ? 'text' : null;
+  if (on === 'tunePlays') return name === 'bytes' ? 'bytes' : name === 'routine' || name === 'problem' || name === 'alone' ? 'text' : null;
+  if (on === 'sidFile') return name === 'bytes' ? 'bytes' : name === 'name' || name === 'author' || name === 'released' ? 'text' : null;
+  if (on === 'sidRun') return name === 'dump' ? 'dump' : name === 'used' || name === 'ran' ? 'ranges' : name === 'stop' ? 'text' : null;
+  if (on === 'sidPlayer') return name === 'prg' ? 'bytes' : name === 'warnings' ? 'texts' : name === 'driver' ? 'file' : null;
+  if (on === 'voice') return name === 'note' || name === 'wave' ? 'text' : null;
+  if (on === 'sidNote') return name === 'name' ? 'text' : null;
   if (on === 'lastBuild') return name === 'files' ? 'builtFiles' : name === 'log' || name === 'by' ? 'text' : null;
   if (on === 'builtFile') return name === 'bytes' || name === 'prg' ? 'bytes' : name === 'errors' ? 'texts' : name === 'name' || name === 'source' ? 'text' : null;
   if (on === 'exporter') return name === 'files' ? 'exportFiles' : name === 'names' || name === 'sources' ? 'texts' : name === 'changes' ? 'exportChanges' : name === 'name' || name === 'assembler' || name === 'main' || name === 'outDir' ? 'text' : null;
