@@ -11517,7 +11517,8 @@ test('a JavaScript script has the blocks: a table of records marked as a struct 
     await runIt();
     await expect(toast(page, /It marked up 3 things \(\$0840-\$084b marked as the struct enemy/)).toBeVisible({ timeout: 30_000 });
     await page.getByRole('tab', { name: 'Listing' }).click();
-    await goTo(page, 'enemies');
+    // (by its address: the label is there once the analysis has run again)
+    await goTo(page, '$0840');
     const l = listing(page);
     await expect(l).toContainText('Struct enemy (6 bytes a record) · enemies · $0840-$084b (12 bytes)');
     await expect(l).toContainText('two enemies');
