@@ -173,8 +173,11 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
 │  ├─ src/script-disks.ts          diskavbilder för ett JavaScript-skript: `disks` (skapa och ändra D64 och D81, spara, montera) (10.3)
+│  ├─ src/c64/crtedit.ts           `CrtEdit`: en .crt läst, ändrad och skriven igen byte för byte; `programCartridge`: en cartridge som startar ett program
+│  ├─ src/c64/crt-layouts.ts       standardstrukturerna för cartridge-typerna (84 st), som VICE:s cartconv skriver dem
 │  ├─ src/c64/diskedit.ts          `DiskEdit`: en D64 eller D81 formaterad och ändrad (katalog, BAM, sektorkedjor), som c1541 gör dem
 │  ├─ src/script-scripts.ts        skripten för ett JavaScript-skript: `scripts` (läs, anropa som bibliotek, lägg till, ändra, kör efteråt) (10.3)
 │  ├─ src/script-snapshot.ts       VICE-snapshoten för ett JavaScript-skript: `snapshot` (CPU, port, RAM, CIA, SID, VIC-II, drive: läs och ändra) (10.3, 13.7)
@@ -2916,6 +2919,17 @@ $06, $08` i `.asm`-filen efter en körning.
     filer som de är i minnet (`fileName`), och filerna på bandet i datasetten med `copyMounted`; `pause` lägger
     tystnad efter varje fil på en TAP; filerna listas, avbilden blir en fil (`saveAs`) och läggs i datasetten med
     `insertIt`.
+  - *Make a cartridge of the program* (`cart_program`, 2026-11-24): en Magic Desk-cartridge (`cartName`) som kopierar
+    programmet som det är i minnet dit det laddas och startar det: med RUN när det laddas på $0801, annars med ett
+    hopp dit det laddas eller till `startAt` (en adress eller en etikett); chipen listas, avbilden blir en fil
+    (`saveAs`) och startas i VICE med `runIt`.
+  - *Make a cartridge of a standard structure* (`cart_make`, 2026-11-24): en ny cartridge med en hårdvarutyps
+    standardstruktur (`structure`, `romSize`, `cartName`): programmets bytes läggs i startbankens chip där dess filer
+    ligger på chipens adresser (`fromMemory`), CBM80-kallstarten sätts med `coldStart`, `listStructures` skriver alla
+    strukturer med de storlekar de finns i; avbilden blir en fil (`saveAs`) och startas i VICE med `runIt`.
+  - *List the cartridge* (`cart_list`, 2026-11-24): projektets cartridge: huvudet, varje chip, hur den startar
+    (CBM80-vektorerna eller reset-vektorn) och vad varje bank har (egna CBM80-vektorer, tom); `maxBanks`, och
+    `saveAs` sparar en kopia av avbilden.
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2926,6 +2940,52 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Cartridge-avbilder i ett JavaScript-skript** (`script-cartridges.ts`, `cartridgesApi`; `c64/crtedit.ts`,
+  `CrtEdit`; `c64/crt-layouts.ts`, 2026-11-24): ett skript får `cartridges`, med vilket det gör och ändrar
+  cartridge-avbilder (.crt, VICE:s format, 13.9), med hårdvarutypernas standardstrukturer som mallar.
+  - **Standardstrukturerna** (`CRT_LAYOUTS`, `crtLayout`): för var och en av de 84 C64-typer VICE 3.10:s `cartconv`
+    gör (nyckeln är cartconvs: `normal`, `ulti`, `ocean`, `md`, `md16`, `easy`, `gmod2`, `gs`, `din`, `fp`, `sg`,
+    `ar5`, `fc3`, `rr`, `ss5`, `simon`, `zaxxon`, `comal`, `epyx`, `rgcd`, …) de storlekar den finns i och för varje
+    storlek EXROM och GAME vid reset och CHIP-paketen: bank, adress, storlek och chiptyp (ROM, RAM, Flash).
+    Tabellen är gjord ur de avbilder `cartconv -b -t <nyckel>` skriver av en .bin av varje storlek, och testet
+    jämför byte för byte mot cartconv där det finns (en Ocean på 256 KB har övre halvan på $a000, en Fun Plays
+    banker numreras i åttor, en EasyFlash har ROML och ROMH som Flash i 64 banker). `cartridges.layouts` ger
+    `{ key, id, name, sizes }`, `cartridges.layout(nyckel, storlek)` en struktur med `exrom`, `game`, `banks` och
+    `chips`; `cartridges.types` hårdvarutyperna (`{ id, name }`).
+  - `cartridges.create(struktur, { name, size, fill, data })` ger en ny cartridge med strukturen (nyckeln, typens
+    nummer eller namn; utan `size` den minsta, eller den minsta `data` får plats i), chipen fyllda med `fill` ($ff)
+    och sedan med `data` i avbildens ordning, som cartconv fyller dem ur en .bin. `create("custom", { name, hw, exrom,
+    game })` ger en utan chip. `cartridges.open(bytes)` tar en avbilds bytes, `cartridges.project` projektets
+    cartridge som kopia (avbilden den öppnades från; `null` utan).
+  - `cartridges.fromProgram(bytes, { load, start, basic, name })` (`programCartridge`) ger en Magic Desk-cartridge
+    som startar ett program: startbanken har CBM80-vektorerna (varmstart $fe5e) och en boot på $8009 som ställer in
+    C64:an som KERNAL:s reset gör (IOINIT, RAMTAS, minnestoppen satt till $a000 igen, RESTOR, CINT) och BASIC som
+    dess kallstart, kopierar en rutin på omkring 70 byte till $0100 och hoppar dit. Rutinen kopierar programmet ur bankerna,
+    en efter en, dit det laddas (med allt RAM inne medan en byte skrivs, så också under ROM och I/O), stänger av
+    cartridgen ($de00 = $80) och startar programmet: `basic` (taget när det laddas på $0801 och ingen start ges)
+    sätter programmets slut och kör RUN ($a659, $a7ae), annars hopp till `start`. Så många banker som programmet
+    behöver (4 till 8). Provat i x64sc 3.10: 63 KB maskinkod från $0810 till $ffef ligger byte för byte i RAM och
+    körs, och ett BASIC-program körs med minnestoppen på $a000.
+  - En cartridge har `name` (32 tecken), `hw`, `revision`, `exrom` och `game` (går alla att sätta; en revision gör
+    huvudet till version 1.1), `type`, `version`, `mode` (`"8k"`, `"16k"`, `"ultimax"`, `"none"`), `chips`
+    (`number`, `bank`, `load`, `address` där CPU:n ser det, `size`, `end`, `type`, `typeId`), `banks`, `bootBank`,
+    `total`, `size`, `bytes` och `start`: `{ kind: "cbm80", cold, warm }` eller, i Ultimax-läge, `{ kind:
+    "vectors", nmi, reset, irq }` (en EasyFlashs ROMH i startbanken ses på $e000). Ett chip är sitt nummer eller
+    det `chips`, `chip(n)` och `find(bank, adress)` ger: `read`, `write(chip, bytes, at)`, `fill`; efter bank och
+    adress `peek`, `poke`, `get(bank, adress, längd)` och `put(bank, adress, bytes)` (över bankens chip; allt eller
+    inget). `add(bank, load, bytes eller storlek, { type, fill, at })` lägger ett CHIP-paket (inte över ett annat i
+    banken), `remove`, `resize(chip, storlek, fill)`, `set(chip, { bank, load, type })`; `setStart(cold, warm,
+    bank)` skriver CBM80-vektorerna och signaturen på $8000, `setVectors({ nmi, reset, irq }, bank)` CPU:ns
+    vektorer på $fffa. `cartridges.cbm80(cold, warm)` ger de nio byten; `cartridges.structs` fälten för
+    `blocks.struct`: `cbm80`, `vectors`, `header` och `chip`.
+  - `list()`, `file()`, `save(filnamn)` (avbilden hel som en fil av körningen) och `run()`, som ber om att
+    avbilden startas i VICE (`ScriptRun.cartridge`, `ScriptCartridgeRequest`): gjort när körningen slutat väl
+    (`doScriptRequests`: avbilden skrivs till en temporär mapp och ansluts med `-cartcrt`); i safe mode visar *Last
+    run* *Would start in VICE*, annars *Started in VICE*.
+  - En avbild som läses och skrivs utan ändring är byte för byte den den var (`CrtEdit.open`, `image()`): huvudets
+    reserverade byte, ett längre huvud, ett paket längre än sina data och byte efter sista paketet behålls (391
+    avbilder ur referensarkivet). En cartridge ett skript arbetar på är skriptets egen: projektets cartridge och
+    filerna på datorn är som de var. Bara JavaScript.
 - **Bandavbilder i ett JavaScript-skript** (`script-tapes.ts`, `tapesApi`, 2026-11-24): ett skript får `tapes`, med
   vilket det gör och ändrar bandavbilder: ett bands pulser (.tap) och ett bandarkiv (.t64).
   - `tapes.create("tap" | "t64", { name })` ger ett nytt, tomt band, `tapes.open(bytes)` en avbilds bytes att arbeta

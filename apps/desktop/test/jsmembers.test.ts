@@ -214,6 +214,29 @@ describe('what the blocks\' values have', () => {
   });
 });
 
+describe('what the cartridges\' values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('cartridges., a cartridge, a chip, a structure and how it starts', () => {
+    expect(names('cartridges')).toEqual(['create', 'fromProgram', 'open', 'project', 'layouts', 'layout', 'types', 'structs', 'cbm80']);
+    const src = 'const c = cartridges.create("normal");\nconst p = cartridges.project;\nfor (const x of c.chips) {\n}\nfor (const l of cartridges.layouts) {\n}\nconst s = c.start;\n';
+    expect(names('c', src)).toEqual(['name', 'fileName', 'hw', 'type', 'revision', 'version', 'exrom', 'game', 'mode', 'chips', 'banks', 'bootBank', 'total', 'size', 'bytes', 'start',
+      'chip', 'find', 'read', 'write', 'fill', 'peek', 'poke', 'get', 'put', 'add', 'remove', 'resize', 'set', 'setStart', 'setVectors', 'list', 'file', 'save', 'run']);
+    expect(names('p', src)).toEqual(names('c', src));
+    expect(names('cartridges.fromProgram(x)', src)).toEqual(names('c', src));
+    expect(names('cartridges.open(x)', src)).toEqual(names('c', src));
+    expect(names('x', src)).toEqual(['number', 'bank', 'load', 'address', 'size', 'end', 'type', 'typeId']);
+    expect(names('c.find(0, 0x8000)', src)).toEqual(names('x', src));
+    expect(names('c.add(0, 0x8000, 16)', src)).toEqual(names('x', src));
+    expect(names('l', src)).toEqual(['key', 'id', 'name', 'sizes', 'size', 'exrom', 'game', 'banks', 'chips']);
+    expect(names('cartridges.layout("md")', src)).toEqual(names('l', src));
+    expect(names('s', src)).toEqual(['kind', 'cold', 'warm', 'reset', 'nmi', 'irq']);
+    expect(jsTypeOf('c.read(0)', src)).toBe('bytes');
+    expect(jsTypeOf('c.get(0, 0x8000, 9)', src)).toBe('bytes');
+    expect(jsTypeOf('cartridges.cbm80(0x8009)', src)).toBe('bytes');
+    expect(jsTypeOf('c.list()', src)).toBe('texts');
+  });
+});
+
 describe('what the tapes\' values have', () => {
   const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
   it('tapes., a tape and a file of it', () => {

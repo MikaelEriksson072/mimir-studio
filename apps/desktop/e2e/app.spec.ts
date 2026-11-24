@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^List the scripts and use one as a library/, /^Make a disk of the program/, /^Make a tape of the program/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^List the scripts and use one as a library/, /^Make a disk of the program/, /^Make a tape of the program/, /^Make a cartridge of the program/, /^Make a cartridge of a standard structure/, /^List the cartridge/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11799,6 +11799,53 @@ test('a JavaScript script has tapes: it makes a TAP and a T64 with files on them
     await setCode(['const m = tapes.mounted;', 'print(m.kind, m.name, m.files.map(f => f.name + "@" + hex(f.load)).join());']);
     await runIt();
     await expect(printed).toHaveText('t64 FROM THE TAPE LEVEL@$4000,EXTRA@$2000', { timeout: 30_000 });
+  });
+});
+
+test('a JavaScript script has cartridges: a template makes one that starts the program, a script makes one of a standard structure, sets its start, adds a chip and saves it; safe mode only says what it would start', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+  const made = page.getByRole('list', { name: 'Files the run made' }).getByRole('listitem');
+
+  await test.step('the template makes a Magic Desk cartridge of the program, lists its chips and makes it a file', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Make a cartridge of the program to the project' }).click();
+    await expect(page.getByRole('option', { name: 'cart_program' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(printed).toContainText('"MIMIR"  Magic Desk (Domark, HES Australia) (type 19), 8K mode (EXROM 0, GAME 1), 4 chips, 32 KB', { timeout: 30_000 });
+    await expect(printed).toContainText(/The program: \$0801-\$[0-9a-f]{4}, \d+ bytes, started with RUN/);
+    await expect(printed).toContainText('Saved as mimir.crt, 32896 bytes');
+    await expect(made).toHaveText([/^mimir\.crt\s*32896 bytes/]);
+  });
+
+  await test.step('a script of one\'s own: cartridges. lists what it has; in safe mode what it would start is only said', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('cartridges.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['create', 'fromProgram', 'open', 'project', 'layouts', 'layout', 'types', 'structs', 'cbm80']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'const c = cartridges.create("normal", { name: "MY CART", size: 8192 });',
+      'c.setStart(0x8009);',
+      'c.put(0, 0x8009, [0x78, 0xee, 0x20, 0xd0, 0x4c, 0x0a, 0x80]);',
+      'const md = cartridges.create("md", { name: "BANKS" });',
+      'md.add(4, 0x8000, 8192, { fill: 0 });',
+      'print(cartridges.project, cartridges.layouts.length, c.mode, hex(c.start.cold), c.peek(0, 0x800a), md.chips.length, md.banks.join(), cartridges.open(c.file()).name);',
+      'c.save(); md.save();',
+      'c.run();',
+    ].join('\n') + '\n');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText('null 84 8k $8009 238 5 0,1,2,3,4 MY CART', { timeout: 30_000 });
+    await expect(made).toHaveText([/^my cart\.crt\s*8272 bytes/, /^banks\.crt\s*41104 bytes/]);
+    await expect(page.getByRole('list', { name: 'What the run would start in VICE' }).getByRole('listitem')).toHaveText(['my cart.crt started in VICE (Normal cartridge, 1 chip, 8 KB)']);
   });
 });
 

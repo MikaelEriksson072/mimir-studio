@@ -2653,10 +2653,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
     if (shown) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     // what it printed, the files it made, or the error it stopped with, is under Last run: that tab is shown
-    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.snapshot || r.scripts?.length || r.disk || r.tape || r.error)) st.set({ outTab: 'run', outFolded: false });
+    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.snapshot || r.scripts?.length || r.disk || r.tape || r.cartridge || r.error)) st.set({ outTab: 'run', outFolded: false });
     // the export it asked for: written now that the run has ended well and its changes are in the program (a safe run's
     // is only said, under Last run)
-    if ((r.exports || r.builds?.length || r.plays?.length || r.library?.length || w?.scripts?.runs.length) && !safe && endedWell(r.end)) void doScriptRequests(s.name, r, !!w?.written.length || !!w?.acted?.done.length, w?.scripts?.runs ?? [], chain);
+    if ((r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.cartridge || w?.scripts?.runs.length) && !safe && endedWell(r.end)) void doScriptRequests(s.name, r, !!w?.written.length || !!w?.acted?.done.length, w?.scripts?.runs ?? [], chain);
     // the disk it asked to be mounted (a disk's mount()), when the run has ended well
     if (r.disk && !safe && endedWell(r.end)) { try { mountBytes(r.disk.name, null, r.disk.bytes); } catch (e) { toast(`"${s.name}": ${r.disk.name} was not mounted: ${errorText(e)}`, 'err'); } }
     // the tape it asked to be put in the datasette (a tape's insert()), when the run has ended well
@@ -2674,7 +2674,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const adding = r.library?.length ? (safe ? ` It would add ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to the library (Scripts → Last run).` : ` It asked for ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to be added to the library.`) : '';
     const scripted = r.scripts?.length && endedWell(r.end) ? (safe ? ` It would add, change or run ${r.scripts.length} script${r.scripts.length === 1 ? '' : 's'} (Scripts → Last run).`
       : `${w?.scripts?.done.length ? ` Scripts: ${w.scripts.done.slice(0, 2).join('; ')}${w.scripts.done.length > 2 ? '; …' : ''}.` : ''}${w?.scripts?.failed.length ? ` Not done: ${w.scripts.failed.join('; ')}.` : ''}`) : '';
-    const mounting = `${r.disk && endedWell(r.end) && safe ? ` It would mount ${r.disk.name} (Scripts → Last run).` : ''}${r.tape && endedWell(r.end) && safe ? ` It would put ${r.tape.name} in the datasette (Scripts → Last run).` : ''}`;
+    const mounting = `${r.disk && endedWell(r.end) && safe ? ` It would mount ${r.disk.name} (Scripts → Last run).` : ''}${r.tape && endedWell(r.end) && safe ? ` It would put ${r.tape.name} in the datasette (Scripts → Last run).` : ''}${r.cartridge && endedWell(r.end) ? (safe ? ` It would start the cartridge ${r.cartridge.name} in VICE (Scripts → Last run).` : ` It asked for the cartridge ${r.cartridge.name} to be started in VICE.`) : ''}`;
     const snapped = r.snapshot && endedWell(r.end) ? (safe ? ' It would change the snapshot (Scripts → Last run).' : r.snapshot.changes.length ? ` It changed the snapshot (${r.snapshot.changes[0]}${r.snapshot.changes.length > 1 ? ', …' : ''}): Build & Run restarts it so.` : ' It asked for the snapshot to be kept, with nothing changed in it.') : '';
     const made = r.made?.length ? ` It made ${r.made.length} file${r.made.length === 1 ? '' : 's'} (Scripts → Last run): ${r.made[0].name}${r.made.length > 1 ? ', …' : ''}.` : '';
     const drew = r.screen?.wrote ? ` It printed on ${r.screen.c64 ? 'the C64\'s screen' : 'its C64 screen'} (Scripts → C64 screen).` : '';
@@ -2714,6 +2714,16 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const res = await kr.run({ prgPath: `${w.dir}/${b.name}`, ...(b.start != null ? { start: b.start } : {}), ...(b.debugger ? { debugger: true } : {}) });
         toast(`"${name}": ${emu} started ${b.name} (${b.prg.length - 2} bytes at $${h4(b.prg[0] | b.prg[1] << 8)})${b.start != null ? ` with SYS ${b.start}` : ''}${res.notes?.length ? ` (${res.notes.join('; ')})` : ''}`, res.notes?.length ? 'warn' : 'ok');
       } catch (e) { toast(`"${name}": ${emu} was not started with ${b.name}: ${errorText(e)}`, 'err'); return; }
+    }
+    // the cartridge it asked to have started (a cartridge's run()): the image written beside the others, attached in VICE
+    if (r.cartridge) {
+      if (!kr) return needDesktop();
+      try {
+        const c = r.cartridge, w = await kr.writeExport({ target: 'temp', name: 'scripted', files: { [c.name]: c.bytes } });
+        if (!w) return;
+        const res = await kr.run({ prgPath: `${w.dir}/${c.name}`, cart: true });
+        toast(`"${name}": VICE started the cartridge ${c.name} (${c.type}, ${c.chips} chip${c.chips === 1 ? '' : 's'})${res.notes?.length ? ` (${res.notes.join('; ')})` : ''}`, res.notes?.length ? 'warn' : 'ok');
+      } catch (e) { toast(`"${name}": VICE was not started with the cartridge ${r.cartridge.name}: ${errorText(e)}`, 'err'); return; }
     }
     if (r.library?.length && !(await addScriptLibrary(name, r.library))) return;
     for (const p of r.plays ?? []) if (!(await playScriptTune(name, p))) return;
@@ -2840,6 +2850,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (s.code === 'js' && /\bdisks\b/.test(source)) opts.disks = scriptD81Ref.current ?? (disk ? { name: disk.name, bytes: disk.bytes } : null);
     // and the tape in the datasette, which a script takes a copy of to change
     if (s.code === 'js' && /\btapes\b/.test(source)) opts.tapes = tape ? { name: tape.name, bytes: tape.bytes } : null;
+    // and the project's cartridge (the image it was opened from), which a script takes a copy of to change
+    if (s.code === 'js' && /\bcartridges\b/.test(source)) { const c = latest.current.project.cart; opts.cartridges = c ? { name: c.name, bytes: c.crt } : null; }
     // and the project's scripts, with the library's
     if (s.code === 'js' && /\bscripts\b/.test(source)) opts.scripts = {
       self: s.name,

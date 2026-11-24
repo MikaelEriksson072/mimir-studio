@@ -49,6 +49,10 @@
  *   tapes                    tape images made and changed (script-tapes.ts): tapes.create("tap" or "t64", { name }),
  *                            tapes.open(bytes), tapes.mounted; a tape's files, add(name, bytes, { load }), remove,
  *                            rename, toT64(), toTap(), save(fileName) and insert(); a TAP's pulses, pause(), cut()
+ *   cartridges               cartridge images made and changed (script-cartridges.ts): cartridges.create(structure,
+ *                            { name, size, data }) with the standard structures (cartridges.layouts) as templates,
+ *                            cartridges.fromProgram(bytes), cartridges.open(bytes), cartridges.project; a cartridge's
+ *                            chips, add(bank, load, bytes), read, write, peek and poke by bank, setStart(), save() and run()
  *   save(name, bytes, load)  a file the run made, listed under Last run (To the project…, Save…); load: where it
  *                            loads, left out for a file without a load address
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
@@ -76,6 +80,7 @@ import { snapshotApi, type ScriptSnapshotData, type ScriptSnapshotRequest } from
 import { scriptsApi, type ScriptScriptsData, type ScriptScriptsRequest } from './script-scripts';
 import { disksApi, type ScriptDiskRequest, type ScriptDisksData } from './script-disks';
 import { tapesApi, type ScriptTapeRequest, type ScriptTapesData } from './script-tapes';
+import { cartridgesApi, type ScriptCartridgeRequest, type ScriptCartridgesData } from './script-cartridges';
 import { libraryApi, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 import { sidApi, type ScriptSidData, type ScriptSidRequest } from './script-sid';
 import { SCREEN_C64, screenApi, screenMemory, screenRanges, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
@@ -109,6 +114,8 @@ export interface JsExtras { disk?: Uint8Array | null;
   disks?: ScriptDisksData | null;
   /** the tape in the datasette, for `tapes.mounted` (null: none) */
   tapes?: ScriptTapesData | null;
+  /** the project's cartridge, for `cartridges.project` (null: none) */
+  cartridges?: ScriptCartridgesData | null;
   /** the size of the script's C64 screen (40×25 when not said) */
   screen?: Partial<ScreenSize> | null }
 
@@ -166,6 +173,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   const scriptsAsked: ScriptScriptsRequest[] = [];
   let diskAsked: ScriptDiskRequest | undefined;
   let tapeAsked: ScriptTapeRequest | undefined;
+  let cartAsked: ScriptCartridgeRequest | undefined;
   let instructions = 0, cycles = 0;
   let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
 
@@ -294,8 +302,9 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
     };
     const disks = disksApi(extras.disks ?? (extras.disk ? { name: 'disk.d64', bytes: extras.disk } : null), { addr, save: saveImage }, r => { diskAsked = r; });
     const tapes = tapesApi(extras.tapes ?? null, { addr, save: saveImage }, r => { tapeAsked = r; });
+    const cartridges = cartridgesApi(extras.cartridges ?? null, { addr, save: saveImage }, r => { cartAsked = r; });
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, scripts, disks, tapes, save, screen };
+    given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, scripts, disks, tapes, cartridges, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -319,7 +328,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
-    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}), ...(scriptsAsked.length && !error ? { scripts: scriptsAsked } : {}), ...(diskAsked && !error ? { disk: diskAsked } : {}), ...(tapeAsked && !error ? { tape: tapeAsked } : {}),
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}), ...(scriptsAsked.length && !error ? { scripts: scriptsAsked } : {}), ...(diskAsked && !error ? { disk: diskAsked } : {}), ...(tapeAsked && !error ? { tape: tapeAsked } : {}), ...(cartAsked && !error ? { cartridge: cartAsked } : {}),
     ...(scr.wrote ? { screen: scr.state() } : {}),
   };
 }

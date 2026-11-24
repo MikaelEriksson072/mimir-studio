@@ -119,6 +119,9 @@ export { snapshotApi, snapshotRequestText, type ScriptSnapshotData, type ScriptS
 export { planScriptsRequests, scriptsApi, scriptsRequestText, SCRIPTS_CALL_DEPTH, SCRIPTS_REQUESTS, SCRIPTS_RUN_CHAIN, type ScriptInfo, type ScriptScriptsData, type ScriptScriptsRequest, type ScriptsPlan } from './script-scripts';
 export { diskRequestText, disksApi, type ScriptDiskRequest, type ScriptDisksData } from './script-disks';
 export { tapeRequestText, tapesApi, type ScriptTapeRequest, type ScriptTapesData } from './script-tapes';
+export { cartridgeRequestText, cartridgesApi, CRT_STRUCTS, type ScriptCartridgeRequest, type ScriptCartridgesData } from './script-cartridges';
+export { CBM80, CrtEdit, programCartridge, CRT_CHIP_MAX, CRT_IMAGE_MAX, type CrtEditChip, type ProgramCartridge } from './c64/crtedit';
+export { CRT_LAYOUTS, crtLayout, crtLayoutName, type CrtLayout, type CrtLayoutChip } from './c64/crt-layouts';
 export { LIBRARY_REQUESTS, libraryApi, libraryRequestText, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 export { SID_REQUESTS, SID_RUN_DEFAULT, SID_RUN_FRAMES, sidApi, sidRequestText, type ScriptSidData, type ScriptSidRequest, type ScriptSidTune } from './script-sid';
 export { BUILD_REQUESTS, buildApi, buildRequestText, type ScriptBuildData, type ScriptBuildRequest } from './script-build';

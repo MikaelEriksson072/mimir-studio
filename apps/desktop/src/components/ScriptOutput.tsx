@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { tapeRequestText, diskRequestText, scriptsRequestText, BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, exportRequestText, buildRequestText, sidRequestText, libraryRequestText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { cartridgeRequestText, tapeRequestText, diskRequestText, scriptsRequestText, BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, exportRequestText, buildRequestText, sidRequestText, libraryRequestText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
@@ -414,6 +414,13 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onSave, onG
           <li><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{tapeRequestText(run.tape)}</li>
         </ul>
         {kept.safe && <p className="small muted">Safe mode: nothing is put in the datasette. Switch safe mode off and run it again.</p>}
+      </div> : null}
+      {run.cartridge && ranWell(run.end) ? <div className="scr-wrote scr-acted">
+        <h5 className="scr-group-h" title="The cartridge image a cartridge's run() asked for: started in VICE when the run has ended well. In safe mode nothing is started">{kept.safe ? 'Would start in VICE' : 'Started in VICE'}</h5>
+        <ul className="scr-acted-list" aria-label={kept.safe ? 'What the run would start in VICE' : 'What the run started in VICE'}>
+          <li><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{cartridgeRequestText(run.cartridge)}</li>
+        </ul>
+        {kept.safe && <p className="small muted">Safe mode: nothing is started. Switch safe mode off and run it again.</p>}
       </div> : null}
       {run.plays?.length ? <div className="scr-wrote scr-acted">
         <h5 className="scr-group-h" title="The tunes the script's sid.play() asked for: played when the run has ended well (after the export and the builds, when it asked for those too), in VICE with Mimir's player or in DeepSID. In safe mode nothing is played">{kept.safe ? 'Would play' : 'Played'}</h5>

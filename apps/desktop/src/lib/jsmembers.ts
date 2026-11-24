@@ -14,6 +14,7 @@ export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | '
   | 'snapshot' | 'snapCpu' | 'snapPort' | 'snapCia' | 'snapSid' | 'snapVic' | 'snapSprite' | 'snapSprites' | 'snapDrive' | 'snapVia' | 'snapModule' | 'snapModules'
   | 'scripts' | 'scriptOne' | 'scriptList' | 'scriptSetting' | 'scriptSettings' | 'scriptPads' | 'scriptTemplate' | 'scriptTemplates'
   | 'tapes' | 'tapeImage' | 'tapeEntry' | 'tapeEntries'
+  | 'cartridges' | 'cartImage' | 'cartChip' | 'cartChips' | 'cartLayout' | 'cartLayouts' | 'cartStart'
   | 'disks' | 'diskImage' | 'diskEntry' | 'diskEntries'
   | 'blocks' | 'block' | 'blockList' | 'struct' | 'structFields' | 'structField' | 'customType' | 'customTypes'
   | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
@@ -65,7 +66,34 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
   libItems: LIST, blockList: LIST, structFields: LIST, customTypes: LIST, snapSprites: LIST, snapModules: LIST,
-  tapeEntries: LIST,
+  tapeEntries: LIST, cartChips: LIST, cartLayouts: LIST,
+  cartridges: [
+    m('create', 'create(structure, { name, size, fill, data }): a new cartridge with a standard structure ("normal", "ulti", "ocean", "md", "easy", … or a hardware type\'s number), its chips filled with data in the image\'s order; create("custom", { name, hw, exrom, game }) is one with no chips yet', true),
+    m('fromProgram', 'fromProgram(bytes, { load, start, basic, name }): a Magic Desk cartridge that copies the program to where it loads and starts it (RUN at $0801, else a jump)', true),
+    m('open', 'open(bytes): a cartridge image\'s bytes to work on (a .crt)', true),
+    m('project', 'the project\'s cartridge to work on, a copy, or null'),
+    m('layouts', 'the standard structures: { key, id, name, sizes }'), m('layout', 'layout(key, size): a structure with its EXROM and GAME lines, banks and chips', true),
+    m('types', 'the hardware types: { id, name }'), m('structs', 'the fields of a cartridge\'s structures for blocks.struct: cbm80, vectors, header, chip'),
+    m('cbm80', 'cbm80(cold, warm): the nine bytes a cartridge starts with at $8000 (the vectors and "CBM80")', true),
+  ],
+  cartImage: [
+    m('name', 'the cartridge\'s name in the header, 32 characters at most (set too)'), m('fileName', 'the name its file has'), m('hw', 'the hardware type\'s number (set too)'), m('type', 'the hardware type\'s name'),
+    m('revision', 'the hardware revision (set too)'), m('version', 'the header\'s version, "1.0"'), m('exrom', 'the EXROM line at reset: 0 active, 1 inactive (set too)'), m('game', 'the GAME line at reset: 0 active, 1 inactive (set too)'),
+    m('mode', 'the memory map the lines give: "8k", "16k", "ultimax" or "none"'), m('chips', 'the chips, in the image\'s order'), m('banks', 'the bank numbers, in order'), m('bootBank', 'the bank the C64 starts in'),
+    m('total', 'the bytes in the chips'), m('size', 'the image\'s size in bytes'), m('bytes', 'the image as it is now, a copy'), m('start', 'how the C64 starts it: { kind: "cbm80", cold, warm }, { kind: "vectors", nmi, reset, irq } or null'),
+    m('chip', 'chip(number): a chip', true), m('find', 'find(bank, address): the chip of a bank at an address (the bank\'s first without one), or null', true),
+    m('read', 'read(chip): a chip\'s bytes, a copy', true), m('write', 'write(chip, bytes, at): bytes into a chip, from its start or from at', true), m('fill', 'fill(chip, value): every byte of a chip ($ff)', true),
+    m('peek', 'peek(bank, address): the byte a bank has at an address', true), m('poke', 'poke(bank, address, value): set it', true),
+    m('get', 'get(bank, address, length): bytes of a bank from an address', true), m('put', 'put(bank, address, bytes): bytes into a bank from an address, over its chips', true),
+    m('add', 'add(bank, load, bytes or size, { type, fill, at }): a new chip (a CHIP packet); type "rom", "ram", "flash" or "eeprom"', true),
+    m('remove', 'remove(chip): take a chip out', true), m('resize', 'resize(chip, size, fill): make a chip another size', true), m('set', 'set(chip, { bank, load, type }): a chip\'s bank, address and type', true),
+    m('setStart', 'setStart(cold, warm, bank): the CBM80 vectors and signature at $8000 (warm: $fe5e when left out)', true), m('setVectors', 'setVectors({ nmi, reset, irq }, bank): the CPU\'s vectors at $fffa of an Ultimax cartridge', true),
+    m('list', 'list(): the header and the chips, a line each', true), m('file', 'file(): the image\'s bytes', true),
+    m('save', 'save(fileName): the image as a file of the run (Last run: Save…); gives the name', true), m('run', 'run(fileName): start the cartridge in VICE when the run has ended well', true),
+  ],
+  cartChip: [m('number', 'its number among the chips, from 0'), m('bank', 'its bank'), m('load', 'the address the image maps it at'), m('address', 'the address the CPU sees it at'), m('size', 'its size in bytes'), m('end', 'the address after its last byte'), m('type', '"rom", "ram", "flash" or "eeprom"'), m('typeId', 'its type\'s number')],
+  cartLayout: [m('key', 'its key, cartconv\'s: "normal", "md", "easy", …'), m('id', 'the hardware type\'s number'), m('name', 'the hardware type\'s name'), m('sizes', 'the sizes it comes in, in bytes (in cartridges.layouts)'), m('size', 'its bytes of ROM (of layout(key, size))'), m('exrom', 'the EXROM line at reset'), m('game', 'the GAME line at reset'), m('banks', 'how many banks'), m('chips', 'its chips: { bank, load, size, type }')],
+  cartStart: [m('kind', '"cbm80" or "vectors"'), m('cold', 'the cold start (cbm80)'), m('warm', 'the warm start, where RESTORE goes (cbm80)'), m('reset', 'the reset vector (vectors)'), m('nmi', 'the NMI vector (vectors)'), m('irq', 'the IRQ vector (vectors)')],
   tapes: [
     m('create', 'create("tap" or "t64", { name }): a new, empty tape (a tape\'s pulses, or a tape archive)', true),
     m('open', 'open(bytes): a tape image\'s bytes to work on (a TAP or a T64)', true),
@@ -433,7 +461,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', tapeEntries: 'tapeEntry', diskEntries: 'diskEntry', scriptList: 'scriptOne', scriptSettings: 'scriptSetting', scriptPads: 'file', scriptTemplates: 'scriptTemplate', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { cartChips: 'cartChip', cartLayouts: 'cartLayout', diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', tapeEntries: 'tapeEntry', diskEntries: 'diskEntry', scriptList: 'scriptOne', scriptSettings: 'scriptSetting', scriptPads: 'file', scriptTemplates: 'scriptTemplate', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -504,6 +532,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'scripts') return 'scripts';
   if (e === 'disks') return 'disks';
   if (e === 'tapes') return 'tapes';
+  if (e === 'cartridges') return 'cartridges';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -540,6 +569,8 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (on === 'scripts') return name === 'find' ? 'scriptOne' : null;
     if (on === 'disks') return name === 'create' || name === 'open' ? 'diskImage' : null;
     if (on === 'tapes') return name === 'create' || name === 'open' ? 'tapeImage' : null;
+    if (on === 'cartridges') return name === 'create' || name === 'open' || name === 'fromProgram' ? 'cartImage' : name === 'layout' ? 'cartLayout' : name === 'cbm80' ? 'bytes' : null;
+    if (on === 'cartImage') return name === 'read' || name === 'get' || name === 'file' ? 'bytes' : name === 'chip' || name === 'find' || name === 'add' ? 'cartChip' : name === 'list' ? 'texts' : name === 'save' ? 'text' : null;
     if (on === 'tapeImage') return name === 'read' || name === 'prg' || name === 'file' ? 'bytes' : name === 'find' || name === 'add' ? 'tapeEntry' : name === 'toT64' || name === 'toTap' ? 'tapeImage' : name === 'list' ? 'texts' : name === 'save' ? 'text' : null;
     if (on === 'diskImage') return name === 'read' || name === 'sector' || name === 'file' ? 'bytes' : name === 'find' || name === 'add' ? 'diskEntry' : name === 'list' || name === 'validate' ? 'texts' : name === 'save' ? 'text' : name === 'chain' ? 'list' : null;
     if (on === 'scriptOne') return name === 'withSettings' || name === 'setting' ? 'text' : null;
@@ -572,6 +603,10 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'library') return name === 'items' || name === 'sids' || name === 'sprites' || name === 'chars' || name === 'bitmaps' ? 'libItems' : name === 'requests' ? 'texts' : name === 'folder' ? 'text' : null;
   if (on === 'libItem') return name === 'bytes' || name === 'bitmap' || name === 'screen' || name === 'colorRam' ? 'bytes' : name === 'tune' ? 'sidFile' : name === 'from' ? 'libFrom' : name === 'colors' ? 'libColors' : name === 'name' || name === 'file' || name === 'kind' || name === 'hash' ? 'text' : null;
   if (on === 'tapes') return name === 'mounted' ? 'tapeImage' : name === 'kinds' ? 'texts' : null;
+  if (on === 'cartridges') return name === 'project' ? 'cartImage' : name === 'layouts' ? 'cartLayouts' : name === 'types' ? 'list' : null;
+  if (on === 'cartImage') return name === 'chips' ? 'cartChips' : name === 'bytes' ? 'bytes' : name === 'start' ? 'cartStart' : name === 'name' || name === 'fileName' || name === 'type' || name === 'mode' || name === 'version' ? 'text' : name === 'banks' ? 'list' : null;
+  if (on === 'cartChip') return name === 'type' ? 'text' : null;
+  if (on === 'cartLayout') return name === 'key' || name === 'name' ? 'text' : name === 'chips' || name === 'sizes' ? 'list' : null;
   if (on === 'tapeImage') return name === 'files' ? 'tapeEntries' : name === 'bytes' ? 'bytes' : name === 'unknown' ? 'list' : name === 'name' || name === 'kind' ? 'text' : null;
   if (on === 'tapeEntry') return name === 'name' || name === 'format' || name === 'type' ? 'text' : name === 'errors' ? 'texts' : null;
   if (on === 'disks') return name === 'mounted' ? 'diskImage' : name === 'kinds' ? 'texts' : null;

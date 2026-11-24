@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeTap, readTape, readT64, DiskEdit, makeD64, openC64File, parseVsf, analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { CrtEdit, makeCrt, makeTap, readTape, readT64, DiskEdit, makeD64, openC64File, parseVsf, analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
 import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are twenty-three, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'script_tools', 'disk_make', 'tape_make', 'screen_show', 'screen_hexdump']);
+  it('are twenty-six, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'script_tools', 'disk_make', 'tape_make', 'cart_program', 'cart_make', 'cart_list', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -336,6 +336,78 @@ describe('the JavaScript template for the library', () => {
     const has = go({ addMusic: 'true' }, lib([{ kind: 'sid', file: 'music.sid', name: 'm', data: a.library![0].bytes }]));
     expect(has.prints!.at(-1)).toBe('music is in the library already: music.sid');
     expect(has.library).toBeUndefined();
+  });
+});
+
+describe('the JavaScript templates for cartridges', () => {
+  const set = (name: string, values: Record<string, string>) => setScriptParams(template(name).source, { code: 'js' }, values).source;
+
+  it('Make a cartridge of the program makes a Magic Desk cartridge that starts it, saves it and starts it in VICE', () => {
+    const r = runJs(env, { source: set('cart_program', {}), pads: [] }, {});
+    expect(r.error).toBeUndefined();
+    const end = program.load + program.bytes.length, h = (v: number) => '$' + v.toString(16).padStart(4, '0');
+    expect(r.prints![0]).toBe('"MIMIR"  Magic Desk (Domark, HES Australia) (type 19), 8K mode (EXROM 0, GAME 1), 4 chips, 32 KB');
+    expect(r.prints!.slice(-2)).toEqual([`The program: ${h(program.load)}-${h(end - 1)}, ${program.bytes.length} bytes, started at ${h(program.load)}`, 'Saved as mimir.crt, 32896 bytes']);
+    const c = CrtEdit.open(r.made![0].bytes, r.made![0].name);
+    expect([c.hw, c.name, c.start]).toEqual([19, 'MIMIR', { kind: 'cbm80', cold: 0x8009, warm: 0xfe5e }]);
+    // the program is in the cartridge, after its boot
+    const rom = c.chips[0].data, at = Buffer.from(rom).indexOf(Buffer.from(program.bytes));
+    expect(at).toBeGreaterThan(9);
+    expect(Array.from(rom.subarray(at - 4, at))).toEqual([0x58, 0x4c, program.load & 0xff, program.load >> 8]);
+    expect(r.cartridge).toBeUndefined();
+    // started where it is said, by a label; saved under a name and started in VICE
+    const s = runJs(env, { source: set('cart_program', { cartName: '"GAME"', startAt: '"double"', saveAs: '"game"', runIt: 'true' }), pads: [] }, {});
+    expect(s.error).toBeUndefined();
+    expect(s.prints!.slice(-2)).toEqual([`The program: ${h(program.load)}-${h(end - 1)}, ${program.bytes.length} bytes, started at $0810`, 'Saved as game.crt, 32896 bytes']);
+    expect([s.made![0].name, s.cartridge!.name, s.cartridge!.chips, s.cartridge!.total]).toEqual(['game.crt', 'game.crt', 4, 32768]);
+  });
+
+  it('Make a cartridge of a standard structure makes one with the program\'s bytes in its boot bank and its start set', () => {
+    const rom = fromSource('rom.prg', ['.pc = $8000', '.word start, start', '.byte $c3, $c2, $cd, $38, $30', 'start: inc $d020', 'jmp start'].join('\n'));
+    const romEnv: ScriptEnv = { files: [rom], names: new Map([['start', 0x8009]]) };
+    const go = (values: Record<string, string> = {}, e = romEnv) => runJs(e, { source: set('cart_make', values), pads: [] }, {});
+    const r = go();
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toEqual([
+      '"MIMIR"  Normal cartridge (type 0), 8K mode (EXROM 0, GAME 1), 1 chip, 4 KB',
+      '  0  bank   0  $8000-$8fff   4096 bytes  ROM',
+      `${rom.bytes.length} bytes of the program in the boot bank, which starts at $8009`,
+      'Saved as mimir.crt, 4176 bytes',
+    ]);
+    const c = CrtEdit.open(r.made![0].bytes);
+    expect(Array.from(c.chips[0].data.subarray(0, rom.bytes.length))).toEqual(Array.from(rom.bytes));
+    expect(c.chips[0].data[rom.bytes.length]).toBe(0xff);
+    // another structure and size, the cold start set, the structures listed, started in VICE
+    const o = go({ structure: '"ocean"', romSize: '131072', cartName: '"BIG"', coldStart: '0x8010', listStructures: 'true', saveAs: '"big"', runIt: 'true' });
+    expect(o.error).toBeUndefined();
+    expect(o.prints!.slice(0, 2)).toEqual(['normal        0  Normal cartridge (8K or 16K mode): 4 KB, 8 KB, 12 KB, 16 KB', 'ulti          0  Normal cartridge in Ultimax mode: 4 KB, 8 KB, 16 KB']);
+    expect(o.prints![84]).toBe('"BIG"  Ocean (type 5), 16K mode (EXROM 0, GAME 0), 16 chips, 128 KB');
+    expect(o.prints!.slice(-2)).toEqual([`${rom.bytes.length} bytes of the program in the boot bank, which starts at $8010`, 'Saved as big.crt, 131392 bytes']);
+    expect([o.cartridge!.name, o.cartridge!.type, o.cartridge!.chips]).toEqual(['big.crt', 'Ocean', 16]);
+    // a program that is not at the chips' addresses leaves them empty
+    const none = go({}, env);
+    expect(none.prints!.at(-2)).toBe('0 bytes of the program in the boot bank, which has no CBM80 vectors and no reset vector yet');
+    expect(go({ structure: '"nothing"' }).error?.msg).toMatch(/^TypeError: cartridges\.create: "nothing" is no standard structure/);
+    expect(go({ romSize: '5000' }).error?.msg).toMatch(/^RangeError: cartridges\.create: Normal cartridge \(8K or 16K mode\) \(normal\) does not come with 5000 bytes/);
+  });
+
+  it('List the cartridge prints the project\'s cartridge: its chips, how it starts and each bank', () => {
+    const boot = new Uint8Array(8192).fill(0xff); boot.set([0x09, 0x80, 0x5e, 0xfe, 0xc3, 0xc2, 0xcd, 0x38, 0x30, 0x78]);
+    const crt = makeCrt({ name: 'GAME', hw: 19, exrom: 0, game: 1, chips: [boot, new Uint8Array(8192).fill(1), new Uint8Array(8192).fill(0xff)].map((bytes, bank) => ({ bank, load: 0x8000, bytes })) });
+    const go = (values: Record<string, string> = {}, c: Uint8Array | null = crt) => runJs(env, { source: set('cart_list', values), pads: [] }, { cartridges: c ? { name: 'game.crt', bytes: c } : null });
+    const r = go();
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toEqual([
+      '"GAME"  Magic Desk (Domark, HES Australia) (type 19), 8K mode (EXROM 0, GAME 1), 3 chips, 24 KB',
+      '  0  bank   0  $8000-$9fff   8192 bytes  ROM', '  1  bank   1  $8000-$9fff   8192 bytes  ROM', '  2  bank   2  $8000-$9fff   8192 bytes  ROM',
+      'It starts at $8009 (the CBM80 vectors; RESTORE goes to $fe5e)',
+      'bank 0: $8000-$9fff, CBM80: cold $8009, warm $fe5e', 'bank 1: $8000-$9fff', 'bank 2: $8000-$9fff, empty',
+    ]);
+    expect(r.made).toBeUndefined();
+    const few = go({ maxBanks: '1', saveAs: '"copy"' });
+    expect(few.prints!.slice(-3)).toEqual(['bank 0: $8000-$9fff, CBM80: cold $8009, warm $fe5e', '… and 2 more banks', `Saved as copy.crt, ${crt.length} bytes`]);
+    expect(Buffer.from(few.made![0].bytes).equals(Buffer.from(crt))).toBe(true);
+    expect(go({}, null).error?.msg).toMatch(/^Error: The project was not opened from a cartridge/);
   });
 });
 
