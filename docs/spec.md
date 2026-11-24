@@ -3646,6 +3646,16 @@ Det rena står i `packages/core/src/asm-project.ts`; mappen läses och skrivs ba
   *Delete* (till papperskorgen), *Show in folder*, *Copy path*; ett nytt namn skrivs i listan själv, och ett namn utan
   ändelse blir en `.asm`. Filnamnet i verktygsraden byter också namn på filen. Listan fälls in till en remsa och bredden
   dras med kanten.
+- **Flikar över koden** för de öppna filerna (`AsmTabs` i `AsmTree.tsx`, 2026-11-24). Ett klick i listan öppnar filen i
+  förhandsfliken (kursiv), som nästa klick i listan lägger en annan fil i; en dubbelklickning i listan eller på fliken, eller att
+  man skriver i filen, behåller den som en egen flik (också en ny fil, *Open* i menyn och Enter i listan). Debuggern,
+  problemen och go to definition öppnar i förhandsfliken. × eller ett mittenklick stänger en flik (det som inte är skrivet
+  skrivs först), och fliken efter den (eller före) visas; Ctrl+F4 stänger den som visas, Ctrl+Tab och Ctrl+PageDown går
+  till nästa, Ctrl+Shift+Tab och Ctrl+PageUp till den före (runt raden), också i listan och under koden. En flik dras till
+  en annan plats i raden. Högerklick: *Close*, *Close the others*, *Close those to the right*, *Close all*, *Keep it open*
+  (en förhandsflik), *Main file*, *Show in the list*, *Show in folder*, *Copy path*. Två filer med samma namn visar sina
+  mappar; en fil som byter namn behåller sin flik, en som tas bort (också utanför appen) stängs. Flikarna sparas per mapp
+  (`kr.asmTabs`) och är kvar när mappen öppnas igen; utan flikar visas *No file open*.
 - **Huvudfilen** är den som byggs: den källfil som startar ett program (BasicUpstart, `* =`, `.pc =`) och som ingen annan
   importerar, sedan en som heter main, sedan den närmast mappens topp (`mainFile`). *Main file* i menyn väljer en annan,
   och valet sparas per mapp. Språket är huvudfilens (`guessAssembler`), och knappen *Language* byter mellan Kick

@@ -8,7 +8,12 @@ import { store } from '../lib/util';
 /** the output's tabs: what the check and the build found, the build's output, and how the last run in Mimir ended */
 export type AsmOutTab = 'problems' | 'build' | 'run';
 
-const MAINS_KEY = 'kr.asmMain', LANGS_KEY = 'kr.asmLang', OPEN_KEY = 'kr.asmOpen', LAYOUT_KEY = 'kr.asmLayout';
+const MAINS_KEY = 'kr.asmMain', LANGS_KEY = 'kr.asmLang', OPEN_KEY = 'kr.asmOpen', LAYOUT_KEY = 'kr.asmLayout', TABS_KEY = 'kr.asmTabs';
+
+/** a folder's tabs: the files open in the editor, in their order, and the one that is a preview (a click in the list
+ *  opens a file there, and the next click puts another in its place; typing in it or a double-click keeps it) */
+export interface AsmTabs { open: string[]; preview: string | null }
+export const NO_TABS: AsmTabs = { open: [], preview: null };
 
 interface Layout { outH: number; outFolded: boolean; listFolded: boolean; listW: number; outTab: AsmOutTab }
 const readLayout = (): Layout => {
@@ -30,12 +35,15 @@ interface AsmState extends Layout {
   expanded: Record<string, string[]>;
   /** the breakpoints by folder and file: the lines */
   bps: Record<string, number[]>;
+  /** the tabs of each folder (by the folder's path) */
+  tabs: Record<string, AsmTabs>;
   set: (patch: Partial<Layout>) => void;
   setMain: (dir: string, path: string | null) => void;
   setLang: (dir: string, lang: ScriptLang | null) => void;
   setShown: (dir: string, path: string | null) => void;
   setExpanded: (dir: string, paths: string[]) => void;
   setBps: (dir: string, path: string, lines: number[]) => void;
+  setTabs: (dir: string, tabs: AsmTabs) => void;
 }
 
 const without = <T,>(r: Record<string, T>, k: string): Record<string, T> => { const { [k]: _, ...rest } = r; return rest; };
@@ -48,11 +56,13 @@ export const useAssembler = create<AsmState>((set, get) => ({
   shown: store.get<Record<string, string>>(OPEN_KEY, {}),
   expanded: {},
   bps: {},
+  tabs: store.get<Record<string, AsmTabs>>(TABS_KEY, {}),
   set: patch => { set(patch); store.set(LAYOUT_KEY, layoutOf({ ...get(), ...patch })); },
   setMain: (dir, path) => { const mains = path ? { ...get().mains, [dir]: path } : without(get().mains, dir); store.set(MAINS_KEY, mains); set({ mains }); },
   setLang: (dir, lang) => { const langs = lang ? { ...get().langs, [dir]: lang } : without(get().langs, dir); store.set(LANGS_KEY, langs); set({ langs }); },
   setShown: (dir, path) => { const shown = path ? { ...get().shown, [dir]: path } : without(get().shown, dir); store.set(OPEN_KEY, shown); set({ shown }); },
   setExpanded: (dir, paths) => set({ expanded: { ...get().expanded, [dir]: paths } }),
+  setTabs: (dir, t) => { const tabs = { ...get().tabs, [dir]: t }; store.set(TABS_KEY, tabs); set({ tabs }); },
   setBps: (dir, path, lines) => {
     const k = `${dir}|${path}`, had = get().bps[k];
     // (nothing changes: no new state, so a file's breakpoints set as its model is made draw nothing again)

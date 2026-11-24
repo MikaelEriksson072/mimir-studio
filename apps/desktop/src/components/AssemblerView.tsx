@@ -13,13 +13,13 @@ import { projectNameProblem } from '../../shared/projects';
 import type { ContextMenuState, MenuItem } from '../lib/types';
 import { Icon, LVL_ICON } from '../lib/icons';
 import { cx, errorText, fmtBytes } from '../lib/util';
-import { useAssembler } from '../store/assembler';
+import { NO_TABS, useAssembler, type AsmTabs } from '../store/assembler';
 import { runScreenSize, useScripts } from '../store/scripts';
 import { ContextMenu } from './ContextMenu';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { ScriptScreenPanel } from './ScriptScreen';
-import { AsmTree, baseName, fileIcon, parentOf, type TreeEdit } from './AsmTree';
+import { AsmTabs as TabRow, AsmTree, baseName, fileIcon, parentOf, type TreeEdit } from './AsmTree';
 import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmRunKept } from './AsmOutput';
 
 const kr = window.kr;
@@ -27,6 +27,9 @@ type MonacoNs = typeof Monaco;
 type ToastKind = 'ok' | 'info' | 'warn' | 'err';
 type ToastFn = (msg: string, kind?: ToastKind) => void;
 type OnMenu = (x: number, y: number, items: MenuItem[]) => void;
+/** where a file opens: at a line (and column); `soft`: the debugger's line, shown only when out of view, the cursor and
+ *  the focus left where they are; `keep`: in a tab that stays (else in the preview tab, when it is not open yet) */
+type OpenAt = { line?: number; col?: number; soft?: boolean; keep?: boolean };
 
 /** files bigger than this are not read as text (no source is this big) */
 const TEXT_MAX = 4 * 1024 * 1024;
@@ -203,6 +206,23 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   const [edit, setEdit] = useState<TreeEdit | null>(null);
   const expanded = useMemo(() => new Set(ui.expanded[dir] ?? []), [ui.expanded, dir]);
   const setShown = (p: string | null) => { setShownState(p); useAssembler.getState().setShown(dir, p); };
+  // the tabs over the code (AsmTabs): the files open, and the preview among them
+  const tabs = ui.tabs[dir] ?? NO_TABS;
+  const tabsNow = () => useAssembler.getState().tabs[dir] ?? NO_TABS;
+  const setTabs = (t: AsmTabs) => useAssembler.getState().setTabs(dir, t);
+  /** a rename going on: where a path of the list goes now (the tabs and the file shown follow it) */
+  const moves = useRef<((p: string) => string | null) | null>(null);
+  /** the tabs as the listing `now` has the files: one gone is closed (one renamed follows its file), and the file shown
+   *  gone, the tab beside it is shown */
+  const fixTabs = (now: { has: (p: string) => boolean }) => {
+    const t = tabsNow(), mv = moves.current, s = shownRef.current;
+    const at = (p: string) => (now.has(p) ? p : (q => (q && now.has(q) ? q : null))(mv?.(p) ?? null));
+    const open: string[] = [];
+    let preview: string | null = null;
+    for (const p of t.open) { const q = at(p); if (q && !open.includes(q)) { open.push(q); if (p === t.preview) preview = q; } }
+    if (open.length !== t.open.length || open.some((p, i) => p !== t.open[i]) || preview !== t.preview) setTabs({ open, preview });
+    if (s && !now.has(s)) { const q = at(s); setShown(q ?? open[Math.min(Math.max(0, t.open.indexOf(s)), open.length - 1)] ?? null); }
+  };
 
   /* ---- the files: read when the folder opens, written as they are typed, read again when they change outside ---- */
   useEffect(() => {
@@ -257,6 +277,8 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     for (const p of gone) delete disk.current[p];
     // the data the sources load, read again when it changed
     setBins(b => { let n: Record<string, Uint8Array> | null = null; for (const p of Object.keys(b)) if (!now.has(p) || (now.get(p)!.mtime !== binTimes.current[p])) { n ??= { ...b }; delete n[p]; tried.current.delete(p); } return n ?? b; });
+    // the tabs of files gone are closed, those renamed follow them
+    fixTabs(now);
     if (!Object.keys(read).length && !gone.length) return;
     // a file changed outside the app: the editor takes its text (undo goes back to what it had)
     for (const [p, text] of Object.entries(read)) {
@@ -323,7 +345,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   /** (`soft`: the debugger's line, shown only when it is out of view, the cursor and the focus left where they are) */
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
-  const keys = useRef({ run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _l?: number, _c?: number) => { } });
+  const keys = useRef({ run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { } });
 
   useEffect(() => {
     if (!loaded) return;
@@ -347,6 +369,9 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
         const text = m.getValue();
         setTexts(t => ({ ...t, [path]: text }));
         schedule(path);
+        // a preview typed in is kept open
+        const t = tabsNow();
+        if (t.preview === path) setTabs({ ...t, preview: null });
       });
       // Ctrl+Enter runs (debugging: goes on), Ctrl+Shift+B builds, Ctrl+S writes now; F8 steps (and starts debugging),
       // F6 steps over a JSR, Shift+F6 out of one
@@ -357,6 +382,12 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
       editor.addCommand(monaco.KeyCode.F8, () => keys.current.step());
       editor.addCommand(monaco.KeyCode.F6, () => keys.current.over());
       editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F6, () => keys.current.out());
+      // the tabs: Ctrl+Tab and Ctrl+PageDown the next, with Shift and Ctrl+PageUp the one before, Ctrl+F4 closes it
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Tab, () => keys.current.tab(1));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Tab, () => keys.current.tab(-1));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageDown, () => keys.current.tab(1));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageUp, () => keys.current.tab(-1));
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F4, () => keys.current.closeTab());
       // a click in the gutter left of the line numbers sets or clears a breakpoint
       editor.onMouseDown(ev => { if (ev.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN && ev.target.position) keys.current.toggleBp(ev.target.position.lineNumber); });
       // a definition in another of the folder's files (F12, Ctrl+click): that file in the editor, at it
@@ -364,7 +395,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
         openCodeEditor(_from, resource, at) {
           const p = pathOfUri(resource); if (!p) return false;
           const pos = at && 'startLineNumber' in at ? { line: at.startLineNumber, col: at.startColumn } : at ? { line: at.lineNumber, col: at.column } : { line: 1, col: 1 };
-          keys.current.open(p, pos.line, pos.col);
+          keys.current.open(p, { line: pos.line, col: pos.col });
           return true;
         },
       });
@@ -392,19 +423,18 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     for (const [p, m] of Object.entries(models.current)) { const l = editorLang(p, lang); if (m.getLanguageId() !== l) monaco.editor.setModelLanguage(m, l); }
   }, [state, texts, lang]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // the file shown: the main file (or the first source) until one is opened
+  // the files open when the folder opens: the tabs it had (those still there) and the file shown last, else the main
+  // file (or the first source)
   useEffect(() => {
-    if (!loaded) return;
-    if (shown && (shown in texts || paths.has(shown))) {
-      // (the folders of the file shown last open in the list)
-      if (!opened.current) { opened.current = true; openFile(shown); }
-      return;
-    }
+    if (!loaded || opened.current) return;
+    opened.current = true;
+    const t = tabsNow(), open = t.open.filter(p => paths.has(p));
     // (the main file found from the texts as they are: the check's lag a moment behind)
-    const now = chosen && paths.has(chosen) ? chosen : mainFile(Object.entries(texts).map(([path, text]) => ({ path, text })));
-    const p = now ?? Object.keys(texts)[0] ?? null;
-    if (p) { opened.current = true; openFile(p); } else setShown(null);
-  }, [loaded, main, paths]); // eslint-disable-line react-hooks/exhaustive-deps
+    const first = () => (chosen && paths.has(chosen) ? chosen : mainFile(Object.entries(texts).map(([path, text]) => ({ path, text })))) ?? Object.keys(texts)[0] ?? null;
+    const p = shown && paths.has(shown) ? shown : open[0] ?? first();
+    setTabs({ open: p && !open.includes(p) ? [...open, p] : open, preview: t.preview && open.includes(t.preview) ? t.preview : null });
+    if (p) openFile(p, { keep: true }); else setShown(null);
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
   const opened = useRef(false);
   // the shown file's model in the editor (where it was in it kept for each file), and a line asked for shown
   useEffect(() => {
@@ -425,14 +455,60 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     }
   });
 
-  /** a file opened in the editor (its folders opened in the list), at a line (`soft`: see reveal) */
-  const openFile = (path: string, line?: number, col?: number, soft = false) => {
+  /** a file opened in the editor (its folders opened in the list), in its tab: one open already, else the preview tab
+   *  (a file put in its place) or, `keep`, a new tab after the one shown; at a line (OpenAt) */
+  const openFile = (path: string, o: OpenAt = {}) => {
     const ups: string[] = [];
     for (let p = parentOf(path); p; p = parentOf(p)) ups.push(p);
     if (ups.some(p => !expanded.has(p))) ui.setExpanded(dir, [...new Set([...expanded, ...ups])]);
-    if (line) reveal.current = { path, line, col, soft };
+    placeTab(path, !!o.keep);
+    if (o.line) reveal.current = { path, line: o.line, col: o.col, soft: o.soft };
     if (path !== shownRef.current) setShown(path);
-    else if (line) setTick(t => t + 1);
+    else if (o.line) setTick(t => t + 1);
+  };
+  /** `path` given a tab (see openFile) */
+  const placeTab = (path: string, keep: boolean) => {
+    const t = tabsNow();
+    if (t.open.includes(path)) { if (keep && t.preview === path) setTabs({ ...t, preview: null }); return; }
+    // the preview's place, unless it has changes not written yet (it is kept then)
+    if (!keep && t.preview && t.open.includes(t.preview) && !timers.current[t.preview]) { setTabs({ open: t.open.map(p => (p === t.preview ? path : p)), preview: path }); return; }
+    const at = shownRef.current ? t.open.indexOf(shownRef.current) : -1;
+    setTabs({ open: at >= 0 ? [...t.open.slice(0, at + 1), path, ...t.open.slice(at + 1)] : [...t.open, path], preview: keep ? (t.preview && timers.current[t.preview] ? null : t.preview) : path });
+  };
+  /** tabs closed (what is not written yet is written first); the tab shown closed, the one after it (or before it) is shown */
+  const closeTabs = (closing: readonly string[]) => {
+    for (const p of closing) if (timers.current[p]) void write(p);
+    const t = tabsNow(), open = t.open.filter(p => !closing.includes(p)), s = shownRef.current;
+    setTabs({ open, preview: t.preview && !closing.includes(t.preview) ? t.preview : null });
+    for (const p of closing) delete views.current[p];
+    if (s && closing.includes(s)) { const i = t.open.indexOf(s); setShown(open[Math.min(i, open.length - 1)] ?? null); }
+  };
+  /** the tab `step` places on from the one shown (round the row) */
+  const stepTab = (step: number) => {
+    const t = tabsNow(); if (!t.open.length) return;
+    const i = shownRef.current ? t.open.indexOf(shownRef.current) : -1;
+    setShown(t.open[((i < 0 ? 0 : i + step) % t.open.length + t.open.length) % t.open.length]);
+  };
+  /** a tab dragged to before another (null: to the end) */
+  const moveTab = (path: string, before: string | null) => {
+    if (path === before) return;
+    const t = tabsNow(), rest = t.open.filter(p => p !== path), i = before ? rest.indexOf(before) : rest.length;
+    setTabs({ ...t, open: [...rest.slice(0, i < 0 ? rest.length : i), path, ...rest.slice(i < 0 ? rest.length : i)] });
+  };
+  const tabMenu = (x: number, y: number, path: string) => {
+    const t = tabsNow(), i = t.open.indexOf(path), source = ASM_SOURCE.test(path);
+    onMenu(x, y, [
+      { label: 'Close', key: 'Ctrl+F4', icon: 'x', run: () => closeTabs([path]) },
+      { label: 'Close the others', run: () => closeTabs(t.open.filter(p => p !== path)) },
+      { label: 'Close those to the right', run: () => closeTabs(t.open.slice(i + 1)) },
+      { label: 'Close all', run: () => closeTabs(t.open) },
+      ...(t.preview === path ? [{ label: 'Keep it open', icon: 'pin' as const, run: () => setTabs({ ...t, preview: null }) }] : []),
+      { sep: true },
+      ...(source ? [{ label: 'Main file: Run and Build build it', checked: path === main, run: () => { ui.setMain(dir, path); toast(`${path} is the main file: Run and Build build it`, 'ok'); } }] : []),
+      { label: 'Show in the list', icon: 'files', run: () => { openFile(path); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.asm-tree [data-path="${CSS.escape(path)}"]`)?.focus()); } },
+      { label: 'Show in folder', icon: 'folder', run: () => void kr?.assemblerReveal({ dir, path }).catch((err: unknown) => toast(errorText(err), 'err')) },
+      { label: 'Copy path', icon: 'copy', run: () => { const full = joinDir(dir, path); void navigator.clipboard.writeText(full).then(() => toast(`Copied ${full}`, 'ok')); } },
+    ]);
   };
 
   // the problems as markers on their lines: what Mimir's check finds, and what the last build found
@@ -486,7 +562,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     // a file without an extension is a source
     const file = e.kind === 'file' && !/\.[^./]+$/.test(baseName(path)) ? `${path}.asm` : path;
     if (await change(e.kind === 'file' ? { dir, op: 'file', path: file, text: '' } : { dir, op: 'folder', path })) {
-      if (e.kind === 'file') openFile(file);
+      if (e.kind === 'file') openFile(file, { keep: true });
       else ui.setExpanded(dir, [...expanded, path]);
     }
   };
@@ -494,24 +570,26 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   const renameTo = async (from: string, to: string) => {
     const under = (p: string) => p === from || p.startsWith(`${from}/`);
     await Promise.all(Object.keys(timers.current).filter(under).map(write));
-    if (!await change({ dir, op: 'rename', path: from, to }, `${from} is ${to} now`)) return;
     const moved = (p: string) => `${to}${p.slice(from.length)}`;
-    if (shownRef.current && under(shownRef.current)) setShown(moved(shownRef.current));
+    // (the tabs, the file shown and where it was shown follow the files: fixTabs asks where each went)
+    moves.current = p => (under(p) ? moved(p) : null);
+    for (const p of Object.keys(views.current)) if (under(p)) views.current[moved(p)] = views.current[p];
+    try { if (!await change({ dir, op: 'rename', path: from, to }, `${from} is ${to} now`)) return; } finally { moves.current = null; }
     if (chosen && under(chosen)) ui.setMain(dir, moved(chosen));
     ui.setExpanded(dir, [...expanded].map(p => (under(p) ? moved(p) : p)));
   };
   const remove = async (e: AsmEntry) => {
     const under = (p: string) => p === e.path || p.startsWith(`${e.path}/`);
     for (const p of Object.keys(timers.current).filter(under)) { clearTimeout(timers.current[p]); delete timers.current[p]; }
+    // (its tabs are closed as the listing no longer has it: fixTabs)
     if (!await change({ dir, op: 'remove', path: e.path }, `${e.path} is in the Recycle Bin`)) return;
-    if (shownRef.current && under(shownRef.current)) setShown(null);
     if (chosen && under(chosen)) ui.setMain(dir, null);
   };
   const rowMenu = (x: number, y: number, e: AsmEntry | null) => {
     const source = !!e && !e.dir && ASM_SOURCE.test(e.path);
     const full = e ? joinDir(dir, e.path) : dir;
     const items: MenuItem[] = [
-      ...(e && !e.dir ? [{ label: 'Open', icon: 'doc' as const, run: () => openFile(e.path) }] : []),
+      ...(e && !e.dir ? [{ label: 'Open', icon: 'doc' as const, run: () => openFile(e.path, { keep: true }) }] : []),
       ...(source ? [{ label: 'Main file: Run and Build build it', checked: e!.path === main, run: () => { ui.setMain(dir, e!.path); toast(`${e!.path} is the main file: Run and Build build it`, 'ok'); } }] : []),
       ...(e ? [{ sep: true } as const] : []),
       { label: 'New file…', icon: 'plus', run: () => newIn(folderOf(e), 'file') },
@@ -565,7 +643,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
         ui.set({ outTab: problems.some(p => p.file) ? 'problems' : 'build', outFolded: false });
         const p = problems.find(x => x.severity === 'error');
         toast(!o ? `${p?.msg ?? `${tool} is not set`}${/not set|not found|missing/i.test(p?.msg ?? '') ? ' (Settings → Toolchain in Mimir\'s main window)' : ''}` : `${tool} could not build ${main}${p ? `: ${p.file}${p.line ? `:${p.line}` : ''} ${p.msg}` : ''}`, 'err');
-        if (p?.file && paths.has(p.file)) openFile(p.file, p.line, p.column || 1);
+        if (p?.file && paths.has(p.file)) openFile(p.file, { line: p.line, col: p.column || 1 });
         return null;
       }
       if (!forRun) toast(`Built ${baseName(o.prgPath)}: ${fmtBytes(prg!.size)} at $${h4(prg!.load)}`, 'ok');
@@ -632,7 +710,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     if (d.m.end) { finishDbg(d); return; }
     setTick(t => t + 1);
     const l = asmLineAt(d.c, d.m.cpu.pc);
-    if (l) openFile(l.file, l.line, 1, true);
+    if (l) openFile(l.file, { line: l.line, col: 1, soft: true });
   };
   const finishDbg = (d: Debugging) => {
     setDbg(null); dbgRef.current = null;
@@ -645,7 +723,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   const startDebug = () => {
     if (dbgRef.current || building.current) return;
     if (!check) { toast('There is no main file to debug: + makes a source', 'warn'); return; }
-    if (!check.ok) { const p = check.problems[0]; toast(`The program does not assemble in Mimir${p ? `: ${p.file}${p.line ? ` line ${p.line}` : ''}: ${p.msg}` : ''}`, 'warn'); if (p?.file && p.line) openFile(p.file, p.line); return; }
+    if (!check.ok) { const p = check.problems[0]; toast(`The program does not assemble in Mimir${p ? `: ${p.file}${p.line ? ` line ${p.line}` : ''}: ${p.msg}` : ''}`, 'warn'); if (p?.file && p.line) openFile(p.file, { line: p.line }); return; }
     let m: ScriptMachine;
     try { m = asmMachine(check, lang, runScreenSize()); } catch (e) { toast(errorText(e), 'err'); return; }
     const d: Debugging = { m, c: check, prev: null };
@@ -691,7 +769,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
     setDbg(null); dbgRef.current = null; busyRef.current = false; setDbgBusy(false);
     if (!quiet) toast('Debugging stopped', 'info');
   };
-  keys.current = { run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile };
+  keys.current = { run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
   // the code cannot change while it is being debugged
   useEffect(() => { ed.current?.updateOptions({ readOnly: !!dbg }); }, [dbg, state]);
   // the debugger's line, in the file shown
@@ -709,10 +787,15 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
   });
   // starting and stopping change the editor's size: laid out again once drawn (or the line numbers stay a line off)
   useEffect(() => { const e = ed.current; if (!e) return; const id = requestAnimationFrame(() => e.layout()); return () => cancelAnimationFrame(id); }, [!!dbg, state, ui.outFolded, c64.open]); // eslint-disable-line react-hooks/exhaustive-deps
-  // the keys outside the editor: F5 runs, Ctrl+Shift+B builds, F8 / F6 / Shift+F6 step, Ctrl+S writes
+  // the keys outside the editor: F5 runs, Ctrl+Shift+B builds, F8 / F6 / Shift+F6 step, Ctrl+S writes; the tabs'
+  // Ctrl+Tab (Ctrl+PageDown), Ctrl+Shift+Tab (Ctrl+PageUp) and Ctrl+F4 also in the list and the output
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement | null)?.closest?.('.monaco-editor, input, textarea, select')) return;
+      if ((e.target as HTMLElement | null)?.closest?.('.monaco-editor, textarea')) return;
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && !e.altKey && (e.key === 'Tab' || e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); keys.current.tab(e.key === 'PageUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1); return; }
+      if (ctrl && !e.altKey && !e.shiftKey && e.key === 'F4') { e.preventDefault(); keys.current.closeTab(); return; }
+      if ((e.target as HTMLElement | null)?.closest?.('input, select')) return;
       if (e.key === 'F5' && !e.ctrlKey && !e.altKey) { e.preventDefault(); keys.current.run(); }
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); keys.current.build(); }
       else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); void writeAll(); }
@@ -755,7 +838,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
           </div>
           {!loaded ? <p className="muted small asm-tree-empty">Reading the files…</p>
             : <AsmTree entries={folder.entries} expanded={expanded} shown={shown} main={main} dirty={dirty} problems={problemsOf} edit={edit}
-              onOpen={p => openFile(p)} onToggle={p => ui.setExpanded(dir, expanded.has(p) ? [...expanded].filter(x => x !== p) : [...expanded, p])}
+              onOpen={(p, keep) => openFile(p, { keep })} onToggle={p => ui.setExpanded(dir, expanded.has(p) ? [...expanded].filter(x => x !== p) : [...expanded, p])}
               onMenu={rowMenu} onEdit={n => void named(n)} />}
           {folder.more && <p className="muted small asm-tree-empty">The folder has more files than the list holds.</p>}
         </div>}
@@ -763,7 +846,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
       <div className="scr-main">
         <div className="toolbar">
           {shown ? <FileNameField key={shown} path={shown} dirty={dirty.has(shown)} onRename={n => void named(n, { kind: 'rename', path: shown })} /> : <span className="muted small">No file open</span>}
-          {check && <span className={cx('pill scr-check', check.ok ? 'hi' : 'lo')} role="status" onClick={() => { if (first?.file && first.line) openFile(first.file, first.line); }}
+          {check && <span className={cx('pill scr-check', check.ok ? 'hi' : 'lo')} role="status" onClick={() => { if (first?.file && first.line) openFile(first.file, { line: first.line }); }}
             title={[...errors.map(p => `${p.file}${p.line ? ` line ${p.line}` : ''}: ${p.msg}`), check.ok ? `Mimir's own assembler assembles the program: ${check.ranges.slice(0, 4).map(r => `$${h4(r.start)}-$${h4(r.end - 1)}`).join(', ')}${check.entry != null ? `; a run starts at $${h4(check.entry)}` : ''}.` : 'What Mimir\'s own assembler finds as you type. It knows most of Kick Assembler and 64tass, not all: Run builds with the real one all the same.'].join('\n')}>
             <Icon name={check.ok ? 'check' : 'err'} size={12} />{chip}</span>}
           <button className="pill scr-lang asm-lang" aria-label="Language" onClick={() => ui.setLang(dir, lang === '64tass' ? 'kickass' : '64tass')}
@@ -794,6 +877,8 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
         </div>
         {dbg && <p className="scr-howto scr-dbg-note" role="note"><Icon name="info" size={13} /><span>Debugging in Mimir's 6510: the code cannot be changed until you stop. A click left of a line number sets a breakpoint. It has no ROMs or I/O: the KERNAL's printing routines are done on the C64 screen.</span></p>}
         <div className="scr-body">
+          <TabRow open={tabs.open} preview={tabs.preview} shown={shown} main={main} dirty={dirty} problems={problemsOf}
+            onShow={p => setShown(p)} onKeep={p => placeTab(p, true)} onClose={closeTabs} onMove={moveTab} onMenu={tabMenu} />
           <div className="scr-edit-row" ref={editRow}>
             <div className="mon-host scr-editor" ref={host} aria-label="Code" style={{ display: state === 'ready' && shownText ? 'block' : 'none' }} />
             {state === 'fallback' && shownText && <textarea className="fallback-code scr-fallback" aria-label="Code" value={texts[shown!]} readOnly={!!dbg} onChange={e => { const p = shown!; setTexts(t => ({ ...t, [p]: e.target.value })); schedule(p); }} />}
@@ -803,7 +888,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
               <p className="muted">{shownEntry ? `${fmtBytes(shownEntry.size)}: not a text file the editor opens.` : 'The file is not there any more.'} A source loads it with <span className="mono">{lang === '64tass' ? '.binary' : '.import binary'}</span>{lang === '64tass' ? '' : ' or LoadSid'}.</p>
               <button className="btn small" onClick={() => void kr?.assemblerReveal({ dir, path: shown })}><Icon name="folder" size={13} />Show in folder</button>
             </div>}
-            {!shown && loaded && <div className="asm-binary" role="note"><Icon name="code" size={28} /><h3>No file open</h3><p className="muted">Click a file in the list, or + to make a source.</p></div>}
+            {!shown && loaded && <div className="asm-binary" role="note"><Icon name="code" size={28} /><h3>No file open</h3><p className="muted">Click a file in the list to open it (a double-click keeps its tab open), or + to make a source.</p></div>}
             {dbg && <DebugPanel m={dbg.m} prev={dbg.prev} names={names} busy={dbgBusy} atBp={atBp} lineOf={a => lineText(dbg.c, a)} />}
             {c64.open && <>
               <Splitter dir="v" onDrag={d => {
@@ -823,7 +908,7 @@ function AsmWorkspace({ folder, onFolder, onLeave, toast, onMenu, beforeClose }:
             ui.set({ outH: Math.max(110, Math.min(window.innerHeight - 200, now + room, now - d)) });
           }} />}
           <AsmOutput check={check} build={build} kept={kept} tab={ui.outTab} folded={ui.outFolded} height={ui.outH}
-            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, l || 1); }} onScreen={() => setC64({ open: true })} />
+            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} />
         </div>
       </div>
     </div>

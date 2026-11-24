@@ -2189,3 +2189,21 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-problem.warning .icon { color: var(--warn); }
 .asm-problem-at { flex: none; color: var(--accent-hi); }
 .asm-problem-msg { min-width: 0; }
+/* the Assembler's open files as tabs over the code (AsmTabs): a preview in italics, a dot for changes not written yet
+   (× on hover), the place a dragged tab goes marked */
+.tabs.small.asm-tabs { flex: none; }
+.tabs.small .tab.asm-tab { gap: 6px; padding: 0 5px 0 10px; max-width: 260px; font: 12px var(--font-code); user-select: none; }
+.tabs.small .tab.asm-tab.on { background: var(--editor); }
+.asm-tab .asm-ico { flex: none; color: var(--fg-3); }
+.asm-tab .asm-ico.main { color: var(--ok); }
+.asm-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.asm-tab.preview .asm-tab-name { font-style: italic; }
+.asm-tab-dir { color: var(--fg-3); font-size: 11px; }
+.asm-tab-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg-3); cursor: pointer; opacity: 0; }
+.asm-tab:hover .asm-tab-x, .asm-tab.on .asm-tab-x, .asm-tab:focus-visible .asm-tab-x { opacity: 1; }
+.asm-tab-x:hover { background: var(--row-hover); color: var(--fg); }
+.asm-tab-x.dirty { opacity: 1; }
+.asm-tab-x.dirty::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.asm-tab-x.dirty .icon, .asm-tab-x.dirty:hover::before { display: none; }
+.asm-tab-x.dirty:hover .icon { display: inline-block; }
+.asm-tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }

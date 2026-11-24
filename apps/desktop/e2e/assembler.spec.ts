@@ -185,3 +185,95 @@ test('the Assembler: a folder opened as it is, its main file found, a breakpoint
   expect(existsSync(join(trash, 'readme.txt'))).toBe(true);
   await shot(page, '7-open-folder');
 });
+
+test('the Assembler: open files as tabs over the code, a preview the list replaces, kept by typing or a double-click, closed, moved, following renames and deletes', async ({ workDir: work, userData, app, page }) => {
+  const trash = join(userData, 'trash');
+  await app.evaluate((_e, to) => {
+    const req = (process as unknown as { mainModule: { require: (m: string) => any } }).mainModule.require; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const fs = req('node:fs'), path = req('node:path'), { shell } = req('electron');
+    shell.trashItem = async (p: string) => { fs.mkdirSync(to, { recursive: true }); fs.renameSync(p, path.join(to, path.basename(p))); };
+  }, trash);
+  const dir = join(work, 'tabs');
+  mkdirSync(join(dir, 'lib'), { recursive: true });
+  writeFileSync(join(dir, 'main.asm'), 'BasicUpstart2(start)\n#import "a.asm"\n#import "b.asm"\nstart:\n  jsr a\n  jsr b\n  rts\n');
+  writeFileSync(join(dir, 'a.asm'), 'a: rts\n');
+  writeFileSync(join(dir, 'b.asm'), 'b: rts\n');
+  writeFileSync(join(dir, 'lib', 'a.asm'), '// another a.asm\n');
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+
+  const row = page.getByRole('tablist', { name: 'Open files' });
+  const names = () => row.getByRole('tab').evaluateAll(els => els.map(e => `${e.getAttribute('aria-label')}${e.classList.contains('preview') ? '*' : ''}${e.getAttribute('aria-selected') === 'true' ? '<' : ''}`));
+  // the main file in a tab that stays
+  await expect.poll(names).toEqual(['main.asm<']);
+  await page.locator('.scr-editor .view-lines').waitFor();
+  // a click in the list opens a preview, the next click puts another file in its place
+  await tree(page).getByRole('treeitem', { name: 'a.asm' }).first().click();
+  await expect.poll(names).toEqual(['main.asm', 'a.asm*<']);
+  await tree(page).getByRole('treeitem', { name: 'b.asm' }).click();
+  await expect.poll(names).toEqual(['main.asm', 'b.asm*<']);
+  await expect(page.getByLabel('File name')).toHaveValue('b.asm');
+  // a double-click on the tab keeps it; the next file gets a preview of its own
+  await row.getByRole('tab', { name: 'b.asm' }).dblclick();
+  await expect.poll(names).toEqual(['main.asm', 'b.asm<']);
+  await tree(page).getByRole('treeitem', { name: 'a.asm' }).first().click();
+  await expect.poll(names).toEqual(['main.asm', 'b.asm', 'a.asm*<']);
+  // typing in a preview keeps it
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('End');
+  await page.keyboard.insertText(' // returns');
+  await expect.poll(names).toEqual(['main.asm', 'b.asm', 'a.asm<']);
+  await expect.poll(() => readFileSync(join(dir, 'a.asm'), 'utf8')).toContain('// returns');
+  // two files of the same name say their folders
+  await tree(page).getByRole('treeitem', { name: 'lib' }).click();
+  await tree(page).getByRole('treeitem', { name: 'a.asm' }).first().dblclick();
+  await expect(row.getByRole('tab').filter({ hasText: 'lib' })).toHaveCount(1);
+  await expect.poll(names).toEqual(['main.asm', 'b.asm', 'a.asm', 'a.asm<']);
+  await shot(page, '8-tabs');
+
+  // Ctrl+Tab goes round the row, Ctrl+Shift+Tab back; a click shows a tab
+  await page.keyboard.press('Control+Tab');
+  await expect.poll(names).toEqual(['main.asm<', 'b.asm', 'a.asm', 'a.asm']);
+  await page.keyboard.press('Control+Shift+Tab');
+  await expect.poll(names).toEqual(['main.asm', 'b.asm', 'a.asm', 'a.asm<']);
+  await row.getByRole('tab', { name: 'b.asm' }).click();
+  await expect(page.getByLabel('File name')).toHaveValue('b.asm');
+  // closed with its ×, the tab after it is shown; Ctrl+F4 closes the one shown
+  await row.getByRole('button', { name: 'Close b.asm' }).click();
+  await expect.poll(names).toEqual(['main.asm', 'a.asm<', 'a.asm']);
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('Control+F4');
+  // (the a.asm left is lib's)
+  await expect.poll(names).toEqual(['main.asm', 'a.asm<']);
+  await expect(page.getByLabel('File name')).toHaveValue('a.asm');
+  await expect(page.getByLabel('File name')).toHaveAttribute('title', /^lib\/a\.asm/);
+  // a tab dragged before another
+  await row.getByRole('tab', { name: 'a.asm' }).dragTo(row.getByRole('tab', { name: 'main.asm' }), { targetPosition: { x: 4, y: 10 } });
+  await expect.poll(names).toEqual(['a.asm<', 'main.asm']);
+
+  // a file renamed in the list: its tab follows it; deleted: its tab is closed and the one beside it shown
+  await page.getByLabel('File name').fill('alpha.asm');
+  await page.getByLabel('File name').press('Enter');
+  await expect.poll(names).toEqual(['alpha.asm<', 'main.asm']);
+  expect(existsSync(join(dir, 'lib', 'alpha.asm'))).toBe(true);
+  await tree(page).getByRole('treeitem', { name: 'alpha.asm' }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: /^Delete/ }).click();
+  await expect.poll(names).toEqual(['main.asm<']);
+  expect(existsSync(join(trash, 'alpha.asm'))).toBe(true);
+
+  // the tab's menu: close all leaves no file open
+  await row.getByRole('tab', { name: 'main.asm' }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Close all' }).click();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByRole('note').filter({ hasText: 'No file open' })).toBeVisible();
+
+  // the tabs are kept for the folder: back to the start screen and in again
+  await tree(page).getByRole('treeitem', { name: 'b.asm' }).dblclick();
+  await tree(page).getByRole('treeitem', { name: 'main.asm' }).dblclick();
+  await expect.poll(names).toEqual(['b.asm', 'main.asm<']);
+  await page.getByRole('button', { name: 'Start', exact: true }).click();
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await page.getByRole('region', { name: 'Folders opened before' }).getByRole('button', { name: /^tabs / }).click();
+  await expect.poll(names).toEqual(['b.asm', 'main.asm<']);
+});
