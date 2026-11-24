@@ -10,6 +10,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 /** the kinds of value a script works with */
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
   | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges' | 'build' | 'lastBuild' | 'builtFile' | 'builtFiles'
+  | 'library' | 'libItem' | 'libItems' | 'libFrom' | 'libColors'
   | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
@@ -58,6 +59,28 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
+  libItems: LIST,
+  library: [
+    m('items', 'everything in the library: a list of items'), m('sids', 'its SID music'), m('sprites', 'its sprites'), m('chars', 'its charsets'), m('bitmaps', 'its pictures'),
+    m('find', 'find("name", kind): an item by its name or its file\'s name, or null', true), m('search', 'search("text", kind): the items whose name, file or source has the text', true),
+    m('same', 'same(kind, bytes): the item that holds these bytes already, or null', true),
+    m('add', 'add(kind, bytes, { name, from, mc, colors, load, format, author }): added when the run has ended well; kind "sid", "sprites", "chars" or "bitmaps"', true),
+    m('folder', 'the library\'s folder on the PC'), m('requests', 'what the script has asked to be added so far, a text each'),
+  ],
+  libItem: [
+    m('kind', 'its kind: "sid", "sprites", "chars" or "bitmaps"'), m('name', 'its name'), m('file', 'its file\'s name in its kind\'s folder'),
+    m('bytes', 'its bytes: a .sid whole, sprites and a charset without a load address, a picture as bitmap, screen, colour RAM and background'), m('size', 'how many bytes'),
+    m('load', 'the load address its file has, or null'), m('count', 'how many sprites or characters it has (else 1)'),
+    m('mc', 'true when it is multicolour'), m('colors', 'the colours it is drawn in: { bg, fg, mc1, mc2 }, or null'),
+    m('from', 'where it was taken from: { text, project, file, disk, start, end }, or null'), m('added', 'when it was added (ms, for new Date)'), m('hash', 'its bytes\' hash'), m('own', 'true for a file put in the folder by hand'),
+    m('put', 'put(at): its bytes copied into mem (a SID and a charset with a load address where they load; a picture with put({ bitmap, screen, colorRam })); gives { start, end }', true),
+    m('asFile', 'asFile(format): it as a file: the .sid, the sprites, the charset with its load address, the picture in a format', true),
+    m('tune', 'a SID: { name, author, released, start, end, size, init, play, songs, song, rsid, bytes }'),
+    m('sprite', 'sprites: sprite(i), one sprite\'s 64 bytes', true), m('char', 'a charset: char(i), one character\'s 8 bytes', true),
+    m('bitmap', 'a picture: its 8000 bytes of bitmap'), m('screen', 'a picture: its 1000 bytes of screen'), m('colorRam', 'a picture: its 1000 bytes of colour RAM'), m('background', 'a picture: its background colour'),
+  ],
+  libFrom: [m('text', 'what its name says about where it is from'), m('project', 'the project'), m('file', 'the file the bytes were in'), m('disk', 'the disk or tape the file was on'), m('start', 'where the bytes were in memory'), m('end', 'the address after their last byte')],
+  libColors: [m('bg', 'the background, a C64 colour 0-15'), m('fg', 'a set pixel (hires), or the pair 11'), m('mc1', 'the pair 01'), m('mc2', 'the pair 10')],
   sid: [
     m('tunes', 'the program\'s music blocks: a list of tunes (empty when it has none)'), m('tune', 'the first tune, or null'),
     m('at', 'at(address): the tune that covers an address, or null', true),
@@ -252,7 +275,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', tunes: 'tune', dump: 'bytes', voices: 'voice' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -317,6 +340,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'exporter') return 'exporter';
   if (e === 'build') return 'build';
   if (e === 'sid') return 'sid';
+  if (e === 'library') return 'library';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -345,6 +369,8 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (on === 'cpu' && name === 'call') return 'regs';
     if (on === 'exporter') return name === 'write' ? 'texts' : null;
     if (on === 'sid') return name === 'at' ? 'tune' : name === 'parse' || name === 'load' ? 'sidFile' : name === 'make' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : name === 'note' ? 'sidNote' : name === 'voices' ? 'voices' : name === 'noteTables' ? 'ranges' : null;
+    if (on === 'library') return name === 'find' || name === 'same' ? 'libItem' : name === 'search' ? 'libItems' : null;
+    if (on === 'libItem') return name === 'asFile' || name === 'sprite' || name === 'char' ? 'bytes' : name === 'put' ? 'file' : null;
     if (on === 'tune') return name === 'sid' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : null;
     if (on === 'loader') return name === 'find' ? 'loaderFile' : name === 'group' ? 'loaderGroup' : name === 'load' ? 'file' : name === 'at' ? 'loaderFiles' : null;
     if (on === 'brokkr') return name === 'pack' ? 'packed' : name === 'crunch' ? 'crunched' : name === 'mem' ? 'memFile' : name === 'decrunch' ? 'bytes' : name === 'decruncher' ? 'text' : null;
@@ -370,6 +396,9 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'sindri') return name === 'roms' ? 'text' : null;
   if (on === 'brokkr') return name === 'formats' ? 'texts' : null;
   if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
+  if (on === 'library') return name === 'items' || name === 'sids' || name === 'sprites' || name === 'chars' || name === 'bitmaps' ? 'libItems' : name === 'requests' ? 'texts' : name === 'folder' ? 'text' : null;
+  if (on === 'libItem') return name === 'bytes' || name === 'bitmap' || name === 'screen' || name === 'colorRam' ? 'bytes' : name === 'tune' ? 'sidFile' : name === 'from' ? 'libFrom' : name === 'colors' ? 'libColors' : name === 'name' || name === 'file' || name === 'kind' || name === 'hash' ? 'text' : null;
+  if (on === 'libFrom') return name === 'start' || name === 'end' ? null : 'text';
   if (on === 'sid') return name === 'tunes' ? 'tunes' : name === 'tune' ? 'tune' : name === 'requests' ? 'texts' : name === 'musicPlayer' ? 'text' : null;
   if (on === 'tune') return name === 'plays' ? 'tunePlays' : name === 'bytes' ? 'bytes' : name === 'why' ? 'texts' : name === 'name' || name === 'file' ? 'text' : null;
   if (on === 'tunePlays') return name === 'bytes' ? 'bytes' : name === 'routine' || name === 'problem' || name === 'alone' ? 'text' : null;

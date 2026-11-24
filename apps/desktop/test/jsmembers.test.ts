@@ -176,6 +176,23 @@ describe('what the export\'s values have', () => {
   });
 });
 
+describe('what the library\'s values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('library., an item and where it is from', () => {
+    expect(names('library')).toEqual(['items', 'sids', 'sprites', 'chars', 'bitmaps', 'find', 'search', 'same', 'add', 'folder', 'requests']);
+    const src = 'const f = library.find("font");\nfor (const item of library.sids) {\n}\nlibrary.search("x").forEach(found => {});\n';
+    expect(names('f', src)).toEqual(expect.arrayContaining(['kind', 'name', 'file', 'bytes', 'put', 'asFile', 'tune', 'sprite', 'char', 'bitmap']));
+    expect(names('item', src)).toEqual(names('f', src));
+    expect(names('found', src)).toEqual(names('f', src));
+    expect(names('item.tune', src)).toContain('init');
+    expect(names('f.from', src)).toEqual(['text', 'project', 'file', 'disk', 'start', 'end']);
+    expect(names('f.colors', src)).toEqual(['bg', 'fg', 'mc1', 'mc2']);
+    expect(jsTypeOf('library.bitmaps[0].bitmap', src)).toBe('bytes');
+    expect(jsTypeOf('f.asFile("koala")', src)).toBe('bytes');
+    expect(jsTypeOf('f.put(0x2000)', src)).toBe('file');
+  });
+});
+
 describe('what the SID music\'s values have', () => {
   const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
   it('sid., a tune, what it plays with, a run and its dump', () => {

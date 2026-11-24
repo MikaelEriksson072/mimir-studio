@@ -506,6 +506,9 @@ export interface ScriptRun {
   /** the tunes a JavaScript script asked to be played (sid.play): played by the app, after the
    *  builds, when the run has ended well (not in safe mode) */
   plays?: import('./script-sid').ScriptSidRequest[];
+  /** what a JavaScript script asked to be added to the library (library.add): added by the app when the run has
+   *  ended well (not in safe mode) */
+  library?: import('./script-library').ScriptLibraryRequest[];
   /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
   js?: boolean;
   actions?: ScriptAction[];

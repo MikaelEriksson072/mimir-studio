@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, exportRequestText, buildRequestText, sidRequestText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, exportRequestText, buildRequestText, sidRequestText, libraryRequestText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
@@ -379,6 +379,13 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onSave, onG
           {run.builds.map((b, i) => <li key={i}><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{buildRequestText(b)}</li>)}
         </ul>
         {kept.safe && <p className="small muted">Safe mode: nothing is built or started. Switch safe mode off and run it again.</p>}
+      </div> : null}
+      {run.library?.length ? <div className="scr-wrote scr-acted">
+        <h5 className="scr-group-h" title="What the script's library.add() asked for: added to the library when the run has ended well, each as Add to library writes it; bytes the library has already are not added again. In safe mode nothing is added">{kept.safe ? 'Would add to the library' : 'Added to the library'}</h5>
+        <ul className="scr-acted-list" aria-label={kept.safe ? 'What the run would add to the library' : 'What the run added to the library'}>
+          {run.library.map((a, i) => <li key={i}><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{libraryRequestText(a)}</li>)}
+        </ul>
+        {kept.safe && <p className="small muted">Safe mode: nothing is added. Switch safe mode off and run it again.</p>}
       </div> : null}
       {run.plays?.length ? <div className="scr-wrote scr-acted">
         <h5 className="scr-group-h" title="The tunes the script's sid.play() asked for: played when the run has ended well (after the export and the builds, when it asked for those too), in VICE with Mimir's player or in DeepSID. In safe mode nothing is played">{kept.safe ? 'Would play' : 'Played'}</h5>

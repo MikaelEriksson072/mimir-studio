@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
 import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are seventeen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'screen_show', 'screen_hexdump']);
+  it('are eighteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -307,5 +307,34 @@ describe('the JavaScript templates for SID music', () => {
     expect(own.prints![3]).toMatch(/^10 frames: 3 notes started/);
     expect(go('sid_notes', { tune: '2' }).error?.msg).toMatch(/^Error: There is no tune 2: the program has 1/);
     expect(go('sid_notes', { tune: '-1', play: '0x1000' }).prints!.at(-1)).toMatch(/^It does not play: /);
+  });
+});
+
+describe('the JavaScript template for the library', () => {
+  const tune = fromSource('tune.prg', ['.pc = $1000', ' jmp init', ' jmp play', 'init: rts', 'play: rts'].join(String.fromCharCode(10)));
+  const end = tune.load + tune.bytes.length;
+  const sidData = { player: 'vice' as const, tunes: [{ name: 'music', file: 'tune.prg', start: 0x1000, end, init: 0x1000, play: 0x1003, why: [], score: 1, data: musicPlayData(tune.bytes, 0x1000, 0x1000, 0x1003) }] };
+  const other = makePsid(Uint8Array.of(0x60, 0, 0, 0x60), 0x2000, 0x2000, 0x2003, 'Other');
+  const sprites = new Uint8Array(128);
+  const lib = (items: { kind: 'sid' | 'sprites'; file: string; name: string; data: Uint8Array }[]) => ({ dir: 'C:/Lib', formats: { mc: 'koala' as const, hires: 'art' as const },
+    items: items.map(i => ({ ...i, added: 1, hash: libraryHash(i.data), from: { project: 'Game' } })) });
+  const both = lib([{ kind: 'sid', file: 'Other.sid', name: 'Other', data: other }, { kind: 'sprites', file: 'ship.spr', name: 'ship', data: sprites }]);
+  const go = (values: Record<string, string> = {}, library = both) =>
+    runJs({ files: [tune], names: new Map() }, { source: setScriptParams(template('library_items').source, { code: 'js' }, values).source, pads: [] }, { sid: sidData, library });
+
+  it('List the library and add the music lists the items, one kind or a search, and asks for the tunes it does not hold', () => {
+    const r = go();
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toEqual(['C:/Lib: 2 items', `sid     Other                       ${String(other.length).padStart(6)} bytes  init $2000 play $2003, 1 song  (Game)`, 'sprites ship                           128 bytes  2 sprites  (Game)']);
+    expect(r.library).toBeUndefined();
+    expect(go({ kind: '"sprites"' }).prints![0]).toBe('C:/Lib: 2 items, 1 listed');
+    expect(go({ search: '"oth"' }).prints).toHaveLength(2);
+    const a = go({ addMusic: 'true', author: '"Me"' });
+    expect(a.prints!.at(-1)).toMatch(/^Then added: music \(SID, \d+ bytes\)$/);
+    expect(a.library!.map(x => [x.kind, x.name, parsePsid(x.bytes).author])).toEqual([['sid', 'music', 'Me']]);
+    // a tune the library holds already is not asked for again
+    const has = go({ addMusic: 'true' }, lib([{ kind: 'sid', file: 'music.sid', name: 'm', data: a.library![0].bytes }]));
+    expect(has.prints!.at(-1)).toBe('music is in the library already: music.sid');
+    expect(has.library).toBeUndefined();
   });
 });

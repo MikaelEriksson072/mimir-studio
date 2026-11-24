@@ -98,6 +98,7 @@ export const JS_API: readonly { label: string; insert: string; detail: string }[
   { label: 'junk', insert: 'junk(', detail: 'junk(start, end): the bytes are junk, left out of everything' },
   { label: 'files', insert: 'files', detail: 'the program\'s files in memory: [{ start, end }], end the address after the last byte' },
   { label: 'disk', insert: 'disk', detail: 'the mounted disk, or null: disk.files, disk.read("NAME"), disk.sector(track, sector)' },
+  { label: 'library', insert: 'library', detail: 'the library of SIDs, sprites, charsets and bitmaps: library.items (and sids, sprites, chars, bitmaps), library.find("name"), an item\'s bytes, put(at) and asFile(), library.add(kind, bytes, { name })' },
   { label: 'sid', insert: 'sid', detail: 'SID music: sid.tunes (the program\'s music, each with sid(), player() and run()), sid.parse(file), sid.make(bytes, { load, init, play }), sid.run({ init, play }) frame by frame, sid.play(tune) in VICE or DeepSID' },
   { label: 'build', insert: 'build', detail: 'building and running: build.last (the last build), build.verify(), build.run({ debugger }), build.start(prg) for a file of the script\'s own in the emulator' },
   { label: 'exporter', insert: 'exporter', detail: 'the export: exporter.files, exporter.read("name"), exporter.add("name", content), exporter.edit("name", text => …), exporter.remove("name"), exporter.write() to have it written' },

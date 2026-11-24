@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-library.ts        biblioteket för ett JavaScript-skript: `library` (SID, sprites, teckenset, bitmappar: läs, sök, lägg i minnet, lägg till) (10.3, 10.6)
 │  ├─ src/script-sid.ts            SID-musiken för ett JavaScript-skript: `sid` (programmets låtar, .sid-filer, spelaren körd bild för bild, spela i VICE/DeepSID) (10.3)
 │  ├─ src/script-build.ts          bygge och körning för ett JavaScript-skript: `build` (senaste bygget, Verify, Build & Run, starta en PRG) (10.3)
 │  ├─ src/script-export.ts         exporten för ett JavaScript-skript: `exporter` (läs, ändra, lägg till, skriv) (10.3)
@@ -2888,6 +2889,9 @@ $06, $08` i `.asm`-filen efter en körning.
   - *Print the notes a tune plays* (`sid_notes`, 2026-11-24): en spelare körd bild för bild (en av programmets låtar,
     `tune`, eller rutinerna `init` och `play`), och det den lämnar i SID:en skrivet: varje rösts not, vågform och
     gate, och volymen; en bild som är som den förra utelämnas.
+  - *List the library and add the music* (`library_items`, 2026-11-24): bibliotekets SID, sprites, teckenset och
+    bitmappar listade (alla, en sort med `kind` eller de med en text, `search`); `addMusic` lägger till programmets
+    låtar som biblioteket inte redan har, som .sid (`author`).
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2898,6 +2902,32 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Biblioteket i ett JavaScript-skript** (`script-library.ts`, `libraryApi`, 2026-11-24): ett skript får `library`,
+  biblioteket av SID-musik, sprites, teckenset och bitmappar (10.6).
+  - Läsa: `library.items` (allt), `library.sids`, `library.sprites`, `library.chars`, `library.bitmaps`,
+    `library.folder`, `library.find(namn, sort)` (namn eller filnamn, oavsett skiftläge och ändelse; `null` när det
+    inte finns), `library.search(text, sort)` (namn, fil och källa) och `library.same(sort, bytes)` (det som redan
+    har samma bytes; en .sid jämförs utan sina tre texter).
+  - Ett föremål har `kind`, `name`, `file`, `bytes` (`LibraryItem.data`: en .sid hel, sprites och teckenset utan
+    laddadress, en bild som bitmap, skärm, färg-RAM och bakgrund), `size`, `load`, `count`, `mc`, `colors`,
+    `from` (`{ text, project, file, disk, start, end }`), `added`, `hash` och `own`. En SID har `tune` (det
+    `sid.parse` ger; spelas med `sid.play(item.bytes)`), sprites `sprite(i)` (64 byte), ett teckenset `char(i)`
+    (8 byte) och en bild `bitmap`, `screen`, `colorRam` och `background`.
+  - `item.put(at)` kopierar in det i `mem`: en SID där den laddas (eller på en adress), sprites på en adress, ett
+    teckenset på en adress eller där filen laddas, en bild med `put({ bitmap, screen, colorRam })`; ger
+    `{ start, end }`. `item.asFile(format)` ger det som fil: .sid:en, sprites, teckensetet med laddadress, bilden i
+    ett format (`"koala"`, `"ocp"`, `"art"`, `"doodle"`; utan format det Settings säger för sorten).
+  - Lägga till: `library.add(sort, bytes, { name, from, mc, colors, load, format, author })`. En SID läggs till som
+    .sid-fil (`tune.sid()`, `sid.make`), sprites som 64 byte var (`spriteFile`), ett teckenset som 8 byte per
+    tecken med laddadress (`load`, annars $2000) och en bild som `{ bitmap, screen, colorRam, background, mc }` i
+    ett format som passar (multicolour eller hires). Ingenting läggs till under körningen: körningen slutar med
+    begäran (`ScriptRun.library`, `ScriptLibraryRequest`, högst `LIBRARY_REQUESTS` = 32) och appen lägger till
+    dem när körningen slutat väl (`doScriptRequests`, `addScriptLibrary`: som *Add to library*, med projektets namn
+    som källa), efter exporten och byggena och före uppspelningen. Bytes biblioteket redan har läggs inte till igen
+    (`sameInLibrary`). I safe mode läggs ingenting till: *Last run* visar *Would add to the library*; annars
+    *Added to the library*.
+  - Biblioteket ges bara till en körning av skriptet självt, och bara när koden nämner `library` (det läses då
+    först om det inte är läst); annars är det tomt och `library.add` säger att det inte går där.
 - **SID-musiken i ett JavaScript-skript** (`script-sid.ts`, `sidApi`, 2026-11-24): ett skript får `sid`, det
   analysen vet om programmets musik (5.8) och det *Play music* och exportens .sid gör.
   - Låtarna: `sid.tunes` är programmets musikblock (tom lista när det inte har något), `sid.tune` det första och

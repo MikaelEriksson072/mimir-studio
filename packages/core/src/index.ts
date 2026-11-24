@@ -113,6 +113,7 @@ export { JS_CALL_LIMIT, JS_RUN_LIMIT, runJs, type JsExtras } from './script-js';
 export { SINDRI_BUDGET, SINDRI_RUN_CYCLES, sindriApi, type SindriContext } from './script-sindri';
 export { BROKKR_FORMATS, brokkrApi, type BrokkrContext } from './script-brokkr';
 export { loaderApi, type ScriptLoaderData } from './script-loader';
+export { LIBRARY_REQUESTS, libraryApi, libraryRequestText, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 export { SID_REQUESTS, SID_RUN_DEFAULT, SID_RUN_FRAMES, sidApi, sidRequestText, type ScriptSidData, type ScriptSidRequest, type ScriptSidTune } from './script-sid';
 export { BUILD_REQUESTS, buildApi, buildRequestText, type ScriptBuildData, type ScriptBuildRequest } from './script-build';
 export { applyExportRequest, exportApi, exportFileName, exportRequestText, type ScriptExportData, type ScriptExportRequest } from './script-export';

@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11395,6 +11395,71 @@ test('a JavaScript script has the SID music: the program\'s tunes listed and mad
     await runIt();
     await expect(toast(page, /VICE plays music_1800: init \$1800 with song \$01, then play \$1803 each frame/)).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole('list', { name: 'What the run played' }).getByRole('listitem')).toHaveCount(1);
+  });
+});
+
+test('a JavaScript script has the library: its items listed, and the program\'s music and sprites of its own added when the run has ended; safe mode only says; the same bytes are not added twice', async ({ userData, page }) => {
+  await waitForListing(page);
+  await page.getByRole('button', { name: 'Demo', exact: true }).click();
+  await expect(toast(page, 'Showcase loaded: the Bookmarks view is a tour of it, F2 goes to the next stop')).toBeVisible();
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+  const sids = join(userData, 'library', 'SIDs'), sprites = join(userData, 'library', 'Sprites');
+  const filesIn = (dir: string, ext: string) => (existsSync(dir) ? readdirSync(dir).filter(n => n.endsWith(ext)) : []);
+
+  await test.step('the template lists an empty library', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template List the library and add the music to the project' }).click();
+    await expect(page.getByRole('option', { name: 'library_items' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(printed).toHaveText(/library: 0 items$/, { timeout: 30_000 });
+  });
+
+  await test.step('a script of one\'s own: library. lists what it has; in safe mode what it would add is only said', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('library.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['items', 'sids', 'sprites', 'chars', 'bitmaps', 'find', 'search', 'same', 'add', 'folder', 'requests']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'const t = sid.tune, file = t.sid();',
+      'const block = new Uint8Array(64).fill(0xff);',
+      'print(library.items.length, library.sids.length, library.same("sid", file) ? "there" : "new", library.same("sprites", block) ? "there" : "new");',
+      'const has = library.find("block");',
+      'if (has) print(has.kind, has.count, has.sprite(0)[0], has.from.text, has.put(0xc000).end);',
+      'library.add("sid", file, { name: t.name });',
+      'library.add("sprites", block, { name: "block", from: "a script" });',
+    ].join('\n') + '\n');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText('0 0 new new', { timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run would add to the library' }).getByRole('listitem')).toHaveText([/^music_1800 \(SID, \d+ bytes\)$/, 'block (sprites, 1 sprite)']);
+    expect(filesIn(sids, '.sid')).toEqual([]);
+  });
+
+  await test.step('out of safe mode both are written to the library\'s folders', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /added to the library: SIDs\\.*music_1800.*\.sid, Sprites\\.*block\.spr/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run added to the library' }).getByRole('listitem')).toHaveCount(2);
+    expect(filesIn(sids, '.sid')).toHaveLength(1);
+    expect(filesIn(sprites, '.spr')).toHaveLength(1);
+    expect(readFileSync(join(sprites, filesIn(sprites, '.spr')[0]))).toHaveLength(64);
+  });
+
+  await test.step('run again, the script reads what it added, and the same bytes are not added twice', async () => {
+    await runIt();
+    await expect(printed).toHaveText(/^2 1 there there\s*sprites 1 255 a script 49216$/, { timeout: 30_000 });
+    await expect(toast(page, /the library has 2 of them already/)).toBeVisible({ timeout: 30_000 });
+    expect(filesIn(sids, '.sid')).toHaveLength(1);
+    expect(filesIn(sprites, '.spr')).toHaveLength(1);
   });
 });
 

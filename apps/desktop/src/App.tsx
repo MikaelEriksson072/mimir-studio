@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type ScriptBuildData, type ScriptBuildRequest, buildRequestText, type ScriptSidData, type ScriptSidRequest, sidRequestText, type UserScript,
+  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type ScriptBuildData, type ScriptBuildRequest, buildRequestText, type ScriptSidData, type ScriptSidRequest, sidRequestText, type ScriptLibraryData, type ScriptLibraryRequest, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2630,10 +2630,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
     if (shown) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     // what it printed, the files it made, or the error it stopped with, is under Last run: that tab is shown
-    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.error)) st.set({ outTab: 'run', outFolded: false });
+    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.error)) st.set({ outTab: 'run', outFolded: false });
     // the export it asked for: written now that the run has ended well and its changes are in the program (a safe run's
     // is only said, under Last run)
-    if ((r.exports || r.builds?.length || r.plays?.length) && !safe && endedWell(r.end)) void doScriptRequests(s.name, r, !!w?.written.length || !!w?.acted?.done.length);
+    if ((r.exports || r.builds?.length || r.plays?.length || r.library?.length) && !safe && endedWell(r.end)) void doScriptRequests(s.name, r, !!w?.written.length || !!w?.acted?.done.length);
     // what it printed on its C64 screen: the screen is shown
     if (shown && r.screen?.wrote && !st.c64.open) st.setC64({ open: true });
     const on = w?.written.filter(p => !p.off) ?? [], bytes = on.reduce((n, p) => n + p.bytes.length, 0);
@@ -2644,9 +2644,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const asked = r.exports ? (safe ? ' It would write the export (Scripts → Last run).' : ' It asked for the export, which is being written.') : '';
     const building = r.builds?.length ? (safe ? ` It would build or start ${r.builds.length} thing${r.builds.length === 1 ? '' : 's'} (Scripts → Last run).` : ` It asked for: ${r.builds.map(b => buildRequestText(b, { emulator: 'VICE', debugger: debuggerName })).slice(0, 2).join('; ')}${r.builds.length > 2 ? '; …' : ''}.`) : '';
     const playing = r.plays?.length ? (safe ? ` It would play ${r.plays.length} tune${r.plays.length === 1 ? '' : 's'} (Scripts → Last run).` : ` It asked for ${r.plays.map(p => p.name).slice(0, 2).join(' and ')}${r.plays.length > 2 ? ', …' : ''} to be played.`) : '';
+    const adding = r.library?.length ? (safe ? ` It would add ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to the library (Scripts → Last run).` : ` It asked for ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to be added to the library.`) : '';
     const made = r.made?.length ? ` It made ${r.made.length} file${r.made.length === 1 ? '' : 's'} (Scripts → Last run): ${r.made[0].name}${r.made.length > 1 ? ', …' : ''}.` : '';
     const drew = r.screen?.wrote ? ` It printed on ${r.screen.c64 ? 'the C64\'s screen' : 'its C64 screen'} (Scripts → C64 screen).` : '';
-    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${asked}${building}${playing}${drew}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${asked}${building}${adding}${playing}${drew}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
   };
   /** the export as it is now, for a JavaScript script's `exporter` (core script-export.ts): what Export would write,
    *  less the verified PRGs (they are made when it is written); null without a file to export */
@@ -2670,7 +2671,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** what a script's run asked for with exporter.write(), build.verify/run/start and sid.play: the export first, then
    *  the builds and starts in the order asked, then the tunes; one that does not go well ends them */
   const doScriptRequests = async (name: string, r: ScriptRun, changed: boolean) => {
-    if (r.exports && !(await exportProject(r.exports.elsewhere, { request: r.exports, changed, script: name })) && (r.builds?.length || r.plays?.length)) { toast(`"${name}": the export was not written, so what it asked to build, start and play was not done`, 'warn'); return; }
+    if (r.exports && !(await exportProject(r.exports.elsewhere, { request: r.exports, changed, script: name })) && (r.builds?.length || r.plays?.length || r.library?.length)) { toast(`"${name}": the export was not written, so what it asked to build, start and play was not done`, 'warn'); return; }
     for (const b of r.builds ?? []) {
       if (b.kind === 'verify') { const v = await runVerify(); if (!v?.ok) return; continue; }
       if (b.kind === 'run') { await runBuild(b.debugger); continue; }
@@ -2683,6 +2684,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         toast(`"${name}": ${emu} started ${b.name} (${b.prg.length - 2} bytes at $${h4(b.prg[0] | b.prg[1] << 8)})${b.start != null ? ` with SYS ${b.start}` : ''}${res.notes?.length ? ` (${res.notes.join('; ')})` : ''}`, res.notes?.length ? 'warn' : 'ok');
       } catch (e) { toast(`"${name}": ${emu} was not started with ${b.name}: ${errorText(e)}`, 'err'); return; }
     }
+    if (r.library?.length && !(await addScriptLibrary(name, r.library))) return;
     for (const p of r.plays ?? []) if (!(await playScriptTune(name, p))) return;
   };
   /** the program's music, for a JavaScript script's `sid` (core script-sid.ts): each music block with what it plays
@@ -2698,6 +2700,37 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       } catch { /* a block that cannot play is not a tune */ }
     }
     return { player: toolchain.musicPlayer === 'deepsid' ? 'deepsid' : 'vice', tunes };
+  };
+  /** the library as it is now, for a JavaScript script's `library` (core script-library.ts): read first when it has
+   *  not been; null outside the desktop app */
+  const scriptLibraryData = async (): Promise<ScriptLibraryData | null> => {
+    if (!kr) return null;
+    const lib = useLibrary.getState();
+    if (!lib.listing) await lib.load();
+    const l = useLibrary.getState().listing;
+    return l ? { dir: l.dir, items: l.items, formats: { mc: toolchain.bitmapFormatMc, hires: toolchain.bitmapFormatHires } } : null;
+  };
+  /** what a script asked to be added to the library (library.add): each written as Add to library writes it; bytes
+   *  the library has already are left as they are */
+  const addScriptLibrary = async (script: string, adds: readonly ScriptLibraryRequest[]): Promise<boolean> => {
+    if (!kr) { needDesktop(); return false; }
+    const lib = useLibrary.getState();
+    if (!lib.listing) await lib.load();
+    const added: string[] = [], there: string[] = [];
+    try {
+      for (const a of adds) {
+        const same = sameInLibrary(useLibrary.getState().listing?.items ?? [], a.kind, a.data);
+        if (same) { there.push(`${a.name} (${same.file})`); continue; }
+        const proj = home?.name ?? latest.current.project.name;
+        const from: LibrarySource = { ...(proj ? { project: proj } : {}), ...a.from };
+        const r = await lib.add({ kind: a.kind, stem: libraryStem(a.name, from), bytes: a.bytes, ...(a.format ? { format: a.format } : {}),
+          entry: { name: a.name, from, ...(a.mc != null ? { mc: a.mc } : {}), ...(a.colors ? { colors: a.colors } : {}) } });
+        added.push(`${LIB_KIND[a.kind].folder}\\${r.item.file}`);
+      }
+    } catch (e) { toast(`"${script}": could not add to the library: ${errorText(e)}${added.length ? ` (${added.length} added before it)` : ''}`, 'err'); return false; }
+    if (added.length) toast(`"${script}": added to the library: ${added.slice(0, 3).join(', ')}${added.length > 3 ? `, and ${added.length - 3} more` : ''}`, 'ok');
+    if (there.length) toast(`"${script}": the library has ${there.length === 1 ? 'these bytes' : `${there.length} of them`} already: ${there.slice(0, 3).join(', ')}${there.length > 3 ? ', …' : ''}`, 'info');
+    return true;
   };
   /** a tune a script asked to be played (sid.play): in VICE with Mimir's player, or in DeepSID as its .sid */
   const playScriptTune = async (script: string, p: ScriptSidRequest): Promise<boolean> => {
@@ -2764,6 +2797,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (s.code === 'js' && /\bbuild\b/.test(source)) { await analysisSettled(); opts.build = scriptBuildData(); }
     // and the program's music, with where it plays
     if (s.code === 'js' && /\bsid\b/.test(source)) { await analysisSettled(); opts.sid = scriptSidData(); }
+    // and the library of SIDs, sprites, charsets and bitmaps
+    if (s.code === 'js' && /\blibrary\b/.test(source)) opts.library = await scriptLibraryData();
     useScripts.getState().set({ running: id });
     try {
       const r = await runScriptInWorker(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init }, opts);
