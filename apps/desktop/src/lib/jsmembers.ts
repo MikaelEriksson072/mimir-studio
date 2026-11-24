@@ -185,11 +185,11 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('show', 'show(at, colorsAt): 1000 screen codes of the program (an address, a name or bytes) and their colours at the top left; show(c64) the screen of a C64 of sindri.c64()', true),
     m('charset', 'charset(at): the program\'s own character set (2 KB) in place of the ROM\'s; charset(null) for the ROM\'s', true),
     m('color', 'the colour text is printed in: 0-15 or a name ("light blue"), read and set'),
-    m('border', 'the border\'s colour: 0-15 or a name, read and set'), m('background', 'the background\'s colour: 0-15 or a name, read and set'),
+    m('border', 'the border\'s colour: 0-15 or a name, read and set (also mem[0xd020])'), m('background', 'the background\'s colour: 0-15 or a name, read and set (also mem[0xd021])'),
     m('reverse', 'RVS ON: true or false'), m('lower', 'the lower case character set: true or false'),
     m('cols', 'how many columns it has (40; more in extended mode)'), m('rows', 'how many rows it has (25; more in extended mode)'),
     m('col', 'the cursor\'s column, read and set'), m('row', 'the cursor\'s row, read and set'),
-    m('codes', 'every cell\'s screen code, a row after another (cols bytes a row)'), m('colors', 'every cell\'s colour, a row after another'),
+    m('codes', 'every cell\'s screen code, a row after another (cols bytes a row); the top left 40×25 are also mem at $0400'), m('colors', 'every cell\'s colour, a row after another; the top left 40×25 are also mem at $d800'),
   ],
   ran: [m('reason', 'why it stopped: "until" (it got to the address), "cycles" or "jam"'), m('pc', 'where it is'), m('cycles', 'the cycles this run took')],
 };

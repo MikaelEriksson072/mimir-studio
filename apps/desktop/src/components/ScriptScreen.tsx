@@ -263,7 +263,7 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
     <section className="c64s" aria-label="C64 screen">
       <div className="c64s-head">
         <Icon name="screen" size={14} />
-        <span className="c64s-title" title="The script's C64 screen. JavaScript prints on it with screen.print(…) (screen.at, screen.color, screen.poke, screen.show …); assembler with JSR $FFD2 (CHROUT, the character in A), $AB1E (a text up to a zero byte at A/Y), $BDCD (the number in A/X) and $FFF0 (PLOT). A script that runs in the whole C64 shows the C64's own screen">C64 screen</span>
+        <span className="c64s-title" title="The script's C64 screen. JavaScript prints on it with screen.print(…) (screen.at, screen.color, screen.poke, screen.show …); assembler with JSR $FFD2 (CHROUT, the character in A), $AB1E (a text up to a zero byte at A/Y), $BDCD (the number in A/X) and $FFF0 (PLOT). It is in the memory as on a C64: STA $0400 puts a character on it, STA $D800 colours it, $D020 and $D021 are the border and the background (mem[0x0400] in JavaScript; in extended mode the top left 40×25). A script that runs in the whole C64 shows the C64's own screen">C64 screen</span>
         <span className="pill c64s-size" aria-label="Screen size" title={extended ? `Extended mode: ${sizeText} characters, as many as the panel has room for (never fewer than 40×25). A run gets the size the screen has when it starts` : 'The C64\'s 40 columns and 25 rows'}>{sizeText}</span>
         {live && <span className="pill c64s-live" title="Debugging: the screen as the run has it now">now</span>}
         <span className="grow" />
@@ -296,7 +296,7 @@ export function ScriptScreenPanel({ screen, extended, zoom, mag, size, live, onE
         <Picture base={base} cursor={cursor} scale={scale} dpr={room.dpr} label={label} />
       </div>
       <pre className="sr-only" aria-label="Text on the C64 screen">{lines.join('\n')}</pre>
-      {!screen ? <p className="c64s-note">Nothing printed yet. In JavaScript: <code>screen.print("HELLO")</code>; in assembler: <code>lda #'H'</code> <code>jsr $ffd2</code>.{font.state === 'none' ? ' The letters are Mimir\'s own: VICE\'s character ROM was not found (Settings → Toolchain → VICE).' : ''}</p>
+      {!screen ? <p className="c64s-note">Nothing printed yet. In JavaScript: <code>screen.print("HELLO")</code>; in assembler: <code>lda #'H'</code> <code>jsr $ffd2</code>, or a screen code into <code>$0400</code> and its colour into <code>$d800</code>, as on a C64.{font.state === 'none' ? ' The letters are Mimir\'s own: VICE\'s character ROM was not found (Settings → Toolchain → VICE).' : ''}</p>
         : other ? <p className="c64s-note">Printed on {screen.cols}×{screen.rows}{screen.c64 ? ' (the whole C64\'s screen)' : ''}: shown from its top left. The next run gets {sizeText}.</p>
         : font.state === 'none' && !screen.font ? <p className="c64s-note">The letters are Mimir's own, without the graphics: VICE's character ROM was not found (Settings → Toolchain → VICE).</p> : null}
       {large && createPortal(

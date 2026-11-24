@@ -18,7 +18,7 @@ import { assembleIn, codeLabels, codeOfLine, langIs, langOf, lineComment, needsT
 import { planPatch, programNames, withoutPatch, withPatch } from './patch';
 import { scriptActions, scriptDirectives, type ScriptAction } from './script-actions';
 import { checkJs, runJs } from './script-js';
-import { SCREEN_C64, screenRoutine, screenTraps, TextScreen, type ScreenSize, type ScriptScreen } from './script-screen';
+import { SCREEN_C64, screenMemory, screenRanges, screenRoutine, screenTraps, startScreenMemory, TextScreen, type ScreenSize, type ScriptScreen } from './script-screen';
 import { fileSpaces } from './spaces';
 import { OPC } from './cpu/opcodes';
 import { lineText, type LineTextSettings } from './render/lines';
@@ -557,6 +557,8 @@ export function scriptStartMemory(env: ScriptEnv, script: Pick<UserScript, 'pads
     own.set(padStart(p), p.start); mine.fill(p.role ? 2 : 1, p.start, p.start + p.size);
   }
   for (let a = 0; a < 0x10000; a++) if (check.written[a]) { own[a] = check.mem[a]; mine[a] = 1; }
+  // the C64 screen's memory ($0400, $d800, $d020/$d021) cleared, where no file and no scratchpad has bytes
+  startScreenMemory(screenMemory(mem, env.files, script.pads));
   // its instructions' bytes (not its data): a write there changes its code
   for (let a = 0; a < 0x10000; a++) if (check.ops[a]) code.fill(1, a, Math.min(0x10000, a + OPC[check.mem[a]].len));
   // called like SYS: the return address on the stack; the init's zero page in place before the run (no change of it)
@@ -650,7 +652,7 @@ export class ScriptMachine implements ScriptMemory {
     const { mem, own, mine, ctx } = this;
     // the files, the scratchpads, the script's code, the SYS return on the stack and the init's zero page
     scriptStartMemory(env, script, check, this);
-    this.screen = new TextScreen(screen);
+    this.screen = new TextScreen(screen, screenMemory(mem, env.files, script.pads));
     this.traps = screenTraps(env.files, mine);
     this.inScript = !!mine[check.entry];
     const bus = new ScriptBus(mem, own, mine, ctx, this.code, this.overCode, this.wrote, this.wroteOwn);
@@ -767,7 +769,10 @@ export class ScriptMachine implements ScriptMemory {
   /** the run as it stands (once it has ended: its result): what it changed in the program, what its pads hold */
   result(): ScriptRun {
     const { mem, before, cpu, env } = this;
-    const { changes, other } = runChanges(mem, before, env.files);
+    // (what it wrote into the screen's memory is on its screen, not among what it changed)
+    const onScreen = screenRanges(this.screen.memory), wrote = this.wrote.slice(), skip = new Uint8Array(0x10000);
+    for (const r of onScreen) { wrote.fill(0, r.start, r.end); skip.fill(1, r.start, r.end); }
+    const { changes, other } = runChanges(mem, before, env.files, skip);
     // the script's own code it wrote over, by line (the first address and how many writes)
     const overCode: ScriptRun['overCode'] = [];
     for (let a = 0; a < 0x10000; a++) {
@@ -782,7 +787,7 @@ export class ScriptMachine implements ScriptMemory {
         const w = this.wroteOwn.subarray(p.start, p.start + p.size), first = w.indexOf(1);
         return { name: p.name, bytes: this.own.slice(p.start, p.start + p.size), ...(first >= 0 ? { wrote: [first, w.lastIndexOf(1) + 1] as [number, number] } : {}) };
       }),
-      changes, other, mem, own: this.own, wrote: maskRanges(this.wrote, 0x200), ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
+      changes, other, mem, own: this.own, wrote: maskRanges(wrote, 0x200), ms: Date.now() - this.t0, ...(overCode.length ? { overCode } : {}),
       ...(this.screen.wrote ? { screen: this.screen.state() } : {}),
     };
   }

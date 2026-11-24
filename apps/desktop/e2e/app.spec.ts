@@ -8992,7 +8992,8 @@ test('scripts: the watch list finds what the code writes, shows it after a run a
     await expect(watch.getByRole('listitem').nth(1).locator('.wl-src')).toHaveText('line 8');
     await expect(head).toContainText('at the start');
     await expect(watch.getByRole('listitem').nth(0).locator('.wl-addr')).toHaveText('$0939,x');
-    await expect(watch.getByRole('listitem').nth(1).locator('.wl-val')).toHaveText('$00');
+    // ($d020 starts as the C64 has it, light blue: it is the run's C64 screen's border)
+    await expect(watch.getByRole('listitem').nth(1).locator('.wl-val')).toHaveText('$0e');
   });
 
   await test.step('after a run: how many bytes of the range changed, and each byte with what it was', async () => {
@@ -9000,7 +9001,7 @@ test('scripts: the watch list finds what the code writes, shows it after a run a
     await expect(head).toContainText('after the last run');
     await expect(watch.getByRole('listitem').nth(0).locator('.wl-val')).toHaveText('2 changed');
     await expect(watch.getByRole('listitem').nth(0).locator('.wl-bytes .wl-chg')).toHaveCount(2);
-    await expect(watch.getByRole('listitem').nth(1).locator('.wl-val')).toHaveText('$00→$02');
+    await expect(watch.getByRole('listitem').nth(1).locator('.wl-val')).toHaveText('$0e→$02');
     await expect(watch.getByRole('listitem').nth(2).locator('.wl-val')).toHaveText('$00→$01');
   });
 
@@ -11084,6 +11085,20 @@ test('scripts: a C64 screen beside the code that JavaScript and assembler print 
     await expect(page.locator('.scr-check')).toHaveText('Ready to run');
     await runIt();
     await expect(text).toHaveText(/^HI\n?/);
+  });
+
+  await test.step('the screen is in the memory, as on a C64: sta $0400 puts a character on it, sta $d800 colours it; mem[0x0400] in JavaScript', async () => {
+    await code(['start:  ldx #4', 'loop:   lda word,x', '        sta $0400+40,x', '        lda #2', '        sta $d800+40,x', '        dex', '        bpl loop',
+      '        lda $0400+40', '        sta $0400+81', '        rts', 'word:   .byte $13, $14, $01, $20, $24']);
+    await expect(page.locator('.scr-check')).toHaveText('Ready to run');
+    await runIt();
+    await expect(text).toHaveText(/^\nSTA \$\n S\n?/);
+    // nothing the run wrote there is said to be lost: it is on the screen
+    await expect(page.locator('.scr-run-notes')).toHaveCount(0);
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await code(['mem[0x0400 + 40 * 2] = 0x0d; mem[0x0400 + 40 * 2 + 1] = 0x05; mem[0xd020] = 0;', 'screen.at(0, 0); screen.print("MEM", mem[0x0400 + 40 * 2]);']);
+    await runIt();
+    await expect(text).toHaveText(/^MEM 13\n\nME\n?/);
   });
 });
 

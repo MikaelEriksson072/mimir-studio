@@ -200,6 +200,94 @@ describe('the printing routines in a run in memory', () => {
   });
 });
 
+describe('the screen in the memory of a run in memory', () => {
+  it('is at $0400 and $d800, with the border and background at $d020/$d021: sta puts a character on it, lda reads what CHROUT printed', () => {
+    const s = asm(['* = $c000',
+      'start:  lda #$01', '        sta $0400', '        lda #$02', '        sta $d800',
+      '        ldx #4', 'loop:   lda #$2a', '        sta $0400+40*2+10,x', '        lda #7', '        sta $d800+40*2+10,x', '        dex', '        bpl loop',
+      '        lda #0', '        sta $d020', '        lda #11', '        sta $d021',
+      '        lda #$0d', '        jsr $ffd2', '        lda #$48', '        jsr $ffd2',
+      '        lda $0400+40', '        sta $c100', '        lda $d800+40', '        sta $c101',
+      '        rts']);
+    const c = checkScript(empty, s);
+    expect(c.ok).toBe(true);
+    const r = runScript(empty, s, c);
+    expect(r.end).toBe('rts');
+    const sc = r.screen!;
+    expect(sc.codes[0]).toBe(0x01);
+    expect(sc.colors[0]).toBe(2);
+    expect(rowText(sc, 1)).toBe('H');
+    expect(rowText(sc, 2)).toBe('          *****');
+    expect(sc.colors[at(sc, 12, 2)]).toBe(7);
+    expect([sc.border, sc.background]).toEqual([0, 11]);
+    // what CHROUT printed is in the memory, as the C64 has it
+    expect([r.mem[0xc100], r.mem[0xc101]]).toEqual([0x08, 14]);
+    // what is on the screen is not among what the run changed (only $c100, $c101 and the JSR's return on the stack),
+    // nor among the memory it wrote
+    expect(r.other).toBe(4);
+    expect(r.wrote.some(w => w.start < 0x0800 && w.end > 0x0400)).toBe(false);
+  });
+
+  it('starts as a cleared screen, and a run that leaves it so has none', () => {
+    const r = runScript(empty, asm(['* = $c000', 'start: lda $0400', '       sta $c100', '       lda $d800', '       sta $c101', '       lda $d020', '       sta $c102', '       rts']));
+    expect([r.mem[0xc100], r.mem[0xc101], r.mem[0xc102]]).toEqual([0x20, 14, 14]);
+    expect(r.screen).toBeUndefined();
+  });
+
+  it('is in mem in JavaScript, both ways, and what the program\'s code writes there too', () => {
+    const prog = fromSource('fill.prg', ['.pc = $0810', 'fill: ldx #39', 'l:    lda #$51', '      sta $0400+40*24,x', '      lda #5', '      sta $d800+40*24,x', '      dex', '      bpl l', '      rts'].join('\n'));
+    const env: ScriptEnv = { files: [prog], names: new Map([['fill', 0x0810]]) };
+    const r = runJs(env, { source: [
+      'mem[0x0400] = 0x08; mem[0x0401] = 0x09; mem[0xd800] = 2;',
+      'screen.at(0, 1); screen.print("HI");',
+      'print(mem[0x0400 + 40], mem[0x0401 + 40], screen.peek(0, 0), screen.border);',
+      'mem[0xd020] = 0;',
+      'cpu.call("fill");',
+    ].join('\n'), pads: [] });
+    expect(r.error).toBeUndefined();
+    expect(r.prints).toEqual(['8 9 8 14']);
+    expect(rowText(r.screen!, 0)).toBe('HI');
+    expect(rowText(r.screen!, 1)).toBe('HI');
+    expect(r.screen!.colors[0]).toBe(2);
+    expect(r.screen!.border).toBe(0);
+    expect(r.screen!.codes[at(r.screen!, 39, 24)]).toBe(0x51);
+    expect(r.screen!.colors[at(r.screen!, 0, 24)]).toBe(5);
+    // (only the stack cpu.call used)
+    expect(r.other).toBe(2);
+    expect(r.changes).toEqual([]);
+  });
+
+  it('is the top left 40×25 of a larger screen (extended mode), kept in step with what prints on it', () => {
+    const s = asm(['* = $c000', 'start:  lda #$01', '        sta $0400+40', '        lda #3', '        sta $d800+40', '        lda #$42', '        jsr $ffd2', '        lda $0400', '        sta $c100', '        rts']);
+    const r = runScript(empty, s, checkScript(empty, s), undefined, null, { cols: 60, rows: 30 });
+    expect(r.end).toBe('rts');
+    const sc = r.screen!;
+    expect([sc.cols, sc.rows]).toEqual([60, 30]);
+    expect(sc.codes[at(sc, 0, 0)]).toBe(0x02);
+    expect(sc.codes[at(sc, 0, 1)]).toBe(0x01);
+    expect(sc.colors[at(sc, 0, 1)]).toBe(3);
+    expect(r.mem[0xc100]).toBe(0x02);
+    // JavaScript: mem and screen.poke beyond the 40×25 the memory has
+    const j = runJs(empty, { source: 'mem[0x0400 + 40 * 24 + 39] = 0x18; screen.poke(50, 28, 0x19); screen.poke(1, 0, 0x1a); print(mem[0x0401]);', pads: [] }, { screen: { cols: 60, rows: 30 } });
+    expect(j.error).toBeUndefined();
+    expect(j.prints).toEqual(['26']);
+    expect(j.screen!.codes[at(j.screen!, 39, 24)]).toBe(0x18);
+    expect(j.screen!.codes[at(j.screen!, 50, 28)]).toBe(0x19);
+    expect(j.screen!.codes[at(j.screen!, 1, 0)]).toBe(0x1a);
+  });
+
+  it('is left to the program where it has bytes: a program over $0400 keeps its own', () => {
+    const prog = fromSource('low.prg', ['.pc = $0400', '.fill 1000, $41'].join('\n'));
+    const env: ScriptEnv = { files: [prog], names: new Map() };
+    const r = runScript(env, asm(['* = $c000', 'start: lda #$42', '       sta $0400', '       lda #$43', '       jsr $ffd2', '       rts']));
+    expect(r.end).toBe('rts');
+    expect(r.mem[0x0400]).toBe(0x42);
+    expect(r.changes.map(ch => ch.start)).toEqual([0x0400]);
+    expect(r.screen!.codes[0]).toBe(0x03);
+    expect(r.screen!.colors[0]).toBe(14);
+  });
+});
+
 const roms = findC64Roms();
 describe.skipIf(!roms)('the screen of a run in the whole C64', () => {
   it('is the C64\'s own, as its VIC shows it: what the KERNAL printed', () => {

@@ -114,7 +114,8 @@ describe.skipIf(!roms)('sindri.c64 in a JavaScript script (VICE\'s ROMs)', () =>
     expect(run.prints![4]).toBe('cycles true');
     expect(run.prints![5]).toBe('$c000 255 $07 7');
     expect(run.prints![6]).toMatch(/the routine called at \$0819 did not return after 5,000 cycles \(it was at \$0819\)/);
-    expect(run.prints![7]).toBe('0');
+    // (a space: $0400 of the script's memory is its own C64 screen, cleared)
+    expect(run.prints![7]).toBe('32');
     expect(run.changes).toEqual([]);
   });
 

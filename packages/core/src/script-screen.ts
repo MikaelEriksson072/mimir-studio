@@ -14,6 +14,14 @@
  *   byte, at A/Y) and LINPRT ($bdcd: the number in A/X); also when the program's own code calls them (cpu.call);
  * - a script that runs in the whole C64: its screen is the C64's own, as the VIC shows it (c64TextScreen).
  *
+ * In a run in memory (in assembler or in JavaScript) the screen is also in the memory, where the C64 has it
+ * (screenMemory): the screen matrix at $0400-$07e7, the colour RAM at $d800-$dbe7 and the VIC's border and background
+ * colours at $d020 and $d021, so that `sta $0400,x` puts a character on it, `sta $d800,x` colours it, `lda $0400` reads
+ * what CHROUT printed and `mem[0x0400]` in JavaScript is the screen's first cell. Each part is where no file of the
+ * program and no scratchpad has bytes (a program that loads over $0400 keeps its bytes as its own); a run starts it
+ * as a cleared screen. On a screen larger than the C64's (extended mode) the memory is its top left 40×25 cells, a row
+ * of 40 after another, as on the C64.
+ *
  * What a run leaves on it is a ScriptScreen, kept with the run (ScriptRun.screen) and drawn by the Scripts tab.
  * ===================================================================== */
 import type { C64 } from '@mimir/sindri';
@@ -103,26 +111,112 @@ export function textPetscii(ch: string, lower: boolean): number | null {
   return UNICODE[ch] ?? null;
 }
 
-/** The KERNAL's screen editor on a screen of `cols` × `rows`, as CHROUT drives it. */
+/** Where a run in memory has its screen in its memory, as the C64 has it: the screen matrix (1000 screen codes), the
+ *  colour RAM (their 1000 colours), and the VIC's border and background colour registers. */
+export const SCREEN_RAM = 0x0400, COLOR_RAM = 0xd800, BORDER_AT = 0xd020, BACKGROUND_AT = 0xd021;
+
+/** A run's memory with which parts of the C64's screen are in it (screenMemory): the screen matrix at SCREEN_RAM, the
+ *  colour RAM at COLOR_RAM, the border and background at BORDER_AT and BACKGROUND_AT. */
+export interface ScreenMemory { mem: Uint8Array; screen: boolean; color: boolean; regs: boolean }
+
+/** The parts of the C64's screen a run in memory has in `mem`: each where no file of the program and no scratchpad
+ *  has bytes (a program that loads over the screen keeps its bytes as its own). */
+export function screenMemory(mem: Uint8Array, files: readonly { load: number; bytes: Uint8Array }[], pads: readonly { start: number; size: number }[] = []): ScreenMemory {
+  const free = (s: number, e: number) => !files.some(f => f.load < e && s < f.load + f.bytes.length) && !pads.some(p => p.start < e && s < p.start + p.size);
+  return { mem, screen: free(SCREEN_RAM, SCREEN_RAM + 1000), color: free(COLOR_RAM, COLOR_RAM + 1000), regs: free(BORDER_AT, BACKGROUND_AT + 1) };
+}
+
+/** The addresses of the screen's parts in the memory (none: a run without them), end excluded: what a run wrote there
+ *  is on the screen, not among the bytes it changed. */
+export function screenRanges(m: ScreenMemory | null | undefined): { start: number; end: number }[] {
+  if (!m) return [];
+  return [
+    ...(m.screen ? [{ start: SCREEN_RAM, end: SCREEN_RAM + 1000 }] : []),
+    ...(m.regs ? [{ start: BORDER_AT, end: BACKGROUND_AT + 1 }] : []),
+    ...(m.color ? [{ start: COLOR_RAM, end: COLOR_RAM + 1000 }] : []),
+  ];
+}
+
+/** The screen's parts in the memory as a run starts them: a cleared screen, spaces in light blue, the C64's border
+ *  and background. */
+export function startScreenMemory(m: ScreenMemory): void {
+  if (m.screen) m.mem.fill(0x20, SCREEN_RAM, SCREEN_RAM + 1000);
+  if (m.color) m.mem.fill(C64_TEXT, COLOR_RAM, COLOR_RAM + 1000);
+  if (m.regs) { m.mem[BORDER_AT] = C64_BORDER; m.mem[BACKGROUND_AT] = C64_BACKGROUND; }
+}
+
+/**
+ * The KERNAL's screen editor on a screen of `cols` × `rows`, as CHROUT drives it. With `memory` (a run in memory) the
+ * screen is also in the memory (screenMemory): a 40×25 screen's cells are the memory's bytes at $0400 and $d800, and
+ * a larger screen has its top left 40×25 there, kept in step with sync().
+ */
 export class TextScreen {
   readonly cols: number;
   readonly rows: number;
   readonly codes: Uint8Array;
   readonly colors: Uint8Array;
+  /** the run's memory the screen is in (null: none) */
+  readonly memory: ScreenMemory | null;
   /** 1: the row goes on from the row above (the second row of a logical line) */
   private readonly link: Uint8Array;
-  col = 0; row = 0; color = C64_TEXT; border = C64_BORDER; background = C64_BACKGROUND;
+  col = 0; row = 0; color = C64_TEXT;
   rvs = false; lower = false; quote = false; insert = 0;
   font: Uint8Array | null = null;
-  /** something was printed or drawn */
-  wrote = false;
+  private bord = C64_BORDER;
+  private back = C64_BACKGROUND;
+  private drew = false;
+  /** a screen larger than 40×25 in the memory: the screen's memory as it was when last in step (codes, then colours) */
+  private readonly last: Uint8Array | null = null;
 
-  constructor(size: Partial<ScreenSize> = SCREEN_C64) {
+  constructor(size: Partial<ScreenSize> = SCREEN_C64, memory: ScreenMemory | null = null) {
     const { cols, rows } = screenSize(size);
-    this.cols = cols; this.rows = rows;
-    this.codes = new Uint8Array(cols * rows).fill(0x20);
-    this.colors = new Uint8Array(cols * rows).fill(C64_TEXT);
+    this.cols = cols; this.rows = rows; this.memory = memory;
+    const m = memory, c64 = cols === SCREEN_C64.cols && rows === SCREEN_C64.rows;
+    // (the C64's size: the cells are the memory's own bytes)
+    this.codes = m?.screen && c64 ? m.mem.subarray(SCREEN_RAM, SCREEN_RAM + 1000) : new Uint8Array(cols * rows);
+    this.colors = m?.color && c64 ? m.mem.subarray(COLOR_RAM, COLOR_RAM + 1000) : new Uint8Array(cols * rows);
+    this.codes.fill(0x20); this.colors.fill(C64_TEXT);
     this.link = new Uint8Array(rows);
+    if (m) {
+      startScreenMemory(m);
+      if (!c64 && (m.screen || m.color)) { this.last = new Uint8Array(2000); this.sync(); }
+    }
+  }
+
+  /** the border's and the background's colours (in the memory at $d020 and $d021 when the screen is there) */
+  get border(): number { const m = this.memory; return m?.regs ? m.mem[BORDER_AT] & 15 : this.bord; }
+  set border(v: number) { const m = this.memory; if (m?.regs) m.mem[BORDER_AT] = v & 15; else this.bord = v & 15; }
+  get background(): number { const m = this.memory; return m?.regs ? m.mem[BACKGROUND_AT] & 15 : this.back; }
+  set background(v: number) { const m = this.memory; if (m?.regs) m.mem[BACKGROUND_AT] = v & 15; else this.back = v & 15; }
+
+  /** something was printed or drawn on it, or written into its memory (it is not as the run started it) */
+  get wrote(): boolean { return this.drew || this.memoryWrote(); }
+  set wrote(v: boolean) { this.drew = v; }
+  private memoryWrote(): boolean {
+    const m = this.memory;
+    if (!m) return false;
+    const mem = m.mem;
+    if (m.screen) for (let a = SCREEN_RAM; a < SCREEN_RAM + 1000; a++) if (mem[a] !== 0x20) return true;
+    if (m.color) for (let a = COLOR_RAM; a < COLOR_RAM + 1000; a++) if ((mem[a] & 15) !== C64_TEXT) return true;
+    return m.regs && ((mem[BORDER_AT] & 15) !== C64_BORDER || (mem[BACKGROUND_AT] & 15) !== C64_BACKGROUND);
+  }
+
+  /**
+   * A screen larger than 40×25 and its memory in step: what was written into the memory since the last time onto
+   * the screen's top left 40×25, then those cells into the memory. Called before and after whatever prints on it or
+   * reads it (screenRoutine, screenApi) and by state(). Nothing to do for a 40×25 screen, whose cells are the memory.
+   */
+  sync(): void {
+    const m = this.memory, last = this.last;
+    if (!m || !last) return;
+    const w = this.cols, mem = m.mem;
+    const parts = [[m.screen, SCREEN_RAM, this.codes, 0], [m.color, COLOR_RAM, this.colors, 1000]] as const;
+    for (const [on, at, cells, off] of parts) {
+      if (!on) continue;
+      for (let i = 0; i < 1000; i++) { const v = mem[at + i]; if (v !== last[off + i]) cells[((i / 40) | 0) * w + (i % 40)] = v; }
+      for (let r = 0; r < 25; r++) mem.set(cells.subarray(r * w, r * w + 40), at + r * 40);
+      last.set(mem.subarray(at, at + 1000), off);
+    }
   }
 
   /** the rows of the logical line the cursor is in */
@@ -259,10 +353,11 @@ export class TextScreen {
     }
     this.link.fill(0); this.wrote = true;
   }
-  /** What is on it, as a run keeps it. */
+  /** What is on it, as a run keeps it (a colour as the VIC sees it: the low four bits of what is in colour RAM). */
   state(): ScriptScreen {
+    this.sync();
     return {
-      cols: this.cols, rows: this.rows, codes: this.codes.slice(), colors: this.colors.slice(), border: this.border, background: this.background,
+      cols: this.cols, rows: this.rows, codes: this.codes.slice(), colors: this.colors.map(c => c & 15), border: this.border, background: this.background,
       lower: this.lower, ...(this.font ? { font: this.font.slice() } : {}), cursor: { col: this.col, row: this.row, color: this.color }, wrote: this.wrote,
     };
   }
@@ -295,6 +390,8 @@ interface RoutineCpu { a: number; x: number; y: number; s: number; pc: number; c
  * text STROUT prints, the stack).
  */
 export function screenRoutine(screen: TextScreen, cpu: RoutineCpu, read: (a: number) => number): void {
+  // (what the code wrote into the screen's memory is on the screen first, and what this prints goes into it)
+  screen.sync();
   switch (cpu.pc) {
     case 0xffd2: case 0xe716: screen.out(cpu.a); cpu.c = 0; break;
     case 0xe544: screen.clear(); break;
@@ -309,6 +406,7 @@ export function screenRoutine(screen: TextScreen, cpu: RoutineCpu, read: (a: num
     }
     case 0xbdcd: screen.text(String((cpu.a << 8) | cpu.x)); break;
   }
+  screen.sync();
   const lo = read(0x100 + ((cpu.s + 1) & 0xff)), hi = read(0x100 + ((cpu.s + 2) & 0xff));
   cpu.s = (cpu.s + 2) & 0xff;
   cpu.pc = (((hi << 8) | lo) + 1) & 0xffff;
@@ -362,7 +460,10 @@ export interface ScreenContext {
  *   screen.poke(col, row, code, color), screen.peek(col, row)
  *                                 a screen code (and its colour) in a cell, as POKE into the screen and colour RAM
  *   screen.codes, screen.colors   every cell's screen code and colour, a row after another
- *   screen.show(at, colorsAt)     a 40×25 screen of the program's (1000 screen codes at an address, a name, or
+ *   mem[0x0400 + 40 * row + col], mem[0xd800 + …], mem[0xd020], mem[0xd021]
+ *                                 the same in the memory, as on the C64 (screenMemory): the top left 40×25 cells, their
+ *                                 colours, the border and the background (and so what the program's code writes there)
+ *   screen.show(at, colorsAt)    a 40×25 screen of the program's (1000 screen codes at an address, a name, or
  *                                 bytes, and their colours) at the top left; show(c64) the screen of a C64 of sindri.c64()
  *   screen.charset(at)            a character set of the program's (2 KB at an address, a name, or bytes) in place of
  *                                 the ROM's; charset(null) for the ROM's again
@@ -418,6 +519,11 @@ export function screenApi(scr: TextScreen, ctx: ScreenContext): Record<string, u
       scr.font = f; scr.wrote = true;
     },
   };
+  // each in step with the memory before and after (a screen larger than 40×25: TextScreen.sync)
+  for (const [k, f] of Object.entries(api)) {
+    if (typeof f !== 'function') continue;
+    api[k] = (...a: unknown[]) => { scr.sync(); try { return (f as (...x: unknown[]) => unknown)(...a); } finally { scr.sync(); } };
+  }
   const prop = (name: string, get: () => unknown, set?: (v: unknown) => void) => Object.defineProperty(api, name, { enumerable: true, get, ...(set ? { set } : {}) });
   prop('cols', () => scr.cols);
   prop('rows', () => scr.rows);
@@ -428,7 +534,7 @@ export function screenApi(scr: TextScreen, ctx: ScreenContext): Record<string, u
   prop('background', () => scr.background, v => { scr.background = c64Color(v, 'screen.background'); scr.wrote = true; });
   prop('reverse', () => scr.rvs, v => { scr.rvs = !!v; });
   prop('lower', () => scr.lower, v => { scr.lower = !!v; scr.wrote = true; });
-  prop('codes', () => { scr.wrote = true; return scr.codes; });
-  prop('colors', () => { scr.wrote = true; return scr.colors; });
+  prop('codes', () => { scr.sync(); scr.wrote = true; return scr.codes; });
+  prop('colors', () => { scr.sync(); scr.wrote = true; return scr.colors; });
   return api;
 }

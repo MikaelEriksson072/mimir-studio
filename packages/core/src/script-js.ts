@@ -37,7 +37,10 @@
  *   screen                   the script's C64 screen (script-screen.ts): screen.print(...), write, chrout, at, clear,
  *                            color, border, background, poke, show, charset; 40×25, larger in extended mode. What the
  *                            program's own code prints through CHROUT and the other printing routines of the KERNAL
- *                            and BASIC (where the program has no bytes) goes there too
+ *                            and BASIC (where the program has no bytes) goes there too. It is in mem, as on the C64:
+ *                            the top left 40×25 at $0400 (mem[0x0400 + 40 * row + col]), their colours at $d800, the
+ *                            border at $d020 and the background at $d021 (where no file and no scratchpad is), so that
+ *                            what the script or the program's code writes there is on it
  *
  * It runs in the scripts' worker, which has no network and no file system to give; the names that would reach out of
  * it (fetch, importScripts, self, …) are not there for the script. An error it throws ends the run and is said with
@@ -49,7 +52,7 @@ import { brokkrApi } from './script-brokkr';
 import { loaderApi, type ScriptLoaderData } from './script-loader';
 import { exportApi, type ScriptExportData, type ScriptExportRequest } from './script-export';
 import { buildApi, type ScriptBuildData, type ScriptBuildRequest } from './script-build';
-import { SCREEN_C64, screenApi, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
+import { SCREEN_C64, screenApi, screenMemory, screenRanges, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
 import type { Addr, UserScript } from './types';
 import { diskSectors, parseD64, readD64File, sectorOffset, type D64File } from './c64/d64';
 import { MARK_NAMES, type ScriptAction } from './script-actions';
@@ -106,10 +109,11 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   const pads = script.pads.filter(p => p.start >= 0 && p.size >= 1 && p.start + p.size <= 0x10000);
   for (const p of pads) { mem.set(padStart(p), p.start); own.fill(1, p.start, p.start + p.size); }
   for (const z of script.init?.zp ?? []) { mem[z.at & 0xff] = z.value & 0xff; if (z.word) mem[(z.at + 1) & 0xff] = (z.value >> 8) & 0xff; }
+  // the C64 screen, in mem at $0400, $d800 and $d020/$d021 (where no file and no scratchpad is), and where the
+  // program's code calling CHROUT (and the others) prints on it
+  const scr = new TextScreen(extras.screen ?? SCREEN_C64, screenMemory(mem, env.files, pads)), traps = screenTraps(env.files, own);
   const before = mem.slice();
   const names = scriptNames(env, script.pads);
-  // the C64 screen, and where the program's code calling CHROUT (and the others) prints on it
-  const scr = new TextScreen(extras.screen ?? SCREEN_C64), traps = screenTraps(env.files, own);
   const prints: string[] = [], actions: ScriptAction[] = [];
   const made: NonNullable<ScriptRun['made']> = [];
   let exports: ScriptExportRequest | undefined;
@@ -229,14 +233,17 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
     const line = errorLine(e);
     error = { msg: e instanceof Error ? `${e.name}: ${e.message}` : String(e), ...(line ? { line } : {}) };
   }
-  // what changed, taken as what the run wrote: of the program's memory (not the scratchpads), and of each scratchpad
-  const changed = new Uint8Array(0x10000);
+  // what changed, taken as what the run wrote: of the program's memory (not the scratchpads), and of each scratchpad;
+  // not the screen's memory (what is there is on the screen)
+  scr.sync();
+  const changed = new Uint8Array(0x10000), skip = own.slice();
   for (let a = 0x200; a < 0x10000; a++) if (mem[a] !== before[a]) changed[a] = 1;
+  for (const r of screenRanges(scr.memory)) { changed.fill(0, r.start, r.end); skip.fill(1, r.start, r.end); }
   const padRuns = script.pads.map(p => {
     const w = changed.subarray(p.start, p.start + p.size), first = w.indexOf(1);
     return { name: p.name, bytes: mem.slice(p.start, p.start + p.size), ...(first >= 0 ? { wrote: [first, w.lastIndexOf(1) + 1] as [number, number] } : {}) };
   });
-  const { changes, other } = runChanges(mem, before, env.files, own);
+  const { changes, other } = runChanges(mem, before, env.files, skip);
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,

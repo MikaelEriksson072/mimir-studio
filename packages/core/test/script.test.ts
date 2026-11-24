@@ -259,7 +259,9 @@ describe('user scripts', () => {
     expect(runScript(env, script('* = $c000\nstart: nop\n .byte $02')).end).toBe('jam');
     const loop = runScript(env, script('* = $c000\nstart: inc BORDER\n jmp start'), undefined, 1000);
     expect(loop).toMatchObject({ end: 'limit', instructions: 1000 });
-    expect(loop.other).toBe(1);
+    // (the border, $d020, is the run's C64 screen's: what INC did there is on the screen, not a byte changed elsewhere)
+    expect(loop.other).toBe(0);
+    expect(loop.screen?.border).toBe((14 + 500) & 15);
   });
 
   it('are made from the lines given, without * = and without a scratchpad, and check out', () => {

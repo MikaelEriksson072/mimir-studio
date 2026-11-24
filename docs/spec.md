@@ -3047,6 +3047,18 @@ $06, $08` i `.asm`-filen efter en körning.
     en nollbyte) och `$bdcd` LINPRT (talet i A/X). Rutinen görs och returneras från som dess RTS (`JMP $ffd2` sist
     avslutar körningen), också när programmets egen kod anropar den (och från `cpu.call` i JavaScript). I
     felsökaren är ett `JSR $FFD2` ett steg och skärmen visar körningens skärm som den är nu (*now*).
+  - **Skärmen i minnet** (`screenMemory`, `SCREEN_RAM`/`COLOR_RAM`, 2026-11-24): i en körning i minnet (assembler och
+    JavaScript) ligger skärmen där C64:an har den: skärmkoderna på `$0400`–`$07e7`, färg-RAM på `$d800`–`$dbe7`, ram-
+    och bakgrundsfärgen på `$d020` och `$d021`. `sta $0400,x` sätter ett tecken på skärmen, `sta $d800,x` färgar det,
+    `inc $d020` byter ramfärg och `lda $0400` läser det CHROUT skrev; i JavaScript är `mem[0x0400]` skärmens första
+    cell (och `screen.border` är `mem[0xd020]`), också det programmets kod skriver där från `cpu.call`. En körning
+    börjar med en rensad skärm där (mellanslag i ljusblått, C64:ans ram och bakgrund). Varje del är skärmens bara där
+    ingen fil i programmet och ingen scratchpad har byte (`screenMemory`: ett program som laddar över `$0400` behåller
+    sina byte, och skärmen har dem då inte). Det som skrivs där hör till skärmen: det räknas inte bland det körningen
+    ändrade utanför programmet och visas inte under *Memory it wrote* (`screenRanges`). I extended mode är minnet
+    skärmens övre vänstra 40×25 tecken, 40 i raden som på C64:an (`TextScreen.sync` håller dem i takt före och efter
+    det som skriver på skärmen); resten nås med utskrift och `screen.poke`. Färgerna är de låga fyra bitarna, som VIC:en
+    ser dem.
   - **I hela C64:an** är skärmen C64:ans egen, som VIC:en visar den (`c64TextScreen`): matrisen i banken CIA 2 och
     $d018 väljer, färg-RAM, ram- och bakgrundsfärg, teckensetet (ROM:ens, eller 2 KB i RAM); markören visas inte.
   - Det en körning skrev på skärmen sparas med körningen (`ScriptRun.screen`, `ScriptScreen`); en körning som skrev

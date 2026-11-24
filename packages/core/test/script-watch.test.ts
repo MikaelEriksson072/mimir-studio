@@ -79,7 +79,8 @@ describe('the watch list found in a script\'s code', () => {
     const o = { ref: start, start };
     const [range, border, counter, ptr, pad] = w.map(x => watchView(x, after, o));
     expect(range).toMatchObject({ changed: 16, of: 256, row: { at: 0x0830, bytes: [0x5a, 0x5b, 0x58, 0xee, 0x5e, 0x5f, 0x5c, 0x5d], was: [0, 1, 2, 3, 4, 5, 6, 7] } });
-    expect(border).toEqual({ value: 2, was: 0 });
+    // (the run starts $d020 as the C64 has it, light blue: it is its C64 screen's border)
+    expect(border).toEqual({ value: 2, was: 14 });
     expect(counter).toEqual({ value: 1, was: 0 });
     // the run set the pointer (it was $0000): its bytes are where it points now, with the $ee written at data+3
     expect(ptr).toMatchObject({ value: 0x0830, was: 0x0000, changed: 16, of: 256, row: { at: 0x0830, bytes: [0x5a, 0x5b, 0x58, 0xee, 0x5e, 0x5f, 0x5c, 0x5d] } });

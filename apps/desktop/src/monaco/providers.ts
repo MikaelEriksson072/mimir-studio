@@ -104,7 +104,7 @@ export const JS_API: readonly { label: string; insert: string; detail: string }[
   { label: 'loaders', insert: 'loaders', detail: 'the loaders of the mounted disk and the tape: a list (empty when Mimir knows none)' },
   { label: 'brokkr', insert: 'brokkr', detail: 'Brokkr, Mimir\'s cruncher: brokkr.pack(prg) for a file that unpacks itself, brokkr.crunch(bytes), brokkr.decrunch(stream), brokkr.mem(bytes, start)' },
   { label: 'sindri', insert: 'sindri', detail: 'Sindri, Mimir\'s C64 and unpacker: sindri.unpack(prg), sindri.c64(), sindri.disassemble(at), sindri.basic()' },
-  { label: 'screen', insert: 'screen', detail: 'the script\'s C64 screen (Scripts → C64 screen): screen.print("HELLO"), screen.at(col, row), screen.color = "white", screen.poke(col, row, code)' },
+  { label: 'screen', insert: 'screen', detail: 'the script\'s C64 screen (Scripts → C64 screen): screen.print("HELLO"), screen.at(col, row), screen.color = "white", screen.poke(col, row, code); also in mem at $0400 (characters), $d800 (colours), $d020/$d021 (border, background)' },
   { label: 'save', insert: 'save(', detail: 'save("name.prg", bytes, load): a file the run made, listed under Last run (To the project…, Save…)' },
 ];
 
