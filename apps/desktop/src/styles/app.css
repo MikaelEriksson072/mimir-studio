@@ -2130,3 +2130,62 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .lib-add .lib-add-pic .lib-add-addr.bad { border-color: var(--err, #e5484d); }
 .lib-add-found { margin: 0; }
 .lib-big-bitmap { cursor: default; }
+
+/* ---- the Assembler (spec 10.7): the script editor's layout with the folder's files in place of the library ---- */
+.asm-app { height: 100%; display: flex; flex-direction: column; background: var(--bg); }
+.asm-app > .start { flex: 1; min-height: 0; }
+.asm-home-lead { margin: 0; color: var(--fg-2); font-size: 12.5px; line-height: 1.5; }
+.asm-ws { flex: 1; min-height: 0; }
+/* (display: the narrow window hides the window's column edges, not this one) */
+.asm-ws > .splitter.v { width: 4px; flex: none; display: block; }
+.asm-ws > .scr-list:has(+ .splitter.v) { border-right: 0; }
+.scr-list.asm-list { padding: 0; gap: 0; min-width: 160px; }
+.asm-top { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 4px; border-bottom: 1px solid var(--line); }
+.asm-folder { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; color: var(--fg); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.asm-folder .icon { flex: none; color: var(--accent); }
+.asm-list > .scr-list-head { flex: none; padding: 8px 6px 4px 12px; }
+.asm-tree { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 10px; outline: none; }
+.asm-tree-empty { margin: 6px 12px; }
+.asm-row { display: flex; align-items: center; gap: 5px; min-width: 0; height: 24px; padding-right: 4px; border-radius: 5px; cursor: pointer; color: var(--fg-2); font: 12px var(--font-code); outline: none; }
+.asm-row:hover { background: var(--row-hover); color: var(--fg); }
+.asm-row:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.asm-row.on { background: var(--sel); color: var(--fg); }
+.asm-row.dir { color: var(--fg); }
+.asm-caret { flex: none; width: 11px; display: inline-flex; color: var(--fg-3); transition: transform 0.12s; }
+.asm-caret.open { transform: rotate(90deg); }
+.asm-ico { flex: none; color: var(--fg-3); }
+.asm-row.dir .asm-ico { color: var(--accent); }
+.asm-row.main .asm-ico { color: var(--ok); }
+.asm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asm-main { flex: none; font: 600 9.5px/1 var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 5px; border-radius: 7px; color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 50%, transparent); }
+.asm-dirty { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.asm-row-more { flex: none; width: 20px; height: 20px; opacity: 0; }
+.asm-row:hover .asm-row-more, .asm-row:focus-visible .asm-row-more { opacity: 1; }
+.asm-row-edit { cursor: default; }
+.asm-row-edit .icon { flex: none; margin-left: 16px; color: var(--fg-3); }
+.asm-name-input { flex: 1; min-width: 0; height: 22px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--accent); background: var(--editor); color: var(--fg); font: 12px var(--font-code); outline: none; }
+.asm-file { display: inline-flex; align-items: center; gap: 6px; }
+.asm-lang, .asm-main-pill { cursor: pointer; background: none; font: inherit; font-size: 11px; }
+.asm-lang:hover, .asm-main-pill:hover { color: var(--fg); border-color: var(--fg-3); }
+.asm-main-pill { display: inline-flex; align-items: center; gap: 5px; margin-left: 0; padding: 2px 8px; white-space: nowrap; font-family: var(--font-code); }
+.asm-main-pill .icon { color: var(--ok); }
+.asm-binary { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--fg-2); }
+.asm-binary h3 { margin: 0; font: 600 14px var(--font-code); color: var(--fg); }
+.asm-binary p { margin: 0 0 6px; max-width: 460px; }
+.asm-binary > .icon { color: var(--fg-3); }
+.asm-pane-scroll { flex: 1; min-height: 0; overflow: auto; padding: 6px 12px 10px; }
+.asm-out-head { margin: 8px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-3); }
+.asm-out-head .muted { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 6px; }
+.asm-out-p { margin: 4px 0; }
+.asm-out-p .icon { position: relative; top: 2px; }
+.asm-out-pre { margin: 4px 0; padding: 6px 8px; border-radius: 6px; background: var(--editor); border: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; }
+.asm-out-pre.asm-cmd { color: var(--fg-3); }
+.asm-problem-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.asm-problem-go { width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 3px 6px; border: 0; border-radius: 5px; background: none; color: var(--fg-2); text-align: left; cursor: pointer; font-size: 12px; }
+.asm-problem-go:hover:not(:disabled) { background: var(--row-hover); color: var(--fg); }
+.asm-problem-go:disabled { cursor: default; }
+.asm-problem-go .icon { flex: none; position: relative; top: 2px; }
+.asm-problem.error .icon { color: var(--err); }
+.asm-problem.warning .icon { color: var(--warn); }
+.asm-problem-at { flex: none; color: var(--accent-hi); }
+.asm-problem-msg { min-width: 0; }

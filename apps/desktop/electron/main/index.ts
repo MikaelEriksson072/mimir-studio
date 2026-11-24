@@ -13,6 +13,7 @@ import { ProjectStore } from './projects';
 import { GitService } from './git';
 import { defaultLibraryDir, LibraryStore } from './library';
 import { ScriptStore } from './scripts';
+import { AsmStore } from './assembler';
 import { QuicksaveHistory, QuicksaveWatcher } from './quicksave';
 import { RecentFolders } from './recent';
 import { SettingsStore } from './settings';
@@ -90,12 +91,16 @@ app.whenReady().then(() => {
   // the library's folder: the one in the settings, else Mimir\Library in the documents folder (spec 10.6)
   const library = new LibraryStore(() => settings.get().libraryDir || defaultLibraryDir(app.getPath('documents')), p => shell.trashItem(p));
   const scripts = new ScriptStore(() => library.root(), p => shell.trashItem(p));
-  registerIpc({ scripts, policy: new PathPolicy(), settings, recent: new RecentFolders(app.getPath('userData')), watcher, isTrustedUrl, quicksave, history, projects, git: new GitService(() => projects.current?.dir ?? null), library });
+  // the folder open in the Assembler (spec 10.7), watched on its own: its changes go to the Assembler (fs:changed)
+  const asmWatcher = new ExportWatcher(path => {
+    for (const w of appWindows()) w.webContents.send(CHANNELS.fsChanged, { path });
+  });
+  registerIpc({ scripts, policy: new PathPolicy(), settings, recent: new RecentFolders(app.getPath('userData')), watcher, isTrustedUrl, quicksave, history, projects, git: new GitService(() => projects.current?.dir ?? null), library, asm: new AsmStore(app.getPath('userData')), asmWatcher, trash: p => shell.trashItem(p) });
   buildMenu();
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   // not before-quit: that comes before the windows close, and a window whose page asks about unsaved work may stay
-  app.on('will-quit', () => { watcher.close(); quicksave.close(); });
+  app.on('will-quit', () => { watcher.close(); asmWatcher.close(); quicksave.close(); });
 });
 
 app.on('window-all-closed', () => {

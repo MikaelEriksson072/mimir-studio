@@ -154,6 +154,7 @@ mimir-studio/
 │  │  ├─ main/toolchain.ts        KickAss- och VICE-körning, felparsning
 │  │  ├─ main/vice-monitor.ts     binary monitor-protokoll (TCP 6502)
 │  │  ├─ main/project-fs.ts       öppna/spara .mimir, exportera projektmapp
+│  │  ├─ main/assembler.ts        Assemblerns mapp: listan, filerna bara med sin väg i mappen, mapparna som öppnats (10.7)
 │  │  └─ preload/index.ts         contextBridge → window.kr
 │  └─ src/                        renderer
 │     ├─ App.tsx
@@ -162,6 +163,7 @@ mimir-studio/
 │     ├─ components/{TitleBar, ActivityBar, Sidebar, Listing, SourceView,
 │     │              Inspector, Heatmap, GfxPreview, BottomPanel, StatusBar,
 │     │              CommandPalette, Settings, ContextMenu}.tsx
+│     ├─ components/{AssemblerView, AsmTree, AsmOutput}.tsx   Assemblern: filerna bredvid koden, Run, Debug (10.7)
 │     ├─ monaco/{kickass-language.ts, theme.ts, providers.ts}
 │     └─ styles/{tokens.css, tailwind.css}
 ├─ packages/core/
@@ -172,6 +174,7 @@ mimir-studio/
 │  ├─ src/render/{lines.ts, kick.ts, include.ts}
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
+│  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -3622,6 +3625,60 @@ format, döpa om, papperskorgen, IPC-scheman), `apps/desktop/test/library.test.t
 samma byte, bilderna, en bitmapps celler) och `apps/desktop/e2e/library.spec.ts` (också: formatet i Settings, loggan
 från listningen och Graphics-fliken med skärmen $6000 och färg-RAM från `logo_colors`).
 
+### 10.7 Assemblern
+
+Med skripteditorn (10.3) har Mimir i princip en assembler. Assemblern är den editorn för att skriva egna C64-program:
+den startas från startfönstret (**Assembler…**) och tar hela fönstret, som *Pack a file* gör, med *Start* tillbaka.
+Där skripteditorn har biblioteket och mallarna har Assemblern projektets filstruktur; editorn i övrigt är skripteditorns.
+Det rena står i `packages/core/src/asm-project.ts`; mappen läses och skrivs bara av huvudprocessen
+(`apps/desktop/electron/main/assembler.ts`), och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`,
+`AsmOutput.tsx`, `store/assembler.ts`).
+
+- **Projektet är en mapp.** *Open folder…* öppnar vilken mapp som helst med källkod (också ett Mimir-projekts mapp);
+  *New…* gör en ny mapp (namn, var den hamnar, Kick Assembler eller 64tass) med `main.asm` i: ett program som tömmer
+  skärmen, skriver en rad och går tillbaka till BASIC (`asmTemplate`; Mimirs egen assembler, KickAss.jar och 64tass ger
+  samma bytes, testat i `kickass.integration.test.ts`). Mapparna som öppnats listas under *Opened before*
+  (`assembler.json` i användarmappen) och öppnas igen utan dialog; en mapp som inte finns längre är överstruken.
+- **Filerna bredvid koden.** Listan är mappens filer och mappar som ett träd, mapparna först (`.git`, `node_modules` och
+  liknande utelämnas; högst 4000 poster). Ett klick öppnar en fil i editorn, en mapp fälls ut och in; piltangenterna och
+  Enter går i listan. Huvudfilen är märkt *main*, en fil med ändringar som inte är skrivna har en prick och en fil med
+  problem en siffra. Högerklick (eller ⋯ på raden): *Open*, *Main file*, *New file…*, *New folder…*, *Rename…* (F2),
+  *Delete* (till papperskorgen), *Show in folder*, *Copy path*; ett nytt namn skrivs i listan själv, och ett namn utan
+  ändelse blir en `.asm`. Filnamnet i verktygsraden byter också namn på filen. Listan fälls in till en remsa och bredden
+  dras med kanten.
+- **Huvudfilen** är den som byggs: den källfil som startar ett program (BasicUpstart, `* =`, `.pc =`) och som ingen annan
+  importerar, sedan en som heter main, sedan den närmast mappens topp (`mainFile`). *Main file* i menyn väljer en annan,
+  och valet sparas per mapp. Språket är huvudfilens (`guessAssembler`), och knappen *Language* byter mellan Kick
+  Assembler och 64tass (sparas per mapp).
+- **Editorn** är skripteditorns Monaco: färgningen för språket, förslag på programmets namn (etiketter och konstanter
+  som kontrollen hittade, `asmContext` i `monaco/providers.ts`), hover med adressen och var etiketten står, och
+  go to definition (F12, Ctrl+klick) i alla mappens källfiler, som då öppnas. Det man skriver skrivs till filen en halv
+  sekund efter sista tangenten (Ctrl+S skriver direkt), och allt skrivs innan man lämnar Assemblern eller stänger
+  fönstret. En fil som ändras utanför appen läses in igen (huvudprocessen bevakar mappen, `fs:changed`); har filen egna
+  ändringar som inte är skrivna behåller den dem. En fil som inte är text visas med sin storlek och *Show in folder*.
+- **Kontrollen** sker medan man skriver, med Mimirs egen assembler på hela programmet: huvudfilen, det den importerar
+  (`#import`, `.include`, från den importerande filens mapp först, som KickAss gör) och data den laddar (`LoadSid`,
+  `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
+  körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
+  fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (makron, funktioner, segment): där
+  bygger *Run* ändå med den riktiga, vars problem är de som gäller.
+- **Run** (Ctrl+Enter, F5) skriver det som inte är skrivet, bygger huvudfilen med KickAss.jar eller 64tass i dess mapp
+  (`toolchain:build`, PRG:n i `out\` bredvid) och startar den i VICE med etiketterna (`toolchain:run`). **Build**
+  (Ctrl+Shift+B) bygger utan att starta. Byggets problem (fil och rad från huvudfilens mapp) visas under *Problems*, som
+  markeringar och i listan, och editorn öppnar det första felet.
+- **Debug** (F8) kör programmet i Mimirs 6510 en instruktion i taget (`asmMachine`: skriptens maskin med programmet som
+  koden och ett enda minne, så att kod som programmet kopierar någon annanstans och hoppar till ser programmets bytes),
+  startat på samma sätt som SYS. Step, Over (F6), Out (Shift+F6), Continue (Ctrl+Enter), Pause och Stop som i
+  skripteditorn; brytpunkter i vänstermarginalen i vilken fil som helst (`asmAddrOf`), och editorn byter till filen där
+  körningen stannar. Panelen bredvid koden säger fil och rad, registren, stacken och nästa instruktioner. Maskinen har
+  inga ROM eller I/O: KERNAL:s och BASIC:s utskriftsrutiner görs på C64-skärmen (10.3), ett anrop till något annat i
+  ROM:en stoppar körningen och säger det.
+- **Under koden** flikarna *Problems* (kontrollens problem medan man skriver, det senaste byggets, och vad `.print`
+  skrev), *Build* (kommandoraden och vad assemblern skrev) och *Last run* (hur den senaste körningen i Mimir slutade,
+  registren); raden till höger säger det senaste bygget och om VICE startades.
+- **C64-skärmen** bredvid koden är skripteditorns (samma inställningar): vad programmet skriver ut och skriver till
+  skärmminnet medan det körs i Mimir.
+
 ## 11. Kick Assembler-generatorn
 
 ### 11.1 Filens struktur
@@ -4292,6 +4349,16 @@ Med `-binarymonitor` (TCP 6502) kan appen: sätta brytpunkter från listningen, 
 | `scripts:save` | renderer → main | `{ file, text, was? }` → listan: filen skrivs (ett rent filnamn, `.asm` eller `.js`); `was`, filen den ersätter under ett annat namn, till papperskorgen |
 | `scripts:remove` | renderer → main | `{ file }` → listan: filen till papperskorgen |
 | `scripts:reveal` | renderer → main | mappen `Scripts` visas i filhanteraren (görs om den inte finns) |
+| `assembler:start` | renderer → main | → `{ recent, parent }`: mapparna som öppnats i Assemblern (10.7) och var en ny hamnar |
+| `assembler:open` | renderer → main | `{ path? }` → `{ dir, name, entries, more }` eller `null`: en mapp som öppnats förut (ingen dialog) eller en mappdialog; mappen bevakas (`fs:changed`) |
+| `assembler:create` | renderer → main | `{ name, parent, files }` → mappens innehåll: en ny mapp `<parent>/<name>` med `files` (den första källfilen) |
+| `assembler:forget` | renderer → main | `{ dir }` → listan: mappen tas bort ur listan (mappen själv är kvar) |
+| `assembler:close` | renderer → main | `{ dir }`: mappen bevakas inte längre |
+| `assembler:list` | renderer → main | `{ dir }` → mappens filer och mappar, med storlek och ändringstid |
+| `assembler:read` | renderer → main | `{ dir, path, as? }` → `{ text }` eller `{ bytes }`, `size`, `mtime`: en fil, bara med sin väg i mappen |
+| `assembler:write` | renderer → main | `{ dir, path, text }` → `{ mtime }`: en källfil skrivs (dess mapp görs om den saknas) |
+| `assembler:change` | renderer → main | `{ dir, op, path, to?, text? }` → mappens innehåll: en ny fil eller mapp, ett namnbyte (eller en flytt i mappen), eller till papperskorgen |
+| `assembler:reveal` | renderer → main | `{ dir, path? }`: filhanteraren vid filen eller mappen |
 
 ### 13.4b Smart attach
 

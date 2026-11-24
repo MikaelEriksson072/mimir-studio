@@ -16,6 +16,10 @@ export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly
    *  be changed (debugging) */
   padStore: ((line: number, pad: number) => void) | null } = { names: new Map(), pads: [], links: new Set(), kinds: new Map(), padStore: null };
 
+/** The Assembler's files (models of the `asm` scheme, spec 10.7): the names the program defines (its labels and
+ *  constants, as Mimir's check of it last found them) and what each is. */
+export const asmContext: { names: ReadonlyMap<string, number>; kinds: ReadonlyMap<string, string> } = { names: new Map(), kinds: new Map() };
+
 /** the command a store's code actions run (scriptContext.padStore) */
 export const PAD_STORE_CMD = 'mimir.script.padStore';
 
@@ -148,14 +152,16 @@ export function registerProviders(monaco: typeof Monaco): void {
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerCompletionItemProvider(lang, {
     triggerCharacters: ['.'],
     provideCompletionItems(model, pos) {
-      if (model.uri.scheme !== 'script') return { suggestions: [] };
+      const asm = model.uri.scheme === 'asm';
+      if (model.uri.scheme !== 'script' && !asm) return { suggestions: [] };
       const w = model.getWordUntilPosition(pos), line = model.getLineContent(pos.lineNumber);
       const before = line.slice(0, w.startColumn - 1), dot = before.endsWith('.');
       const range = new monaco.Range(pos.lineNumber, w.startColumn - (dot ? 1 : 0), pos.lineNumber, w.endColumn);
       const K = monaco.languages.CompletionItemKind;
       const kind = { link: K.Reference, pad: K.Struct, name: K.Variable, hardware: K.Constant, mnemonic: K.Keyword, word: K.Function } as const;
       const order = { link: '0', pad: '1', name: '2', hardware: '3', mnemonic: '4', word: '5' } as const;
-      return { suggestions: scriptSuggestions(before, w.word, scriptContext.names, scriptContext.pads, { ...scriptContext, lang: lang === TASS64 ? '64tass' : 'kickass' }).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
+      const ctx = asm ? { names: asmContext.names, pads: [], kinds: asmContext.kinds } : scriptContext;
+      return { suggestions: scriptSuggestions(before, w.word, ctx.names, ctx.pads, { ...(asm ? { kinds: asmContext.kinds } : scriptContext), lang: lang === TASS64 ? '64tass' : 'kickass' }).map(s => ({ label: s.label, kind: kind[s.kind], insertText: s.label, range, sortText: order[s.kind] + s.label, ...(s.detail ? { detail: s.detail } : {}) })) };
     },
   });
   // a script in JavaScript: what it is given, and the program's names inside addr("…")
@@ -179,6 +185,11 @@ export function registerProviders(monaco: typeof Monaco): void {
         const d = dottedNameAt(model.getLineContent(pos.lineNumber), pos.column - 1), a = d != null ? scriptContext.names.get(d) : undefined;
         if (d != null && a != null) return { contents: [{ value: `**${d}** — $${h4(a)}` }, { value: scriptContext.kinds.get(d) ?? 'a name of the program' }] };
       }
+      // in the Assembler: a name the program defines (dotted ones whole: a label in a scope)
+      if (model.uri.scheme === 'asm') {
+        const d = dottedNameAt(model.getLineContent(pos.lineNumber), pos.column - 1) ?? name, a = asmContext.names.get(d) ?? asmContext.names.get(name);
+        if (a != null) return { contents: [{ value: `**${asmContext.names.has(d) ? d : name}** — $${h4(a)}${a > 0xffff || a < 0 ? ` (${a})` : ''}` }, { value: asmContext.kinds.get(asmContext.names.has(d) ? d : name) ?? 'a label of the program' }] };
+      }
       // a script's scratchpad
       const pad = model.uri.scheme === 'script' ? scriptContext.pads.find(p => p.name === name || `${p.name}_end` === name) : undefined;
       if (pad) return { contents: [{ value: `**${name}** — $${h4(name === pad.name ? pad.start : pad.start + pad.size)}` }, { value: `scratchpad ${pad.name}: $${h4(pad.start)}-$${h4(pad.start + pad.size - 1)}, ${pad.size} bytes${name === pad.name ? '' : ' (the address after it)'}` }] };
@@ -192,7 +203,7 @@ export function registerProviders(monaco: typeof Monaco): void {
       if (region) return { contents: [{ value: `**${name}** — $${h4(region.start)}` }, { value: `${region.cat} · ${region.desc}` }] };
       const { R, A } = monacoContext;
       // (the names the source has: with a view offset the listing's differ, spec 10.4)
-      if (R && A && !drive) for (const [a, l] of R.fileLabels ?? R.labels) if (l.name === name) {
+      if (R && A && !drive && model.uri.scheme !== 'asm') for (const [a, l] of R.fileLabels ?? R.labels) if (l.name === name) {
         const xs = A.xrefs.get(a) || [];
         const b = findBlock(A.blocks, a);
         return { contents: [{ value: `**${name}** — $${h4(a)}` }, { value: `${b ? kindInfo(b.type).label : 'label'} · ${xs.length} reference${xs.length === 1 ? '' : 's'}${l.user ? ' · renamed by you' : ''}` }] };
@@ -236,7 +247,19 @@ export function registerProviders(monaco: typeof Monaco): void {
       const w = model.getWordAtPosition(pos); if (!w) return null;
       // `name:`; in 64tass also `name = value` and `name .namespace` at the start of a line
       const word = w.word.replace(/[^\w]/g, '');
-      const m = new RegExp(lang === TASS64 ? `^${word}(?::|\\s*:?=|\\s+\\.(?:namespace|block)\\b)` : `^${word}:`, 'm').exec(model.getValue()); if (!m) return null;
+      const re = new RegExp(lang === TASS64 ? `^${word}(?::|\\s*:?=|\\s+\\.(?:namespace|block)\\b)` : `^${word}:`, 'm');
+      // the Assembler's (spec 10.7): also in the folder's other sources, the file shown first (Kick Assembler's
+      // labels may be indented there, and constants are `.label`, `.const` or `.var` lines)
+      if (model.uri.scheme === 'asm') {
+        const own = lang === TASS64 ? re : new RegExp(`^\\s*(?:${word}:|\\.(?:label|const|var)\\s+${word}\\s*=)`, 'm');
+        for (const x of [model, ...monaco.editor.getModels().filter(o => o !== model && o.uri.scheme === 'asm')]) {
+          const m = own.exec(x.getValue()); if (!m) continue;
+          const p = x.getPositionAt(m.index + m[0].indexOf(word));
+          return { uri: x.uri, range: new monaco.Range(p.lineNumber, p.column, p.lineNumber, p.column + word.length) };
+        }
+        return null;
+      }
+      const m = re.exec(model.getValue()); if (!m) return null;
       const p = model.getPositionAt(m.index);
       return { uri: model.uri, range: new monaco.Range(p.lineNumber, 1, p.lineNumber, w.word.length + 1) };
     },

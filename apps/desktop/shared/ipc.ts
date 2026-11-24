@@ -66,6 +66,16 @@ export const CHANNELS = {
   scriptsSave: 'scripts:save',
   scriptsRemove: 'scripts:remove',
   scriptsReveal: 'scripts:reveal',
+  assemblerStart: 'assembler:start',
+  assemblerOpen: 'assembler:open',
+  assemblerCreate: 'assembler:create',
+  assemblerForget: 'assembler:forget',
+  assemblerClose: 'assembler:close',
+  assemblerList: 'assembler:list',
+  assemblerRead: 'assembler:read',
+  assemblerWrite: 'assembler:write',
+  assemblerChange: 'assembler:change',
+  assemblerReveal: 'assembler:reveal',
   /** main -> renderer */
   fsChanged: 'fs:changed',
   viceQuicksaved: 'vice:quicksaved',
@@ -436,6 +446,37 @@ export interface LibraryChangeResult { item: LibraryItem; listing: LibraryListin
 /** the file manager at a file of the library, or at its folder (a kind's, or the library's) */
 export interface LibraryRevealRequest { kind?: LibraryKind; file?: string }
 
+/* ---------------------------------------------------------------------
+ * The Assembler (spec 10.7): a folder of Kick Assembler or 64tass sources. The renderer names a file by its path inside
+ * the folder (`src/main.asm`, with /), never by a path of its own; the folder is one picked in a dialog or one the
+ * Assembler opened before.
+ * --------------------------------------------------------------------- */
+
+/** a file or folder of the Assembler's folder: its path inside it, with /; a file's size and when it was changed */
+export interface AsmEntry { path: string; dir: boolean; size: number; mtime: number }
+/** the folder and what is in it, the folders first and each by name; `more`: there was more than the listing holds */
+export interface AsmFolder { dir: string; name: string; entries: AsmEntry[]; more: boolean }
+/** a folder opened in the Assembler before; `exists`: it is still there */
+export interface AsmRecent { dir: string; name: string; opened: number; exists: boolean }
+/** what the Assembler offers before a folder is open: the folders opened before, and where a new one goes */
+export interface AsmStartInfo { recent: AsmRecent[]; parent: string }
+/** `path`: a folder opened before (no dialog); none: a folder dialog */
+export interface AsmOpenRequest { path?: string }
+/** a new folder `<parent>/<name>` with `files` in it (the first source); `parent` is the one the start info gave or
+ *  one picked with project:parent */
+export interface AsmCreateRequest { name: string; parent: string; files: Record<string, string> }
+/** a file of the folder, as text or as its bytes */
+export interface AsmReadRequest { dir: string; path: string; as?: 'text' | 'bytes' }
+export interface AsmReadResult { text?: string; bytes?: Uint8Array; size: number; mtime: number }
+export interface AsmWriteRequest { dir: string; path: string; text: string }
+/** a new file (with its text) or folder, a file or folder renamed (or moved) inside the folder, or one moved to the
+ *  Recycle Bin; the answer is the folder's listing after it */
+export type AsmChangeRequest =
+  | { dir: string; op: 'file'; path: string; text?: string }
+  | { dir: string; op: 'folder'; path: string }
+  | { dir: string; op: 'rename'; path: string; to: string }
+  | { dir: string; op: 'remove'; path: string };
+
 export interface KrApi {
   openProject(req?: ProjectOpenRequest): Promise<ProjectOpenResult | null>;
   saveProject(req: ProjectSaveRequest): Promise<ProjectSaveResult | null>;
@@ -532,4 +573,19 @@ export interface KrApi {
   scriptsSave(req: { file: string; text: string; was?: string }): Promise<ScriptsListing>;
   scriptsRemove(req: { file: string }): Promise<ScriptsListing>;
   scriptsReveal(): Promise<void>;
+  /** the Assembler (10.7): the folders opened in it before, and where a new one goes */
+  assemblerStart(): Promise<AsmStartInfo>;
+  /** a folder opened (a dialog when `path` is not one opened before; null: cancelled): it is watched for changes made
+   *  outside the app (fs:changed) until assemblerClose */
+  assemblerOpen(req?: AsmOpenRequest): Promise<AsmFolder | null>;
+  assemblerCreate(req: AsmCreateRequest): Promise<AsmFolder>;
+  assemblerForget(req: { dir: string }): Promise<AsmRecent[]>;
+  /** the folder is no longer watched */
+  assemblerClose(req: { dir: string }): Promise<void>;
+  assemblerList(req: { dir: string }): Promise<AsmFolder>;
+  assemblerRead(req: AsmReadRequest): Promise<AsmReadResult>;
+  assemblerWrite(req: AsmWriteRequest): Promise<{ mtime: number }>;
+  assemblerChange(req: AsmChangeRequest): Promise<AsmFolder>;
+  /** the file manager at a file of the folder, or at the folder */
+  assemblerReveal(req: { dir: string; path?: string }): Promise<void>;
 }

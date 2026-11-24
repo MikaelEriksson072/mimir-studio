@@ -34,6 +34,8 @@ import type { LibraryStore } from './library';
 import type { ScriptStore } from './scripts';
 import { initRepository, type GitService } from './git';
 import { answerClose } from './closing';
+import { changeInFolder, createAsmFolder, inFolder, listFolder, readInFolder, writeInFolder, type AsmStore } from './assembler';
+import { asmChangeSchema, asmCreateSchema, asmDirSchema, asmOpenSchema, asmReadSchema, asmRevealSchema, asmWriteSchema } from './schemas';
 
 export interface IpcDeps {
   policy: PathPolicy;
@@ -55,6 +57,11 @@ export interface IpcDeps {
   library: LibraryStore;
   /** the library's scripts, files in its folder Scripts (spec 10.3) */
   scripts: ScriptStore;
+  /** the folders opened in the Assembler (spec 10.7), and the watcher of the one open there (fs:changed) */
+  asm: AsmStore;
+  asmWatcher: ExportWatcher;
+  /** a file or folder moved to the Recycle Bin */
+  trash: (path: string) => Promise<void>;
 }
 
 const windowOf = (wc: WebContents) => BrowserWindow.fromWebContents(wc) ?? undefined;
@@ -87,7 +94,7 @@ async function sourceAssembler(path: string): Promise<AssemblerId> {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { policy, settings, watcher, recent, quicksave, history, projects, git, library, scripts } = deps;
+  const { policy, settings, watcher, recent, quicksave, history, projects, git, library, scripts, asm, asmWatcher, trash } = deps;
   quicksave.watch(quicksaveFiles(settings.get().viceQuicksave));
   // the quicksave there is now (from before the app started, or in a newly set file) joins the kept ones
   const keepCurrent = () => quicksaveInfo(quicksaveFiles(settings.get().viceQuicksave)).then(i => (i.found && i.saved ? history.add(i.path, i.saved) : null)).catch(() => null);
@@ -380,6 +387,50 @@ export function registerIpc(deps: IpcDeps): void {
   handle(CHANNELS.scriptsReveal, none, async () => {
     await mkdir(scripts.dir(), { recursive: true });
     const problem = await shell.openPath(scripts.dir());
+    if (problem) throw new Error(problem);
+  });
+  // the Assembler (10.7): a folder picked in a dialog or opened there before, and its files only by their path inside it
+  /** the folder open in the Assembler from now on: allowed, at the top of the list, watched (one at a time) */
+  const asmEnter = async (dir: string) => {
+    const d = policy.allow(dir);
+    asm.enter(d);
+    asmWatcher.close(); asmWatcher.watch(d);
+    return listFolder(d);
+  };
+  /** the folder of a request: one this session may use */
+  const asmDir = (dir: string) => policy.assert(dir, 'The Assembler\'s folder');
+  handle(CHANNELS.assemblerStart, none, () => ({ recent: asm.recent(), parent: projects.parent() }));
+  handle(CHANNELS.assemblerOpen, asmOpenSchema, async (req, e) => {
+    if (req.path) {
+      if (!asm.isRecent(req.path) && !policy.isAllowed(req.path)) throw new Error(`${req.path} was not opened in the Assembler before: open it with Open folder…`);
+      if (!existsSync(req.path) || !statSync(req.path).isDirectory()) throw new Error(`${req.path} is not there any more`);
+      return asmEnter(req.path);
+    }
+    const [picked] = await pick(e, 'asm', { title: 'Open a folder of sources in the Assembler', properties: ['openDirectory', 'createDirectory'] });
+    if (!picked) return null;
+    recent.remember('asm', picked);
+    return asmEnter(picked);
+  });
+  handle(CHANNELS.assemblerCreate, asmCreateSchema, async req => {
+    const parent = req.parent === projects.parent() ? req.parent : policy.assert(req.parent, 'The folder for the new one');
+    return asmEnter(await createAsmFolder(parent, req.name, req.files));
+  });
+  handle(CHANNELS.assemblerForget, asmDirSchema, req => asm.forget(req.dir));
+  handle(CHANNELS.assemblerClose, asmDirSchema, req => { asmWatcher.unwatch(policy.assert(req.dir, 'The Assembler\'s folder')); });
+  handle(CHANNELS.assemblerList, asmDirSchema, req => listFolder(asmDir(req.dir)));
+  handle(CHANNELS.assemblerRead, asmReadSchema, req => readInFolder(asmDir(req.dir), req.path, req.as ?? 'text'));
+  // (the folder's watcher is not quieted for the Assembler's own writes: it tells them apart by their text, and a change
+  // made outside the app a moment after one is still seen)
+  handle(CHANNELS.assemblerWrite, asmWriteSchema, req => writeInFolder(asmDir(req.dir), req.path, req.text));
+  handle(CHANNELS.assemblerChange, asmChangeSchema, async req => {
+    const dir = asmDir(req.dir);
+    await changeInFolder(dir, req, trash);
+    return listFolder(dir);
+  });
+  handle(CHANNELS.assemblerReveal, asmRevealSchema, async req => {
+    const dir = asmDir(req.dir);
+    if (req.path) { shell.showItemInFolder(inFolder(dir, req.path)); return; }
+    const problem = await shell.openPath(dir);
     if (problem) throw new Error(problem);
   });
   // Settings → Library folder → Choose…: nothing is stored here (Save settings goes through settings:set)

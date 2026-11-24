@@ -13,7 +13,7 @@
 import type { AsmError, AssembleResult, Vfs } from '../types';
 import { MODE_LEN, OPC, TASS_ENC, type AddrMode } from '../cpu/opcodes';
 import { h4 } from '../util/hex';
-import type { AssembleOptions } from './kick-subset-assembler';
+import { importPath, type AssembleOptions } from './kick-subset-assembler';
 
 /** a statement: its label, its body and (`cmt`) the comment after it, which a `* =` line's names its block by */
 interface Stmt { file: string; line: number; src: string; label?: string; body: string; cmt?: string }
@@ -133,7 +133,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       if (inComment) { if (/^\.endc(omment)?$/.test(body)) inComment = false; return; }
       if (/^\.comment$/.test(body)) { inComment = true; return; }
       const inc = body.match(/^\.include\s+"([^"]+)"$/);
-      if (inc) { if (label) stmts.push({ ...at, label }); loadFile(inc[1], depth + 1); return; }
+      if (inc) { if (label) stmts.push({ ...at, label }); loadFile(importPath(vfs, path, inc[1]), depth + 1); return; }
       if (!label && !body) return;
       stmts.push({ ...at, ...(label ? { label } : {}), body });
     });
@@ -276,7 +276,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const builtins: Record<string, Value> = {
     true: true, false: false,
     binary: (path: string, off?: number, len?: number) => {
-      const u = vfs[path]; if (!(u instanceof Uint8Array)) throw new Error(`can't open file "${path}"`);
+      const u = vfs[importPath(vfs, curStmt?.file ?? entryPath, path)]; if (!(u instanceof Uint8Array)) throw new Error(`can't open file "${path}"`);
       const o = off == null ? 0 : numberOf(off); return u.slice(o, len == null ? u.length : o + numberOf(len));
     },
     len: (x: Value) => { if (x instanceof Uint8Array || typeof x === 'string' || Array.isArray(x)) return x.length; throw new Error(`len() of a ${typeName(x)}`); },
@@ -382,6 +382,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const linePcs = new Map<number, number>();
   const prints: string[] = [];
   let endPc = 0;
+  // (allFiles: every file's lines, and whose each byte is: its index in fileNames + 1)
+  const all = !!opts.allFiles, fileOf = all ? new Uint16Array(0x10000) : undefined, fileNames: string[] = [];
+  const fileNo = (file: string) => { let i = fileNames.indexOf(file); if (i < 0) i = fileNames.push(file) - 1; return i + 1; };
+  const mine = (st: Stmt) => all || st.file === entryPath;
   let fresh = false;
   const emit = (b: number, st: Stmt) => {
     b &= 0xff;
@@ -389,7 +393,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
     if (written[a] && pass === 'final') E(`memory at $${h4(a)} written twice`, st);
     if (first < 0) first = a;
-    if (pass === 'final' && st.file === entryPath) { lines[a] = st.line; if (fresh) starts[a] = 1; }
+    if (pass === 'final' && mine(st)) { lines[a] = st.line; if (fresh) starts[a] = 1; if (fileOf) fileOf[a] = fileNo(st.file); }
     fresh = false;
     mem[a] = b; written[a] = 1; pc++;
   };
@@ -517,7 +521,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
             const pat = v == null ? [0] : v instanceof Uint8Array ? [...v] : [numberOf(v)];
             for (let i = 0; i < n; i++) emit(pat[i % pat.length], st);
           } else {
-            const path = ev(P(args[0])); const u = vfs[path];
+            const path = ev(P(args[0])); const u = vfs[importPath(vfs, st.file, path)];
             if (!(u instanceof Uint8Array)) { E(`can't open file "${path}"`, st); continue; }
             const o = args[1] ? evn(args[1]) ?? 0 : 0; const len = args[2] ? evn(args[2]) ?? 0 : u.length - o;
             for (let i = 0; i < len && o + i < u.length; i++) emit(u[o + i], st);
@@ -551,7 +555,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           if (op === undefined) { E(`not a valid addressing mode for ${mn.toLowerCase()} (${mode})`, st); continue; }
           if (OPC[op].ill && cpu !== '6502i') { E(`${mn.toLowerCase()} is an undocumented opcode: it needs .cpu "6502i"`, st); continue; }
           emit(op, st);
-          if (pass === 'final' && st.file === entryPath) ops[(pc - off - 1) & 0xffff] = 1;
+          if (pass === 'final' && mine(st)) ops[(pc - off - 1) & 0xffff] = 1;
           const len = MODE_LEN[mode as AddrMode];
           if (mode === 'rel') {
             const o = v == null ? 0 : v - (pc + 1);
@@ -581,5 +585,5 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
   // the memory map: each `* =` with a name as its comment (`* = $0810 ; Code`), to the next one
   const blockList = blocks.filter(b => b.name).map((b, i, arr) => ({ start: b.start, name: b.name, end: i + 1 < arr.length ? arr[i + 1].start - 1 : max }));
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts, ops, linePcs, endPc };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, prints, first, external, lines, starts, ops, linePcs, endPc, ...(fileOf ? { fileOf, fileNames } : {}) };
 }

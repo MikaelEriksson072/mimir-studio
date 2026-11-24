@@ -84,6 +84,20 @@ export interface AssembleOptions {
   names?: ReadonlyMap<string, number>;
   /** where the program counter starts before the first .pc (0 when missing) */
   pc?: number;
+  /** the lines, statement starts and instructions of every file the code imports, not only the entry file's, with
+   *  `fileOf` and `fileNames` saying whose each byte is (the Assembler's debugger: a breakpoint in an imported file) */
+  allFiles?: boolean;
+}
+
+/** the folder part of a path in the files (`lib/macros.asm` → `lib/`; none: '') */
+const folderOf = (path: string): string => { const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')); return i < 0 ? '' : path.slice(0, i + 1); };
+/** `p` as Kick Assembler finds it from a file at `from`: in that file's folder first, else as it is written (from the
+ *  entry file's folder) */
+export function importPath(vfs: Vfs, from: string, p: string): string {
+  const dir = folderOf(from);
+  if (!dir || /^([A-Za-z]:)?[\\/]/.test(p)) return p;
+  const near = (dir + p).replace(/\\/g, '/').split('/').reduce<string[]>((out, part) => { if (part === '..' && out.length && out[out.length - 1] !== '..') out.pop(); else if (part !== '.') out.push(part); return out; }, []).join('/');
+  return vfs[near] !== undefined ? near : p;
 }
 
 /** an index past the parentheses (or brackets) that open at `i` in `s`, or -1 */
@@ -196,7 +210,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
       }
       if (!on()) return;
       const imp = s.match(/^(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?#import\s+"([^"]+)"/);
-      if (imp) { if (imp[1]) stmts.push({ file: path, line: i + 1, label: imp[1], body: '' }); loadFile(imp[2], depth + 1); return; }
+      if (imp) { if (imp[1]) stmts.push({ file: path, line: i + 1, label: imp[1], body: '' }); loadFile(importPath(vfs, path, imp[2]), depth + 1); return; }
       for (let part of braceParts(s)) {
         const st: Stmt = { file: path, line: i + 1, src: s, body: '' };
         // a label (`name:`), or a multi-label (`!name:`, `!:`), before the statement
@@ -361,7 +375,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   let enc = 'screencode_mixed';
   const builtins: Record<string, Value> = {
     ...MATH,
-    LoadSid: (path: string) => { const u = vfs[path]; if (!(u instanceof Uint8Array)) throw new Error(`LoadSid: can't open "${path}"`); const sid = parsePsid(u); return Object.assign({}, sid, { getData: (i: number) => sid.data[i] }); },
+    LoadSid: (path: string) => { const u = vfs[importPath(vfs, curStmt?.file ?? entryPath, path)]; if (!(u instanceof Uint8Array)) throw new Error(`LoadSid: can't open "${path}"`); const sid = parsePsid(u); return Object.assign({}, sid, { getData: (i: number) => sid.data[i] }); },
   };
   const names = opts.names;
   /** the statement being assembled, and the names from outside (`names`) the code used, with the first line using each */
@@ -485,6 +499,10 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   // in the final pass, the line of the entry file each byte comes from, and where each statement's bytes start (an
   // instruction's first byte: a debugger's line, a breakpoint's address)
   const lines = new Int32Array(0x10000), starts = new Uint8Array(0x10000), ops = new Uint8Array(0x10000);
+  // (allFiles: every file's, and whose each byte is: its index in fileNames + 1)
+  const all = !!opts.allFiles, fileOf = all ? new Uint16Array(0x10000) : undefined, fileNames: string[] = [];
+  const fileNo = (file: string) => { let i = fileNames.indexOf(file); if (i < 0) i = fileNames.push(file) - 1; return i + 1; };
+  const mine = (st: Stmt) => all || st.file === entryPath;
   let fresh = false;
   const emit = (b: number, st: Stmt) => {
     b &= 0xff;
@@ -492,7 +510,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     if (a < 0 || a > 0xffff) { E('program counter past $ffff', st); return; }
     if (written[a] && pass === 'final') E(`memory at $${h4(a)} written twice`, st);
     if (first < 0) first = a;
-    if (pass === 'final' && st.file === entryPath) { lines[a] = st.line; if (fresh) starts[a] = 1; }
+    if (pass === 'final' && mine(st)) { lines[a] = st.line; if (fresh) starts[a] = 1; if (fileOf) fileOf[a] = fileNo(st.file); }
     fresh = false;
     mem[a] = b; written[a] = 1; pc++;
   };
@@ -623,6 +641,9 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
           emit(endL & 0xff, st); emit(endL >> 8, st); emit(10, st); emit(0, st); emit(0x9e, st);
           for (const c of digits) emit(c.charCodeAt(0), st);
           emit(0, st); emit(0, st); emit(0, st);
+          // as KickAss 5.25's macro: `.pc = $080e "Basic End"` after the line (code after a SYS with four digits starts
+          // a byte after the line's end)
+          if (pc < 0x080e) pc = 0x080e;
           return;
         }
         if ((m = s.match(/^\.(byte|by|word|wo|text|fill|import\s+binary|align)\b\s*(.*)$/))) {
@@ -636,7 +657,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
             for (let i = 0; i < n; i++) { sc.vars.set('i', i); emit(evn(node, sc) ?? 0, st); }
           }
           else if (dir === 'align') { const n = evn(P(args[0])); if (n) while (pc % n) emit(0, st); }
-          else if (dir === 'import binary') { const path = ev(P(args[0])); const u = vfs[path]; if (!(u instanceof Uint8Array)) { E(`Can't open binary file "${path}"`, st); return; } const o = args[1] ? evn(P(args[1])) ?? 0 : 0; const len = args[2] ? evn(P(args[2])) ?? 0 : u.length - o; for (let i = 0; i < len; i++) emit(u[o + i], st); }
+          else if (dir === 'import binary') { const path = ev(P(args[0])); const u = vfs[importPath(vfs, st.file, path)]; if (!(u instanceof Uint8Array)) { E(`Can't open binary file "${path}"`, st); return; } const o = args[1] ? evn(P(args[1])) ?? 0 : 0; const len = args[2] ? evn(P(args[2])) ?? 0 : u.length - o; for (let i = 0; i < len; i++) emit(u[o + i], st); }
           return;
         }
         if ((m = s.match(/^([A-Za-z]{3})(?:\.([A-Za-z]+))?(?:\s+(.*))?$/)) && ENC[m[1].toUpperCase()]) {
@@ -666,7 +687,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
           const op = modes[mode as AddrMode];
           if (op === undefined) { E(`${mn.toLowerCase()} does not support this addressing mode (${mode})`, st); return; }
           emit(op, st);
-          if (pass === 'final' && st.file === entryPath) ops[(pc - off - 1) & 0xffff] = 1;
+          if (pass === 'final' && mine(st)) ops[(pc - off - 1) & 0xffff] = 1;
           const len = MODE_LEN[mode as AddrMode];
           if (mode === 'rel') {
             const o = v == null ? 0 : v - (pc + 1);
@@ -694,5 +715,5 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   // an error a loop met in each round is said once
   const said = new Set<string>();
   const once = errors.filter(e => { const k = `${e.file}:${e.line}:${e.msg}`; if (said.has(k)) return false; said.add(k); return true; });
-  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, vars: new Map(root.vars), prints, first, external, lines, starts, ops };
+  return { mem, written, min, max, errors: once, prg, blocks: blockList, symbols: syms, vars: new Map(root.vars), prints, first, external, lines, starts, ops, ...(fileOf ? { fileOf, fileNames } : {}) };
 }

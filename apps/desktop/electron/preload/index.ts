@@ -89,6 +89,16 @@ const api: KrApi = {
   scriptsSave: req => invoke(CHANNELS.scriptsSave, req),
   scriptsRemove: req => invoke(CHANNELS.scriptsRemove, req),
   scriptsReveal: () => invoke(CHANNELS.scriptsReveal),
+  assemblerStart: () => invoke(CHANNELS.assemblerStart),
+  assemblerOpen: req => invoke(CHANNELS.assemblerOpen, req ?? {}),
+  assemblerCreate: req => invoke(CHANNELS.assemblerCreate, req),
+  assemblerForget: req => invoke(CHANNELS.assemblerForget, req),
+  assemblerClose: req => invoke(CHANNELS.assemblerClose, req),
+  assemblerList: req => invoke(CHANNELS.assemblerList, req),
+  assemblerRead: req => invoke(CHANNELS.assemblerRead, req),
+  assemblerWrite: req => invoke(CHANNELS.assemblerWrite, req),
+  assemblerChange: req => invoke(CHANNELS.assemblerChange, req),
+  assemblerReveal: req => invoke(CHANNELS.assemblerReveal, req),
 };
 
 contextBridge.exposeInMainWorld('kr', api);

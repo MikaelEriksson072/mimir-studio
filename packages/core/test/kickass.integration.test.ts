@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { analyze, assemble, bankFiles, SCRIPT_TEMPLATES, comparePrg, createProject, exportFiles, h4, makePrg, openCartridge, planPatch, render, withPatch } from '../src';
+import { analyze, asmTemplate, assemble, bankFiles, SCRIPT_TEMPLATES, comparePrg, createProject, exportFiles, h4, makePrg, openCartridge, planPatch, render, withPatch } from '../src';
 import { findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
 import { cases, demo, type Case } from './helpers/cases';
 
@@ -143,6 +143,8 @@ BEYOND.push(...SCRIPT_TEMPLATES.map(t => TEMPLATE_PAD + t.source),
   flip('xor_rolling_key', { backwards: 'true' }), flip('xor_chain', { backwards: 'true', encrypt: 'true', withDecrypted: 'false' }),
   flip('steps', { step1: 'ROTL', key1: '3', step3: 'NONE', step4: 'ROTR', encrypt: 'true' }), flip('add_key', { subtract: 'false' }), flip('xor_key_string', { keyLength: '0' }),
   flip('xor_rolling_key', { pageKey: 'true' }));
+// the Assembler's (spec 10.7): code right after BasicUpstart2 (KickAss's macro goes on at $080e), and its new folder's main.asm
+BEYOND.push('BasicUpstart2(start)\nstart: inc $d020\n jmp start', 'BasicUpstart2(start)\n* = $c000\nstart: rts', asmTemplate('kickass', 'demo'));
 
 describe.skipIf(!available)(`the built-in assembler beyond the generated subset, against ${jar ?? 'KickAss.jar'}`, () => {
   it('writes the same bytes as Kick Assembler', async () => {

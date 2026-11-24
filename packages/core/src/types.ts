@@ -1227,6 +1227,10 @@ export interface AssembleResult {
   /** (64tass) the program counter at each line of the entry file the final pass assembled, and where it ended */
   linePcs?: Map<number, number>;
   endPc?: number;
+  /** (AssembleOptions.allFiles) whose line each byte's `lines` is: an index into `fileNames` + 1 (0: no line); `lines`,
+   *  `starts` and `ops` then cover every file the code imports */
+  fileOf?: Uint16Array;
+  fileNames?: string[];
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }
 export interface FileVerifyResult {

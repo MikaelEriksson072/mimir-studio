@@ -363,3 +363,21 @@ const scriptFile = z.string().min(1).max(130).refine(isScriptFileName, 'not a pl
 export const scriptsSaveSchema = z.object({ file: scriptFile, text: z.string().max(SCRIPT_FILE_MAX), was: scriptFile.optional() }).strict();
 export const scriptsFileSchema = z.object({ file: scriptFile }).strict();
 export const libraryPickSchema = z.object({ current: z.string().max(1024).optional() }).strict();
+
+/* the Assembler (spec 10.7): a folder, and a file by its path inside it (assembler.ts inFolder checks it again) */
+const asmDir = z.string().min(1).max(4096);
+const asmPath = z.string().min(1).max(1024).refine(p => !/^[\/]|^[A-Za-z]:|(^|[\/])\.\.?([\/]|$)/.test(p), 'not a path inside the folder');
+/** the most a source may hold (a file the Assembler writes) */
+export const ASM_TEXT_MAX = 8 * 1024 * 1024;
+export const asmOpenSchema = z.object({ path: asmDir.optional() }).strict();
+export const asmCreateSchema = z.object({ name: z.string().min(1).max(200), parent: asmDir, files: z.record(asmPath, z.string().max(ASM_TEXT_MAX)).refine(f => Object.keys(f).length <= 16, 'too many files') }).strict();
+export const asmDirSchema = z.object({ dir: asmDir }).strict();
+export const asmReadSchema = z.object({ dir: asmDir, path: asmPath, as: z.enum(['text', 'bytes']).optional() }).strict();
+export const asmWriteSchema = z.object({ dir: asmDir, path: asmPath, text: z.string().max(ASM_TEXT_MAX) }).strict();
+export const asmChangeSchema = z.discriminatedUnion('op', [
+  z.object({ dir: asmDir, op: z.literal('file'), path: asmPath, text: z.string().max(ASM_TEXT_MAX).optional() }).strict(),
+  z.object({ dir: asmDir, op: z.literal('folder'), path: asmPath }).strict(),
+  z.object({ dir: asmDir, op: z.literal('rename'), path: asmPath, to: asmPath }).strict(),
+  z.object({ dir: asmDir, op: z.literal('remove'), path: asmPath }).strict(),
+]);
+export const asmRevealSchema = z.object({ dir: asmDir, path: asmPath.optional() }).strict();

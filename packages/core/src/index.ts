@@ -82,7 +82,7 @@ export { hardwareInclude } from './render/include';
 // the assemblers the source can be written for (spec 11.8)
 export { ASSEMBLERS, asmMnemonic, assemblerOf, forcedMnemonic, guessAssembler, isLabelDefinition, isTass, labelFor, TASS_FIXED_ARGS, type AssemblerInfo } from './render/dialect';
 
-export { assemble, type AssembleOptions } from './verify/kick-subset-assembler';
+export { assemble, importPath, type AssembleOptions } from './verify/kick-subset-assembler';
 export { assembleTass } from './verify/tass-subset-assembler';
 export { comparePrg } from './verify/verify';
 export { parseKickOutput } from './verify/kick-output';
@@ -103,6 +103,7 @@ export {
 export { SCRIPT_TEMPLATES, templateSource, type ScriptTemplate } from './script-templates';
 export { JS_TEMPLATES } from './script-templates-js';
 export { asmOfLang, assembleIn, codeLabels, codeLines, codeOfLine, commentAt, definedNames, LANG_TITLE, langIs, langOf, LANGS, lineComment, needsTassCpu, setsItsPlace, splitLabel, startsInBlockComment, usedWords, withoutComment } from './code-lang';
+export { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmEndText, asmTemplate, asmLineAt, asmMachine, checkAsm, dataFiles, importsOf, mainFile, sourceLang, type AsmCheck, type AsmProblem } from './asm-project';
 export { kickToTass, type Converted } from './code-convert';
 export { patchIn64tass, scriptIn64tass, type Moved } from './script-convert';
 export { padStoreAt, padStoreLine, padStoreReach, type PadStore, type PadStoreFind } from './script-padstore';
