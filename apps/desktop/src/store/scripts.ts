@@ -56,6 +56,10 @@ const readScreenPrefs = (): ScreenPrefs => {
 /** The size of the C64 screen a run gets now: 40×25, or in extended mode what the panel had room for. */
 export const runScreenSize = (): ScreenSize => { const p = useScripts.getState().c64; return p.extended ? screenSize(p.size) : { ...SCREEN_C64 }; };
 const LIST_FOLDED_KEY = 'kr.scriptListFolded';
+const LIST_W_KEY = 'kr.scriptListW';
+/** the Scripts tab's list: how narrow and how wide its edge can be dragged, and its width at first */
+export const SCRIPT_LIST_W = { min: 120, max: 700, start: 150 } as const;
+export const clampListW = (w: number) => Math.round(Math.max(SCRIPT_LIST_W.min, Math.min(SCRIPT_LIST_W.max, w)));
 const TEMPLATES_FOLDED_KEY = 'kr.scriptTemplatesFolded';
 const isPad = (p: unknown): p is Omit<ScriptPad, 'bytes'> => !!p && typeof (p as ScriptPad).name === 'string' && Number.isInteger((p as ScriptPad).start) && Number.isInteger((p as ScriptPad).size);
 const isByte = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xff;
@@ -122,6 +126,9 @@ interface ScriptsState {
   /** the Scripts tab's list of the project's scripts and the library folded in to a strip (kept by the app) */
   listFolded: boolean;
   setListFolded: (v: boolean) => void;
+  /** the list's width, its edge dragged (kept by the app) */
+  listW: number;
+  setListW: (w: number) => void;
   /** the list's Templates folded to its heading (kept by the app) */
   templatesFolded: boolean;
   setTemplatesFolded: (v: boolean) => void;
@@ -142,7 +149,7 @@ interface ScriptsState {
   c64: ScreenPrefs;
   setC64: (p: Partial<ScreenPrefs>) => void;
   setBps: (id: string, lines: number[]) => void;
-  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'libraryDir' | 'loadLibrary' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'templatesFolded' | 'setTemplatesFolded' | 'c64' | 'setC64'>>) => void;
+  set: (s: Partial<Omit<ScriptsState, 'set' | 'library' | 'libraryDir' | 'loadLibrary' | 'saveToLibrary' | 'removeFromLibrary' | 'bps' | 'setBps' | 'listFolded' | 'setListFolded' | 'listW' | 'setListW' | 'templatesFolded' | 'setTemplatesFolded' | 'c64' | 'setC64'>>) => void;
   /** a copy of the script in the library, in place of one of the same name: whether one was replaced */
   saveToLibrary: (s: Pick<UserScript, 'name' | 'lang' | 'code' | 'source' | 'pads' | 'safe' | 'init' | 'watch' | 'unwatch' | 'machine' | 'stopAt' | 'table' | 'when'> & { needs?: string[] }) => boolean;
   removeFromLibrary: (name: string) => void;
@@ -177,6 +184,8 @@ export const useScripts = create<ScriptsState>((set, get) => ({
   set: s => set(s),
   listFolded: store.get<boolean>(LIST_FOLDED_KEY, false) === true,
   setListFolded: v => { store.set(LIST_FOLDED_KEY, v); set({ listFolded: v }); },
+  listW: (w => Number.isFinite(w) ? clampListW(w) : SCRIPT_LIST_W.start)(store.get<number>(LIST_W_KEY, SCRIPT_LIST_W.start)),
+  setListW: w => { const v = clampListW(w); if (v === get().listW) return; store.set(LIST_W_KEY, v); set({ listW: v }); },
   templatesFolded: store.get<boolean>(TEMPLATES_FOLDED_KEY, false) === true,
   setTemplatesFolded: v => { store.set(TEMPLATES_FOLDED_KEY, v); set({ templatesFolded: v }); },
   saveToLibrary: s => {

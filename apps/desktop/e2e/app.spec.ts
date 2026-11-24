@@ -9324,6 +9324,45 @@ test('scripts: the bottom panel cannot be dragged over the code and the output; 
   expect(Math.abs((await box('section.bottom')).h - shown)).toBeLessThan(4);
 });
 
+test('scripts: the list of scripts is made wider by its edge, a double-click fits the longest name, and the width is kept', async ({ page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'New script' }).first().click();
+  const name = page.getByLabel('Script name');
+  await name.fill('decrypt_level_data_with_a_rolling_key');
+  await name.press('Enter');
+  const item = page.locator('.scr-item .scr-item-name', { hasText: 'decrypt_level_data_with_a_rolling_key' });
+  await expect(item).toBeVisible();
+  const list = page.locator('.scripts > .scr-list'), edge = page.getByRole('separator', { name: 'Width of the script list' });
+  const width = async () => (await list.boundingBox())!.width;
+  const cut = () => item.evaluate(e => e.scrollWidth > e.clientWidth);
+  const w0 = await width();
+  expect(await cut()).toBe(true);
+  // dragged 80 px to the right: 80 px wider
+  const b = (await edge.boundingBox())!, x = b.x + b.width / 2, y = b.y + 100;
+  await page.mouse.move(x, y); await page.mouse.down();
+  await page.mouse.move(x + 80, y, { steps: 8 }); await page.mouse.up();
+  await expect.poll(width).toBeGreaterThan(w0 + 75);
+  // no narrower than 120 px
+  const b2 = (await edge.boundingBox())!;
+  await page.mouse.move(b2.x + 2, y); await page.mouse.down();
+  await page.mouse.move(b2.x - 600, y, { steps: 8 }); await page.mouse.up();
+  await expect.poll(width).toBe(120);
+  // a double-click: the whole name shows
+  await edge.dblclick();
+  await expect.poll(cut).toBe(false);
+  const fitted = await width();
+  expect(fitted).toBeGreaterThan(w0);
+  // kept: another tab and back, and the folded list unfolded again
+  await page.getByRole('tab', { name: 'Listing' }).click();
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  await page.getByRole('button', { name: 'Fold the script list' }).click();
+  await expect(edge).toHaveCount(0);
+  await page.getByRole('button', { name: 'Unfold the script list' }).click();
+  await expect.poll(width).toBe(fitted);
+  expect(await cut()).toBe(false);
+});
+
 test('scripts: the music as the source loads it with LoadSid (music.location, .init, .play, .size) is known, suggested and shown', async ({ app, page }) => {
   await waitForListing(page);
   await stubDialogs(app, { open: [join(repoDir, 'fixtures/prg/raster-demo.prg')] });

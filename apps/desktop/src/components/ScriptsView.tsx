@@ -13,7 +13,7 @@ import { Icon } from '../lib/icons';
 import { cx, store } from '../lib/util';
 import { stopScript } from '../lib/scriptrun';
 import { initValue } from '../lib/scriptinit';
-import { runScreenSize, useScripts, type LibraryScript } from '../store/scripts';
+import { runScreenSize, SCRIPT_LIST_W, useScripts, type LibraryScript } from '../store/scripts';
 import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { WatchSection, WatchTable, type WatchItem, type WatchKind, type WatchMode } from './ScriptWatch';
@@ -103,8 +103,28 @@ const $ = (a: number) => '$' + h4(a);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 export function ScriptsView({ scripts, lang, env, envFor, patches, theme, linkOf, kinds, onNew, onNewJs, onAdd, onAddTemplate, onEdit, onRemove, onRun, onWrite, onSafe, onFinish, onTakeOut, onSwitchPatch, onShow, onCopy, onSave, onSaveText, toast, onMenu, blocks, cursorBlock, onCopyBlock, fits, userNames, onRevealLibrary, loops, onAddLoop, files, onRunOnFiles, onRunValues, onToProject }: ScriptsViewProps) {
-  const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, templatesFolded, setTemplatesFolded, c64, setC64, full } = useScripts();
+  const { selected, runs, running, pad, outH, dbgOutH, outFolded, library, gotoLine, set, saveToLibrary, removeFromLibrary, listFolded, setListFolded, listW, templatesFolded, setTemplatesFolded, c64, setC64, full } = useScripts();
   const cur = scripts.find(s => s.id === selected) ?? scripts[0] ?? null;
+  /** the tab, and its list of the project's scripts and the library: the list's edge is dragged */
+  const box = useRef<HTMLDivElement>(null), listBox = useRef<HTMLDivElement>(null);
+  /** the list's edge dragged: wider up to where the code keeps 320px beside it */
+  const dragList = (d: number) => {
+    const s = useScripts.getState(), room = (box.current?.offsetWidth ?? 1200) - 320;
+    s.setListW(Math.min(Math.max(room, SCRIPT_LIST_W.min), s.listW + d));
+  };
+  /** a double-click on the list's edge: as wide as the longest name of the project's scripts and the library's (the
+   *  templates' titles left out), narrower too when they all have room */
+  const fitList = () => {
+    const el = listBox.current; if (!el) return;
+    const names = [...el.querySelectorAll<HTMLElement>('.scr-item .scr-item-name, .scr-lib-item:not(.scr-tpl-item) .scr-item-name')];
+    if (!names.length) return;
+    const r = document.createRange();
+    const need = Math.max(...names.map(e => { r.selectNodeContents(e); return Math.ceil(r.getBoundingClientRect().width) - e.clientWidth; }));
+    const s = useScripts.getState(), room = (box.current?.offsetWidth ?? 1200) - 320;
+    s.setListW(Math.min(Math.max(room, SCRIPT_LIST_W.min), s.listW + need + 2));
+  };
+  const listEdge = <Splitter dir="v" className="scr-list-split" onDrag={dragList} onReset={fitList} label="Width of the script list"
+    title="Drag to make the list of scripts wider or narrower; double-click to fit the longest name" />;
   const host = useRef<HTMLDivElement>(null);
   /** the code's row: the output's edge goes up only as far as it has more than its least height */
   const editRow = useRef<HTMLDivElement>(null);
@@ -539,8 +559,9 @@ ${cryptWhereText(l)}`}>
   </>;
 
   if (!scripts.length) return (
-    <div className="scripts">
-      <div className="scr-list">{libraryList}</div>
+    <div className="scripts" ref={box}>
+      <div className="scr-list" ref={listBox} style={{ width: listW }}>{libraryList}</div>
+      {listEdge}
       <div className="empty-project scripts-empty">
         <Icon name="prompt" size={30} />
         <h2>No scripts yet</h2>
@@ -612,7 +633,7 @@ ${cryptWhereText(l)}`}>
   const stale = !!kept && kept.source !== source;
 
   return (
-    <div className="scripts">
+    <div className="scripts" ref={box}>
       {listFolded ? <div className="scr-list folded" role="navigation" aria-label="Scripts in the project, folded in">
         <button className="icon-btn" onClick={() => setListFolded(false)} aria-label="Unfold the script list" title="Unfold the list of the project's scripts and the library"><Icon name="side-show" size={16} /></button>
         <button className="icon-btn" onClick={onNew} aria-label="New script" title={`New script: ${LANG_TITLE[lang]} code that runs in Mimir`}><Icon name="plus" size={15} /></button>
@@ -622,7 +643,7 @@ ${cryptWhereText(l)}`}>
           <button key={s.id} className={cx('icon-btn scr-rail-item', s.id === cur?.id && 'on')} aria-label={s.name} aria-pressed={s.id === cur?.id} onClick={() => { flush(); set({ selected: s.id, pad: 0, change: null }); }}
             title={`${s.name}${s.safe ? ' · safe mode' : ''}${running === s.id ? ' · running' : ''}`}><span className="scr-rail-name">{railName(s.name)}</span>{running === s.id && <span className="scr-busy" />}</button>
         ))}
-      </div> : <div className="scr-list">
+      </div> : <div className="scr-list" ref={listBox} style={{ width: listW }}>
         <div className="scr-list-head"><span>Project</span><span className="grow" />
           <button className="icon-btn" onClick={onNew} aria-label="New script" title={`New script: ${LANG_TITLE[lang]} code that runs in Mimir`}><Icon name="plus" size={15} /></button>
           <button className="icon-btn scr-new-js" onClick={onNewJs} aria-label="New JavaScript script" title="New script in JavaScript: loops, arrays and strings over the program's memory, and the program's own 6510 routines called with cpu.call">JS</button>
@@ -637,6 +658,7 @@ ${cryptWhereText(l)}`}>
         </div>
         {libraryList}
       </div>}
+      {!listFolded && listEdge}
       {cur && check && <div className="scr-main">
         <div className="toolbar">
           <NameField key={cur.id} value={cur.name} taken={scripts.filter(s => s.id !== cur.id).map(s => s.name)} onCommit={n => onEdit(cur.id, { name: n }, `Rename script "${cur.name}" to "${n}"`)} toast={toast} />
