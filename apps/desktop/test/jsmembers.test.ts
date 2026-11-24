@@ -175,3 +175,15 @@ describe('what the export\'s values have', () => {
     expect(jsTypeOf('exporter.name', src)).toBe('text');
   });
 });
+
+describe('what the build\'s values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('build., the last build and one of its files', () => {
+    expect(names('build')).toEqual(['last', 'verify', 'run', 'start', 'requests', 'assembler', 'emulator', 'debugger']);
+    const src = 'const b = build.last;\nfor (const f of b.files) {\n}\n';
+    expect(names('b', src)).toEqual(['ok', 'fresh', 'by', 'files', 'log']);
+    expect(names('f', src)).toEqual(['name', 'source', 'ok', 'same', 'total', 'start', 'end', 'bytes', 'prg', 'errors']);
+    expect(jsTypeOf('build.last.files[0].prg', src)).toBe('bytes');
+    expect(jsTypeOf('build.requests[0]', src)).toBe('text');
+  });
+});

@@ -10,7 +10,7 @@
  * The tab row stays when the output is folded down; each tab says what it holds (a count, a mark), and the last run's
  * end is at the right of the row. */
 import { useEffect, useMemo, useState } from 'react';
-import { BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, exportRequestText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
+import { BLOCK_PAD_FORM, LANG_TITLE, SCRIPT_KEYS, endedWell as ranWell, paramValueOk, scriptParams, scriptStopAt, setScriptParams, type ScriptParam, byteLines, disassembleBytes, filePad, h2, h4, initEmpty, monitorChar, padData, padName, padNow, padStart, padWithFile, patchEnd, rangeText, SCRIPT_FLAGS, SCRIPT_P, scriptEndText, exportRequestText, buildRequestText, scriptPlace, tidyInit, type Addr, type BlockKind, type Patch, type ScriptCheck, type ScriptEnv, type ScriptInit, type ScriptPad, type ScriptPadSource, type ScriptProblem, type ScriptZpInit, type UserScript } from '@mimir/core';
 import type { MenuItem } from '../lib/types';
 import { PadCompare, PadEditor } from './PadTools';
 import { FileToPad, type ScriptFileChoice } from './ScriptFiles';
@@ -372,6 +372,13 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onSave, onG
           {exportRequestText(run.exports).map((d, i) => <li key={i}><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{d}</li>)}
         </ul>
         {kept.safe && <p className="small muted">Safe mode: nothing is written. Switch safe mode off and run it again to write the export.</p>}
+      </div> : null}
+      {run.builds?.length ? <div className="scr-wrote scr-acted">
+        <h5 className="scr-group-h" title="What the script's build.verify(), build.run() and build.start() asked for: done in this order when the run has ended well (after the export, when it asked for that too). In safe mode nothing is built or started">{kept.safe ? 'Would build and start' : 'Built and started'}</h5>
+        <ul className="scr-acted-list" aria-label={kept.safe ? 'What the run would build and start' : 'What the run built and started'}>
+          {run.builds.map((b, i) => <li key={i}><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{buildRequestText(b)}</li>)}
+        </ul>
+        {kept.safe && <p className="small muted">Safe mode: nothing is built or started. Switch safe mode off and run it again.</p>}
       </div> : null}
       {run.made?.length ? <div className="scr-wrote">
         <h5 className="scr-group-h" title="The files the script made with save(name, bytes, load): kept with this run until the next one. Nothing is written anywhere before one of them is saved or put in the project">Files it made</h5>

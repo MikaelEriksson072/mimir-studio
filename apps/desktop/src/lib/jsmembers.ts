@@ -9,7 +9,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 
 /** the kinds of value a script works with */
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
-  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges';
+  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges' | 'build' | 'lastBuild' | 'builtFile' | 'builtFiles';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
 
@@ -57,6 +57,25 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST,
+  build: [
+    m('last', 'the last build, or null before one: { ok, fresh, by, files, log }'),
+    m('verify', 'verify(): the round-trip check when the run has ended well, as F7', true),
+    m('run', 'run({ debugger }): Build & Run when the run has ended well, as F5 (debugger: true as Shift+F5)', true),
+    m('start', 'start(prg, { name, start, debugger }): a PRG of the script\'s own started in the emulator: RUN, or SYS at start', true),
+    m('requests', 'what the script has asked for so far, a text each'),
+    m('assembler', 'the assembler the project builds with: "kickass" or "64tass"'), m('emulator', 'the emulator Build & Run starts'), m('debugger', 'the debugger Build & Run in a debugger starts'),
+  ],
+  lastBuild: [
+    m('ok', 'true when every file came out byte for byte'), m('fresh', 'true when it is of the project as it is now'), m('by', 'what built it: "built-in" (Verify) or the assembler'),
+    m('files', 'the built files: a list of { name, source, ok, same, total, start, end, bytes, prg, errors }'), m('log', 'the build log, a text'),
+  ],
+  builtFile: [
+    m('name', 'the built file\'s name'), m('source', 'the source it was built from'), m('ok', 'true when it came out byte for byte'),
+    m('same', 'how many of its bytes are as in the original'), m('total', 'how many bytes were compared'),
+    m('start', 'where it loads (null when it did not assemble)'), m('end', 'the address after its last byte'),
+    m('bytes', 'its bytes, without the load address'), m('prg', 'it as a PRG, its load address first'), m('errors', 'what the assembler said, a text each'),
+  ],
+  builtFiles: LIST,
   exporter: [
     m('files', 'every file the export writes: a list of { name, kind, size, text, bytes }'), m('names', 'the names of the export\'s files'),
     m('sources', 'the names of the sources, in the order they are built'), m('main', 'the name of the first source'),
@@ -176,7 +195,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -239,6 +258,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'brokkr') return 'brokkr';
   if (e === 'loader') return 'loader';
   if (e === 'exporter') return 'exporter';
+  if (e === 'build') return 'build';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -289,6 +309,9 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'diskFile') return name === 'name' || name === 'type' ? 'text' : null;
   if (on === 'sindri') return name === 'roms' ? 'text' : null;
   if (on === 'brokkr') return name === 'formats' ? 'texts' : null;
+  if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
+  if (on === 'lastBuild') return name === 'files' ? 'builtFiles' : name === 'log' || name === 'by' ? 'text' : null;
+  if (on === 'builtFile') return name === 'bytes' || name === 'prg' ? 'bytes' : name === 'errors' ? 'texts' : name === 'name' || name === 'source' ? 'text' : null;
   if (on === 'exporter') return name === 'files' ? 'exportFiles' : name === 'names' || name === 'sources' ? 'texts' : name === 'changes' ? 'exportChanges' : name === 'name' || name === 'assembler' || name === 'main' || name === 'outDir' ? 'text' : null;
   if (on === 'exportFile') return name === 'bytes' ? 'bytes' : name === 'name' || name === 'kind' || name === 'text' ? 'text' : null;
   if (on === 'exportChanges') return 'texts';

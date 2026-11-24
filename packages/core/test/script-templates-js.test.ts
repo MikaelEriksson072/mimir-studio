@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are fourteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'screen_show', 'screen_hexdump']);
+  it('are fifteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -245,5 +245,27 @@ describe('the JavaScript template that writes the export', () => {
     expect(o.exports!.files).toEqual({ 'a.asm': '; x\n.pc = $0810\n', 'b.asm': '; x\n.pc = $2000\n' });
     expect(o.exports!.elsewhere).toBe(true);
     expect(go({ header: '""', listFile: '""' }, { ...data, folder: 'C:\\p\\source' }).prints).toEqual(['demo (kickass): 4 files to C:\\p\\source']);
+  });
+});
+
+describe('the JavaScript template that builds and starts', () => {
+  it('Pack and start packs the program, asks for the check and for the packed file to be started', () => {
+    const demo = makeDemo(), demoFile = parsePrg(demo.name, demo.prg), t = template('build_packed');
+    const data = { assembler: 'kickass', emulator: 'VICE', debugger: 'Retro Debugger', last: null as null | { ok: boolean; fresh: boolean; by: string; log: string; files: [] } };
+    const go = (values: Record<string, string>, d = data) => runJs({ files: [demoFile], names: new Map() }, { source: setScriptParams(t.source, { code: 'js' }, values).source, pads: [] }, { build: d });
+    const r = go({});
+    expect(r.error).toBeUndefined();
+    expect(r.prints![0]).toBe('Not built yet');
+    expect(r.prints![1]).toMatch(new RegExp(`^Packed \\(exomizer\\): ${demo.prg.length} -> \\d+ bytes, unpacks in [\\d.]+ s$`));
+    expect(r.prints!.slice(2)).toEqual(['Then: Verify: the round-trip check (as F7)', expect.stringMatching(/^Then: packed\.prg \(\d+ bytes, loads at \$0801\) started in VICE with RUN$/)]);
+    expect(r.builds!.map(b => b.kind)).toEqual(['verify', 'start']);
+    const start = r.builds![1] as { kind: 'start'; prg: Uint8Array; name: string; debugger: boolean };
+    expect(start.name).toBe('packed.prg');
+    expect(start.prg.length).toBeLessThan(demo.prg.length);
+    expect(start.debugger).toBe(false);
+    // in the debugger, unchecked, after a build that is no longer of the program as it is
+    const o = go({ verifyFirst: 'false', inDebugger: 'true' }, { ...data, last: { ok: true, fresh: false, by: 'built-in', log: '', files: [] } });
+    expect(o.prints![0]).toBe('Last build (built-in): OK, of the program before its last change');
+    expect(o.builds).toEqual([expect.objectContaining({ kind: 'start', debugger: true })]);
   });
 });

@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-build.ts          bygge och körning för ett JavaScript-skript: `build` (senaste bygget, Verify, Build & Run, starta en PRG) (10.3)
 │  ├─ src/script-export.ts         exporten för ett JavaScript-skript: `exporter` (läs, ändra, lägg till, skriv) (10.3)
 │  ├─ src/script-loader.ts         loadern för ett JavaScript-skript: `loader` (loaderflikens filer, grupper, skript) (10.3)
 │  ├─ src/script-brokkr.ts         Brokkr för ett JavaScript-skript: `brokkr` (packa, kruncha, avkruncha) (10.3)
@@ -2890,6 +2891,28 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Bygge och körning i ett JavaScript-skript** (`script-build.ts`, `buildApi`, 2026-11-24): ett skript får `build`,
+  det *Verify* (F7) och *Build & Run* (F5, Shift+F5) gör.
+  - Läsa: `build.assembler` (`"kickass"`/`"64tass"`), `build.emulator` (`"VICE"`), `build.debugger` (namnet på
+    debuggern i Settings → Toolchain) och `build.last`, det senaste bygget eller `null` före ett: `{ ok, fresh, by,
+    files, log }`. `fresh` är sant när bygget är av projektet som det är nu (`BuildState.key` mot `filesKey`), `by`
+    är `"built-in"` (Verify) eller assemblerns namn (Build & Run), och varje fil är `{ name, source, ok, same,
+    total, start, end, bytes, prg, errors }` (PRG:n är assemblerns när den byggde, annars den inbyggda
+    verifierarens; `null` när källan inte gick att assemblera).
+  - Begära: `build.verify()` (som F7), `build.run({ debugger })` (som F5, eller Shift+F5 med `debugger: true`) och
+    `build.start(prg, { name, start, debugger })`, som startar en PRG skriptet självt gjort (en fil packad med
+    `brokkr.pack`, en av loaderns filer) i emulatorn: laddad och körd med RUN, eller med SYS på `start`.
+    `build.requests` är det som begärts så här långt, en text var (`buildRequestText`).
+  - Ingenting byggs eller startas under körningen: körningen slutar med begäran (`ScriptRun.builds`,
+    `ScriptBuildRequest`, högst `BUILD_REQUESTS` = 8), och appen gör dem i ordning när körningen slutat väl
+    (`doScriptRequests`): först exporten, om skriptet också bad om den, sedan byggena och starterna. En verifiering
+    som inte går igenom, en export som inte skrevs eller en start som misslyckas avslutar resten. En PRG som ska
+    startas skrivs till en tillfällig mapp (`writeExport` `temp`) och ges till `kr.run`.
+  - I safe mode byggs och startas ingenting: *Last run* visar *Would build and start*; annars *Built and started*.
+    Som exporten ges bygget bara till en körning av skriptet självt, och bara när koden nämner `build`.
+  - Editorn föreslår medlemmarna efter `build.`, senaste bygget och en byggd fil. Mallen *Pack and start*
+    (`build_packed`) packar programmet med Brokkr (`format`), begär verifieringen (`verifyFirst`) och startar den
+    packade filen i VICE eller debuggern (`inDebugger`).
 - **Exporten i ett JavaScript-skript** (`script-export.ts`, `exportApi`, 2026-11-24): ett skript får `exporter`
   (`export` är ett ord i språket), det *Export* skriver: källorna, binärerna, byggskripten, README, projektfilen och
   originalfilerna (`exportFiles`), som de är när körningen börjar.

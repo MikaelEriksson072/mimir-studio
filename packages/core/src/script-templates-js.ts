@@ -445,5 +445,30 @@ const exportOwn = js('export_own', 'Export with a header and a file list', 'The 
   'if (done.added.length) print("Added: " + done.added.join(", "));',
   'exporter.write({ elsewhere });',
 ]);
+const buildPacked = js('build_packed', 'Pack and start', 'The program packed with Brokkr and the packed file started in VICE or the debugger, after the round-trip check.', [], [
+  ...box('Pack and start', [
+  'Packs the program\'s first file with Brokkr and starts the packed file in',
+  'VICE (or the debugger), with the round-trip check first. It shows what a',
+  'script can do with building: read the last build (build.last), ask for the',
+  'check (build.verify), for Build & Run (build.run) and for a file of its own',
+  'to be started (build.start). Nothing is built or started before the run has',
+  'ended well, in the order asked; in safe mode Last run says what would be done.',
+  ]),
+  '',
+  part('settings: change these'),
+  'const format = "exomizer";     // the packed file\'s format: "exomizer", "brokkr", "fast", or "auto"',
+  'const verifyFirst = true;      // the round-trip check first (as F7); when it fails nothing is started: true or false',
+  'const inDebugger = false;      // start it in the debugger, not in VICE: true or false',
+  '',
+  part('the build'),
+  'if (!files.length) throw new Error("The program has no file to pack");',
+  'let last = build.last;',
+  'print(last ? "Last build (" + last.by + "): " + (last.ok ? "OK" : "FAILED") + (last.fresh ? "" : ", of the program before its last change") : "Not built yet");',
+  'let packed = brokkr.pack(undefined, { format });',
+  'print("Packed (" + packed.format + "): " + packed.from + " -> " + packed.size + " bytes, unpacks in " + packed.seconds + " s");',
+  'if (verifyFirst) build.verify();',
+  'build.start(packed.prg, { name: "packed.prg", debugger: inDebugger });',
+  'build.requests.forEach(text => print("Then: " + text));',
+]);
 /** The JavaScript templates, in the order the Scripts tab lists them. */
-export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, brokkrPack, loaderFiles, exportOwn, screenShow, hexDump];
+export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, brokkrPack, loaderFiles, exportOwn, buildPacked, screenShow, hexDump];

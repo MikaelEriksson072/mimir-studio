@@ -500,6 +500,9 @@ export interface ScriptRun {
   /** the export a JavaScript script asked for with exporter.write(): written by the app when the run has ended well
    *  (script-export.ts); a safe run's is only said */
   exports?: import('./script-export').ScriptExportRequest;
+  /** the builds and starts a JavaScript script asked for (build.verify(), build.run(), build.start(prg)): done by
+   *  the app in this order when the run has ended well (script-build.ts); a safe run's are only said */
+  builds?: import('./script-build').ScriptBuildRequest[];
   /** the run was a JavaScript script's: it has no RTS of its own, and its instructions are those of the program's code it called */
   js?: boolean;
   actions?: ScriptAction[];

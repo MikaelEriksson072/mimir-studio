@@ -10861,7 +10861,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11318,5 +11318,60 @@ test('a JavaScript script writes the export: its files read and changed, a file 
     expect(existsSync(join(other, 'build.sh'))).toBe(false);
     expect(existsSync(join(other, 'make.sh'))).toBe(true);
     expect([...readFileSync(join(other, 'data', 'start.bin'))]).toHaveLength(8);
+  });
+});
+
+test('a JavaScript script builds and starts: the last build read, Verify and a packed file of its own started when the run has ended; safe mode only says', async ({ page }) => {
+  // VICE itself is not started: a Windows program that ends at once stands in for it
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  test.skip(!existsSync(standIn), 'needs where.exe');
+  await waitForListing(page);
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+
+  await test.step('the template in safe mode says what it would build and start, and does neither', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Pack and start to the project' }).click();
+    await expect(page.getByRole('option', { name: 'build_packed' })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end', { timeout: 30_000 });
+    await expect(printed).toContainText('Not built yet');
+    await expect(printed).toContainText(/Packed \(exomizer\): \d+ -> \d+ bytes/);
+    await expect(page.getByRole('list', { name: 'What the run would build and start' }).getByRole('listitem')).toHaveText([
+      'Verify: the round-trip check (as F7)', /^packed\.prg \(\d+ bytes, loads at \$0801\) started in VICE with RUN$/]);
+    await expect(statusBar(page)).toContainText('round-trip not verified');
+  });
+
+  await test.step('out of safe mode the round-trip is verified and the packed file started', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /^"build_packed": VICE started packed\.prg \(\d+ bytes at \$0801\)/)).toBeVisible({ timeout: 120_000 });
+    await expect(statusBar(page)).toContainText('✓ round-trip verified');
+    await expect(page.getByRole('list', { name: 'What the run built and started' }).getByRole('listitem')).toHaveCount(2);
+  });
+
+  await test.step('a script of one\'s own reads the build that was made and asks for Build & Run; build. lists what it has', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('build.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['last', 'verify', 'run', 'start', 'requests', 'assembler', 'emulator', 'debugger']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'const b = build.last;',
+      'print(b.ok, b.fresh, b.by, b.files.length, b.files[0].name, hex(b.files[0].start), b.files[0].same === b.files[0].total, b.files[0].prg.length > 2);',
+      'build.run();',
+    ].join('\n') + '\n');
+    await runIt();
+    // (KickAss.jar built it too where the machine has it)
+    await expect(printed).toHaveText(/^true true (built-in|KickAss\.jar) 1 raster-demo\.prg \$0801 true true$/);
+    await expect(toast(page, /^VICE started/)).toBeVisible({ timeout: 120_000 });
   });
 });
