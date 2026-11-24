@@ -1,7 +1,7 @@
 /* Script worker (spec 10.3): a user script's run off the UI thread. A run takes at most some seconds (the limit of
  * instructions); Stop ends the worker itself, and the next run starts a new one. */
 import * as Comlink from 'comlink';
-import { runJs, runScript, runScriptInC64, type Addr, type Roms, type ScriptLoaderData, type ScriptExportData, type ScriptBuildData, type ScriptSidData, type ScriptLibraryData, type ScreenSize, type ScriptC64, type ScriptEnv, type ScriptRun, type UserScript } from '@mimir/core';
+import { runJs, runScript, runScriptInC64, type Addr, type Roms, type ScriptLoaderData, type ScriptExportData, type ScriptBuildData, type ScriptSidData, type ScriptBlocksData, type ScriptLibraryData, type ScreenSize, type ScriptC64, type ScriptEnv, type ScriptRun, type UserScript } from '@mimir/core';
 
 /** how a run is to go beyond the script itself: in the whole C64 (its ROMs, and the disk in its 1541), and the address
  *  it stops at */
@@ -20,6 +20,8 @@ export interface ScriptRunOpts { c64?: ScriptC64; stopAt?: Addr | null;
   sid?: ScriptSidData | null;
   /** the library as it is now, for a JavaScript script's `library` (left out: the run is not given it) */
   library?: ScriptLibraryData | null;
+  /** the program's blocks as they are now, for a JavaScript script's `blocks` (left out: the run has none to read) */
+  blocks?: ScriptBlocksData | null;
   /** the size of the script's C64 screen: 40×25, or what the screen's extended mode gives (a run in the whole C64 has
    *  the C64's own) */
   screen?: ScreenSize }
@@ -37,7 +39,7 @@ function closeWorker(): void {
 
 const api = {
   run(env: ScriptEnv, script: Pick<UserScript, 'source' | 'lang' | 'code' | 'pads' | 'init'>, opts: ScriptRunOpts = {}): ScriptRun {
-    if (script.code === 'js') { closeWorker(); return runJs(env, script, { disk: opts.disk ?? null, roms: opts.roms ?? null, loaders: opts.loaders ?? [], export: opts.export ?? null, build: opts.build ?? null, sid: opts.sid ?? null, library: opts.library ?? null, screen: opts.screen ?? null }); }
+    if (script.code === 'js') { closeWorker(); return runJs(env, script, { disk: opts.disk ?? null, roms: opts.roms ?? null, loaders: opts.loaders ?? [], export: opts.export ?? null, build: opts.build ?? null, sid: opts.sid ?? null, library: opts.library ?? null, blocks: opts.blocks ?? null, screen: opts.screen ?? null }); }
     return opts.c64 ? runScriptInC64(env, script, opts.c64, undefined, opts.stopAt ?? null) : runScript(env, script, undefined, undefined, opts.stopAt ?? null, opts.screen);
   },
 };

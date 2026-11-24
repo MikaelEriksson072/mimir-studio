@@ -51,6 +51,8 @@ function overrideLike(b: Block, start: Addr, end: Addr): Override {
   if ((type === 'sprite' || type === 'charset' || type === 'bitmap') && p.mc != null) props.mc = p.mc;
   if (type === 'sprite' && p.colors) props.colors = { ...p.colors };
   if (type === 'code' && p.one) props.one = true;
+  if (p.custom) props.custom = p.custom;
+  if (type === 'data' && p.struct?.length) props.struct = p.struct.map(f => ({ ...f }));
   return { start, end, type, ...(Object.keys(props).length ? { props } : {}) };
 }
 
@@ -297,7 +299,7 @@ export interface MarkMerge {
 }
 
 /** a block is of the type a "Mark as" id gives (text of its encoding); detected-only kinds (a lo/hi table, BASIC) are not */
-const ofMark = (b: Block, id: string) => b.type === MARK_TYPE[id] && markIdOf(b) === id;
+const ofMark = (b: Block, id: string) => b.type === MARK_TYPE[id] && markIdOf(b) === id && !b.props.struct && !b.props.custom;
 
 /**
  * The override that marks `start`..`end` (end excluded) as `id` (a MARK_AS id). Auto merge (`merge`): the block that

@@ -4,7 +4,7 @@
  * ===================================================================== */
 import type {
   Addr, AnalysisResult, Block, BlockKind, DelaySled, ForcedMode, HeadPart, Line, ListingLine, MusicInfo, NumberFormat,
-  ProjectInput, RenderLabel, RenderProblem, RenderResult, TextEncoding, Token, ZpVar, ExcludedRange, LoaderPart, ViewOffset } from '../types';
+  ProjectInput, RenderLabel, RenderProblem, RenderResult, StructField, TextEncoding, Token, ZpVar, ExcludedRange, LoaderPart, ViewOffset } from '../types';
 import { MAX_BLANKS } from '../types';
 import { kindInfo, TYPE_BY_KEY } from '../model';
 import { ENC, MODE_LEN, OPC } from '../cpu/opcodes';
@@ -26,6 +26,7 @@ import {
   labelFor, logicalEndTokens, logicalTokens, pcLine, pcTokens, writesOpcode } from './dialect';
 import { applyZpPairs } from '../zp-pairs';
 import { junkIn } from '../junk';
+import { fieldSize, structSize, validStruct } from '../struct';
 import { shiftText, shownAddress, shownLabelName, shownTarget, usableViewOffsets, viewOffsetAt } from '../viewoffsets';
 
 const ID_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -473,29 +474,76 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
     }
   }
 
-  function textRows(out: Line[], s: Addr, e: Addr, enc: TextEncoding, ctx: RenderCtx) {
+  function textRows(out: Line[], s: Addr, e: Addr, enc: TextEncoding, ctx: RenderCtx, opt: { noEnc?: boolean; cmt?: string } = {}) {
     const te = textEncoding(enc), pet = enc === 'petscii' || enc === 'petscii-mixed';
     // the characters of the assembler's table (64tass's with -a: the unshifted letters as a-z)
     const char = tass ? te.tass.char : te.char;
     // a screen code $00 is '@' inside a text; at its end it stays `.byte $00 // end` (a terminator). In a PETSCII text
     // the control codes are in the `.text` line by name (`PET_CLR + "HELLO"`, in 64tass `PET_CLR, "hello"`)
     const ok = (a: Addr) => (char(mem[a]) != null && (mem[a] !== 0 || (a + 1 < e && mem[a + 1] !== 0 && char(mem[a + 1]) != null))) || (pet && !!petsciiControl(mem[a]));
-    out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: tass ? '.enc' : '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: `"${tass ? te.tass.enc : te.kick}"` }] });
+    if (!opt.noEnc) out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: tass ? '.enc' : '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: `"${tass ? te.tass.enc : te.kick}"` }] });
+    // (a struct's text field: the field's name is the comment of its first line)
+    let first = opt.cmt ?? '';
+    const own = (c: string) => { const t = [first, c].filter(Boolean).join('; '); first = ''; return t; };
     let p = s;
     while (p < e) {
       if (p !== s && labelAt(p)) out.push({ k: 'lbl', a: p, name: labelAt(p)!.name });
       if (ok(p)) {
         let q = p; while (q < e && ok(q) && q - p < 48 && !(q !== p && (labelAt(q) || breakAt(q)))) q++;
-        out.push({ k: 'dat', a: p, n: q - p, dir: '.text', tok: textTokens(mem.subarray(p, q), char, pet, ctx.usePet, tass ? ', ' : ' + '), cmt: '' });
+        out.push({ k: 'dat', a: p, n: q - p, dir: '.text', tok: textTokens(mem.subarray(p, q), char, pet, ctx.usePet, tass ? ', ' : ' + '), cmt: own('') });
         p = q;
       } else {
         let q = p; while (q < e && !ok(q) && q - p < S.bytesPerRow && !(q !== p && (labelAt(q) || breakAt(q)))) q++;
         // the control codes with a name are in the .text lines: of the rest, a $00 ends the string
         const c = pet ? [...mem.subarray(p, q)].filter(b => b === 0).map(() => 'end').join(', ') : (mem[p] === 0 && q - p === 1 ? 'end' : '');
-        out.push({ k: 'dat', a: p, n: q - p, dir: '.byte', tok: joinList([...mem.subarray(p, q)].map(b => numTok(b))), cmt: c });
+        out.push({ k: 'dat', a: p, n: q - p, dir: '.byte', tok: joinList([...mem.subarray(p, q)].map(b => numTok(b))), cmt: own(c) });
         p = q;
       }
     }
+  }
+
+  /** a struct block (struct.ts): its records one after the other, a line a field (more where a label or a comment
+   *  line of the user's is inside it), the field's name as the line's comment and the record's number before the
+   *  first; bytes after the last whole record are plain bytes. A word a label points into is written as bytes. */
+  function structRows(out: Line[], b: Block, fields: readonly StructField[], ctx: RenderCtx) {
+    const size = structSize(fields), count = size ? Math.floor((b.end - b.start) / size) : 0;
+    const lbl = (a: Addr) => { const l = labelAt(a); if (l && a !== b.start) out.push({ k: 'lbl', a, name: l.name }); };
+    let enc: TextEncoding | null = null, p = b.start;
+    for (let r = 0; r < count; r++) {
+      fields.forEach((f, fi) => {
+        const q = p + fieldSize(f), s = p, name = `${fi === 0 && count > 1 ? `[${r}] ` : ''}${f.name}`;
+        const cmt = (a: Addr) => (a === s ? name : '');
+        lbl(s);
+        if (f.type === 'text') {
+          const e = f.enc ?? 'petscii';
+          if (enc !== e) { const te = textEncoding(e); out.push({ k: 'dir', a: s, n: 0, tok: [{ t: 'dir', s: tass ? '.enc' : '.encoding' }, { t: 'p', s: ' ' }, { t: 'str', s: `"${tass ? te.tass.enc : te.kick}"` }] }); enc = e; }
+          textRows(out, s, q, e, ctx, { noEnc: true, cmt: name });
+        } else if (f.type === 'byte') dataRows(out, s, q, ctx, { fmt: f.fmt, row: Math.min(f.count ?? 1, 40), cmt });
+        else {
+          let odd = false; for (let a = s + 1; a < q; a += 2) if (labelAt(a)) odd = true;
+          if (odd) dataRows(out, s, q, ctx, { cmt });
+          else {
+            const word = (a: Addr): Token[] => {
+              const v = mem[a] | (mem[a + 1] << 8);
+              if (f.type === 'word') return [{ t: 'num', s: f.fmt === 'bin' ? '%' + v.toString(2).padStart(16, '0') : f.fmt === 'dec' ? String(v) : n4(v) }];
+              const tk = addrTokens(v, Object.assign({}, ctx, { zpWidth: false, from: a }));
+              return tk.length === 1 && tk[0].t === 'num' ? [Object.assign({}, tk[0], { s: n4(v) })] : tk;
+            };
+            let a = s;
+            while (a < q) {
+              if (a !== s) lbl(a);
+              const items: Token[][] = [];
+              let z = a;
+              while (z < q && items.length < 8 && !(z !== a && (labelAt(z) || breakAt(z)))) { items.push(word(z)); z += 2; }
+              out.push({ k: 'dat', a, n: z - a, dir: '.word', tok: joinList(items), cmt: cmt(a) });
+              a = z;
+            }
+          }
+        }
+        p = q;
+      });
+    }
+    if (p < b.end) { lbl(p); const s = p; dataRows(out, p, b.end, ctx, { cmt: a => (a === s ? (count ? 'after the last whole record' : 'less than a record') : '') }); }
   }
 
   const binFiles: Record<string, Uint8Array> = {};
@@ -516,6 +564,9 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
     if (b.type === 'table') t = p.sub === 'sine' ? 'Curve table' : p.sub === 'colors' ? 'Color table' : 'Table';
     if (b.type === 'lohi') t = `${p.ptr ? 'Pointer' : 'Value'} table (${p.part} bytes)`;
     if (b.type === 'data' && p.var) t = 'Variables';
+    // a struct (its record's size) and a custom block (a script's blocks.define): its type's name before what it is
+    if (b.type === 'data' && p.struct?.length) return `Struct${p.custom ? ` ${p.custom}` : ''} (${structSize(p.struct)} byte${structSize(p.struct) === 1 ? '' : 's'} a record)`;
+    if (p.custom) t = `${p.custom} (${t})`;
     return t;
   };
   /** 10.4: the part of a block a view offset shows elsewhere, for its header */
@@ -721,6 +772,9 @@ function renderWith(A: AnalysisResult, project: ProjectInput, opts: RenderOption
       default: {
         label(b.start);
         const p = b.props || {};
+        // (fields a project file holds that are no fields: plain bytes)
+        const st = b.type === 'data' && p.struct?.length ? validStruct(p.struct) : null;
+        if (st) { structRows(out, b, st, ctx); break; }
         dataRows(out, b.start, b.end, ctx, { fmt: p.fmt, row: p.row });
       }
     }

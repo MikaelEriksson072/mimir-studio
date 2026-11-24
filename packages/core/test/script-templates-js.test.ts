@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
 import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are eighteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'screen_show', 'screen_hexdump']);
+  it('are nineteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -336,5 +336,32 @@ describe('the JavaScript template for the library', () => {
     const has = go({ addMusic: 'true' }, lib([{ kind: 'sid', file: 'music.sid', name: 'm', data: a.library![0].bytes }]));
     expect(has.prints!.at(-1)).toBe('music is in the library already: music.sid');
     expect(has.library).toBeUndefined();
+  });
+});
+
+describe('the JavaScript template for the blocks', () => {
+  const project = createProject({ files: [program] });
+  const A = analyze(project), R = render(A, project);
+  const go = (values: Record<string, string> = {}) =>
+    runJs(env, { source: setScriptParams(template('block_records').source, { code: 'js' }, values).source, pads: [] }, { blocks: scriptBlocksData(A, R, project) });
+
+  it('List the blocks and mark a table of records lists the blocks, one type or none, and marks records as a struct', () => {
+    const r = go();
+    expect(r.error).toBeUndefined();
+    expect(r.prints![0]).toBe(`${A.blocks.length} blocks`);
+    expect(r.prints).toHaveLength(A.blocks.length + 1);
+    expect(r.prints![1]).toMatch(/^\$0810-\$0811 {2}code {17}2 bytes {2}\S+$/);
+    expect(r.actions).toBeUndefined();
+    const code = go({ type: '"code"' });
+    expect(code.prints![0]).toBe(`${A.blocks.length} blocks, ${A.blocks.filter(b => b.type === 'code').length} of type code`);
+    const m = go({ type: '"none"', table: '0x0940', count: '3', typeName: '"word"', fields: '"text: text[5], gap: byte"' });
+    expect(m.error).toBeUndefined();
+    expect(m.prints).toEqual(['A word is 6 bytes: text: text[5], gap: byte', '  0  text="HELLO"  gap=$20', '  1  text="FROM "  gap=$54', '  2  text="HE GA"  gap=$4d', 'Then marked: $0940-$0951 as the struct word']);
+    expect(m.actions).toEqual([
+      { kind: 'mark', line: 0, start: 0x0940, end: 0x0952, as: 'bytes', props: { struct: [{ name: 'text', type: 'text', count: 5, enc: 'petscii' }, { name: 'gap', type: 'byte' }], custom: 'word' } },
+      { kind: 'blockComment', line: 0, at: 0x0940, text: '3 records: text: text[5], gap: byte' },
+    ]);
+    expect(go({ table: '"nowhere"' }).error?.msg).toMatch(/"nowhere" is not a name/);
+    expect(go({ table: '0x0940', fields: '"x: float"' }).error?.msg).toMatch(/^TypeError: struct: "float" is no type of a field/);
   });
 });

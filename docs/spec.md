@@ -173,6 +173,8 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-blocks.ts         blocken för ett JavaScript-skript: `blocks` (läs, märk, struct, egna typer, dela, kommentera) (10.3)
+│  ├─ src/struct.ts                struct-block: fälten (`StructField`), deras storlek, text och värden (10.3)
 │  ├─ src/script-library.ts        biblioteket för ett JavaScript-skript: `library` (SID, sprites, teckenset, bitmappar: läs, sök, lägg i minnet, lägg till) (10.3, 10.6)
 │  ├─ src/script-sid.ts            SID-musiken för ett JavaScript-skript: `sid` (programmets låtar, .sid-filer, spelaren körd bild för bild, spela i VICE/DeepSID) (10.3)
 │  ├─ src/script-build.ts          bygge och körning för ett JavaScript-skript: `build` (senaste bygget, Verify, Build & Run, starta en PRG) (10.3)
@@ -2892,6 +2894,9 @@ $06, $08` i `.asm`-filen efter en körning.
   - *List the library and add the music* (`library_items`, 2026-11-24): bibliotekets SID, sprites, teckenset och
     bitmappar listade (alla, en sort med `kind` eller de med en text, `search`); `addMusic` lägger till programmets
     låtar som biblioteket inte redan har, som .sid (`author`).
+  - *List the blocks and mark a table of records* (`block_records`, 2026-11-24): programmets block listade (alla,
+    en typ med `type`, eller inga med `"none"`); med `table` märks `count` poster från en adress eller etikett som en
+    struct med namnet `typeName` och fälten `fields`, och posterna skrivs.
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2902,6 +2907,51 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Blocken i ett JavaScript-skript** (`script-blocks.ts`, `blocksApi`, `scriptBlocksData`, 2026-11-24): ett skript
+  får `blocks`, programmets block som analysen gjort dem (kod, bytes, words, text, tabeller, grafik, musik), att läsa
+  och ändra.
+  - Läsa: `blocks.all` (alla block i adressordning, som de var när körningen startade), `blocks.count`,
+    `blocks.at(adress)`, `blocks.in(start, end)`, `blocks.of(typ)` (en blocktyp som `"code"`, en Mark as-typ som
+    `"textsc"`, `"struct"` eller en egen typs namn) och `blocks.find(etikett)`. Ett block har `start`, `end`, `size`,
+    `type` (blocktypen), `as` (typen `mark` tar för det, eller `"struct"`), `custom`, `label`, `comment`, `file`,
+    `user`, `confidence`, `why`, `entropy`, `excluded`, `binary`, `fmt`, `row`, `enc`, `mc`, `colors`, `init`, `play`,
+    `struct`, och läst ur `mem` som det är nu: `bytes`, `text` (ett textblock), `words`, `records` (ett struct-block),
+    samt `next` och `prev`.
+  - Märka: `blocks.mark(start, end, typ, { fmt, row, mc, colors, init, play, label, comment })` gör det Mark as gör
+    (`typ`: ett av `MARK_NAMES`, en egen typ eller en struct), med inställningarna *Inspector* annars sätter, en
+    etikett på starten och en kommentar ovanför blocket. Ett block har `mark(typ, opts)`, `format({ fmt, row, mc,
+    colors })` (typen behålls), `setLabel(namn)`, `setComment(text)`, `split(adress)`, `auto()` (det märkta tas bort:
+    som analysen läser det), `exclude(on)`, `asBinary(on)` och `junk()`; `blocks.split`, `blocks.auto`,
+    `blocks.comment`, `blocks.exclude` och `blocks.binary` gör samma sak på en adress.
+  - **Struct** (`struct.ts`, `StructField`, `OverrideProps.struct`): `blocks.struct("namn", fält)` är en serie fält,
+    vart och ett bytes, words, adresser eller en text: `"x: byte"`, `"hp: byte dec"`, `"flags: byte bin"`,
+    `"row: byte[40]"`, `"score: word dec"`, `"handler: addr"` (ett word skrivet som etiketten det pekar på),
+    `"title: text[16]"`, `"line: textsc[40]"` (`textmix`, `textscmix`); som lista, som objekt med ett fält per nyckel
+    eller som `{ name, type, count, fmt }`. Högst `STRUCT_FIELDS` = 64 fält och `STRUCT_SIZE` = 4096 byte per post.
+    En struct har `size`, `fields` (med `offset` och `size`), `text`, `offset(fält)`, `read(adress)` (en post som
+    `{ fält: värde }`), `records(adress, antal)`, `write(adress, { fält: värde })` (skriver i `mem`; en kortare text
+    fylls med blanksteg), `mark(start, end, opts)` och `markRecords(start, antal, opts)`.
+  - Ett struct-block är ett datablock vars överstyrning har fälten (`props.struct`): listningen och källkoden
+    skriver posterna efter varandra, en rad per fält (`structRows` i `render/kick.ts`) med fältets namn som
+    kommentar och postens nummer före det första (`.byte $10  // [0] x`), text som `.text` i fältets kodning,
+    adresser som etiketter; byte efter den sista hela posten skrivs som bytes, och ett word som en etikett pekar in i
+    skrivs som bytes. Blockets rubrik säger `Struct namn (n bytes a record)`, blocket får en etikett på starten, och
+    *Inspector* visar fälten (*Struct*). Källkoden assembleras till samma bytes i Kick Assembler och 64tass. Mark as
+    på blocket gör det till en vanlig typ igen, och Auto merge tar inte in ett struct-block eller ett block av egen
+    typ i ett grannblock.
+  - **Egna blocktyper**: `blocks.define("namn", vad)` ger en typ ett namn: en inbyggd typ med inställningar
+    (`{ as: "bytes", row: 40, fmt: "dec" }`, `"textsc"`) eller en struct (fälten, eller `{ fields }`).
+    `blocks.mark` tar namnet eller det `define` gav (som också har `mark(start, end)`); `blocks.defined` listar dem.
+    Namnet följer med överstyrningen (`props.custom`) och sägs i blockets rubrik (`level map (Data)`) och i
+    *Inspector* (*Custom type*). Typen finns under körningen: ett skript som märker med den definierar den.
+  - `blocks.text(start, end, "textsc")` läser bytes som text och `blocks.encode("HELLO", "textsc")` ger en texts
+    bytes, i en texttyps kodning.
+  - Ingenting ändras under körningen: det skriptet ber om görs när körningen slutat, i samma ångra-steg som bytes
+    det ändrat (`ScriptAction`: `mark` med `props`, `auto`, `split`, `blockComment`, `exclude`, `binary`;
+    `planScriptActions`), och sägs under *Last run* (*Marked up*; i safe mode *Would mark up*), med det som inte gick
+    och varför. Blocken ges till en körning av skriptet självt när koden nämner `blocks`; i andra körningar är
+    listan tom men `blocks.mark` och `blocks.struct` fungerar. Bara JavaScript: `.mark` i ett assemblerskript tar
+    typnamnen som förut.
 - **Biblioteket i ett JavaScript-skript** (`script-library.ts`, `libraryApi`, 2026-11-24): ett skript får `library`,
   biblioteket av SID-musik, sprites, teckenset och bitmappar (10.6).
   - Läsa: `library.items` (allt), `library.sids`, `library.sprites`, `library.chars`, `library.bitmaps`,

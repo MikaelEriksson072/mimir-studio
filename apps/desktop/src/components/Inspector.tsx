@@ -1,7 +1,7 @@
 /* Inspector (right column): memory map, block evidence/type/label/comment (or the zero-page variable whose .label line
  * was clicked: its name and comments), graphics/music/text preview. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, refsShown, relocAt, relocLoadedAt, shiftText, viewOffsetAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode, type SpriteColors } from '@mimir/core';
+import { structSize, structText, textEncoding, zpPairable, ALL_BANKS, bankRange, banksOf, describePorts, findBlock, h2, h4, kindInfo, loadAddress, MARK_AS, mergeOverride, OPC, portName, portsOf, portText, refsShown, relocAt, relocLoadedAt, shiftText, viewOffsetAt, type Addr, type AnalysisResult, type Block, type CyclePath, type Project, type RenderResult, FORMATTABLE, type NumberFormat, type CartMode, type SpriteColors } from '@mimir/core';
 import type { MusicPlayer, TypeGroup } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, GROUP_LABEL, GROUP_ORDER, groupOfType } from '../lib/util';
@@ -173,6 +173,8 @@ export function Inspector({ A, R, project, cursor, sel, colors, heatMode, setHea
             {runRl && <><dt>Loaded at</dt><dd className="mono">${h4(loadAddress(A, blk.start))}–${h4(loadAddress(A, blk.end - 1))} <span className="muted">· in </span><button className="linkish mono" title="Go to the relocated block, where it is loaded" onClick={() => onNavigate(runRl.start)}>{R.labels.get(runRl.start)?.name ?? `$${h4(runRl.start)}`}</button></dd></>}
             {voff && <><dt>Shown at</dt><dd className="mono">${h4(voff.to + Math.max(blk.start, voff.start) - voff.start)}–${h4(voff.to + Math.min(blk.end, voff.end) - 1 - voff.start)} <span className="muted">· offset {shiftText(voff)}</span></dd></>}
             <dt>Why</dt><dd>{blk.reason || '—'}</dd>
+            {blk.props.custom && !blk.props.struct?.length && <><dt>Custom type</dt><dd>{blk.props.custom}</dd></>}
+            {blk.props.struct?.length ? <><dt>Struct</dt><dd className="mono" aria-label="The struct's fields">{blk.props.custom ? `${blk.props.custom}: ` : ''}{structText(blk.props.struct)} <span className="muted">· {Math.floor((blk.end - blk.start) / structSize(blk.props.struct))} × {structSize(blk.props.struct)} bytes</span></dd></> : null}
             <dt>Refs in</dt><dd>{xin}</dd>
             <dt>Entropy</dt><dd className="mono">{blk.entropy.toFixed(2)} <span className="muted">bits/byte</span></dd>
           </dl>

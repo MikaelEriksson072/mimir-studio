@@ -52,6 +52,19 @@ export interface Cartridge {
   crt: Uint8Array;
 }
 
+/** a field of a struct block: `count` bytes, words (low byte first; `addr`: written as the label they point at) or
+ *  characters of a text */
+export interface StructField {
+  name: string;
+  type: 'byte' | 'word' | 'addr' | 'text';
+  /** how many (missing: 1) */
+  count?: number;
+  /** bytes and words: how the numbers are written (missing: hex) */
+  fmt?: NumberFormat;
+  /** text: its encoding (missing: PETSCII) */
+  enc?: TextEncoding;
+}
+
 export interface OverrideProps {
   enc?: TextEncoding;
   row?: number;
@@ -67,6 +80,11 @@ export interface OverrideProps {
   colors?: SpriteColors;
   /** code: one block over the whole range, not split per routine (code blocks merged when marking, Auto merge) */
   one?: boolean;
+  /** a custom block (a script's blocks.define): the name of its type, said in the block's header and the inspector */
+  custom?: string;
+  /** a struct (data only): the fields its bytes are a record of, repeated to the block's end; the listing and the
+   *  source write a line a field, with the field's name as its comment */
+  struct?: StructField[];
 }
 
 /** C64 colour numbers (0-15) of sprites as the VIC gives them: the background ($d021, seen where a pixel is 0 or 00),
@@ -612,6 +630,11 @@ export interface BlockProps {
   colors?: SpriteColors;
   /** code merged into one block, not split per routine (OverrideProps.one) */
   one?: boolean;
+  /** a custom block (a script's blocks.define): the name of its type, said in the block's header and the inspector */
+  custom?: string;
+  /** a struct (data only): the fields its bytes are a record of, repeated to the block's end; the listing and the
+   *  source write a line a field, with the field's name as its comment */
+  struct?: StructField[];
 }
 
 export interface Block {

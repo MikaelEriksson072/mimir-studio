@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11460,6 +11460,85 @@ test('a JavaScript script has the library: its items listed, and the program\'s 
     await expect(toast(page, /the library has 2 of them already/)).toBeVisible({ timeout: 30_000 });
     expect(filesIn(sids, '.sid')).toHaveLength(1);
     expect(filesIn(sprites, '.spr')).toHaveLength(1);
+  });
+});
+
+test('a JavaScript script has the blocks: a table of records marked as a struct is a line a field in the listing, named and commented; safe mode only says; F7 verifies', async ({ app, page, workDir }) => {
+  // a routine, and from $0840 two records: x, y and a name of four characters
+  const code = [0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00, 0xad, 0x40, 0x08, 0x8d, 0x20, 0xd0, 0x60];
+  const table = [0x10, 20, ...[...'SHIP'].map(c => c.charCodeAt(0)), 0x30, 40, ...[...'BOSS'].map(c => c.charCodeAt(0))];
+  const file = join(workDir, 'records.prg');
+  writeFileSync(file, Uint8Array.from([0x01, 0x08, ...code, ...Array(0x0840 - 0x0801 - code.length).fill(0), ...table]));
+  await waitForListing(page);
+  await stubDialogs(app, { open: [file] });
+  await page.keyboard.press('Control+o');
+  await expect(toast(page, 'Loaded records.prg at $0801')).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  if (await overview.isVisible()) await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+
+  await test.step('blocks. lists what it has, and a struct what it has', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('blocks.');
+    await expect.poll(async () => (await page.locator('.suggest-widget.visible .monaco-list-row .label-name').allTextContents()).slice(0, 8))
+      .toEqual(['all', 'count', 'at', 'in', 'of', 'find', 'mark', 'struct']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText('const rec = blocks.struct("enemy", ["x: byte"]);\nrec.');
+    await expect.poll(async () => (await page.locator('.suggest-widget.visible .monaco-list-row .label-name').allTextContents()).slice(0, 5))
+      .toEqual(['name', 'size', 'fields', 'text', 'read']);
+    await page.keyboard.press('Escape');
+  });
+
+  await test.step('in safe mode a run reads the records and says what it would mark', async () => {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'const rec = blocks.struct("enemy", ["x: byte", "y: byte dec", "name: text[4]"]);',
+      'print(blocks.count > 1, blocks.at(0x0840).as, rec.size, rec.records(0x0840, 2).map(r => r.name + " " + r.y).join(", "));',
+      'rec.markRecords(0x0840, 2, { label: "enemies", comment: "two enemies" });',
+    ].join('\n') + '\n');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText(/^true \w+ 6 SHIP 20, BOSS 40$/, { timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run would mark up' }).getByRole('listitem')).toHaveText([
+      '$0840-$084b marked as the struct enemy (x: byte, y: byte dec, name: text[4]): 2 records of 6 bytes', '$0840 named enemies', 'the block at $0840 commented: two enemies']);
+  });
+
+  await test.step('out of safe mode the block is a struct in the listing, and the next run reads it as one', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /It marked up 3 things \(\$0840-\$084b marked as the struct enemy/)).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await goTo(page, 'enemies');
+    const l = listing(page);
+    await expect(l).toContainText('Struct enemy (6 bytes a record) · enemies · $0840-$084b (12 bytes)');
+    await expect(l).toContainText('two enemies');
+    await expect(l).toContainText('[0] x');
+    await expect(l).toContainText('"SHIP"');
+    await expect(l).toContainText('[1] x');
+    await expect(l).toContainText('"BOSS"');
+    await expect(page.getByLabel('The struct\'s fields')).toHaveText('enemy: x: byte, y: byte dec, name: text[4] · 2 × 6 bytes');
+    await page.getByRole('tab', { name: 'Scripts' }).click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText('const b = blocks.find("enemies");\nprint(b.as, b.custom, b.comment, b.records.length, b.records[1].name, blocks.of("struct").length);\n');
+    await runIt();
+    await expect(printed).toHaveText('struct enemy two enemies 2 BOSS 1', { timeout: 30_000 });
+  });
+
+  await test.step('F7: the source with the struct assembles to the same bytes', async () => {
+    await page.keyboard.press('F7');
+    await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
+    await expect(page.locator('.bottom .build')).not.toContainText('FAILED');
   });
 });
 

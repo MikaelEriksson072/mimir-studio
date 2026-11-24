@@ -14,16 +14,27 @@
  * `.const` of the script's), added and subtracted: `table_end - 2`, `dest + length`. The directives are the same in
  * Kick Assembler and 64tass. (Not `.label` and `.comment`: Kick Assembler and 64tass have those.)
  * ===================================================================== */
-import type { Addr, AnalysisResult, JunkArea, Override, Project, RenderResult, ScriptLang } from './types';
+import type { Addr, AnalysisResult, JunkArea, Override, OverrideProps, Project, RenderResult, ScriptLang } from './types';
 import { commentAt, splitLabel } from './code-lang';
-import { keepCutTypes, markOverride } from './edit';
+import { keepCutTypes, markOverride, splitBlock } from './edit';
+import { findBlock } from './analyze/classify';
+import { structSize, structText } from './struct';
 import { addJunk, junkPlan } from './junk';
 import { MARK_AS } from './model';
 import { h4 } from './util/hex';
 
 /** something a script's run does to the program beyond its bytes; `line`: the line of the code that says it */
 export type ScriptAction =
-  | { kind: 'mark'; line: number; start: Addr; end: Addr; as: string }
+  /** `props`: settings of the block besides its type's own (a JavaScript script's blocks.mark: a number format, a
+   *  row length, a struct's fields, a custom type's name) */
+  | { kind: 'mark'; line: number; start: Addr; end: Addr; as: string; props?: OverrideProps }
+  /** a JavaScript script's blocks (script-blocks.ts): the detection back over a range, a block cut in two, the
+   *  comment above a block, a block in or out of the build, a block as a binary file or in the source */
+  | { kind: 'auto'; line: number; start: Addr; end: Addr }
+  | { kind: 'split'; line: number; at: Addr }
+  | { kind: 'blockComment'; line: number; at: Addr; text: string }
+  | { kind: 'exclude'; line: number; at: Addr; on: boolean }
+  | { kind: 'binary'; line: number; at: Addr; on: boolean }
   | { kind: 'name'; line: number; at: Addr; name: string }
   | { kind: 'note'; line: number; at: Addr; text: string }
   | { kind: 'junk'; line: number; start: Addr; end: Addr };
@@ -137,6 +148,11 @@ export interface ActionsPlan {
   comments: [Addr, string][];
   /** the project's junk areas with the new ones (missing: none is new) */
   junk?: JunkArea[];
+  /** comments above blocks, by the block's start ('': the comment is taken away) */
+  blockComments: [Addr, string][];
+  /** starts of blocks to leave out of the build (true) or put back in it, and to write as a binary file or in the source */
+  excluded: [Addr, boolean][];
+  binary: [Addr, boolean][];
   /** what is done, a line each */
   done: string[];
   /** what cannot be done, and why */
@@ -152,7 +168,9 @@ const span = (s: Addr, e: Addr) => (e - s > 1 ? `$${h4(s)}-$${h4(e - 1)}` : `$${
  * relocated block, a name another address has, junk the junk rules refuse.
  */
 export function planScriptActions(A: AnalysisResult, R: Pick<RenderResult, 'labels' | 'zp'>, project: Pick<Project, 'junk'>, actions: readonly ScriptAction[]): ActionsPlan {
-  const plan: ActionsPlan = { overrides: [], labels: [], comments: [], done: [], failed: [] };
+  const plan: ActionsPlan = { overrides: [], labels: [], comments: [], blockComments: [], excluded: [], binary: [], done: [], failed: [] };
+  /** the block an action is about: the one that starts at the address or has it */
+  const blockAt = (at: Addr) => { const b = findBlock(A.blocks, at); return b && at >= b.start && at < b.end ? b : null; };
   const loaded = (s: Addr, e: Addr) => { for (let a = s; a < e; a++) if (!(A.owner[a] >= 0)) return false; return true; };
   let junk = project.junk;
   for (const x of actions) {
@@ -163,8 +181,36 @@ export function planScriptActions(A: AnalysisResult, R: Pick<RenderResult, 'labe
       const rl = A.relocs.find(r => r.start < x.end && x.start < r.end);
       if (rl) { fail(`${span(rl.start, rl.end)} is a relocated block (it runs at $${h4(rl.to)}): mark its bytes where they run`); continue; }
       const o = markOverride(A, x.start, x.end, x.as, false).override;
+      if (x.props && Object.keys(x.props).length) o.props = { ...o.props, ...x.props };
       plan.overrides.push(...keepCutTypes(A, o.start, o.end), o);
-      plan.done.push(`${span(x.start, x.end)} marked as ${MARK_AS.find(m => m.id === x.as)?.label ?? x.as}`);
+      const st = o.props?.struct, n = st ? structSize(st) : 0, label = MARK_AS.find(m => m.id === x.as)?.label ?? x.as;
+      plan.done.push(st ? `${span(x.start, x.end)} marked as the struct${o.props?.custom ? ` ${o.props.custom}` : ''} (${structText(st)}): ${Math.floor((x.end - x.start) / n)} record${Math.floor((x.end - x.start) / n) === 1 ? '' : 's'} of ${n} byte${n === 1 ? '' : 's'}${(x.end - x.start) % n ? `, and ${(x.end - x.start) % n} byte${(x.end - x.start) % n === 1 ? '' : 's'} after them` : ''}`
+        : `${span(x.start, x.end)} marked as ${o.props?.custom ? `${o.props.custom} (${label})` : label}`);
+    } else if (x.kind === 'auto') {
+      if (!loaded(x.start, x.end)) { fail(`${span(x.start, x.end)} is not all the program's bytes`); continue; }
+      plan.overrides.push({ start: x.start, end: x.end, type: 'auto' });
+      plan.done.push(`${span(x.start, x.end)} is as the analysis reads it again (what was marked there is taken away)`);
+    } else if (x.kind === 'split') {
+      const s = splitBlock(A, x.at);
+      if ('error' in s) { fail(s.error); continue; }
+      plan.overrides.push(...s.overrides);
+      plan.done.push(`the block ${span(s.block.start, s.block.end)} cut in two at $${h4(x.at)}`);
+    } else if (x.kind === 'blockComment' || x.kind === 'exclude' || x.kind === 'binary') {
+      // (a block this run marks from the address starts there, whatever block has the address now)
+      const old = blockAt(x.at), mine = plan.overrides.filter(o => o.start === x.at && o.type !== 'auto' && o.end > x.at).pop();
+      const b = old && mine ? { start: x.at, end: mine.end } : old;
+      if (!b) { fail(`$${h4(x.at)} is in no block of the program`); continue; }
+      if (x.kind === 'blockComment') {
+        plan.blockComments.push([b.start, x.text]);
+        plan.done.push(x.text ? `the block at $${h4(b.start)} commented: ${x.text.split('\n')[0]}` : `the comment above the block at $${h4(b.start)} taken away`);
+      } else if (x.kind === 'exclude') {
+        if (A.relocs.some(r => b.start >= r.to && b.start < r.to + r.end - r.start)) { fail(`the block at $${h4(b.start)} is inside a relocated block: leave the whole relocated block out`); continue; }
+        plan.excluded.push([b.start, x.on]);
+        plan.done.push(`the block ${span(b.start, b.end)} is ${x.on ? 'left out of' : 'in'} the build`);
+      } else {
+        plan.binary.push([b.start, x.on]);
+        plan.done.push(`the block ${span(b.start, b.end)} is ${x.on ? 'saved as a binary file' : 'written in the source'}`);
+      }
     } else if (x.kind === 'name') {
       const other = [...R.labels].find(([a, l]) => a !== x.at && l.name === x.name)?.[0] ?? [...R.zp].find(([a, z]) => a !== x.at && !z.off && z.name === x.name)?.[0]
         ?? plan.labels.find(([a, n]) => a !== x.at && n === x.name)?.[0];

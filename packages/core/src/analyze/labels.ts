@@ -83,7 +83,7 @@ export function makeLabels(ctx: Ctx, cls: Classification, vic: VicEvidence): { l
     setLabel(addr, dataName(addr), 'data');
   }
   for (const b of blocks) {
-    if (b.type === 'lohi' || b.type === 'text' || b.type === 'sprite' || b.type === 'charset' || b.type === 'bitmap' || b.type === 'screen' || b.type === 'table' || b.type === 'words' || b.type === 'reloc' || (b.type === 'code' && b.user)) setLabel(b.start, dataName(b.start), 'data');
+    if (b.type === 'lohi' || b.type === 'text' || b.type === 'sprite' || b.type === 'charset' || b.type === 'bitmap' || b.type === 'screen' || b.type === 'table' || b.type === 'words' || b.type === 'reloc' || (b.type === 'code' && b.user) || (b.type === 'data' && !!b.props.struct?.length)) setLabel(b.start, dataName(b.start), 'data');
   }
   for (const b of blocks) if (b.type === 'sprite') for (let s = b.start + 64; s < b.end; s += 64) if (vic.sprites.some(x => x.addr === s)) setLabel(s, `spr_${h4(s)}`, 'data');
 

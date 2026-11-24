@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type ScriptBuildData, type ScriptBuildRequest, buildRequestText, type ScriptSidData, type ScriptSidRequest, sidRequestText, type ScriptLibraryData, type ScriptLibraryRequest, type UserScript,
+  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, scriptBlocksData, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type ScriptExportData, type ScriptExportRequest, applyExportRequest, type ScriptBuildData, type ScriptBuildRequest, buildRequestText, type ScriptSidData, type ScriptSidRequest, sidRequestText, type ScriptLibraryData, type ScriptLibraryRequest, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2588,6 +2588,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         for (const [at, name] of acts.labels) d.labels[at] = name;
         for (const [at, c] of acts.comments) d.comments[at] = c;
         if (acts.junk) d.junk = acts.junk;
+        // what a JavaScript script's blocks asked for: comments above blocks, blocks in or out of the build, binary files
+        for (const [at, c] of acts.blockComments) { if (c) d.blockComments[at] = c; else delete d.blockComments[at]; }
+        for (const [at, on] of acts.excluded) d.excluded = on ? [...new Set([...d.excluded, at])] : d.excluded.filter(x => x !== at);
+        for (const [at, on] of acts.binary) d.binary = on ? [...new Set([...d.binary, at])] : d.binary.filter(x => x !== at);
       }
       const t = d.userScripts?.find(x => x.id === id); if (!t) return;
       for (const pad of t.pads) { const b = run.pads.find(x => x.name === pad.name); if (b && b.bytes.length === pad.size) pad.bytes = b.bytes; }
@@ -2799,6 +2803,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (s.code === 'js' && /\bsid\b/.test(source)) { await analysisSettled(); opts.sid = scriptSidData(); }
     // and the library of SIDs, sprites, charsets and bitmaps
     if (s.code === 'js' && /\blibrary\b/.test(source)) opts.library = await scriptLibraryData();
+    // and the program's blocks, as the analysis has them now
+    if (s.code === 'js' && /\bblocks\b/.test(source)) { await analysisSettled(); const { A: a1, R: r1, project: p1 } = latest.current; opts.blocks = scriptBlocksData(a1, r1, p1); }
     useScripts.getState().set({ running: id });
     try {
       const r = await runScriptInWorker(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init }, opts);

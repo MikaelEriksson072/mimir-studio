@@ -193,6 +193,27 @@ describe('what the library\'s values have', () => {
   });
 });
 
+describe('what the blocks\' values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('blocks., a block, a struct with its fields and a custom type', () => {
+    expect(names('blocks')).toEqual(['all', 'count', 'at', 'in', 'of', 'find', 'mark', 'struct', 'define', 'split', 'auto', 'comment', 'exclude', 'binary', 'text', 'encode', 'types', 'defined']);
+    const src = 'const b = blocks.at(0x0840);\nfor (const one of blocks.all) {\n}\nblocks.of("text").forEach(t => {});\nconst rec = blocks.struct("enemy", ["x: byte"]);\nconst row = blocks.define("row", { as: "bytes" });\n';
+    expect(names('b', src)).toEqual(expect.arrayContaining(['start', 'end', 'size', 'type', 'as', 'custom', 'label', 'bytes', 'records', 'struct', 'mark', 'format', 'setLabel', 'setComment', 'split', 'auto', 'exclude', 'asBinary', 'junk']));
+    expect(names('one', src)).toEqual(names('b', src));
+    expect(names('t', src)).toEqual(names('b', src));
+    expect(names('b.next', src)).toEqual(names('b', src));
+    expect(names('rec', src)).toEqual(['name', 'size', 'fields', 'text', 'read', 'records', 'write', 'offset', 'mark', 'markRecords']);
+    expect(names('b.struct', src)).toEqual(names('rec', src));
+    expect(names('rec.fields[0]', src)).toEqual(['name', 'type', 'count', 'fmt', 'enc', 'offset', 'size', 'text']);
+    expect(names('row', src)).toEqual(['name', 'as', 'struct', 'size', 'mark']);
+    expect(names('blocks.defined[0]', src)).toEqual(names('row', src));
+    expect(jsTypeOf('b.bytes', src)).toBe('bytes');
+    expect(jsTypeOf('blocks.encode("A")', src)).toBe('bytes');
+    expect(jsTypeOf('blocks.find("x")', src)).toBe('block');
+    expect(jsTypeOf('blocks.in(1, 2)', src)).toBe('blockList');
+  });
+});
+
 describe('what the SID music\'s values have', () => {
   const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
   it('sid., a tune, what it plays with, a run and its dump', () => {

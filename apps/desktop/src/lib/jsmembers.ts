@@ -11,6 +11,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
   | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges' | 'build' | 'lastBuild' | 'builtFile' | 'builtFiles'
   | 'library' | 'libItem' | 'libItems' | 'libFrom' | 'libColors'
+  | 'blocks' | 'block' | 'blockList' | 'struct' | 'structFields' | 'structField' | 'customType' | 'customTypes'
   | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
@@ -59,7 +60,54 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
-  libItems: LIST,
+  libItems: LIST, blockList: LIST, structFields: LIST, customTypes: LIST,
+  blocks: [
+    m('all', 'every block of the program, in address order: a list of blocks (as they were when the run started)'), m('count', 'how many blocks there are'),
+    m('at', 'at(address): the block that has an address, or null', true), m('in', 'in(start, end): the blocks in a range', true),
+    m('of', 'of("type"): the blocks of a type ("code", "bytes", "text", "struct", …) or of a custom type', true), m('find', 'find("label"): the block with a label, or null', true),
+    m('mark', 'mark(start, end, type, { fmt, row, mc, colors, init, play, label, comment }): as Mark as; type a type\'s name, a custom type or a struct', true),
+    m('struct', 'struct("name", ["x: byte", "hp: byte dec", "handler: addr", "name: text[8]"]): a struct, a series of fields; it reads records and marks them', true),
+    m('define', 'define("name", { as: "bytes", row: 40, fmt: "dec" }) or define("name", fields): a custom block type; mark takes its name', true),
+    m('split', 'split(address): the block there cut in two at the address', true), m('auto', 'auto(start, end): what was marked there taken away: as the analysis reads it', true),
+    m('comment', 'comment(address, "text"): the comment above the block there ("" takes it away)', true),
+    m('exclude', 'exclude(address, on): the block there left out of the build (false: in it again)', true), m('binary', 'binary(address, on): the block there saved as a binary file (false: written in the source)', true),
+    m('text', 'text(start, end, "textsc"): the bytes of a range as text, in a text type\'s encoding', true), m('encode', 'encode("HELLO", "textsc"): a text\'s bytes in a text type\'s encoding', true),
+    m('types', 'the types mark takes: a list of names'), m('defined', 'the custom types the script has defined so far'),
+  ],
+  block: [
+    m('start', 'the address of its first byte'), m('end', 'the address after its last byte'), m('size', 'how many bytes it is'),
+    m('type', 'what it is: "code", "data", "text", "words", "table", "lohi", "sprite", "charset", "bitmap", "screen", "music", "fill", "basic", "reloc"'),
+    m('as', 'the type mark takes for it: "bytes", "textsc", …, or "struct"'), m('custom', 'the name of its custom type, or null'), m('label', 'the label at its start, or null'),
+    m('comment', 'the comment above it, or null'), m('file', 'the program\'s file it is in'), m('user', 'true when it was marked (by you or a script), false as the analysis found it'),
+    m('confidence', 'how sure the analysis is, 0 to 1'), m('why', 'what the analysis found it by'), m('entropy', 'bits a byte'),
+    m('excluded', 'true when it is left out of the build'), m('binary', 'true when it is saved as a binary file'),
+    m('fmt', 'how its numbers are written: "hex", "dec", "bin", or null'), m('row', 'how many go on a line, or null'), m('enc', 'a text\'s encoding, else null'),
+    m('mc', 'graphics: true multicolour, false hires, null as the VIC registers say'), m('colors', 'sprites: the colours they are drawn in, or null'),
+    m('init', 'music: its init routine, else null'), m('play', 'music: its play routine, else null'),
+    m('struct', 'a struct block\'s struct, else null'), m('records', 'a struct block\'s records: a list of { field: value }, else null'),
+    m('bytes', 'its bytes, as mem has them now'), m('text', 'a text block\'s text, else null'), m('words', 'its bytes as 16-bit values, low byte first'),
+    m('next', 'the block after it, or null'), m('prev', 'the block before it, or null'),
+    m('mark', 'mark(type, { fmt, row, … }): the block marked as a type, a custom type or a struct', true),
+    m('format', 'format({ fmt, row, mc, colors }): how it is written changed, its type kept', true),
+    m('setLabel', 'setLabel("name"): the label at its start', true), m('setComment', 'setComment("text"): the comment above it ("" takes it away)', true),
+    m('split', 'split(address): cut in two at an address inside it', true), m('auto', 'auto(): what was marked taken away: as the analysis reads it', true),
+    m('exclude', 'exclude(on): left out of the build (false: in it again)', true), m('asBinary', 'asBinary(on): saved as a binary file (false: written in the source)', true),
+    m('junk', 'junk(): its bytes are junk, left out of everything', true),
+  ],
+  struct: [
+    m('name', 'its name, or null'), m('size', 'how many bytes a record is'), m('fields', 'its fields: a list of { name, type, count, fmt, enc, offset, size, text }'), m('text', 'its fields in a line: "x: byte, name: text[8]"'),
+    m('read', 'read(address): the record there: { field: value }, a text field a text, a field with a count a list', true),
+    m('records', 'records(address, count): that many records from there, a list', true),
+    m('write', 'write(address, { field: value }): the fields given written into mem; gives the address after the record', true),
+    m('offset', 'offset("field"): where a field is in the record', true),
+    m('mark', 'mark(start, end, { label, comment }): the range marked as records of the struct, a line a field in the listing', true),
+    m('markRecords', 'markRecords(start, count, { label, comment }): that many records marked', true),
+  ],
+  structField: [m('name', 'its name'), m('type', '"byte", "word", "addr" or "text"'), m('count', 'how many'), m('fmt', 'the number format, when it has one'), m('enc', 'a text\'s encoding'), m('offset', 'where it is in the record'), m('size', 'how many bytes it is'), m('text', 'its type as it is written: "byte[40] dec"')],
+  customType: [
+    m('name', 'its name'), m('as', 'the type it is: "bytes", "textsc", …'), m('struct', 'its struct, or null'), m('size', 'a struct\'s record size, else null'),
+    m('mark', 'mark(start, end, { label, comment }): the range marked as this type', true),
+  ],
   library: [
     m('items', 'everything in the library: a list of items'), m('sids', 'its SID music'), m('sprites', 'its sprites'), m('chars', 'its charsets'), m('bitmaps', 'its pictures'),
     m('find', 'find("name", kind): an item by its name or its file\'s name, or null', true), m('search', 'search("text", kind): the items whose name, file or source has the text', true),
@@ -275,7 +323,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', tunes: 'tune', dump: 'bytes', voices: 'voice' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -341,6 +389,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'build') return 'build';
   if (e === 'sid') return 'sid';
   if (e === 'library') return 'library';
+  if (e === 'blocks') return 'blocks';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -371,6 +420,9 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (on === 'sid') return name === 'at' ? 'tune' : name === 'parse' || name === 'load' ? 'sidFile' : name === 'make' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : name === 'note' ? 'sidNote' : name === 'voices' ? 'voices' : name === 'noteTables' ? 'ranges' : null;
     if (on === 'library') return name === 'find' || name === 'same' ? 'libItem' : name === 'search' ? 'libItems' : null;
     if (on === 'libItem') return name === 'asFile' || name === 'sprite' || name === 'char' ? 'bytes' : name === 'put' ? 'file' : null;
+    if (on === 'blocks') return name === 'at' || name === 'find' ? 'block' : name === 'in' || name === 'of' ? 'blockList' : name === 'struct' ? 'struct' : name === 'define' ? 'customType' : name === 'text' ? 'text' : name === 'encode' ? 'bytes' : name === 'mark' ? 'file' : null;
+    if (on === 'block') return name === 'mark' || name === 'format' ? 'file' : null;
+    if (on === 'struct' || on === 'customType') return name === 'mark' || name === 'markRecords' ? 'file' : null;
     if (on === 'tune') return name === 'sid' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : null;
     if (on === 'loader') return name === 'find' ? 'loaderFile' : name === 'group' ? 'loaderGroup' : name === 'load' ? 'file' : name === 'at' ? 'loaderFiles' : null;
     if (on === 'brokkr') return name === 'pack' ? 'packed' : name === 'crunch' ? 'crunched' : name === 'mem' ? 'memFile' : name === 'decrunch' ? 'bytes' : name === 'decruncher' ? 'text' : null;
@@ -398,6 +450,11 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
   if (on === 'library') return name === 'items' || name === 'sids' || name === 'sprites' || name === 'chars' || name === 'bitmaps' ? 'libItems' : name === 'requests' ? 'texts' : name === 'folder' ? 'text' : null;
   if (on === 'libItem') return name === 'bytes' || name === 'bitmap' || name === 'screen' || name === 'colorRam' ? 'bytes' : name === 'tune' ? 'sidFile' : name === 'from' ? 'libFrom' : name === 'colors' ? 'libColors' : name === 'name' || name === 'file' || name === 'kind' || name === 'hash' ? 'text' : null;
+  if (on === 'blocks') return name === 'all' ? 'blockList' : name === 'types' ? 'texts' : name === 'defined' ? 'customTypes' : null;
+  if (on === 'block') return name === 'bytes' ? 'bytes' : name === 'struct' ? 'struct' : name === 'next' || name === 'prev' ? 'block' : name === 'records' || name === 'words' ? 'list' : name === 'type' || name === 'as' || name === 'label' || name === 'comment' || name === 'file' || name === 'why' || name === 'custom' || name === 'text' ? 'text' : name === 'colors' ? 'libColors' : null;
+  if (on === 'struct') return name === 'fields' ? 'structFields' : name === 'name' || name === 'text' ? 'text' : null;
+  if (on === 'structField') return name === 'name' || name === 'type' || name === 'text' ? 'text' : null;
+  if (on === 'customType') return name === 'struct' ? 'struct' : name === 'name' || name === 'as' ? 'text' : null;
   if (on === 'libFrom') return name === 'start' || name === 'end' ? null : 'text';
   if (on === 'sid') return name === 'tunes' ? 'tunes' : name === 'tune' ? 'tune' : name === 'requests' ? 'texts' : name === 'musicPlayer' ? 'text' : null;
   if (on === 'tune') return name === 'plays' ? 'tunePlays' : name === 'bytes' ? 'bytes' : name === 'why' ? 'texts' : name === 'name' || name === 'file' ? 'text' : null;
