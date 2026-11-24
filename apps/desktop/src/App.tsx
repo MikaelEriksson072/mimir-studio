@@ -13,7 +13,7 @@ import {
   addReloc, loadAddress, loadRange, moveReloc, relocAt, relocLoadedAt, removeReloc, type Reloc,
   addJunk, junkPlan, removeJunk, type JunkArea,
   removeViewOffset, setViewOffset, shiftText, shownAddress, shownTarget, viewOffsetAt, type ViewOffset,
-  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type UserScript,
+  checkScript, loadScripts, runChangeText, withRunChanges, scriptFits, runResults, setScriptParams, planScriptActions, endedWell, scriptStopAt, type Roms, type ScriptCheck, type ScriptEnv, callScript, cryptScript, cryptStepsText, cryptWhereText, findCryptLoops, type CryptLoop, lineComment, filePad, fileRunPlan, fileRunResults, type ScriptFileResult, asmOfLang, langOf, templateSource, LANG_TITLE, patchLang, OPC, type ScriptTemplate, linkName, type MusicField, musicNames, newId, newScript, padName, scriptPlace, scriptEndText, scriptEnv, scriptName, scriptPatches, withoutScriptPatches, writeScriptRun, type ScriptRun, type ScriptLoaderData, type UserScript,
   BLOCK_PAD_FORM, blockPad, padText, scriptNames, type BlockPad, type ScriptPad,
   bankFiles, bootBank, builtCartridge, cartBuild, cartridgeFiles, chipAddress, crtBanks, loadedRanges, compareCrt, describeCrt, expectedCartridge, fileOffsetBases, isCrt, openCartridge, parseCrt, SPACE, spaceAddr, spaceOf, spaceRender, spaceView, type Crt,
   type Addr, type AnalysisResult, type Block, type SpriteColors, type DriveCode, type Bookmark, type BuildScript, type ByteMove, type D64File, type PirateSlayerDisk, type PirateSlayerFile, type ParaProtectDisk, type ParaProtectFile, type DiskSpeedDisk, type DiskSpeedFile, type NumberFormat, type Override, type PackingInfo, type PackPrefs, type KickProblem, type ListingLine, type LoadedFile, type FileInput, type Patch, type PatchPlan, type Project, type RenderResult,
@@ -2644,15 +2644,17 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
   /** how a script's run is to go beyond its code: the address it stops at (UserScript.stopAt, read with the names the
    *  code has), and for one that runs in the whole C64 the ROMs and the mounted disk. null: it cannot run, and why was
    *  said */
-  const scriptRunOpts = async (s: UserScript, env: ScriptEnv, pads: readonly ScriptPad[], c: ScriptCheck): Promise<ScriptRunOpts | null> => {
+  const scriptRunOpts = async (s: UserScript, env: ScriptEnv, pads: readonly ScriptPad[], c: ScriptCheck, source = s.source): Promise<ScriptRunOpts | null> => {
     const stop = scriptStopAt(s.stopAt, scriptNames(env, pads), c);
     // the C64 screen it prints on: 40×25, or what the screen's extended mode has room for (Scripts → C64 screen)
     const screen = runScreenSize();
     // JavaScript runs in its own way: no stop address, no C64 of the run's; it gets the mounted disk, and the ROMs when
     // its code uses Sindri (without them sindri.unpack runs on the stand-ins, and sindri.c64 says what it needs)
     if (s.code === 'js') {
-      if (/\bsindri\b/.test(s.source)) scriptRoms.current ??= await (kr?.c64Roms() ?? Promise.resolve(null)).catch(() => null);
-      return { disk: disk?.bytes ?? null, roms: /\bsindri\b/.test(s.source) ? scriptRoms.current : null, screen };
+      // (the code that runs, which may be newer than the script's saved one)
+      if (/\bsindri\b/.test(source)) scriptRoms.current ??= await (kr?.c64Roms() ?? Promise.resolve(null)).catch(() => null);
+      // the loader's files are read (and unpacked) only for a script whose code names the loader
+      return { disk: disk?.bytes ?? null, roms: /\bsindri\b/.test(source) ? scriptRoms.current : null, ...(/\bloaders?\b/.test(source) ? { loaders: scriptLoaders() } : {}), screen };
     }
     if (stop != null && typeof stop === 'object') { toast(`"${s.name}": its Stop at is no address: ${stop.error} (Scripts → Init)`, 'warn'); return null; }
     if (s.machine !== 'c64') return { stopAt: stop, screen };
@@ -2671,7 +2673,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const source = text ?? s.source, env = scriptEnvFor(id);
     const c = checkScript(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init });
     if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); toast(`"${s.name}" does not check out${e?.line ? ` (line ${e.line})` : ''}: ${e?.msg}`, 'warn'); return; }
-    const opts = await scriptRunOpts(s, env, s.pads, c);
+    const opts = await scriptRunOpts(s, env, s.pads, c, source);
     if (!opts) return;
     useScripts.getState().set({ running: id });
     try {
@@ -2781,6 +2783,35 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (tape) tape.img.files.forEach((f, i) => { if (f.load != null && f.data.length) add(`${tape.name}: the tape`, `tape/${i}`, f.name || tapeFileName(f), f.load, f.data); });
     return out;
   };
+  /** the loaders of the mounted disk and the tape for a JavaScript script's `loader` (core script-loader.ts): what each
+   *  loader tab lists, group by group as Export files to project takes them, with the script the tab writes */
+  const scriptLoaders = (): ScriptLoaderData[] => {
+    const out: ScriptLoaderData[] = [];
+    const lines = (make: () => string[] | null | undefined): string[] => { try { return make() ?? []; } catch { return []; } };
+    const take = (name: string, from: string, ask: () => void, script: () => string[] | null | undefined) => {
+      const groups: LoaderGroup[] = groupsOnly.current = [];
+      try { ask(); } catch { /* not such a disk */ } finally { groupsOnly.current = null; }
+      const made: ScriptLoaderData['groups'] = [];
+      for (const g of groups) try { made.push({ name: g.name, what: g.what, files: g.files().map(f => ({ name: f.name, load: f.load, bytes: f.bytes })) }); } catch { /* a group that does not open is not there */ }
+      if (made.length) out.push({ name, from, script: lines(script), groups: made });
+    };
+    if (disk) {
+      const n = disk.name;
+      if (disk.spindle) take('Spindle', n, exportSpindleFiles, () => spinScript(disk.spindle!, n));
+      if (disk.bitfire) take('Bitfire', n, exportBitfireFiles, () => d64writeScript(disk.bitfire!, n));
+      if (disk.booze) take('BoozeLoader', n, exportBoozeFiles, () => boozeFileList(disk.booze!, n));
+      if (disk.sparkle) take('Sparkle', n, exportSparkleFiles, () => sparkleScript(disk.sparkle!, n));
+      if (disk.iffl) take('IFFL', n, exportIfflParts, () => []);
+      if (disk.krill) take('Krill\'s loader', n, exportKrillFiles, () => cc1541Script(disk.krill!, n));
+      if (disk.covert) take('Covert Bitops loader', n, exportCovertFiles, () => covertScriptText(covertScript(disk.covert!, n)));
+      if (disk.dloc) take('DLoC\'s loader', n, exportDlocFiles, () => dlocScriptText(dlocScript(disk.dloc!, n)));
+      if (disk.pirateslayer) take('Pirate Slayer', n, exportPirateSlayerFiles, () => pirateSlayerFileList(disk.pirateslayer!, n));
+      if (disk.paraprotect) take('Para-Protect', n, exportParaProtectFiles, () => paraProtectFileList(disk.paraprotect!, n));
+      if (disk.diskspeed) take('Disk-Speed', n, exportDiskSpeedFiles, () => diskSpeedFileList(disk.diskspeed!, n));
+    }
+    if (tape) take('Tape', tape.name, exportTapeFiles, () => tapeToolScript(tape.img, tape.name)?.script);
+    return out;
+  };
   /** Run on files…: the script, the files it can be given and the ones ticked first; and where a run is */
   const [filesRun, setFilesRun] = useState<{ id: string; files: ScriptFileChoice[]; first: string[] } | null>(null);
   const [filesBusy, setFilesBusy] = useState<FilesRunBusy | null>(null);
@@ -2885,7 +2916,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
         const c = checkScript(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init });
         if (!c.ok) { const e = c.problems.find(p => p.level === 'error'); failed.push({ name: row, why: `${e?.line ? `line ${e.line}: ` : ''}${e?.msg}` }); continue; }
         try {
-          const opts = await scriptRunOpts(s, env, s.pads, c);
+          const opts = await scriptRunOpts(s, env, s.pads, c, source);
           if (!opts) { failed.push({ name: row, why: 'it could not start' }); break; }
           const run = await runScriptInWorker(env, { source, lang: s.lang, code: s.code, pads: s.pads, init: s.init }, opts);
           if (!endedWell(run.end)) { failed.push({ name: row, why: scriptEndText(run) }); continue; }

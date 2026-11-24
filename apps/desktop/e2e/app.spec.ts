@@ -10861,7 +10861,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11196,5 +11196,58 @@ test('a JavaScript script has Brokkr: the template packs the program, checks it 
     await page.keyboard.press('Delete');
     await page.keyboard.type('brokkr.');
     await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['pack', 'crunch', 'decrunch', 'mem', 'decruncher', 'formats']);
+  });
+});
+
+test('a JavaScript script has the loader of the mounted disk: its groups and files listed, a file found, loaded into memory and made a file, its script', async ({ app, page }) => {
+  await waitForListing(page);
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const made = page.getByRole('list', { name: 'Files the run made' });
+  const runIt = () => page.locator('button.scr-run').click();
+
+  await test.step('with no disk the template says there is no loader', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template List the loader\'s files to the project' }).click();
+    await expect(page.getByRole('option', { name: 'loader_files' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(page.locator('.scr-end')).toContainText('The mounted disk or tape has no loader Mimir knows');
+  });
+
+  await test.step('on a Sparkle disk it lists the bundles and their files as the Sparkle script tab does', async () => {
+    await stubDialogs(app, { open: [join(repoDir, 'fixtures/d64/sparkle-demo.d64')] });
+    await fromFileMenu(page, 'Mount disk image (D64, G64)…');
+    await expect(toast(page, /^Mounted sparkle-demo\.d64: /)).toBeVisible();
+    await page.getByRole('tab', { name: 'Scripts', exact: true }).click();
+    await runIt();
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end');
+    const text = (await printed.innerText()).split('\n');
+    expect(text[0]).toBe('Sparkle on sparkle-demo.d64: 3 groups, 4 files');
+    expect(text.filter(l => !l.startsWith('  ')).slice(1)).toEqual(['bundle00  (bundle $00 of sparkle-demo.d64)', 'bundle01  (bundle $01 of sparkle-demo.d64)', 'bundle02  (bundle $02 of sparkle-demo.d64)']);
+    expect(text.filter(l => l.startsWith('  ')).map(l => l.trim().split(/\s+/).slice(0, 2).join(' '))).toEqual(['bundle00_0801.prg $0801-$37ff', 'bundle01_3000.prg $3000-$34af', 'bundle01_d000.prg $d000-$d1f3', 'bundle02_0400.prg $0400-$0427']);
+  });
+
+  await test.step('a script of one\'s own finds a file, loads it into memory, makes a file of it and reads the loader script; loader. lists what it has', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('loader.');
+    await expect(page.locator('.suggest-widget.visible .monaco-list-row .label-name')).toHaveText(['name', 'disk', 'files', 'groups', 'find', 'group', 'load', 'at', 'script', 'lines']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'const f = loader.find("bundle02_0400");',
+      'const r = loader.load(f);',
+      'print(f.name, f.group, hex(r.start), hex(r.end), mem[0x0400] === f.bytes[0], loader.at(0xd000)[0].name);',
+      'print(loader.lines[0]);',
+      'save(f.name, f.bytes, f.start);',
+    ].join('\n') + '\n');
+    await runIt();
+    await expect(page.locator('.scr-end')).toContainText('Ran to its end');
+    await expect(printed).toHaveText('bundle02_0400.prg bundle02 $0400 $0428 true bundle01_d000.prg\n# Sparkle loader script, rebuilt by Mimir Studio from sparkle-demo.d64 (Sparkle): 3 bundles, 4 files.');
+    await expect(made.getByRole('listitem')).toHaveText([/^bundle02_0400\.prg40 bytes, loads at \$0400To the project…Save…$/]);
   });
 });

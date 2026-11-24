@@ -9,7 +9,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 
 /** the kinds of value a script works with */
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
-  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area';
+  | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles';
 
 const m = (label: string, detail: string, call = false): JsMember => ({ label, insert: call ? `${label}(` : label, detail });
 
@@ -57,6 +57,26 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST,
+  loader: [
+    m('name', 'which loader: "Spindle", "Sparkle", "Krill\'s loader", "Tape", …'), m('disk', 'the name of the disk image or tape it is on'),
+    m('files', 'every file the loader loads, in the order they load: a list of { name, group, index, start, end, size, bytes, prg }'),
+    m('groups', 'what one call of the loader loads together (a job, a bundle, a part; else a file each): a list of { name, what, files, start, end, size }'),
+    m('find', 'find("name" or number): a file by its name (with or without its extension) or its number; null when there is none', true),
+    m('group', 'group("name" or number): a group by its name or its number; null when there is none', true),
+    m('load', 'load(file or group, at): its bytes copied into mem where it loads (a file elsewhere with at); gives { start, end }', true),
+    m('at', 'at(address): the files that cover an address when they are loaded', true),
+    m('script', 'the loader script as the tab writes it, one text'), m('lines', 'the loader script, a line each'),
+  ],
+  loaderGroup: [
+    m('name', 'the group\'s name: "job03", "bundle01", a file\'s name'), m('what', 'what it is, in words'), m('files', 'its files: a list of { name, start, end, size, bytes, prg }'),
+    m('start', 'the lowest address its files load at'), m('end', 'the address after the highest byte they load'), m('size', 'its files\' bytes together'),
+  ],
+  loaderFile: [
+    m('name', 'the file\'s name, as the loader tab names it'), m('group', 'the name of the group it is in'), m('index', 'its number in loader.files'),
+    m('start', 'where it loads'), m('end', 'the address after its last byte'), m('size', 'how many bytes'),
+    m('bytes', 'its bytes, without a load address (unpacked where the tab unpacks it)'), m('prg', 'it as a PRG, its load address first'),
+  ],
+  loaders: LIST, loaderGroups: LIST, loaderFiles: LIST,
   brokkr: [
     m('pack', 'pack(prg, { format, start, effect, effort, port, irq }): a PRG (the program\'s first file when none is given) as a file that unpacks itself; gives { prg, bytes, load, end, size, from, saved, format, entry, … }', true),
     m('crunch', 'crunch(bytes, { format, backward, effort }): a bare stream of the bytes; gives { bytes, size, from, saved, format }', true),
@@ -137,7 +157,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -198,6 +218,8 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'files') return 'files';
   if (e === 'sindri') return 'sindri';
   if (e === 'brokkr') return 'brokkr';
+  if (e === 'loader') return 'loader';
+  if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
     const n = esc(e);
@@ -223,6 +245,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (!callee || callee[1][0] !== '.') return null;
     const on = jsTypeOf(callee[0], source, depth + 1), name = callee[1].slice(1);
     if (on === 'cpu' && name === 'call') return 'regs';
+    if (on === 'loader') return name === 'find' ? 'loaderFile' : name === 'group' ? 'loaderGroup' : name === 'load' ? 'file' : name === 'at' ? 'loaderFiles' : null;
     if (on === 'brokkr') return name === 'pack' ? 'packed' : name === 'crunch' ? 'crunched' : name === 'mem' ? 'memFile' : name === 'decrunch' ? 'bytes' : name === 'decruncher' ? 'text' : null;
     if (on === 'sindri') return name === 'unpack' ? 'unpacked' : name === 'c64' ? 'machine' : name === 'prg' ? 'bytes' : name === 'disassemble' || name === 'basic' ? 'texts' : null;
     if (on === 'machine') return name === 'call' ? 'regs' : name === 'run' ? 'ran' : name === 'screen' ? 'texts' : null;
@@ -245,6 +268,9 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'diskFile') return name === 'name' || name === 'type' ? 'text' : null;
   if (on === 'sindri') return name === 'roms' ? 'text' : null;
   if (on === 'brokkr') return name === 'formats' ? 'texts' : null;
+  if (on === 'loader') return name === 'files' ? 'loaderFiles' : name === 'groups' ? 'loaderGroups' : name === 'lines' ? 'texts' : name === 'name' || name === 'disk' || name === 'script' ? 'text' : null;
+  if (on === 'loaderGroup') return name === 'files' ? 'loaderFiles' : name === 'name' || name === 'what' ? 'text' : null;
+  if (on === 'loaderFile') return name === 'bytes' || name === 'prg' ? 'bytes' : name === 'name' || name === 'group' ? 'text' : null;
   if (on === 'packed') return name === 'prg' || name === 'bytes' ? 'bytes' : name === 'areas' ? 'areas' : name === 'warnings' ? 'texts' : name === 'format' ? 'text' : null;
   if (on === 'crunched') return name === 'bytes' ? 'bytes' : name === 'format' ? 'text' : null;
   if (on === 'memFile') return name === 'bytes' ? 'bytes' : name === 'inPlace' ? 'file' : name === 'warnings' ? 'texts' : name === 'format' ? 'text' : null;

@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-loader.ts         loadern för ett JavaScript-skript: `loader` (loaderflikens filer, grupper, skript) (10.3)
 │  ├─ src/script-brokkr.ts         Brokkr för ett JavaScript-skript: `brokkr` (packa, kruncha, avkruncha) (10.3)
 │  ├─ src/script-sindri.ts         Sindri för ett JavaScript-skript: `sindri` (uppackaren, en hel C64, disassemblering) (10.3)
 │  ├─ src/script-templates-js.ts   skriptmallarna i JavaScript: exempel på vad språket är bra på (10.3)
@@ -2888,6 +2889,26 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Loadern i ett JavaScript-skript** (`script-loader.ts`, `loaderApi`, 2026-11-24): ett skript får `loader`, det
+  loaderfliken för den monterade disken eller bandet visar (Spindle, Bitfire, BoozeLoader, Sparkle, IFFL, Krills,
+  Covert Bitops, DLoC:s, Pirate Slayer, Para-Protect, Disk-Speed, band), eller `null` när Mimir inte känner någon;
+  `loaders` är alla (diskens, sedan bandets), en tom lista utan.
+  - `loader.name` (vilken loader), `loader.disk` (avbildningens namn), `loader.script` och `loader.lines` (skriptet
+    fliken skriver: verktygets eget skript som bygger disken igen, eller fillistan; tomt där loadern inte har något).
+  - `loader.groups`: det ett anrop av loadern laddar tillsammans (ett Spindle-jobb, en Sparkle-bundle, en IFFL-del;
+    annars en fil var): `[{ name, what, files, start, end, size }]`. `loader.files`: alla filer i laddordning,
+    `[{ name, group, index, start, end, size, bytes, prg }]`, uppackade där fliken packar upp dem; `bytes` utan
+    laddadress, `prg` med.
+  - `loader.find(namn eller nummer)` ger en fil (namnet med eller utan ändelse, skiftläget kvittar) eller `null`;
+    `loader.group(namn eller nummer)` en grupp; `loader.at(adress)` filerna som täcker en adress när de är laddade.
+  - `loader.load(fil eller grupp, at)` kopierar byten in i `mem` där de laddas (en fil kan läggas på `at`) och ger
+    `{ start, end }`. Det som hamnar över programmets byte är körningens ändring, som allt annat skriptet skriver
+    i `mem`; resten är skriptets arbetsminne (läs det, kör kod i det med `cpu.call`, spara det med `save`).
+  - Appen läser filerna (`scriptLoaders` i `App.tsx`) med samma grupper som *Export files to project* tar
+    (`groupsOnly`), och bara för ett skript vars kod nämner `loader`; de skickas med körningen
+    (`ScriptRunOpts.loaders`, `JsExtras.loaders`, `ScriptLoaderData`). Editorn föreslår medlemmarna efter `loader.`,
+    en grupp och en fil. Mallen *List the loader's files* (`loader_files`) skriver grupperna och filerna med adress
+    och storlek, gör en fil eller alla (`saveFile`, `"*"`) till filer och kan skriva loaderskriptet (`showScript`).
 - **Brokkr i ett JavaScript-skript** (`script-brokkr.ts`, `brokkrApi`, 2026-11-23): ett skript får `brokkr`, det
   Brokkr kan, med Brokkrs egen kod (samma som *Pack with Brokkr* och kommandoraden kör).
   - `brokkr.pack(prg, { format, start, effect, effort, port, irq, maxSeconds })` gör en PRG (programmets första fil

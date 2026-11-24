@@ -112,6 +112,7 @@ export { MARK_NAMES, planScriptActions, scriptActions, scriptDirectives, type Ac
 export { JS_CALL_LIMIT, JS_RUN_LIMIT, runJs, type JsExtras } from './script-js';
 export { SINDRI_BUDGET, SINDRI_RUN_CYCLES, sindriApi, type SindriContext } from './script-sindri';
 export { BROKKR_FORMATS, brokkrApi, type BrokkrContext } from './script-brokkr';
+export { loaderApi, type ScriptLoaderData } from './script-loader';
 export { C64_COLOR_NAMES, c64Color, SCREEN_C64, SCREEN_MAX, SCREEN_ROUTINES, screenApi, screenRoutine, screenSize, screenTraps, textPetscii, TextScreen, vicMatrix, c64TextScreen, type ScreenContext, type ScreenSize, type ScriptScreen } from './script-screen';
 export { paramValueOk, parseParamTable, runResults, scriptParams, setScriptParams, startParamTable, type ParamTable, type ScriptParam } from './script-params';
 export { isScriptFileName, readScriptFile, SCRIPT_FILE_MAX, SCRIPT_FOLDER, scriptFileName, scriptFileText, scriptFits, type StoredScript } from './script-file';

@@ -20,6 +20,8 @@
  *   mark(start, end, "type"), name(a, "name"), note(a, "text"), junk(start, end)
  *                            what script-actions.ts's directives do, done when the run ends
  *   files                    the program's files in memory: [{ start, end }], end the address after the last byte
+ *   loader, loaders          the loader of the mounted disk or tape, as its loader tab shows it (script-loader.ts): or null;
+ *                            loader.files, loader.groups, loader.script, loader.find(name), loader.load(name)
  *   brokkr                   Brokkr, Mimir's cruncher (script-brokkr.ts): brokkr.pack(prg) for a file that unpacks itself,
  *                            brokkr.crunch(bytes) and brokkr.decrunch(stream), brokkr.mem(bytes, start), brokkr.decruncher()
  *   sindri                   Sindri, Mimir's C64 and unpacker (script-sindri.ts): sindri.unpack(prg), sindri.c64() for a
@@ -40,6 +42,7 @@
 import { Cpu, type Bus, type Roms } from '@mimir/sindri';
 import { SINDRI_BUDGET, sindriApi, sindriMachine } from './script-sindri';
 import { brokkrApi } from './script-brokkr';
+import { loaderApi, type ScriptLoaderData } from './script-loader';
 import { SCREEN_C64, screenApi, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
 import type { Addr, UserScript } from './types';
 import { diskSectors, parseD64, readD64File, sectorOffset, type D64File } from './c64/d64';
@@ -51,6 +54,8 @@ import { h2, h4 } from './util/hex';
 export interface JsExtras { disk?: Uint8Array | null;
   /** the C64's ROMs, for sindri.unpack (the stand-ins run without them) and sindri.c64 (which needs them) */
   roms?: Roms | null;
+  /** the loaders of the mounted disk and tape, with their files (the app reads them: script-loader.ts) */
+  loaders?: readonly ScriptLoaderData[] | null;
   /** the size of the script's C64 screen (40×25 when not said) */
   screen?: Partial<ScreenSize> | null }
 
@@ -192,6 +197,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
     const files = env.files.map(f => ({ start: f.load, end: Math.min(0x10000, f.load + f.bytes.length) })).filter(f => f.end > f.start);
     const sindri = sindriApi({ mem, addr, files, roms: extras.roms ?? null, disk: extras.disk ?? null, budget: { left: SINDRI_BUDGET } });
     const brokkr = brokkrApi({ mem, addr, files });
+    const { loader, loaders } = loaderApi(extras.loaders ?? [], { mem, addr });
     const save = (name: unknown, bytes: unknown, load?: unknown) => {
       if (!(bytes instanceof Uint8Array) && !Array.isArray(bytes)) throw new TypeError('save: bytes are wanted (a Uint8Array, such as mem.subarray(…) or what sindri.unpack gave)');
       const n = String(name ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'file';
@@ -199,7 +205,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, save, screen };
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval

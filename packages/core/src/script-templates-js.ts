@@ -389,5 +389,35 @@ const brokkrPack = js('brokkr_pack', 'Pack with Brokkr', 'The program\'s file pa
   '}',
   'if (saveAs) save(saveAs, packed.bytes, packed.load);',
 ]);
+const loaderFiles = js('loader_files', 'List the loader\'s files', 'The files the loader of the mounted disk or tape loads, as its loader tab lists them: each with its group, where it loads and its size; one or all of them made files.', [], [
+  ...box('List the loader\'s files', [
+  'Lists what the loader of the mounted disk or tape loads (a Spindle or',
+  'Sparkle disk, Bitfire, BoozeLoader, Krill\'s loader, IFFL, a tape …), as the',
+  'loader\'s tab lists it: group by group (what one call of the loader loads),',
+  'each file with where it loads and its size, unpacked where the tab unpacks',
+  'it. One file, or every file, can be made a file (Last run: To the project…,',
+  'Save…), and the loader script printed. Nothing of the program is changed.',
+  ]),
+  '',
+  part('settings: change these'),
+  'const saveFile = "";         // a file to make a file of, by its name; "*" for every file, "" for none',
+  'const showScript = false;    // print the loader script too (what Copy script copies): true or false',
+  '',
+  part('the list'),
+  'if (!loader) throw new Error("The mounted disk or tape has no loader Mimir knows (or none is mounted): File, Mount disk image");',
+  'print(loader.name + " on " + loader.disk + ": " + loader.groups.length + " group" + (loader.groups.length === 1 ? "" : "s") + ", " + loader.files.length + " file" + (loader.files.length === 1 ? "" : "s"));',
+  'for (const group of loader.groups) {',
+  '  print(group.name + "  (" + group.what + ")");',
+  '  for (const file of group.files) print("  " + file.name.padEnd(24) + hex(file.start) + "-" + hex(file.end - 1) + String(file.size).padStart(7) + " bytes");',
+  '}',
+  'if (showScript) loader.lines.forEach(line => print(line));',
+  'if (saveFile === "*") {',
+  '  loader.files.forEach(file => save(file.name, file.bytes, file.start));',
+  '} else if (saveFile) {',
+  '  const file = loader.find(saveFile);',
+  '  if (!file) throw new Error("The loader has no file " + saveFile);',
+  '  save(file.name, file.bytes, file.start);',
+  '}',
+]);
 /** The JavaScript templates, in the order the Scripts tab lists them. */
-export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, brokkrPack, screenShow, hexDump];
+export const JS_TEMPLATES: readonly ScriptTemplate[] = [xor, findText, findBytes, jumpTable, rle, diskFiles, callMany, sindriUnpack, sindriRun, brokkrPack, loaderFiles, screenShow, hexDump];

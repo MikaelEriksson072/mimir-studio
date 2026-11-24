@@ -144,3 +144,21 @@ describe('what Brokkr\'s values have', () => {
     expect(jsTypeOf('brokkr.decruncher()', src)).toBe('text');
   });
 });
+
+describe('what the loader\'s values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('loader., one of its groups and one of its files', () => {
+    expect(names('loader')).toEqual(['name', 'disk', 'files', 'groups', 'find', 'group', 'load', 'at', 'script', 'lines']);
+    const src = 'const f = loader.find("a");\nfor (const g of loader.groups) {\n  for (const x of g.files) {\n  }\n}\nloader.files.forEach(file => 0);\nconst other = loaders[1];\n';
+    expect(names('f', src)).toEqual(['name', 'group', 'index', 'start', 'end', 'size', 'bytes', 'prg']);
+    expect(names('g', src)).toEqual(['name', 'what', 'files', 'start', 'end', 'size']);
+    expect(names('x', src)).toContain('prg');
+    expect(names('file', src)).toContain('bytes');
+    expect(names('other', src)).toContain('groups');
+    expect(names('loader.load("a")', src)).toEqual(['start', 'end']);
+    expect(jsTypeOf('f.bytes', src)).toBe('bytes');
+    expect(jsTypeOf('loader.script', src)).toBe('text');
+    expect(jsTypeOf('loader.lines[0]', src)).toBe('text');
+    expect(jsTypeOf('loader.at(0x0810)[0]', src)).toBe('loaderFile');
+  });
+});
