@@ -37,6 +37,9 @@
  *   blocks                   the program's blocks (script-blocks.ts): blocks.all, blocks.at(a), blocks.mark(start, end,
  *                            type, opts), blocks.struct(name, fields) for records of fields, blocks.define(name, what)
  *                            for a custom type, a block's bytes, records, format(), setLabel(), setComment(), split()
+ *   snapshot                 the VICE snapshot the project was opened from (script-snapshot.ts), or null: snapshot.cpu,
+ *                            port, ram, cia1, cia2, sid, vic and drive as they were saved, read and set, and
+ *                            snapshot.write() to have the project keep it as changed
  *   save(name, bytes, load)  a file the run made, listed under Last run (To the project…, Save…); load: where it
  *                            loads, left out for a file without a load address
  *   disk                     the mounted disk, or null: { name, id, tracks, files: [{ name, type, blocks, track,
@@ -60,6 +63,7 @@ import { loaderApi, type ScriptLoaderData } from './script-loader';
 import { exportApi, type ScriptExportData, type ScriptExportRequest } from './script-export';
 import { buildApi, type ScriptBuildData, type ScriptBuildRequest } from './script-build';
 import { blocksApi, type ScriptBlocksData } from './script-blocks';
+import { snapshotApi, type ScriptSnapshotData, type ScriptSnapshotRequest } from './script-snapshot';
 import { libraryApi, type ScriptLibraryData, type ScriptLibraryRequest } from './script-library';
 import { sidApi, type ScriptSidData, type ScriptSidRequest } from './script-sid';
 import { SCREEN_C64, screenApi, screenMemory, screenRanges, screenRoutine, screenTraps, TextScreen, type ScreenSize } from './script-screen';
@@ -85,6 +89,8 @@ export interface JsExtras { disk?: Uint8Array | null;
   library?: ScriptLibraryData | null;
   /** the program's blocks as they are now, for `blocks` (null: the run has none to read; it can still mark) */
   blocks?: ScriptBlocksData | null;
+  /** the snapshot the project was opened from, for `snapshot` (null: there is none, or the run is not given it) */
+  snapshot?: ScriptSnapshotData | null;
   /** the size of the script's C64 screen (40×25 when not said) */
   screen?: Partial<ScreenSize> | null }
 
@@ -136,6 +142,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   const builds: ScriptBuildRequest[] = [];
   const sidPlays: ScriptSidRequest[] = [];
   const libraryAdds: ScriptLibraryRequest[] = [];
+  let snapshotAsked: ScriptSnapshotRequest | undefined;
   let instructions = 0, cycles = 0;
   let regs = { a: 0, x: 0, y: 0, s: 0xff, p: SCRIPT_P, pc: 0 };
 
@@ -237,6 +244,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
     const sid = sidApi(extras.sid ?? null, { mem, addr, files }, r => { sidPlays.push(r); });
     const library = libraryApi(extras.library ?? null, { mem, addr }, r => { libraryAdds.push(r); });
     const blocks = blocksApi(extras.blocks ?? null, { mem, addr }, a => { actions.push(a); });
+    const snapshot = snapshotApi(extras.snapshot ?? null, { addr }, r => { snapshotAsked = r; });
     const save = (name: unknown, bytes: unknown, load?: unknown) => {
       if (!(bytes instanceof Uint8Array) && !Array.isArray(bytes)) throw new TypeError('save: bytes are wanted (a Uint8Array, such as mem.subarray(…) or what sindri.unpack gave)');
       const n = String(name ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^[.\-\s]+/, '').slice(0, 100) || 'file';
@@ -244,7 +252,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
       made.push({ name: n, load: load == null ? null : addr(load), bytes: Uint8Array.from(bytes as ArrayLike<number>).slice(0, 0x10000) });
     };
     const screen = screenApi(scr, { mem, addr, show, machine: sindriMachine });
-    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, save, screen };
+    const given = { mem, addr, pad, cpu, print, hex, word, setWord, ...api, files, disk, sindri, brokkr, loader, loaders, exporter, build, sid, library, blocks, snapshot, save, screen };
     // the code in a block of its own: a name it declares (const screen = …) is its own, in place of the one it is given,
     // as it was before the name was given (the block's brace is on the first line: the lines keep their numbers)
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -268,7 +276,7 @@ export function runJs(env: ScriptEnv, script: Pick<UserScript, 'source' | 'pads'
   for (let a = 0; a < 0x10000; a++) if (own[a]) changed[a] = 0;
   return {
     js: true, end: error ? 'error' : 'rts', at: regs.pc, instructions, cycles, regs, pads: padRuns, changes, other, mem, own: mem, wrote: maskRanges(changed, 0x200), ms: Date.now() - t0,
-    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}),
+    ...(error ? { error } : {}), ...(prints.length ? { prints } : {}), ...(actions.length ? { actions } : {}), ...(made.length ? { made } : {}), ...(exports && !error ? { exports } : {}), ...(builds.length && !error ? { builds } : {}), ...(sidPlays.length && !error ? { plays: sidPlays } : {}), ...(libraryAdds.length && !error ? { library: libraryAdds } : {}), ...(snapshotAsked && !error ? { snapshot: snapshotAsked } : {}),
     ...(scr.wrote ? { screen: scr.state() } : {}),
   };
 }

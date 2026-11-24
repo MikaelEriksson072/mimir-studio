@@ -11,6 +11,7 @@ export interface JsMember { label: string; insert: string; detail: string }
 export type JsType = 'disk' | 'diskFile' | 'cpu' | 'regs' | 'file' | 'bytes' | 'text' | 'diskFiles' | 'files' | 'list'
   | 'sindri' | 'machine' | 'unpacked' | 'layers' | 'layer' | 'ranges' | 'ran' | 'texts' | 'screen' | 'brokkr' | 'packed' | 'crunched' | 'memFile' | 'areas' | 'area' | 'loader' | 'loaders' | 'loaderGroup' | 'loaderGroups' | 'loaderFile' | 'loaderFiles' | 'exporter' | 'exportFile' | 'exportFiles' | 'exportChanges' | 'build' | 'lastBuild' | 'builtFile' | 'builtFiles'
   | 'library' | 'libItem' | 'libItems' | 'libFrom' | 'libColors'
+  | 'snapshot' | 'snapCpu' | 'snapPort' | 'snapCia' | 'snapSid' | 'snapVic' | 'snapSprite' | 'snapSprites' | 'snapDrive' | 'snapVia' | 'snapModule' | 'snapModules'
   | 'blocks' | 'block' | 'blockList' | 'struct' | 'structFields' | 'structField' | 'customType' | 'customTypes'
   | 'sid' | 'tune' | 'tunes' | 'tunePlays' | 'sidFile' | 'sidRun' | 'sidPlayer' | 'dump' | 'voices' | 'voice' | 'sidNote';
 
@@ -60,7 +61,45 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
     m('charCodeAt', 'charCodeAt(i): the code of its character i', true), m('split', 'split(" "): a list of its parts', true),
   ],
   diskFiles: LIST, files: LIST, list: LIST, layers: LIST, ranges: LIST, texts: LIST, tunes: LIST, dump: LIST,
-  libItems: LIST, blockList: LIST, structFields: LIST, customTypes: LIST,
+  libItems: LIST, blockList: LIST, structFields: LIST, customTypes: LIST, snapSprites: LIST, snapModules: LIST,
+  snapshot: [
+    m('name', 'the snapshot\'s file'), m('machine', 'the machine VICE ran: "C64SC" (x64sc) or "C64"'), m('vice', 'the VICE version that wrote it'), m('format', 'the snapshot format, "2.0"'), m('size', 'how many bytes the .vsf is'),
+    m('cpu', 'the 6510 as it was: { pc, a, x, y, sp, status, flags }, read and set'), m('port', 'the 6510 port: { data ($01), dir ($00), config }'),
+    m('ram', 'all 64 KB of RAM as saved: the zero page, the stack and the RAM under ROM and I/O too'),
+    m('cia1', 'CIA 1: { pra, prb, ddra, ddrb, timerA, timerB, latchA, latchB, tod, sdr, mask, cra, crb, flags }'), m('cia2', 'CIA 2 (its port A has the VIC bank): as cia1'),
+    m('sid', 'the SID: { regs ($d400-$d418 as last written), volume }'), m('vic', 'the VIC-II: its registers, colour RAM and raster, and what they come to (mode, screenAt, sprites, …)'),
+    m('drive', 'drive 8 as it was: { type, model, halfTrack, track, cpu, ram, via1, via2, motor, led }, or null'),
+    m('modules', 'the modules the snapshot is made of: a list of { name, version, size, offset }'), m('module', 'module("MAINCPU"): a module\'s bytes, to read and to write', true), m('has', 'has("REU"): whether it has a module', true),
+    m('changes', 'what the script has changed so far, a text a module'), m('changed', 'true when it has changed something'),
+    m('file', 'file(): the snapshot as the script has it now, the bytes of a .vsf', true), m('reset', 'reset(): the script\'s changes taken back', true),
+    m('write', 'write(): the project keeps the snapshot as the script has it now, when the run has ended well; Build & Run restarts that one', true),
+  ],
+  snapCpu: [m('pc', 'where it was (set: an address or a name)'), m('a', 'the accumulator'), m('x', 'the X register'), m('y', 'the Y register'), m('sp', 'the stack pointer'), m('status', 'the status register'), m('flags', 'the status as a text: "N.-..I.C"')],
+  snapPort: [m('data', '$01: the port\'s data'), m('dir', '$00: its direction'), m('config', 'the memory configuration it gives, 0-7 (7: BASIC, KERNAL and I/O)')],
+  snapCia: [
+    m('pra', 'port A'), m('prb', 'port B'), m('ddra', 'port A\'s direction'), m('ddrb', 'port B\'s direction'), m('timerA', 'timer A as it counts now'), m('timerB', 'timer B as it counts now'),
+    m('latchA', 'timer A\'s latch'), m('latchB', 'timer B\'s latch'), m('tod', 'the time of day: tenths, seconds, minutes, hours (4 bytes)'), m('sdr', 'the serial register'),
+    m('mask', 'the interrupts that are on'), m('cra', 'control register A'), m('crb', 'control register B'), m('flags', 'the interrupts that are waiting'),
+  ],
+  snapSid: [m('regs', 'the registers $d400-$d418 as last written: 25 bytes'), m('volume', 'the volume, 0-15')],
+  snapVic: [
+    m('regs', 'the registers $d000-$d03f as last written: 64 bytes, read and set'), m('colorRam', 'the colour RAM ($d800-$dbff): 1024 bytes, read and set'),
+    m('border', 'the border colour, 0-15'), m('background', 'the background colour, 0-15'), m('displayOn', 'true when the screen is on ($d011 bit 4)'),
+    m('mode', 'the mode: "text", "mc-text", "ecm-text", "bitmap", "mc-bitmap" or "invalid"'), m('bank', 'the VIC bank, 0-3 (from CIA 2)'),
+    m('screenAt', 'where the screen is in memory'), m('charsetAt', 'where the character set is'), m('bitmapAt', 'where the bitmap is'), m('charRom', 'true when the characters come from the ROM'),
+    m('rows', '24 or 25'), m('cols', '38 or 40'), m('sprites', 'the 8 sprites: a list of { n, on, x, y, color, mc, wide, tall, behind, pointer, dataAt }'),
+    m('line', 'the raster line the VIC was at'), m('cycle', 'the cycle in that line'), m('irqLine', 'the raster interrupt\'s line'), m('irqFlags', 'the interrupts that are waiting ($d019)'), m('model', 'VICE\'s model number (0: 6569 PAL, 3: 6567 NTSC), or null'),
+  ],
+  snapSprite: [m('n', 'which sprite, 0-7'), m('on', 'true when it is shown'), m('x', 'its x, 0-511'), m('y', 'its y'), m('color', 'its colour, 0-15'), m('mc', 'true when it is multicolour'), m('wide', 'true when it is twice as wide'), m('tall', 'true when it is twice as tall'), m('behind', 'true when it is behind the graphics'), m('pointer', 'its pointer (in the screen\'s last bytes)'), m('dataAt', 'where its 64 bytes are')],
+  snapDrive: [
+    m('unit', '8'), m('type', 'the drive\'s type as VICE numbers it: 1541, 1542 (a 1541-II), 1571, 1581'), m('model', 'the type\'s name: "1541-II"'),
+    m('track', 'the track the head is on, in halves (18.5): read and set'), m('halfTrack', 'the half track the head is on (track 18 is 36)'),
+    m('cpu', 'the drive\'s 6502: { pc, a, x, y, sp, status, flags }'), m('ram', 'the drive\'s 2 KB of RAM ($0000-$07ff), read and set; null for a drive it is not read from'),
+    m('via1', 'VIA 1 ($1800, the serial bus): { pra, ddra, prb, ddrb, latch1, timer1, timer2, sr, acr, pcr, ifr, ier }'), m('via2', 'VIA 2 ($1c00, the head and the motor): as via1'),
+    m('motor', 'true when the motor is on'), m('led', 'true when the LED is on'),
+  ],
+  snapVia: [m('pra', 'port A'), m('ddra', 'port A\'s direction'), m('prb', 'port B'), m('ddrb', 'port B\'s direction'), m('latch1', 'timer 1\'s latch'), m('timer1', 'timer 1 as it counts now'), m('timer2', 'timer 2 as it counts now'), m('sr', 'the shift register'), m('acr', 'the auxiliary control register'), m('pcr', 'the peripheral control register'), m('ifr', 'the interrupt flags'), m('ier', 'the interrupts that are on')],
+  snapModule: [m('name', 'its name: "MAINCPU", "C64MEM", "VIC-II", "DRIVECPU0", …'), m('version', 'its version, "1.4"'), m('size', 'how many bytes it has'), m('offset', 'where its bytes start in the file')],
   blocks: [
     m('all', 'every block of the program, in address order: a list of blocks (as they were when the run started)'), m('count', 'how many blocks there are'),
     m('at', 'at(address): the block that has an address, or null', true), m('in', 'in(start, end): the blocks in a range', true),
@@ -323,7 +362,7 @@ export const JS_MEMBERS: Readonly<Record<JsType, readonly JsMember[]>> = {
 };
 
 /** what one of a list is */
-const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
+const ELEMENT: Partial<Record<JsType, JsType>> = { diskFiles: 'diskFile', files: 'file', layers: 'layer', ranges: 'file', texts: 'text', areas: 'area', loaders: 'loader', loaderGroups: 'loaderGroup', loaderFiles: 'loaderFile', exportFiles: 'exportFile', builtFiles: 'builtFile', libItems: 'libItem', snapSprites: 'snapSprite', snapModules: 'snapModule', blockList: 'block', structFields: 'structField', customTypes: 'customType', tunes: 'tune', dump: 'bytes', voices: 'voice' };
 const LIST_GIVES_ONE = /^(find|at)$/, LIST_GIVES_LIST = /^(filter|slice)$/, CALLBACKS = 'map|forEach|filter|find|some|every|findIndex';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -390,6 +429,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (e === 'sid') return 'sid';
   if (e === 'library') return 'library';
   if (e === 'blocks') return 'blocks';
+  if (e === 'snapshot') return 'snapshot';
   if (e === 'loaders') return 'loaders';
   if (e === 'screen' && !/\b(?:const|let|var)\s+screen\b/.test(source)) return 'screen';
   if (/^[A-Za-z_$][\w$]*$/.test(e)) {
@@ -422,6 +462,7 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
     if (on === 'libItem') return name === 'asFile' || name === 'sprite' || name === 'char' ? 'bytes' : name === 'put' ? 'file' : null;
     if (on === 'blocks') return name === 'at' || name === 'find' ? 'block' : name === 'in' || name === 'of' ? 'blockList' : name === 'struct' ? 'struct' : name === 'define' ? 'customType' : name === 'text' ? 'text' : name === 'encode' ? 'bytes' : name === 'mark' ? 'file' : null;
     if (on === 'block') return name === 'mark' || name === 'format' ? 'file' : null;
+    if (on === 'snapshot') return name === 'module' || name === 'file' ? 'bytes' : name === 'write' ? 'texts' : null;
     if (on === 'struct' || on === 'customType') return name === 'mark' || name === 'markRecords' ? 'file' : null;
     if (on === 'tune') return name === 'sid' ? 'bytes' : name === 'run' ? 'sidRun' : name === 'player' ? 'sidPlayer' : null;
     if (on === 'loader') return name === 'find' ? 'loaderFile' : name === 'group' ? 'loaderGroup' : name === 'load' ? 'file' : name === 'at' ? 'loaderFiles' : null;
@@ -450,6 +491,14 @@ export function jsTypeOf(expr: string, source: string, depth = 0): JsType | null
   if (on === 'build') return name === 'last' ? 'lastBuild' : name === 'requests' ? 'texts' : name === 'assembler' || name === 'emulator' || name === 'debugger' ? 'text' : null;
   if (on === 'library') return name === 'items' || name === 'sids' || name === 'sprites' || name === 'chars' || name === 'bitmaps' ? 'libItems' : name === 'requests' ? 'texts' : name === 'folder' ? 'text' : null;
   if (on === 'libItem') return name === 'bytes' || name === 'bitmap' || name === 'screen' || name === 'colorRam' ? 'bytes' : name === 'tune' ? 'sidFile' : name === 'from' ? 'libFrom' : name === 'colors' ? 'libColors' : name === 'name' || name === 'file' || name === 'kind' || name === 'hash' ? 'text' : null;
+  if (on === 'snapshot') return name === 'cpu' ? 'snapCpu' : name === 'port' ? 'snapPort' : name === 'ram' ? 'bytes' : name === 'cia1' || name === 'cia2' ? 'snapCia' : name === 'sid' ? 'snapSid' : name === 'vic' ? 'snapVic' : name === 'drive' ? 'snapDrive'
+    : name === 'modules' ? 'snapModules' : name === 'changes' ? 'texts' : name === 'name' || name === 'machine' || name === 'vice' || name === 'format' ? 'text' : null;
+  if (on === 'snapVic') return name === 'regs' || name === 'colorRam' ? 'bytes' : name === 'sprites' ? 'snapSprites' : name === 'mode' ? 'text' : null;
+  if (on === 'snapDrive') return name === 'cpu' ? 'snapCpu' : name === 'ram' ? 'bytes' : name === 'via1' || name === 'via2' ? 'snapVia' : name === 'model' ? 'text' : null;
+  if (on === 'snapCia') return name === 'tod' ? 'bytes' : null;
+  if (on === 'snapSid') return name === 'regs' ? 'bytes' : null;
+  if (on === 'snapCpu') return name === 'flags' ? 'text' : null;
+  if (on === 'snapModule') return name === 'name' || name === 'version' ? 'text' : null;
   if (on === 'blocks') return name === 'all' ? 'blockList' : name === 'types' ? 'texts' : name === 'defined' ? 'customTypes' : null;
   if (on === 'block') return name === 'bytes' ? 'bytes' : name === 'struct' ? 'struct' : name === 'next' || name === 'prev' ? 'block' : name === 'records' || name === 'words' ? 'list' : name === 'type' || name === 'as' || name === 'label' || name === 'comment' || name === 'file' || name === 'why' || name === 'custom' || name === 'text' ? 'text' : name === 'colors' ? 'libColors' : null;
   if (on === 'struct') return name === 'fields' ? 'structFields' : name === 'name' || name === 'text' ? 'text' : null;

@@ -173,6 +173,7 @@ mimir-studio/
 │  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
+│  ├─ src/script-snapshot.ts       VICE-snapshoten för ett JavaScript-skript: `snapshot` (CPU, port, RAM, CIA, SID, VIC-II, drive: läs och ändra) (10.3, 13.7)
 │  ├─ src/script-blocks.ts         blocken för ett JavaScript-skript: `blocks` (läs, märk, struct, egna typer, dela, kommentera) (10.3)
 │  ├─ src/struct.ts                struct-block: fälten (`StructField`), deras storlek, text och värden (10.3)
 │  ├─ src/script-library.ts        biblioteket för ett JavaScript-skript: `library` (SID, sprites, teckenset, bitmappar: läs, sök, lägg i minnet, lägg till) (10.3, 10.6)
@@ -2897,6 +2898,10 @@ $06, $08` i `.asm`-filen efter en körning.
   - *List the blocks and mark a table of records* (`block_records`, 2026-11-24): programmets block listade (alla,
     en typ med `type`, eller inga med `"none"`); med `table` märks `count` poster från en adress eller etikett som en
     struct med namnet `typeName` och fälten `fields`, och posterna skrivs.
+  - *Print the snapshot and change it* (`snapshot_state`, 2026-11-24): för ett projekt öppnat från en .vsf: CPU:n,
+    minneskonfigurationen, VIC-II:n (läge, adresser, färger, raster, sprites med `showSprites`), CIA:ernas timers
+    och diskdriven (`showDrive`) skrivna; `border`, `background`, `goOnAt` och `track` ändrar snapshoten, som
+    projektet då behåller.
   - *Show a screen* (`screen_show`, 2026-11-23): 1000 skärmkoder i programmet (`screenAt`) visade på C64-skärmen som
     C64:an visar dem, med färgerna från `colorsAt` (annars `textColor`), programmets eget teckenset (`charsetAt`) eller
     ROM:ens (`lowerCase`), och ram- och bakgrundsfärg.
@@ -2907,6 +2912,37 @@ $06, $08` i `.asm`-filen efter en körning.
   Varje mall börjar med en kommentar som säger vad den gör och har sina inställningar som `const`-rader med
   kommentar. I JavaScript är **bara `const`-rader vid vänsterkanten inställningar** (en `let` är kodens egen
   variabel). Ett JavaScript-skript får också `files`: programmets filer i minnet, `[{ start, end }]`.
+- **Snapshoten i ett JavaScript-skript** (`script-snapshot.ts`, `snapshotApi`, 2026-11-24): ett skript får
+  `snapshot`, VICE-snapshoten projektet öppnades från (13.7), eller `null` när det inte finns någon: C64:an, VIC-II:n
+  och diskdriven som de var när snapshoten sparades, att läsa och ändra.
+  - Snapshoten: `name`, `machine`, `vice`, `format`, `size`, `modules` (`{ name, version, size, offset }`),
+    `module(namn)` (en moduls bytes, att läsa och skriva) och `has(namn)`.
+  - C64:an: `snapshot.cpu` (`pc`, `a`, `x`, `y`, `sp`, `status`, `flags`), `snapshot.port` (`data` = $01, `dir` =
+    $00, `config`), `snapshot.ram` (alla 64 KB: nollsidan, stacken och RAM under ROM och I/O), `snapshot.cia1` och
+    `cia2` (`pra`, `prb`, `ddra`, `ddrb`, `timerA`, `timerB`, `latchA`, `latchB`, `tod`, `sdr`, `mask`, `cra`, `crb`,
+    `flags`) och `snapshot.sid` (`regs`, `volume`).
+  - VIC-II:n: `snapshot.vic` har `regs` ($d000–$d03f), `colorRam`, `line`, `cycle`, `irqLine`, `irqFlags` och
+    `model`, och det registren ger (`vicState`): `bank`, `mode`, `screenAt`, `charsetAt`, `bitmapAt`, `charRom`,
+    `displayOn`, `rows`, `cols`, `border`, `background` och `sprites` (åtta: `n`, `on`, `x`, `y`, `color`, `mc`,
+    `wide`, `tall`, `behind`, `pointer`, `dataAt`).
+  - Diskdriven (drive 8): `snapshot.drive` har `type` (VICE:s nummer: 1541, 1542 = 1541-II, …), `model`,
+    `halfTrack`, `track`, `cpu` (drivens 6502), `ram` (dess 2 KB), `via1` ($1800) och `via2` ($1c00) (`pra`, `ddra`,
+    `prb`, `ddrb`, `latch1`, `timer1`, `timer2`, `sr`, `acr`, `pcr`, `ifr`, `ier`), `motor` och `led`. Modulerna som
+    x64sc 3.10 skriver dem, mätta mot VICE:s monitor: `DRIVE8` 2.0 (halvspåret som word på 16, typen som dword på
+    40), `DRIVECPU0` 1.3 (klockan, A, X, Y, SP, PC, status; RAM 92 byte in) och `1541VIA1D0`/`VIA2D0` 2.2 (PRA,
+    DDRA, PRB, DDRB, timer 1:s latch och räknare, timer 2:s räknare på 12, SR, ACR, PCR, IFR, IER från 15).
+  - Ändra: det som läses är skriptets egen kopia, och det som sätts går in i den (`snapshot.cpu.pc = 0x0810`,
+    `snapshot.vic.border = 2`, `snapshot.vic.regs[0x18] = 0x15`, `snapshot.vic.colorRam[0] = 7`,
+    `snapshot.vic.sprites[0].x = 300`, `snapshot.drive.track = 1`, `snapshot.drive.ram[0x22] = 18`); ett värde som
+    inte ryms sägs som fel. `snapshot.changes` säger vad som ändrats (en text per modul), `snapshot.file()` ger
+    .vsf:en som den är nu (till `save`), `snapshot.reset()` tar tillbaka ändringarna, och `snapshot.write()` ber
+    projektet behålla den ändrade snapshoten (`ScriptRun.snapshot`, `ScriptSnapshotRequest`): när körningen slutat
+    väl läggs den på filen (`LoadedFile.vsf`) i samma ångra-steg som körningens bytes, så att Build & Run startar om
+    den, analysen läser dess VIC-II och översikten visar den. I safe mode behålls ingenting: *Last run* visar
+    *Would change the snapshot*; annars *Changed the snapshot*. En ändrad snapshot som VICE läser in har ändringarna
+    (kontrollerat i VICE 3.10: A, $d020, drivens X, RAM, VIA 2 och halvspår). RAM som programmet har är
+    programmets (`mem`): Build & Run lägger det byggda programmet där.
+  - Snapshoten ges till en körning av skriptet självt när koden nämner `snapshot`. Bara JavaScript.
 - **Blocken i ett JavaScript-skript** (`script-blocks.ts`, `blocksApi`, `scriptBlocksData`, 2026-11-24): ett skript
   får `blocks`, programmets block som analysen gjort dem (kod, bytes, words, text, tabeller, grafik, musik), att läsa
   och ändra.

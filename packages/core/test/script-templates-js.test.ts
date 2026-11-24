@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
+import { openC64File, parseVsf, analyze, createProject, render, scriptBlocksData, libraryHash, makePsid, musicPlayData, parsePsid, checkScript, DEFAULT_PACK, JS_TEMPLATES, makeDemo, packWithBrokkr, parsePrg, parseD64, readD64File, runJs, scriptParams, setScriptParams, templateSource, type ScriptEnv, type ScriptTemplate } from '../src';
 import { findC64Roms } from '../src/node';
 import { fromSource } from './helpers/programs';
 
@@ -44,8 +44,8 @@ const run = (t: ScriptTemplate, values: Record<string, string> = {}, extras = {}
 };
 
 describe('the JavaScript templates', () => {
-  it('are nineteen, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
-    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'screen_show', 'screen_hexdump']);
+  it('are twenty, each JavaScript with a comment that says what it does and settings the Settings tab shows', () => {
+    expect(JS_TEMPLATES.map(t => t.name)).toEqual(['xor_js', 'find_text', 'find_bytes', 'jump_table', 'rle_unpack', 'disk_files', 'call_many', 'sindri_unpack', 'sindri_run', 'brokkr_pack', 'loader_files', 'export_own', 'build_packed', 'sid_files', 'sid_notes', 'library_items', 'block_records', 'snapshot_state', 'screen_show', 'screen_hexdump']);
     for (const t of JS_TEMPLATES) {
       expect(t.code).toBe('js');
       expect(t.source.startsWith(`// ${'='.repeat(76)}\n//  `)).toBe(true);
@@ -336,6 +336,33 @@ describe('the JavaScript template for the library', () => {
     const has = go({ addMusic: 'true' }, lib([{ kind: 'sid', file: 'music.sid', name: 'm', data: a.library![0].bytes }]));
     expect(has.prints!.at(-1)).toBe('music is in the library already: music.sid');
     expect(has.library).toBeUndefined();
+  });
+});
+
+describe('the JavaScript template for the snapshot', () => {
+  const vsf = new Uint8Array(readFileSync(join(__dirname, '../../../fixtures/vsf/raster-demo.vsf')));
+  const opened = openC64File('raster-demo.vsf', vsf);
+  const go = (values: Record<string, string> = {}, given = true) =>
+    runJs({ files: [opened], names: new Map([['irq', 0x08b7]]) }, { source: setScriptParams(template('snapshot_state').source, { code: 'js' }, values).source, pads: [] }, given ? { snapshot: { name: 'raster-demo.vsf', vsf } } : {});
+
+  it('Print the snapshot and change it prints the C64, the VIC-II and the drive, and asks for the changed snapshot', () => {
+    const r = go();
+    expect(r.error).toBeUndefined();
+    expect(r.prints![0]).toBe(`raster-demo.vsf: C64SC, VICE 3.10, 26 modules, ${vsf.length} bytes`);
+    expect(r.prints![1]).toMatch(/^CPU {4}pc \$08c7 {2}a \$[0-9a-f]{2} {2}x \$[0-9a-f]{2} {2}y \$[0-9a-f]{2} {2}sp \$[0-9a-f]{2} {2}[NV.\-BDIZC]{8}$/);
+    expect(r.prints![2]).toBe('Memory $01 = $37 (configuration 7), IRQ $08b7, NMI $fe47');
+    expect(r.prints![3]).toMatch(/^VIC-II text, bank 0, screen \$0400, characters \$3000, bitmap \$2000$/);
+    expect(r.prints![4]).toMatch(/^ {7}border \d+, background \d+, raster line \d+ cycle \d+, interrupt at line \d+$/);
+    expect(r.prints!.some(l => /^Drive {2}1541-II, head on track 18\.5, motor off, LED off$/.test(l))).toBe(true);
+    expect(r.prints!.some(l => /^ {7}jobs \$[0-9a-f]{2}( \$[0-9a-f]{2}){4}, track and sector of job 0: \d+,\d+$/.test(l))).toBe(true);
+    expect(r.snapshot).toBeUndefined();
+    expect(go({ showDrive: 'false' }).prints!.some(l => l.startsWith('Drive'))).toBe(false);
+    const c = go({ border: '2', background: '6', goOnAt: '"irq"', track: '1' });
+    expect(c.error).toBeUndefined();
+    expect(c.prints!.filter(l => l.startsWith('Changed: ')).map(l => l.replace(/\d+ bytes?/, 'n bytes'))).toEqual(['Changed: MAINCPU: n bytes changed (the CPU, now at $08b7)', 'Changed: DRIVE8: n bytes changed', 'Changed: VIC-II: n bytes changed']);
+    const s = parseVsf(c.snapshot!.vsf);
+    expect([s.cpu!.pc, s.vic!.regs[0x20] & 15, s.vic!.regs[0x21] & 15]).toEqual([0x08b7, 2, 6]);
+    expect(go({}, false).error?.msg).toMatch(/^Error: The project was not opened from a VICE snapshot/);
   });
 });
 

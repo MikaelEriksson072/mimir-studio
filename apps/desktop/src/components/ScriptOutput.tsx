@@ -387,6 +387,13 @@ function RunPane({ script, kept, stale, onEdit, onMenu, onToProject, onSave, onG
         </ul>
         {kept.safe && <p className="small muted">Safe mode: nothing is added. Switch safe mode off and run it again.</p>}
       </div> : null}
+      {run.snapshot && ranWell(run.end) ? <div className="scr-wrote scr-acted">
+        <h5 className="scr-group-h" title="What the script's snapshot.write() asked for: the project's VICE snapshot as the script changed it, kept with the file when the run has ended well, so that Build & Run restarts that one. In safe mode the snapshot stays as it was">{kept.safe ? 'Would change the snapshot' : 'Changed the snapshot'}</h5>
+        <ul className="scr-acted-list" aria-label={kept.safe ? 'What the run would change in the snapshot' : 'What the run changed in the snapshot'}>
+          {(run.snapshot.changes.length ? run.snapshot.changes : ['nothing: it is as it was']).map((c, i) => <li key={i}><Icon name={kept.safe ? 'shield' : 'check'} size={12} className={kept.safe ? undefined : 'scr-tab-ok'} />{c}</li>)}
+        </ul>
+        {kept.safe && <p className="small muted">Safe mode: the snapshot stays as it was. Switch safe mode off and run it again.</p>}
+      </div> : null}
       {run.plays?.length ? <div className="scr-wrote scr-acted">
         <h5 className="scr-group-h" title="The tunes the script's sid.play() asked for: played when the run has ended well (after the export and the builds, when it asked for those too), in VICE with Mimir's player or in DeepSID. In safe mode nothing is played">{kept.safe ? 'Would play' : 'Played'}</h5>
         <ul className="scr-acted-list" aria-label={kept.safe ? 'What the run would play' : 'What the run played'}>

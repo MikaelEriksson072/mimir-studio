@@ -214,6 +214,27 @@ describe('what the blocks\' values have', () => {
   });
 });
 
+describe('what the snapshot\'s values have', () => {
+  const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
+  it('snapshot., its CPU, VIC-II, sprites and drive', () => {
+    expect(names('snapshot')).toEqual(['name', 'machine', 'vice', 'format', 'size', 'cpu', 'port', 'ram', 'cia1', 'cia2', 'sid', 'vic', 'drive', 'modules', 'module', 'has', 'changes', 'changed', 'file', 'reset', 'write']);
+    const src = 'const v = snapshot.vic;\nconst d = snapshot.drive;\nfor (const s of snapshot.vic.sprites) {\n}\n';
+    expect(names('snapshot.cpu')).toEqual(['pc', 'a', 'x', 'y', 'sp', 'status', 'flags']);
+    expect(names('snapshot.port')).toEqual(['data', 'dir', 'config']);
+    expect(names('v', src)).toEqual(expect.arrayContaining(['regs', 'colorRam', 'border', 'background', 'mode', 'bank', 'screenAt', 'sprites', 'line', 'irqLine']));
+    expect(names('s', src)).toEqual(['n', 'on', 'x', 'y', 'color', 'mc', 'wide', 'tall', 'behind', 'pointer', 'dataAt']);
+    expect(names('d', src)).toEqual(['unit', 'type', 'model', 'track', 'halfTrack', 'cpu', 'ram', 'via1', 'via2', 'motor', 'led']);
+    expect(names('d.cpu', src)).toEqual(names('snapshot.cpu'));
+    expect(names('d.via2', src)).toEqual(['pra', 'ddra', 'prb', 'ddrb', 'latch1', 'timer1', 'timer2', 'sr', 'acr', 'pcr', 'ifr', 'ier']);
+    expect(names('snapshot.cia1')).toContain('latchA');
+    expect(names('snapshot.modules[0]')).toEqual(['name', 'version', 'size', 'offset']);
+    expect(jsTypeOf('snapshot.ram', src)).toBe('bytes');
+    expect(jsTypeOf('d.ram', src)).toBe('bytes');
+    expect(jsTypeOf('snapshot.file()', src)).toBe('bytes');
+    expect(jsTypeOf('snapshot.module("SID")', src)).toBe('bytes');
+  });
+});
+
 describe('what the SID music\'s values have', () => {
   const names = (before: string, source = '') => jsMembers(before, '', source)?.map(x => x.label);
   it('sid., a tune, what it plays with, a run and its dump', () => {

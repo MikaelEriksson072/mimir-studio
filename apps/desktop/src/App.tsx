@@ -2581,8 +2581,11 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const w = writeScriptRun(a, r, base, s, run, scriptPatches(p.patches, id));
     // what its directives say beyond the bytes (.mark, .name, .note, .junk), in the same step
     const acts = scriptActsOf(id, text, run);
+    // the snapshot it asked the project to keep (snapshot.write()), when the run ended well: in the same step
+    const snap = run.snapshot && endedWell(run.end) ? run.snapshot.vsf : null;
     update(`Run script "${s.name}"`, d => {
       d.files = w.files; d.patches = w.patches;
+      if (snap) { const at = d.files.findIndex(x => x.vsf); if (at >= 0) d.files = d.files.map((x, i) => (i === at ? { ...x, vsf: snap } : x)); }
       if (acts) {
         d.overrides.push(...acts.overrides);
         for (const [at, name] of acts.labels) d.labels[at] = name;
@@ -2634,7 +2637,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     // In the program shows the first change the run made (or would make, in safe mode) beside its list
     if (shown) st.set({ change: !w?.written.length ? null : safe ? { kind: 'would', i: 0 } : { kind: 'patch', id: w.written[0].id } });
     // what it printed, the files it made, or the error it stopped with, is under Last run: that tab is shown
-    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.error)) st.set({ outTab: 'run', outFolded: false });
+    if (shown && (r.prints?.length || r.made?.length || r.exports || r.builds?.length || r.plays?.length || r.library?.length || r.snapshot || r.error)) st.set({ outTab: 'run', outFolded: false });
     // the export it asked for: written now that the run has ended well and its changes are in the program (a safe run's
     // is only said, under Last run)
     if ((r.exports || r.builds?.length || r.plays?.length || r.library?.length) && !safe && endedWell(r.end)) void doScriptRequests(s.name, r, !!w?.written.length || !!w?.acted?.done.length);
@@ -2649,9 +2652,10 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     const building = r.builds?.length ? (safe ? ` It would build or start ${r.builds.length} thing${r.builds.length === 1 ? '' : 's'} (Scripts → Last run).` : ` It asked for: ${r.builds.map(b => buildRequestText(b, { emulator: 'VICE', debugger: debuggerName })).slice(0, 2).join('; ')}${r.builds.length > 2 ? '; …' : ''}.`) : '';
     const playing = r.plays?.length ? (safe ? ` It would play ${r.plays.length} tune${r.plays.length === 1 ? '' : 's'} (Scripts → Last run).` : ` It asked for ${r.plays.map(p => p.name).slice(0, 2).join(' and ')}${r.plays.length > 2 ? ', …' : ''} to be played.`) : '';
     const adding = r.library?.length ? (safe ? ` It would add ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to the library (Scripts → Last run).` : ` It asked for ${r.library.length} thing${r.library.length === 1 ? '' : 's'} to be added to the library.`) : '';
+    const snapped = r.snapshot && endedWell(r.end) ? (safe ? ' It would change the snapshot (Scripts → Last run).' : r.snapshot.changes.length ? ` It changed the snapshot (${r.snapshot.changes[0]}${r.snapshot.changes.length > 1 ? ', …' : ''}): Build & Run restarts it so.` : ' It asked for the snapshot to be kept, with nothing changed in it.') : '';
     const made = r.made?.length ? ` It made ${r.made.length} file${r.made.length === 1 ? '' : 's'} (Scripts → Last run): ${r.made[0].name}${r.made.length > 1 ? ', …' : ''}.` : '';
     const drew = r.screen?.wrote ? ` It printed on ${r.screen.c64 ? 'the C64\'s screen' : 'its C64 screen'} (Scripts → C64 screen).` : '';
-    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${asked}${building}${adding}${playing}${drew}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
+    toast(`${s.name}: ${scriptEndText(r)}${printed}${made}${asked}${building}${adding}${playing}${drew}${snapped}${what}${w?.acted?.done.length ? ` ${safe ? 'It would mark up' : 'It marked up'} ${w.acted.done.length} thing${w.acted.done.length === 1 ? '' : 's'} (${w.acted.done[0]}${w.acted.done.length > 1 ? ', …' : ''}).` : ''}${w?.acted?.failed.length ? ` ${w.acted.failed.length} of its directives could not be done (Scripts → Last run says why).` : ''}${r.overCode?.length ? ` It wrote over its own code (line ${r.overCode[0].line}): Scripts → Last run.` : ''}${w?.failed.length ? ` ${w.failed.length} change${w.failed.length === 1 ? '' : 's'} could not ${safe ? 'have been' : 'be'} written (Scripts → Last run says why).` : ''}`, endedWell(r.end) ? (w?.failed.length || r.overCode?.length ? 'warn' : 'ok') : 'warn');
   };
   /** the export as it is now, for a JavaScript script's `exporter` (core script-export.ts): what Export would write,
    *  less the verified PRGs (they are made when it is written); null without a file to export */
@@ -2803,6 +2807,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     if (s.code === 'js' && /\bsid\b/.test(source)) { await analysisSettled(); opts.sid = scriptSidData(); }
     // and the library of SIDs, sprites, charsets and bitmaps
     if (s.code === 'js' && /\blibrary\b/.test(source)) opts.library = await scriptLibraryData();
+    // and the snapshot the project was opened from
+    if (s.code === 'js' && /\bsnapshot\b/.test(source)) { const f = latest.current.project.files.find(x => x.vsf); opts.snapshot = f?.vsf ? { name: f.name.replace(/\.prg$/i, '.vsf'), vsf: f.vsf } : null; }
     // and the program's blocks, as the analysis has them now
     if (s.code === 'js' && /\bblocks\b/.test(source)) { await analysisSettled(); const { A: a1, R: r1, project: p1 } = latest.current; opts.blocks = scriptBlocksData(a1, r1, p1); }
     useScripts.getState().set({ running: id });

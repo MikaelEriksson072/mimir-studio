@@ -10862,7 +10862,7 @@ test('the JavaScript templates have a tab of their own: one is added with its se
     await expect(tabs.getByRole('tab', { name: 'Assembler' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('list', { name: 'Templates', exact: true }).getByRole('listitem')).toHaveCount(6);
     await tabs.getByRole('tab', { name: 'JavaScript' }).click();
-    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Show a screen/, /^Hex dump on the screen/]);
+    await expect(page.getByRole('list', { name: 'JavaScript templates' }).getByRole('listitem')).toHaveText([/^XOR key byte/, /^Find text/, /^Find bytes/, /^Name a jump table/, /^Unpack RLE/, /^Read the disk/, /^Call a routine/, /^Unpack with Sindri/, /^Run in a C64/, /^Pack with Brokkr/, /^List the loader's files/, /^Export with a header and a file list/, /^Pack and start/, /^List the music and make \.sid files/, /^Print the notes a tune plays/, /^List the library and add the music/, /^List the blocks and mark a table of records/, /^Print the snapshot and change it/, /^Show a screen/, /^Hex dump on the screen/]);
   });
 
   await test.step('XOR key byte is added as JavaScript with its settings shown; set, it decrypts the block into its scratchpad', async () => {
@@ -11539,6 +11539,70 @@ test('a JavaScript script has the blocks: a table of records marked as a struct 
     await page.keyboard.press('F7');
     await expect(statusBar(page)).toContainText('✓ round-trip verified', { timeout: 90_000 });
     await expect(page.locator('.bottom .build')).not.toContainText('FAILED');
+  });
+});
+
+test('a JavaScript script has the snapshot: the C64, the VIC-II and the drive as VICE saved them, and the project keeps the snapshot as the script changed it; safe mode only says', async ({ app, page }) => {
+  await waitForListing(page);
+  await stubDialogs(app, { open: [join(repoDir, 'fixtures/vsf/raster-demo.vsf')] });
+  await fromFileMenu(page, 'Open a VICE snapshot (.vsf)…');
+  await expect(toast(page, /Loaded raster-demo\.prg at \$0200 from a VICE 3\.10 snapshot/)).toBeVisible();
+  const overview = page.getByRole('dialog', { name: 'Analysis overview' });
+  if (await overview.isVisible()) await page.keyboard.press('Escape');
+  const start = await openSection(page, 'Program start');
+  await expect(start).toContainText('VICE restarts the snapshot as it was taken (PC $08c7, $01 = $37)');
+  await page.getByRole('tab', { name: 'Scripts' }).click();
+  const editor = page.locator('.scr-editor');
+  const printed = page.getByLabel('What the run printed');
+  const runIt = () => page.locator('button.scr-run').click();
+
+  await test.step('the template prints the machine as it was saved', async () => {
+    await page.getByRole('tablist', { name: 'Templates in' }).getByRole('tab', { name: 'JavaScript' }).click();
+    await page.getByRole('button', { name: 'Add the template Print the snapshot and change it to the project' }).click();
+    await expect(page.getByRole('option', { name: 'snapshot_state' })).toHaveAttribute('aria-selected', 'true');
+    await runIt();
+    await expect(printed).toContainText('raster-demo.vsf: C64SC, VICE 3.10, 26 modules', { timeout: 30_000 });
+    await expect(printed).toContainText(/CPU {4}pc \$08c7/);
+    await expect(printed).toContainText('Memory $01 = $37 (configuration 7), IRQ $08b7');
+    await expect(printed).toContainText('Drive  1541-II, head on track 18.5, motor off, LED off');
+  });
+
+  await test.step('a script of one\'s own: snapshot. lists what it has; in safe mode what it would change is only said', async () => {
+    await page.getByRole('button', { name: 'New JavaScript script' }).first().click();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.type('snapshot.');
+    await expect.poll(async () => (await page.locator('.suggest-widget.visible .monaco-list-row .label-name').allTextContents()).slice(0, 8))
+      .toEqual(['name', 'machine', 'vice', 'format', 'size', 'cpu', 'port', 'ram']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText([
+      'print(hex(snapshot.cpu.pc), snapshot.vic.mode, snapshot.drive.model, snapshot.drive.ram.length);',
+      'snapshot.cpu.pc = 0x0810;',
+      'snapshot.vic.border = (snapshot.vic.border + 1) & 15;',
+      'snapshot.write();',
+    ].join('\n') + '\n');
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(printed).toHaveText('$08c7 text 1541-II 2048', { timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run would change in the snapshot' }).getByRole('listitem')).toHaveText(['MAINCPU: 1 byte changed (the CPU, now at $0810)', 'VIC-II: 1 byte changed']);
+  });
+
+  await test.step('out of safe mode the project keeps the changed snapshot: the next run reads it, and Ctrl+Z takes it back', async () => {
+    await page.getByRole('switch', { name: 'Safe mode' }).click();
+    await runIt();
+    await expect(toast(page, /It changed the snapshot \(MAINCPU: 1 byte changed \(the CPU, now at \$0810\), …\): Build & Run restarts it so\./)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('list', { name: 'What the run changed in the snapshot' }).getByRole('listitem')).toHaveCount(2);
+    await runIt();
+    await expect(printed).toHaveText('$0810 text 1541-II 2048', { timeout: 30_000 });
+    await page.getByRole('tab', { name: 'Listing' }).click();
+    await expect(start).toContainText('PC $0810');
+    await listing(page).click();
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    await expect(start).toContainText('PC $08c7');
   });
 });
 
