@@ -3,13 +3,14 @@
  * Graphics, Memory, the inspector and the Explorer, show it); the window asks it to show an address's line in the
  * sources, to run or build, and to write what is not written yet before the window closes or the project does. */
 import { create } from 'zustand';
-import type { Addr, AsmBlockKind, AsmByteChange, AsmCheck, AsmProgram } from '@mimir/core';
+import type { Addr, AsmBlockKind, AsmByteChange, AsmC64Note, AsmCheck, AsmProgram } from '@mimir/core';
 import type { LibraryRef } from './library';
 
 /** what the window asks the Assembler tab for; `block`: Insert block, of a kind or with a library item; `log`: `text`
  *  (a pack's) after the last build's, under Build; `write`: bytes drawn (the enlarged sprite or character) written into
  *  the lines that write them */
-export interface AsmAsk { what: 'run' | 'build' | 'debug' | 'block' | 'log' | 'write'; n: number; kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[] }
+export interface AsmAsk { what: 'run' | 'build' | 'debug' | 'debugger' | 'block' | 'log' | 'write'; n: number; kind?: AsmBlockKind; lib?: LibraryRef; text?: string; changes?: AsmByteChange[] }
+export interface AsmLive { mem: Uint8Array; pc: Addr; where: string | null; whole: boolean; running: boolean; n: number }
 /** the main file built with KickAss.jar or 64tass (Pack, Release): the PRG's bytes, where it and its labels are, and
  *  the main file (a path in the project's folder) */
 export interface AsmBuilt { prg: Uint8Array; prgPath: string; vsPath: string | null; main: string }
@@ -29,6 +30,11 @@ interface AsmLinkState {
   building: boolean;
   /** the main file the tab builds (a path in the project's folder; null: none yet) */
   main: string | null;
+  /** the C64 checks of the program (the window's analysis of it: asmC64Notes) */
+  notes: AsmC64Note[];
+  /** the memory of the program being debugged (Memory and Graphics show it while it is): its RAM, where it stopped (or
+   *  runs: `running`), that line, whether it is the whole C64; `n` tells one from the next. Null: not debugging */
+  live: AsmLive | null;
   /** what is not written yet, written (the tab sets it) */
   flush: () => Promise<unknown>;
   /** the main file built (what is not written yet is written first); null: it was not (the tab said why) */
@@ -43,9 +49,9 @@ interface AsmLinkState {
 const none = () => Promise.resolve();
 const noBuild = () => Promise.resolve(null);
 export const useAsmLink = create<AsmLinkState>(set => ({
-  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, flush: none, buildPrg: noBuild,
+  program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, notes: [], live: null, flush: none, buildPrg: noBuild,
   set: p => set(p),
   request: (what, o) => set(s => ({ ask: { what, n: (s.ask?.n ?? 0) + 1, ...o } })),
   showAddr: addr => set(s => ({ show: { addr, n: (s.show?.n ?? 0) + 1 } })),
-  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, flush: none, buildPrg: noBuild }),
+  reset: () => set({ program: null, check: null, assembles: false, show: null, ask: null, building: false, main: null, notes: [], live: null, flush: none, buildPrg: noBuild }),
 }));

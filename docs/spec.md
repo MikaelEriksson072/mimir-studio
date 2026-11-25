@@ -183,6 +183,7 @@ mimir-studio/
 │  ├─ src/asm-write.ts             Assemblern: ändrade bytes tillbaka i raderna som skriver dem (det man ritar) (10.7)
 │  ├─ src/asm-cycles.ts            Assemblern: varje rads cykler, koden i valda rader (cyclePath) (10.7)
 │  ├─ src/asm-names.ts             Assemblern: var ett namn står och definieras (referenser, namnbyte, översikt) (10.7)
+│  ├─ src/asm-c64check.ts          Assemblern: C64-kontrollerna av programmet (VIC-bank, tecken-ROM, I/O, ROM) (10.7)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -3750,6 +3751,25 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`toolchain:build`, PRG:n i `out\` bredvid) och startar den i VICE med etiketterna (`toolchain:run`). **Build**
   (Ctrl+Shift+B) bygger utan att starta. Byggets problem (fil och rad från huvudfilens mapp) visas under *Problems*, som
   markeringar och i listan, och editorn öppnar det första felet.
+- **Det debuggade programmets minne, och externa debuggers** (2026-11-25). Medan Assemblern debuggar programmet visar
+  *Memory* och *Graphics* maskinens minne som det är nu i stället för programmet som det laddas (`live` i
+  `store/asmlink.ts`): i Mimirs 6510 det programmet ser (`asmMachineMemory`: det det skrivit över sina egna bytes), i hela
+  C64:an dess RAM. Det skickas vid varje stopp (Step, Over, Out, en brytpunkt, Pause) och några gånger i sekunden medan det
+  kör; en rad över vyn säger var det står (`Stopped at $0813 (main.asm line 4)`), och allt minne går att visa, laddat
+  eller inte. När debuggningen stoppas visar vyerna programmet igen. **Shift+F5** (och paletten) bygger huvudfilen och
+  startar den i Retro Debugger eller C64 Debugger (Settings → Toolchain), som Build & Run gör (13.2b), med källorna
+  (`asmDebugSources`: varje fil och vilka bytes varje rad gjorde; en mapps `/` blir `-` i namnet), etiketterna och
+  Assemblerns brytpunkter i debuginfon bredvid PRG:n i `out`.
+- **C64-kontrollerna** (2026-11-25, `asmC64Notes` i `asm-c64check.ts`). Det assemblern inte ser men analysen gör (av
+  programmet som det laddas och VIC-bevisen i koden, 5.9) står under *Problems* i ett eget avsnitt, *The C64*, och som
+  varningar (eller upplysningar) på raden som skriver den första byten: grafik (sprites, en teckenuppsättning, en bitmap,
+  en skärm, som källan markerar dem) i en VIC-bank programmet inte visar (`$dd00`; bank 0 om det aldrig väljer någon),
+  under tecken-ROM:en (`$1000-$1fff` i bank 0 och 2) eller inte justerad (sprites på $40, en teckenuppsättning på $800, en
+  bitmap på $2000, en skärm på $400); en spritepekare koden skriver som visar något programmet inte laddar, eller bytes
+  som inte är markerade som sprites; bytes i `$d000-$dfff` (också nollorna i en lucka mellan programmets delar), som
+  LOAD skriver in i VIC:ens, SID:ens, färg-RAM:ens och CIA:ornas register; kod under BASIC- eller KERNAL-ROM:en när
+  programmet aldrig skriver `$01`; och (en upplysning) bytes i `$0002-$03ff`, där LOAD och RUN har sina saker. Antalet
+  varningar räknas i *Problems*-flikens siffra.
 - **Namnen i källorna** (2026-11-25, `asm-names.ts`). Ett namns **referenser** (Shift+F12, *Go to References* och *Peek
   References* i högermenyn, och Ctrl+klick på en definition) visas i Monacos ruta under raden, som re-assemblerns ruta
   med en etiketts referenser: varje rad i mappens alla källor där namnet står, per fil. **Rename Symbol** (F2) byter

@@ -10,6 +10,7 @@ import { assembleIn, langIs } from './code-lang';
 import { guessAssembler } from './render/dialect';
 import { parseBasic } from './c64/basic';
 import { importPath } from './verify/kick-subset-assembler';
+import type { DebugSource } from './c64/debugger-dbg';
 import { maskRanges, ScriptMachine, SCRIPT_LIMIT, type ScriptCheck, type ScriptRange, type ScriptRun, type StackEntry } from './script';
 import { SCREEN_C64, SCREEN_ROUTINES, type ScreenSize } from './script-screen';
 import { h4 } from './util/hex';
@@ -300,4 +301,26 @@ export function asmProgram(c: Pick<AsmCheck, 'asm' | 'entry' | 'check' | 'files'
   const labels: Record<Addr, string> = {};
   for (const [a, n] of c.check.labels) if (a >= lo && a <= hi) labels[a] = n;
   return { files, overrides, labels, entryPoint: c.entry };
+}
+
+/** The memory a run in Mimir's 6510 (asmMachine) has now, as the program sees it: what it wrote over its own bytes. */
+export function asmMachineMemory(m: Pick<ScriptMachine, 'mem' | 'own' | 'mine'>): Uint8Array {
+  const out = m.mem.slice();
+  for (let a = 0; a < 0x10000; a++) if (m.mine[a]) out[a] = m.own[a];
+  return out;
+}
+
+/** The sources as Retro Debugger and C64 Debugger read them (DebugSource, spec 13.2b): each file of the program with the
+ *  bytes each of its lines made, from `texts`; named by their paths in the folder (a folder's / as -: one name each). */
+export function asmDebugSources(c: Pick<AsmCheck, 'files' | 'fileOf' | 'asm'>, texts: Readonly<Record<string, string>>): DebugSource[] {
+  const spans = new Map<number, [Addr, Addr, number][]>();
+  for (let a = 0; a < 0x10000; a++) {
+    const f = c.fileOf[a], line = c.asm.lines[a];
+    if (!f || !line || !c.asm.written[a]) continue;
+    let list = spans.get(f);
+    if (!list) spans.set(f, list = []);
+    const last = list[list.length - 1];
+    if (last && last[2] === line && last[1] === a - 1) last[1] = a; else list.push([a, a, line]);
+  }
+  return [...spans].flatMap(([f, sp]) => { const file = c.files[f - 1], text = texts[file]; return text == null ? [] : [{ name: file.replace(/[\\/]/g, '-'), text, spans: sp }]; });
 }

@@ -53,14 +53,18 @@ interface AsmOutputProps {
   onScreen: () => void;
   /** Cycles on: the lines chosen counted (null: off, and no Cycles tab) */
   cycles: AsmCycles | null;
+  /** the C64 checks: what the analysis sees in the program that the assembler cannot (at the line that writes it) */
+  notes: AsmNote[];
 }
+/** a C64 check's finding at its line (file '': no line writes the byte) */
+export interface AsmNote { file: string; line: number; level: 'warning' | 'info'; msg: string }
 
-export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFold, onGo, onScreen, cycles }: AsmOutputProps) {
-  const own = check?.problems.length ?? 0, built = build?.problems.length ?? 0;
+export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFold, onGo, onScreen, cycles, notes }: AsmOutputProps) {
+  const own = check?.problems.length ?? 0, built = build?.problems.length ?? 0, warned = notes.filter(n => n.level === 'warning').length;
   const builtErrors = build?.problems.filter(p => p.severity === 'error').length ?? 0;
   const tabs: { k: AsmOutTab; label: string; tip: string; badge: React.ReactNode }[] = [
-    { k: 'problems', label: 'Problems', tip: 'What Mimir\'s check finds in the sources as you type, and what the assembler found in the last build',
-      badge: <span className={cx('count', own || builtErrors ? 'bad' : '')}>{own + built}</span> },
+    { k: 'problems', label: 'Problems', tip: 'What Mimir\'s check finds in the sources as you type, what the assembler found in the last build, and what the C64 does with the program that the assembler cannot see',
+      badge: <span className={cx('count', own || builtErrors ? 'bad' : warned ? 'warn' : '')}>{own + built + warned}</span> },
     { k: 'build', label: 'Build', tip: build ? `The last build of ${build.main} with ${build.tool}` : 'The last build: Run (Ctrl+Enter) and Build (Ctrl+Shift+B) build the main file with KickAss.jar or 64tass',
       badge: build && !build.running && <Icon name={build.ok ? 'check' : 'warn'} size={12} className={build.ok ? 'scr-tab-ok' : 'scr-tab-warn'} /> },
     { k: 'run', label: 'Last run', tip: kept ? `The last run in Mimir: ${kept.text}` : 'How the last run in Mimir\'s 6510 ended: Debug (F8), then Continue to its end',
@@ -84,7 +88,7 @@ export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFo
           <Icon name="down" size={14} className={folded ? 'flip' : ''} /></button>
       </div>
       {!folded && <div className={cx('scr-out', `asm-out-${tab}`)} id="asm-out" role="tabpanel" aria-labelledby={`asm-tab-${tab}`} aria-label={label} style={{ height, maxHeight: height }}>
-        {tab === 'problems' && <ProblemsPane check={check} build={build} onGo={onGo} />}
+        {tab === 'problems' && <ProblemsPane check={check} build={build} notes={notes} onGo={onGo} />}
         {tab === 'build' && <BuildPane build={build} onGo={onGo} />}
         {tab === 'run' && <RunPane kept={kept} onScreen={onScreen} />}
         {tab === 'cycles' && cycles && <CyclesPane c={cycles} onGo={onGo} />}
@@ -103,11 +107,11 @@ export function buildLine(b: AsmBuild): string {
 }
 const baseOf = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
 
-function ProblemRow({ file, line, msg, level, onGo }: { file: string; line: number; msg: string; level: 'error' | 'warning'; onGo: (file: string, line: number) => void }) {
+function ProblemRow({ file, line, msg, level, onGo }: { file: string; line: number; msg: string; level: 'error' | 'warning' | 'info'; onGo: (file: string, line: number) => void }) {
   return (
     <li className={cx('asm-problem', level)}>
       <button className="asm-problem-go" disabled={!file} onClick={() => onGo(file, line)} title={file ? `Show ${file}${line ? ` at line ${line}` : ''}` : undefined}>
-        <Icon name={level === 'error' ? 'err' : 'warn'} size={13} />
+        <Icon name={level === 'error' ? 'err' : level === 'warning' ? 'warn' : 'info'} size={13} />
         <span className="asm-problem-at mono">{file || '—'}{line ? `:${line}` : ''}</span>
         <span className="asm-problem-msg">{msg}</span>
       </button>
@@ -115,7 +119,7 @@ function ProblemRow({ file, line, msg, level, onGo }: { file: string; line: numb
   );
 }
 
-function ProblemsPane({ check, build, onGo }: { check: AsmCheck | null; build: AsmBuild | null; onGo: (file: string, line: number) => void }) {
+function ProblemsPane({ check, build, notes, onGo }: { check: AsmCheck | null; build: AsmBuild | null; notes: AsmNote[]; onGo: (file: string, line: number) => void }) {
   return (
     <section className="scr-pane asm-problems" aria-label="Problems">
       <div className="scr-pane-body asm-pane-scroll">
@@ -124,6 +128,10 @@ function ProblemsPane({ check, build, onGo }: { check: AsmCheck | null; build: A
           : check.problems.length ? <ul className="asm-problem-list" aria-label="What the check found">{check.problems.map((p, i) => <ProblemRow key={i} file={p.file} line={p.line} msg={p.msg} level="error" onGo={onGo} />)}</ul>
             : <p className="small asm-out-p"><Icon name="check" size={12} className="scr-tab-ok" /> The program assembles: {plural(check.bytes, 'byte')}{check.entry != null ? `, a run starts at $${h4(check.entry)}${check.entryFrom === 'basic' ? ' (the SYS of its BASIC line)' : check.entryFrom === 'label' ? ` (its label ${check.check.labels.get(check.entry) ?? ''})` : ' (its first byte)'}` : ''}.</p>}
         {!!check?.problems.length && <p className="muted small asm-out-p">Mimir's assembler knows most of what Kick Assembler and 64tass do, not all (macros, functions, segments): where it cannot follow a line, Run still builds with the real assembler, and that build's problems are the ones that count.</p>}
+        {notes.length > 0 && <>
+          <h4 className="asm-out-head">The C64 <span className="muted small">what it does with the program that the assembler cannot see: the VIC, LOAD, the ROMs</span></h4>
+          <ul className="asm-problem-list" aria-label="What the C64 check found">{notes.map((n, i) => <ProblemRow key={i} file={n.file} line={n.line} msg={n.msg} level={n.level} onGo={onGo} />)}</ul>
+        </>}
         {!!check?.prints.length && <><h4 className="asm-out-head">.print</h4><pre className="asm-out-pre mono small">{check.prints.join('\n')}</pre></>}
         {build && !build.running && build.ok !== null && <>
           <h4 className="asm-out-head">{build.tool} <span className="muted small">the last build, {new Date(build.at).toLocaleTimeString()}</span></h4>

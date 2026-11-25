@@ -792,3 +792,97 @@ test('a name in the Assembler: its references in all the sources (Shift+F12), re
   await page.keyboard.press('Escape');
   await closeProject(page, 'names');
 });
+
+test('the C64 checks of an Assembler project: sprites outside the VIC bank and under the character ROM, on their lines and under Problems', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'c64');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', 'start:  lda #$80', '        sta $07f8', '        rts', '        * = $4000', '// @block sprite', 'ship:   .fill 64, $ff', '// @end', '        * = $1000', '// @block sprite', 'rock:   .fill 64, $0f', '// @end', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const found = page.getByRole('list', { name: 'What the C64 check found' });
+  await expect(found.getByRole('listitem')).toHaveCount(2, { timeout: 20_000 });
+  await expect(found).toContainText('main.asm:11');
+  await expect(found).toContainText('the VIC sees the character ROM at $1000-$1fff');
+  await expect(found).toContainText('main.asm:7');
+  await expect(found).toContainText('in VIC bank 1 ($4000-$7fff), but the program shows bank 0 ($0000-$3fff)');
+  await expect(page.locator('#asm-tab-problems .count')).toHaveText('2');
+  // on their lines in the editor
+  await expect(page.locator('.scr-editor .squiggly-warning')).toHaveCount(2);
+  await shot(page, '23-c64-checks');
+  // a click goes to the line
+  await found.getByRole('button', { name: /main\.asm:11/ }).click();
+  await expect(page.locator('.scr-editor .line-numbers.active-line-number')).toHaveText('11');
+
+  // moved where the VIC sees them, the warnings go
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', 'start:  lda #$80', '        sta $07f8', '        rts', '        * = $2000', '// @block sprite', 'ship:   .fill 64, $ff', '// @end', ''].join('\n'));
+  await expect(found).toHaveCount(0, { timeout: 20_000 });
+  await closeProject(page, 'c64');
+});
+
+test('debugging in the Assembler: Memory shows the memory of the program being debugged, back to the program when it stops; Shift+F5 starts the build in Retro Debugger with the sources and the breakpoints', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'live');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', 'start:  lda #$41', '        sta $3000', '        rts', '        * = $3000', 'cell:   .byte 0', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const tabs = page.locator('.main-tabs'), dump = page.getByLabel('Memory dump');
+  const cell = dump.locator('[data-a="12288"].mon-b');
+  const live = page.locator('.gfxv-live');
+  const showCell = async () => {
+    await expect(async () => {
+      await page.getByLabel('Monitor command').fill('m 3000');
+      await page.getByLabel('Monitor command').press('Enter');
+      await expect(cell).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 30_000 });
+  };
+
+  // Debug: stopped at the first instruction; Memory says it shows the machine's memory
+  await page.getByRole('button', { name: /^Debug/ }).click();
+  await expect(page.getByRole('complementary', { name: 'Debugger' })).toBeVisible();
+  await tabs.getByRole('tab', { name: 'Memory' }).click();
+  await expect(live).toContainText('Stopped at $080e (main.asm line 2): the memory of the program being debugged in Mimir\'s 6510');
+  await showCell();
+  await expect(cell).toHaveText('00');
+  // two steps: the store has written, and Memory shows it
+  await tabs.getByRole('tab', { name: 'Assembler' }).click();
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('F8'); await page.keyboard.press('F8');
+  await tabs.getByRole('tab', { name: 'Memory' }).click();
+  await expect(live).toContainText('Stopped at $0813 (main.asm line 4)');
+  await showCell();
+  await expect(cell).toHaveText('41');
+  await shot(page, '24-live-memory');
+  // stopped: the program as it loads again
+  await tabs.getByRole('tab', { name: 'Assembler' }).click();
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await tabs.getByRole('tab', { name: 'Memory' }).click();
+  await expect(live).toHaveCount(0);
+  await showCell();
+  await expect(cell).toHaveText('00');
+
+  // Shift+F5: built and started in Retro Debugger (a Windows program that ends at once stands in), with the source and
+  // the breakpoint on line 3
+  const kickJar = (await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<{ kickJar: string }> } }).kr.getSettings())).kickJar;
+  const standIn = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
+  if (kickJar && existsSync(kickJar) && existsSync(standIn)) {
+    await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ debugger: 'retro', retroDebuggerPath: v }), standIn);
+    await tabs.getByRole('tab', { name: 'Assembler' }).click();
+    const editor = page.locator('.scr-editor');
+    const box = await editor.locator('.line-numbers', { hasText: /^3$/ }).boundingBox();
+    const glyph = await editor.locator('.glyph-margin').boundingBox();
+    await page.mouse.click(glyph!.x + glyph!.width / 2, box!.y + box!.height / 2);
+    await expect(editor.locator('.scr-bp')).toHaveCount(1);
+    await page.locator('.scr-editor .view-lines').click();
+    await page.keyboard.press('Shift+F5');
+    await expect(toast(page, /^Retro Debugger started main\.prg with 1 breakpoint, the sources beside its code/)).toBeVisible({ timeout: 60_000 });
+    const dbg = readFileSync(join(dir, 'out', 'main.debugger.dbg'), 'utf8');
+    expect(dbg).toContain('   <Breakpoints values="SEGMENT,ADDRESS,ARGUMENT">\n      Default,$0810,\n   </Breakpoints>');
+    expect(dbg).toMatch(/\n {9}\$0810,\$0812,0,3,/);
+    expect(readFileSync(join(dir, 'out', 'main.debugger.src', 'main.asm'), 'utf8').split('\n')[2]).toBe('        sta $3000');
+  }
+  await closeProject(page, 'live');
+});

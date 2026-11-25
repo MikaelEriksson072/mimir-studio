@@ -10,7 +10,7 @@
  * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
+import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmDebugSources, asmMachineMemory, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
@@ -51,6 +51,8 @@ const DEBUG_SLICE = 400_000;
 const WRITE_MS = 500;
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** a file's name in a path of the computer's (\ or /), as baseName is of a path in the folder */
+const fileName = (path: string) => path.replace(/^.*[\\/]/, '');
 /** `fn` on each of `items`, `n` at a time */
 async function inParallel<T>(items: readonly T[], n: number, fn: (t: T) => Promise<void>): Promise<void> {
   let i = 0;
@@ -417,7 +419,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /** (`soft`: the debugger's line, scrolled to only when it is out of view, the focus left where it is) */
   const reveal = useRef<{ path: string; line: number; col?: number; soft?: boolean } | null>(null);
   /** what the editor's keys and the gutter do (the editor is made once; these change every render) */
-  const keys = useRef({ block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { } });
+  const keys = useRef({ debugger: () => { }, block: () => { }, run: () => { }, build: () => { }, step: () => { }, over: () => { }, out: () => { }, cont: () => { }, toggleBp: (_line: number) => { }, write: () => { }, open: (_p: string, _o?: OpenAt) => { }, tab: (_step: number) => { }, closeTab: () => { } });
 
   useEffect(() => {
     if (!loaded) return;
@@ -449,6 +451,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       // F6 steps over a JSR, Shift+F6 out of one
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { editor.trigger('run', 'hideSuggestWidget', null); if (dbgRef.current) keys.current.cont(); else keys.current.run(); });
       editor.addCommand(monaco.KeyCode.F5, () => keys.current.run());
+      editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F5, () => keys.current.debugger());
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyB, () => keys.current.build());
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => keys.current.write());
       editor.addCommand(monaco.KeyCode.F8, () => keys.current.step());
@@ -592,6 +595,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
 
   // the problems as markers on their lines: what Mimir's check finds, and what the last build found
   const [build, setBuild] = useState<AsmBuild | null>(null);
+  // the C64 checks (the window's analysis of the program) at the lines that write their bytes
+  const c64Notes = useAsmLink(s => s.notes);
+  const notes = useMemo(() => c64Notes.map(n => { const l = check ? asmLineAt(check, n.addr) : null; return { file: l?.file ?? '', line: l?.line ?? 0, level: n.level, msg: n.msg }; }), [c64Notes, check]);
   useEffect(() => {
     const monaco = monacoRef.current;
     if (state !== 'ready' || !monaco) return;
@@ -600,6 +606,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       const on = (line: number) => line > 0 && line <= m.getLineCount();
       monaco.editor.setModelMarkers(m, 'asm-check', (check?.problems ?? []).filter(x => x.file === p && on(x.line)).map(x => ({
         severity: monaco.MarkerSeverity.Error, message: x.msg, source: 'Mimir\'s check', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
+      })));
+      monaco.editor.setModelMarkers(m, 'asm-c64', notes.filter(x => x.file === p && on(x.line)).map(x => ({
+        severity: x.level === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Info, message: x.msg, source: 'Mimir\'s C64 check', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
       })));
       monaco.editor.setModelMarkers(m, 'asm-blocks', blocks.warnings.filter(x => x.file === p && on(x.line)).map(x => ({
         severity: monaco.MarkerSeverity.Warning, message: x.msg, source: 'Mimir', startLineNumber: x.line, startColumn: 1, endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
@@ -619,7 +628,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         startLineNumber: x.line, startColumn: Math.max(1, x.column || 1), endLineNumber: x.line, endColumn: m.getLineMaxColumn(x.line),
       })));
     }
-  }, [check, build, state, texts, blocks]);
+  }, [check, build, state, texts, blocks, notes]);
   const blockDecos = useRef<Record<string, string[]>>({});
   const problemsOf = useMemo(() => {
     const n = new Map<string, number>();
@@ -730,11 +739,30 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         if (p?.file && paths.has(p.file)) openFile(p.file, { line: p.line, col: p.column || 1 });
         return null;
       }
-      if (!forRun) toast(`Built ${baseName(o.prgPath)}: ${fmtBytes(prg!.size)} at $${h4(prg!.load)}`, 'ok');
+      if (!forRun) toast(`Built ${fileName(o.prgPath)}: ${fmtBytes(prg!.size)} at $${h4(prg!.load)}`, 'ok');
       return { prgPath: o.prgPath, vsPath: o.vsPath, prg: o.prg!, main };
     } finally { building.current = false; }
   };
   buildRef.current = () => doBuild(true);
+  /** the build in Retro Debugger or C64 Debugger (Settings → Toolchain), as Build & Run's Shift+F5 (spec 13.2b): with
+   *  the sources (their lines and the bytes each made), the labels and the breakpoints */
+  const runInDebugger = async () => {
+    const b = await doBuild(true);
+    if (!b || !kr) return;
+    const c = check ?? useAsmLink.getState().check;
+    const now: Record<string, string> = { ...textsRef.current };
+    for (const [p, m] of Object.entries(models.current)) if (!m.isDisposed()) now[p] = m.getValue();
+    const debug = c ? { sources: asmDebugSources(c, now), breakpoints: [...bpAddrs(c)] } : undefined;
+    try {
+      const res = await kr.run({ prgPath: b.prgPath, ...(b.vsPath ? { labelsPath: b.vsPath } : {}), debugger: true, ...(debug ? { debug } : {}) });
+      const name = res.debugger ?? 'The debugger';
+      setBuild(x => x && { ...x, vice: `${name} started it` });
+      toast(`${name} started ${fileName(b.prgPath)}${debug?.breakpoints.length ? ` with ${plural(debug.breakpoints.length, 'breakpoint')}` : ''}, the sources beside its code${res.notes?.length ? ` (${res.notes[0]})` : ''}`, 'ok');
+    } catch (e) {
+      setBuild(x => x && { ...x, vice: `The debugger did not start: ${errorText(e)}` });
+      toast(`The debugger did not start: ${errorText(e)} (Settings → Toolchain)`, 'err');
+    }
+  };
   const run = async () => {
     if (dbgRef.current) { contDbg(); return; }
     const b = await doBuild(true);
@@ -743,7 +771,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       const res = await kr.run({ prgPath: b.prgPath, ...(b.vsPath ? { labelsPath: b.vsPath } : {}) });
       const how = res.via === 'run' ? 'with RUN' : res.via === 'sys' ? 'with SYS' : res.via === 'monitor' ? 'from the monitor' : '';
       setBuild(x => x && { ...x, vice: `VICE started it ${how}`.trim() });
-      toast(`VICE started ${baseName(b.prgPath)} ${how}${b.vsPath ? ', its labels in the monitor' : ''}`.trim(), 'ok');
+      toast(`VICE started ${fileName(b.prgPath)} ${how}${b.vsPath ? ', its labels in the monitor' : ''}`.trim(), 'ok');
     } catch (e) {
       setBuild(x => x && { ...x, vice: `VICE did not start: ${errorText(e)}` });
       toast(`VICE did not start: ${errorText(e)} (Settings → Toolchain)`, 'err');
@@ -798,9 +826,21 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   /** the debugger stopped somewhere: its line shown (in its file; at no line of the sources, the line it is running
    *  for), the C64's picture as it stands; at the end of the run (memory only: the program returned; the whole C64: a
    *  JAM), it is the last run */
+  const liveAt = useRef(0);
+  /** the machine's memory to the window's Memory and Graphics (each stop; running, a few times a second) */
+  const publishLive = (d: Debugging, running: boolean) => {
+    const now = performance.now();
+    if (running && now - liveAt.current < 300) return;
+    liveAt.current = now;
+    const whole = d.m instanceof AsmC64, mem = d.m instanceof AsmC64 ? d.m.m.ram.slice() : asmMachineMemory(d.m);
+    const l = asmLineAt(d.c, d.m.cpu.pc);
+    useAsmLink.getState().set({ live: { mem, pc: d.m.cpu.pc, where: l ? `${l.file} line ${l.line}` : null, whole, running, n: (useAsmLink.getState().live?.n ?? 0) + 1 } });
+  };
+  useEffect(() => { if (!dbg) useAsmLink.getState().set({ live: null }); }, [dbg]);
   const stopped = (d: Debugging) => {
     if (dbgRef.current !== d) return;
     if (d.m.end) { finishDbg(d); return; }
+    publishLive(d, false);
     setTick(t => t + 1);
     if (d.m instanceof AsmC64) showPic(d.m, true);
     const l = asmLineAt(d.c, d.m.cpu.pc) ?? asmCallSite(d.c, d.m);
@@ -866,7 +906,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
         const cycles = Math.min(3 * FRAME_CYCLES, Math.max(LINE_CYCLES, Math.round((t - last) * PAL_CLOCK / 1000)));
         last = t;
         const r = c64m.runFor(cycles, at);
-        showPic(c64m, false); setTick(n => n + 1);
+        showPic(c64m, false); setTick(n => n + 1); publishLive(d, true);
         if (r === 'more') { requestAnimationFrame(frame); return; }
         done();
       };
@@ -876,7 +916,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     const part = () => {
       if (dbgRef.current !== d) return;
       const r = pauseReq.current ? 'stopped' : d.m.runUntil(at, DEBUG_SLICE);
-      if (r === 'more') { if (c64m) showPic(c64m, false); setTick(t => t + 1); setTimeout(part, 0); return; }
+      if (r === 'more') { if (c64m) showPic(c64m, false); setTick(t => t + 1); publishLive(d, true); setTimeout(part, 0); return; }
       done();
     };
     setTimeout(part, 0);
@@ -921,7 +961,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     m.setKeys(c64Held([...heldKeys.current].map(([code, key]) => ({ code, key }))));
   };
   const c64Release = () => { heldKeys.current.clear(); const m = dbgRef.current?.m; if (m instanceof AsmC64) m.setKeys([]); };
-  keys.current = { block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
+  keys.current = { debugger: () => void runInDebugger(), block: () => askBlock(), run: () => void run(), build: () => void doBuild(false), step: stepDbg, over: overDbg, out: outDbg, cont: contDbg, toggleBp, write: () => { if (shownRef.current) void write(shownRef.current); }, open: openFile, tab: stepTab, closeTab: () => { if (shownRef.current) closeTabs([shownRef.current]); } };
   // what the rest of the window asks for: an address's line in the sources shown (Graphics, Memory, the inspector, the
   // Explorer), Run, Build or Debug (the title bar, F5 on another tab)
   const show = useAsmLink(s => s.show), ask = useAsmLink(s => s.ask);
@@ -937,7 +977,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
   useEffect(() => {
     if (!ask || ask.n === seenAsk.current.ask) return;
     seenAsk.current.ask = ask.n;
-    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else if (ask.what === 'write') { if (ask.changes) void writeBytes(ask.changes); } else if (ask.what === 'log') { if (ask.text) setBuild(b => (b ? { ...b, log: `${b.log}\n\n${ask.text}` } : b)); ui.set({ outTab: 'build', outFolded: false }); } else void startDebug();
+    if (ask.what === 'run') void run(); else if (ask.what === 'build') void doBuild(false); else if (ask.what === 'block') askBlock(ask.kind, ask.lib); else if (ask.what === 'debugger') void runInDebugger(); else if (ask.what === 'write') { if (ask.changes) void writeBytes(ask.changes); } else if (ask.what === 'log') { if (ask.text) setBuild(b => (b ? { ...b, log: `${b.log}\n\n${ask.text}` } : b)); ui.set({ outTab: 'build', outFolded: false }); } else void startDebug();
   }, [ask]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useAsmLink.getState().set({ building: !!build?.running }); }, [build?.running]);
   useEffect(() => { useAsmLink.getState().set({ main }); }, [main]);
@@ -1071,7 +1111,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       if (ctrl && !e.altKey && (e.key === 'Tab' || e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); keys.current.tab(e.key === 'PageUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1); return; }
       if (ctrl && !e.altKey && !e.shiftKey && e.key === 'F4') { e.preventDefault(); keys.current.closeTab(); return; }
       if ((e.target as HTMLElement | null)?.closest?.('input, select')) return;
-      if (e.key === 'F5' && !e.ctrlKey && !e.altKey) { e.preventDefault(); keys.current.run(); }
+      if (e.key === 'F5' && !e.ctrlKey && !e.altKey) { e.preventDefault(); if (e.shiftKey) keys.current.debugger(); else keys.current.run(); }
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); keys.current.build(); }
       else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); void writeAll(); }
       else if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -1150,7 +1190,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
             <button className="btn" onClick={() => stopDbg()} title="Stop debugging where it is"><Icon name="x" />Stop</button>
           </div> : <>
             <button className="btn primary scr-run asm-run" disabled={!main || !!build?.running} onClick={() => void run()}
-              title={main ? `Build ${main} with ${tool} and start it in VICE (Ctrl+Enter or F5); what is not written yet is written first` : 'There is no source to run'}>
+              title={main ? `Build ${main} with ${tool} and start it in VICE (Ctrl+Enter or F5); what is not written yet is written first. Shift+F5 starts it in Retro Debugger or C64 Debugger (Settings → Toolchain) with the sources and the breakpoints` : 'There is no source to run'}>
               <Icon name="play" />{build?.running ? 'Building…' : 'Run'}<kbd>Ctrl+Enter</kbd></button>
             <button className="btn asm-build" disabled={!main || !!build?.running} onClick={() => void doBuild(false)} title={main ? `Build ${main} with ${tool}, without starting it (Ctrl+Shift+B): the PRG goes in out\\ beside it` : 'There is no source to build'}>Build</button>
             <button className="btn asm-release" disabled={!main || !!build?.running} onClick={onRelease} title={main ? `Release: build ${main} and make a disk image (.d64), a tape image (.tap), a cartridge (.crt) or a PRG of it, packed or not, in out\\, and start it in VICE; or write build.bat and build.sh` : 'There is no source to build'}>Release…</button>
@@ -1202,7 +1242,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
             ui.set({ outH: Math.max(110, Math.min(window.innerHeight - 200, now + room, now - d)) });
           }} />}
           <AsmOutput check={check} build={build} kept={kept} tab={ui.outTab} folded={ui.outFolded} height={ui.outH}
-            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} cycles={cycles} />
+            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} cycles={cycles} notes={notes} />
         </div>
       </div>
       {blockAsk && shown && <AsmBlockDialog lang={lang} dir={dir} source={shown} paths={paths} names={new Set(check?.names.keys() ?? [])} kind={blockAsk.kind} lib={blockAsk.lib}

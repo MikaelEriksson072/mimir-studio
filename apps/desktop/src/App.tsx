@@ -5,7 +5,7 @@
  * ===================================================================== */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
-  assemblerSources, bankRange, buildScripts, comparePrg, createProject, makeD64, makeTap, programCartridge, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
+  asmC64Notes, assemblerSources, bankRange, buildScripts, comparePrg, createProject, makeD64, makeTap, programCartridge, cyclePath, d64FileName, detectPacking, makePrg, mergeOverride, nextSides, portName, portText, deserializeProject, exportFiles, findBlock, h2, h4, kindInfo, lineMove, lineText, MARK_AS, markOverride, MAX_BLANKS, moveBlockKeys, resizeBlock,
   gfxToData, keepCutTypes, markIdOf, moveFrom, splitBlock, type BlockResize,
   formatOverride, openC64File, overwritesSystemArea, coversReadyScreen, parseVsf, patchSnapshot, editRanges, showcaseProject, parseD64, parsePrg, pastEndText, projectNameFor, unpackedName, rangeCover, bitfireFileName, boozeFileName, readBitfireDisk, readBoozeDisk, readCovertDisk, readIfflDisk, IFFL_PACKER, ifflPartName, ifflPieceName, ifflPiecePrg, covertDiskFile, covertFileName, covertFilePrg, covertScript, covertScriptText, covertSummary, covertUnpackedName, dlocFileName, dlocFilePrg, dlocScript, dlocScriptText, dlocSummary, dlocUnpackedName, readDlocDisk, readD64File, readKrillDisk, cc1541Script, krillPackerName, krillScriptText, krillDiskPrg, krillFileName, krillFilePrg, krillUnpackedName, readSparkleDisk, sparkleChunkName, sparkleChunkPrg, sparkleScript, pirateSlayerFileList, pirateSlayerFileName, pirateSlayerPrg, readPirateSlayerDisk, paraProtectFileList, paraProtectPrg, readParaProtectDisk, diskSpeedFileList, diskSpeedPrg, readDiskSpeedDisk, writeDiskFile, readSpindleDisk, readTape, replaceTapeFile, tapeBoot, tapeFileName, tapeToolScript, writeT64, spinChunkName, spinScript, d64writeScript, boozeFileList, projectTextFiles, shellWord, SYSTEM_AREA, READY_SCREEN, START_STUB, textLabel, TOOLCHAIN_KEYS, validLabel, withId, ASSEMBLERS, assemblerOf, isLabelDefinition, labelFor,
   patchAt, patchEnd, patchesOn, patchFileName, patchPrg, switchPatch, withoutPatch, withPatch, notPacked, packedData, packerNames, unpackLog, ioSummary, sidPlayer, musicPlayData, musicSidFile, decode, zpPairable,
@@ -153,6 +153,8 @@ const ASM_TABS: readonly EditorTab[] = ['asm', 'gfx', 'mem', 'scripts', 'git', '
 /** the side panel's views an Assembler project has not: its bookmarks would not stay at their lines, and the Pack view
  *  packs a re-assembled build */
 const ASM_HIDDEN_VIEWS: readonly Activity[] = ['bookmarks'];
+/** every byte loaded: the memory of a program being debugged is all there is (Memory and Graphics show any of it) */
+const ALL_LOADED = new Int16Array(0x10000);
 /** an Assembler project's commands: those that are not of the analysis, the re-assembly or the listing (its own Run,
  *  Build and Debug come first) */
 const ASM_COMMANDS = new Set(['mount', 'tape', 'side-panel', 'inspector-show', 'inspector-mode', 'panel', 'library-show', 'library-add', 'save', 'save-copy', 'openproj', 'reveal', 'start-screen', 'settings', 'theme', 'undo', 'redo', 'tab-gfx', 'tab-mem', 'tab-scripts', 'script-full', 'tab-git', 'script-new', 'tab-spec', 'pack-view', 'pack-run', 'pack-save']);
@@ -219,6 +221,13 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
    *  and the listing */
   const asmMode = !!asmProject;
   const asmBuilding = useAsmLink(s => s.building), asmMain = useAsmLink(s => s.main);
+  // the memory of the program being debugged in the Assembler: Memory and Graphics show it (all of it, loaded or not)
+  const asmLive = useAsmLink(s => s.live);
+  const liveA = useMemo(() => (asmMode && asmLive ? { ...A, mem: asmLive.mem, owner: ALL_LOADED } : null), [asmMode, asmLive, A]);
+  const liveNote = asmLive ? `${asmLive.running ? 'Running' : 'Stopped'} at $${h4(asmLive.pc)}${asmLive.where ? ` (${asmLive.where})` : ''}: the memory of the program being debugged${asmLive.whole ? ' in the whole C64 (its RAM)' : ' in Mimir\'s 6510'}, as it is now. The program as it loads comes back when debugging stops.` : null;
+  // an Assembler project's C64 checks (spec 10.7): what the analysis sees that the assembler cannot, to the Assembler tab
+  const asmNotes = useMemo(() => (asmMode && A.files.length ? asmC64Notes(A) : []), [asmMode, A]);
+  useEffect(() => { useAsmLink.getState().set({ notes: asmNotes }); }, [asmNotes]);
   const past = useProject(s => s.past), future = useProject(s => s.future), home = useProject(s => s.home);
   const { update, replace, undo, redo, enter, setHome } = useProject.getState();
   /** analysis settings from the project, toolchain paths from the app */
@@ -4409,7 +4418,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'name-known', label: suggested.length ? `Name the ${suggested.length} routine${suggested.length === 1 ? '' : 's'} known from other projects (${suggested.slice(0, 3).map(m => m.name).join(', ')}${suggested.length > 3 ? ' …' : ''})` : 'Name the routines known from other projects (none here)', run: () => nameKnown() },
     { id: 'learn-project', label: `Learn the routines named in this project, so other projects get their names suggested (Mimir knows ${library.length})`, run: learnThisProject },
   ];
-  const asmAsk = (what: 'run' | 'build' | 'debug' | 'block') => useAsmLink.getState().request(what);
+  const asmAsk = (what: 'run' | 'build' | 'debug' | 'debugger' | 'block') => useAsmLink.getState().request(what);
   const asmTool2 = stored.asm?.lang === '64tass' ? '64tass' : 'KickAss.jar';
   const commands: Command[] = asmMode ? [
     { id: 'tab-asm', label: 'Show the Assembler: the project\'s sources, checked as you type', run: () => setUi({ tab: 'asm' }) },
@@ -4419,6 +4428,7 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     { id: 'asm-pack', label: `Pack with ${project.pack?.packer === 'exomizer' ? 'Exomizer' : 'Brokkr'}: build the main file with ${asmTool2} and pack it as the Pack view says`, run: () => { setUi({ activity: 'pack', sidePanel: true }); void runPack(); } },
     { id: 'asm-release', label: 'Release: make the build into a disk image, a tape image, a cartridge or a PRG, packed or not, and start it in VICE…', run: () => setAsmRelease(true) },
     { id: 'asm-scripts', label: 'Write build.bat and build.sh beside the main file (they build it and start it in VICE outside Mimir)', run: () => void asmScripts() },
+    { id: 'asm-debugger', label: `Run in ${debuggerName}: build the main file with ${asmTool2} and start it there with the sources and the breakpoints`, key: 'Shift+F5', run: () => asmAsk('debugger') },
     { id: 'asm-block', label: 'Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data (from the library, a file, or empty .byte lines)', run: () => { setUi({ tab: 'asm' }); asmAsk('block'); } },
     ...allCommands.filter(c => ASM_COMMANDS.has(c.id) || c.id.startsWith('script-run-')),
   ] : allCommands;
@@ -4522,7 +4532,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
       // Alt+Enter: the script editor in full screen and back (in its code Monaco's command does it)
       if (e.altKey && !ctrl && !e.shiftKey && e.key === 'Enter' && k.tab === 'scripts' && !k.modal && !e.defaultPrevented) { e.preventDefault(); toggleScriptsFull(); return; }
       if (e.altKey && !ctrl && !e.shiftKey && !k.modal && /^[1-9]$/.test(e.key)) { const c = k.commands.find(x => x.key === `Alt+${e.key}` && x.id.startsWith('script-run-')); if (c) { e.preventDefault(); c.run(); return; } }
-      if (e.key === 'F5') return run(e.shiftKey ? 'build-debugger' : 'build');
+      // (an Assembler project's Shift+F5: its build in the debugger)
+      if (e.key === 'F5') return run(e.shiftKey ? (k.asm ? 'asm-debugger' : 'build-debugger') : 'build');
       if (e.key === 'F9') return run('quicksave');
       if (e.key === 'F7') return run('verify');
       if (e.key === 'F8' && !typing && !k.modal && !k.editing && k.tab === 'listing') { e.preventDefault(); return run(e.shiftKey ? 'watch' : 'breakpoint'); }
@@ -5195,14 +5206,14 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
                 files={scriptFileChoices} onRunOnFiles={id => openRunOnFiles(id)} onRunValues={id => setValuesRun(id)} onToProject={padToProject} />}
               {/* every bank at once: bank addresses as they are (a view of one bank: its plain addresses, made bank addresses);
                   another way of showing opens the tab anew */}
-              {tab === 'gfx' && (g => <MemoryGfx source={asmMode} key={allGfx ? 'all' : 'one'} A={allGfx ? A : As} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
+              {tab === 'gfx' && (g => <MemoryGfx source={asmMode} live={liveNote} key={allGfx ? 'all' : 'one'} A={liveA ?? (allGfx ? A : As)} R={allGfx ? R : Rs} cursor={allGfx ? cursor : vCursor} sel={allGfx ? sel : vSel} bank={bankPick} start={startIn(allGfx)} goTo={goIn(allGfx)} onView={(t, e) => { seeIn(allGfx)(t, e); setGfxGo(null); }}
                 parts={allGfx ? bankParts : null} fmt={allGfx ? bankText : undefined} resolve={allGfx ? resolveAddr : undefined}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}
                 onMark={(id, r, mc, ps) => (ps && ps.length > 1 ? markPieces(id, ps.map(p => ({ start: g(p.start), end: g(p.end) })), mc) : mark(id, r && { start: g(r.start), end: g(r.end) }, { mc }))} onUnmark={r => unmark({ start: g(r.start), end: g(r.end) })}
                 onMulticolor={(r, view, mc) => setGfxMc({ start: g(r.start), end: g(r.end) }, view, mc)}
                 onShow={a => navigate(g(a), { center: true, listing: true })} onSave={(name, bytes) => void saveGraphics(name, bytes)}
                 onLibrary={(r, kind, mc, cols, bitmap) => startLibraryAdd(null, { start: g(r.start), end: g(r.end), kind, mc, colors: { ...cols }, ...(bitmap ? { bitmap } : {}) })} />)(allGfx ? (a: Addr) => a : inBank)}
-              {tab === 'mem' && (g => <MemoryDump source={asmMode} key={allBanks ? 'all' : 'one'} A={allBanks ? A : As} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
+              {tab === 'mem' && (g => <MemoryDump source={asmMode} live={liveNote} key={allBanks ? 'all' : 'one'} A={liveA ?? (allBanks ? A : As)} R={allBanks ? R : Rs} cursor={allBanks ? cursor : vCursor} sel={allBanks ? sel : vSel} bank={bankPick} start={startIn(allBanks)} goTo={memGoIn(allBanks)} onView={(t, e) => { seeIn(allBanks)(t, e); setMemGo(null); }}
                 spaces={allBanks ? A.spaces : null} fmt={allBanks ? bankText : undefined} resolve={allBanks ? resolveAddr : undefined}
                 onCursor={a => { const b = g(a); navigate(b, { noHistory: true }); setSel({ start: b, end: b + 1, multi: false, anchor: b, anchorEnd: b + 1 }); }}
                 onSelect={(s, e) => { setSel({ start: g(s), end: g(e), multi: true, anchor: g(s), anchorEnd: g(e) }); setCursor(g(s)); }} onClear={() => setSel(null)}

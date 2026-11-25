@@ -69,6 +69,8 @@ export interface MemoryGfxProps {
   /** an Assembler project (spec 10.7): nothing is marked here (the sources say what the bytes are), and Show goes to the
    *  line in the sources that writes them */
   source?: boolean;
+  /** an Assembler project's program being debugged: what the memory shown is, said over it (null: the program as it loads) */
+  live?: string | null;
   /** save a file through a save dialog (its suggested name and bytes) */
   onSave: (name: string, bytes: Uint8Array) => void;
   /** the selection as characters, sprites or a bitmap to the library (spec 10.6), drawn as here; a part of a bitmap is
@@ -110,7 +112,7 @@ const VIC_COLOURS_OF: Record<GfxKind, string> = {
   bitmap: 'the background $d021 and the colours most cells of its screen and colour RAM give',
 };
 
-export function MemoryGfx({ source = false, A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
@@ -458,6 +460,7 @@ export function MemoryGfx({ source = false, A, R, cursor, sel, onSelect, onClear
   </>;
   return (
     <div className="gfxv" tabIndex={-1} onKeyDown={key} aria-label="Memory as graphics">
+      {live && <p className="gfxv-live small" role="status"><Icon name="play" size={12} />{live}</p>}
       <ViewModes label="Show memory as" modes={modes} value={kind} onChange={k => set({ kind: k })} now={now}
         aside={(bank || kind !== 'fontrows') && <>{bank && <BankPick {...bank} />}{kind !== 'fontrows' && <form className="gfxv-go" onSubmit={e => { e.preventDefault(); go(); }}>
           <input aria-label="Go to address, label or range" className={cx('mono', gotoErr && 'bad')} value={goto} title={gotoErr ?? 'Go to an address, a label or a range ($2000-$27ff)'} placeholder="$3000, label, range" spellCheck={false} onChange={e => { setGoto(e.target.value); setGotoErr(null); }} />

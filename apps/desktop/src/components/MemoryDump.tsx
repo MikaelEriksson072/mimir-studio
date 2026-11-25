@@ -51,6 +51,8 @@ interface MemoryDumpProps {
   /** an Assembler project (spec 10.7): nothing is marked here, and Show goes to the line in the sources that writes the
    *  bytes */
   source?: boolean;
+  /** an Assembler project's program being debugged: what the memory shown is, said over it (null: the program as it loads) */
+  live?: string | null;
   /** a cartridge's banks: the one shown and picking another (null without a cartridge) */
   bank?: BankPickProps | null;
   /** where the editor was in memory (14.6b): the tab opens with it in the top row (null: at the cursor) */
@@ -73,7 +75,7 @@ const plainAddr = (a: Addr) => `$${h4(a)}`;
 /** the line over a bank's rows: `bank 1 · $8000–$9fff` */
 const bankLine = (bank: number, start: Addr, end: Addr) => `bank ${bank} · $${h4(start & 0xffff)}–$${h4((end - 1) & 0xffff)}`;
 
-export function MemoryDump({ source = false, A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, goTo, onView, spaces, fmt = plainAddr, resolve }: MemoryDumpProps) {
+export function MemoryDump({ source = false, live = null, A, R, cursor, sel, onCursor, onSelect, onClear, onMark, onShow, onCopy, bank, start, goTo, onView, spaces, fmt = plainAddr, resolve }: MemoryDumpProps) {
   const prefs = useUi(s => s.mon), setUi = useUi(s => s.set);
   const set = (p: Partial<MonPrefs>) => setUi({ mon: { ...useUi.getState().mon, ...p } });
   const { mode, lower, colors } = prefs;
@@ -366,6 +368,7 @@ export function MemoryDump({ source = false, A, R, cursor, sel, onCursor, onSele
   </>;
   return (
     <div className="gfxv monv" aria-label="Memory as the VICE monitor shows it">
+      {live && <p className="gfxv-live small" role="status"><Icon name="play" size={12} />{live}</p>}
       <ViewModes label="Show memory as" modes={MODES} value={mode} onChange={k => set({ mode: k })} now={now}
         aside={<>{bank && <BankPick {...bank} />}<form className="gfxv-go" onSubmit={e => { e.preventDefault(); run(); }}>
           <input aria-label="Monitor command" className={cx('mono', cmdErr && 'bad')} value={cmd} title={cmdErr ?? 'A VICE monitor command (m 0801 08ff, i 0801, ii 0400 07e7), or an address or label'} placeholder="m 0801 08ff" spellCheck={false}

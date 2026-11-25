@@ -2159,6 +2159,12 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-block input.bad { border-color: var(--err, #e5534b); }
 .asm-block .ab-preview pre { margin: 4px 0 0; padding: 8px 10px; background: var(--editor); border: 1px solid var(--line); border-radius: 6px; max-height: 220px; overflow: auto; white-space: pre; }
 .asm-block .ab-sid { margin: 0; }
+/* Memory and Graphics while the Assembler debugs: the machine's memory, said over it */
+.gfxv-live { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; padding: 4px 10px; border-radius: 6px; color: var(--fg); background: color-mix(in srgb, var(--ok) 16%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent); }
+.gfxv-live .icon { color: var(--ok); flex: none; }
+/* the Assembler's C64 checks under Problems */
+.asm-problem.info .icon { color: var(--hint); }
+.scr-out-tabs .count.warn { color: var(--warn); }
 /* the Assembler's cycles: the lines chosen counted */
 .asm-cycles .asm-cyc-br { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .asm-cycles .asm-cyc-br li { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
