@@ -9,6 +9,7 @@ import { cx, errorText } from '../lib/util';
 import { forgetUnsavedWork, unsavedWork, unsavedWorkChanged, useProject, workChanged } from '../store/project';
 import { useUi } from '../store/ui';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
+import { asmGitIgnore } from '../../shared/git';
 import type { GitVersion, ProjectCreateResult, ProjectStartInfo, RecentProject } from '../../shared/ipc';
 import { Logo } from './Logo';
 import { Modal } from './Modal';
@@ -40,13 +41,14 @@ export function gitNote(r: ProjectCreateResult): { text: string; bad: boolean } 
 /** an Assembler project's analysis settings: the normal analysis (the program is known: its code is the code the sources
  *  write), not the deep one a program to re-assemble starts with */
 const ASM_SETTINGS = { deepAnalysis: false } as const;
-/** the folder's .gitignore leaves out what the Assembler's builds write (out, beside the main file) too */
-export async function ignoreOut(dir: string): Promise<void> {
+/** the folder's .gitignore leaves out what the Assembler's builds and Pack write (out, packed) too (asmGitIgnore);
+ *  `existingOnly`: only in a .gitignore that is there (a folder that is a repository) */
+export async function ignoreOut(dir: string, existingOnly = false): Promise<void> {
   if (!kr) return;
   const r = await kr.assemblerRead({ dir, path: '.gitignore' }).catch(() => null);
-  const text = r?.text ?? '';
-  if (/^\/?out\/?\s*$/m.test(text)) return;
-  await kr.assemblerWrite({ dir, path: '.gitignore', text: `${text}${text && !text.endsWith('\n') ? '\n' : ''}# Mimir: the Assembler's builds (Run, Build) write the program here\nout/\n` }).catch(() => null);
+  if (!r && existingOnly) return;
+  const next = asmGitIgnore(r?.text ?? '');
+  if (next != null) await kr.assemblerWrite({ dir, path: '.gitignore', text: next }).catch(() => null);
 }
 
 /** `parent` and `name` joined as Windows (or the folder's own separators) writes them */

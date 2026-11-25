@@ -4025,6 +4025,8 @@ function Workspace({ A, R, aKey, renderMs, rProject, final, swaps, busy, deepBus
     asmBuilt.current = b;
     const { A, R, project } = latest.current;
     await packPrgs([{ name: b.prgPath.replace(/^.*[\\/]/, ''), prg: b.prg }], { ...(project.pack ?? packDefaults(A, project)), dir }, R, `the PRG ${asmTool2} built, ${b.prgPath}`, dir);
+    // (an Assembler project that is a repository leaves the packed folder out of it, as its builds' out)
+    if (home) await ignoreOut(home.dir, true);
   };
   /** the built PRGs packed as `prefs` say (into `dir` too, when it is set): the result kept, the log, and what it gave */
   const packPrgs = async (files: { name: string; prg: Uint8Array }[], prefs: PackPrefs, R: RenderResult, from: string, dir: string) => {

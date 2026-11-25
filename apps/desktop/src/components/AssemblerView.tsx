@@ -186,7 +186,7 @@ function NewFolderForm({ parent: parent0, onCreate, onCancel, name: name0 = '', 
         <span>Create a git repository (.git) in the folder
           <small className="muted">{gitFound === null
             ? ' — git is not installed: Mimir found no git.exe on PATH or in Program Files (Git for Windows, git-scm.com)'
-            : <> — with a <span className="mono">.gitignore</span> that leaves out what the builds write (<span className="mono">out</span>, <span className="mono">build</span>). The Git tab stages, commits and pushes.</>}</small>
+            : <> — with a <span className="mono">.gitignore</span> that leaves out what the builds and Pack write (<span className="mono">out</span>, <span className="mono">packed</span>, <span className="mono">build</span>). The Git tab stages, commits and pushes.</>}</small>
         </span>
       </label>
       <div className="np-where">{n && !problem

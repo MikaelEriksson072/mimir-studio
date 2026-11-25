@@ -7,6 +7,20 @@ export const GIT_IGNORE = `# Mimir: KickAss.jar's output, made again by every bu
 build/
 `;
 
+/** What an Assembler project's .gitignore leaves out besides Mimir's (spec 10.7): what its builds write (out, beside the
+ *  main file) and what Pack writes (packed). Each is added once: a line already there, or its comment (the line taken
+ *  out by hand), is not added again. */
+export const ASM_IGNORES: readonly { line: string; re: RegExp; comment: string }[] = [
+  { line: 'out/', re: /^\/?out\/?\s*$/m, comment: '# Mimir: the Assembler\'s builds (Run, Build) write the program here' },
+  { line: 'packed/', re: /^\/?packed\/?\s*$/m, comment: '# Mimir: Pack writes the packed program here' },
+];
+/** the .gitignore `text` with what an Assembler project leaves out (ASM_IGNORES) added; null: nothing to add */
+export function asmGitIgnore(text: string): string | null {
+  let out = text;
+  for (const x of ASM_IGNORES) if (!x.re.test(out) && !out.includes(x.comment)) out = `${out}${out && !out.endsWith('\n') ? '\n' : ''}${x.comment}\n${x.line}\n`;
+  return out === text ? null : out;
+}
+
 /** C64 files are bytes, never text: git on Windows (core.autocrlf) would otherwise turn a $0a in a .prg that happens to
  *  hold no zero byte into $0d $0a when it checks the file out */
 export const GIT_ATTRIBUTES = `# Mimir: C64 files are binary, whatever bytes they hold

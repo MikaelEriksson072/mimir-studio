@@ -628,7 +628,9 @@ test('Release and Pack in an Assembler project: the build as a disk, a tape, a c
   await expect.poll(() => existsSync(join(dir, 'build.sh')), { timeout: 10_000 }).toBe(true);
   await page.keyboard.press('Escape');
 
-  // the Pack view packs what the Assembler builds, its log under the Assembler's Build
+  // the Pack view packs what the Assembler builds, its log under the Assembler's Build; a repository's .gitignore (one
+  // made before Pack wrote a packed folder) leaves that out too
+  writeFileSync(join(dir, '.gitignore'), "# Mimir: the Assembler's builds (Run, Build) write the program here\nout/\n");
   await page.locator('nav.activity').getByRole('button', { name: 'Pack' }).click();
   const view = page.locator('.pack-view');
   await openSection(page, 'Command');
@@ -638,6 +640,7 @@ test('Release and Pack in an Assembler project: the build as a disk, a tape, a c
   await shot(page, '19-asm-pack');
   await page.locator('.main-tabs').getByRole('tab', { name: 'Assembler' }).click();
   await expect(page.getByRole('tabpanel', { name: 'Build' })).toContainText('brokkr', { timeout: 10_000 });
+  await expect.poll(() => readFileSync(join(dir, '.gitignore'), 'utf8'), { timeout: 5000 }).toContain('# Mimir: Pack writes the packed program here\npacked/\n');
   await closeProject(page, 'rel');
 });
 

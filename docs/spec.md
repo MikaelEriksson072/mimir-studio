@@ -3650,7 +3650,7 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   Assemblerns sida: *New…* gör ett nytt projekt (namn, var mappen hamnar, Kick Assembler eller 64tass, git eller inte, som
   *New project*) med projektfilen och `main.asm` i: ett program som tömmer skärmen, skriver en rad och går tillbaka till
   BASIC (`asmTemplate`; Mimirs egen assembler, KickAss.jar och 64tass ger samma bytes, testat i
-  `kickass.integration.test.ts`); med git lämnar `.gitignore` också `out` utanför. *Open folder…* öppnar en mapp med
+  `kickass.integration.test.ts`); med git lämnar `.gitignore` också `out` och `packed` utanför (`asmGitIgnore`; en `.gitignore` som finns sedan förut får `packed` när Pack skriver dit första gången, en gång: en rad man tagit bort läggs inte tillbaka). *Open folder…* öppnar en mapp med
   källkod: har den en projektfil öppnas det projektet (vilket slags det än är), annars blir mappen ett Assembler-projekt
   (projektfilen skrivs i den, språket är huvudfilens). Mapparna som öppnats listas under *Opened before*
   (`assembler.json` i användarmappen) och öppnas igen utan dialog; en mapp som inte finns längre är överstruken.

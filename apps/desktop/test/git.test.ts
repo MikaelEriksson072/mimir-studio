@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addNumstat, CHANGE_WORD, conflictFiles, GIT_ATTRIBUTES, gitPathProblem, parseLog, parseNameStatus, parseRemotes, parseStatus, remoteUrlProblem, stagedFiles, unstagedFiles } from '../shared/git';
+import { addNumstat, asmGitIgnore, CHANGE_WORD, conflictFiles, GIT_ATTRIBUTES, gitPathProblem, parseLog, parseNameStatus, parseRemotes, parseStatus, remoteUrlProblem, stagedFiles, unstagedFiles } from '../shared/git';
 import { findGit, GitService, initRepository } from '../electron/main/git';
 import { gitCommitSchema, gitDiffSchema, gitPathsSchema, gitRangeSchema, gitRemoteSchema, gitStatusSchema, projectCreateSchema } from '../electron/main/schemas';
 import { createProject } from '@mimir/core';
@@ -334,5 +334,18 @@ describe.skipIf(!GIT)('the GitService with the real git', () => {
       expect(again.runs).toEqual([]);
       expect(again.outcome.message).toMatch(/is a git repository already/);
     } finally { rmSync(outer, { recursive: true, force: true }); }
+  });
+});
+
+describe('an Assembler project\'s .gitignore', () => {
+  it('leaves out what its builds and Pack write, once each', () => {
+    const made = asmGitIgnore('build/\n')!;
+    expect(made).toBe("build/\n# Mimir: the Assembler's builds (Run, Build) write the program here\nout/\n# Mimir: Pack writes the packed program here\npacked/\n");
+    expect(asmGitIgnore(made)).toBe(null);
+    // an older one with out only gets packed; a line taken out by hand (its comment left) is not put back
+    expect(asmGitIgnore("# Mimir: the Assembler's builds (Run, Build) write the program here\nout/\n")).toMatch(/\npacked\/\n$/);
+    expect(asmGitIgnore('# Mimir: Pack writes the packed program here\nout/\n')).toBe(null);
+    expect(asmGitIgnore('/packed\nout\n')).toBe(null);
+    expect(asmGitIgnore('')).toBe("# Mimir: the Assembler's builds (Run, Build) write the program here\nout/\n# Mimir: Pack writes the packed program here\npacked/\n");
   });
 });
