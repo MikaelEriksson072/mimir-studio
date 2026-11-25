@@ -1,7 +1,7 @@
 /* The Assembler's output (spec 10.7), under the code as the script editor's is: Problems (what Mimir's check finds as
  * you type, and what the assembler found in the last build), Build (the last build's command and what it wrote) and
  * Last run (how the last run in Mimir's 6510 ended, its registers and what it printed). */
-import { h2, h4, type AsmCheck, type ScriptRun, type VicScreen } from '@mimir/core';
+import { h2, h4, type Addr, type AsmCheck, type CyclePath, type ScriptRun, type VicScreen } from '@mimir/core';
 import { Icon } from '../lib/icons';
 import { cx, fmtBytes } from '../lib/util';
 import type { AsmOutTab } from '../store/assembler';
@@ -24,6 +24,16 @@ export interface AsmBuild {
   vice?: string;
   at: number;
 }
+/** the cycles of the lines chosen (Cycles on): along one path with the branches marked as taken; the line and the code of
+ *  an address, and a branch marked taken or not */
+export interface AsmCycles {
+  path: CyclePath | null;
+  /** the lines chosen, in words ("main.asm lines 12-30") */
+  label: string | null;
+  lineOf: (a: Addr) => { file: string; line: number } | null;
+  code: (a: Addr) => string;
+  onToggle: (pc: Addr) => void;
+}
 /** a run in Mimir's 6510 that ended (Debug to its end), with how it ended in words */
 export interface AsmRunKept { run: ScriptRun; text: string; ok: boolean; at: number; /** the whole C64's picture as it was stopped */ picture?: VicScreen }
 
@@ -41,9 +51,11 @@ interface AsmOutputProps {
   onGo: (file: string, line: number) => void;
   /** the C64 screen beside the code shown (the last run's screen is there) */
   onScreen: () => void;
+  /** Cycles on: the lines chosen counted (null: off, and no Cycles tab) */
+  cycles: AsmCycles | null;
 }
 
-export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFold, onGo, onScreen }: AsmOutputProps) {
+export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFold, onGo, onScreen, cycles }: AsmOutputProps) {
   const own = check?.problems.length ?? 0, built = build?.problems.length ?? 0;
   const builtErrors = build?.problems.filter(p => p.severity === 'error').length ?? 0;
   const tabs: { k: AsmOutTab; label: string; tip: string; badge: React.ReactNode }[] = [
@@ -53,6 +65,8 @@ export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFo
       badge: build && !build.running && <Icon name={build.ok ? 'check' : 'warn'} size={12} className={build.ok ? 'scr-tab-ok' : 'scr-tab-warn'} /> },
     { k: 'run', label: 'Last run', tip: kept ? `The last run in Mimir: ${kept.text}` : 'How the last run in Mimir\'s 6510 ended: Debug (F8), then Continue to its end',
       badge: kept && <Icon name={kept.ok ? 'check' : 'warn'} size={12} className={kept.ok ? 'scr-tab-ok' : 'scr-tab-warn'} /> },
+    ...(cycles ? [{ k: 'cycles' as const, label: 'Cycles', tip: 'The 6510 cycles of the lines chosen in the editor, along one path with the branches marked as taken',
+      badge: cycles.path && cycles.path.instructions > 0 && <span className="count">{cycles.path.total}</span> }] : []),
   ];
   const label = tabs.find(t => t.k === tab)?.label ?? 'Output';
   return (
@@ -73,6 +87,7 @@ export function AsmOutput({ check, build, kept, tab, folded, height, onTab, onFo
         {tab === 'problems' && <ProblemsPane check={check} build={build} onGo={onGo} />}
         {tab === 'build' && <BuildPane build={build} onGo={onGo} />}
         {tab === 'run' && <RunPane kept={kept} onScreen={onScreen} />}
+        {tab === 'cycles' && cycles && <CyclesPane c={cycles} onGo={onGo} />}
       </div>}
     </>
   );
@@ -134,6 +149,41 @@ function BuildPane({ build, onGo }: { build: AsmBuild | null; onGo: (file: strin
       <div className="scr-pane-body asm-pane-scroll">
         {build.commands.map((c, i) => <pre key={i} className="asm-out-pre mono small asm-cmd">{'> '}{c.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}</pre>)}
         <pre className="asm-out-pre mono small" aria-label="What the assembler wrote">{build.log.trim() || (build.running ? '…' : '(nothing)')}</pre>
+      </div>
+    </section>
+  );
+}
+
+/** The lines chosen counted along one path (cyclePath, as the re-assembler's inspector does, spec 10.1): the total, with
+ *  no branch taken, the branches (a box marks one taken), and each instruction's cycles and the sum to its end. */
+function CyclesPane({ c, onGo }: { c: AsmCycles; onGo: (file: string, line: number) => void }) {
+  const p = c.path;
+  const go = (a: Addr) => { const l = c.lineOf(a); return l ? <button className="linkish mono" onClick={() => onGo(l.file, l.line)} title={`Show ${l.file} line ${l.line}`}>{l.line}</button> : <span className="mono muted">${h4(a)}</span>; };
+  if (!p || !p.instructions) return <section className="scr-pane" aria-label="Cycles"><p className="muted small asm-out-p">{c.label ? `No instructions on ${c.label}.` : 'Select lines in the editor to count their cycles along one path. Each instruction\'s cycles are beside its line number: 4+ takes one more when the index crosses a page, 2/3 is a branch not taken / taken (✓: marked taken here).'}</p></section>;
+  return (
+    <section className="scr-pane" aria-label="Cycles">
+      <div className="scr-pane-bar">
+        <span className="pill hi" role="status"><b className="mono">{p.total}</b> cycles on this path</span>
+        <span className="muted small">{c.label}{p.total !== p.straight ? ` · ${p.straight} with no branch taken` : ''} · {plural(p.instructions, 'instruction')}{p.pageMax ? ` · up to +${p.pageMax} when indexes cross a page` : ''}{p.calls ? ` · ${plural(p.calls, 'jsr')}: the subroutines are not counted` : ''}</span>
+      </div>
+      <div className="scr-pane-body asm-pane-scroll asm-cycles">
+        {p.branches.length > 0 && <ul className="asm-cyc-br" aria-label="Branches">
+          {p.branches.map(b => (
+            <li key={b.pc} className={cx(!b.onPath && 'off')}>
+              <label className="check"><input type="checkbox" checked={b.on} onChange={() => c.onToggle(b.pc)} aria-label={`Branch on line ${c.lineOf(b.pc)?.line ?? h4(b.pc)} taken`} />
+                <span className="mono">{c.code(b.pc)}</span></label>
+              <span className="muted small">line {go(b.pc)} · {b.notTaken}/{b.taken}{b.taken === 4 ? ' (page)' : ''} · {!b.onPath ? 'not on this path'
+                : b.back ? (b.pass != null ? `a loop: one more pass takes ${b.pass}` : 'loops back out of the lines') : `${b.on ? 'not taken' : 'taken'}: ${b.other}${b.leaves ? ' (leaves the lines)' : ''}`}</span>
+            </li>
+          ))}
+        </ul>}
+        <table className="asm-cyc-steps mono small" aria-label="Instructions">
+          <thead><tr><th>Line</th><th>Code</th><th>Cycles</th><th>Sum</th></tr></thead>
+          <tbody>{p.steps.slice(0, 400).map(st => (
+            <tr key={st.pc} className={cx(!st.counted && 'off')}><td>{go(st.pc)}</td><td>{c.code(st.pc)}</td><td>{st.counted ? st.used : '—'}</td><td>{st.counted ? st.sum : ''}</td></tr>
+          ))}</tbody>
+        </table>
+        {p.steps.length > 400 && <p className="muted small asm-out-p">… and {p.steps.length - 400} more instructions.</p>}
       </div>
     </section>
   );

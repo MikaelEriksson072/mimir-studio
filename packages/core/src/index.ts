@@ -105,6 +105,7 @@ export { JS_TEMPLATES } from './script-templates-js';
 export { asmOfLang, assembleIn, codeLabels, codeLines, codeOfLine, commentAt, definedNames, LANG_TITLE, langIs, langOf, LANGS, lineComment, needsTassCpu, setsItsPlace, splitLabel, startsInBlockComment, usedWords, withoutComment } from './code-lang';
 export { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmTemplate, asmLineAt, asmMachine, asmProgram, checkAsm, dataFiles, importsOf, mainFile, sourceLang, type AsmCheck, type AsmProblem, type AsmProgram } from './asm-project';
 export { asmWriteBytes, type AsmByteChange, type AsmWriteBack } from './asm-write';
+export { asmCode, asmLineCycles, asmLinesRange } from './asm-cycles';
 export { ASM_BLOCK_INFO, ASM_BLOCK_KINDS, ASM_MARK_WORDS, asmBlockBytes, asmBlockMarks, asmBlockText, asmLabel, asmMarkAt, assemblerSources, libraryLabel, type AssemblerSources, type AsmBlockInfo, type AsmBlockKind, type AsmBlockMark, type AsmBlockRequest, type AsmBlockText } from './asm-blocks';
 export { AsmC64, asmC64Text, c64Held, c64Key, C64_KEYS, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, PAL_LINES, type AsmC64Options, type C64Key } from './asm-c64';
 export { kickToTass, type Converted } from './code-convert';

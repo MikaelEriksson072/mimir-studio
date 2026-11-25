@@ -623,8 +623,8 @@ test('Release and Pack in an Assembler project: the build as a disk, a tape, a c
   // build.bat and build.sh beside the main file; those there stay
   await page.getByRole('button', { name: 'Release…' }).click();
   await dialog.getByRole('button', { name: 'Build scripts' }).click();
-  await expect.poll(() => existsSync(join(dir, 'build.bat')), { timeout: 10_000 }).toBe(true);
-  expect(readFileSync(join(dir, 'build.bat'), 'utf8')).toContain('main.asm -odir out');
+  // (the file is there before its text is: wait for the text)
+  await expect.poll(() => (existsSync(join(dir, 'build.bat')) ? readFileSync(join(dir, 'build.bat'), 'utf8') : ''), { timeout: 10_000 }).toContain('main.asm -odir out');
   await expect.poll(() => existsSync(join(dir, 'build.sh')), { timeout: 10_000 }).toBe(true);
   await page.keyboard.press('Escape');
 
@@ -654,9 +654,12 @@ test('drawing in the enlarged sprite of an Assembler project changes the .byte l
 
   // the sprite in the inspector, by its byte in Memory
   await page.locator('.main-tabs').getByRole('tab', { name: 'Memory' }).click();
-  await page.getByLabel('Monitor command').fill('m 2000');
-  await page.getByLabel('Monitor command').press('Enter');
-  await page.getByLabel('Memory dump').locator('[data-a="8192"].mon-b').click({ timeout: 15_000 });
+  // (the program reaches the analysis a moment after the check: until then $2000 is not loaded, and m says so)
+  await expect(async () => {
+    await page.getByLabel('Monitor command').fill('m 2000');
+    await page.getByLabel('Monitor command').press('Enter');
+    await page.getByLabel('Memory dump').locator('[data-a="8192"].mon-b').click({ timeout: 2000 });
+  }).toPass({ timeout: 30_000 });
   const insp = page.locator('.inspector');
   const canvas = insp.getByLabel('sprite preview');
   await expect(canvas).toBeVisible({ timeout: 15_000 });
@@ -684,4 +687,45 @@ test('drawing in the enlarged sprite of an Assembler project changes the .byte l
   // the program has the bytes drawn
   await expect(zoom.locator('.cz-bytes > div').nth(1)).toContainText('2003 00 ff 00', { timeout: 10_000 });
   await closeProject(page, 'draw');
+});
+
+test('cycles in the Assembler: each instruction\'s beside its line number, the lines chosen counted along a path, a branch marked taken', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'cyc');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', 'start:', '        ldx #0', '!:', '        lda $04f0,x', '        sta $d020', '        inx', '        bne !-', '        rts', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const numbers = () => page.locator('.scr-editor .line-numbers').evaluateAll(els => els.map(e => ({ top: parseFloat((e.parentElement as HTMLElement).style.top || '0'), t: (e.textContent ?? '').replace(/ /g, ' ').trim() })).sort((a, b) => a.top - b.top).map(x => x.t));
+
+  // on: the cycles beside the line numbers
+  await page.getByRole('button', { name: 'Cycles' }).click();
+  await expect(page.getByRole('button', { name: 'Cycles' })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(numbers).toEqual(['1', '2', '3 2', '4', '5 4+', '6 4', '7 2', '8 2/3', '9 6', '10']);
+  await expect(page.getByRole('tabpanel', { name: 'Cycles' })).toContainText('Select lines in the editor');
+
+  // lines 3-8 chosen: counted along one path
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
+  for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+End');
+  const pane = page.getByRole('tabpanel', { name: 'Cycles' });
+  await expect(pane.getByRole('status')).toHaveText('14 cycles on this path');
+  await expect(pane).toContainText('main.asm lines 3-8');
+  await expect(pane.getByRole('table', { name: 'Instructions' }).locator('tbody tr')).toHaveCount(5);
+  await shot(page, '21-cycles');
+
+  // the branch marked taken: the loop's one more pass, and ✓ beside its line number
+  await pane.getByRole('checkbox', { name: 'Branch on line 8 taken' }).check();
+  await expect(pane.getByRole('status')).toHaveText('15 cycles on this path');
+  await expect(pane).toContainText('a loop: one more pass takes 13');
+  await expect.poll(async () => (await numbers())[7]).toBe('8 2/3✓');
+
+  // off: the line numbers alone
+  await page.getByRole('button', { name: 'Cycles' }).click();
+  await expect.poll(async () => (await numbers())[4]).toBe('5');
+  await expect(page.getByRole('tab', { name: /^Cycles/ })).toHaveCount(0);
+  await closeProject(page, 'cyc');
 });

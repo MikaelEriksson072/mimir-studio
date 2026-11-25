@@ -181,6 +181,7 @@ mimir-studio/
 │  ├─ src/asm-c64.ts               Assemblern i hela C64:an: Sindris C64, start med RUN, bilden rad för rad, tangentbordet (10.7)
 │  ├─ src/asm-blocks.ts            Assemblerns block: markeringarna i källan, ett nytt blocks rader (Insert block) (10.7)
 │  ├─ src/asm-write.ts             Assemblern: ändrade bytes tillbaka i raderna som skriver dem (det man ritar) (10.7)
+│  ├─ src/asm-cycles.ts            Assemblern: varje rads cykler, koden i valda rader (cyclePath) (10.7)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -3748,6 +3749,15 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`toolchain:build`, PRG:n i `out\` bredvid) och startar den i VICE med etiketterna (`toolchain:run`). **Build**
   (Ctrl+Shift+B) bygger utan att starta. Byggets problem (fil och rad från huvudfilens mapp) visas under *Problems*, som
   markeringar och i listan, och editorn öppnar det första felet.
+- **Cykler** (2026-11-25). *Cycles* i verktygsraden (sparas) visar varje instruktions 6510-cykler efter radnumret
+  (`asmLineCycles`, som re-assemblerns listning, 10.1): `4`, `4+` (en till när indexet korsar en sida), `2/3` för en
+  gren som inte tas / tas, `✓` efter en gren som är markerad som tagen. Under koden räknar fliken *Cycles* raderna som
+  är markerade i editorn längs en väg (`asmLinesRange` och `cyclePath`): totalen, den utan tagna grenar, antal
+  instruktioner, hur många som kan ta en cykel till över en sida och hur många JSR (deras rutiner räknas inte), varje gren
+  med en ruta som markerar den som tagen (en loop säger vad ett varv till tar, en annan gren vad totalen blir åt andra
+  hållet) och en tabell med raden, koden, cyklerna och summan till radens slut (det vägen hoppar över är grått). En
+  markering som slutar i första kolumnen på en rad tar inte med den raden. Under en körning i debuggern räknas den
+  körda kontrollens program.
 - **Rita i den förstorade spriten eller tecknet** (2026-11-25). I ett Assembler-projekt ritar man i inspektorns
   förstorade sprite eller tecken (14.1): ett klick eller ett drag sätter pixlarna (hires: den färg den första pixeln inte
   hade; flerfärg: pennan, en av de fyra bitparen, som väljs över pixlarna; höger knapp: bakgrunden), och när knappen

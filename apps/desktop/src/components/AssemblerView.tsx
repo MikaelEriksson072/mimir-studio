@@ -10,7 +10,7 @@
  * (AssemblerHome) makes a new Assembler project, or makes one of a folder of sources. */
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { AsmC64, asmBlockMarks, asmC64Text, asmProgram, asmWriteBytes, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
+import { AsmC64, asmBlockMarks, asmC64Text, asmCode, asmLineCycles, asmLinesRange, asmProgram, asmWriteBytes, cyclePath, cycleText, kindInfo, c64Held, c64Key, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, SYM, type AsmProgram, type AsmProjectInfo, type C64Key, type Roms, type VicScreen } from '@mimir/core';
 import { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmLineAt, asmMachine, checkAsm, dataFiles, endedWell, h4, LANG_TITLE, mainFile, type Addr, type AsmCheck, type ScriptLang, type ScriptMachine } from '@mimir/core';
 import type { AsmChangeRequest, AsmEntry, AsmFolder, AsmStartInfo, BuildResult, GitVersion } from '../../shared/ipc';
 import { projectFileName, projectNameProblem } from '../../shared/projects';
@@ -25,7 +25,7 @@ import { Splitter } from './Splitter';
 import { DebugPanel, regsOf, type DebugRegs } from './ScriptDebug';
 import { ScriptScreenPanel } from './ScriptScreen';
 import { AsmTabs as TabRow, AsmTree, baseName, fileIcon, parentOf, type TreeEdit } from './AsmTree';
-import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmRunKept } from './AsmOutput';
+import { AsmOutput, type AsmBuild, type AsmBuildProblem, type AsmCycles, type AsmRunKept } from './AsmOutput';
 import { AsmBlockDialog, type AsmBlockInsert } from './AsmBlockDialog';
 import { Modal } from './Modal';
 import type { LibraryRef } from '../store/library';
@@ -460,6 +460,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageDown, () => keys.current.tab(1));
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageUp, () => keys.current.tab(-1));
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.F4, () => keys.current.closeTab());
+      // the lines chosen (Cycles counts them)
+      editor.onDidChangeCursorSelection(ev => { const m = editor.getModel(), p = m ? pathOfUri(m.uri) : null; setSelLines(p ? { file: p, from: ev.selection.startLineNumber, to: ev.selection.endColumn === 1 && ev.selection.endLineNumber > ev.selection.startLineNumber ? ev.selection.endLineNumber - 1 : ev.selection.endLineNumber } : null); });
       // the editor's menu: a block of sprites, a charset, a bitmap, music … put in where the caret is
       editor.addAction({ id: 'mimir.insertBlock', label: 'Insert block…', contextMenuGroupId: '1_modification', contextMenuOrder: 0, run: () => keys.current.block() });
       // a click in the gutter left of the line numbers sets or clears a breakpoint
@@ -972,6 +974,35 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     else if (where.length) toast(`Drawn into ${where.slice(0, 3).join(', ')}${where.length > 3 ? ` and ${where.length - 3} more` : ''}${Object.keys(w.bins).length ? ` (${Object.keys(w.bins).join(', ')})` : ''}`, 'ok');
   };
 
+  /* ---- Cycles: each instruction's beside its line number, the lines chosen counted along a path (spec 10.7) ---- */
+  const cycOn = ui.cycles;
+  const [selLines, setSelLines] = useState<{ file: string; from: number; to: number } | null>(null);
+  const [taken, setTaken] = useState<ReadonlySet<Addr>>(new Set());
+  const cycCheck = dbg?.c ?? check;
+  const lineCyc = useMemo(() => (cycOn && cycCheck && shown ? asmLineCycles(cycCheck, shown) : null), [cycOn, cycCheck, shown]);
+  const cycCode = useMemo(() => (cycOn && cycCheck ? asmCode(cycCheck) : null), [cycOn, cycCheck]);
+  const cycPath = useMemo(() => {
+    if (!cycOn || !cycCheck || !cycCode || !selLines || selLines.to <= selLines.from) return null;
+    const r = asmLinesRange(cycCheck, selLines.file, selLines.from, selLines.to);
+    return r ? cyclePath(cycCode, r.start, r.end, taken) : null;
+  }, [cycOn, cycCheck, cycCode, selLines, taken]);
+  // the line numbers with the cycles after them (Monaco draws only what the option's function gives: a new one each time)
+  useEffect(() => {
+    const e = ed.current;
+    if (state !== 'ready' || !e) return;
+    if (!lineCyc) { e.updateOptions({ lineNumbers: 'on', lineNumbersMinChars: 5 }); return; }
+    const pad = (t: string) => t + '\u00a0'.repeat(Math.max(0, 5 - t.length));
+    e.updateOptions({ lineNumbersMinChars: 10, lineNumbers: n => { const x = lineCyc.get(n); return `${n}\u00a0${pad(x ? `${cycleText(x.cycles)}${x.cycles.taken != null && taken.has(x.addr) ? '✓' : ''}` : '')}`; } });
+  }, [lineCyc, taken, state]);
+  const toggleCycles = () => { const on = !cycOn; ui.set({ cycles: on, ...(on ? { outTab: 'cycles' as const, outFolded: false } : useAssembler.getState().outTab === 'cycles' ? { outTab: 'problems' as const } : {}) }); };
+  const cycles: AsmCycles | null = cycOn ? {
+    path: cycPath,
+    label: selLines && selLines.to > selLines.from ? `${selLines.file} lines ${selLines.from}-${selLines.to}` : null,
+    lineOf: a => (cycCheck ? asmLineAt(cycCheck, a) : null),
+    code: a => { const l = cycCheck ? asmLineAt(cycCheck, a) : null, m = l ? models.current[l.file] : null; return m && !m.isDisposed() && l!.line <= m.getLineCount() ? m.getLineContent(l!.line).replace(/\s*(\/\/|;).*$/, '').trim() : `$${h4(a)}`; },
+    onToggle: pc => setTaken(t => { const n = new Set(t); if (n.has(pc)) n.delete(pc); else n.add(pc); return n; }),
+  } : null;
+
   /* ---- Insert block: sprites, a charset, a bitmap, a screen, music or data, in the source where the caret is ---- */
   const [blockAsk, setBlockAsk] = useState<{ kind?: AsmBlockKind; lib?: LibraryRef | null } | null>(null);
   const askBlock = (kind?: AsmBlockKind, lib?: LibraryRef) => {
@@ -1097,6 +1128,9 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
           {main && shown !== main && <button className="pill asm-main-pill" onClick={() => openFile(main)} title={`The main file, which Run and Build build: ${main}. A click opens it (right-click a source in the list to make it the main file)`}>
             <Icon name="play" size={10} />{baseName(main)}</button>}
           <span className="grow" />
+          <button className={cx('btn asm-cycles-btn', cycOn && 'on')} aria-pressed={cycOn} onClick={toggleCycles}
+            title={cycOn ? 'Hide the cycles' : 'Cycles: each instruction\'s 6510 cycles beside its line number (4+ one more across a page, 2/3 a branch not taken / taken); select lines to count them along one path under Cycles, where a box marks a branch taken'}>
+            <Icon name="clock" size={14} /><span className="lbl">Cycles</span></button>
           <button className="btn asm-block-btn" aria-label="Insert block" disabled={!!dbg || !shown || !shownText || !ASM_SOURCE.test(shown)} onClick={() => askBlock()}
             title="Insert a block where the caret is: sprites, a charset, a bitmap, a screen, music or data, from the library, a file, or empty .byte lines to fill in. Graphics and Memory show its bytes as what they are; the rest of the program is code (also in the editor's right-click menu)">
             <Icon name="blocks" size={14} /><span className="lbl">Block…</span></button>
@@ -1166,7 +1200,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
             ui.set({ outH: Math.max(110, Math.min(window.innerHeight - 200, now + room, now - d)) });
           }} />}
           <AsmOutput check={check} build={build} kept={kept} tab={ui.outTab} folded={ui.outFolded} height={ui.outH}
-            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} />
+            onTab={t => ui.set({ outTab: t })} onFold={v => ui.set({ outFolded: v })} onGo={(f, l) => { if (paths.has(f)) openFile(f, { line: l || 1 }); }} onScreen={() => setC64({ open: true })} cycles={cycles} />
         </div>
       </div>
       {blockAsk && shown && <AsmBlockDialog lang={lang} dir={dir} source={shown} paths={paths} names={new Set(check?.names.keys() ?? [])} kind={blockAsk.kind} lib={blockAsk.lib}

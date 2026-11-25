@@ -2159,6 +2159,15 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-block input.bad { border-color: var(--err, #e5534b); }
 .asm-block .ab-preview pre { margin: 4px 0 0; padding: 8px 10px; background: var(--editor); border: 1px solid var(--line); border-radius: 6px; max-height: 220px; overflow: auto; white-space: pre; }
 .asm-block .ab-sid { margin: 0; }
+/* the Assembler's cycles: the lines chosen counted */
+.asm-cycles .asm-cyc-br { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.asm-cycles .asm-cyc-br li { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.asm-cycles .asm-cyc-br li.off { opacity: .55; }
+.asm-cycles .asm-cyc-steps { border-collapse: collapse; }
+.asm-cycles .asm-cyc-steps th { text-align: left; font-weight: 500; color: var(--fg-3); padding: 2px 12px 2px 0; }
+.asm-cycles .asm-cyc-steps td { padding: 1px 12px 1px 0; white-space: pre; }
+.asm-cycles .asm-cyc-steps td:nth-child(3), .asm-cycles .asm-cyc-steps td:nth-child(4) { text-align: right; }
+.asm-cycles .asm-cyc-steps tr.off td { opacity: .45; }
 /* the enlarged sprite or character drawn on (an Assembler project) */
 .cz-grid.draw { cursor: crosshair; user-select: none; }
 .cz-draw { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }

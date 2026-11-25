@@ -5,8 +5,9 @@ import { create } from 'zustand';
 import type { ScriptLang } from '@mimir/core';
 import { store } from '../lib/util';
 
-/** the output's tabs: what the check and the build found, the build's output, and how the last run in Mimir ended */
-export type AsmOutTab = 'problems' | 'build' | 'run';
+/** the output's tabs: what the check and the build found, the build's output, how the last run in Mimir ended, and the
+ *  cycles of the lines chosen */
+export type AsmOutTab = 'problems' | 'build' | 'run' | 'cycles';
 
 const MAINS_KEY = 'kr.asmMain', LANGS_KEY = 'kr.asmLang', OPEN_KEY = 'kr.asmOpen', LAYOUT_KEY = 'kr.asmLayout', TABS_KEY = 'kr.asmTabs', MACHINE_KEY = 'kr.asmMachine';
 
@@ -18,12 +19,14 @@ export type AsmMachineKind = 'memory' | 'c64';
 export interface AsmTabs { open: string[]; preview: string | null }
 export const NO_TABS: AsmTabs = { open: [], preview: null };
 
-interface Layout { outH: number; outFolded: boolean; listFolded: boolean; listW: number; outTab: AsmOutTab }
+/** `cycles`: each instruction's 6510 cycles beside its line number, the lines chosen counted under Cycles */
+interface Layout { outH: number; outFolded: boolean; listFolded: boolean; listW: number; outTab: AsmOutTab; cycles: boolean }
 const readLayout = (): Layout => {
   const v = store.get<Partial<Layout> | null>(LAYOUT_KEY, null) ?? {};
   return {
     outH: Number.isFinite(v.outH) ? Math.max(110, Math.min(1200, v.outH!)) : 200, outFolded: v.outFolded === true, listFolded: v.listFolded === true,
-    listW: Number.isFinite(v.listW) ? Math.max(160, Math.min(700, v.listW!)) : 240, outTab: v.outTab === 'build' || v.outTab === 'run' ? v.outTab : 'problems',
+    listW: Number.isFinite(v.listW) ? Math.max(160, Math.min(700, v.listW!)) : 240, outTab: v.outTab === 'build' || v.outTab === 'run' || v.outTab === 'cycles' ? v.outTab : 'problems',
+    cycles: v.cycles === true,
   };
 };
 
@@ -53,7 +56,7 @@ interface AsmState extends Layout {
 }
 
 const without = <T,>(r: Record<string, T>, k: string): Record<string, T> => { const { [k]: _, ...rest } = r; return rest; };
-const layoutOf = (s: Layout): Layout => ({ outH: s.outH, outFolded: s.outFolded, listFolded: s.listFolded, listW: s.listW, outTab: s.outTab });
+const layoutOf = (s: Layout): Layout => ({ outH: s.outH, outFolded: s.outFolded, listFolded: s.listFolded, listW: s.listW, outTab: s.outTab, cycles: s.cycles });
 
 export const useAssembler = create<AsmState>((set, get) => ({
   ...readLayout(),
