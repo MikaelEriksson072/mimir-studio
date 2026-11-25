@@ -106,6 +106,7 @@ export { asmOfLang, assembleIn, codeLabels, codeLines, codeOfLine, commentAt, de
 export { ASM_SOURCE, ASM_TEXT, asmAddrOf, asmCallSite, asmEndText, asmTemplate, asmLineAt, asmMachine, asmProgram, checkAsm, dataFiles, importsOf, mainFile, sourceLang, type AsmCheck, type AsmProblem, type AsmProgram } from './asm-project';
 export { asmWriteBytes, type AsmByteChange, type AsmWriteBack } from './asm-write';
 export { asmCode, asmLineCycles, asmLinesRange } from './asm-cycles';
+export { asmNameRefs, asmNames, asmRenameProblem, type AsmNameAt } from './asm-names';
 export { ASM_BLOCK_INFO, ASM_BLOCK_KINDS, ASM_MARK_WORDS, asmBlockBytes, asmBlockMarks, asmBlockText, asmLabel, asmMarkAt, assemblerSources, libraryLabel, type AssemblerSources, type AsmBlockInfo, type AsmBlockKind, type AsmBlockMark, type AsmBlockRequest, type AsmBlockText } from './asm-blocks';
 export { AsmC64, asmC64Text, c64Held, c64Key, C64_KEYS, FRAME_CYCLES, LINE_CYCLES, PAL_CLOCK, PAL_LINES, type AsmC64Options, type C64Key } from './asm-c64';
 export { kickToTass, type Converted } from './code-convert';

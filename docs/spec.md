@@ -182,6 +182,7 @@ mimir-studio/
 │  ├─ src/asm-blocks.ts            Assemblerns block: markeringarna i källan, ett nytt blocks rader (Insert block) (10.7)
 │  ├─ src/asm-write.ts             Assemblern: ändrade bytes tillbaka i raderna som skriver dem (det man ritar) (10.7)
 │  ├─ src/asm-cycles.ts            Assemblern: varje rads cykler, koden i valda rader (cyclePath) (10.7)
+│  ├─ src/asm-names.ts             Assemblern: var ett namn står och definieras (referenser, namnbyte, översikt) (10.7)
 │  ├─ src/script-templates.ts      skriptmallarna: dekryptering och kryptering som spelen gör (10.3)
 │  ├─ src/script-cartridges.ts     cartridge-avbilder för ett JavaScript-skript: `cartridges` (skapa och ändra .crt, standardstrukturer som mallar, spara, starta i VICE) (10.3)
 │  ├─ src/script-tapes.ts          bandavbilder för ett JavaScript-skript: `tapes` (skapa och ändra TAP och T64, spara, lägga i datasetten) (10.3)
@@ -3749,6 +3750,18 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`toolchain:build`, PRG:n i `out\` bredvid) och startar den i VICE med etiketterna (`toolchain:run`). **Build**
   (Ctrl+Shift+B) bygger utan att starta. Byggets problem (fil och rad från huvudfilens mapp) visas under *Problems*, som
   markeringar och i listan, och editorn öppnar det första felet.
+- **Namnen i källorna** (2026-11-25, `asm-names.ts`). Ett namns **referenser** (Shift+F12, *Go to References* och *Peek
+  References* i högermenyn, och Ctrl+klick på en definition) visas i Monacos ruta under raden, som re-assemblerns ruta
+  med en etiketts referenser: varje rad i mappens alla källor där namnet står, per fil. **Rename Symbol** (F2) byter
+  namnet i alla källor på en gång; filer som inte visas skrivs som när man skriver i dem, och bytet är ett steg att ångra i
+  varje fil. Ett nytt namn som är en instruktion, ett register, inte ett namn, eller som källorna redan har (någonstans)
+  tas inte, och ett meddelande säger varför; ett namn som inte definieras i mappens källor (assemblerns egna) byts inte.
+  **Go to Symbol** (Ctrl+Shift+O) listar namnen filen definierar, med adressen. Ett namn är ett ord i koden: inte i en
+  kommentar (`//`, `/* */`; i 64tass `;` och `.comment` … `.endc`) eller en sträng, inte siffrorna i ett tal
+  (`$c000`, `%0101`), inte en medlem eller ett direktiv efter en punkt (`music.init`, `.byte`), inte Kick Assemblers
+  lokala etiketter (`!loop`). Det definieras där det är en etikett (`name:`; i 64tass först på raden) eller får ett värde
+  (`.label`, `.const`, `.var`; i 64tass `name = värde`). Sökningen är på text: ett namn som finns i flera scope
+  (Kick Assemblers `{ }`) räknas som ett, och byts överallt (programmet blir detsamma, testat i `asm-names.test.ts`).
 - **Cykler** (2026-11-25). *Cycles* i verktygsraden (sparas) visar varje instruktions 6510-cykler efter radnumret
   (`asmLineCycles`, som re-assemblerns listning, 10.1): `4`, `4+` (en till när indexet korsar en sida), `2/3` för en
   gren som inte tas / tas, `✓` efter en gren som är markerad som tagen. Under koden räknar fliken *Cycles* raderna som

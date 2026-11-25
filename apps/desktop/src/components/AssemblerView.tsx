@@ -385,7 +385,7 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
       const l = v >= 0 && v < 0x10000 && check.asm.written[v] ? asmLineAt(check, v) : null;
       kinds.set(n, l ? `a label · ${l.file} line ${l.line}` : 'a constant');
     }
-    void import('../monaco/providers').then(({ asmContext }) => { asmContext.names = check.names; asmContext.kinds = kinds; });
+    void import('../monaco/providers').then(({ asmContext }) => { asmContext.names = check.names; asmContext.kinds = kinds; asmContext.notify = msg => toast(msg, 'warn'); });
   }, [check]);
   // the program the sources make, to the project's views (Graphics, Memory, the inspector, the Explorer): the last check
   // that assembled, a moment after it (the analysis of it runs in its worker), and only when it is another program
@@ -493,6 +493,8 @@ function AsmWorkspace({ folder, onFolder, name, info, onInfo, active, toast, onM
     if (state !== 'ready' || !monaco) return;
     for (const [p, text] of Object.entries(texts)) if (!models.current[p]) {
       const m = models.current[p] = monaco.editor.createModel(text, editorLang(p, lang), uriOf(monaco, p));
+      // a change in a file the editor does not show (a rename, F2, in all the files): written as typing is
+      m.onDidChangeContent(() => { if (applying.current || m.isDisposed() || ed.current?.getModel() === m) return; setTexts(t => ({ ...t, [p]: m.getValue() })); schedule(p); });
       bpIds.current[p] = []; setBps(p, useAssembler.getState().bps[`${dir}|${p}`] ?? [], m);
     }
     for (const p of Object.keys(models.current)) if (!(p in texts)) { models.current[p].dispose(); delete models.current[p]; delete views.current[p]; }

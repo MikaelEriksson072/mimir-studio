@@ -1,8 +1,10 @@
 /* Hover (registers, labels, opcodes) and go-to-definition (Ctrl+click, F12) for the sources of both assemblers, and
- * a script's suggestions and light bulb in its language (Kick Assembler or 64tass). */
+ * a script's suggestions and light bulb in its language (Kick Assembler or 64tass). In the Assembler (spec 10.7) also a
+ * name's references in all the folder's sources (Shift+F12), its rename in all of them (F2) and a file's outline
+ * (Ctrl+Shift+O). */
 import type * as Monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import { jsMembers } from '../lib/jsmembers';
-import { driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptLang, type ScriptPad } from '@mimir/core';
+import { asmNameRefs, asmNames, asmRenameProblem, driveSymbol, findBlock, h4, kindInfo, OPC, padName, tassName, padStoreAt, padStoreLine, SYM, undocumentedText, type AnalysisResult, type RenderResult, type ScriptLang, type ScriptPad } from '@mimir/core';
 import { KICKASS } from './kickass-language';
 import { TASS64 } from './tass-language';
 
@@ -18,7 +20,9 @@ export const scriptContext: { names: ReadonlyMap<string, number>; pads: readonly
 
 /** The Assembler's files (models of the `asm` scheme, spec 10.7): the names the program defines (its labels and
  *  constants, as Mimir's check of it last found them) and what each is. */
-export const asmContext: { names: ReadonlyMap<string, number>; kinds: ReadonlyMap<string, string> } = { names: new Map(), kinds: new Map() };
+export const asmContext: { names: ReadonlyMap<string, number>; kinds: ReadonlyMap<string, string>;
+  /** says why a rename was not done (Monaco's standalone editor shows a rename's refusal nowhere) */
+  notify: (msg: string) => void } = { names: new Map(), kinds: new Map(), notify: () => { } };
 
 /** the command a store's code actions run (scriptContext.padStore) */
 export const PAD_STORE_CMD = 'mimir.script.padStore';
@@ -242,6 +246,48 @@ export function registerProviders(monaco: typeof Monaco): void {
       };
     },
   }, { providedCodeActionKinds: ['quickfix'] });
+  // the Assembler's names (spec 10.7): where one is written in any of the folder's sources, its rename in all of them,
+  // and the names a file defines
+  const asmModels = () => monaco.editor.getModels().filter(m => m.uri.scheme === 'asm' && (m.getLanguageId() === KICKASS || m.getLanguageId() === TASS64));
+  const langOf = (m: Monaco.editor.ITextModel) => (m.getLanguageId() === TASS64 ? '64tass' as const : 'kickass' as const);
+  /** the name the position is on (a name of the code: not in a comment, a string or a number) */
+  const nameAt = (model: Monaco.editor.ITextModel, pos: Monaco.Position) => asmNames(model.getLineContent(pos.lineNumber), langOf(model))
+    .find(n => pos.column >= n.col && pos.column <= n.col + n.name.length) ?? null;
+  const refsOf = (name: string) => asmModels().flatMap(m => asmNameRefs(m.getValue(), langOf(m), name).map(r => ({ m, r })));
+  for (const lang of [KICKASS, TASS64]) monaco.languages.registerReferenceProvider(lang, {
+    provideReferences(model, pos, ctx) {
+      if (model.uri.scheme !== 'asm') return null;
+      const n = nameAt(model, pos); if (!n) return null;
+      return refsOf(n.name).filter(x => ctx.includeDeclaration || !x.r.def).map(({ m, r }) => ({ uri: m.uri, range: new monaco.Range(r.line, r.col, r.line, r.col + r.name.length) }));
+    },
+  });
+  for (const lang of [KICKASS, TASS64]) monaco.languages.registerRenameProvider(lang, {
+    resolveRenameLocation(model, pos) {
+      const here = new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column);
+      if (model.uri.scheme !== 'asm') return { range: here, text: '', rejectReason: 'Names are renamed in the Assembler\'s sources (a script uses the program\'s names)' };
+      const n = nameAt(model, pos);
+      if (!n) return { range: here, text: '', rejectReason: 'Not a name of the code' };
+      const range = new monaco.Range(pos.lineNumber, n.col, pos.lineNumber, n.col + n.name.length);
+      if (!refsOf(n.name).some(x => x.r.def)) return { range, text: n.name, rejectReason: `${n.name} is not defined in the project's sources: a name of the assembler's, or of a file outside the folder` };
+      return { range, text: n.name };
+    },
+    provideRenameEdits(model, pos, to) {
+      const n = nameAt(model, pos); if (!n) return { edits: [], rejectReason: 'Not a name of the code' };
+      const problem = asmRenameProblem(to, x => asmContext.names.has(x) || refsOf(x).length > 0);
+      if (problem) { asmContext.notify(`${n.name} was not renamed: ${problem}`); return { edits: [], rejectReason: problem }; }
+      return { edits: refsOf(n.name).map(({ m, r }) => ({ resource: m.uri, versionId: m.getVersionId(), textEdit: { range: new monaco.Range(r.line, r.col, r.line, r.col + r.name.length), text: to } })) };
+    },
+  });
+  for (const lang of [KICKASS, TASS64]) monaco.languages.registerDocumentSymbolProvider(lang, {
+    provideDocumentSymbols(model) {
+      if (model.uri.scheme !== 'asm') return [];
+      const K = monaco.languages.SymbolKind;
+      return asmNames(model.getValue(), langOf(model)).filter(n => n.def).map(n => {
+        const range = new monaco.Range(n.line, n.col, n.line, n.col + n.name.length), a = asmContext.names.get(n.name);
+        return { name: n.name, detail: a != null ? `$${h4(a)}` : '', kind: n.how === 'value' ? K.Constant : K.Field, tags: [], range, selectionRange: range };
+      });
+    },
+  });
   for (const lang of [KICKASS, TASS64]) monaco.languages.registerDefinitionProvider(lang, {
     provideDefinition(model, pos) {
       const w = model.getWordAtPosition(pos); if (!w) return null;

@@ -729,3 +729,66 @@ test('cycles in the Assembler: each instruction\'s beside its line number, the l
   await expect(page.getByRole('tab', { name: /^Cycles/ })).toHaveCount(0);
   await closeProject(page, 'cyc');
 });
+
+test('a name in the Assembler: its references in all the sources (Shift+F12), renamed in all of them (F2), the file\'s outline (Ctrl+Shift+O)', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'names');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', '#import "lib.asm"', 'start:  jsr copy', '        jsr copy        // copy again', '        rts', 'text:   .text "copy"', ''].join('\n'));
+  writeFileSync(join(dir, 'lib.asm'), ['copy:   lda text', '        sta $0400', '        rts', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await expect(page.getByLabel('File name')).toHaveValue('main.asm');
+  const disk = (f: string) => readFileSync(join(dir, f), 'utf8');
+  // the caret on `copy` of line 3
+  const onCopy = async () => {
+    await page.locator('.scr-editor .view-lines').click();
+    await page.keyboard.press('Control+Home');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('End'); await page.keyboard.press('ArrowLeft');
+  };
+
+  // its references: the two calls and the label in lib.asm, not the comment or the text
+  await onCopy();
+  await page.keyboard.press('Shift+F12');
+  const peek = page.locator('.scr-editor .peekview-widget');
+  await expect(peek).toBeVisible();
+  await expect(peek).toContainText('References (3)');
+  await expect(peek.locator('.monaco-list-row', { hasText: 'lib.asm' })).toContainText('1');
+  await expect(peek.locator('.monaco-list-row', { hasText: 'main.asm' })).toContainText('2');
+  await shot(page, '22-references');
+  await page.keyboard.press('Escape');
+  await expect(peek).toHaveCount(0);
+
+  // a new name taken already is refused, and nothing changes
+  await onCopy();
+  await page.keyboard.press('F2');
+  const box = page.locator('.scr-editor .rename-box input');
+  await expect(box).toHaveValue('copy');
+  await box.fill('text');
+  await box.press('Enter');
+  await expect(toast(page, 'copy was not renamed: The sources have a text already')).toBeVisible();
+  await page.keyboard.press('Escape');
+  expect(disk('lib.asm')).toContain('copy:');
+
+  // renamed in both files, the comment and the text as they were; they are written, and the program is the same
+  await onCopy();
+  await page.keyboard.press('F2');
+  await expect(box).toBeVisible();
+  await box.fill('copier');
+  await box.press('Enter');
+  await expect.poll(() => disk('lib.asm'), { timeout: 5000 }).toContain('copier:   lda text');
+  await expect.poll(() => disk('main.asm'), { timeout: 5000 }).toContain('start:  jsr copier\n        jsr copier        // copy again');
+  expect(disk('main.asm')).toContain('.text "copy"');
+  await expect(page.locator('.scr-check')).toContainText('Ready', { timeout: 10_000 });
+
+  // the file's outline: the names it defines
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('Control+Shift+O');
+  const outline = page.locator('.quick-input-widget');
+  await expect(outline).toBeVisible();
+  await expect(outline.locator('.monaco-list-row')).toContainText(['start', 'text']);
+  await page.keyboard.press('Escape');
+  await closeProject(page, 'names');
+});
