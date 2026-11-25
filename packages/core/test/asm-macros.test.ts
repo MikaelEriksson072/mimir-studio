@@ -187,3 +187,68 @@ describe('the names of macros for references and rename', () => {
     expect(n.some(x => x.name === 'byte')).toBe(false);
   });
 });
+
+describe("Kick Assembler's disks, files per memory block and its modifier in Mimir's check", () => {
+  const DISK = '.disk [filename="game.d64", name="MY GAME", id="2025!"] {\n  [name="----", type="rel"],\n  [name="GAME", type="prg", segments="Code"],\n  [name="NOTES", type="seq<", segments="Code"],\n}\n.segment Code [start=$0801]\nBasicUpstart2(start)\nstart: rts\n';
+
+  it('writes a .disk as Kick Assembler lays it out, and gives its first program as the program', () => {
+    const r = kick(DISK);
+    expect(msgs(r)).toEqual([]);
+    expect(r.programFile).toBe('game.d64');
+    expect(r.min).toBe(0x0801);
+    const d = r.files!.find(f => f.name === 'game.d64')!;
+    expect(d.type).toBe('d64');
+    const img = d.bytes!, bam = 0x16500, dir = 0x16600;
+    expect([...img.subarray(bam + 0x90, bam + 0x97)]).toEqual([...'MY GAME'].map(c => c.charCodeAt(0)));
+    expect([...img.subarray(bam + 0xa2, bam + 0xa7)]).toEqual([...'2025!'].map(c => c.charCodeAt(0)));
+    // the directory: the separator (no blocks), the program at 1/0, the locked SEQ (no load address) at 1/10
+    expect([img[dir + 2], img[dir + 3], img[dir + 4], img[dir + 30]]).toEqual([0x84, 0, 0, 0]);
+    expect([img[dir + 32 + 2], img[dir + 32 + 3], img[dir + 32 + 4], img[dir + 32 + 30]]).toEqual([0x82, 1, 0, 1]);
+    expect([img[dir + 64 + 2], img[dir + 64 + 3], img[dir + 64 + 4]]).toEqual([0xc1, 1, 10]);
+    expect([...img.subarray(2, 4)]).toEqual([0x01, 0x08]);
+    expect([...img.subarray(10 * 256 + 2, 10 * 256 + 4)]).toEqual([0x0b, 0x08]);
+    const c = checkAsm({ 'main.asm': DISK }, 'main.asm', 'kickass');
+    expect(c.ok).toBe(true);
+    expect(c.programFile).toBe('game.d64');
+    expect(c.entry).toBe(0x080e);
+  });
+
+  it('says what Kick Assembler says of a disk it cannot make', () => {
+    expect(msgs(kick('.disk [filename="a.d64"] {\n  [name="A", type="xyz", segments="Default"],\n}\n'))).toEqual(["main.asm:1 Error while generating 'a.d64': Unknown type: xyz"]);
+    const full = `.disk [filename="f.d64"] {\n${Array.from({ length: 4 }, (_, i) => `  [name="F${i}", segments="S${i}"],`).join('\n')}\n}\n${Array.from({ length: 4 }, (_, i) => `.segment S${i} [start=$0400]\n .fill 60000, i\n`).join('')}`;
+    expect(msgs(kick(full))).toEqual(["main.asm:1 Error while generating 'f.d64': Disk is full!"]);
+    expect(msgs(kick('.disk [name="X"] {\n}\n'))[0]).toMatch(/\.disk needs its parameters/);
+    expect(msgs(kick('.disk [filename="a.d64", bogus] {\n}\n'))).toEqual(['main.asm:1 Unknown parameter "bogus" of .disk']);
+  });
+
+  it('writes a file per memory block with mbfiles, named after the block', () => {
+    const r = kick('.file [name="mb.prg", mbfiles, segments="Code"]\n.segment Code [start=$1000]\n .byte 1,2\n* = $2000 "Second"\n .byte 3\n');
+    expect(msgs(r)).toEqual([]);
+    expect(r.files?.map(f => [f.name, [...(f.bytes ?? [])]])).toEqual([['mb_Code.prg', [0x00, 0x10, 1, 2]], ['mb_Second.prg', [0x00, 0x20, 3]]]);
+    expect(r.programFile).toBe('mb_Code.prg');
+  });
+
+  it('puts a BASIC line at $0801 for modify="BasicUpstart", and refuses the modifiers that are plugins', () => {
+    const r = kick('.file [name="up.prg", segments="Code"]\n.segment Code [start=$0810, modify="BasicUpstart", _start=start]\nstart: rts\n');
+    expect(msgs(r)).toEqual([]);
+    expect(bytes(r, 0x0801, 16)).toEqual([0x0b, 0x08, 0x0a, 0x00, 0x9e, 0x32, 0x30, 0x36, 0x34, 0, 0, 0, 0, 0, 0, 0x60]);
+    expect(msgs(kick('.segmentdef Code [start=$0810, modify="Packer"]\n'))[0]).toMatch(/cannot run the modifier "Packer" of the segment Code: only BasicUpstart/);
+    expect(msgs(kick('.segmentdef Code [start=$0810, modify="BasicUpstart"]\n'))[0]).toMatch(/needs _start/);
+    expect(msgs(kick('* = $1000\n.modify Packer() {\n}\n'))[0]).toMatch(/cannot run a modifier plugin \(\.modify\)/);
+  });
+});
+
+describe("64tass's functions in Mimir's check", () => {
+  it('gives a function\'s result in a value, runs its lines as an instruction (bytes on the call\'s line), a label before it its result', () => {
+    const r = tass('*       = $1000\nadd     .function a, b=1\n        .endf a + b\nset     .function v, t\n        lda v\n        sta t\n        .endf\n        .byte add(2), add(2, 5)\n        set #1, $d020\nsum     add 3, 4\n        .byte sum\n');
+    expect(msgs(r)).toEqual([]);
+    expect(bytes(r, 0x1000, 8)).toEqual([3, 7, 0xa9, 1, 0x8d, 0x20, 0xd0, 7]);
+    expect([...r.lines.subarray(0x1002, 0x1007)]).toEqual([9, 9, 9, 9, 9]);
+    expect(r.symbols.get('sum')).toBe(7);
+  });
+
+  it('says what is wrong with a call', () => {
+    expect(msgs(tass('f       .function a\n        .endf a\n        .byte f(1, 2)\n'))[0]).toMatch(/too many arguments for f: it takes 1, not 2/);
+    expect(msgs(tass('f       .function a\n        nop\n'))[0]).toMatch(/closing directive '\.endfunction' not found for 'f'/);
+  });
+});

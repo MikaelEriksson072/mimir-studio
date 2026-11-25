@@ -11,6 +11,10 @@
  * .macro a, b=2` … `.endm` (a block of its own, which a label before the call names: `var .lohi 1, 2` → `var.lo`) and
  * `name .segment` … `.endsegment` (no block), called `#name 1, 2` or `.name 1, 2` before or after the definition, the
  * parameters as text (`\1`-`\9`, `\name`, `\{name}`, `\@` all of them, `@1`-`@9`; not inside strings, as 64tass 1.57).
+ * Functions: `name .function a, b=1, *rest` … `.endf result` (and `name .sfunction a, expression`), called in a value
+ * (`add(2)`: the result, a list when there are several) or as an instruction (`mva #1, $d020`, `#mva …`, `.mva …`:
+ * its lines with the arguments as values, `#1` an immediate one that `lda value` takes as lda #1; a label before it gets
+ * the result when there is one), before or after the definition, each call a block of its own under the top level.
  * Sections: `.dsection name` where the bytes of every `.section name` … `.send` go, as 64tass, nested too; `.byte ?`,
  * `.word ?`, `.addr ?` take room only. Several passes until the sizes settle, as 64tass. The desktop app and the CLI
  * can additionally run the real 64tass.
@@ -65,6 +69,12 @@ const BRANCH = new Set(['BPL', 'BMI', 'BVC', 'BVS', 'BCC', 'BCS', 'BNE', 'BEQ'])
 interface Space { space: string; v?: number }
 /** a macro (`.macro`: a block of its own; `.segment`: none): its parameters with their defaults and its lines */
 interface TMacro { kind: 'macro' | 'segment'; name: string; params: { name: string; def: string | null }[]; lines: { raw: string; line: number }[]; file: string }
+/** a function (`.function` … `.endf result`, or `.sfunction`): its parameters (`*rest` takes the rest as a list), its
+ *  lines and the expressions it gives */
+interface TFunc { name: string; params: { name: string; def: string | null; rest: boolean }[]; body: Stmt[]; result: string; st: Stmt }
+/** an immediate value: a function's argument written `#1` (`lda value` is then lda #1) */
+interface Imm { imm: true; v: Value }
+const isImm = (v: Value): v is Imm => !!v && typeof v === 'object' && v.imm === true;
 /** a section: where its .dsection put it in this pass and the last (pc, and the offset of a .logical), how much its
  *  fragments took so far and at most */
 interface Sect { name: string; key: string; pc0: number | null; off0: number; used: number; max: number; prevPc0: number | null; prevOff0: number; prevSize: number; frags: boolean }
@@ -129,7 +139,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     errors.push({ msg: msg + where, file: st ? st.file : entryPath, line: st ? st.line : 0 });
   };
   const stmts: Stmt[] = [];
-  const macros = new Map<string, TMacro>();
+  const macros = new Map<string, TMacro>(), funcs = new Map<string, TFunc>();
 
   // ---- the lines: comments off, the label at the start of a line, .include and .comment … .endc ----
   /** a line as a statement: its label at the start of the line, the rest, and its comment */
@@ -149,7 +159,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const src = vfs[path];
     if (typeof src !== 'string') { E(`can't open file "${path}"`); return; }
     if (depth > 16) { E(`.include nested too deep at "${path}"`); return; }
-    let inComment = false, def: TMacro | null = null, inner = 0;
+    let inComment = false, def: TMacro | null = null, inner = 0, fn: TFunc | null = null;
     src.split(/\r?\n/).forEach((raw, i) => {
       const st = parseLine(raw, path, i + 1), { label, body } = st;
       if (inComment) { if (/^\.endc(omment)?$/.test(body)) inComment = false; return; }
@@ -160,7 +170,25 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         def.lines.push({ raw, line: i + 1 });
         return;
       }
+      // a function's lines, until .endf (its result after it)
+      if (fn) {
+        const end = body.match(/^\.(endf|endfunction)\b\s*(.*)$/);
+        if (end) { fn.result = end[2].trim(); fn = null; return; }
+        if (st.label || st.body) fn.body.push(st);
+        return;
+      }
       if (/^\.comment$/.test(body)) { inComment = true; return; }
+      const fd = body.match(/^\.(function|sfunction)\b\s*(.*)$/);
+      if (fd) {
+        const parts = fd[2].trim() ? splitTop(fd[2], ',') : [];
+        const result = fd[1] === 'sfunction' ? parts.pop() ?? '' : '';
+        const f: TFunc = { name: label ?? '', params: parts.filter(x => x !== '').map(x => { const [n, d] = x.split('='); const name = n.trim().replace(/:.*$/, ''); return { name: name.replace(/^\*/, ''), def: d == null ? null : d.trim(), rest: name.startsWith('*') }; }), body: [], result, st };
+        if (!label || label === '+' || label === '-') E(`a .${fd[1]} needs its name before it (name .${fd[1]})`, st);
+        else if (funcs.has(label) || macros.has(label)) E(`duplicate definition '${label}'`, st);
+        else funcs.set(label, f);
+        if (fd[1] === 'function') fn = f;
+        return;
+      }
       const md = body.match(/^\.(macro|segment)\b\s*(.*)$/);
       if (md) {
         def = { kind: md[1] as TMacro['kind'], name: label ?? '', params: md[2].trim() ? splitTop(md[2], ',').map(p => { const [n, d] = p.split('='); return { name: n.trim(), def: d == null ? null : d.trim() }; }) : [], lines: [], file: path };
@@ -175,8 +203,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       stmts.push(st);
     });
     if (inComment) E(`.comment without .endc in "${path}"`);
-    const unclosed = def as TMacro | null;
+    const unclosed = def as TMacro | null, unended = fn as TFunc | null;
     if (unclosed) E(`closing directive '.endmacro' not found for '${unclosed.name}' in "${path}"`);
+    if (unended) E(`closing directive '.endfunction' not found for '${unended.name}'`, unended.st);
   };
   loadFile(entryPath, 0);
   /** a macro's lines for a call with these parameters (as text): each reference replaced outside strings and comments */
@@ -209,6 +238,12 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     const list = def.lines.map(l => parseLine(sub(l.raw), def.file, l.line)).filter(st => st.label || st.body);
     expanded.set(key, list);
     return list;
+  };
+  /** a function called as an instruction: `name …`, `#name …` or `.name …` (a name that is a function) */
+  const fnCallOf = (body: string): { def: TFunc; args: string } | null => {
+    const m = body.match(/^[#.]?([A-Za-z_]\w*)(?:\s+(.*))?$/);
+    const def = m ? funcs.get(m[1]) : undefined;
+    return def && !(m![0][0] !== '#' && m![0][0] !== '.' && TASS_ENC[m![1].toUpperCase()] && m![1].length === 3) ? { def, args: m![2] ?? '' } : null;
   };
   /** a call of a macro: `#name …` or `.name …` (a name that is a macro) */
   const callOf = (body: string): { def: TMacro; args: string } | null => {
@@ -352,6 +387,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (typeof v === 'string') { const b = encode(v); if (b.length === 1) return b[0]; throw new Error(`a string of ${b.length} characters is not a number`); }
     // a block's or a macro call's label is also the address where it starts
     if (isSpace(v) && typeof v.v === 'number') return v.v;
+    if (isImm(v)) return numberOf(v.v);
     throw new Error(`a ${typeName(v)} is not a number`);
   };
   const truth = (v: Value): boolean => (typeof v === 'boolean' ? v : numberOf(v) !== 0);
@@ -371,6 +407,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
   const lookup = (name: string): Value | undefined => {
     if (name.startsWith('_') && scope) { const v = lookup(`${scope}.${name}`); if (v !== undefined) return v; }
     for (let i = spaces.length; i >= 0; i--) { const k = keyIn(spaces.slice(0, i), name); if (syms.has(k)) return syms.get(k); }
+    // a function: its result for the arguments (it runs its lines)
+    const f = funcs.get(name);
+    if (f) return (...args: Value[]) => callFn(f, args, null);
     if (name in builtins) return builtins[name];
     const ext = names?.get(name);
     if (ext !== undefined && pass === 'final' && curStmt && !external.has(name)) external.set(name, curStmt.line);
@@ -458,6 +497,9 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     return null;
   };
   const evn = (src: string): number | null => { const v = ev(P(src)); return v == null ? null : numberOf(v); };
+  /** runs a function the source defines with these arguments (set by each pass: it runs lines); `st`: called as an
+   *  instruction there. Its result: undefined when its .endf gives none */
+  let callFn: (f: TFunc, args: Value[], st: Stmt | null) => Value = () => null;
 
   let mem = new Uint8Array(0x10000), written = new Uint8Array(0x10000), blocks: { start: number; name: string }[] = [];
   // `.logical a`: `pc` counts from a while the bytes go on where they are; `off` is how far pc is from where the next
@@ -512,6 +554,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       if (old !== v && (typeof v === 'number' || !syms.has(k) || (isSpace(v) && isSpace(old) && v.v !== old.v))) changed = true;
       syms.set(k, v);
     };
+    const defineVar = (name: string, v: Value) => define(name, v, curStmt ?? stmts[0], true);
     // .if: whether each level is on, whether a branch of it was taken, and whether the level around it is on
     const cond: { on: boolean; taken: boolean; outer: boolean }[] = [];
     const active = () => cond.every(c => c.on);
@@ -528,6 +571,35 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
       calls.push({ name: def.name, st });
       try { runList(list); } finally { calls.pop(); if (def.kind === 'macro') { spaces = wasSpaces; scope = wasScope; } }
     };
+
+    // ---- functions: each call a block of its own under the top level, its parameters variables in it ----
+    let fnNo = 0;
+    callFn = (f, args, st) => {
+      if (calls.length >= 100) throw new Error(`functions called ${calls.length} deep at ${f.name}: does it call itself without end?`);
+      const wasSpaces = spaces, wasScope = scope, wasStmt = curStmt, wasUnresolved = unresolved;
+      spaces = [`#f${fnNo++}`]; unresolved = [];
+      calls.push({ name: `${f.name}()`, st: st ?? wasStmt ?? f.st });
+      try {
+        const fixed = f.params.filter(x => !x.rest), rest = f.params.find(x => x.rest);
+        if (args.length > fixed.length && !rest) throw new Error(`too many arguments for ${f.name}: it takes ${fixed.length}, not ${args.length}`);
+        fixed.forEach((x, i) => {
+          let v = args[i];
+          if (v === undefined) { if (x.def == null) throw new Error(`not enough arguments for ${f.name}: ${x.name} has none`); v = ev(P(x.def)); }
+          if (x.name) defineVar(x.name, v);
+        });
+        if (rest) defineVar(rest.name, args.slice(fixed.length));
+        runList(f.body);
+        if (!f.result) return undefined;
+        const parts = splitTop(f.result, ',').map(e => ev(P(e)));
+        if (parts.some(x => x == null)) return null;
+        return parts.length === 1 ? parts[0] : parts;
+      } finally {
+        calls.pop(); spaces = wasSpaces; scope = wasScope; curStmt = wasStmt;
+        unresolved = wasUnresolved.concat(unresolved);
+      }
+    };
+    /** a function's argument as written: `#1` immediate, else its value */
+    const argOf = (text: string): Value => { const t = text.trim(); if (t[0] === '#') { const v = ev(P(t.slice(1))); return v == null ? null : { imm: true, v } as Imm; } return ev(P(t)); };
 
     // ---- sections: the fragments open now, innermost last; each section where its .dsection is ----
     for (const x of sects.values()) {
@@ -564,7 +636,20 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         if (!active()) continue;
         // (a macro's lines are the call's: the program counter at a line is the line's own only)
         if (final && st.file === entryPath && !calls.length) linePcs.set(st.line, pc);
-        const call = callOf(s);
+        const call = callOf(s), fcall = call ? null : fnCallOf(s);
+        // a function called as an instruction: its lines; a label before it gets its result (the address when none)
+        if (fcall) {
+          const args = fcall.args.trim() ? splitTop(fcall.args, ',').map(argOf) : [];
+          if (st.label === '+' || st.label === '-') anon.push({ dir: st.label, v: pc });
+          const here = pc, r = args.some(a => a == null) ? null : callFn(fcall.def, args, st);
+          if (st.label && st.label !== '+' && st.label !== '-') {
+            const local = st.label.startsWith('_') && scope ? `${scope}.${st.label}` : st.label;
+            if (r !== undefined) { if (r != null) define(local, r, st); }
+            else { define(local, here, st); if (!st.label.startsWith('_')) scope = st.label; }
+          }
+          report(st);
+          continue;
+        }
         // a label: an anonymous one, `name = value`, `name := value`, a namespace, or the address here; one that
         // starts with _ is local to the code label before it (`loop._x`); one before a .macro's call names its block
         if (st.label === '+' || st.label === '-') anon.push({ dir: st.label, v: pc });
@@ -705,7 +790,10 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           else if ((m = arg.match(/^\((.+)\)$/)) && mn === 'JMP') { mode = 'ind'; ex = m[1]; }
           else if ((m = arg.match(/^(.+),\s*([xy])$/))) { ex = m[1]; mode = m[2]; }
           else { ex = arg; mode = 'plain'; }
-          const v = ex != null ? evn(ex) : null;
+          // (a function's argument written #1 is immediate: lda value is lda #1)
+          const raw = ex != null ? ev(P(ex)) : null;
+          if (isImm(raw) && mode === 'plain') mode = 'imm';
+          const v = raw == null ? null : numberOf(raw);
           if (BRANCH.has(mn)) mode = 'rel';
           else if (mode === 'plain' || mode === 'x' || mode === 'y') {
             const suf = mode === 'plain' ? '' : mode;

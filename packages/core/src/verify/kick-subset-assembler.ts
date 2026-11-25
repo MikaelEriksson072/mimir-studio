@@ -22,6 +22,7 @@ import type { AsmBlock, AsmError, AssembleResult, Vfs } from '../types';
 import { BRANCHES, ENC, MODE_LEN, type AddrMode } from '../cpu/opcodes';
 import { parsePsid } from '../c64/psid';
 import { h4 } from '../util/hex';
+import { KICK_DISK_TYPES, kickBytes, kickD64, type KickDiskFile, type KickDiskFormat } from './kick-d64';
 
 interface Stmt { file: string; line: number; src?: string; label?: string; body: string }
 
@@ -172,7 +173,7 @@ function braceParts(s: string): string[] {
 /** a statement of the code, or a block of statements (a scope, `.pseudopc`, `.if`, `.for`, `.while`) */
 type Tree =
   | { k: 'st'; st: Stmt }
-  | { k: 'blk'; id: number; st: Stmt; kind: 'scope' | 'pseudopc' | 'if' | 'for' | 'while'; head: string; body: Tree[]; els?: Tree[] };
+  | { k: 'blk'; id: number; st: Stmt; kind: 'scope' | 'pseudopc' | 'if' | 'for' | 'while' | 'disk'; head: string; body: Tree[]; els?: Tree[] };
 
 /** where names are looked up: a block's own variables and labels, then the blocks around it (a named one's labels are
  *  also `name.label` in `home`, else in the parent) */
@@ -195,7 +196,12 @@ interface Seg {
 interface Content { mem: Uint8Array; written: Uint8Array; lines: Int32Array; starts: Uint8Array; ops: Uint8Array; fileOf?: Uint16Array; min: number; max: number; first: number; firstN: number; blocks: AsmBlock[] }
 /** a file the build writes: `.file` or a segment's outPrg / outBin */
 interface OutFile { name: string; type: 'prg' | 'bin'; segments: string[]; st: Stmt }
-const SEG_PARAMS = new Set(['start', 'startAfter', 'align', 'min', 'max', 'fill', 'fillByte', 'virtual', 'segments', 'outPrg', 'outBin', 'allowOverlap', 'hide', 'dest', 'prgFiles', 'sidFiles']);
+const SEG_PARAMS = new Set(['start', 'startAfter', 'align', 'min', 'max', 'fill', 'fillByte', 'virtual', 'segments', 'outPrg', 'outBin', 'allowOverlap', 'hide', 'dest', 'prgFiles', 'sidFiles', 'modify']);
+/** a .disk's parameters (KickAss's cc1541 disk writer), and each of its files' (those of a segment besides) */
+const DISK_PARAMS = new Set(['filename', 'name', 'id', 'format', 'dontSplitFilesOverDir', 'storeFilesInDir', 'interleave', 'showInfo']);
+const DISK_FILE_PARAMS = new Set([...SEG_PARAMS, 'name', 'type', 'hide', 'interleave', 'noStartAddr']);
+/** a disk image the build writes, and its files with what each is made of (`extra`: the PRGs and SIDs it is given) */
+interface OutDisk { p: Record<string, Value>; files: { p: Record<string, Value>; extra: Seg | null }[]; st: Stmt }
 
 export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}): AssembleResult {
   const errors: AsmError[] = [];
@@ -341,11 +347,15 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
       addDef(def[1] as Def['kind'], def[2], body, st);
       return { k: 'st', st: { ...st, body: '' } };
     }
+    // a disk image: its files, each `[name="…", …]`, in its block
+    if (/^\.disk\b/.test(s) && !s.endsWith('{') && at < stmts.length && stmts[at].body === '{' && !stmts[at].label) { at++; return { k: 'blk', id: blockIds++, st, kind: 'disk', head: s.slice(5).trim(), body: list(st) }; }
     if (s.endsWith('{')) {
       const head = s.slice(0, -1).trim(), pp = head.match(/^\.pseudopc\s+(.+)$/);
+      if (/^\.disk\b/.test(head)) return { k: 'blk', id: blockIds++, st, kind: 'disk', head: head.slice(5).trim(), body: list(st) };
       if (pp) return { k: 'blk', id: blockIds++, st, kind: 'pseudopc', head: pp[1], body: list(st) };
       if (!head) return { k: 'blk', id: blockIds++, st, kind: 'scope', head: '', body: list(st) };
-      E(`unexpected { after "${head}"`, st);
+      if (/^\.(modify|filemodify)\b/.test(head)) E(`Mimir's check cannot run a modifier plugin (${head.split(/\s/)[0]}): Kick Assembler has none of its own, they are Java plugins (Run builds with Kick Assembler)`, st);
+      else E(`unexpected { after "${head}"`, st);
       return { k: 'blk', id: blockIds++, st, kind: 'scope', head: '', body: list(st) };
     }
     return { k: 'st', st };
@@ -599,7 +609,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     pc: at, begun: false, blocks: [], first: -1, firstN: 0,
   });
   let segs = new Map<string, Seg>(), prevSegs: Map<string, Seg> | null = null, prevEnds = new Map<string, number>();
-  let seg: Seg = newSeg('Default', null, {}, false), outFiles: (OutFile & { p: Record<string, Value> })[] = [], outed = new Set<string>();
+  let seg: Seg = newSeg('Default', null, {}, false), outFiles: (OutFile & { p: Record<string, Value> })[] = [], outed = new Set<string>(), outDisks: OutDisk[] = [];
   /** bytes written so far in the pass, and how deep in .function calls the code is (a function writes none) */
   let emitted = 0, inFunc = 0;
   let fresh = false;
@@ -631,7 +641,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   const segEnd = (s: Seg) => { let e = -1; for (const b of s.blocks) if (b.end != null && b.end > e) e = b.end; return e < 0 ? s.pc : e + 1; };
   /** the bytes of segments together (those they are made of too, and fill where asked), as a file or .segmentout has
    *  them; two in one address is an error unless allowOverlap */
-  const compose = (names: readonly string[], p: Record<string, Value>, what: string, from: Map<string, Seg>, st: Stmt | null, final: boolean): Content => {
+  const compose = (names: readonly string[], p: Record<string, Value>, what: string, from: Map<string, Seg>, st: Stmt | null, final: boolean, extra: Seg | null = null): Content => {
     const out: Content = { mem: new Uint8Array(0x10000), written: new Uint8Array(0x10000), lines: new Int32Array(0x10000), starts: new Uint8Array(0x10000), ops: new Uint8Array(0x10000), ...(all ? { fileOf: new Uint16Array(0x10000) } : {}), min: -1, max: -1, first: -1, firstN: Infinity, blocks: [] };
     const who = new Int16Array(0x10000), parts: string[] = [], said = new Set<string>(), seen = new Set<string>();
     const fill = (q: Record<string, Value>, part: number) => {
@@ -639,8 +649,19 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
       const fb = q.fillByte == null ? 0 : numberOf(q.fillByte) & 0xff;
       for (let a = Math.max(0, numberOf(q.min)); a <= Math.min(0xffff, numberOf(q.max)); a++) if (!out.written[a]) { out.mem[a] = fb; out.written[a] = 1; who[a] = part; }
     };
+    // modify="BasicUpstart", _start=…: Kick Assembler's one modifier puts a BASIC line with SYS _start at $0801
+    const upstart = (q: Record<string, Value>, part: number, at: Stmt | null) => {
+      if (q.modify == null || q._start == null) return;
+      const digits = String(numberOf(q._start)), next = 0x0801 + 6 + digits.length;
+      const line = [next & 0xff, next >> 8, 10, 0, 0x9e, ...[...digits].map(c => c.charCodeAt(0)), 0, 0, 0];
+      line.forEach((b, i) => {
+        const a = 0x0801 + i;
+        if (out.written[a] && who[a] !== part && final && !said.has(`up:${part}`)) { said.add(`up:${part}`); E(`In ${what} the BASIC line of the modifier BasicUpstart overlaps '${parts[who[a] - 1]}' at $${h4(a)}`, at ?? st ?? undefined); }
+        out.mem[a] = b; out.written[a] = 1; who[a] = part; out.lines[a] = at?.line ?? 0;
+      });
+    };
     const add = (name: string, depth: number) => {
-      const s = from.get(name);
+      const s = from.get(name) ?? (extra?.name === name ? extra : undefined);
       if (!s) { if (final) E(`Undefined segment '${name}' in ${what}`, st ?? undefined); return; }
       if (seen.has(name) || depth > 32) return;
       seen.add(name);
@@ -658,11 +679,13 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
         if (out.fileOf && s.fileOf) out.fileOf[a] = s.fileOf[a] ?? 0;
       }
       fill(s.p, part);
+      upstart(s.p, part, s.st);
       if (s.first >= 0 && s.firstN < out.firstN) { out.first = s.first; out.firstN = s.firstN; }
       for (const b of s.blocks) if (b.end != null && b.end >= b.start && (b.name || name !== 'Default')) out.blocks.push({ start: b.start, end: b.end, name: b.name || name });
     };
-    for (const n of names) add(n, 0);
-    fill(p, parts.push(what));
+    for (const n of extra ? [...names, extra.name] : names) add(n, 0);
+    const own = parts.push(what);
+    fill(p, own); upstart(p, own, st);
     for (let a = 0; a < 0x10000; a++) if (out.written[a]) { if (out.min < 0) out.min = a; out.max = a; }
     out.blocks.sort((x, y) => x.start - y.start);
     return out;
@@ -698,7 +721,7 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   const runPass = (final: boolean) => {
     prevSegs = segs.size ? segs : null;
     seg = { ...newSeg('Default', null, {}, false, opts.pc ?? 0), lines: lines0, starts: starts0, ops: ops0, fileOf: fileOf0, begun: true };
-    segs = new Map([['Default', seg]]); outFiles = []; outed = new Set();
+    segs = new Map([['Default', seg]]); outFiles = []; outed = new Set(); outDisks = [];
     mem = seg.mem; written = seg.written; blocks = seg.blocks; lines = lines0; starts = starts0; ops = ops0; fileOf = fileOf0;
     pc = opts.pc ?? 0; off = 0; outer = []; enc = 'screencode_mixed'; unresolved = []; first = -1;
     calls = []; inFunc = 0; emitted = 0;
@@ -772,19 +795,18 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
       return { p: paramsOf(t.slice(1, k - 1)), rest: t.slice(k).trim() };
     };
     const checkParams = (p: Record<string, Value>, allowed: Set<string>, what: string) => {
-      for (const k of Object.keys(p)) if (!allowed.has(k)) {
-        throw new Error(k === 'modify' || /^marg\d$/.test(k) ? `Mimir's check cannot run the modifier of ${what} (Run builds with Kick Assembler)`
-          : k === 'mbfiles' ? `Mimir's check does not write a file per memory block (mbfiles): Run builds with Kick Assembler` : `Unknown parameter "${k}" of ${what}`);
+      for (const k of Object.keys(p)) {
+        if (k[0] === '_' && 'modify' in p) continue;
+        if (!allowed.has(k)) throw new Error(`Unknown parameter "${k}" of ${what}`);
+      }
+      if ('modify' in p) {
+        if (String(p.modify) !== 'BasicUpstart') throw new Error(`Mimir's check cannot run the modifier "${p.modify}" of ${what}: only BasicUpstart is Kick Assembler's own, others are plugins (Run builds with Kick Assembler)`);
+        if (!('_start' in p)) throw new Error(`The modifier BasicUpstart of ${what} needs _start (the address its SYS goes to)`);
       }
       if (p.fill && (!('min' in p) || !('max' in p))) throw new Error("Can't use fill without both min and max");
     };
-    const defineSeg = (name: string, p: Record<string, Value>, st: Stmt): Seg => {
-      if (segs.has(name)) throw new Error(`The segment '${name}' is already defined`);
-      checkParams(p, SEG_PARAMS, `the segment ${name}`);
-      const s = newSeg(name, st, p, final);
-      segs.set(name, s);
-      for (const k of ['outPrg', 'outBin'] as const) if (p[k] != null) outFiles.push({ name: String(p[k]), type: k === 'outPrg' ? 'prg' : 'bin', segments: [name], st, p: {} });
-      // the files it is given: a PRG where it loads, a SID's data where it loads
+    /** the PRGs (where they load) and SIDs (their data where it loads) a segment, or a file of a disk, is given */
+    const giveFiles = (s: Seg, p: Record<string, Value>, st: Stmt) => {
       for (const k of ['prgFiles', 'sidFiles'] as const) if (p[k] != null) for (const f of listOf(p[k])) {
         const u = vfs[importPath(vfs, st.file, f)];
         if (!(u instanceof Uint8Array)) { E(`Can't open file "${f}"`, st); continue; }
@@ -794,6 +816,14 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
         for (const b of data) emit(b, st);
         useSeg(was);
       }
+    };
+    const defineSeg = (name: string, p: Record<string, Value>, st: Stmt): Seg => {
+      if (segs.has(name)) throw new Error(`The segment '${name}' is already defined`);
+      checkParams(p, SEG_PARAMS, `the segment ${name}`);
+      const s = newSeg(name, st, p, final);
+      segs.set(name, s);
+      for (const k of ['outPrg', 'outBin'] as const) if (p[k] != null) outFiles.push({ name: String(p[k]), type: k === 'outPrg' ? 'prg' : 'bin', segments: [name], st, p: {} });
+      giveFiles(s, p, st);
       return s;
     };
     /** a segment's first `.segment` in the pass: its program counter from start, startAfter (and align), else $2000 */
@@ -834,6 +864,25 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
         const key = `${cur.key}>${b.id}`;
         switch (b.kind) {
           case 'scope': inScope(key, st.label && st.label[0] !== '!' ? st.label : undefined, b.body); return;
+          case 'disk': {
+            const { p, rest } = bracket(b.head);
+            if (!p || rest || p.filename == null) throw new Error('.disk needs its parameters: .disk [filename="game.d64", name="GAME", id="2025!"] { [name="GAME", type="prg", segments="Code"], … }');
+            checkParams(p, DISK_PARAMS, '.disk');
+            const text = b.body.map(n => (n.k === 'st' ? n.st.body : '')).join(' '), files: OutDisk['files'] = [];
+            for (let i = 0; i < text.length;) {
+              if (/[\s,]/.test(text[i])) { i++; continue; }
+              if (text[i] !== '[') throw new Error(`a file of .disk is written [name="…", type="prg", segments="…"], not "${text.slice(i, i + 24)}"`);
+              const k = closeAt(text, i); if (k < 0) throw new Error('missing ] after a file of .disk');
+              const fp = paramsOf(text.slice(i + 1, k - 1)); i = k;
+              checkParams(fp, DISK_FILE_PARAMS, `the file "${fp.name ?? ''}" of ${p.filename}`);
+              if (fp.name == null) throw new Error(`a file of ${p.filename} needs its name: [name="…", …]`);
+              let extra: Seg | null = null;
+              if (fp.prgFiles != null || fp.sidFiles != null) { extra = newSeg(`<<${p.filename}:${files.length}>>`, st, {}, final); giveFiles(extra, fp, st); }
+              files.push({ p: fp, extra });
+            }
+            outDisks.push({ p, files, st });
+            return;
+          }
           case 'pseudopc': {
             const v = evn(P(b.head)); report(st); outer.push(off); if (v != null) { off += v - pc; pc = v; }
             try { run(b.body); } finally { const was = outer.pop()!; pc -= off - was; off = was; }
@@ -933,7 +982,8 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
           if (c.min >= 0) for (let a = c.min; a <= c.max; a++) emit(c.mem[a], st);
           return;
         }
-        if (/^\.disk\b/.test(s)) { E("Mimir's check does not make disk images (.disk): Run builds with Kick Assembler", st); return; }
+        if (/^\.disk\b/.test(s)) { E('.disk needs its files in { }: .disk [filename="game.d64"] { [name="GAME", segments="Code"] }', st); return; }
+        if (/^\.(modify|filemodify)\b/.test(s)) { E(`Mimir's check cannot run a modifier plugin (${s.split(/\s/)[0]}): Kick Assembler has none of its own, they are Java plugins (Run builds with Kick Assembler)`, st); return; }
         // a macro called: `name(1, 2)` (or `:name(1, 2)`)
         if ((m = s.match(/^:?([A-Za-z_]\w*)\s*\((.*)\)$/)) && m[1] !== 'BasicUpstart2' && !(ENC[m[1].toUpperCase()] && s[0] !== ':' && !macros.has(m[1]))) {
           const def = macros.get(m[1]);
@@ -1042,25 +1092,69 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
   const dflt = segs.get('Default')!;
   let out: Pick<Content, 'mem' | 'written' | 'lines' | 'starts' | 'ops' | 'fileOf' | 'first'> & { blocks: AsmBlock[] | null } = { mem: dflt.mem, written: dflt.written, lines: lines0, starts: starts0, ops: ops0, fileOf: fileOf0, first, blocks: null };
   let programFile: string | null = null, fileContents: Content[] = [];
-  const usesSegs = segs.size > 1 || outFiles.length > 0;
+  const usesSegs = segs.size > 1 || outFiles.length > 0 || outDisks.length > 0;
+  // the files the build writes besides <main>.prg (a .file with mbfiles: one per memory block, name_block.prg), and the
+  // disk images
+  const outList: { name: string; type: 'prg' | 'bin'; segments: string[]; c: Content; st: Stmt }[] = [];
+  const diskList: { name: string; image: Uint8Array | null; first: Content | null }[] = [];
   if (usesSegs) {
     const base = entryPath.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') + '.prg';
-    const named = outFiles.find(f => f.type === 'prg' && f.name.toLowerCase() === base.toLowerCase());
     // (every file put together: two segments over each other in one is an error)
-    const contents = fileContents = outFiles.map(f => compose(f.segments, f.p, `the file '${f.name}'`, segs, f.st, true));
+    for (const f of outFiles) {
+      const c = compose(f.segments, f.p, `the file '${f.name}'`, segs, f.st, true);
+      if (!f.p.mbfiles) { outList.push({ name: f.name, type: f.type, segments: f.segments, c, st: f.st }); continue; }
+      const dot = f.name.lastIndexOf('.'), stem = dot > 0 ? f.name.slice(0, dot) : f.name, ext = dot > 0 ? f.name.slice(dot) : '';
+      for (const b of c.blocks) {
+        const written = new Uint8Array(0x10000); written.set(c.written.subarray(b.start, b.end + 1), b.start);
+        outList.push({ name: `${stem}_${b.name}${ext}`, type: f.type, segments: f.segments, c: { ...c, written, min: b.start, max: b.end, blocks: [b] }, st: f.st });
+      }
+    }
+    fileContents = outList.map(o => o.c);
+    // the disk images: each file's bytes (with the address it loads at unless noStartAddr, which a PRG has not), then
+    // the image as Kick Assembler lays it out
+    for (const d of outDisks) {
+      const name = String(d.p.filename), interleave = d.p.interleave == null ? 10 : numberOf(d.p.interleave);
+      let first: Content | null = null;
+      try {
+        if (interleave < 0) throw new Error(`Interleave can't be negative: ${interleave}`);
+        const format = String(d.p.format ?? 'commodore').toLowerCase() as KickDiskFormat;
+        if (!['commodore', 'speeddos', 'dolphindos'].includes(format)) throw new Error(`Unknown format: ${d.p.format}`);
+        const files: KickDiskFile[] = d.files.map(f => {
+          let type = String(f.p.type ?? 'prg'), locked = false;
+          if (type.endsWith('<')) { locked = true; type = type.slice(0, -1); }
+          const t = KICK_DISK_TYPES[type.toLowerCase()];
+          if (t == null) throw new Error(`Unknown type: ${type}`);
+          const fi = f.p.interleave == null ? interleave : numberOf(f.p.interleave);
+          if (fi < 0) throw new Error(`Interleave can't be negative: ${fi}`);
+          const c = compose(f.p.segments == null ? [] : listOf(f.p.segments), f.p, `the file '${f.p.name}' of ${name}`, segs, d.st, true, f.extra);
+          const noStart = f.p.noStartAddr == null ? t !== KICK_DISK_TYPES.prg : !!f.p.noStartAddr;
+          const body = c.min < 0 ? new Uint8Array(0) : c.mem.subarray(c.min, c.max + 1);
+          const data = c.min < 0 ? body : noStart ? body.slice() : Uint8Array.from([c.min & 0xff, c.min >> 8, ...body]);
+          if (!first && t === KICK_DISK_TYPES.prg && !f.p.hide && c.min >= 0) first = c;
+          return { name: kickBytes(String(f.p.name)), type: t, interleave: fi, data, locked, visible: !f.p.hide };
+        });
+        const image = kickD64({ format, name: kickBytes(String(d.p.name ?? 'UNNAMED')), id: kickBytes(String(d.p.id ?? '   2A')), files, dontSplitFilesOverDir: !!d.p.dontSplitFilesOverDir, storeFilesInDir: !!d.p.storeFilesInDir });
+        diskList.push({ name, image, first });
+        if (d.p.showInfo) prints.push(`Info for disk '${d.p.name ?? 'UNNAMED'}'`);
+      } catch (err) { E(`Error while generating '${name}': ${(err as Error).message}`, d.st); diskList.push({ name, image: null, first: null }); }
+    }
+    const named = outList.find(f => f.type === 'prg' && f.name.toLowerCase() === base.toLowerCase());
     let c: Content | null = null;
     if (dflt.first >= 0) {
       if (named) E(`Can't output default segment since a file called '${base}' already exist`, named.st);
       c = compose(['Default'], {}, base, segs, null, true); programFile = base;
     } else {
-      const i = named ? outFiles.indexOf(named) : outFiles.findIndex(f => f.type === 'prg');
-      if (i >= 0) { c = contents[i]; programFile = outFiles[i].name; }
+      const o = named ?? outList.find(f => f.type === 'prg');
+      if (o) { c = o.c; programFile = o.name; }
+      // else the first PRG on the first disk that has one: what VICE starts of the disk
+      else { const d = diskList.find(x => x.first); if (d) { c = d.first; programFile = d.name; } }
     }
     if (c) out = { mem: c.mem, written: c.written, lines: c.lines, starts: c.starts, ops: c.ops, fileOf: c.fileOf, first: c.first, blocks: c.blocks };
     // a segment with bytes that no file has: Kick Assembler writes it nowhere
     const inFile = new Set<string>(['Default']);
     const take = (n: string, d: number) => { if (d > 32 || inFile.has(n) && d) return; inFile.add(n); const s = segs.get(n); if (s?.p.segments != null) for (const x of listOf(s.p.segments)) take(x, d + 1); };
     for (const f of outFiles) for (const n of f.segments) take(n, 0);
+    for (const d of outDisks) for (const f of d.files) if (f.p.segments != null) for (const n of listOf(f.p.segments)) take(n, 0);
     for (const n of outed) take(n, 0);
     for (const s of segs.values()) {
       if (inFile.has(s.name) || s.first < 0 || s.p.virtual || !s.st) continue;
@@ -1080,7 +1174,10 @@ export function assemble(vfs: Vfs, entryPath: string, opts: AssembleOptions = {}
     const body = c.mem.subarray(c.min, c.max + 1);
     return type === 'bin' ? body.slice() : Uint8Array.from([c.min & 0xff, c.min >> 8, ...body]);
   };
-  const files = outFiles.map((f, i) => ({ name: f.name, type: f.type, segments: f.segments, bytes: bytesOf(fileContents[i], f.type) }));
+  const files: NonNullable<AssembleResult['files']> = [
+    ...outList.map((f, i) => ({ name: f.name, type: f.type, segments: f.segments, bytes: bytesOf(fileContents[i], f.type) })),
+    ...diskList.map(d => ({ name: d.name, type: 'd64' as const, segments: [], bytes: d.image })),
+  ];
   return {
     mem: out.mem, written: out.written, min, max, errors: once, prg, blocks: blockList, symbols: syms, vars: new Map(root.vars), prints, first: out.first, external,
     lines: out.lines, starts: out.starts, ops: out.ops, ...(out.fileOf ? { fileOf: out.fileOf, fileNames } : {}),

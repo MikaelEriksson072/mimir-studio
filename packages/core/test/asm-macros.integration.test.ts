@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkAsm } from '../src/asm-project';
 import { find64tass, findKickAssJar, runKickAssembler, writeVfs } from '../src/node';
+import { makePsid } from '../src/c64/psid';
 import type { ScriptLang, Vfs } from '../src/types';
 
 const jar = process.env.KICKASS_JAR || findKickAssJar();
@@ -151,7 +152,118 @@ cnt: .byte 0
 `,
 };
 
+/** the files the sources load (prgFiles, sidFiles) */
+const DATA: Vfs = {
+  'data/pic.prg': Uint8Array.from([0x00, 0x40, ...Array.from({ length: 700 }, (_, i) => (i * 7) & 0xff)]),
+  'music/tune.sid': makePsid(Uint8Array.from({ length: 300 }, (_, i) => (i * 5 + 1) & 0xff), 0x1000, 0x1000, 0x1003, 'Tune'),
+};
+/** a segment of n bytes at $1000 */
+const big = (name: string, n: number) => `.segment ${name} [start=$1000]\n .fill ${n}, i * 3 + ${name.length}\n`;
+
+Object.assign(KICK, {
+  'a disk': `.disk [filename="MyDisk.d64", name="THE DISK", id="2021!"] {
+  [name="----------------", type="rel"],
+  [name="BORDER", type="prg", segments="Code"],
+  [name="DATA", type="prg", segments="Data"],
+  [name="SEQ", type="seq", segments="Data"],
+  [name="HIDDEN", type="prg", segments="Code", hide],
+  [name="Locked", type="usr<", segments="Data"],
+  [name="PIC", type="prg", prgFiles="data/pic.prg"],
+  [name="TUNE", type="prg", sidFiles="music/tune.sid"],
+  [name="RAW", type="prg", segments="Data", noStartAddr],
+  [name="slow", segments="Code", interleave=3],
+}
+.segment Code [start=$0801]
+BasicUpstart2(start)
+start: inc $d020
+ jmp start
+.segment Data [start=$2000]
+ .fill 600, i
+`,
+  'a disk without a name, the program on it': `.disk [filename="game.d64"] {
+  [name="GAME", segments="Code"],
+}
+.segment Code [start=$0801]
+BasicUpstart2(start)
+start: rts
+`,
+  'a full disk over track 18': `.disk [filename="big.d64", name="BIG", interleave=4] {
+  [name="A", segments="A"], [name="B", segments="B"], [name="C", segments="C"], [name="D", segments="D"],
+}
+${big('A', 30000)}${big('B', 30000)}${big('C', 30000)}${big('D', 12000)}`,
+  'a disk whose files do not cross track 18': `.disk [filename="split.d64", dontSplitFilesOverDir, format="speeddos"] {
+  [name="A", segments="A"], [name="B", segments="B"], [name="C", segments="C"],
+}
+${big('A', 40000)}${big('B', 40000)}${big('C', 15000)}`,
+  'files on the directory track': `.disk [filename="dir.d64", storeFilesInDir, format="dolphindos"] {
+  [name="A", segments="A"], [name="B", segments="B"], [name="C", segments="C"],
+}
+${big('A', 50000)}${big('B', 40000)}${big('C', 9000)}`,
+  'a directory of many files': `.disk [filename="many.d64", name="MANY"] {
+${Array.from({ length: 17 }, (_, i) => `  [name="FILE ${i}", segments="S${i}"],`).join('\n')}
+}
+${Array.from({ length: 17 }, (_, i) => `.segment S${i} [start=$${(0x1000 + i * 0x100).toString(16)}]\n .fill ${20 + i * 40}, i + ${i}\n`).join('')}`,
+  'files per memory block (mbfiles)': `.file [name="mb.prg", mbfiles, segments="Code"]
+.file [name="all.bin", type="bin", segments="Code"]
+.segment Code [start=$1000]
+ .byte 1,2
+* = $2000 "Second"
+ .byte 3
+.memblock "Third"
+ .byte 4
+`,
+  'the BasicUpstart modifier': `.segmentdef Code [start=$0810, modify="BasicUpstart", _start=start]
+.file [name="up.prg", segments="Code"]
+.file [name="up2.prg", segments="Data", modify="BasicUpstart", _start=$2000]
+.segment Code
+start: inc $d020
+ jmp start
+.segment Data [start=$2000]
+ rts
+`,
+});
+
 export const TASS: Record<string, string> = {
+  functions: `*       = $1000
+        .byte add(2), add(2, 5)
+add     .function a, b=1
+        .endf a + b
+mva     .function value, target
+        lda value
+        sta target
+        .endf
+        mva #1, $d020
+        mva $10, $11
+        #mva #2, $d021
+        .mva #3, $d022
+dbl     .sfunction x, x * 2
+        .byte dbl(4)
+two     .function
+        .endf 3, 4
+        .byte two()
+lbl     mva #5, $d020
+        jmp lbl
+vals    add 3, 4
+        .byte vals
+loc     .function n
+x       := n * 2
+        .endf x + 1
+        .byte loc(10), loc(20)
+idx     .function p
+        lda p,x
+        .endf
+        idx $1234
+rest    .function a, *r
+        .endf len(r)
+        .byte rest(1), rest(1, 2, 3)
+wait    .function n
+        ldx #n
+lp      dex
+        bne lp
+        .endf
+        wait 3
+        wait 4
+`,
   macros: `*       = $1000
 copy    .macro
         ldx #\\2
@@ -238,7 +350,7 @@ async function build(lang: ScriptLang, text: string, extra: Vfs = {}): Promise<M
     if (lang === 'kickass') {
       const r = await runKickAssembler({ java, jar: jar!, cwd: dir, entry: 'main.asm', outDir: 'out' });
       expect(r.output ?? '').not.toMatch(/error/i);
-      for (const m of (r.output ?? '').matchAll(/Writing (?:prg|binary) file: (.+)/g)) out.set(m[1].trim(), new Uint8Array(await readFile(join(dir, 'out', m[1].trim()))));
+      for (const m of (r.output ?? '').matchAll(/Writing (?:prg|binary|bin|d64) file: (.+)/g)) out.set(m[1].trim(), new Uint8Array(await readFile(join(dir, 'out', m[1].trim()))));
       return out;
     }
     const r = spawnSync(tass!, ['-a', '-C', '-o', 'main.prg', 'main.asm'], { cwd: dir, windowsHide: true, encoding: 'utf8' });
@@ -250,21 +362,35 @@ async function build(lang: ScriptLang, text: string, extra: Vfs = {}): Promise<M
   }
 }
 
+/** '' when the bytes are the same, else where they first differ (a disk image's track and sector too) */
+function differs(want: Uint8Array, got: Uint8Array | null): string {
+  if (!got) return 'Mimir wrote nothing';
+  const n = Math.min(want.length, got.length);
+  for (let i = 0; i < n; i++) {
+    if (want[i] === got[i]) continue;
+    let s = i >> 8, t = 1;
+    if (want.length >= 174848) for (const spt of [...Array(17).fill(21), ...Array(7).fill(19), ...Array(6).fill(18), ...Array(10).fill(17)]) { if (s < spt) break; s -= spt; t++; }
+    return `at ${i}${want.length >= 174848 ? ` (track ${t} sector ${s} byte ${i & 255})` : ''}: KickAss ${want.slice(i, i + 8).join(',')} Mimir ${got.slice(i, i + 8).join(',')}`;
+  }
+  return want.length === got.length ? '' : `length: ${want.length}, Mimir ${got.length}`;
+}
+
 const cases: [ScriptLang, boolean, Record<string, string>][] = [['kickass', kick, KICK], ['64tass', !!tass, TASS]];
 for (const [lang, there, sources] of cases) {
   describe.skipIf(!there)(`macros and segments built with the real ${lang === '64tass' ? '64tass' : 'Kick Assembler'}`, () => {
     for (const [what, text] of Object.entries(sources)) {
       it(`gives the bytes Mimir's assembler gives: ${what}`, async () => {
-        const c = checkAsm({ 'main.asm': text }, 'main.asm', lang);
+        const c = checkAsm({ ...DATA, 'main.asm': text }, 'main.asm', lang);
         expect(c.problems).toEqual([]);
-        const real = await build(lang, text);
+        const real = await build(lang, text, DATA);
         const prog = c.asm.programFile ?? 'main.prg';
         expect(real.has(prog), [...real.keys()].join(', ')).toBe(true);
-        expect([...real.get(prog)!]).toEqual([...c.asm.prg!]);
+        // (a disk's program is its first PRG, compared as the disk below)
+        if (!/\.d64$/i.test(prog)) expect(differs(real.get(prog)!, c.asm.prg!), prog).toBe('');
         // every other file the build writes
         for (const f of c.asm.files ?? []) {
           expect(real.has(f.name), f.name).toBe(true);
-          expect([...real.get(f.name)!], f.name).toEqual([...f.bytes!]);
+          expect(differs(real.get(f.name)!, f.bytes!), f.name).toBe('');
         }
         expect(real.size).toBe(new Set([...(c.asm.files ?? []).map(f => f.name), ...(c.asm.programFile !== undefined && c.asm.programFile !== null ? [c.asm.programFile] : ['main.prg'])]).size);
       }, 60_000);

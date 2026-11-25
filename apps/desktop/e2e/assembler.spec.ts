@@ -979,3 +979,41 @@ test('macros and segments in an Assembler project: Mimir\'s check runs them, say
   }
   await closeProject(page, 'segs');
 });
+
+test('a disk in an Assembler project: Mimir\'s check makes the .disk as Kick Assembler does, its first program is the program, and Build and Run take the disk', async ({ workDir: work, app, page }) => {
+  const kickJar = (await page.evaluate(() => (window as unknown as { kr: { getSettings(): Promise<{ kickJar: string }> } }).kr.getSettings())).kickJar;
+  test.skip(!kickJar || !existsSync(kickJar), 'KickAss.jar is not installed here');
+  const dir = join(work, 'disk');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), [
+    '.disk [filename="game.d64", name="MY GAME", id="2025!"] {',
+    '  [name="----------------", type="rel"],',
+    '  [name="GAME", type="prg", segments="Code"],',
+    '}',
+    '.segment Code [start=$0810, modify="BasicUpstart", _start=start]',
+    'start:  inc $d020',
+    '        jmp start',
+    '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await page.locator('#asm-tab-problems').click();
+  const problems = page.getByRole('tabpanel', { name: 'Problems' });
+  await expect(problems).toContainText('(the first program on game.d64, the disk the sources\' .disk writes)');
+  await expect(problems).toContainText('a run starts at $0810 (the SYS of its BASIC line)');
+  // (where.exe stands in for VICE)
+  const standIn = join(process.env.SystemRoot ?? 'C:\Windows', 'System32', 'where.exe');
+  await page.evaluate(v => (window as unknown as { kr: { setSettings(p: object): Promise<unknown> } }).kr.setSettings({ vicePath: v }), standIn);
+  await page.getByRole('button', { name: 'Build', exact: true }).click();
+  await expect(page.locator('.scr-run-stat')).toContainText('Built game.d64', { timeout: 60_000 });
+  const d64 = readFileSync(join(dir, 'out', 'game.d64'));
+  expect(d64.length).toBe(174848);
+  expect(d64.subarray(0x16590, 0x16597).toString('latin1')).toBe('MY GAME');
+  await page.locator('.scr-editor .view-lines').click();
+  await page.keyboard.press('Control+Enter');
+  await expect(page.locator('.toast-msg', { hasText: 'VICE started game.d64' })).toBeVisible({ timeout: 60_000 });
+  await shot(page, '27-asm-disk');
+  await closeProject(page, 'disk');
+});

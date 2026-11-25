@@ -1250,7 +1250,7 @@ export interface AssembleResult {
   warnings?: AsmError[];
   /** (Kick Assembler's segments) the files the build writes besides <main>.prg (.file, outPrg, outBin), and the one the
    *  program (`mem`, `written`, `prg`) is: <main>.prg from the Default segment, else the first PRG of those (null: none) */
-  files?: { name: string; type: 'prg' | 'bin'; segments: string[]; bytes: Uint8Array | null }[];
+  files?: { name: string; type: 'prg' | 'bin' | 'd64'; segments: string[]; bytes: Uint8Array | null }[];
   programFile?: string | null;
 }
 export interface VerifyDiff { addr: number; msg?: string; exp?: number; got?: number | null }

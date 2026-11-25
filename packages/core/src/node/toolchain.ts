@@ -6,6 +6,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import type { KickProblem, Vfs } from '../types';
 import { START_STUB, startsFromMonitor } from '../c64/prg';
+import { parseD64, readD64File } from '../c64/d64';
 import { parseKickOutput } from '../verify/kick-output';
 import { parseTassOutput } from '../verify/tass-output';
 import { TASS_FIXED_ARGS } from '../render/dialect';
@@ -58,7 +59,8 @@ export interface KickRunResult {
   output: string;
   problems: KickProblem[];
   argv: string[];
-  /** the output: the PRG, or for a cartridge's source (`<name>.crt.asm`) the image `<name>.crt` */
+  /** the output: the PRG, or for a cartridge's source (`<name>.crt.asm`) the image `<name>.crt`; for a source whose
+   *  output is only a disk image (.disk) the disk, `prg` then its first program */
   prgPath: string;
   prg: Uint8Array | null;
   /** VICE label file written by -vicesymbols, when present */
@@ -100,7 +102,18 @@ export async function runKickAssembler(o: KickRunOptions): Promise<KickRunResult
     const first = output.match(/^Writing prg file: (.+)$/m)?.[1].trim();
     if (first && existsSync(join(o.cwd, o.outDir, first))) outPath = join(o.cwd, o.outDir, first);
   }
-  const prg = existsSync(outPath) ? new Uint8Array(await readFile(outPath)) : null;
+  // one that writes only a disk image (.disk): the disk is what runs (VICE starts it), its first program the PRG
+  let prg: Uint8Array | null = existsSync(outPath) ? new Uint8Array(await readFile(outPath)) : null;
+  if (!prg) {
+    const disk = output.match(/^Writing d64 file: (.+)$/m)?.[1].trim();
+    if (disk && existsSync(join(o.cwd, o.outDir, disk))) {
+      const image = new Uint8Array(await readFile(join(o.cwd, o.outDir, disk)));
+      try {
+        const f = parseD64(image).files.find(x => x.type === 'PRG' && x.blocks > 0);
+        if (f) { prg = readD64File(image, f); outPath = join(o.cwd, o.outDir, disk); }
+      } catch { /* not a disk Mimir reads: no program */ }
+    }
+  }
   const ok = code === 0 && !problems.some(p => p.severity === 'error') && prg != null;
   return { ok, code, output, problems, argv: [o.java, ...argv], prgPath: outPath, prg, vsPath: existsSync(vsPath) ? vsPath : null, ms: Date.now() - t0 };
 }

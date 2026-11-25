@@ -175,7 +175,7 @@ mimir-studio/
 │  ├─ src/analyze/{memory.ts, trace.ts, evidence.ts, pointers.ts, music.ts,
 │  │               vic.ts, classify.ts, labels.ts, diagnostics.ts, index.ts}
 │  ├─ src/render/{lines.ts, kick.ts, include.ts}
-│  ├─ src/verify/{kick-subset-assembler.ts, verify.ts}
+│  ├─ src/verify/{kick-subset-assembler.ts, tass-subset-assembler.ts, kick-d64.ts, verify.ts}
 │  ├─ src/script.ts                användarens skript: kontroll och körning i Sindris 6510 (10.3)
 │  ├─ src/asm-project.ts           Assemblern: huvudfilen, källfilerna och datan, kontrollen av hela programmet, körningen i Mimir (10.7)
 │  ├─ src/asm-c64.ts               Assemblern i hela C64:an: Sindris C64, start med RUN, bilden rad för rad, tangentbordet (10.7)
@@ -3746,8 +3746,9 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   (`#import`, `.include`, från den importerande filens mapp först, som KickAss gör) och data den laddar (`LoadSid`,
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
-  fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers `.disk`, modifierare
-  och `mbfiles`, 64tass `.function`): där bygger *Run* ändå med den riktiga, vars problem är de som gäller. Kick
+  fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; 64tass `.for`, `.rept`): där bygger
+  *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
   segment som Kick Assembler 5.25 och makron och sektioner som 64tass 1.57 (mätt mot dem: `asm-macros.integration.test.ts`
@@ -3770,6 +3771,19 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     `allowOverlap`), och de andra felen säger det KickAss säger (`Undefined segment`, `Can't use fill without both min
     and max`, `Can't output default segment …`). *Build* och *Run* tar filen KickAss skrev först (`Writing prg file:`)
     när `<main>.prg` inte skrivs (`runKickAssembler`).
+  - *Kick Assemblers diskar, filer per minnesblock och modifierare* (2026-11-25). `.disk [filename=…, name, id, format
+    (commodore, speeddos, dolphindos), interleave, dontSplitFilesOverDir, storeFilesInDir, showInfo] { [name=…, type
+    (prg, seq, usr, rel, del; `<` efter låser), hide, interleave, noStartAddr, segments, prgFiles, sidFiles …], … }`
+    gör D64:an som KickAss gör den, byte för byte (`verify/kick-d64.ts`, läst ur KickAss.jar:s klasser och mätt):
+    BAM:en med namnet och id:t som tecknens koder (standard `UNNAMED` och `   2A`), katalogen i 18/1, 18/2 … i följd,
+    varje fils sektorer från där förra filen slutade med interleave 10 från spår 1, spår 18 överhoppat (en fil som inte
+    får delas börjar om efter det), en PRG med laddadressen och en annan fil utan, felen som KickAss (`Error while
+    generating 'game.d64': Disk is full!`, `Unknown type`). Programmet är, när varken Default eller en `.file` har ett,
+    diskens första PRG; *Problems* säger `(the first program on game.d64, …)`, och *Build* och *Run* tar disken (VICE
+    startar den, dess första program är PRG:n för *Release* och *Pack*). `.file [… , mbfiles]` skriver en fil per
+    minnesblock, `namn_block.prg`. Modifieraren `modify="BasicUpstart", _start=…` (på ett segment, en `.file` eller en
+    fil på en disk), KickAss enda egna, lägger en BASIC-rad med SYS till `_start` vid `$0801`; en annan modifierare,
+    `.modify` och `.filemodify` är Java-plugins som kontrollen säger att den inte kan köra.
   - *64tass:* `name .macro a, b=2` … `.endm` (`.endmacro`; ett eget block, som en etikett före anropet namnger och är
     adressen för: `var .lohi 1, 2` → `var.lo`) och `name .segment` … `.endsegment` (inget block), anropade `#name 1, 2`
     eller `.name 1, 2` före eller efter definitionen; parametrarna som text (`\1`-`\9`, `\name`, `\{name}`, `\@` alla,
@@ -3777,6 +3791,11 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     vecklas ut så långt dess `.if` låter det. Sektioner: `.dsection name` där byten från alla `.section name` … `.send`
     hamnar, före eller efter fragmenten, nästlade också; `.byte ?`, `.word ?`, `.addr ?` tar plats utan att skriva.
     En tuppel `(1234, 5678)` och `<`/`>` av den ger en byte per värde.
+  - *64tass-funktioner* (2026-11-25): `name .function a, b=1, *rest` … `.endf resultat` och `name .sfunction a, uttryck`,
+    anropade i ett värde (`add(2)`: resultatet, en lista när det är flera) eller som en instruktion (`mva #1, $d020`,
+    `#mva …`, `.mva …`: dess rader med argumenten som värden; `#1` är ett omedelbart värde som `lda value` gör till
+    `lda #1`), före eller efter definitionen, varje anrop ett eget block under toppnivån. En etikett före ett anrop som
+    instruktion får resultatet, adressen när det inte finns något.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger
