@@ -15,6 +15,10 @@
  * (`add(2)`: the result, a list when there are several) or as an instruction (`mva #1, $d020`, `#mva …`, `.mva …`:
  * its lines with the arguments as values, `#1` an immediate one that `lda value` takes as lda #1; a label before it gets
  * the result when there is one), before or after the definition, each call a block of its own under the top level.
+ * Loops: `.for i := 0, i < 8, i += 1`, `.for x in list`, `.rept n`, `.while cond` … `.endfor`/`.endrept`/`.endwhile`/`.next`,
+ * and their b-forms (`.bfor`, `.brept`, `.bwhile`: each round a block of its own, a label before it the list of them:
+ * `lst[1].label`), `.break`, `.continue`, `.breakif`, `.continueif`; variables changed with `+=`, `-=` … and `::=`;
+ * `range()`, and an operator over a list giving a list (`%10000000 >> range(8)`).
  * Sections: `.dsection name` where the bytes of every `.section name` … `.send` go, as 64tass, nested too; `.byte ?`,
  * `.word ?`, `.addr ?` take room only. Several passes until the sizes settle, as 64tass. The desktop app and the CLI
  * can additionally run the real 64tass.
@@ -75,6 +79,10 @@ interface TFunc { name: string; params: { name: string; def: string | null; rest
 /** an immediate value: a function's argument written `#1` (`lda value` is then lda #1) */
 interface Imm { imm: true; v: Value }
 const isImm = (v: Value): v is Imm => !!v && typeof v === 'object' && v.imm === true;
+/** what .break and .continue throw to the loop they are in */
+class LoopSignal { constructor(readonly kind: 'break' | 'continue') {} }
+/** a loop's first line, and the lines that end one */
+const LOOP = /^\.(b?)(for|rept|while)\b\s*(.*)$/, LOOP_END = /^\.(next|endfor|endrept|endwhile)\b/;
 /** a section: where its .dsection put it in this pass and the last (pc, and the offset of a .logical), how much its
  *  fragments took so far and at most */
 interface Sect { name: string; key: string; pc0: number | null; off0: number; used: number; max: number; prevPc0: number | null; prevOff0: number; prevSize: number; frags: boolean }
@@ -361,6 +369,8 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
 
   const syms = new Map<string, Value>();
   let pc = 0, unresolved: string[] = [], missing = false;
+  /** a loop went round too many times: no more passes before the final one, which says so */
+  let stuck = false;
   let enc = 'none', cpu = '6502';
   const names = opts.names;
   let curStmt: Stmt | null = null;
@@ -401,6 +411,13 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     },
     len: (x: Value) => { if (x instanceof Uint8Array || typeof x === 'string' || Array.isArray(x)) return x.length; throw new Error(`len() of a ${typeName(x)}`); },
     format: (f: string, ...args: Value[]) => format(f, args),
+    range: (...a: Value[]) => {
+      const [s, e, t] = a.length === 1 ? [0, numberOf(a[0]), 1] : [numberOf(a[0]), numberOf(a[1]), a[2] == null ? 1 : numberOf(a[2])];
+      if (!t) throw new Error('range() with a step of 0');
+      const out: number[] = [];
+      for (let i = s; t > 0 ? i < e : i > e; i += t) { out.push(i); if (out.length > 1_000_000) throw new Error('range() of more than a million values'); }
+      return out;
+    },
   };
   /** the code label a local label (`_loop`) belongs to: the last one before it (a constant opens no new scope) */
   let scope = '';
@@ -476,23 +493,32 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           return ev(node.b);
         }
         const x = ev(node.a), y = ev(node.b); if (x == null || y == null) return null;
-        if (node.op === '==' || node.op === '!=') {
-          const same = x instanceof Uint8Array || y instanceof Uint8Array ? numberOf(x) === numberOf(y) : typeof x === typeof y ? x === y : numberOf(x) === numberOf(y);
-          return node.op === '==' ? same : !same;
-        }
-        const a = numberOf(x), b = numberOf(y);
-        switch (node.op) {
-          case '+': return a + b; case '-': return a - b; case '*': return a * b;
-          case '/': if (!b) throw new Error('division by zero'); return Math.floor(a / b);
-          case '%': if (!b) throw new Error('division by zero'); return a - b * Math.floor(a / b);
-          case '**': return a ** b;
-          case '&': return a & b; case '|': return a | b; case '^': return a ^ b;
-          case '<<': return a << b; case '>>': return a >> b;
-          case '<': return a < b; case '<=': return a <= b; case '>': return a > b; case '>=': return a >= b;
-          case '^^': return truth(x) !== truth(y) ? (truth(x) ? x : y) : false;
-        }
-        return null;
+        return bin(node.op, x, y);
       }
+    }
+    return null;
+  };
+  /** a binary operator's value: over a list, a list of each item's (two lists item by item) */
+  const bin = (op: string, x: Value, y: Value): Value => {
+    if (Array.isArray(x) || Array.isArray(y)) {
+      if (Array.isArray(x) && Array.isArray(y) && x.length !== y.length) throw new Error(`lists of ${x.length} and ${y.length} values`);
+      const n = Array.isArray(x) ? x.length : y.length;
+      return Array.from({ length: n }, (_, i) => bin(op, Array.isArray(x) ? x[i] : x, Array.isArray(y) ? y[i] : y));
+    }
+    if (op === '==' || op === '!=') {
+      const same = x instanceof Uint8Array || y instanceof Uint8Array ? numberOf(x) === numberOf(y) : typeof x === typeof y ? x === y : numberOf(x) === numberOf(y);
+      return op === '==' ? same : !same;
+    }
+    const a = numberOf(x), b = numberOf(y);
+    switch (op) {
+      case '+': return a + b; case '-': return a - b; case '*': return a * b;
+      case '/': if (!b) throw new Error('division by zero'); return Math.floor(a / b);
+      case '%': if (!b) throw new Error('division by zero'); return a - b * Math.floor(a / b);
+      case '**': return a ** b;
+      case '&': return a & b; case '|': return a | b; case '^': return a ^ b;
+      case '<<': return a << b; case '>>': return a >> b;
+      case '<': return a < b; case '<=': return a <= b; case '>': return a > b; case '>=': return a >= b;
+      case '^^': return truth(x) !== truth(y) ? (truth(x) ? x : y) : false;
     }
     return null;
   };
@@ -615,7 +641,74 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     };
     const sectFirst = new Map<Sect, Stmt>();
 
-    const runList = (list: readonly Stmt[]): void => { for (const st of list) {
+    // ---- loops: their lines run again and again; a b-loop's each round in a block of its own ----
+    let loops = 0, loopNo = 0, rounds = 0;
+    /** a variable set: `::=` and `+=` … change the one a name finds (an outer block's too), `:=` sets it here */
+    const setVar = (name: string, v: Value, st: Stmt, here: boolean) => {
+      if (!here) for (let i = spaces.length; i >= 0; i--) { const k = keyIn(spaces.slice(0, i), name); if (syms.has(k)) { syms.set(k, v); return; } }
+      define(name, v, st, true);
+    };
+    /** `i := 0`, `i = 0`, `i += 1`, `i ::= 2`: an assignment of a .for */
+    const assign = (text: string, st: Stmt) => {
+      const m = text.trim().match(/^([A-Za-z_]\w*)\s*(::=|:=|=|\+=|-=|\*=|\/=|%=|<<=|>>=|\|=|&=|\^=)\s*(.+)$/);
+      if (!m) { if (text.trim()) ev(P(text)); return; }
+      const r = ev(P(m[3])); if (r == null) { unresolved.push(m[1]); return; }
+      if (m[2] === ':=' || m[2] === '=') { setVar(m[1], r, st, true); return; }
+      if (m[2] === '::=') { setVar(m[1], r, st, false); return; }
+      const old = lookup(m[1]); if (old === undefined) throw new Error(`not defined symbol '${m[1]}'`);
+      setVar(m[1], bin(m[2].slice(0, -1), old, r), st, false);
+    };
+    /** where the loop that starts at `list[i]` ends (its .next, .endfor …), nested loops counted */
+    const ends = new WeakMap<readonly Stmt[], Map<number, number>>();
+    const endOf = (list: readonly Stmt[], i: number): number => {
+      let m = ends.get(list); if (!m) { m = new Map(); ends.set(list, m); }
+      const known = m.get(i); if (known != null) return known;
+      let depth = 0, j = i + 1;
+      for (; j < list.length; j++) { const b = list[j].body; if (LOOP.test(b)) depth++; else if (LOOP_END.test(b)) { if (!depth) break; depth--; } }
+      const end = j < list.length ? j : -1; m.set(i, end); return end;
+    };
+    const runLoop = (b: boolean, kind: string, head: string, body: readonly Stmt[], st: Stmt): Space[] => {
+      const scopes: Space[] = [];
+      /** a round of the loop: false when it .breaks */
+      const round = (): boolean => {
+        if (++rounds > 100_000) { stuck = true; throw new Error(`.${kind} went round 100000 times: does its condition ever turn false?`); }
+        const wasSpaces = spaces, wasScope = scope, depth = cond.length;
+        if (b) { const name = `#l${loopNo++}`; scopes.push({ space: keyIn(spaces, name), v: pc }); spaces = [...spaces, name]; }
+        loops++;
+        try { runList(body); }
+        catch (err) { if (!(err instanceof LoopSignal)) throw err; cond.length = depth; if (err.kind === 'break') return false; }
+        finally { loops--; if (b) { spaces = wasSpaces; scope = wasScope; } }
+        if (cond.length !== depth) { E(`an .if in the .${kind} is not closed in it`, st); cond.length = depth; }
+        return true;
+      };
+      const test = (c: string) => { const v = ev(P(c)); report(st); return v != null && truth(v); };
+      if (kind === 'rept') { const n = evn(head); report(st); for (let i = 0; i < (n ?? 0); i++) if (!round()) break; return scopes; }
+      if (kind === 'while') { while (test(head)) if (!round()) break; return scopes; }
+      const inForm = head.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+in\s+(.+)$/);
+      if (inForm) {
+        const names = inForm[1].split(',').map(x => x.trim()), parts = splitTop(inForm[2], ',');
+        const v = parts.length > 1 ? parts.map(x => ev(P(x))) : ev(P(inForm[2]));
+        report(st);
+        if (v == null || (Array.isArray(v) && v.some(x => x == null))) return scopes;
+        const items: Value[] = Array.isArray(v) ? v : v instanceof Uint8Array ? [...v] : typeof v === 'string' ? [...v] : [v];
+        for (const it of items) {
+          if (names.length > 1) { if (!Array.isArray(it) || it.length !== names.length) throw new Error(`${names.length} variables, but a value of ${Array.isArray(it) ? it.length : 1}`); names.forEach((n, i) => setVar(n, it[i], st, true)); }
+          else setVar(names[0], it, st, true);
+          if (!round()) break;
+        }
+        return scopes;
+      }
+      const [init = '', c = '', step = ''] = splitTop(head, ',');
+      assign(init, st); report(st);
+      for (;;) {
+        if (c.trim() && !test(c)) break;
+        if (!round()) break;
+        assign(step, st); report(st);
+      }
+      return scopes;
+    };
+
+    const runList = (list: readonly Stmt[]): void => { for (let ix = 0; ix < list.length; ix++) { const st = list[ix];
       curStmt = st; fresh = true;
       const s = st.body;
       try {
@@ -656,16 +749,34 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
         else if (st.label) {
           const local = st.label.startsWith('_') && scope ? `${scope}.${st.label}` : st.label;
           if ((m = s.match(/^(:?)=(?!=)\s*(.+)$/))) { const v = ev(P(m[2])); if (v != null) define(local, v, st, m[1] === ':'); report(st); continue; }
+          // a variable changed: `n += 1`, `n ::= 2` (the one the name finds)
+          if (/^(::|\+|-|\*|\/|%|<<|>>|\||&|\^)=/.test(s)) { assign(`${local} ${s}`, st); report(st); continue; }
           if (/^\.(namespace|block)\b/.test(s) || call?.def.kind === 'macro') {
             define(st.label, { space: keyIn(spaces, st.label), ...(/^\.namespace\b/.test(s) ? {} : { v: pc }) } as Space, st);
             if (call) { runCall(call.def, call.args, st); continue; }
             spaces = [...spaces, st.label];
             continue;
           }
-          define(local, pc, st);
-          if (!st.label.startsWith('_')) scope = st.label;
+          // (a b-loop's label is the list of its rounds' blocks, set when it ends)
+          if (!/^\.b(for|rept|while)\b/.test(s)) { define(local, pc, st); if (!st.label.startsWith('_')) scope = st.label; }
         }
         if (call) { runCall(call.def, call.args, st); continue; }
+        // a loop: its lines up to its end, again and again
+        if ((m = s.match(LOOP))) {
+          const end = endOf(list, ix);
+          // (one not closed takes the rest of the lines with it, as 64tass)
+          if (end < 0) { E(`closing directive '.end${m[2]}' not found`, st); ix = list.length; continue; }
+          const b = m[1] === 'b', label = st.label && st.label !== '+' && st.label !== '-' ? st.label : null;
+          try { const scopes = runLoop(b, m[2], m[3].trim(), list.slice(ix + 1, end), st); if (b && label) define(label, scopes, st); }
+          finally { ix = end; }
+          continue;
+        }
+        if (LOOP_END.test(s)) { E(`${s.split(/\s/)[0]} without a loop`, st); continue; }
+        if ((m = s.match(/^\.(break|continue)(if)?\b\s*(.*)$/))) {
+          if (!loops) { E('.break or .continue must be used within a loop', st); continue; }
+          if (m[2]) { const v = ev(P(m[3])); report(st); if (v == null || !truth(v)) continue; }
+          throw new LoopSignal(m[1] as 'break' | 'continue');
+        }
         if (!s) continue;
         // a macro's call that names no macro
         if ((m = s.match(/^#([A-Za-z_]\w*)\b/))) { E(`not defined symbol '${m[1]}' (no macro of that name)`, st); continue; }
@@ -817,7 +928,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
           continue;
         }
         E(`general syntax: ${s}`, st);
-      } catch (err) { E((err as Error).message, st); if (unresolved.length) missing = true; unresolved = []; }
+      } catch (err) { if (err instanceof LoopSignal) throw err; E((err as Error).message, st); if (unresolved.length) missing = true; unresolved = []; }
     } };
     runList(stmts);
     if (open.length && final) E(`.section without .send (${open.map(o => o.sect.name).join(', ')})`, open[0] && sectFirst.get(open[0].sect));
@@ -831,7 +942,7 @@ export function assembleTass(vfs: Vfs, entryPath: string, opts: AssembleOptions 
     if (final) endPc = pc;
     return changed;
   };
-  for (pass = 1; pass <= 12; pass++) { const ch = runPass(false); if (!ch && !missing && pass > 1) break; }
+  for (pass = 1; pass <= 12; pass++) { const ch = runPass(false); if (stuck || (!ch && !missing && pass > 1)) break; }
   pass = 'final';
   runPass(true);
   let min = -1, max = -1;

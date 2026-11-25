@@ -224,6 +224,57 @@ start: inc $d020
 });
 
 export const TASS: Record<string, string> = {
+  loops: `*       = $1000
+        ldx #0
+        lda #32
+lp      .for ue := $400, ue < $800, ue += $100
+        sta ue,x
+        .endfor
+        dex
+        bne lp
+        .for col in 0, 11, 12, 15, 1
+        lda #col
+        .next
+        .rept 3
+-       inx
+        bne -
+        .endrept
+lst     .brept 3
+label   jmp label
+        .endrept
+        jmp lst[1].label
+n       := 0
+        .while n < 4
+        .byte n
+n       += 1
+        .endwhile
+        .for i := 0, i < 10, i += 1
+        .continueif i == 2
+        .breakif i == 5
+        .byte i
+        .endfor
+        .for i in range(3)
+        .byte i * 2
+        .next
+        .byte %10000000 >> range(8)
+        .byte range(10, 0, -2)
+        .bfor k in range(2)
+x       .byte k
+        .endfor
+        .for i := 0, i < 3, i += 1
+        .for j := 0, j < 2, j += 1
+        .byte i * 10 + j
+        .if j == 1
+        .break
+        .endif
+        .next
+        .next
+        .byte i
+rows    .for r := 0, r < 25, r += 1
+        .byte <($0400 + r * 40)
+        .next
+        .byte >($0400 + range(0, 1000, 40))
+`,
   functions: `*       = $1000
         .byte add(2), add(2, 5)
 add     .function a, b=1

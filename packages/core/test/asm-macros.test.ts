@@ -252,3 +252,24 @@ describe("64tass's functions in Mimir's check", () => {
     expect(msgs(tass('f       .function a\n        nop\n'))[0]).toMatch(/closing directive '\.endfunction' not found for 'f'/);
   });
 });
+
+describe("64tass's loops in Mimir's check", () => {
+  it('repeats a loop\'s lines, each byte on its line, and keeps a b-loop\'s labels to each round', () => {
+    const r = tass('*       = $1000\n        .for i := 0, i < 3, i += 1\n        .byte i\n        .next\nlst     .brept 2\nl       nop\n        .endrept\n        jmp lst[1].l\n');
+    expect(msgs(r)).toEqual([]);
+    expect(bytes(r, 0x1000, 8)).toEqual([0, 1, 2, 0xea, 0xea, 0x4c, 0x04, 0x10]);
+    expect([...r.lines.subarray(0x1000, 0x1003)]).toEqual([3, 3, 3]);
+  });
+
+  it('says what is wrong with a loop', () => {
+    expect(msgs(tass('        .for i := 0, i < 3, i += 1\n        .byte i\n'))).toEqual(["main.asm:1 closing directive '.endfor' not found"]);
+    expect(msgs(tass('        .break\n'))).toEqual(['main.asm:1 .break or .continue must be used within a loop']);
+    expect(msgs(tass('        .endrept\n'))).toEqual(['main.asm:1 .endrept without a loop']);
+    expect(msgs(tass('*       = $1000\n        .rept 2\nx       nop\n        .endrept\n'))).toEqual(["main.asm:3 duplicate definition 'x'"]);
+    const t0 = Date.now();
+    // (its nops run past $ffff first, which is said too)
+    expect(msgs(tass('*       = $1000\nn       := 0\n        .while n < 1\n        nop\n        .endwhile\n'))).toContain('main.asm:3 .while went round 100000 times: does its condition ever turn false?');
+    // (one pass finds it stuck: the check does not go on for 12)
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+});

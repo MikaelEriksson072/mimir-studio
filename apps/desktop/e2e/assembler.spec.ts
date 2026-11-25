@@ -1017,3 +1017,43 @@ test('a disk in an Assembler project: Mimir\'s check makes the .disk as Kick Ass
   await shot(page, '27-asm-disk');
   await closeProject(page, 'disk');
 });
+
+test('64tass in an Assembler project: Mimir\'s check runs its loops, macros and functions as 64tass does, and Build gives the same program', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'tassloops');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'main.asm'), [
+    '        * = $0801',
+    '        .word (+), 2025',
+    '        .null $9e, format("%4d", start)',
+    '+       .word 0',
+    'border  .function c',
+    '        lda #c',
+    '        sta $d020',
+    '        .endf',
+    'start   border 2',
+    '        ldx #0',
+    '        lda #32',
+    '        .for p := $400, p < $800, p += $100',
+    '        sta p,x',
+    '        .next',
+    '        rts',
+    'rows    .byte <($0400 + range(0, 1000, 40))',
+    '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  await page.locator('#asm-tab-problems').click();
+  const problems = page.getByRole('tabpanel', { name: 'Problems' });
+  await expect(problems).toContainText('The program assembles: 59 bytes');
+  await expect(problems).toContainText('a run starts at $080d (the SYS of its BASIC line)');
+  await shot(page, '28-asm-64tass-loops');
+  // the real 64tass (the one Mimir has, or one in C:\C64) builds the same bytes
+  await page.getByRole('button', { name: 'Build', exact: true }).click();
+  await expect(page.locator('.scr-run-stat')).toContainText('Built main.prg', { timeout: 60_000 });
+  const prg = readFileSync(join(dir, 'out', 'main.prg'));
+  expect(prg.length).toBe(2 + 59);
+  expect([...prg.subarray(2, 6)]).toEqual([0x0b, 0x08, 0xe9, 0x07]);
+  await closeProject(page, 'tassloops');
+});

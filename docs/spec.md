@@ -3747,7 +3747,8 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   `.import binary`, `.binary`), som läses som bytes (`dataFiles`). Statusen säger *Ready* med antal bytes och var en
   körning startar (SYS:en i BASIC-raden, annars etiketten start/main, annars första byten), eller första problemet med
   fil och rad; problemen är markeringar i filerna. Mimirs assembler kan inte allt (Kick Assemblers Java-plugins:
-  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; 64tass `.for`, `.rept`): där bygger
+  modifierare utom `BasicUpstart`, `.modify`, `.filemodify`, andra diskskrivare; 64tass flyttal, `.struct`, `.union`,
+  `.virtual`, `.lbl`/`.goto`): där bygger
   *Run* ändå med den riktiga, vars problem är de som gäller. Kick
   Assemblers programräknare börjar på `$2000` tills en `* =` flyttar den, som i KickAss.
 - **Makron och segment i kontrollen** (2026-11-25). Mimirs egen assembler kör makron, funktioner, pseudokommandon och
@@ -3796,6 +3797,12 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
     `#mva …`, `.mva …`: dess rader med argumenten som värden; `#1` är ett omedelbart värde som `lda value` gör till
     `lda #1`), före eller efter definitionen, varje anrop ett eget block under toppnivån. En etikett före ett anrop som
     instruktion får resultatet, adressen när det inte finns något.
+  - *64tass-loopar* (2026-11-25): `.for i := 0, i < 8, i += 1`, `.for x in lista` (också `.for a, b in …`), `.rept n`,
+    `.while villkor` … `.endfor`/`.endrept`/`.endwhile`/`.next`, nästlade, och b-formerna `.bfor`, `.brept`, `.bwhile`
+    (varje varv ett eget block; en etikett före är listan av dem: `lst[1].label`); `.break`, `.continue`, `.breakif`,
+    `.continueif`; variabler ändrade med `+=`, `-=` … och `::=`; `range()`, och en operator över en lista ger en lista
+    (`%10000000 >> range(8)`, `<($0400 + range(0, 1000, 40))`). En vanlig etikett i en loop utan b är definierad två
+    gånger, som i 64tass. En loop som går runt 100 000 gånger stoppas med ett fel, och kontrollen gör inga fler pass.
   - Ett makros bytes hör till **anropets rad** (det yttersta anropets, i filen som anropar): debuggern står på
     anropsraden, en brytpunkt där stannar vid dess första instruktion, och *Insert block*s markeringar och ritandet ser
     raden som ett makro (ritande ändrar inte ett makros rader). Ett problem i ett makro står på makrots rad och säger
