@@ -16,7 +16,7 @@ import { BankPick, OptGroup, ViewModes, type BankPickProps } from './ViewModes';
 import { parseGoto } from '../lib/goto';
 import { snapshotVic } from '../lib/overview';
 import { vicCellColors, vicGfxColors } from '../lib/vicgfx';
-import { bitmapAround, BITMAP_BYTES, BITMAP_COLS, BITMAP_ROW_BYTES, BITMAP_ROWS, bitmapWindowOf, builtinFont, cellFrom, isWholeBitmap, windowBitmap, windowPieces, type BitmapWindow, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type CellColors, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
+import { pixelAt, bitmapAround, BITMAP_BYTES, BITMAP_COLS, BITMAP_ROW_BYTES, BITMAP_ROWS, bitmapWindowOf, builtinFont, cellFrom, isWholeBitmap, windowBitmap, windowPieces, type BitmapWindow, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, fontRowStarts, FONT_ROWS, gfxImage, LOADED, MARKED, MARKED_TINT, NO_FONT, NOT_LOADED, gfxLayout, MAX_SPRITE_COLS, rangeRects, rowAddr, screenPointer, spritePointer, stepCell, type CellColors, type GfxColors, type GfxKind, type GfxLayout, type Shade } from '../lib/gfxview';
 import { C64, C64_NAMES } from '../lib/palette';
 import { cx, groupOfKind } from '../lib/util';
 import type { Sel } from '../lib/types';
@@ -69,6 +69,9 @@ export interface MemoryGfxProps {
   /** an Assembler project (spec 10.7): nothing is marked here (the sources say what the bytes are), and Show goes to the
    *  line in the sources that writes them */
   source?: boolean;
+  /** an Assembler project: what is drawn in the graphics (Draw) goes to it, the bytes changed, which the sources' lines
+   *  that write them take (spec 10.7); missing: no Draw */
+  onDraw?: (changes: { addr: Addr; value: number }[]) => void;
   /** an Assembler project's program being debugged: what the memory shown is, said over it (null: the program as it loads) */
   live?: string | null;
   /** save a file through a save dialog (its suggested name and bytes) */
@@ -112,7 +115,7 @@ const VIC_COLOURS_OF: Record<GfxKind, string> = {
   bitmap: 'the background $d021 and the colours most cells of its screen and colour RAM give',
 };
 
-export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
+export function MemoryGfx({ source = false, live = null, onDraw, A, R, cursor, sel, onSelect, onClear, onMark, onMulticolor, onUnmark, onShow, onSave, onLibrary, bank, start, goTo, onView, parts, fmt = plainAddr, resolve }: MemoryGfxProps) {
   const prefs = useUi(s => s.gfx), setUi = useUi(s => s.set);
   // a scroll just made is taken before the view changes (its event may not have come yet)
   const set = (p: Partial<GfxPrefs>) => { keepTop(); setUi({ gfx: { ...useUi.getState().gfx, ...p } }); };
@@ -152,6 +155,15 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
   /** a wheel step at most every 60 ms, so a touchpad does not race through the list */
   const lastWheel = useRef(0);
   const fontRows = useMemo(() => fontRowStarts(rowFonts, rowCount, rowSkip), [rowFonts, rowCount, rowSkip]);
+  // Draw (an Assembler project): what is drawn shown over the memory until the program has it
+  const drawable = !!onDraw && (kind === 'chars' || kind === 'sprites' || kind === 'bitmap');
+  const [drawOn, setDrawOn] = useState(false);
+  const drawing = drawable && drawOn;
+  const [pen, setPen] = useState(3);
+  const [drawn, setDrawn] = useState<ReadonlyMap<Addr, number>>(new Map());
+  useEffect(() => { setDrawn(d => { if (!d.size) return d; const n = new Map([...d].filter(([a, v]) => A.mem[a] !== v)); return n.size === d.size ? d : n; }); }, [A.mem]);
+  useEffect(() => { if (!drawn.size) return; const t = setTimeout(() => setDrawn(new Map()), 8000); return () => clearTimeout(t); }, [drawn]);
+  const mem = useMemo(() => { if (!drawn.size) return A.mem; const v = A.mem.slice(); for (const [a, b] of drawn) v[a] = b; return v; }, [A.mem, drawn]);
   const L = useMemo(() => (kind === 'fontrows' ? fontRowsLayout(fontRows.starts, codes) : gfxLayout(kind, cols, offset, parts ?? undefined, win)), [kind, cols, offset, fontRows, codes, parts, win]);
   const canvas = useRef<HTMLCanvasElement>(null), scroller = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Addr | null>(null);
@@ -189,9 +201,9 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
     const cv = canvas.current; if (!cv) return;
     const ctx = cv.getContext('2d'), h = (bandRows.to - bandRows.from) * stepY; if (!ctx || h <= 0) return;
     const img = ctx.createImageData(L.width, h);
-    drawMemory(img.data, L, A.mem, a => shades[a] as Shade, mc, colors, kind === 'screens' ? font : undefined, undefined, bandRows.from, bandRows.to, cells);
+    drawMemory(img.data, L, mem, a => shades[a] as Shade, mc, colors, kind === 'screens' ? font : undefined, undefined, bandRows.from, bandRows.to, cells);
     ctx.putImageData(img, 0, 0);
-  }, [A, L, mc, colors, cells, kind, font, shades, bandRows.from, bandRows.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [A, mem, L, mc, colors, cells, kind, font, shades, bandRows.from, bandRows.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scrollTo = (a: Addr, G: GfxLayout = L) => { const c = cellOf(G, a), el = scroller.current; if (c && el) el.scrollTop = Math.max(0, c.y * zoom - el.clientHeight / 3); };
   /** the cell of `a` is on screen */
@@ -326,7 +338,29 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
   // another view or layout: the screen shown is no longer a cell of it
   useEffect(() => { setFocus(null); }, [kind, L]);
 
+  /** a drawing: the colour index it sets and the bytes it changed (to onDraw when the button is let go) */
+  const stroke = useRef<{ v: number; bytes: Map<Addr, number> } | null>(null);
+  const paint = (e: ReactMouseEvent, first: boolean) => {
+    const { x, y } = point(e), p = pixelAt(L, x, y, mc);
+    if (!p) return;
+    const get = (a: Addr) => stroke.current?.bytes.get(a) ?? mem[a];
+    const old = get(p.addr);
+    // (hires: the colour the first pixel did not have; multicolour: the pen; the right button: the background)
+    if (first) stroke.current = { v: e.button === 2 ? 0 : mc ? pen : (old >> p.shift) & 1 ? 0 : 1, bytes: new Map() };
+    const st = stroke.current; if (!st) return;
+    const value = (old & ~(p.mask << p.shift) & 0xff) | ((st.v & p.mask) << p.shift);
+    if (value === old) return;
+    st.bytes.set(p.addr, value);
+    setDrawn(d => new Map([...d, [p.addr, value]]));
+  };
+  useEffect(() => {
+    if (!onDraw) return;
+    const up = () => { const st = stroke.current; stroke.current = null; if (st?.bytes.size) onDraw([...st.bytes].map(([addr, value]) => ({ addr, value }))); };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, [onDraw]);
   const down = (e: ReactMouseEvent) => {
+    if (drawing && (e.button === 0 || e.button === 2)) { e.preventDefault(); paint(e, true); return; }
     if (e.button !== 0) return;
     e.preventDefault(); (e.currentTarget as HTMLElement).closest<HTMLElement>('.gfxv')?.focus();
     // with a screen up, a click selects that screen (the wheel may have stepped away from the one under the pointer)
@@ -340,6 +374,7 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
   const move = (e: ReactMouseEvent) => {
     const { x, y } = point(e), at = byteAt(L, x, y);
     setHover(at);
+    if (drawing) { if (stroke.current && e.buttons) paint(e, false); return; }
     if (kind === 'fontrows') setHoverAt({ row: Math.floor(y / 8), col: Math.floor(x / 8) });
     // Ctrl held as the pointer comes onto a screen: it comes at once (no button held: that is a drag)
     if ((e.ctrlKey || e.metaKey) && !e.buttons && focus == null && at != null && FOCUS_KINDS.includes(kind) && !focusKeys.current.quiet) {
@@ -369,7 +404,7 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
   const blockAt = (a: Addr) => findBlock(A.blocks, a);
   const blockText = (a: Addr) => { const b = blockAt(a); if (!b) return 'not loaded'; const l = R.labels.get(b.start); return `${kindInfo(b.type).label}${l ? ` ${l.name}` : ''} (${fmt(b.start)}–${fmt(b.end - 1)})`; };
   const hoverText = hover == null ? null : [
-    `${fmt(hover)} = $${h2(A.mem[hover])}`,
+    `${fmt(hover)} = $${h2(mem[hover])}`,
     kind === 'chars' ? `char $${h2((hover & 0x7ff) >> 3)} of the 2 KB at ${fmt(charsetAround(hover).start)}` : kind === 'sprites' ? (p => `sprite pointer $${h2(p.pointer)} in VIC bank ${p.bank}`)(spritePointer(hover))
       : kind === 'screens' ? (c => { const i = hover - c, p = screenPointer(c); return `row ${Math.floor(i / 40)}, column ${i % 40} of the screen at ${fmt(c)}${p ? ` ($d018 = $${p.d018.toString(16)}x in VIC bank ${p.bank})` : ''}`; })(cellOf(L, hover)?.start ?? hover)
         : kind === 'fontrows' ? (hoverAt ? `row ${hoverAt.row}, column ${hoverAt.col}: char $${h2(codes[hoverAt.col])} of the font at $${h4(rowAddr(L, hoverAt.row))}` : '')
@@ -515,6 +550,12 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
               <optgroup label="2 KB of memory at">{Array.from({ length: 32 }, (_, i) => i * 0x800).filter(a => !charsets.some(b => b.start === a)).map(a => <option key={a} value={`$${h4(a)}`}>${h4(a)}</option>)}</optgroup>
             </select></label>
         </OptGroup>}
+        {drawable && <OptGroup title="Draw">
+          <label className="check gfxv-mc" title="Draw in the graphics: a click or a drag sets pixels (hires: the colour the first pixel did not have; multicolour: the pen; the right button: the background). When the button is let go the lines of the sources that write the bytes change (.byte lines, or a file a line loads)">
+            <input type="checkbox" checked={drawOn} onChange={e => setDrawOn(e.target.checked)} /><span>Draw</span></label>
+          {drawOn && mc && [0, 1, 2, 3].map(v => <button key={v} type="button" className={cx('gfxv-pen', pen === v && 'on')} aria-pressed={pen === v} aria-label={`Pen ${v.toString(2).padStart(2, '0')}`}
+            title={`Draw the bit pair ${v.toString(2).padStart(2, '0')}`} style={{ background: C64[[colors.bg, colors.mc1, colors.mc2, colors.fg][v]] }} onClick={() => setPen(v)} />)}
+        </OptGroup>}
         <OptGroup title="Colours">
           <label className="check gfxv-mc" title={kind === 'screens' ? 'Draw the characters multicolour: pairs of bits, each two pixels wide' : `Draw multicolour: pairs of bits, each two pixels wide. ${kind === 'sprites' ? 'Sprite data' : kind === 'bitmap' ? 'A bitmap' : 'A charset'} the selection is in is drawn so in the listing too, and Mark as takes it with it`}><input type="checkbox" checked={mc} onChange={e => { set({ mc: e.target.checked }); if (range && kind !== 'screens' && !source) onMulticolor?.(range, kind, e.target.checked); }} /><span>Multicolor</span></label>
           <label className="check gfxv-mc" title="Bytes in a block that is already graphics (Charset, Sprite data, Bitmap or Screen matrix, set by the analysis or by you) are drawn tinted orange, the graphics colour, so what is left to find stands out. Saved files keep their own colours">
@@ -529,7 +570,7 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
         </OptGroup>
       </div>
       <div className="gfxv-sel" role="status">
-        {range ? <>
+        {drawing ? <span className="muted">Click or drag to draw{mc ? ' with the pen' : ': a pixel turns the other colour'}; the right button draws the background. The lines that write the bytes change in the sources when the button is let go.</span> : range ? <>
           <span><b className="mono">{fmt(range.start)}–{fmt(range.end - 1)}</b> <span className="muted">({range.end - range.start} bytes) · {blockText(range.start)}</span></span>
           <span className="grow" />
           {whole && wholeOf && (wholeOf.start !== range.start || wholeOf.end !== range.end || (kind === 'bitmap' && !wholeWin)) && <button className="btn small" title={whole.title} onClick={takeWhole}>{whole.label}</button>}
@@ -565,8 +606,8 @@ export function MemoryGfx({ source = false, live = null, A, R, cursor, sel, onSe
               </div>;
             })}
           </div>
-          <div className="gfxv-canvas" style={{ width: L.width * zoom, height: L.height * zoom }} onMouseDown={down} onMouseMove={move} onMouseLeave={() => { setHover(null); setHoverAt(null); }} onMouseUp={() => { dragging.current = false; }}
-            onDoubleClick={e => { const { x, y } = point(e); const a = byteAt(L, x, y); if (a != null) onShow(a); }}>
+          <div className={cx('gfxv-canvas', drawing && 'draw')} style={{ width: L.width * zoom, height: L.height * zoom }} onMouseDown={down} onMouseMove={move} onMouseLeave={() => { setHover(null); setHoverAt(null); }} onMouseUp={() => { dragging.current = false; }}
+            onDoubleClick={e => { if (drawing) return; const { x, y } = point(e); const a = byteAt(L, x, y); if (a != null) onShow(a); }} onContextMenu={e => { if (drawing) e.preventDefault(); }}>
             <canvas ref={canvas} width={L.width} height={Math.max(1, (bandRows.to - bandRows.from) * stepY)} style={{ position: 'absolute', left: 0, top: bandRows.from * rowH, width: L.width * zoom, height: (bandRows.to - bandRows.from) * rowH }} aria-label={kind === 'fontrows' ? 'A font per row' : `Memory as ${kind}`} />
             {rects.map((r, i) => <div key={i} className="gfxv-selrect" style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom }} />)}
           </div>

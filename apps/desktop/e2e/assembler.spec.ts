@@ -886,3 +886,43 @@ test('debugging in the Assembler: Memory shows the memory of the program being d
   }
   await closeProject(page, 'live');
 });
+
+test('drawing in the Graphics tab of an Assembler project: Draw, a click and a drag on a sprite, the right button, the .byte lines that write it change', async ({ workDir: work, app, page }) => {
+  const dir = join(work, 'gdraw');
+  mkdirSync(dir);
+  const rows = Array.from({ length: 21 }, () => '        .byte %00000000, %00000000, %00000000');
+  writeFileSync(join(dir, 'main.asm'), ['BasicUpstart2(start)', 'start:  rts', '        * = $2000 "sprite"', '// @block sprite hires', 'ship:', ...rows, '        .byte 0', '// @end', ''].join('\n'));
+  await page.getByRole('button', { name: 'Assembler…' }).click();
+  await stubDialogs(app, { open: [dir] });
+  await page.getByRole('button', { name: 'Open folder…' }).click();
+  await expect(page.locator('.scr-check')).toContainText('Ready');
+  const disk = () => readFileSync(join(dir, 'main.asm'), 'utf8').split('\n');
+
+  // the sprite at $2000 in the Graphics tab, selected
+  await page.locator('.main-tabs').getByRole('tab', { name: 'Graphics' }).click();
+  await page.getByRole('group', { name: 'Show memory as' }).getByRole('button', { name: /Sprites/ }).click();
+  const goTo = page.getByLabel('Go to address, label or range');
+  await expect(async () => {
+    await goTo.fill('$2000'); await goTo.press('Enter');
+    await expect(page.locator('.gfxv-sel')).toContainText('$2000–$203f', { timeout: 2000 });
+  }).toPass({ timeout: 30_000 });
+
+  // Draw on: a click sets a pixel, a drag a row of them, the right button clears (where the sprite is, Draw on)
+  await page.getByRole('group', { name: 'Draw' }).getByRole('checkbox', { name: 'Draw' }).check();
+  await expect(page.locator('.gfxv-sel')).toContainText('Click or drag to draw');
+  const cell = (await page.locator('.gfxv-selrect').first().boundingBox())!;
+  const px = cell.width / 24;
+  const at = (x: number, y: number) => ({ x: cell.x + (x + 0.5) * px, y: cell.y + (y + 0.5) * px });
+  let p = at(0, 0);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(() => disk()[5], { timeout: 5000 }).toBe('        .byte %10000000, %00000000, %00000000');
+  p = at(8, 1); await page.mouse.move(p.x, p.y); await page.mouse.down();
+  for (let x = 9; x <= 15; x++) { p = at(x, 1); await page.mouse.move(p.x, p.y); }
+  await page.mouse.up();
+  await expect.poll(() => disk()[6], { timeout: 5000 }).toBe('        .byte %00000000, %11111111, %00000000');
+  await shot(page, '25-graphics-draw');
+  p = at(0, 0);
+  await page.mouse.click(p.x, p.y, { button: 'right' });
+  await expect.poll(() => disk()[5], { timeout: 5000 }).toBe('        .byte %00000000, %00000000, %00000000');
+  await closeProject(page, 'gdraw');
+});

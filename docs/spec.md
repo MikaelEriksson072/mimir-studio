@@ -3791,8 +3791,10 @@ och appen visar den (`components/AssemblerView.tsx`, `AsmTree.tsx`, `AsmOutput.t
   hållet) och en tabell med raden, koden, cyklerna och summan till radens slut (det vägen hoppar över är grått). En
   markering som slutar i första kolumnen på en rad tar inte med den raden. Under en körning i debuggern räknas den
   körda kontrollens program.
-- **Rita i den förstorade spriten eller tecknet** (2026-11-25). I ett Assembler-projekt ritar man i inspektorns
-  förstorade sprite eller tecken (14.1): ett klick eller ett drag sätter pixlarna (hires: den färg den första pixeln inte
+- **Rita i den förstorade spriten eller tecknet, och i Graphics** (2026-11-25). I ett Assembler-projekt ritar man i
+  inspektorns förstorade sprite eller tecken (14.1), och i Graphics-flikens tecken, sprites och bitmappar med *Draw* (en
+  ruta under *Draw* bland vyns val; i flerfärg pennorna bredvid; `pixelAt` i `lib/gfxview.ts` ger byten och biten under
+  pekaren; medan man ritar säger raden under valen hur, och ingen markering görs; inte medan programmet debuggas): ett klick eller ett drag sätter pixlarna (hires: den färg den första pixeln inte
   hade; flerfärg: pennan, en av de fyra bitparen, som väljs över pixlarna; höger knapp: bakgrunden), och när knappen
   släpps skrivs de ändrade bytes in i raderna som skriver dem (`asmWriteBytes` i `asm-write.ts`). En `.byte`-rad får det
   nya värdet där det gamla stod, skrivet som det var (binärt, hex i samma skiftläge, decimalt, lika många siffror); en

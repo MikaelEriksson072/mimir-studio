@@ -1,6 +1,6 @@
 /* The memory graphics browser's geometry and drawing (src/lib/gfxview.ts). */
 import { describe, expect, it } from 'vitest';
-import { bitmapAround, bitmapRowsOf, bitmapWindowOf, cellFrom, isWholeBitmap, windowBitmap, windowPieces, windowSpan, WHOLE_BITMAP, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, LOADED, MARKED, markedRgb, NOT_LOADED, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer, stepCell } from '../src/lib/gfxview';
+import { pixelAt, bitmapAround, bitmapRowsOf, bitmapWindowOf, cellFrom, isWholeBitmap, windowBitmap, windowPieces, windowSpan, WHOLE_BITMAP, builtinFont, byteAt, cellAt, cellBytes, cellLayout, cellOf, cellRange, charsetAround, drawMemory, fontRowsLayout, LOADED, MARKED, markedRgb, NOT_LOADED, fontRowStarts, gfxImage, noFont, gfxLayout, rangeRects, rowAddr, screenPointer, spriteColsOf, spritePointer, stepCell } from '../src/lib/gfxview';
 import { C64, hexRgb } from '../src/lib/palette';
 
 describe('memory graphics layout', () => {
@@ -411,5 +411,19 @@ describe('a font per row', () => {
     const img = gfxImage('fontrows', mem, 0x0800, 0x2800, false, colors, { codes, rows });
     expect([img.width, img.height]).toEqual([320, 16]);
     expect([...img.rgba.subarray((9 * 320 + 15) * 4, (9 * 320 + 15) * 4 + 3)]).toEqual(fg);
+  });
+});
+
+describe('the pixel a point is on (drawing in the Graphics tab)', () => {
+  it('gives the byte and the bit of a character, a sprite or a bitmap; the bit pair in multicolour', () => {
+    const C = gfxLayout('chars', 32), S = gfxLayout('sprites', 8), B = gfxLayout('bitmap', 1);
+    expect(pixelAt(C, 8 * 5 + 3, 8 * 2 + 7, false)).toEqual({ addr: 2 * 256 + 5 * 8 + 7, shift: 4, mask: 1 });
+    expect(pixelAt(C, 8 * 5 + 3, 8 * 2 + 7, true)).toEqual({ addr: 2 * 256 + 5 * 8 + 7, shift: 4, mask: 3 });
+    expect(pixelAt(S, 26 + 17, 4, false)).toEqual({ addr: 64 + 4 * 3 + 2, shift: 6, mask: 1 });
+    expect(pixelAt(S, 26 + 23, 4, true)).toEqual({ addr: 64 + 4 * 3 + 2, shift: 0, mask: 3 });
+    expect(pixelAt(B, 8 * 3 + 7, 8 * 1 + 2, false)).toEqual({ addr: (1 * 40 + 3) * 8 + 2, shift: 0, mask: 1 });
+    // a gap, a screen: no pixel
+    expect(pixelAt(S, 25, 4, false)).toBe(null);
+    expect(pixelAt(gfxLayout('screens', 2), 3, 3, false)).toBe(null);
   });
 });

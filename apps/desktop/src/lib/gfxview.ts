@@ -207,6 +207,17 @@ export function byteAt(L: GfxLayout, x: number, y: number): Addr | null {
   return a < L.size ? a : null;
 }
 
+/** The pixel under a point (pixels at zoom 1) of a character, a sprite or a bitmap: its byte, and where its bit (hires)
+ *  or its pair of bits (multicolour, each pixel two wide) is in it; null in a gap, past the end, or in another view
+ *  (an Assembler project draws in the Graphics tab, spec 10.7). */
+export function pixelAt(L: GfxLayout, x: number, y: number, mc: boolean): { addr: Addr; shift: number; mask: number } | null {
+  if (L.kind !== 'chars' && L.kind !== 'sprites' && L.kind !== 'bitmap') return null;
+  const a = byteAt(L, x, y);
+  if (a == null) return null;
+  const xi = Math.floor(x % (L.cellW + L.gapX)) & 7;
+  return mc ? { addr: a, shift: 6 - 2 * (xi >> 1), mask: 3 } : { addr: a, shift: 7 - xi, mask: 1 };
+}
+
 /** the cell starting at `start` alone, without gaps: a layout of one row and one column of `L`'s kind, for drawing that
  *  cell by itself (Ctrl over a screen shows it over the whole window) */
 export const cellLayout = (L: GfxLayout, start: Addr): GfxLayout => ({

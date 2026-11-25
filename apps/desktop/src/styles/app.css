@@ -2174,6 +2174,10 @@ button.wl-addr:hover { color: var(--accent-hi); text-decoration: underline; text
 .asm-cycles .asm-cyc-steps td { padding: 1px 12px 1px 0; white-space: pre; }
 .asm-cycles .asm-cyc-steps td:nth-child(3), .asm-cycles .asm-cyc-steps td:nth-child(4) { text-align: right; }
 .asm-cycles .asm-cyc-steps tr.off td { opacity: .45; }
+/* the Graphics tab drawn on (an Assembler project) */
+.gfxv-canvas.draw { cursor: crosshair; }
+.gfxv-pen { width: 18px; height: 18px; border-radius: 3px; border: 1px solid var(--line-2); padding: 0; cursor: pointer; }
+.gfxv-pen.on { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* the enlarged sprite or character drawn on (an Assembler project) */
 .cz-grid.draw { cursor: crosshair; user-select: none; }
 .cz-draw { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
